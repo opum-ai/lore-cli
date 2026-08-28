@@ -17,7 +17,7 @@
  * BLOCKING-1 — confirmed live: `lore init >/dev/null 2>&1` under a pty hung forever with zero
  * output). `--json` is a third, independent veto: a machine-readable run must never prompt even at a
  * genuinely interactive terminal. Every wizard question maps 1:1 to a flag (`--agents`,
- * `--scaffold <target>`, `--obsidian`, `--no-backlog`/`--check-backlog`), so a script gets the exact
+ * `--scaffold <target>`, `--obsidian`, `--no-tracker`/`--check-tracker`), so a script gets the exact
  * same outcome as answering the wizard, with zero prompts. This is documented in
  * [ADR-0017](../../docs/adr/0017-interactive-init-wizard-tty-gated.md) (an amendment to ADR-0004/
  * ADR-0005's non-interactive CLI contract).
@@ -104,7 +104,32 @@ import { assertNoSymlinkInPath, assertScaffoldPathsFree, createIfAbsent, ensureD
 import { applyHermesBridge, type HermesBridgeResult } from "./hermes-bridge";
 import { applyScaffold, TARGETS as SCAFFOLD_TARGETS, type ScaffoldResult } from "./scaffold";
 
-/** The backlog-coupling capability check's outcome, folded into {@link InitResult} when it ran. */
+/**
+ * The selected tracker's capability check outcome, folded into {@link InitResult} when it ran
+ * (LCLI-358.2).
+ *
+ * Supersedes {@link InitBacklogCheck}, which could only ever describe Backlog.md — the probe used
+ * to run against the `backlog` binary no matter which backend the bundle had actually selected, so
+ * choosing Quest produced a diagnostic about Backlog being uninitialized.
+ */
+export interface InitTrackerCheck {
+  /** Always `true` when this field is present at all, so a `--json` consumer can branch without an `in` check. */
+  readonly checked: true;
+  /** The backend that was probed — always the one this bundle selected. */
+  readonly backend: TrackerBackend;
+  /** Whether that backend's CLI answered with the capability lore requires. */
+  readonly capable: boolean;
+  /** The version the backend reported, when capable. */
+  readonly version?: string;
+  /** The advisory message (also written to stderr) when NOT capable. */
+  readonly warning?: string;
+}
+
+/**
+ * @deprecated Use {@link InitResult.trackerCheck}, which reports whichever backend was selected.
+ * Retained, and populated ONLY for a `backlog` bundle (its exact historical meaning), so the
+ * documented `--json` field does not change shape under existing consumers.
+ */
 export interface InitBacklogCheck {
   /** Always `true` when this field is present at all — kept explicit (vs. field presence alone) so a `--json` consumer can branch without an `in` check. */
   readonly checked: true;
@@ -134,7 +159,9 @@ export interface InitResult {
   hermes?: HermesBridgeResult;
   /** One entry per downstream doc-site/vault actually scaffolded this run (wizard picks, `--scaffold`, `--obsidian`); empty when none were requested. */
   scaffolds: ScaffoldResult[];
-  /** The backlog-coupling capability check's outcome, present iff it ran this invocation. */
+  /** The selected tracker's capability check outcome, present iff it ran this invocation. */
+  trackerCheck?: InitTrackerCheck;
+  /** @deprecated Use {@link InitResult.trackerCheck}. Present only for a `backlog` bundle whose check ran. */
   backlog?: InitBacklogCheck;
   /** Explicit tracker choice made by the wizard or `--tracker`; absent on the legacy bare path. */
   tracker?: TrackerBackend;
@@ -235,10 +262,10 @@ interface InitArgs {
   hermes: boolean;
   /** `--scaffold <target>` (repeatable) and/or `--obsidian`, deduped; targets from {@link SCAFFOLD_TARGETS}. */
   scaffolds: string[];
-  /** `--no-backlog`: skip the backlog-coupling capability check entirely. */
-  noBacklog: boolean;
-  /** `--check-backlog`: run the backlog-coupling capability check even with no other flag requesting it. */
-  checkBacklog: boolean;
+  /** `--no-tracker` (alias `--no-backlog`): skip the tracker-coupling capability check entirely. */
+  noTracker: boolean;
+  /** `--check-tracker` (alias `--check-backlog`): run the tracker-coupling capability check even with no other flag requesting it. */
+  checkTracker: boolean;
   /** `--tracker <quest|backlog|jira>`: persist the selected task backend without prompting. */
   tracker?: TrackerBackend;
   /** `--migrate-backlog`: preflight and preserve compatible Backlog ids while selecting Quest. */
@@ -324,13 +351,13 @@ export function runInit(options: InitOptions): number | Promise<number> {
     // backlog/ is verified-archived-and-deleted. The migration-only path is unchanged.
     if (parsed.adoptManifest !== undefined) {
       return runCoordinatedCutover(options, parsed).then((migration) =>
-        finishNonInteractive(options, parsed, base, clock, migration),
+        finishNonInteractive(options, parsed, base, clock, priorSelection, migration),
       );
     }
     return runBacklogMigration(options).then((migration) => {
       persistTrackerBackend(options.root, "quest");
       clearPendingQuestMigration(options.root);
-      return finishNonInteractive(options, parsed, base, clock, migration);
+      return finishNonInteractive(options, parsed, base, clock, priorSelection, migration);
     });
   }
   if (parsed.tracker !== undefined) {
@@ -341,7 +368,7 @@ export function runInit(options: InitOptions): number | Promise<number> {
     persistTrackerBackend(options.root, "quest");
   }
 
-  return finishNonInteractive(options, parsed, base, clock);
+  return finishNonInteractive(options, parsed, base, clock, priorSelection);
 }
 
 /** The base OKF bundle this run wrote (or found already present). */
@@ -440,6 +467,7 @@ function finishNonInteractive(
   parsed: InitArgs,
   base: { root: string; created: string[]; skipped: string[] },
   clock: () => Date,
+  priorSelection: () => TrackerSelection,
   migration?: TrackerMigrationResult,
 ): number | Promise<number> {
   const scaffoldTargets = [...new Set(parsed.scaffolds)];
@@ -448,47 +476,75 @@ function finishNonInteractive(
   const hermes = parsed.hermes ? applyHermesBridge({ root: options.root, force: false, check: false }) : undefined;
   const scaffolds = scaffoldTargets.map((target) => applyScaffold({ root: options.root, target, force: false, clock }));
 
-  // The backlog check is advisory-only (never fails the run) and, off-TTY/via-flags, runs only when
-  // it's actually relevant: explicitly requested (`--check-backlog`), or implied by onboarding a
+  // The tracker check is advisory-only (never fails the run) and, off-TTY/via-flags, runs only when
+  // it's actually relevant: explicitly requested (`--check-tracker`), or implied by onboarding a
   // consumer that depends on the coupling (`--agents`/`--scaffold`/`--obsidian`) — unless the user
-  // opted all the way out with `--no-backlog`. A completely bare `lore init` therefore never spawns
-  // a `backlog` subprocess, exactly as before this task.
-  const shouldCheckBacklog =
-    parsed.checkBacklog ||
-    (parsed.tracker !== "none" && !parsed.noBacklog && (parsed.agents || parsed.codex || scaffoldTargets.length > 0));
-  if (!shouldCheckBacklog) {
-    const result: InitResult = {
-      ...base,
-      interactive: false,
-      agents,
-      codex,
-      hermes,
-      scaffolds,
-      backlog: undefined,
-      tracker: parsed.tracker,
-      migration,
-    };
-    emit(initRenderable(result), options.output, options.stdout);
+  // opted all the way out with `--no-tracker`. A completely bare `lore init` therefore never spawns
+  // a tracker subprocess, exactly as before LORE-260.
+  const backend = selectedBackendFor(parsed, priorSelection);
+  const shouldCheck =
+    (parsed.checkTracker || parsed.agents || parsed.codex || scaffoldTargets.length > 0) &&
+    !parsed.noTracker &&
+    backend !== "none";
+  if (!shouldCheck) {
+    emit(
+      initRenderable({
+        ...base,
+        interactive: false,
+        agents,
+        codex,
+        hermes,
+        scaffolds,
+        trackerCheck: undefined,
+        backlog: undefined,
+        tracker: parsed.tracker,
+        migration,
+      }),
+      options.output,
+      options.stdout,
+    );
     return EXIT_OK;
   }
 
   const warnings = new WarningCollector();
-  return probeBacklogCapability(options, warnings).then((backlog) => {
+  return probeTrackerCapability(options, backend, warnings).then((trackerCheck) => {
     warnings.flush({ color: options.output.color, stderr: options.stderr ?? process.stderr });
-    const result: InitResult = {
-      ...base,
-      interactive: false,
-      agents,
-      codex,
-      hermes,
-      scaffolds,
-      backlog,
-      tracker: parsed.tracker,
-      migration,
-    };
-    emit(initRenderable(result), options.output, options.stdout);
+    emit(
+      initRenderable({
+        ...base,
+        interactive: false,
+        agents,
+        codex,
+        hermes,
+        scaffolds,
+        trackerCheck,
+        backlog: legacyBacklogCheck(trackerCheck),
+        tracker: parsed.tracker,
+        migration,
+      }),
+      options.output,
+      options.stdout,
+    );
     return EXIT_OK;
   });
+}
+
+/**
+ * Project the tracker check onto the deprecated `backlog` field — populated ONLY for a `backlog`
+ * bundle, which is exactly what that field has always meant. A Quest or Jira bundle leaves it
+ * absent rather than filling it with another backend's result, so no existing `--json` consumer
+ * reads a Quest probe as a Backlog one.
+ */
+function legacyBacklogCheck(check: InitTrackerCheck): InitBacklogCheck | undefined {
+  if (check.backend !== "backlog") {
+    return undefined;
+  }
+  return {
+    checked: true,
+    capable: check.capable,
+    ...(check.version === undefined ? {} : { version: check.version }),
+    ...(check.warning === undefined ? {} : { warning: check.warning }),
+  };
 }
 
 function runBacklogMigration(options: InitOptions): Promise<TrackerMigrationResult> {
@@ -622,7 +678,9 @@ async function runInteractiveWizard(
   const scaffolds = scaffoldTargets.map((target) => applyScaffold({ root: options.root, target, force: false, clock }));
 
   const warnings = new WarningCollector();
-  const backlog = tracker === "none" ? undefined : await probeBacklogCapability(options, warnings);
+  // Probes the backend the operator just chose — not `backlog` regardless, which is what made
+  // choosing Quest report that Backlog.md was uninitialized (LCLI-358.2).
+  const trackerCheck = tracker === "none" ? undefined : await probeTrackerCapability(options, tracker, warnings);
   warnings.flush({ color: options.output.color, stderr: options.stderr ?? process.stderr });
 
   const result: InitResult = {
@@ -632,7 +690,8 @@ async function runInteractiveWizard(
     codex,
     hermes,
     scaffolds,
-    backlog,
+    trackerCheck,
+    backlog: trackerCheck === undefined ? undefined : legacyBacklogCheck(trackerCheck),
     tracker,
     migration,
   };
@@ -700,7 +759,7 @@ export function createRealPrompter(
     return new LoreError(
       "usage",
       "stdin closed or the wizard was interrupted before it finished (EOF/Ctrl-D or Ctrl-C)",
-      "answer every prompt, or run prompt-free with `lore init --yes` (or --claude/--codex/--scaffold <target>/--obsidian/--no-backlog/--check-backlog)",
+      "answer every prompt, or run prompt-free with `lore init --yes` (or --claude/--codex/--scaffold <target>/--obsidian/--no-tracker/--check-tracker)",
     );
   }
 
@@ -752,20 +811,47 @@ export function createRealPrompter(
  * bridge/doc-site scaffold already applied) succeeded regardless of whether Backlog.md coupling is
  * available yet.
  */
-async function probeBacklogCapability(options: InitOptions, warnings: WarningCollector): Promise<InitBacklogCheck> {
-  // This onboarding diagnostic is intentionally Backlog-specific even when the
-  // newly selected production tracker is Jira. Jira readiness is validated by
-  // configured command construction after its non-secret project map is added.
-  const adapter = options.adapter ?? createTrackerAdapter(options.root, { backend: "backlog" });
+async function probeTrackerCapability(
+  options: InitOptions,
+  backend: TrackerBackend,
+  warnings: WarningCollector,
+): Promise<InitTrackerCheck> {
+  // Adapter construction lives INSIDE the try (LCLI-358.2): `createTrackerAdapter` itself throws
+  // for `jira` with no `[tracker.jira]` table, and that is exactly the kind of "your tracker is not
+  // ready yet" fact this advisory exists to report — not an uncaught error that fails a run whose
+  // scaffold already succeeded.
   try {
+    const adapter = options.adapter ?? createConfiguredAdapterFor(options.root, backend);
     const capability = await adapter.probe();
-    return { checked: true, capable: true, version: capability.version };
+    return { checked: true, backend, capable: true, version: capability.version };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const hint = err instanceof LoreError ? err.hint : undefined;
-    warnings.add(`backlog coupling unavailable: ${message}${hint ? ` — ${hint}` : ""}`);
-    return { checked: true, capable: false, warning: message };
+    warnings.add(`${backend} coupling unavailable: ${message}${hint ? ` — ${hint}` : ""}`);
+    return { checked: true, backend, capable: false, warning: message };
   }
+}
+
+/**
+ * Build the adapter for one selected backend, supplying the non-secret configuration a backend
+ * needs. Only `jira` reads any: `createTrackerAdapter` requires its project map, and `loadConfig`
+ * is the single owner of that validation.
+ */
+function createConfiguredAdapterFor(root: string, backend: TrackerBackend) {
+  if (backend === "jira") {
+    return createTrackerAdapter(root, { backend, jira: loadConfig({ root }).tracker.jira });
+  }
+  return createTrackerAdapter(root, { backend });
+}
+
+/**
+ * Which backend this run actually selected, and therefore the ONE this command may probe or
+ * diagnose (LCLI-358.2). An explicit `--tracker` wins; otherwise the bundle's own resolved
+ * selection does. Never defaults to `backlog`: probing a backend the operator did not choose is
+ * the defect this function exists to prevent.
+ */
+function selectedBackendFor(parsed: InitArgs, priorSelection: () => TrackerSelection): TrackerBackend {
+  return parsed.tracker ?? priorSelection().backend;
 }
 
 /**
@@ -787,8 +873,8 @@ function anyFlagGiven(parsed: InitArgs): boolean {
     parsed.codex ||
     parsed.hermes ||
     parsed.scaffolds.length > 0 ||
-    parsed.noBacklog ||
-    parsed.checkBacklog ||
+    parsed.noTracker ||
+    parsed.checkTracker ||
     parsed.migrateBacklog ||
     parsed.tracker !== undefined
   );
@@ -798,9 +884,9 @@ function anyFlagGiven(parsed: InitArgs): boolean {
  * Parse `init`'s tokens: no positionals (unchanged from before LORE-260 — a bare/`--`-terminated
  * positional is still a `usage` error, byte-identical wording to the router's old blanket
  * `rejectCommandArgs` guard so every pre-existing regression test keeps passing), plus the boolean
- * `--yes` (alias `--non-interactive`, NIT-2)/`--agents`/`--obsidian`/`--no-backlog`/`--check-backlog`
+ * `--yes` (alias `--non-interactive`, NIT-2)/`--agents`/`--obsidian`/`--no-tracker`/`--check-tracker`
  * and the repeatable value flag `--scaffold <target>`. An unknown flag, an invalid `--scaffold`
- * target, a stray positional, or the mutually-exclusive `--no-backlog`+`--check-backlog` pair all
+ * target, a stray positional, or the mutually-exclusive `--no-tracker`+`--check-tracker` pair all
  * throw a `usage` {@link LoreError} (exit `2`) before any scaffold work runs.
  */
 function parseInitArgs(args: readonly string[]): InitArgs {
@@ -809,8 +895,11 @@ function parseInitArgs(args: readonly string[]): InitArgs {
   const agents = parsed.flags.has("agents") || parsed.flags.has("claude");
   const codex = parsed.flags.has("codex");
   const hermes = parsed.flags.has("hermes");
-  const noBacklog = parsed.flags.has("no-backlog");
-  const checkBacklog = parsed.flags.has("check-backlog");
+  // `--no-tracker`/`--check-tracker` are the accurate spellings now that the probe follows the
+  // selected backend; the `-backlog` originals stay as aliases, the same way `--agents` aliases
+  // `--claude` (LCLI-358.2).
+  const noTracker = parsed.flags.has("no-tracker") || parsed.flags.has("no-backlog");
+  const checkTracker = parsed.flags.has("check-tracker") || parsed.flags.has("check-backlog");
   const migrateBacklog = parsed.flags.has("migrate-backlog");
   const allowNoGit = parsed.flags.has("allow-no-git");
   const adoptManifestValue = singleOptionValue(parsed, "adopt-manifest");
@@ -857,10 +946,10 @@ function parseInitArgs(args: readonly string[]): InitArgs {
       { command: "init", unexpected: [...parsed.positionals] },
     );
   }
-  if (noBacklog && checkBacklog) {
+  if (noTracker && checkTracker) {
     throw usage(
-      "--no-backlog and --check-backlog are mutually exclusive",
-      "pass at most one of --no-backlog / --check-backlog",
+      "--no-tracker and --check-tracker are mutually exclusive",
+      "pass at most one of --no-tracker / --check-tracker (or their --no-backlog / --check-backlog aliases)",
     );
   }
   return {
@@ -869,8 +958,8 @@ function parseInitArgs(args: readonly string[]): InitArgs {
     codex,
     hermes,
     scaffolds,
-    noBacklog,
-    checkBacklog,
+    noTracker,
+    checkTracker,
     tracker,
     migrateBacklog,
     adoptManifest: adoptManifestValue,
@@ -1003,11 +1092,12 @@ function renderPretty(data: InitResult, opts: { color: boolean }): string {
       lines.push(`  ${paint(file.action, ANSI.green, opts.color)} ${file.path}`);
     }
   }
-  if (data.backlog) {
+  if (data.trackerCheck) {
+    const { backend, capable, version } = data.trackerCheck;
     lines.push(
-      data.backlog.capable
-        ? `backlog: --json-capable${data.backlog.version ? ` (v${data.backlog.version})` : ""}`
-        : paint("backlog: not --json-capable — see the warning above (coupling unavailable)", ANSI.yellow, opts.color),
+      capable
+        ? `${backend}: ready${version ? ` (v${version})` : ""}`
+        : paint(`${backend}: not ready — see the warning above (coupling unavailable)`, ANSI.yellow, opts.color),
     );
   }
   if (data.tracker !== undefined) {
@@ -1058,8 +1148,8 @@ function renderPlain(data: InitResult): string {
       lines.push(`scaffold-${scaffold.target}-${file.action} ${file.path}`);
     }
   }
-  if (data.backlog) {
-    lines.push(data.backlog.capable ? "backlog capable" : "backlog incapable");
+  if (data.trackerCheck) {
+    lines.push(`${data.trackerCheck.backend} ${data.trackerCheck.capable ? "capable" : "incapable"}`);
   }
   if (data.tracker !== undefined) {
     lines.push(`tracker ${data.tracker}`);

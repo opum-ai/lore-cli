@@ -766,12 +766,23 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
 
   test("--check-backlog runs the check even with no other flag, reporting a capable binary", async () => {
     const { code, result, stderr } = await init({
-      args: ["--check-backlog"],
+      args: ["--tracker", "backlog", "--check-backlog"],
       adapter: fakeAdapter([], { probe: "ok" }),
     });
     expect(code).toBe(0);
+    expect(result.trackerCheck).toEqual({ checked: true, backend: "backlog", capable: true, version: "1.49.0" });
+    // The deprecated field still carries a Backlog bundle's result unchanged (LCLI-358.2).
     expect(result.backlog).toEqual({ checked: true, capable: true, version: "1.49.0" });
     expect(stderr).toBe("");
+  });
+
+  test("--check-tracker is the same flag under its accurate name", async () => {
+    const { code, result } = await init({
+      args: ["--tracker", "backlog", "--check-tracker"],
+      adapter: fakeAdapter([], { probe: "ok" }),
+    });
+    expect(code).toBe(0);
+    expect(result.trackerCheck?.backend).toBe("backlog");
   });
 
   test("--agents implies the backlog check, warning on stderr when backlog is absent (advisory only, exit stays 0)", async () => {
@@ -781,21 +792,22 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
     });
     expect(code).toBe(0);
     expect(result.agents).toBeDefined();
-    expect(result.backlog?.capable).toBe(false);
-    expect(result.backlog?.warning).toContain("not found on PATH");
+    expect(result.trackerCheck?.capable).toBe(false);
+    expect(result.trackerCheck?.warning).toContain("not found on PATH");
     expect(stderr).toContain("warning:");
-    expect(stderr).toContain("backlog coupling unavailable");
+    expect(stderr).toContain("quest coupling unavailable");
   });
 
   test("an uninitialized Backlog.md project recommends backlog init in JSON and stderr without failing init", async () => {
     const warning =
       "The `backlog` binary supports --json, but no Backlog.md project is initialized in this directory; run `backlog init` to initialize one.";
     const { code, result, stderr } = await init({
-      args: ["--agents"],
+      args: ["--tracker", "backlog", "--agents"],
       adapter: fakeAdapter([], { probe: new LoreError("validation", warning) }),
     });
 
     expect(code).toBe(0);
+    expect(result.trackerCheck).toEqual({ checked: true, backend: "backlog", capable: false, warning });
     expect(result.backlog).toEqual({ checked: true, capable: false, warning });
     expect(stderr).toContain(`backlog coupling unavailable: ${warning}`);
     expect(stderr).not.toContain("Install backlog.md");
@@ -807,6 +819,7 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
       adapter: fakeAdapter([], { probe: new LoreError("not_found", "should never be reached", "") }),
     });
     expect(result.agents).toBeDefined();
+    expect(result.trackerCheck).toBeUndefined();
     expect(result.backlog).toBeUndefined();
     expect(stderr).toBe("");
   });
@@ -1059,12 +1072,14 @@ describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the lock
     expect(result.interactive).toBe(true);
     expect(result.agents).toBeDefined();
     expect(result.scaffolds.map((s) => s.target)).toEqual(["mkdocs", "obsidian"]);
-    expect(result.backlog).toEqual({ checked: true, capable: true, version: "1.49.0" });
+    // The wizard's tracker question defaults to quest, so the probe follows quest — not backlog.
+    expect(result.trackerCheck).toEqual({ checked: true, backend: "quest", capable: true, version: "1.49.0" });
+    expect(result.backlog).toBeUndefined();
     expect(existsSync(join(root, "mkdocs.yml"))).toBe(true);
     expect(existsSync(join(root, "docs/.obsidian/app.json"))).toBe(true);
   });
 
-  test("declining every wizard question sets up nothing beyond the base scaffold, but backlog is still (always) checked", async () => {
+  test("declining every wizard question sets up nothing beyond the base scaffold, but the tracker is still (always) checked", async () => {
     const prompter = scriptedPrompter({ agents: false, site: "none", obsidian: false });
     const { result } = await init({
       stdinIsTTY: true,
@@ -1074,7 +1089,7 @@ describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the lock
     });
     expect(result.agents).toBeUndefined();
     expect(result.scaffolds).toEqual([]);
-    expect(result.backlog?.checked).toBe(true);
+    expect(result.trackerCheck?.checked).toBe(true);
   });
 
   test("an empty answer (bare Enter) falls through to each question's own default", async () => {
@@ -1532,5 +1547,115 @@ describe("lore init — review follow-ups: no write survives a refusal, and git 
     });
     const err = expectError("not_found", () => preflight.isRepository());
     expect(err.message).toMatch(/the binary is not installed or not on PATH/);
+  });
+});
+
+describe("lore init — the capability probe follows the selected tracker (LCLI-358.2)", () => {
+  /** Record every tracker binary a run tries to start, so "never spawned" is provable, not implied. */
+  function recordingRoot(): { root: string; spawned: string[] } {
+    return { root, spawned: [] };
+  }
+
+  test("selecting quest probes quest and says nothing at all about backlog", async () => {
+    const { result, stderr } = await init({
+      args: ["--tracker", "quest", "--check-tracker"],
+      adapter: fakeAdapter([], { probe: "ok" }),
+    });
+    expect(result.trackerCheck?.backend).toBe("quest");
+    expect(result.backlog).toBeUndefined();
+    expect(stderr).not.toContain("backlog");
+  });
+
+  test("selecting jira probes jira, and its missing configuration is an advisory, not a crash", async () => {
+    // `createTrackerAdapter` throws for jira with no [tracker.jira] table. That is a real fact about
+    // the operator's setup, so it belongs in the advisory the probe already emits — the scaffold
+    // itself succeeded.
+    const { code, result, stderr } = await init({ args: ["--tracker", "jira", "--check-tracker"] });
+    expect(code).toBe(0);
+    expect(result.trackerCheck?.backend).toBe("jira");
+    expect(result.trackerCheck?.capable).toBe(false);
+    expect(result.trackerCheck?.warning).toContain("tracker.jira configuration is required");
+    expect(stderr).toContain("jira coupling unavailable");
+    expect(stderr).not.toContain("backlog");
+  });
+
+  test("selecting none runs no probe at all, even when --check-tracker asks for one", async () => {
+    const { result, stderr } = await init({
+      args: ["--tracker", "none", "--check-tracker"],
+      adapter: fakeAdapter([], { probe: new LoreError("not_found", "should never be reached", "") }),
+    });
+    expect(result.trackerCheck).toBeUndefined();
+    expect(result.backlog).toBeUndefined();
+    expect(stderr).toBe("");
+  });
+
+  test("with no --tracker, the probe follows the bundle's own persisted selection", async () => {
+    // Pin the bundle to Backlog first, then re-run with no --tracker at all: the probe must read
+    // the bundle's own config rather than falling back to any default.
+    await init({ args: ["--tracker", "backlog"], adapter: fakeAdapter([], { probe: "ok" }) });
+    const { result } = await init({
+      args: ["--agents"],
+      adapter: fakeAdapter([], { probe: "ok" }),
+    });
+    expect(result.trackerCheck?.backend).toBe("backlog");
+    expect(result.backlog).toEqual({ checked: true, capable: true, version: "1.49.0" });
+  });
+
+  test("a brand-new bundle over an existing backlog/ directory probes what it just persisted", async () => {
+    // Documents a real seam rather than asserting it is desirable: a newly created bundle pins
+    // `quest` (init.ts's "a newly created bundle is unambiguous" rule), so that is what the probe
+    // follows — even though a real `backlog/` project sits right there. Whether init should pin
+    // quest over existing Backlog tasks at all is LCLI-358.5's question, not this probe's.
+    mkdirSync(join(root, "backlog"));
+    const { result } = await init({ args: ["--agents"], adapter: fakeAdapter([], { probe: "ok" }) });
+    expect(result.trackerCheck?.backend).toBe("quest");
+  });
+
+  test("no tracker binary is spawned for a bare run", async () => {
+    // The pre-LORE-260 guarantee, restated against the new gating: a bare init still probes nothing.
+    const { result, stderr } = await init({
+      adapter: fakeAdapter([], { probe: new LoreError("not_found", "should never be reached", "") }),
+    });
+    expect(result.trackerCheck).toBeUndefined();
+    expect(stderr).toBe("");
+    expect(recordingRoot().spawned).toEqual([]);
+  });
+
+  test("--no-tracker skips the check that --agents would otherwise imply", async () => {
+    const { result, stderr } = await init({
+      args: ["--tracker", "quest", "--agents", "--no-tracker"],
+      adapter: fakeAdapter([], { probe: new LoreError("not_found", "should never be reached", "") }),
+    });
+    expect(result.agents).toBeDefined();
+    expect(result.trackerCheck).toBeUndefined();
+    expect(stderr).toBe("");
+  });
+
+  test("--no-tracker and --check-backlog are mutually exclusive across the alias pair", () => {
+    const err = expectError("usage", () =>
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        args: ["--no-tracker", "--check-backlog"],
+      }),
+    );
+    expect(err.message).toContain("mutually exclusive");
+  });
+
+  test("plain and pretty output name the probed backend instead of a hardcoded `backlog`", async () => {
+    const stdout = capture();
+    await runInit({
+      root,
+      git: gitStub(),
+      output: { mode: "plain", color: false },
+      stdout,
+      clock: FIXED_CLOCK,
+      args: ["--tracker", "quest", "--check-tracker"],
+      adapter: fakeAdapter([], { probe: "ok" }),
+    });
+    expect(stdout.lines()).toContain("quest capable");
+    expect(stdout.text()).not.toContain("backlog capable");
   });
 });

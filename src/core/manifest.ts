@@ -246,11 +246,13 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
         summary: "Also scaffold an Obsidian vault config (shorthand for --scaffold obsidian)",
       },
       {
-        name: "check-backlog",
+        name: "check-tracker",
         takesValue: false,
-        summary: "Check --json-capable backlog coupling even with no other flag",
+        summary: "Check the selected tracker's coupling even with no other flag",
       },
-      { name: "no-backlog", takesValue: false, summary: "Skip the backlog-coupling capability check entirely" },
+      { name: "no-tracker", takesValue: false, summary: "Skip the tracker-coupling capability check entirely" },
+      { name: "check-backlog", takesValue: false, summary: "Alias for --check-tracker" },
+      { name: "no-backlog", takesValue: false, summary: "Alias for --no-tracker" },
       {
         name: "allow-no-git",
         takesValue: false,

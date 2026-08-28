@@ -202,6 +202,18 @@ later prompt leaves no `.git` behind either. A structurally blocked bundle (a
 symlink or wrong-shaped entry at a path the bundle needs) is refused before the
 first question rather than after the last one.
 
+### Amendment (2026-08-28, LCLI-358.2): the capability check follows the selected tracker
+
+This ADR calls the capability check "backlog-coupling" throughout, and the
+implementation matched: it probed the `backlog` binary no matter which backend
+the bundle had selected, so choosing Quest reported that Backlog.md was
+uninitialized. It now probes the selected backend, and the flags are spelled
+`--check-tracker`/`--no-tracker`, with `--check-backlog`/`--no-backlog` kept as
+aliases so this ADR's flag-per-question mapping still holds for every script
+already written against it. The `--json` result carries the outcome under
+`trackerCheck`, which names the backend it probed; the older `backlog` field is
+deprecated and populated only for a Backlog bundle.
+
 ## Consequences
 
 ### Positive

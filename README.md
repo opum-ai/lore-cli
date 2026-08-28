@@ -146,7 +146,7 @@ three modes with precedence `--json` > `--plain` > pretty:
 #    repository — `lore sync` reads git history and the default tracker's own
 #    `quest init` refuses a non-worktree path. On a bare TTY invocation the
 #    wizard offers to run `git init` for you, then covers the rest of
-#    onboarding (agent bridge, doc-site scaffolds, backlog check); off a TTY
+#    onboarding (agent bridge, doc-site scaffolds, tracker check); off a TTY
 #    (CI, this snippet) it's exactly this — the bundle only, non-interactively.
 #    Add `--allow-no-git` for a docs-only bundle outside a repository.
 lore init

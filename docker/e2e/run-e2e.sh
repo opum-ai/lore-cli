@@ -280,6 +280,21 @@ step_json "LCLI-358.1: --allow-no-git scaffolds a docs-only bundle outside a wor
   -- bash -c 'cd /tmp/no-git-probe && lore init --allow-no-git --json'
 rm -rf /tmp/no-git-probe
 
+# LCLI-358.2: the capability probe must follow the SELECTED tracker. Selecting quest previously
+# still probed the `backlog` binary and reported Backlog.md as uninitialized. Asserted on the
+# envelope rather than on stderr, so this holds whether or not quest is installed in the image:
+# `trackerCheck` names quest, and the deprecated Backlog-only field stays absent.
+mkdir -p /tmp/tracker-probe && (cd /tmp/tracker-probe && git init -q)
+step_json "LCLI-358.2: --tracker quest probes quest, and reports nothing about backlog" \
+  '.kind == "init.result"
+   and .data.trackerCheck.backend == "quest"
+   and (.data.backlog == null)' \
+  -- bash -c 'cd /tmp/tracker-probe && lore init --tracker quest --check-tracker --json'
+step_json "LCLI-358.2: --tracker none runs no tracker probe at all" \
+  '.kind == "init.result" and (.data.trackerCheck == null) and (.data.backlog == null)' \
+  -- bash -c 'cd /tmp/tracker-probe && lore init --tracker none --check-tracker --json'
+rm -rf /tmp/tracker-probe
+
 # ── Phase 1: bootstrap (critical — nothing downstream works without this) ───
 critical "git init" 0 -- git init -q
 critical "backlog init" 0 -- backlog init "lore-e2e" --defaults
