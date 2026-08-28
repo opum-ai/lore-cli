@@ -239,7 +239,8 @@ function emitBindingFailure(error: unknown, options: AgentCommandOptions): numbe
             ? "OPUM_WORKFLOW_LORE_MISMATCH"
             : "OPUM_WORKFLOW_LORE_INCOMPATIBLE"
         : "OPUM_WORKFLOW_LORE_INCOMPATIBLE";
-  options.stdout?.write(`${JSON.stringify({ error: { code: marker } })}\n`);
+  // Strict contract: on failure stdout stays BYTE-EMPTY (machine JSON only on
+  // success) and the stable marker is echoed on stderr; exit is nonzero.
   options.stderr?.write(`${marker}\n`);
   return 1;
 }
