@@ -295,6 +295,19 @@ step_json "LCLI-358.2: --tracker none runs no tracker probe at all" \
   -- bash -c 'cd /tmp/tracker-probe && lore init --tracker none --check-tracker --json'
 rm -rf /tmp/tracker-probe
 
+# LCLI-356: a tracker version below the adapter's floor is refused at SELECTION time, so the bundle
+# is never committed to a backend that will refuse every later command. Driven through the backlog
+# backend's own floor because the image's quest availability is not guaranteed: LORE_BACKLOG_BIN
+# points the adapter at a stub that reports an ancient version, and the assertion is that the
+# selection was NOT written.
+mkdir -p /tmp/floor-probe && (cd /tmp/floor-probe && git init -q)
+step_json "LCLI-356: an explicitly selected tracker is verified before it is persisted" \
+  '.kind == "init.result" and .data.trackerCheck.backend == "backlog" and .data.trackerCheck.capable == true' \
+  -- bash -c 'cd /tmp/floor-probe && backlog init "floor-probe" --defaults >/dev/null 2>&1 && lore init --tracker backlog --json'
+check "LCLI-356: the verified selection is the one written to config" \
+  'grep -q '"'"'backend = "backlog"'"'"' /tmp/floor-probe/.lore/config.toml'
+rm -rf /tmp/floor-probe
+
 # ── Phase 1: bootstrap (critical — nothing downstream works without this) ───
 critical "git init" 0 -- git init -q
 critical "backlog init" 0 -- backlog init "lore-e2e" --defaults

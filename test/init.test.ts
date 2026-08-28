@@ -14,6 +14,8 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import type { BacklogAdapter } from "../src/adapters/backlog";
 import { type GitPreflight, realGitPreflight } from "../src/adapters/git-preflight";
+import { MIN_QUEST_VERSION, QUEST_VERSION_FLOOR_CODE } from "../src/adapters/quest";
+import { atLeast } from "../src/adapters/semver";
 import {
   createRealPrompter,
   type InitOptions,
@@ -1657,5 +1659,96 @@ describe("lore init — the capability probe follows the selected tracker (LCLI-
     });
     expect(stdout.lines()).toContain("quest capable");
     expect(stdout.text()).not.toContain("backlog capable");
+  });
+});
+
+describe("lore init — an unsupported tracker version is rejected at selection time (LCLI-356)", () => {
+  /** A tracker adapter whose probe fails exactly the way an under-the-floor Quest does. */
+  function belowFloorAdapter(): BacklogAdapter {
+    return fakeAdapter([], {
+      probe: new LoreError("validation", "Quest 0.2.6 is below the 0.2.7 floor", "install a newer Quest", {
+        code: QUEST_VERSION_FLOOR_CODE,
+        version: "0.2.6",
+        floor: "0.2.7",
+      }),
+    });
+  }
+
+  test("--tracker quest against an under-the-floor Quest fails and does NOT persist the backend", async () => {
+    // The reported defect: init exited 0, wrote backend = "quest", and every later tracker command
+    // then exited 6 — the user committed to a backend nothing would accept.
+    const err = await Promise.resolve(
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        clock: FIXED_CLOCK,
+        args: ["--tracker", "quest"],
+        adapter: belowFloorAdapter(),
+      }),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught as LoreError,
+    );
+    expect(err).toBeInstanceOf(LoreError);
+    expect(err?.type).toBe("validation");
+    expect(err?.message).toContain("below the 0.2.7 floor");
+    // The scaffold is idempotent and harmless; the SELECTION is the commitment that is withheld.
+    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).not.toContain('backend = "quest"');
+  });
+
+  test("every other probe failure stays advisory, so LORE-319's decision is untouched", async () => {
+    const warning = "The `backlog` binary supports --json, but no Backlog.md project is initialized in this directory";
+    const { code, result, stderr } = await init({
+      args: ["--tracker", "backlog", "--check-tracker"],
+      adapter: fakeAdapter([], { probe: new LoreError("validation", warning) }),
+    });
+    expect(code).toBe(0);
+    expect(result.trackerCheck?.capable).toBe(false);
+    expect(stderr).toContain(warning);
+    // One setup step away in this same directory — so the selection is still written.
+    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).toContain('backend = "backlog"');
+  });
+
+  test("--no-tracker opts out of the gate for a repository configured before its tooling", async () => {
+    const { code } = await init({
+      args: ["--tracker", "quest", "--no-tracker"],
+      adapter: belowFloorAdapter(),
+    });
+    expect(code).toBe(0);
+    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).toContain('backend = "quest"');
+  });
+
+  test("a supported tracker is probed once, and its verification is what the result reports", async () => {
+    let probes = 0;
+    const adapter: BacklogAdapter = {
+      ...fakeAdapter([], { probe: "ok" }),
+      probe: async () => {
+        probes += 1;
+        return { version: "0.2.9", schemaVersion: 1 };
+      },
+    };
+    const { result } = await init({ args: ["--tracker", "quest", "--check-tracker"], adapter });
+    expect(result.trackerCheck).toEqual({ checked: true, backend: "quest", capable: true, version: "0.2.9" });
+    expect(probes).toBe(1);
+  });
+});
+
+describe("quest version floor (LCLI-356)", () => {
+  test("the shipped 0.2.9 and later releases are accepted; below the floor is not", () => {
+    // Reversing LCLI-353's frozen ["0.2.7","0.2.8"] set: the two currently published packages could
+    // not be used together at all, and every Quest patch would have needed a new Lore release.
+    for (const version of ["0.2.7", "0.2.9", "0.3.0", "1.4.2"]) {
+      expect(atLeast(version, MIN_QUEST_VERSION)?.ok).toBe(true);
+    }
+    for (const version of ["0.1.0", "0.2.6"]) {
+      expect(atLeast(version, MIN_QUEST_VERSION)?.ok).toBe(false);
+    }
+    expect(atLeast("not a version", MIN_QUEST_VERSION)).toBeNull();
+  });
+
+  test("an invalid floor is a programming error, not a silent accept-everything", () => {
+    expect(() => atLeast("1.0.0", "not-a-floor")).toThrow(/invalid minimum-version floor/);
   });
 });

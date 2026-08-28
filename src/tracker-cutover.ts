@@ -16,7 +16,7 @@
  * never partially selected, never dual-written.
  */
 
-import type { QuestBacklogMigration } from "./adapters/quest";
+import { MIN_QUEST_VERSION, type QuestBacklogMigration } from "./adapters/quest";
 import { type ArchiveEvidence, archiveAndDeleteBacklog, verifyArchive, type ZipWriter } from "./backlog-archive";
 import { applyKnowledgeAdoption, previewKnowledgeAdoption } from "./commands/backlog";
 import { CUTOVER_SCHEMA, type CutoverPlan, type CutoverPlanStore, diskCutoverPlanStore } from "./cutover-state";
@@ -57,7 +57,11 @@ export async function planCutover(deps: CutoverDeps): Promise<CutoverPlan> {
   if (existing !== undefined && existing.phase !== "done") return existing;
   const preview = await deps.migration.preview(deps.root);
   if (!preview.requiresApproval || !preview.digest || !preview.sourceFingerprint)
-    throw new LoreError("drift", "Quest returned an invalid Backlog migration preview", "Quest 0.2.7 is required");
+    throw new LoreError(
+      "drift",
+      "Quest returned an invalid Backlog migration preview",
+      `Quest ${MIN_QUEST_VERSION} or newer is required`,
+    );
   const adoption =
     deps.adoptManifest !== undefined
       ? (() => {

@@ -83,7 +83,7 @@ import { join } from "node:path";
 import * as readline from "node:readline/promises";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { type GitPreflight, realGitPreflight } from "../adapters/git-preflight";
-import { createQuestBacklogMigration } from "../adapters/quest";
+import { createQuestBacklogMigration, isQuestVersionFloorFailure } from "../adapters/quest";
 import { createTrackerAdapter } from "../adapters/tracker";
 import { CONFIG_REL_PATH, loadConfig, TRACKER_BACKENDS, type TrackerBackend } from "../config";
 import { loadProfile } from "../core/profile";
@@ -361,14 +361,71 @@ export function runInit(options: InitOptions): number | Promise<number> {
     });
   }
   if (parsed.tracker !== undefined) {
-    persistTrackerBackend(options.root, parsed.tracker);
-  } else if (created.includes(CONFIG_REL_PATH)) {
+    // LCLI-356 AC#2: an EXPLICIT selection is verified before it is written. Persisting first and
+    // discovering the backend is unusable later is what produced the reported failure — `lore init
+    // --yes --tracker quest` exited 0 and wrote `backend = "quest"`, and every subsequent
+    // tracker-touching command then exited 6. The bundle scaffold above is idempotent and harmless;
+    // the *selection* is the commitment, so that is what a failed verification withholds.
+    return verifySelectedBackend(options, parsed).then((verified) => {
+      persistTrackerBackend(options.root, parsed.tracker as TrackerBackend);
+      return finishNonInteractive(options, parsed, base, clock, priorSelection, undefined, verified);
+    });
+  }
+  if (created.includes(CONFIG_REL_PATH)) {
     // A newly created bundle is unambiguous. Persist rather than relying on a
     // changing zero-config default, so an existing bundle is never switched.
+    //
+    // NOT verified, deliberately: this is a default, not a choice the operator expressed, and a
+    // bare `lore init` has never spawned a tracker subprocess. The advisory probe still reports the
+    // backend's readiness whenever this run has a reason to look.
     persistTrackerBackend(options.root, "quest");
   }
 
   return finishNonInteractive(options, parsed, base, clock, priorSelection);
+}
+
+/**
+ * Verify an explicitly selected backend BEFORE the selection is persisted (LCLI-356 AC#2), letting
+ * the adapter's own classified {@link LoreError} propagate: an unusable backend must fail the run
+ * that chose it, not become an advisory warning attached to a bundle already committed to it.
+ *
+ * Returns the resulting {@link InitTrackerCheck} so the advisory step downstream reuses this
+ * probe's answer instead of spawning the tracker a second time.
+ *
+ * **Only a version-floor rejection is fatal.** That precision is the whole design. An installed
+ * Quest below the floor is a pairing that cannot work at all, and nothing the operator does inside
+ * this repository fixes it — they must install a different Quest, so committing the bundle to that
+ * backend first only guarantees a broken next command. Every other probe failure ("workspace is not
+ * initialized", "not on PATH", "no Backlog.md project") is one setup step away in the same
+ * directory, which is precisely why LORE-319 made this check advisory rather than fatal. This
+ * function does not reverse that decision; it carves out the one class LORE-319 was never about.
+ *
+ * `none`, `jira`, and `--no-tracker` are skipped entirely. `none` has nothing to verify;
+ * `--no-tracker` is the documented opt-out for pinning a backend before installing its tooling;
+ * and Lore cannot determine jira's readiness at all yet, because `lore init` never writes
+ * `[tracker.jira]` — LCLI-358.4 adds that configuration and its verification together.
+ *
+ * The interactive wizard deliberately does not call this. LCLI-358.6/.7 replace its tracker step
+ * with an offer to install or initialize the chosen backend; failing the run outright in the
+ * meantime would pre-empt that with a worse version of the same idea.
+ */
+async function verifySelectedBackend(options: InitOptions, parsed: InitArgs): Promise<InitTrackerCheck | undefined> {
+  const backend = parsed.tracker;
+  if (backend === undefined || backend === "none" || backend === "jira" || parsed.noTracker) {
+    return undefined;
+  }
+  try {
+    const adapter = options.adapter ?? createConfiguredAdapterFor(options.root, backend);
+    const capability = await adapter.probe();
+    return { checked: true, backend, capable: true, version: capability.version };
+  } catch (err) {
+    if (isQuestVersionFloorFailure(err)) {
+      throw err;
+    }
+    // Anything else stays advisory: the downstream probe reports it as a warning, exactly as it did
+    // before this gate existed.
+    return undefined;
+  }
 }
 
 /** The base OKF bundle this run wrote (or found already present). */
@@ -469,6 +526,8 @@ function finishNonInteractive(
   clock: () => Date,
   priorSelection: () => TrackerSelection,
   migration?: TrackerMigrationResult,
+  /** A selection-time verification's result (LCLI-356), reused so the tracker is probed once per run. */
+  verified?: InitTrackerCheck,
 ): number | Promise<number> {
   const scaffoldTargets = [...new Set(parsed.scaffolds)];
   const agents = parsed.agents ? applyAgentsBridge({ root: options.root, force: false, check: false }) : undefined;
@@ -486,7 +545,7 @@ function finishNonInteractive(
     (parsed.checkTracker || parsed.agents || parsed.codex || scaffoldTargets.length > 0) &&
     !parsed.noTracker &&
     backend !== "none";
-  if (!shouldCheck) {
+  if (!shouldCheck && verified === undefined) {
     emit(
       initRenderable({
         ...base,
@@ -507,7 +566,9 @@ function finishNonInteractive(
   }
 
   const warnings = new WarningCollector();
-  return probeTrackerCapability(options, backend, warnings).then((trackerCheck) => {
+  const probed =
+    verified !== undefined ? Promise.resolve(verified) : probeTrackerCapability(options, backend, warnings);
+  return probed.then((trackerCheck) => {
     warnings.flush({ color: options.output.color, stderr: options.stderr ?? process.stderr });
     emit(
       initRenderable({
@@ -679,7 +740,8 @@ async function runInteractiveWizard(
 
   const warnings = new WarningCollector();
   // Probes the backend the operator just chose — not `backlog` regardless, which is what made
-  // choosing Quest report that Backlog.md was uninitialized (LCLI-358.2).
+  // choosing Quest report that Backlog.md was uninitialized (LCLI-358.2). Reuses the selection-time
+  // verification above when it ran, so the tracker is spawned once per wizard run.
   const trackerCheck = tracker === "none" ? undefined : await probeTrackerCapability(options, tracker, warnings);
   warnings.flush({ color: options.output.color, stderr: options.stderr ?? process.stderr });
 

@@ -280,13 +280,13 @@ describe("Quest 0.2 tracker adapter", () => {
     await expect(tracker.editTask("QUEST-2", { addLabels: ["--actor"] })).rejects.toMatchObject({ type: "validation" });
   });
 
-  test("rejects milestones before spawning because Quest 0.2.7 exposes no task-to-milestone attachment", async () => {
+  test("rejects milestones before spawning because Quest exposes no task-to-milestone attachment", async () => {
     const spawn: QuestSpawn = async () => {
       throw new Error("must not spawn");
     };
     await expect(adapter(spawn).createTask({ title: "New", milestone: "M2" })).rejects.toMatchObject({
       type: "validation",
-      message: "Quest 0.2.7 does not support task-to-milestone attachment",
+      message: "Quest does not support task-to-milestone attachment",
       hint: expect.stringContaining("omit the milestone"),
       input: { milestone: "M2" },
     });
@@ -359,7 +359,7 @@ describe("Quest 0.2 tracker adapter", () => {
   });
 });
 
-describe("quest adapter structured criteria (Quest 0.2.7)", () => {
+describe("quest adapter structured criteria", () => {
   test("maps Quest 0.2.7 structured acceptanceCriteria and definitionOfDone losslessly (checked=true survives, index dropped)", async () => {
     const spawn: QuestSpawn = async (args) => {
       if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
@@ -394,7 +394,7 @@ describe("quest adapter structured criteria (Quest 0.2.7)", () => {
     expect(detail?.acceptanceCriteria[0]).not.toHaveProperty("index");
   });
 
-  test("fails loud when criteria are not Quest 0.2.7 structured objects", async () => {
+  test("fails loud when criteria are not Quest structured objects", async () => {
     const spawnFor =
       (payload: unknown): QuestSpawn =>
       async (args) => {
@@ -415,19 +415,19 @@ describe("quest adapter structured criteria (Quest 0.2.7)", () => {
         };
       };
     for (const payload of [
-      ["works"], // legacy string array — rejected per pinned 0.2.7 structured contract
+      ["works"], // legacy string array — rejected per the structured criteria contract
       { index: 0, text: "x", checked: 0 }, // non-boolean checked
       { index: -1, text: "x", checked: false }, // negative index
     ]) {
       await expect(adapter(spawnFor(payload)).viewTask("QUEST-2")).rejects.toMatchObject({
         type: "drift",
         message: "Quest returned invalid acceptanceCriteria",
-        hint: "Quest 0.2.7 or 0.2.8 is required",
+        hint: "Quest 0.2.7 or newer is required",
       });
     }
   });
 
-  test("accepts exactly the supported Quest versions 0.2.7 and 0.2.8 in the version gate", async () => {
+  test("accepts the versions this adapter was originally qualified against", async () => {
     const spawnFor =
       (version: string): QuestSpawn =>
       async (args) => {
@@ -449,23 +449,51 @@ describe("quest adapter structured criteria (Quest 0.2.7)", () => {
     await expect(adapter(spawnFor("0.2.8")).probe()).resolves.toBeTruthy();
   });
 
-  test("fails loud with a hint naming the supported set for unsupported Quest versions", async () => {
-    const spawnFor =
-      (version: string): QuestSpawn =>
-      async (args) => {
-        if (args[0] === "--version") return { exitCode: 0, stdout: `${version}\n`, stderr: "" };
+  /** A Quest that reports `version` and otherwise answers every probe call successfully. */
+  const spawnVersion =
+    (version: string): QuestSpawn =>
+    async (args) => {
+      if (args[0] === "--version") return { exitCode: 0, stdout: `${version}\n`, stderr: "" };
+      if (args[0] === "manifest")
         return {
           exitCode: 0,
           stdout: JSON.stringify({ schemaVersion: 1, kind: "manifest.registry", data: manifest() }),
           stderr: "",
         };
+      return {
+        exitCode: 0,
+        stdout: JSON.stringify({ schemaVersion: 1, kind: "task.status-flow", data: flow() }),
+        stderr: "",
       };
-    for (const version of ["0.1.0", "0.2.6", "0.2.9", "0.3.0", ""]) {
-      await expect(adapter(spawnFor(version)).probe()).rejects.toMatchObject({
+    };
+
+  test("accepts every Quest at or above the floor, including the ones shipped after this adapter", async () => {
+    // LCLI-356 reverses LCLI-353's frozen allowlist, whose assertions required exactly 0.2.7/0.2.8
+    // and so rejected the shipped 0.2.9 — leaving the two current published packages unusable
+    // together. 0.2.9 and 0.3.0 are the cases that used to fail.
+    for (const version of ["0.2.7", "0.2.8", "0.2.9", "0.3.0", "1.0.0"]) {
+      await expect(adapter(spawnVersion(version)).probe()).resolves.toMatchObject({ version });
+    }
+  });
+
+  test("fails loud below the floor, naming the minimum rather than a frozen set", async () => {
+    for (const version of ["0.1.0", "0.2.6"]) {
+      await expect(adapter(spawnVersion(version)).probe()).rejects.toMatchObject({
         type: "validation",
-        message: "`quest --version` did not return a supported Quest 0.2 version",
-        hint: "Quest 0.2.7 or 0.2.8 is required",
+        message: `Quest ${version} is below the 0.2.7 floor this adapter is qualified against`,
+        input: { version, floor: "0.2.7" },
       });
     }
+  });
+
+  test("output that is not a version at all stays a distinct failure from being too old", async () => {
+    await expect(adapter(spawnVersion("")).probe()).rejects.toMatchObject({
+      type: "validation",
+      message: "`quest --version` did not report a supported Quest version",
+    });
+    await expect(adapter(spawnVersion("quest version alpha")).probe()).rejects.toMatchObject({
+      type: "validation",
+      message: "`quest --version` did not print a bare semver",
+    });
   });
 });
