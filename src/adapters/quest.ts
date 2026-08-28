@@ -9,9 +9,11 @@ import type { TrackerAdapter, TrackerCapability } from "./tracker";
 export const QUEST_SCHEMA_VERSION = 1;
 export const QUEST_TIMEOUT_ENV_VAR = "LORE_QUEST_TIMEOUT_MS";
 export const DEFAULT_QUEST_TIMEOUT_MS = 30_000;
-const REQUIRED_VERSION = "0.2.7";
+const SUPPORTED_QUEST_VERSIONS = ["0.2.7", "0.2.8"] as const;
+const QUEST_VERSION_SET_HINT = `Quest ${SUPPORTED_QUEST_VERSIONS[0]} or ${SUPPORTED_QUEST_VERSIONS[1]} is required`;
+const QUEST_VERSION_GATE_MESSAGE = "`quest --version` did not return a supported Quest 0.2 version";
 const ACTOR_FLAGS = ["--actor", "lore", "--actor-kind", "human"] as const;
-const INSTALL_HINT = "install @opum-ai/quest@0.2.7 and ensure the `quest` binary is on PATH";
+const INSTALL_HINT = "install @opum-ai/quest@0.2.7 (or @opum-ai/quest@0.2.8) and ensure the `quest` binary is on PATH";
 const REQUIRED_COMMANDS = [
   ["manifest", "manifest.registry", false],
   ["version", null, false],
@@ -157,12 +159,9 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
     assertWorkspace();
     const versionResult = await invoke(["--version"], "--version");
     const version = versionResult.stdout.trim();
-    if (versionResult.exitCode !== 0 || version !== REQUIRED_VERSION)
-      throw new LoreError(
-        "validation",
-        "`quest --version` did not return a supported Quest 0.2 version",
-        `Quest ${REQUIRED_VERSION} is required`,
-      );
+    const supported = (SUPPORTED_QUEST_VERSIONS as readonly string[]).includes(version);
+    if (versionResult.exitCode !== 0 || !version || !supported)
+      throw new LoreError("validation", QUEST_VERSION_GATE_MESSAGE, QUEST_VERSION_SET_HINT);
     const manifest = await run(["manifest", "--json"], "manifest --json");
     if (manifest.kind !== "manifest.registry")
       throw drift("manifest --json", `returned kind ${JSON.stringify(manifest.kind)}, expected "manifest.registry"`);
@@ -228,8 +227,7 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
       for (const label of input.labels ?? []) args.push("--label", safe(label));
       for (const doc of input.doc ?? []) args.push("--doc", safe(doc));
       const value = await data([...args, "--json"], "task create", "task.created");
-      if (!record(value))
-        throw new LoreError("drift", "Quest returned invalid created task", `Quest ${REQUIRED_VERSION} is required`);
+      if (!record(value)) throw new LoreError("drift", "Quest returned invalid created task", QUEST_VERSION_SET_HINT);
       return string(value.id, "created task id");
     },
     async editTask(id, patch) {
@@ -369,7 +367,7 @@ function drift(operation: string, reason: string): LoreError {
   return new LoreError(
     "drift",
     `\`quest ${operation}\` ${reason}`,
-    `Quest ${REQUIRED_VERSION} with schemaVersion ${QUEST_SCHEMA_VERSION} is required`,
+    `${QUEST_VERSION_SET_HINT.replace(" is required", "")} with schemaVersion ${QUEST_SCHEMA_VERSION} is required`,
     { operation },
   );
 }
@@ -388,7 +386,7 @@ function safe(value: string): string {
 }
 function string(v: unknown, name: string): string {
   if (typeof v !== "string" || !v)
-    throw new LoreError("drift", `Quest returned an invalid ${name}`, `Quest ${REQUIRED_VERSION} is required`);
+    throw new LoreError("drift", `Quest returned an invalid ${name}`, QUEST_VERSION_SET_HINT);
   return v;
 }
 function nullableString(v: unknown, name: string): string | null {
@@ -396,20 +394,15 @@ function nullableString(v: unknown, name: string): string | null {
 }
 function strings(v: unknown, name: string): string[] {
   if (!Array.isArray(v) || v.some((x) => typeof x !== "string"))
-    throw new LoreError("drift", `Quest returned invalid ${name}`, `Quest ${REQUIRED_VERSION} is required`);
+    throw new LoreError("drift", `Quest returned invalid ${name}`, QUEST_VERSION_SET_HINT);
   return [...v];
 }
 function statusFlow(value: unknown): string[] {
-  if (!record(value))
-    throw new LoreError("drift", "Quest returned invalid task status flow", `Quest ${REQUIRED_VERSION} is required`);
+  if (!record(value)) throw new LoreError("drift", "Quest returned invalid task status flow", QUEST_VERSION_SET_HINT);
   const statuses = strings(value.statuses, "task status-flow statuses");
   const terminalStatuses = strings(value.terminalStatuses, "task status-flow terminalStatuses");
   if (terminalStatuses.some((status) => !statuses.includes(status)))
-    throw new LoreError(
-      "drift",
-      "Quest returned terminal statuses outside its status flow",
-      `Quest ${REQUIRED_VERSION} is required`,
-    );
+    throw new LoreError("drift", "Quest returned terminal statuses outside its status flow", QUEST_VERSION_SET_HINT);
   return statuses;
 }
 function verifyManifest(value: unknown): void {
@@ -428,10 +421,9 @@ function verifyManifest(value: unknown): void {
 }
 function migrationMappings(value: unknown): QuestMigrationMapping[] {
   if (!Array.isArray(value))
-    throw new LoreError("drift", "Quest returned invalid migration mappings", `Quest ${REQUIRED_VERSION} is required`);
+    throw new LoreError("drift", "Quest returned invalid migration mappings", QUEST_VERSION_SET_HINT);
   return value.map((item) => {
-    if (!record(item))
-      throw new LoreError("drift", "Quest returned invalid migration mapping", `Quest ${REQUIRED_VERSION} is required`);
+    if (!record(item)) throw new LoreError("drift", "Quest returned invalid migration mapping", QUEST_VERSION_SET_HINT);
     return {
       sourceIdentifier: string(item.sourceIdentifier, "migration source identifier"),
       sourceFolder: string(item.sourceFolder, "migration source folder"),
@@ -442,11 +434,7 @@ function migrationMappings(value: unknown): QuestMigrationMapping[] {
 }
 function migrationPreview(value: unknown): QuestMigrationPreview {
   if (!record(value) || value.requiresApproval !== true)
-    throw new LoreError(
-      "drift",
-      "Quest returned invalid Backlog migration preview",
-      `Quest ${REQUIRED_VERSION} is required`,
-    );
+    throw new LoreError("drift", "Quest returned invalid Backlog migration preview", QUEST_VERSION_SET_HINT);
   return {
     sourceFingerprint: string(value.sourceFingerprint, "migration source fingerprint"),
     digest: string(value.digest, "migration digest"),
@@ -463,11 +451,7 @@ function migrationReceipt(value: unknown): QuestMigrationReceipt {
     !record(value.taskFingerprints) ||
     Object.values(value.taskFingerprints).some((fingerprint) => typeof fingerprint !== "string" || !fingerprint)
   )
-    throw new LoreError(
-      "drift",
-      "Quest returned invalid Backlog migration receipt",
-      `Quest ${REQUIRED_VERSION} is required`,
-    );
+    throw new LoreError("drift", "Quest returned invalid Backlog migration receipt", QUEST_VERSION_SET_HINT);
   return {
     schemaVersion: 1,
     kind: "migration.backlog.receipt",
@@ -480,8 +464,7 @@ function migrationReceipt(value: unknown): QuestMigrationReceipt {
   };
 }
 function criteria(v: unknown, name: string): BacklogCriterion[] {
-  const invalid = () =>
-    new LoreError("drift", `Quest returned invalid ${name}`, `Quest ${REQUIRED_VERSION} is required`);
+  const invalid = () => new LoreError("drift", `Quest returned invalid ${name}`, QUEST_VERSION_SET_HINT);
   if (!Array.isArray(v)) throw invalid();
   return v.map((item) => {
     if (!record(item)) throw invalid();
@@ -493,7 +476,7 @@ function criteria(v: unknown, name: string): BacklogCriterion[] {
 }
 function comments(v: unknown): BacklogComment[] {
   if (!Array.isArray(v) || v.some((x) => !record(x) || typeof x.body !== "string"))
-    throw new LoreError("drift", "Quest returned invalid comments", `Quest ${REQUIRED_VERSION} is required`);
+    throw new LoreError("drift", "Quest returned invalid comments", QUEST_VERSION_SET_HINT);
   return v.map((x) => ({
     author: nullableString(x.author ?? x.authorId, "comment author"),
     createdAt: nullableString(x.createdAt, "comment createdAt"),
@@ -518,11 +501,7 @@ function summary(value: unknown): BacklogTask {
         : typeof task.ordinal === "number"
           ? task.ordinal
           : (() => {
-              throw new LoreError(
-                "drift",
-                "Quest returned an invalid task ordinal",
-                `Quest ${REQUIRED_VERSION} is required`,
-              );
+              throw new LoreError("drift", "Quest returned an invalid task ordinal", QUEST_VERSION_SET_HINT);
             })(),
     assignees: strings(task.assignees ?? [], "assignees"),
     labels: strings(task.labels ?? [], "labels"),
@@ -531,8 +510,7 @@ function summary(value: unknown): BacklogTask {
   };
 }
 function list(value: unknown, opts?: ListTasksOptions): BacklogTask[] {
-  if (!Array.isArray(value))
-    throw new LoreError("drift", "Quest returned invalid task list", `Quest ${REQUIRED_VERSION} is required`);
+  if (!Array.isArray(value)) throw new LoreError("drift", "Quest returned invalid task list", QUEST_VERSION_SET_HINT);
   return value
     .map(summary)
     .filter(
@@ -542,15 +520,14 @@ function list(value: unknown, opts?: ListTasksOptions): BacklogTask[] {
     );
 }
 function detail(value: unknown): BacklogTaskDetail {
-  if (!record(value))
-    throw new LoreError("drift", "Quest returned invalid task detail", `Quest ${REQUIRED_VERSION} is required`);
+  if (!record(value)) throw new LoreError("drift", "Quest returned invalid task detail", QUEST_VERSION_SET_HINT);
   const task = summary(value);
   const subtasks = value.subtasks ?? [];
   if (
     !Array.isArray(subtasks) ||
     subtasks.some((x) => !record(x) || typeof x.id !== "string" || typeof x.title !== "string")
   )
-    throw new LoreError("drift", "Quest returned invalid subtasks", `Quest ${REQUIRED_VERSION} is required`);
+    throw new LoreError("drift", "Quest returned invalid subtasks", QUEST_VERSION_SET_HINT);
   return {
     ...task,
     file: nullableString(value.file ?? value.path, "task file"),
