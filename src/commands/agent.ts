@@ -68,6 +68,8 @@ type AgentAction =
       readonly name: string;
       readonly task?: string;
       readonly taskFile?: string;
+      readonly request?: string;
+      readonly requestFile?: string;
       readonly maxTokens?: number;
       readonly out?: string;
       readonly force: boolean;
@@ -95,11 +97,7 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
     // failures are deterministic (stderr carries exactly the stable marker), so
     // dispatcher-level advisory noise is suppressed there and ordinary
     // non-contract paths keep their warnings.
-    const bindingSeam =
-      action.kind === "context" &&
-      action.contract !== undefined &&
-      action.task === undefined &&
-      action.taskFile === undefined;
+    const bindingSeam = action.kind === "context" && action.contract !== undefined;
     if (!bindingSeam) advisories.flush({ color: options.output.color, stderr: options.stderr });
     if (action.kind === "list") {
       const data: AgentProfilesResult = {
@@ -171,15 +169,24 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
 async function runWorkflowBinding(action: ContractContextAction, options: AgentCommandOptions) {
   let binding: WorkflowBinding;
   try {
-    const raw = readFileSync(0, "utf8");
+    const raw =
+      action.requestFile === undefined && action.request === undefined
+        ? readFileSync(0, "utf8")
+        : resolveBindingFile(action, options);
     if (raw.trim() === "") {
-      throw new WorkflowBindingError("OPUM_WORKFLOW_LORE_ABSENT", "stdin binding is empty");
+      throw new WorkflowBindingError("OPUM_WORKFLOW_LORE_ABSENT", "binding is empty");
     }
     binding = parseWorkflowBinding(raw);
   } catch (error) {
     return emitBindingFailure(error, options);
   }
   try {
+    if (action.task !== undefined && action.task !== binding.taskId) {
+      throw new WorkflowBindingError("OPUM_WORKFLOW_LORE_MISMATCH", "--task does not match the binding taskId", {
+        flag: action.task,
+        binding: binding.taskId,
+      });
+    }
     if (binding.profileId !== action.name) {
       throw new WorkflowBindingError(
         "OPUM_WORKFLOW_LORE_MISMATCH",
@@ -236,6 +243,23 @@ async function runWorkflowBinding(action: ContractContextAction, options: AgentC
   }
 }
 
+/** Read the binding envelope from a repo-confined --request file ("-" means stdin). */
+function resolveBindingFile(action: ContractContextAction, options: AgentCommandOptions): string {
+  const path = action.requestFile ?? action.request;
+  if (path === undefined || path === "-") {
+    try {
+      return readFileSync(0, "utf8");
+    } catch (cause) {
+      throw new WorkflowBindingError("OPUM_WORKFLOW_LORE_ABSENT", "cannot read the binding from stdin", {
+        cause: cause instanceof Error ? cause.message : String(cause),
+      });
+    }
+  }
+  const target = confineRepoFile(path, options.root, "--request");
+  assertNoSymlinkInPath(options.root, target.relPath);
+  return readSource(target.absPath, target.relPath);
+}
+
 function emitBindingFailure(error: unknown, options: AgentCommandOptions): number {
   const marker: WorkflowBindingFailureCode =
     error instanceof WorkflowBindingError
@@ -260,46 +284,11 @@ function emitBindingFailure(error: unknown, options: AgentCommandOptions): numbe
 type ContractContextAction = AgentAction & { kind: "context"; contract: string };
 
 async function runContextContract(action: ContractContextAction, options: AgentCommandOptions) {
-  if (action.task === undefined && action.taskFile === undefined) {
-    return runWorkflowBinding(action, options);
-  }
-  const snapshot = loadAgentProfiles(options.root);
-  const advisories = new WarningCollector();
-  const retrieval = await (options.retrieval ?? loadReferenceRetrievalGraph)({
-    root: options.root,
-    warnings: advisories,
-    adapter: options.adapter,
-  });
-  try {
-    validateAgentProfileReferences(snapshot, retrieval.graph);
-    advisories.flush({ color: options.output.color, stderr: options.stderr });
-    findAgentProfile(snapshot, action.name);
-    const taskId = action.task ?? "";
-    if (taskId.trim() === "") {
-      throw usage(
-        `--contract ${WORKFLOW_CONTRACT_SELECTOR} requires --task <taskId>`,
-        "pass a non-empty caller task id, e.g. --task LCLI-123",
-      );
-    }
-    if (action.out !== undefined || action.force) {
-      throw usage("--out/--force are not available with --contract", "the contract projection is read-only");
-    }
-    if (action.taskFile !== undefined) {
-      throw usage(
-        "--task-file is not available with --contract",
-        `pass --task <taskId>; the ${WORKFLOW_CONTRACT_SELECTOR} facade binds a caller task id`,
-      );
-    }
-    const request = parseWorkflowRequest(JSON.stringify({ task: { id: taskId, text: taskId } }));
-    const projection = compileAgentWorkflowProjection(snapshot, retrieval.graph, action.name, request, {
-      root: options.root,
-      maxTokens: action.maxTokens,
-    });
-    emit(projectionRenderable(projection), options.output, options.stdout);
-    return EXIT_OK;
-  } finally {
-    await retrieval.dispose?.();
-  }
+  // The public binding seam owns EVERY --contract invocation — with or without
+  // --task. The canonical Opum facade sends --task plus the exact stdin
+  // binding; --task is an exact consistency check against the binding, and the
+  // legacy envelope flow is not reachable in contract mode.
+  return runWorkflowBinding(action, options);
 }
 
 /** Compile the read-only public opum-agent-workflow/v1 projection. */
@@ -389,13 +378,18 @@ function parseAgentArgs(args: readonly string[]): AgentAction {
   const task = nonEmptyOption(parsed, "task");
   const taskFile = nonEmptyOption(parsed, "task-file");
   const contract = nonEmptyOption(parsed, "contract");
-  // The workflow binding seam (--contract with no --task/--task-file) consumes
-  // its request binding from stdin; the classic path still requires exactly one.
-  if (
-    contract === WORKFLOW_CONTRACT_SELECTOR
-      ? task !== undefined && taskFile !== undefined
-      : (task === undefined) === (taskFile === undefined)
-  ) {
+  const request = nonEmptyOption(parsed, "request");
+  const requestFile = nonEmptyOption(parsed, "request-file");
+  // Contract mode consumes the binding from stdin or --request; --task is an
+  // optional exact consistency flag. Non-contract mode still needs task text.
+  if (contract === WORKFLOW_CONTRACT_SELECTOR) {
+    if (taskFile !== undefined) {
+      throw usage("--task-file is not available with --contract", "pass the binding on stdin or via --request");
+    }
+    if (request !== undefined && requestFile !== undefined) {
+      throw usage("pass the binding via stdin or --request, not both", "omit --request to read stdin");
+    }
+  } else if ((task === undefined) === (taskFile === undefined)) {
     throw usage(
       "agent context needs exactly one of --task or --task-file",
       "pass task text directly or read it from one path (use --task-file - for stdin)",
@@ -416,6 +410,8 @@ function parseAgentArgs(args: readonly string[]): AgentAction {
     name: parsed.positionals[1] as string,
     ...(task === undefined ? {} : { task }),
     ...(taskFile === undefined ? {} : { taskFile }),
+    ...(request === undefined ? {} : { request }),
+    ...(requestFile === undefined ? {} : { requestFile }),
     ...(maxTokens === undefined ? {} : { maxTokens }),
     ...(out === undefined ? {} : { out }),
     force,

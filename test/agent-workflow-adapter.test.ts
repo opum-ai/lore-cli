@@ -89,6 +89,37 @@ function profileRevisionHex(): string {
 }
 
 describe("opum-agent-workflow/v1 binding seam", () => {
+  test("facade shape: --task + --contract + stdin binding emits the bare record (canonical e9083b9a invocation)", () => {
+    const result = spawnSync(
+      process.execPath,
+      [CLI, "agent", "context", "pair", "--task", "T-1", "--contract", "opum-agent-workflow/v1", "--json"],
+      { cwd: root, input: `${JSON.stringify(bindingFor("pair"))}\n`, encoding: "utf8", timeout: 30_000 },
+    );
+    expect(result.status).toBe(0);
+    const lines = (result.stdout ?? "").trim().split("\n");
+    expect(lines).toHaveLength(1);
+    const record = JSON.parse(lines[0] ?? "{}") as Record<string, unknown>;
+    expect(record.contract).toBe("opum-agent-workflow");
+    expect(record.selectedVersion).toBe(1);
+    expect(record.requestId).toBe("a".repeat(32));
+    expect(record.taskId).toBe("T-1");
+    expect(record.profileId).toBe("pair");
+    expect(record.digestAlgorithm).toBe("sha256");
+    expect(record.digest as string).toMatch(/^[a-f0-9]{64}$/);
+    expect(Date.parse(record.expiresAt as string)).toBeGreaterThan(Date.parse(record.issuedAt as string));
+  });
+
+  test("facade shape: --task disagreeing with the binding taskId fails closed with MISMATCH", () => {
+    const result = spawnSync(
+      process.execPath,
+      [CLI, "agent", "context", "pair", "--task", "OTHER", "--contract", "opum-agent-workflow/v1", "--json"],
+      { cwd: root, input: `${JSON.stringify(bindingFor("pair"))}\n`, encoding: "utf8", timeout: 30_000 },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stdout ?? "").toBe("");
+    expect(result.stderr ?? "").toBe("OPUM_WORKFLOW_LORE_MISMATCH\n");
+  });
+
   test("success binds the exact request and emits the bare machine record on stdout", () => {
     const { exitCode, stdout, stderr } = runBinding("pair", bindingFor("pair"));
     expect(exitCode).toBe(0);
