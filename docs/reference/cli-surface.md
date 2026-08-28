@@ -101,7 +101,9 @@ stderr, so a redirected stderr alone is enough to veto it — e.g.
 Whenever stdin or stderr is **not** a TTY (CI, pipes, a subprocess), `--json`
 is given, or **any** flag below is given, `init` runs fully
 non-interactively with defaults and no prompt can ever block it — the
-npm-init pattern. Every wizard question has a 1:1 flag equivalent, so a
+npm-init pattern. `--allow-no-git` is the single exception: it waives the git
+preflight rather than answering a wizard question, so it suppresses only its
+own prompt and leaves the wizard reachable. Every wizard question has a 1:1 flag equivalent, so a
 script can reach every option the wizard offers with zero prompts — but
 `--yes`/`--non-interactive` is npm's `-y` ("skip the wizard, run the bare
 default"), **not** "answer every question with its own default"; the two
@@ -126,14 +128,23 @@ denied and the actorful lifecycle passes against the installed native artifact.
 An explicit wizard or `--tracker` choice also writes `backend` under
 `[tracker]` in `.lore/config.toml`.
 
+**The git preflight runs before anything is written.** `init` requires a git
+worktree: `lore sync` shells `git rev-parse HEAD` and fails outright without a
+repository, and `quest init` refuses a non-worktree path. On a TTY the wizard's
+first question offers to run `git init`; off a TTY, or when that question is
+declined, the run fails with a `validation` error (exit `6`) and the directory
+is left byte-for-byte unchanged. `--allow-no-git` waives the requirement for a
+docs-only bundle that only `lore check` will serve.
+
 Hitting EOF (Ctrl-D) mid-wizard is a `usage` error (exit `2`) with a rendered
 diagnostic, never a silent success — see
 [ADR-0017](../adr/0017-interactive-init-wizard-tty-gated.md).
 
-**Partial application on an interrupted run.** The agent bridge (when
-requested) is applied before scaffold targets are pre-flighted, so a scaffold
-conflict — or an EOF mid-wizard after the bridge question was already
-answered — can leave the bridge already written to disk while the run still
+**Partial application on an interrupted run.** Every check now precedes the
+first write, so a declined git prompt, a rejected flag combination, and an EOF
+mid-wizard all leave the directory untouched. Past that point the agent bridge
+(when requested) is still applied before scaffold targets are pre-flighted, so
+a scaffold conflict can leave the bridge already written to disk while the run
 exits non-zero. This is safe: every step `init` performs is independently
 idempotent, so re-running `lore init` (via the wizard or the same flags)
 picks up exactly where the interrupted run left off — it detects and skips
@@ -142,9 +153,9 @@ whatever already succeeded rather than erroring or duplicating anything.
 | | |
 |---|---|
 | **Args** | none |
-| **Key flags** | `--yes` / `--non-interactive` (skip the wizard even on a TTY) · `--tracker <quest\|backlog\|jira>` (persist the tracker choice without prompting) · `--migrate-backlog` (valid only with `--tracker quest` for a legacy zero-config Backlog bundle) · `--claude` (Claude Code bridge; `--agents` alias) · `--codex` (Codex bridge: `AGENTS.md` + `.codex/skills/lore/`) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-backlog` / `--no-backlog` (force/skip the backlog capability check) |
+| **Key flags** | `--yes` / `--non-interactive` (skip the wizard even on a TTY) · `--tracker <quest\|backlog\|jira>` (persist the tracker choice without prompting) · `--migrate-backlog` (valid only with `--tracker quest` for a legacy zero-config Backlog bundle) · `--claude` (Claude Code bridge; `--agents` alias) · `--codex` (Codex bridge: `AGENTS.md` + `.codex/skills/lore/`) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-backlog` / `--no-backlog` (force/skip the backlog capability check) · `--allow-no-git` (scaffold a docs-only bundle outside a git worktree) |
 | **Output** | `kind: init` — created/skipped scaffold paths, plus `interactive`/`scaffolds` always present (`false`/`[]` on the default path); `tracker` is present after a wizard or explicit `--tracker` choice; `migration` reports the applied digest, source fingerprint, mappings, survivors, and task fingerprints after a successful Backlog-to-Quest migration; `agents` (Claude), `codex`, and `backlog` are present only when those steps ran |
-| **Exit** | `0` ok (the backlog check is advisory-only and never changes this) · `2` usage (bad flag/unknown `--scaffold` target, an invalid migration-flag combination, a missing `--tracker` value, or the wizard's stdin closed before finishing) · `4` permission denied · `5` a non-regular entry (directory/symlink) blocks a scaffold path, or a scaffold target collides with a differing hand-edited file · `6` malformed configuration, unknown tracker backend, legacy migration requirement, or lossless-migration preflight failure |
+| **Exit** | `0` ok (the backlog check is advisory-only and never changes this) · `2` usage (bad flag/unknown `--scaffold` target, an invalid migration-flag combination, a missing `--tracker` value, or the wizard's stdin closed before finishing) · `4` permission denied · `5` a non-regular entry (directory/symlink) blocks a scaffold path, or a scaffold target collides with a differing hand-edited file · `6` malformed configuration, unknown tracker backend, legacy migration requirement, lossless-migration preflight failure, or the directory is not a git worktree and `--allow-no-git` was not passed |
 
 ### `new`
 

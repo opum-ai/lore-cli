@@ -22,12 +22,31 @@
  * [ADR-0017](../../docs/adr/0017-interactive-init-wizard-tty-gated.md) (an amendment to ADR-0004/
  * ADR-0005's non-interactive CLI contract).
  *
+ * ## The git preflight, and why nothing is written before it (LCLI-358.1)
+ *
+ * `init` requires a git worktree. This is not a style rule: `lore sync` shells `git rev-parse HEAD`
+ * and fails outright without a repository, and `quest init` — the default tracker's own
+ * initializer — refuses a non-worktree path, so a bundle scaffolded outside one is broken for
+ * everything except `lore check`. On a TTY the wizard's FIRST question offers to run `git init`;
+ * off a TTY, or when that question is declined, the run raises {@link missingGitRepository}
+ * (`validation`, exit `6`). `--allow-no-git` waives the requirement for exactly the docs-only case
+ * `lore check` still serves, and is the one flag that does NOT force the non-interactive path —
+ * see {@link anyFlagGiven} for why, and the ADR-0017 amendment for the decision.
+ *
+ * The preflight only means something because **every check now runs before the first byte is
+ * written**: the base scaffold moved out of `runInit`'s body into {@link applyBaseScaffold}, which
+ * both paths call only once nothing can still refuse. Before that move, a declined prompt, a
+ * rejected flag combination, or a Ctrl-D left `docs/` and `.lore/` on disk from a run that then
+ * exited non-zero. `resolveTrackerSelection` is resolved lazily for the same reason — it reads
+ * `.lore/config.toml`, so eagerly resolving it would replace the scaffold's precise `conflict`
+ * diagnostic (naming the entry that blocks the path) with a config-read failure.
+ *
  * **EOF (Ctrl-D) mid-wizard is a `usage` error, not a silent exit 0** (review round 2, BLOCKING-2):
  * `readline/promises`' `rl.question()` never settles on stdin EOF, so a naive implementation left the
  * wizard's promise abandoned forever — the process would exit 0 with `process.exitCode` never set,
  * zero stdout bytes even under `--json` (a parse error for a `| jq` consumer expecting either a valid
  * envelope or a classified failure), and a half-applied run (the base scaffold already written,
- * nothing else). {@link createRealPrompter} now races every question against the readline
+ * nothing else — no longer possible since LCLI-358.1 moved the scaffold after every prompt). {@link createRealPrompter} now races every question against the readline
  * interface's own `close` event and throws a `usage` {@link LoreError} on an early close, so the run
  * exits non-zero with a rendered diagnostic instead — chosen over silently falling back to each
  * question's default because BLOCKING-1's lesson applies here too: never silently do something the
@@ -63,6 +82,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as readline from "node:readline/promises";
 import type { BacklogAdapter } from "../adapters/backlog";
+import { type GitPreflight, realGitPreflight } from "../adapters/git-preflight";
 import { createQuestBacklogMigration } from "../adapters/quest";
 import { createTrackerAdapter } from "../adapters/tracker";
 import { CONFIG_REL_PATH, loadConfig, TRACKER_BACKENDS, type TrackerBackend } from "../config";
@@ -188,6 +208,12 @@ export interface InitOptions {
   migrateBacklog?: () => Promise<TrackerMigrationResult>;
   /** Injectable executable discovery for the interactive agent choices. */
   agentAvailability?: () => AgentAvailability;
+  /**
+   * The git preflight seam (LCLI-358.1); defaults to the real `git`-shelling
+   * {@link realGitPreflight} rooted at {@link InitOptions.root}. Injected in tests so the accept,
+   * decline, and `git init`-failure branches run without creating real repositories.
+   */
+  git?: GitPreflight;
 }
 
 export interface AgentAvailability {
@@ -221,6 +247,8 @@ interface InitArgs {
   adoptManifest?: string;
   /** `--approval-digest <digest>`: the adoption preview's approval digest binding the cutover's adoption leg. Required with `--adopt-manifest`. */
   approvalDigest?: string;
+  /** `--allow-no-git`: scaffold a docs-only bundle in a directory that is not a git worktree (LCLI-358.1). */
+  allowNoGit: boolean;
 }
 
 /**
@@ -248,58 +276,33 @@ export function runInit(options: InitOptions): number | Promise<number> {
   const interactive = stdinIsTTY && stderrIsTTY && !jsonRequested && !anyFlagGiven(parsed);
 
   const clock = options.clock ?? (() => new Date());
-  // Honor a pre-existing `.lore/profile.toml` so `init` scaffolds schemas for a project's custom
-  // types; with none present this is the built-in story-convention profile (zero-config).
-  const profile = loadProfile({ root: options.root });
-  const plan = buildScaffold({ timestamp: clock().toISOString(), profile });
+  // `resolveTrackerSelection` tolerates a bundle that does not exist yet (no `.lore/config.toml`
+  // resolves to the zero-config default), which is what lets this — and every guard below — run
+  // BEFORE the scaffold is written rather than after it (LCLI-358.1).
+  //
+  // Resolved LAZILY, and that laziness is load-bearing: it reads `.lore/config.toml`, so on a root
+  // where `.lore` is a regular file (or any other non-directory) it raises a config-read failure.
+  // Before this reordering the scaffold ran first and reported that same root cause as the far more
+  // actionable `conflict` naming the blocking entry. Only a run that actually needs the prior
+  // selection pays for resolving it, so a bare `lore init` still reaches the scaffold — and its
+  // conflict diagnostic — untouched.
+  let cachedSelection: TrackerSelection | undefined;
+  const priorSelection = (): TrackerSelection => (cachedSelection ??= resolveTrackerSelection(options.root));
+  assertFlagCombinations(parsed, priorSelection);
 
-  for (const dir of plan.dirs) {
-    // LORE-77/LORE-93: ensureDir itself refuses a pre-existing symlink at (or above) this
-    // directory before its mkdirSync gets a chance to transparently walk through it.
-    ensureDir(options.root, dir);
-  }
-
-  const created: string[] = [];
-  const skipped: string[] = [];
-  for (const file of plan.files) {
-    assertNoSymlinkInPath(options.root, file.path);
-    if (createIfAbsent(join(options.root, file.path), file.contents, file.path)) {
-      created.push(file.path);
-    } else {
-      skipped.push(file.path);
-    }
-  }
-  const base = { root: options.root, created, skipped };
-  const priorSelection = resolveTrackerSelection(options.root);
-  if (parsed.migrateBacklog && (parsed.tracker !== "quest" || priorSelection.source !== "legacy-backlog")) {
-    throw usage(
-      "--migrate-backlog requires --tracker quest in a legacy zero-config Backlog bundle",
-      "run `lore init --tracker quest --migrate-backlog` only after `quest init`",
-    );
-  }
-  if (priorSelection.source === "legacy-backlog" && parsed.tracker === "quest" && !parsed.migrateBacklog) {
-    throw new LoreError(
-      "validation",
-      "switching this legacy Backlog bundle to Quest requires an explicit task migration",
-      "run `quest init`, then `lore init --tracker quest --migrate-backlog`; or pin Backlog with `lore init --tracker backlog`",
-    );
-  }
-  if (parsed.adoptManifest !== undefined && !parsed.migrateBacklog) {
-    throw usage(
-      "--adopt-manifest requires --migrate-backlog: knowledge adoption is coordinated with the task migration as one cutover",
-      "run `lore init --tracker quest --migrate-backlog --adopt-manifest <path>` in a legacy zero-config Backlog bundle",
-    );
-  }
-  if (parsed.adoptManifest !== undefined && parsed.approvalDigest === undefined) {
-    throw usage(
-      "--adopt-manifest requires --approval-digest: pass the exact digest of the reviewed adoption preview",
-      "run `lore backlog adopt preview --manifest <path>` first and pass its approval.digest",
-    );
-  }
+  const git = options.git ?? realGitPreflight(options.root);
 
   if (interactive) {
-    return runInteractiveWizard(options, base, priorSelection);
+    return runInteractiveWizard(options, parsed, priorSelection(), git);
   }
+
+  // Non-interactive: detect only. A scripted run never silently creates a repository — it either
+  // already has one, opted out with `--allow-no-git`, or fails before writing a single byte.
+  if (!parsed.allowNoGit && !git.isRepository()) {
+    throw missingGitRepository();
+  }
+  const base = applyBaseScaffold(options, clock);
+  const created = base.created;
 
   if (parsed.migrateBacklog) {
     // Coordinated cutover (LCLI-333.1): with an adoption manifest, both legs run through the
@@ -325,6 +328,102 @@ export function runInit(options: InitOptions): number | Promise<number> {
   }
 
   return finishNonInteractive(options, parsed, base, clock);
+}
+
+/** The base OKF bundle this run wrote (or found already present). */
+interface BaseScaffold {
+  root: string;
+  created: string[];
+  skipped: string[];
+}
+
+/**
+ * Write the base OKF bundle idempotently — `init`'s original, sole responsibility, extracted
+ * verbatim so BOTH paths can call it at the one point the preflight has finished (LCLI-358.1).
+ *
+ * The extraction is the whole point of this task's AC#4: this used to run before the wizard asked
+ * its first question, so a declined git prompt, a rejected flag combination, or a Ctrl-D left
+ * `docs/` and `.lore/` on disk with no tracker selected. Every caller now runs its checks first and
+ * calls this only once nothing can still refuse.
+ */
+function applyBaseScaffold(options: InitOptions, clock: () => Date): BaseScaffold {
+  // Honor a pre-existing `.lore/profile.toml` so `init` scaffolds schemas for a project's custom
+  // types; with none present this is the built-in story-convention profile (zero-config).
+  const profile = loadProfile({ root: options.root });
+  const plan = buildScaffold({ timestamp: clock().toISOString(), profile });
+
+  for (const dir of plan.dirs) {
+    // LORE-77/LORE-93: ensureDir itself refuses a pre-existing symlink at (or above) this
+    // directory before its mkdirSync gets a chance to transparently walk through it.
+    ensureDir(options.root, dir);
+  }
+
+  const created: string[] = [];
+  const skipped: string[] = [];
+  for (const file of plan.files) {
+    assertNoSymlinkInPath(options.root, file.path);
+    if (createIfAbsent(join(options.root, file.path), file.contents, file.path)) {
+      created.push(file.path);
+    } else {
+      skipped.push(file.path);
+    }
+  }
+  return { root: options.root, created, skipped };
+}
+
+/**
+ * The flag-combination guards, unchanged in wording and order but moved AHEAD of the scaffold
+ * (LCLI-358.1): a rejected combination now leaves the directory untouched instead of exiting `2`
+ * over a half-written bundle.
+ */
+function assertFlagCombinations(parsed: InitArgs, priorSelection: () => TrackerSelection): void {
+  // Each condition tests the cheap flag half FIRST so `priorSelection()` — which reads
+  // `.lore/config.toml` — is never resolved for a run whose flags could not trip the guard anyway.
+  if (parsed.migrateBacklog && (parsed.tracker !== "quest" || priorSelection().source !== "legacy-backlog")) {
+    throw usage(
+      "--migrate-backlog requires --tracker quest in a legacy zero-config Backlog bundle",
+      "run `lore init --tracker quest --migrate-backlog` only after `quest init`",
+    );
+  }
+  if (parsed.tracker === "quest" && !parsed.migrateBacklog && priorSelection().source === "legacy-backlog") {
+    throw new LoreError(
+      "validation",
+      "switching this legacy Backlog bundle to Quest requires an explicit task migration",
+      "run `quest init`, then `lore init --tracker quest --migrate-backlog`; or pin Backlog with `lore init --tracker backlog`",
+    );
+  }
+  if (parsed.adoptManifest !== undefined && !parsed.migrateBacklog) {
+    throw usage(
+      "--adopt-manifest requires --migrate-backlog: knowledge adoption is coordinated with the task migration as one cutover",
+      "run `lore init --tracker quest --migrate-backlog --adopt-manifest <path>` in a legacy zero-config Backlog bundle",
+    );
+  }
+  if (parsed.adoptManifest !== undefined && parsed.approvalDigest === undefined) {
+    throw usage(
+      "--adopt-manifest requires --approval-digest: pass the exact digest of the reviewed adoption preview",
+      "run `lore backlog adopt preview --manifest <path>` first and pass its approval.digest",
+    );
+  }
+}
+
+/**
+ * The one diagnostic for "this directory is not a git worktree and the operator did not opt out"
+ * (LCLI-358.1), shared by the wizard's declined prompt and the non-interactive path so the two can
+ * never drift.
+ *
+ * `validation` (exit `6`) rather than `usage` (exit `2`): the command line was well-formed — the
+ * *repository* is what fails the requirement. The message names why lore needs git rather than
+ * asserting a bare rule: `lore sync` shells `git rev-parse HEAD` and fails outright without a
+ * repository, and `quest init` refuses a non-worktree path, so a bundle scaffolded here would be
+ * broken for everything except `lore check`. That last exception is exactly what `--allow-no-git`
+ * is for, so the hint offers it instead of leaving the reader stuck.
+ */
+function missingGitRepository(): LoreError {
+  return new LoreError(
+    "validation",
+    "`lore init` needs a git repository: this directory is not a git worktree",
+    "run `git init` here (or rerun `lore init` and accept the prompt) — `lore sync` and `quest init` both require git; pass `--allow-no-git` for a docs-only bundle that only `lore check` will serve",
+  );
 }
 
 function finishNonInteractive(
@@ -422,8 +521,9 @@ function runCoordinatedCutover(options: InitOptions, parsed: InitArgs): Promise<
  */
 async function runInteractiveWizard(
   options: InitOptions,
-  base: { root: string; created: string[]; skipped: string[] },
+  parsed: InitArgs,
   priorSelection: TrackerSelection,
+  git: GitPreflight,
 ): Promise<number> {
   const prompter = options.prompter ?? createRealPrompter();
   const scaffoldTargets: string[] = [];
@@ -433,6 +533,19 @@ async function runInteractiveWizard(
   let tracker: TrackerBackend = "quest";
   let migrateBacklog = false;
   try {
+    // The git preflight is the wizard's FIRST question and runs before every other prompt
+    // (LCLI-358.1) — a declined repository ends the run, so asking about trackers, agent bridges,
+    // or doc-site scaffolds first would collect answers that are then thrown away.
+    if (!parsed.allowNoGit && !git.isRepository()) {
+      const wantGit = await prompter.confirm(
+        "This directory is not a git repository, which `lore sync` and `quest init` both require. Run `git init` here?",
+        true,
+      );
+      if (!wantGit) {
+        throw missingGitRepository();
+      }
+      git.initialize();
+    }
     if (priorSelection.source === "legacy-backlog") {
       const legacyChoice = await prompter.choose(
         "This bundle has Backlog tasks but no explicit tracker. Migrate to Quest or pin Backlog?",
@@ -474,6 +587,11 @@ async function runInteractiveWizard(
   } finally {
     prompter.close();
   }
+
+  // Every question is answered and nothing can still refuse: only now is the first byte written
+  // (LCLI-358.1, AC#4). An EOF/Ctrl-D or a declined git prompt above throws out of the `try` and
+  // reaches here never — leaving the directory exactly as the run found it.
+  const base = applyBaseScaffold(options, options.clock ?? (() => new Date()));
 
   const migration = migrateBacklog ? await runBacklogMigration(options) : undefined;
   persistTrackerBackend(options.root, tracker);
@@ -540,15 +658,18 @@ export function createRealPrompter(
   },
 ): InitPrompter {
   const rl = readline.createInterface({ input: streams.input, output: streams.output });
+  // Whether the interface has already closed by the time a question is asked. Without this,
+  // `ask`'s race is decided by timing rather than by intent (LCLI-358.1): when stdin has ALREADY
+  // hit EOF, `rl.question()` rejects synchronously with Node's own "readline was closed", which
+  // wins the race against `closedEarly` and surfaces an internal message instead of the
+  // classified `usage` diagnostic. That was previously masked because the base scaffold ran before
+  // the wizard and gave `closedEarly` a head start; with the scaffold moved after the prompts the
+  // race is genuinely tight, so the outcome is now decided explicitly instead of by luck.
+  let alreadyClosed = false;
   const closedEarly = new Promise<never>((_resolve, reject) => {
     rl.once("close", () => {
-      reject(
-        new LoreError(
-          "usage",
-          "stdin closed or the wizard was interrupted before it finished (EOF/Ctrl-D or Ctrl-C)",
-          "answer every prompt, or run prompt-free with `lore init --yes` (or --claude/--codex/--scaffold <target>/--obsidian/--no-backlog/--check-backlog)",
-        ),
-      );
+      alreadyClosed = true;
+      reject(interrupted());
     });
   });
   // Prevents an "unhandled promise rejection" once the wizard finishes normally and its own
@@ -556,9 +677,34 @@ export function createRealPrompter(
   // settled and nothing is awaiting `closedEarly` anymore — see the doc comment above.
   closedEarly.catch(() => {});
 
-  /** Race one `rl.question()` call against the interface's own `close` event (see the doc above). */
-  function ask(promptText: string): Promise<string> {
-    return Promise.race([rl.question(promptText), closedEarly]);
+  /** The one classified diagnostic for a wizard that lost its input, raised from both paths below. */
+  function interrupted(): LoreError {
+    return new LoreError(
+      "usage",
+      "stdin closed or the wizard was interrupted before it finished (EOF/Ctrl-D or Ctrl-C)",
+      "answer every prompt, or run prompt-free with `lore init --yes` (or --claude/--codex/--scaffold <target>/--obsidian/--no-backlog/--check-backlog)",
+    );
+  }
+
+  /**
+   * Race one `rl.question()` call against the interface's own `close` event (see the doc above),
+   * with the already-closed case decided up front rather than left to the race, and Node's own
+   * post-close rejection translated into the same classified error.
+   */
+  async function ask(promptText: string): Promise<string> {
+    if (alreadyClosed) {
+      throw interrupted();
+    }
+    try {
+      return await Promise.race([rl.question(promptText), closedEarly]);
+    } catch (cause) {
+      if (cause instanceof LoreError) {
+        throw cause;
+      }
+      // `rl.question()` on a closed interface rejects with an internal readline error; the operator
+      // needs the actionable EOF diagnostic, not that.
+      throw alreadyClosed ? interrupted() : cause;
+    }
   }
 
   return {
@@ -604,7 +750,18 @@ async function probeBacklogCapability(options: InitOptions, warnings: WarningCol
   }
 }
 
-/** Whether any of `lore init`'s own flags was passed — the signal that overrides a bare-TTY invocation into the non-interactive path (AC#2). */
+/**
+ * Whether any of `lore init`'s own flags was passed — the signal that overrides a bare-TTY
+ * invocation into the non-interactive path (LORE-260 AC#2).
+ *
+ * **`--allow-no-git` is deliberately absent from this set** (LCLI-358.1). ADR-0017's rule is that
+ * any flag skips the wizard, and it holds because every other flag *answers a wizard question*, so
+ * passing one means the caller already decided what the wizard would have asked. `--allow-no-git`
+ * answers a **preflight gate** instead: it waives a requirement rather than choosing a consumer.
+ * Including it would make `lore init --allow-no-git` scaffold-and-exit, which leaves no way to
+ * reach the wizard at all from a non-git directory — the exact situation the flag exists for. It
+ * still suppresses its own prompt, so the 1:1 flag-to-question mapping is preserved.
+ */
 function anyFlagGiven(parsed: InitArgs): boolean {
   return (
     parsed.yes ||
@@ -637,6 +794,7 @@ function parseInitArgs(args: readonly string[]): InitArgs {
   const noBacklog = parsed.flags.has("no-backlog");
   const checkBacklog = parsed.flags.has("check-backlog");
   const migrateBacklog = parsed.flags.has("migrate-backlog");
+  const allowNoGit = parsed.flags.has("allow-no-git");
   const adoptManifestValue = singleOptionValue(parsed, "adopt-manifest");
   const approvalDigestValue = singleOptionValue(parsed, "approval-digest");
   if (adoptManifestValue === "") {
@@ -699,6 +857,7 @@ function parseInitArgs(args: readonly string[]): InitArgs {
     migrateBacklog,
     adoptManifest: adoptManifestValue,
     approvalDigest: approvalDigestValue,
+    allowNoGit,
   };
 }
 

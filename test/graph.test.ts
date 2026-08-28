@@ -97,7 +97,7 @@ describe("loadBundle — LORE-192 reserved root index under a custom profile", (
     // init` scaffolds the root index — mirroring `runInit`'s own `loadProfile({ root })` read.
     mkdirSync(join(root, ".lore"), { recursive: true });
     writeFileSync(join(root, PROFILE_REL_PATH), CUSTOM_PROFILE_TOML);
-    runInit({ root, output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
+    runInit({ root, args: ["--allow-no-git"], output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
 
     // Before LORE-192 this threw a `validation` LoreError (exit 6) — "invalid Reference
     // frontmatter in index.md: owner: expected string, received undefined" — on the very file

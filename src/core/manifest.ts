@@ -251,6 +251,11 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
         summary: "Check --json-capable backlog coupling even with no other flag",
       },
       { name: "no-backlog", takesValue: false, summary: "Skip the backlog-coupling capability check entirely" },
+      {
+        name: "allow-no-git",
+        takesValue: false,
+        summary: "Scaffold a docs-only bundle outside a git worktree (lore sync and quest init need git)",
+      },
     ],
     json: true,
     kind: "init.result",
@@ -267,6 +272,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
       "lore init --hermes",
       "lore init --claude --codex",
       "lore init --yes --scaffold mkdocs",
+      "lore init --allow-no-git",
     ],
   },
   {

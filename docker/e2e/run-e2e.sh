@@ -265,6 +265,21 @@ step_fail "pre-init: lore check in a directory with no docs/ bundle fails loud (
   -- bash -c 'cd /tmp/pre-init-probe && lore check --json'
 rm -rf /tmp/pre-init-probe
 
+# LCLI-358.1: `lore init` requires a git worktree, because `lore sync` shells `git rev-parse HEAD`
+# and `quest init` refuses a non-worktree path. A directory that is not a repository must be refused
+# BEFORE anything is written, and `--allow-no-git` must still scaffold the docs-only bundle. Both
+# run in isolated temp directories so /workspace's own bootstrap below is untouched.
+mkdir -p /tmp/no-git-probe
+step_fail "LCLI-358.1: lore init outside a git worktree is refused (validation, exit 6)" 6 \
+  '.error_type == "validation" and (.message | test("not a git worktree"))' \
+  -- bash -c 'cd /tmp/no-git-probe && lore init --json'
+check "LCLI-358.1: the refused run wrote nothing at all" \
+  '[ -z "$(ls -A /tmp/no-git-probe 2>/dev/null)" ]'
+step_json "LCLI-358.1: --allow-no-git scaffolds a docs-only bundle outside a worktree" \
+  '.kind == "init.result" and (.data.created | index("docs/index.md") != null)' \
+  -- bash -c 'cd /tmp/no-git-probe && lore init --allow-no-git --json'
+rm -rf /tmp/no-git-probe
+
 # ── Phase 1: bootstrap (critical — nothing downstream works without this) ───
 critical "git init" 0 -- git init -q
 critical "backlog init" 0 -- backlog init "lore-e2e" --defaults

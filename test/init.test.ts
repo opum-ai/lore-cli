@@ -1,9 +1,19 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import type { BacklogAdapter } from "../src/adapters/backlog";
+import { type GitPreflight, realGitPreflight } from "../src/adapters/git-preflight";
 import {
   createRealPrompter,
   type InitOptions,
@@ -18,7 +28,7 @@ import { parseConcept } from "../src/core/concept";
 import { buildHermesContextDoc, HERMES_CONTEXT_REL_PATH } from "../src/core/hermes-bridge";
 import { EXIT_CODES, exitCodeFor, LoreError, reportError, WarningCollector } from "../src/errors";
 import type { OutputContext } from "../src/output";
-import { capture, expectError, fakeAdapter } from "./helpers";
+import { capture, expectError, fakeAdapter, gitRun } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 const FIXED_CLOCK = (): Date => new Date("2026-06-25T12:00:00Z");
@@ -31,6 +41,24 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
+
+/**
+ * A recording {@link GitPreflight} stub (LCLI-358.1). Defaults to "already a repository" so every
+ * pre-existing test — all of which scaffold into a bare `mkdtemp` directory that is deliberately
+ * NOT a git worktree — keeps exercising the behavior it was written for, instead of tripping the
+ * new preflight. Tests that care about the preflight pass `repository: false` and read `initCalls`.
+ */
+function gitStub(repository = true, onInitialize?: () => void): GitPreflight & { initCalls: number } {
+  const stub = {
+    initCalls: 0,
+    isRepository: () => repository,
+    initialize: () => {
+      stub.initCalls += 1;
+      onInitialize?.();
+    },
+  };
+  return stub;
+}
 
 /**
  * Run `init` in JSON mode and return the parsed `data` payload, exit code, and captured stderr.
@@ -48,6 +76,7 @@ async function init(
     adapter?: BacklogAdapter;
     migrateBacklog?: InitOptions["migrateBacklog"];
     agentAvailability?: () => { claude: boolean; codex: boolean };
+    git?: GitPreflight;
   } = {},
 ): Promise<{ code: number; result: InitResult; stderr: string }> {
   const stdout = capture();
@@ -70,6 +99,7 @@ async function init(
     adapter: extra.adapter,
     migrateBacklog: extra.migrateBacklog,
     agentAvailability: extra.agentAvailability ?? (() => ({ claude: true, codex: false })),
+    git: extra.git ?? gitStub(),
   };
   const code = await runInit(options);
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: InitResult };
@@ -85,9 +115,13 @@ function scriptedPrompter(answers: {
   tracker?: string;
   site?: string;
   obsidian?: boolean;
+  git?: boolean;
 }): InitPrompter {
   return {
     confirm: async (question, defaultValue) => {
+      // Matched before the catch-all below (LCLI-358.1): the git preflight is a `confirm` too, and
+      // without its own branch a test that answers `obsidian: false` would silently decline git.
+      if (question.includes("git repository")) return answers.git ?? defaultValue;
       if (question.includes("Claude Code")) return answers.agents ?? defaultValue;
       if (question.includes("Codex")) return answers.codex ?? defaultValue;
       if (question.includes("Hermes")) return answers.hermes ?? defaultValue;
@@ -239,33 +273,57 @@ describe("lore init — idempotent re-run (AC#2)", () => {
 describe("lore init — output rendering", () => {
   test("plain mode lists created paths, one per line", async () => {
     const stdout = capture();
-    await runInit({ root, output: { mode: "plain", color: false }, stdout, clock: FIXED_CLOCK });
+    await runInit({ root, git: gitStub(), output: { mode: "plain", color: false }, stdout, clock: FIXED_CLOCK });
     const lines = stdout.lines();
     expect(lines).toContain("created docs/index.md");
     expect(lines).toContain("created .lore/schemas/adr.schema.json");
   });
 
   test("plain mode marks already-present paths as exists on re-run", async () => {
-    await runInit({ root, output: { mode: "plain", color: false }, stdout: capture(), clock: FIXED_CLOCK });
+    await runInit({
+      root,
+      git: gitStub(),
+      output: { mode: "plain", color: false },
+      stdout: capture(),
+      clock: FIXED_CLOCK,
+    });
     const stdout = capture();
-    await runInit({ root, output: { mode: "plain", color: false }, stdout, clock: FIXED_CLOCK });
+    await runInit({ root, git: gitStub(), output: { mode: "plain", color: false }, stdout, clock: FIXED_CLOCK });
     expect(stdout.lines()).toContain("exists docs/index.md");
   });
 
   test("pretty mode summarizes the run and, on re-run, says nothing to create", async () => {
     const first = capture();
-    await runInit({ root, output: { mode: "pretty", color: false }, stdout: first, clock: FIXED_CLOCK });
+    await runInit({
+      root,
+      git: gitStub(),
+      output: { mode: "pretty", color: false },
+      stdout: first,
+      clock: FIXED_CLOCK,
+    });
     expect(first.text()).toContain("Initialized lore bundle at");
     expect(first.text()).toContain("+ docs/index.md");
 
     const second = capture();
-    await runInit({ root, output: { mode: "pretty", color: false }, stdout: second, clock: FIXED_CLOCK });
+    await runInit({
+      root,
+      git: gitStub(),
+      output: { mode: "pretty", color: false },
+      stdout: second,
+      clock: FIXED_CLOCK,
+    });
     expect(second.text()).toContain("already initialized");
   });
 
   test("pretty mode emits ANSI only when color is enabled", async () => {
     const colored = capture();
-    await runInit({ root, output: { mode: "pretty", color: true }, stdout: colored, clock: FIXED_CLOCK });
+    await runInit({
+      root,
+      git: gitStub(),
+      output: { mode: "pretty", color: true },
+      stdout: colored,
+      clock: FIXED_CLOCK,
+    });
     // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting an ANSI escape is present.
     expect(colored.text()).toMatch(/\x1b\[/);
   });
@@ -274,6 +332,7 @@ describe("lore init — output rendering", () => {
     const stdout = capture();
     await runInit({
       root,
+      git: gitStub(),
       output: { mode: "plain", color: false },
       stdout,
       clock: FIXED_CLOCK,
@@ -291,6 +350,7 @@ describe("lore init — output rendering", () => {
     const adapter = fakeAdapter([], { probe: "ok" });
     await runInit({
       root,
+      git: gitStub(),
       output: { mode: "plain", color: false },
       stdout: capture(),
       clock: FIXED_CLOCK,
@@ -300,6 +360,7 @@ describe("lore init — output rendering", () => {
     const stdout = capture();
     await runInit({
       root,
+      git: gitStub(),
       output: { mode: "plain", color: false },
       stdout,
       clock: FIXED_CLOCK,
@@ -313,6 +374,7 @@ describe("lore init — output rendering", () => {
     const adapter = fakeAdapter([], { probe: "ok" });
     await runInit({
       root,
+      git: gitStub(),
       output: { mode: "pretty", color: false },
       stdout: capture(),
       clock: FIXED_CLOCK,
@@ -322,6 +384,7 @@ describe("lore init — output rendering", () => {
     const stdout = capture();
     await runInit({
       root,
+      git: gitStub(),
       output: { mode: "pretty", color: false },
       stdout,
       clock: FIXED_CLOCK,
@@ -342,6 +405,7 @@ describe("lore init — output rendering", () => {
     const plainStdout = capture();
     await runInit({
       root,
+      git: gitStub(),
       output: { mode: "plain", color: false },
       stdout: plainStdout,
       clock: FIXED_CLOCK,
@@ -357,6 +421,7 @@ describe("lore init — output rendering", () => {
     const prettyStdoutColored = capture();
     await runInit({
       root,
+      git: gitStub(),
       output: { mode: "pretty", color: true },
       stdout: prettyStdoutColored,
       clock: FIXED_CLOCK,
@@ -379,7 +444,7 @@ describe("lore init — filesystem conflicts (a non-regular entry blocks the sca
   /** Run init and assert it rejects with a `conflict` {@link LoreError}, returning it for further checks. */
   async function expectConflict(): Promise<LoreError> {
     try {
-      await runInit({ root, output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
+      await runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
     } catch (err) {
       expect(err).toBeInstanceOf(LoreError);
       expect((err as LoreError).type).toBe("conflict");
@@ -425,7 +490,7 @@ describe("lore init — refuses to write through a pre-existing symlinked scaffo
   /** Run init and assert it rejects with a `conflict` {@link LoreError}, returning it for further checks. */
   async function expectConflict(): Promise<LoreError> {
     try {
-      await runInit({ root, output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
+      await runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
     } catch (err) {
       expect(err).toBeInstanceOf(LoreError);
       expect((err as LoreError).type).toBe("conflict");
@@ -514,11 +579,13 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
 
   test("--tracker rejects unavailable and missing values", () => {
     const unavailable = expectError("validation", () =>
-      runInit({ root, output: JSON_CTX, stdout: capture(), args: ["--tracker", "bogus"] }),
+      runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), args: ["--tracker", "bogus"] }),
     );
     expect(exitCodeFor(unavailable)).toBe(EXIT_CODES.validation);
     expect(unavailable.hint).toContain("quest, backlog, jira");
-    expectError("usage", () => runInit({ root, output: JSON_CTX, stdout: capture(), args: ["--tracker"] }));
+    expectError("usage", () =>
+      runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), args: ["--tracker"] }),
+    );
   });
 
   test("--tracker preserves future tables, nested dotted keys, and unrelated backend fields", async () => {
@@ -671,22 +738,28 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
 
   test("--scaffold with an unknown target is a usage error (exit 2)", () => {
     const err = expectError("usage", () =>
-      runInit({ root, output: JSON_CTX, stdout: capture(), args: ["--scaffold", "bogus"] }),
+      runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), args: ["--scaffold", "bogus"] }),
     );
     expect(err.message).toContain("bogus");
   });
 
   test("--scaffold with no value is a usage error", () => {
-    expectError("usage", () => runInit({ root, output: JSON_CTX, stdout: capture(), args: ["--scaffold"] }));
+    expectError("usage", () =>
+      runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), args: ["--scaffold"] }),
+    );
   });
 
   test("an unknown flag is a usage error, matching the pre-existing `lore init --bogus` contract", () => {
-    const err = expectError("usage", () => runInit({ root, output: JSON_CTX, stdout: capture(), args: ["--bogus"] }));
+    const err = expectError("usage", () =>
+      runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), args: ["--bogus"] }),
+    );
     expect(err.message).toContain('unknown option "--bogus"');
   });
 
   test("a bare positional is still a usage error (init takes none), matching the pre-existing wording", () => {
-    const err = expectError("usage", () => runInit({ root, output: JSON_CTX, stdout: capture(), args: ["extra"] }));
+    const err = expectError("usage", () =>
+      runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), args: ["extra"] }),
+    );
     expect(err.message).toContain("takes no arguments");
     expect(err.input).toEqual({ command: "init", unexpected: ["extra"] });
   });
@@ -740,7 +813,7 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
 
   test("--no-backlog and --check-backlog together is a usage error", () => {
     expectError("usage", () =>
-      runInit({ root, output: JSON_CTX, stdout: capture(), args: ["--no-backlog", "--check-backlog"] }),
+      runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), args: ["--no-backlog", "--check-backlog"] }),
     );
   });
 });
@@ -800,7 +873,7 @@ describe("lore init — legacy zero-config tracker boundary", () => {
   test("refuses a Quest switch without the explicit migration flag and names both safe commands", () => {
     legacyBundle();
     const error = expectError("validation", () =>
-      runInit({ root, output: JSON_CTX, stdout: capture(), args: ["--tracker", "quest"] }),
+      runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), args: ["--tracker", "quest"] }),
     );
     expect(error.hint).toContain("quest init");
     expect(error.hint).toContain("lore init --tracker quest --migrate-backlog");
@@ -823,6 +896,7 @@ describe("lore init — legacy zero-config tracker boundary", () => {
     const failure = new LoreError("validation", "not lossless", "pin Backlog");
     const promise = runInit({
       root,
+      git: gitStub(),
       output: JSON_CTX,
       stdout: capture(),
       args: ["--tracker", "quest", "--migrate-backlog"],
@@ -848,7 +922,9 @@ describe("lore init — legacy zero-config tracker boundary", () => {
 
   test("requires the exact Quest migration invocation", () => {
     legacyBundle();
-    expectError("usage", () => runInit({ root, output: JSON_CTX, stdout: capture(), args: ["--migrate-backlog"] }));
+    expectError("usage", () =>
+      runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), args: ["--migrate-backlog"] }),
+    );
   });
 
   test("interactive onboarding offers only migration or an explicit Backlog pin", async () => {
@@ -1123,7 +1199,15 @@ describe("lore init — EOF (Ctrl-D) mid-wizard is a `usage` error, not a silent
       },
     };
     await expect(
-      runInit({ root, output: JSON_CTX, stdinIsTTY: true, stderrIsTTY: true, prompter, clock: FIXED_CLOCK }),
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdinIsTTY: true,
+        stderrIsTTY: true,
+        prompter,
+        clock: FIXED_CLOCK,
+      }),
     ).rejects.toThrow(LoreError);
     expect(closed).toBe(true);
   });
@@ -1143,7 +1227,16 @@ describe("lore init — EOF (Ctrl-D) mid-wizard is a `usage` error, not a silent
     const stderr = capture();
     let caught: unknown;
     try {
-      await runInit({ root, output: JSON_CTX, stdinIsTTY: true, stderrIsTTY: true, prompter, stdout, stderr });
+      await runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdinIsTTY: true,
+        stderrIsTTY: true,
+        prompter,
+        stdout,
+        stderr,
+      });
     } catch (err) {
       caught = err;
     }
@@ -1183,5 +1276,168 @@ describe("lore init — EOF (Ctrl-D) mid-wizard is a `usage` error, not a silent
       prompter.close();
       input.end();
     });
+  });
+});
+
+describe("lore init — the git preflight runs before the first byte is written (LCLI-358.1)", () => {
+  /** Every path the base scaffold creates; asserting the directory is EMPTY is the AC, not a sample. */
+  function directoryIsUntouched(): void {
+    expect(readdirSync(root)).toEqual([]);
+  }
+
+  test("a non-git directory is refused before anything is scaffolded, naming the flag that waives it", () => {
+    const git = gitStub(false);
+    const err = expectError("validation", () =>
+      runInit({ root, git, output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK }),
+    );
+    expect(err.message).toMatch(/not a git worktree/);
+    expect(err.hint).toMatch(/--allow-no-git/);
+    expect(exitCodeFor(err)).toBe(EXIT_CODES.validation);
+    // A scripted run never creates a repository on the operator's behalf.
+    expect(git.initCalls).toBe(0);
+    directoryIsUntouched();
+  });
+
+  test("--allow-no-git scaffolds a docs-only bundle in a directory that is not a worktree", async () => {
+    const git = gitStub(false);
+    const { code, result } = await init({ args: ["--allow-no-git"], git });
+    expect(code).toBe(0);
+    expect(result.created).toContain("docs/index.md");
+    expect(git.initCalls).toBe(0);
+  });
+
+  test("--allow-no-git does NOT skip the wizard, unlike every other init flag", async () => {
+    // The deviation from ADR-0017's any-flag rule, asserted rather than left to the doc comment:
+    // this flag waives a preflight gate, so folding it into `anyFlagGiven` would leave a non-git
+    // directory with no way to reach the wizard at all.
+    const git = gitStub(false);
+    const { result } = await init({
+      args: ["--allow-no-git"],
+      git,
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter: scriptedPrompter({ tracker: "none" }),
+    });
+    expect(result.interactive).toBe(true);
+    expect(result.tracker).toBe("none");
+  });
+
+  test("the wizard asks about git FIRST and runs `git init` when the answer is yes", async () => {
+    let initialized = false;
+    const git = gitStub(false, () => {
+      // Proves the ordering claim rather than the call count alone: at the moment `git init` runs,
+      // the scaffold has not written a thing yet.
+      expect(readdirSync(root)).toEqual([]);
+      initialized = true;
+    });
+    const { code, result } = await init({
+      git,
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter: scriptedPrompter({ git: true, tracker: "none" }),
+    });
+    expect(code).toBe(0);
+    expect(initialized).toBe(true);
+    expect(git.initCalls).toBe(1);
+    expect(result.created).toContain("docs/index.md");
+  });
+
+  test("declining the wizard's git question exits non-zero and leaves the directory byte-for-byte unchanged", async () => {
+    const git = gitStub(false);
+    let closed = false;
+    const prompter: InitPrompter = {
+      ...scriptedPrompter({ git: false }),
+      close: () => {
+        closed = true;
+      },
+    };
+    await expect(
+      runInit({ root, git, output: JSON_CTX, stdout: capture(), stdinIsTTY: true, stderrIsTTY: true, prompter }),
+    ).rejects.toThrow(/not a git worktree/);
+    expect(git.initCalls).toBe(0);
+    expect(closed).toBe(true); // the wizard's `finally` still releases the readline session
+    directoryIsUntouched();
+  });
+
+  test("an already-initialized repository is never re-initialized and never prompts about git", async () => {
+    const git = gitStub(true);
+    const asked: string[] = [];
+    const prompter: InitPrompter = {
+      confirm: async (question, defaultValue) => {
+        asked.push(question);
+        return defaultValue === true && question.includes("git repository");
+      },
+      choose: async (_question, _choices, defaultValue) => defaultValue,
+      close: () => {},
+    };
+    await init({ git, stdinIsTTY: true, stderrIsTTY: true, prompter });
+    expect(asked.some((question) => question.includes("git repository"))).toBe(false);
+    expect(git.initCalls).toBe(0);
+  });
+
+  test("EOF mid-wizard leaves no partially written bundle (AC#4)", async () => {
+    const eof = new LoreError("usage", "stdin closed", "answer every prompt");
+    const prompter: InitPrompter = {
+      confirm: async () => {
+        throw eof;
+      },
+      choose: async () => {
+        throw eof;
+      },
+      close: () => {},
+    };
+    await expect(
+      runInit({
+        root,
+        git: gitStub(true),
+        output: JSON_CTX,
+        stdout: capture(),
+        stdinIsTTY: true,
+        stderrIsTTY: true,
+        prompter,
+      }),
+    ).rejects.toBe(eof);
+    directoryIsUntouched();
+  });
+
+  test("a rejected flag combination also leaves the directory untouched", () => {
+    // Same guarantee, different refusal: the flag guards moved ahead of the scaffold too.
+    expectError("usage", () =>
+      runInit({ root, git: gitStub(true), output: JSON_CTX, stdout: capture(), args: ["--migrate-backlog"] }),
+    );
+    directoryIsUntouched();
+  });
+
+  test("the real preflight detects a repository, including from a subdirectory of one", () => {
+    gitRun(root, ["init"]);
+    const nested = join(root, "docs-bundle");
+    mkdirSync(nested);
+    expect(realGitPreflight(root).isRepository()).toBe(true);
+    // `git rev-parse --is-inside-work-tree` walks up, so a bundle nested below the repository root
+    // counts as initialized — the nested-bundle case adapters/git.ts already supports.
+    expect(realGitPreflight(nested).isRepository()).toBe(true);
+  });
+
+  test("the real preflight reports a bare directory as no repository, then initializes one", () => {
+    const preflight = realGitPreflight(root);
+    expect(preflight.isRepository()).toBe(false);
+    preflight.initialize();
+    expect(preflight.isRepository()).toBe(true);
+  });
+});
+
+describe("createRealPrompter — an ALREADY-closed stdin still yields the classified diagnostic (LCLI-358.1)", () => {
+  test("a question asked after stdin has already ended reports EOF, not readline's internal error", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    output.resume();
+    const prompter = createRealPrompter({ input, output });
+    input.end(); // EOF lands BEFORE the first question, the pty-piped case
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const question = prompter.confirm("Run `git init` here?", true);
+    await expect(question).rejects.toThrow(LoreError);
+    await expect(question).rejects.toThrow(/EOF|Ctrl-D/);
+    // Node's own post-close message must not reach the operator.
+    await expect(question).rejects.not.toThrow(/readline was closed/);
   });
 });

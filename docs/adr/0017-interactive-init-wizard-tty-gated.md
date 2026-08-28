@@ -171,6 +171,32 @@ now stated precisely. `--non-interactive` is a plain alias for `--yes` with
 identical semantics, added so a script name can prefer whichever of AC#2's own
 two named examples reads more clearly at the call site.
 
+### Amendment (2026-08-28, LCLI-358.1): `--allow-no-git` is the one flag that does not skip the wizard
+
+`lore init` now requires a git worktree before it writes anything: `lore sync`
+shells `git rev-parse HEAD` and fails outright without a repository, and
+`quest init` refuses a non-worktree path, so a bundle scaffolded outside one is
+broken for everything except `lore check`. On a TTY the wizard asks first and
+runs `git init`; off a TTY, or when the prompt is declined, the run fails with
+a `validation` error before the first byte is written. `--allow-no-git` waives
+the requirement for the docs-only case that `lore check` still serves.
+
+That flag is a deliberate, single exception to this ADR's "any flag runs it
+non-interactively" rule. The rule holds because every other init flag *answers a
+wizard question*, so passing one means the caller already decided what the
+wizard would have asked. `--allow-no-git` answers a **preflight gate** instead:
+it waives a requirement rather than choosing a consumer. Folding it into that
+set would make `lore init --allow-no-git` scaffold-and-exit, leaving no way to
+reach the wizard at all from a non-git directory — the exact situation the flag
+exists for. It still suppresses its own prompt, so the 1:1 flag-per-question
+mapping this ADR rests on is preserved rather than broken.
+
+The same amendment moves the base scaffold to **after** every prompt. This
+ADR's BLOCKING-2 disposition (EOF is a classified `usage` error, never a silent
+exit 0) previously still left `docs/` and `.lore/` on disk from a run that then
+refused; a declined git prompt, a rejected flag combination, and an EOF now all
+leave the directory byte-for-byte unchanged.
+
 ## Consequences
 
 ### Positive
