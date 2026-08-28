@@ -196,6 +196,12 @@
 - 2026-08-17T10:58:24-05:00 39f9f91061bf92e2cf5594654bbd8d9a7d82494f feat: enforce Quest migration boundary
 - 2026-08-17T13:11:48-05:00 4f4934aea05328c0fe49525485f99f72fbbcb0ff docs: define Quest 0.2.2 migration contract
 - 2026-08-18T01:06:33-05:00 cdd94c78149aec07c3c4db8422fb11c93949008c feat: qualify Quest 0.2.7 tracker artifact
+- 2026-08-18T08:25:46-05:00 54387857814f0abfec82ab48eea977baad0ac3ba docs: reconcile log projection
+- 2026-08-18T17:43:32-05:00 4dc2f2fc8cc6bb79915eea16eb9bff2a1feef229 docs: record superseded 0.3.1 settlement
+- 2026-08-18T18:20:10-05:00 fcf64a11696d66f21e2f6938430d4ad12e600830 docs: reconcile retained PR 396 authority work
+- 2026-08-18T19:32:30-05:00 754a3d485c22a8873b40dd7b49fbc115eab494ff docs: reconcile Lore Story ownership
+- 2026-08-18T19:44:43-05:00 61d21b154cd26769859e5a497de6e30f8472ab98 docs: finalize ODOC-66 closeout
+- 2026-08-18T22:38:03-05:00 baca608ad6d2bfbd0fdf11ab802e47dd74f5fd86 feat: complete wave A correctness and interoperability
 
 ## docs/adr
 
@@ -238,6 +244,10 @@
 - 2026-08-17T13:16:05-05:00 340a88179a22c525ae5d3fce7cc015ef82f3b3ec fix: harden Quest migration recovery
 - 2026-08-18T08:17:16-05:00 422f8b95506aeda23ec595bad145e60e0f8c4f54 fix(log): render each commit once
 - 2026-08-18T08:17:16-05:00 677e729f746ee0c9da584443bf66d48a4f2a410f test(sync): cover log reprojection
+- 2026-08-24T21:28:04-05:00 e416f02faee6da3f56085e2249e8b7c6db7b5d3c feat(agents): serve opum-agent-workflow/v1 via `agent context --contract`
+- 2026-08-25T20:17:57-05:00 67fd24ca04196deca37a907ba36ea9ca9fd6ea1b chore(release): align the package family at 0.3.3 and refresh version-bearing baselines (LCLI-349)
+- 2026-08-25T21:29:13-05:00 935cef2cd26db06dcd4afb07e71929e3073dccb9 chore(backlog): renumber campaign tasks LCLI-348/349 to LCLI-350/351
+- 2026-08-26T18:11:47-05:00 6fdb8fa7a5639eb0de4a6a90aad3266cb08f0bf3 chore(release): pin the 0.3.3 candidate family truth to corrected tip (LCLI-351)
 
 ## docs/runbooks
 

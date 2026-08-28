@@ -74,7 +74,13 @@ export interface ManifestCommand {
   readonly flags: readonly ManifestFlag[];
   /** Whether the command supports the `--json` envelope. Universal today, carried per command so an entry is self-describing. */
   readonly json: boolean;
-  /** The `kind` of the command's `--json` success envelope (cli-contract §2.1), matching the live `kind:` literal. */
+  /**
+   * The `kind` of the command's `--json` success envelope (cli-contract §2.1),
+   * matching the live `kind:` literal. Kinds are stable dotted
+   * `command.payload` identifiers; a value change is consumer-visible and must
+   * be handled as a documented, ratified contract migration rather than a
+   * silent alias.
+   */
   readonly kind: string;
   /** Every success-envelope kind when a command's explicit operation selects one of several result shapes. */
   readonly resultKinds?: readonly string[];
@@ -207,15 +213,26 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
       { name: "agents", takesValue: false, summary: "Alias for --claude" },
       { name: "claude", takesValue: false, summary: "Set up the Claude Code bridge (SKILL.md + CLAUDE.md)" },
       { name: "codex", takesValue: false, summary: "Set up the Codex bridge (SKILL.md + AGENTS.md)" },
+      { name: "hermes", takesValue: false, summary: "Set up project-local Hermes context (.hermes.md)" },
       {
         name: "tracker",
         takesValue: true,
-        summary: "Select the task tracker backend without prompting (quest|backlog|jira)",
+        summary: "Select the task tracker backend without prompting (quest|backlog|jira|none)",
       },
       {
         name: "migrate-backlog",
         takesValue: false,
         summary: "Preview and apply Quest's digest-approved Backlog migration before selecting Quest",
+      },
+      {
+        name: "adopt-manifest",
+        takesValue: true,
+        summary: "Coordinate a knowledge-adoption manifest with --migrate-backlog as one cutover",
+      },
+      {
+        name: "approval-digest",
+        takesValue: true,
+        summary: "Adoption preview approval digest binding the --adopt-manifest cutover leg",
       },
       {
         name: "scaffold",
@@ -236,7 +253,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
       { name: "no-backlog", takesValue: false, summary: "Skip the backlog-coupling capability check entirely" },
     ],
     json: true,
-    kind: "init",
+    kind: "init.result",
     // The backlog-coupling check is ADVISORY ONLY (LORE-260): a missing/incapable `backlog` becomes
     // a stderr warning plus a `backlog: {capable: false}` field, never a thrown error — so no
     // `backlog` seam code is added here despite `runInit` calling `adapter.probe()`.
@@ -246,6 +263,8 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
       "quest init && lore init --tracker quest --migrate-backlog",
       "lore init --tracker quest",
       "lore init --tracker jira",
+      "lore init --tracker none",
+      "lore init --hermes",
       "lore init --claude --codex",
       "lore init --yes --scaffold mkdocs",
     ],
@@ -262,7 +281,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
       { name: "out", takesValue: true, summary: "Override the output path" },
     ],
     json: true,
-    kind: "new",
+    kind: "new.result",
     // extra 6 = an unfilled template placeholder / serialize-time validation (template.ts:263) —
     // new's own validation, modeled explicitly rather than left to the coincidental profile 6.
     exitCodes: exitCodesFor(["profile", "read", "write"], [6]),
@@ -667,23 +686,37 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
   {
     name: "agent",
     summary: "List context profiles or compile bounded task-scoped evidence",
-    args: "<list|show|context> [args…]",
+    args: "<list|show|context|project> [args…]",
     flags: [
       { name: "task", takesValue: true, summary: "Assigned task text for context compilation" },
       { name: "task-file", takesValue: true, summary: "Read task text from a repo-relative path or stdin (-)" },
       { name: "max-tokens", takesValue: true, summary: "Override the profile's chars/4 token budget" },
       { name: "out", takesValue: true, summary: "Atomically save canonical Markdown to a repo-relative path" },
       { name: "force", takesValue: false, summary: "Replace a differing regular --out file" },
+      {
+        name: "request",
+        takesValue: true,
+        summary: "Read the opum-agent-workflow v1 request envelope JSON from a repo-relative path or stdin (-)",
+      },
+      {
+        name: "contract",
+        takesValue: true,
+        summary: "Serve context as the opum-agent-workflow/v1 projection (use opum-agent-workflow/v1)",
+      },
     ],
     json: true,
-    kind: "agent.context.export",
+    kind: "agent.profiles",
+    resultKinds: ["agent.profiles", "agent.profile", "agent.context.export", "agent.workflow.projection"],
     // Profile/reference validation is command-owned (extra 6), unknown profiles are
-    // command-owned not_found (extra 3), and task-file/output paths reach read/write.
+    // command-owned not_found (extra 3), and task-file/output paths reach read/write;
+    // `project`'s conflict diagnostic rides exit 5 via the existing write seam.
     exitCodes: exitCodesFor(["bundle", "read", "write"], [3, 6]),
     examples: [
       "lore agent list",
       "lore agent show frontend-dev",
       'lore agent context frontend-dev --task "implement the checkout form"',
+      "lore agent project frontend-dev --request request.json",
+      "lore agent context frontend-dev --task LCLI-348 --contract opum-agent-workflow/v1 --json",
     ],
   },
   {

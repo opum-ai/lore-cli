@@ -6,6 +6,7 @@ import { join, posix } from "node:path";
 import { idFromPath, serializeConcept } from "../core/concept";
 import { typeDirectory } from "../core/schema";
 import { slugify } from "../core/template";
+import { assertNoPendingCutover } from "../cutover-state";
 import { EXIT_CODES, EXIT_OK, LoreError, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { parseCommandArgs, singleOptionValue, usage } from "./args";
@@ -50,7 +51,7 @@ interface Artifact {
   };
   removed: boolean;
 }
-interface Ledger {
+export interface Ledger {
   schema: "lore-backlog-adoption-ledger/1";
   migration: string;
   approvalDigest: string;
@@ -77,6 +78,10 @@ export function runBacklog(options: BacklogOptions): number {
       "backlog adopt needs preview, apply, status, or rollback",
       "run `lore backlog adopt preview --manifest <file>`",
     );
+  // A mid-flight coordinated cutover locks the mutation half of this family (LCLI-333.1): applying
+  // knowledge adoption outside the cutover's ordered legs could strand one leg applied and the
+  // other not. Preview/status/rollback stay available; only a standalone apply is refused.
+  if (operation === "apply") assertNoPendingCutover(options.root);
   const manifestPath = singleOptionValue(parsed, "manifest");
   const approvalDigest = singleOptionValue(parsed, "approval-digest");
   const migrationFlag = singleOptionValue(parsed, "migration");
@@ -93,30 +98,85 @@ export function runBacklog(options: BacklogOptions): number {
     : rollback(options, required(migrationFlag, "--migration"));
 }
 function preview(options: BacklogOptions, manifestPath: string, requestedMigration?: string): number {
-  const manifest = readManifest(options.root, manifestPath);
-  const plan = planFor(manifest, requestedMigration);
-  const data = receipt(plan, options.root);
-  emit(render("backlog.adoption.preview", data), options.output, options.stdout);
+  const { approval } = previewKnowledgeAdoption(options.root, manifestPath, requestedMigration);
+  emit(render("backlog.adoption.preview", approval), options.output, options.stdout);
   return EXIT_OK;
 }
 function apply(options: BacklogOptions, manifestPath: string, expected: string, requestedMigration?: string): number {
-  const manifest = readManifest(options.root, manifestPath);
+  try {
+    const ledger = applyKnowledgeAdoption(options.root, manifestPath, expected, requestedMigration);
+    emit(render("backlog.adoption.apply", ledger), options.output, options.stdout);
+    return EXIT_OK;
+  } catch (error) {
+    if (error instanceof BlockedAdoptionError) {
+      emit(render("backlog.adoption.apply", error.ledger), options.output, options.stdout);
+      return EXIT_CODES.validation;
+    }
+    throw error;
+  }
+}
+
+/** The adoption plan plus its normalized approval receipt — the coordinated cutover binds these digests. */
+export interface KnowledgeAdoptionPreview {
+  /** The planned records (migration identity, destinations, content digests). */
+  readonly plan: ReturnType<typeof planFor>;
+  /** The approval receipt whose `digest` an apply must reproduce exactly. */
+  readonly approval: ReturnType<typeof receipt>;
+}
+
+/**
+ * Run the adoption PREVIEW leg without emitting anything: read + validate the manifest, expand the
+ * plan, and compute the approval receipt exactly as `lore backlog adopt preview` renders it.
+ * Shared by the public command (which then emits) and the coordinated cutover coordinator
+ * (`tracker-cutover.ts`), which persists the digests before either leg mutates.
+ */
+export function previewKnowledgeAdoption(
+  root: string,
+  manifestPath: string,
+  requestedMigration?: string,
+): KnowledgeAdoptionPreview {
+  const manifest = readManifest(root, manifestPath);
   const plan = planFor(manifest, requestedMigration);
-  const file = ledgerPath(options.root, plan.migration);
+  return { plan, approval: receipt(plan, root) };
+}
+
+/** Thrown by {@link applyKnowledgeAdoption} when writes partially failed and were compensated into a blocked-incomplete ledger — the caller still owes the user the rendered ledger. */
+export class BlockedAdoptionError extends Error {
+  constructor(readonly ledger: Ledger) {
+    super("adoption blocked-incomplete");
+  }
+}
+
+/**
+ * Run the adoption APPLY leg without emitting anything, throwing exactly like
+ * `lore backlog adopt apply` on every failure path. Idempotent: an already-applied ledger returns
+ * as-is. The one behavioral delta from the CLI wrapper is the partial-failure shape — instead of
+ * emitting a blocked-incomplete ledger with exit validation, the coordinator receives a typed
+ * {@link BlockedAdoptionError} so the cutover refuses BEFORE archiving or selecting Quest.
+ */
+export function applyKnowledgeAdoption(
+  root: string,
+  manifestPath: string,
+  expectedDigest: string,
+  requestedMigration?: string,
+): Ledger {
+  const manifest = readManifest(root, manifestPath);
+  const plan = planFor(manifest, requestedMigration);
+  const file = ledgerPath(root, plan.migration);
   let ledger = readLedger(file);
   const approval = receipt(
     plan,
-    options.root,
+    root,
     new Set(ledger?.created.filter((artifact) => !artifact.removed).map((artifact) => artifact.path)),
   );
-  if (expected !== approval.approval.digest)
+  if (expectedDigest !== approval.approval.digest)
     throw new LoreError(
       "conflict",
       "approval digest does not match the current normalized preview",
       "run preview again and pass its exact approval digest",
-      { expected, actual: approval.approval.digest },
+      { expected: expectedDigest, actual: approval.approval.digest },
     );
-  if (ledger && ledger.approvalDigest !== expected)
+  if (ledger && ledger.approvalDigest !== expectedDigest)
     throw new LoreError(
       "conflict",
       "migration identity belongs to a different approval receipt",
@@ -124,8 +184,7 @@ function apply(options: BacklogOptions, manifestPath: string, expected: string, 
       { migration: plan.migration },
     );
   if (ledger?.state === "applied") {
-    emit(render("backlog.adoption.apply", ledger), options.output, options.stdout);
-    return EXIT_OK;
+    return ledger;
   }
   if (approval.records.some((record) => record.collision !== null))
     throw new LoreError(
@@ -145,26 +204,26 @@ function apply(options: BacklogOptions, manifestPath: string, expected: string, 
       "remove unsupported source records or supply a supported source type",
       { fidelityGaps: plan.records.filter((r) => r.path === null).map((r) => r.source.id) },
     );
-  assertNoSymlinkInAnyPath(options.root, [...writable.map((r) => r.path), ledgerRel(plan.migration)]);
+  assertNoSymlinkInAnyPath(root, [...writable.map((r) => r.path), ledgerRel(plan.migration)]);
   for (const r of writable)
-    if (existsSync(join(options.root, r.path)))
+    if (existsSync(join(root, r.path)))
       throw new LoreError("conflict", `${r.path} already exists`, "resolve the collision and run preview again", {
         path: r.path,
       });
   ledger = {
     schema: "lore-backlog-adoption-ledger/1",
     migration: plan.migration,
-    approvalDigest: expected,
+    approvalDigest: expectedDigest,
     manifestDigest: plan.manifestDigest,
     source: manifest.repository,
     state: "previewed",
     created: [],
   };
-  saveLedger(options.root, ledger);
+  saveLedger(root, ledger);
   try {
     for (const r of writable) {
-      ensureDir(options.root, posix.dirname(r.path));
-      if (!createIfAbsent(join(options.root, r.path), r.content, r.path))
+      ensureDir(root, posix.dirname(r.path));
+      if (!createIfAbsent(join(root, r.path), r.content, r.path))
         throw new LoreError("conflict", `${r.path} already exists`);
       ledger.created.push({
         id: r.id,
@@ -179,22 +238,20 @@ function apply(options: BacklogOptions, manifestPath: string, expected: string, 
         },
         removed: false,
       });
-      saveLedger(options.root, ledger);
+      saveLedger(root, ledger);
     }
   } catch (error) {
-    const blocked = compensate(options.root, ledger);
+    const blocked = compensate(root, ledger);
     ledger.state = blocked ? "blocked-incomplete" : "previewed";
-    saveLedger(options.root, ledger);
+    saveLedger(root, ledger);
     if (blocked) {
-      emit(render("backlog.adoption.apply", ledger), options.output, options.stdout);
-      return EXIT_CODES.validation;
+      throw new BlockedAdoptionError(ledger);
     }
     throw error;
   }
   ledger.state = "applied";
-  saveLedger(options.root, ledger);
-  emit(render("backlog.adoption.apply", ledger), options.output, options.stdout);
-  return EXIT_OK;
+  saveLedger(root, ledger);
+  return ledger;
 }
 function status(options: BacklogOptions, migration: string): number {
   const ledger = mustLedger(options.root, migration);

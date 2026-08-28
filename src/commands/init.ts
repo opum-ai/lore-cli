@@ -70,6 +70,7 @@ import { loadProfile } from "../core/profile";
 import { buildScaffold } from "../core/scaffold";
 import { ANSI, EXIT_OK, LoreError, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { applyCutover } from "../tracker-cutover";
 import {
   clearPendingQuestMigration,
   migrateBacklogTasksToQuest,
@@ -80,6 +81,7 @@ import { type AgentsResult, applyAgentsBridge, bridgeActionColor, renderTrailer 
 import { optionValues, parseCommandArgs, singleOptionValue, usage } from "./args";
 import { applyCodexBridge, type CodexBridgeResult } from "./codex-bridge";
 import { assertNoSymlinkInPath, createIfAbsent, ensureDir, writeFileAtomic } from "./fswrite";
+import { applyHermesBridge, type HermesBridgeResult } from "./hermes-bridge";
 import { applyScaffold, TARGETS as SCAFFOLD_TARGETS, type ScaffoldResult } from "./scaffold";
 
 /** The backlog-coupling capability check's outcome, folded into {@link InitResult} when it ran. */
@@ -108,6 +110,8 @@ export interface InitResult {
   agents?: AgentsResult;
   /** Codex bridge result, present iff Codex setup was selected or explicitly requested. */
   codex?: CodexBridgeResult;
+  /** Hermes project-context bridge result, present iff `--hermes` or the wizard selected it. */
+  hermes?: HermesBridgeResult;
   /** One entry per downstream doc-site/vault actually scaffolded this run (wizard picks, `--scaffold`, `--obsidian`); empty when none were requested. */
   scaffolds: ScaffoldResult[];
   /** The backlog-coupling capability check's outcome, present iff it ran this invocation. */
@@ -189,6 +193,8 @@ export interface InitOptions {
 export interface AgentAvailability {
   readonly claude: boolean;
   readonly codex: boolean;
+  /** Optional while older injected availability seams migrate; absence means unavailable. */
+  readonly hermes?: boolean;
 }
 
 /** The parsed, validated `lore init` arguments. */
@@ -199,6 +205,8 @@ interface InitArgs {
   agents: boolean;
   /** `--codex`: set up the Codex bridge. */
   codex: boolean;
+  /** `--hermes`: set up the project-local Hermes context bridge. */
+  hermes: boolean;
   /** `--scaffold <target>` (repeatable) and/or `--obsidian`, deduped; targets from {@link SCAFFOLD_TARGETS}. */
   scaffolds: string[];
   /** `--no-backlog`: skip the backlog-coupling capability check entirely. */
@@ -209,6 +217,10 @@ interface InitArgs {
   tracker?: TrackerBackend;
   /** `--migrate-backlog`: preflight and preserve compatible Backlog ids while selecting Quest. */
   migrateBacklog: boolean;
+  /** `--adopt-manifest <path>`: coordinate a knowledge-adoption manifest with `--migrate-backlog` as one cutover (LCLI-333.1). */
+  adoptManifest?: string;
+  /** `--approval-digest <digest>`: the adoption preview's approval digest binding the cutover's adoption leg. Required with `--adopt-manifest`. */
+  approvalDigest?: string;
 }
 
 /**
@@ -272,12 +284,32 @@ export function runInit(options: InitOptions): number | Promise<number> {
       "run `quest init`, then `lore init --tracker quest --migrate-backlog`; or pin Backlog with `lore init --tracker backlog`",
     );
   }
+  if (parsed.adoptManifest !== undefined && !parsed.migrateBacklog) {
+    throw usage(
+      "--adopt-manifest requires --migrate-backlog: knowledge adoption is coordinated with the task migration as one cutover",
+      "run `lore init --tracker quest --migrate-backlog --adopt-manifest <path>` in a legacy zero-config Backlog bundle",
+    );
+  }
+  if (parsed.adoptManifest !== undefined && parsed.approvalDigest === undefined) {
+    throw usage(
+      "--adopt-manifest requires --approval-digest: pass the exact digest of the reviewed adoption preview",
+      "run `lore backlog adopt preview --manifest <path>` first and pass its approval.digest",
+    );
+  }
 
   if (interactive) {
     return runInteractiveWizard(options, base, priorSelection);
   }
 
   if (parsed.migrateBacklog) {
+    // Coordinated cutover (LCLI-333.1): with an adoption manifest, both legs run through the
+    // ordered, resumable coordinator — Quest selection happens only after BOTH legs verify AND
+    // backlog/ is verified-archived-and-deleted. The migration-only path is unchanged.
+    if (parsed.adoptManifest !== undefined) {
+      return runCoordinatedCutover(options, parsed).then((migration) =>
+        finishNonInteractive(options, parsed, base, clock, migration),
+      );
+    }
     return runBacklogMigration(options).then((migration) => {
       persistTrackerBackend(options.root, "quest");
       clearPendingQuestMigration(options.root);
@@ -305,6 +337,7 @@ function finishNonInteractive(
   const scaffoldTargets = [...new Set(parsed.scaffolds)];
   const agents = parsed.agents ? applyAgentsBridge({ root: options.root, force: false, check: false }) : undefined;
   const codex = parsed.codex ? applyCodexBridge({ root: options.root, force: false, check: false }) : undefined;
+  const hermes = parsed.hermes ? applyHermesBridge({ root: options.root, force: false, check: false }) : undefined;
   const scaffolds = scaffoldTargets.map((target) => applyScaffold({ root: options.root, target, force: false, clock }));
 
   // The backlog check is advisory-only (never fails the run) and, off-TTY/via-flags, runs only when
@@ -313,13 +346,15 @@ function finishNonInteractive(
   // opted all the way out with `--no-backlog`. A completely bare `lore init` therefore never spawns
   // a `backlog` subprocess, exactly as before this task.
   const shouldCheckBacklog =
-    parsed.checkBacklog || (!parsed.noBacklog && (parsed.agents || parsed.codex || scaffoldTargets.length > 0));
+    parsed.checkBacklog ||
+    (parsed.tracker !== "none" && !parsed.noBacklog && (parsed.agents || parsed.codex || scaffoldTargets.length > 0));
   if (!shouldCheckBacklog) {
     const result: InitResult = {
       ...base,
       interactive: false,
       agents,
       codex,
+      hermes,
       scaffolds,
       backlog: undefined,
       tracker: parsed.tracker,
@@ -337,6 +372,7 @@ function finishNonInteractive(
       interactive: false,
       agents,
       codex,
+      hermes,
       scaffolds,
       backlog,
       tracker: parsed.tracker,
@@ -350,6 +386,30 @@ function finishNonInteractive(
 function runBacklogMigration(options: InitOptions): Promise<TrackerMigrationResult> {
   if (options.migrateBacklog !== undefined) return options.migrateBacklog();
   return migrateBacklogTasksToQuest(createQuestBacklogMigration(options.root), options.root);
+}
+
+/**
+ * The coordinated two-leg cutover (`--migrate-backlog --adopt-manifest <path>`, LCLI-333.1):
+ * delegates to `tracker-cutover.ts`'s ordered coordinator, whose final step persists the Quest
+ * backend selection and clears the recovery records — so the returned result flows straight into
+ * the unchanged non-interactive finish.
+ */
+function runCoordinatedCutover(options: InitOptions, parsed: InitArgs): Promise<TrackerMigrationResult> {
+  const root = options.root;
+  return applyCutover({
+    root,
+    migration: createQuestBacklogMigration(root),
+    adoptManifest: parsed.adoptManifest,
+    approvalDigest: parsed.approvalDigest,
+    persistQuestBackend: (r) => persistTrackerBackend(r, "quest"),
+  }).then((plan) => ({
+    digest: plan.quest.digest,
+    sourceFingerprint: plan.quest.sourceFingerprint,
+    mappings: [],
+    survivors: [],
+    taskFingerprints: {},
+    state: "applied" as const,
+  }));
 }
 
 /**
@@ -369,6 +429,7 @@ async function runInteractiveWizard(
   const scaffoldTargets: string[] = [];
   let wantAgents = false;
   let wantCodex = false;
+  let wantHermes = false;
   let tracker: TrackerBackend = "quest";
   let migrateBacklog = false;
   try {
@@ -399,6 +460,9 @@ async function runInteractiveWizard(
     if (available.codex) {
       wantCodex = await prompter.confirm("Set up the Codex agent bridge (SKILL.md + AGENTS.md nudge)?", true);
     }
+    if (available.hermes) {
+      wantHermes = await prompter.confirm("Set up the Hermes project context bridge (.hermes.md)?", true);
+    }
     const site = await prompter.choose("Scaffold a downstream docs site?", ["none", "mkdocs", "docusaurus"], "none");
     if (site !== "none") {
       scaffoldTargets.push(site);
@@ -418,13 +482,24 @@ async function runInteractiveWizard(
   const clock = options.clock ?? (() => new Date());
   const agents = wantAgents ? applyAgentsBridge({ root: options.root, force: false, check: false }) : undefined;
   const codex = wantCodex ? applyCodexBridge({ root: options.root, force: false, check: false }) : undefined;
+  const hermes = wantHermes ? applyHermesBridge({ root: options.root, force: false, check: false }) : undefined;
   const scaffolds = scaffoldTargets.map((target) => applyScaffold({ root: options.root, target, force: false, clock }));
 
   const warnings = new WarningCollector();
-  const backlog = await probeBacklogCapability(options, warnings);
+  const backlog = tracker === "none" ? undefined : await probeBacklogCapability(options, warnings);
   warnings.flush({ color: options.output.color, stderr: options.stderr ?? process.stderr });
 
-  const result: InitResult = { ...base, interactive: true, agents, codex, scaffolds, backlog, tracker, migration };
+  const result: InitResult = {
+    ...base,
+    interactive: true,
+    agents,
+    codex,
+    hermes,
+    scaffolds,
+    backlog,
+    tracker,
+    migration,
+  };
   emit(initRenderable(result), options.output, options.stdout);
   return EXIT_OK;
 }
@@ -535,6 +610,7 @@ function anyFlagGiven(parsed: InitArgs): boolean {
     parsed.yes ||
     parsed.agents ||
     parsed.codex ||
+    parsed.hermes ||
     parsed.scaffolds.length > 0 ||
     parsed.noBacklog ||
     parsed.checkBacklog ||
@@ -557,9 +633,21 @@ function parseInitArgs(args: readonly string[]): InitArgs {
   const yes = parsed.flags.has("yes") || parsed.flags.has("non-interactive");
   const agents = parsed.flags.has("agents") || parsed.flags.has("claude");
   const codex = parsed.flags.has("codex");
+  const hermes = parsed.flags.has("hermes");
   const noBacklog = parsed.flags.has("no-backlog");
   const checkBacklog = parsed.flags.has("check-backlog");
   const migrateBacklog = parsed.flags.has("migrate-backlog");
+  const adoptManifestValue = singleOptionValue(parsed, "adopt-manifest");
+  const approvalDigestValue = singleOptionValue(parsed, "approval-digest");
+  if (adoptManifestValue === "") {
+    throw usage("--adopt-manifest needs a value", "pass a repository-relative adoption manifest path");
+  }
+  if (
+    adoptManifestValue !== undefined &&
+    (adoptManifestValue.startsWith("/") || adoptManifestValue.split(/[\\/]/).includes(".."))
+  ) {
+    throw usage("--adopt-manifest must be a repository-relative path", "pass a confined JSON source manifest");
+  }
   const trackerValue = singleOptionValue(parsed, "tracker");
   if (trackerValue === "") {
     throw usage("--tracker needs a value", `pass --tracker ${TRACKER_BACKENDS.join(" or --tracker ")}`);
@@ -599,11 +687,24 @@ function parseInitArgs(args: readonly string[]): InitArgs {
       "pass at most one of --no-backlog / --check-backlog",
     );
   }
-  return { yes, agents, codex, scaffolds, noBacklog, checkBacklog, tracker, migrateBacklog };
+  return {
+    yes,
+    agents,
+    codex,
+    hermes,
+    scaffolds,
+    noBacklog,
+    checkBacklog,
+    tracker,
+    migrateBacklog,
+    adoptManifest: adoptManifestValue,
+    approvalDigest: approvalDigestValue,
+  };
 }
 
 /** Persist one explicit tracker choice while preserving every unrelated config byte. */
-function persistTrackerBackend(root: string, backend: TrackerBackend): void {
+/** Upsert `[tracker].backend` in the bundle's config, validating the current file first. Exported for `tracker-cutover.ts`, whose final irreversible step is exactly this selection. */
+export function persistTrackerBackend(root: string, backend: TrackerBackend): void {
   assertNoSymlinkInPath(root, CONFIG_REL_PATH);
   // Validate the complete current file first, including credential guards and
   // unknown-value diagnostics. The base init scaffold guarantees it exists.
@@ -660,15 +761,19 @@ function withTrackerBackend(current: string, backend: TrackerBackend): string {
 function detectAgentAvailability(options: InitOptions): AgentAvailability {
   if (options.agentAvailability) return options.agentAvailability();
   try {
-    return { claude: Bun.which("claude") !== null, codex: Bun.which("codex") !== null };
+    return {
+      claude: Bun.which("claude") !== null,
+      codex: Bun.which("codex") !== null,
+      hermes: Bun.which("hermes") !== null,
+    };
   } catch {
-    return { claude: false, codex: false };
+    return { claude: false, codex: false, hermes: false };
   }
 }
 
 /** The per-result-type rendering bundle for `init` (output.ts dispatches on the mode). */
 function initRenderable(data: InitResult): Renderable<InitResult> {
-  return { kind: "init", data, pretty: renderPretty, plain: renderPlain };
+  return { kind: "init.result", data, pretty: renderPretty, plain: renderPlain };
 }
 
 /** Human view: the base scaffold summary, then a section per optional consumer that ran this run. */
@@ -703,6 +808,12 @@ function renderPretty(data: InitResult, opts: { color: boolean }): string {
   if (data.codex) {
     lines.push("Codex bridge:");
     for (const file of data.codex.files) {
+      lines.push(`  ${paint(file.action, bridgeActionColor(file.action), opts.color)} ${file.path}`);
+    }
+  }
+  if (data.hermes) {
+    lines.push("Hermes project context bridge:");
+    for (const file of data.hermes.files) {
       lines.push(`  ${paint(file.action, bridgeActionColor(file.action), opts.color)} ${file.path}`);
     }
   }
@@ -751,6 +862,11 @@ function renderPlain(data: InitResult): string {
   if (data.codex) {
     for (const file of data.codex.files) {
       lines.push(`codex-${file.action} ${file.path}`);
+    }
+  }
+  if (data.hermes) {
+    for (const file of data.hermes.files) {
+      lines.push(`hermes-${file.action} ${file.path}`);
     }
   }
   for (const scaffold of data.scaffolds) {

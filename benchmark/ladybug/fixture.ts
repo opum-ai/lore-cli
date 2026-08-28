@@ -247,6 +247,19 @@ function writeRepository(spec: LadybugBenchmarkFixtureSpec, root: string, tasks:
   mkdirSync(join(root, "backlog", "tasks"), { recursive: true });
   mkdirSync(join(root, ".lore"), { recursive: true });
   writeFileSync(join(root, ".lore", "profile.toml"), "# Built-in Lore profile; fixture bytes are intentional.\n");
+  // The fixture is a synthetic legacy-Backlog repository. Under the Quest-default
+  // cutover contract a zero-config Backlog bundle must pin its tracker explicitly,
+  // so the fixture declares its intended backend instead of relying on the
+  // first-use selection gate (which would make `graph index` exit 6).
+  writeFileSync(
+    join(root, ".lore", "config.toml"),
+    [
+      "# Fixture pins its tracker backend explicitly; fixture bytes are intentional.",
+      "[tracker]",
+      'backend = "backlog"',
+      "",
+    ].join("\n"),
+  );
   writeFileSync(
     join(root, "backlog", "config.yml"),
     [

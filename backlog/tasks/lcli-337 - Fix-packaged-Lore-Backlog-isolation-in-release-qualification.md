@@ -5,13 +5,16 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-17 00:27'
-updated_date: '2026-08-17 00:30'
+updated_date: '2026-08-19 00:27'
 labels:
   - release
   - backlog
   - packaging
   - regression
+  - 'doc:stories/prepare-the-first-lore-cli-release'
 dependencies: []
+documentation:
+  - docs/stories/prepare-the-first-lore-cli-release.md
 priority: high
 type: bug
 ordinal: 460000

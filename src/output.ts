@@ -264,6 +264,8 @@ export interface SuccessEnvelope<T> {
   schemaVersion: number;
   kind: string;
   data: T;
+  /** Reserved for a future ratified principal reference; null until then. */
+  principal: null;
 }
 
 /**
@@ -272,7 +274,7 @@ export interface SuccessEnvelope<T> {
  * version and field order are fixed in one place.
  */
 export function successEnvelope<T>(kind: string, data: T): SuccessEnvelope<T> {
-  return { schemaVersion: SCHEMA_VERSION, kind, data };
+  return { schemaVersion: SCHEMA_VERSION, kind, data, principal: null };
 }
 
 /**

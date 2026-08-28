@@ -56,13 +56,15 @@
 import { join } from "node:path";
 import type { BacklogAdapter, BacklogTaskDetail } from "../adapters/backlog";
 import { createConfiguredTrackerAdapter } from "../adapters/tracker";
+import type { TrackerBackend } from "../config";
 import { type BundleGraph, conceptNotInBundle, loadBundle, toRefList } from "../core/bundle";
 import { type Concept, idFromPath, serializeConcept } from "../core/concept";
 import { loadProfile, type Profile, profileForBundle, profileTypeDeclaresField } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { type BacklogCommitResult, commitBacklogFiles, type GitSpawn, renderBacklogCommitLine } from "../state";
+import { type BacklogCommitResult, type GitSpawn, renderBacklogCommitLine } from "../state";
+import { persistTrackerWrites, resolveSelectedBackend, type TrackerWriteRef } from "../tracker-persistence";
 import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
 // The pure worker-pool + shared cap live in the neutral `./concurrency` module (LORE-233), not
 // `./reconcile-shared` — `reconcile-shared.ts` already imports `verifiedViewTask`/`dedupeTaskIds`/
@@ -87,6 +89,12 @@ export interface LinkOptions {
   adapter?: BacklogAdapter;
   /** The git-write seam (`state.ts`) for committing `backlog/` after a back-reference edit; defaults to the real `git` binary. Injected in tests. */
   gitSpawn?: GitSpawn;
+  /**
+   * Explicit tracker-backend override (LCLI-333.1): production resolves the backend from
+   * `resolveTrackerSelection`; tests/CI pin one to keep fixtures honest. Never used as a runtime
+   * fallback — when absent, selection is single-valued and fail-loud.
+   */
+  backend?: TrackerBackend;
 }
 
 /** The parsed form of `link`/`unlink`'s arguments. `allowMissing` is `unlink`-only (see {@link parseLinkArgs}). */
@@ -222,13 +230,13 @@ export async function runLink(options: LinkOptions): Promise<number> {
   const changed = writeTasksIfChanged(docsRoot, concept, existingTasks, nextTasks, profile);
 
   let anyBackRefFailed = false;
-  // The candidate `backlog/` task file paths this run's commit stages — never a bundle-wide sweep.
+  // The candidate tracker-side writes this run's persistence stages — never a bundle-wide sweep.
   // Populated inside the loop after either a successful edit, or an "already-present" no-edit
   // outcome whose file might still carry a prior run's uncommitted drift (LORE-121); either way,
-  // `commitBacklogFiles`'s own `git status` (scoped to exactly these paths) is what decides which
-  // of them, if any, are actually dirty and worth staging — a failed edit never reaches either push,
-  // so it stays excluded (see the "partial back-ref failure" test).
-  const editedFiles: string[] = [];
+  // `persistTrackerWrites`'s backlog branch's own `git status` (scoped to exactly these paths) is
+  // what decides which of them, if any, are actually dirty and worth staging — a failed edit never
+  // reaches either push, so it stays excluded (see the "partial back-ref failure" test).
+  const refs: TrackerWriteRef[] = [];
   if (!noBackRef) {
     const outcomes = await runSequentially(taskIds, async (taskId) => {
       // Re-read fresh right before editing (not the up-front validation snapshot): matches
@@ -256,19 +264,15 @@ export async function runLink(options: LinkOptions): Promise<number> {
         // nothing dirty and stays a true no-op (AC#3), while a dirty one gets picked up and
         // committed by this retry (AC#1/#2) instead of silently no-opping forever.
         if (detail.file) {
-          editedFiles.push(detail.file);
+          refs.push({ taskId, file: detail.file });
         }
         return "already-present" as const;
       }
       const desiredDocs = addDoc(detail.documentation, docPath);
       await adapter.editTask(taskId, { addLabels: [label], doc: desiredDocs });
-      if (detail.file) {
-        // Only after a successful editTask, and only with a usable path — a truthy guard (not just
-        // `!== null`) so a `""` filePathRelative is skipped too, never passed on as an empty git
-        // pathspec (which `git status --` rejects). No path → nothing to commit here; `lore sync`'s
-        // catch-all sweep still picks up any stray dirt later.
-        editedFiles.push(detail.file);
-      }
+      // Only after a successful editTask. A null file is normal for an out-of-repo backend
+      // (quest); the persistence seam decides per backend whether a path means a commit or drift.
+      refs.push({ taskId, file: detail.file });
       return "added" as const;
     });
     outcomes.forEach((outcome, i) => {
@@ -282,13 +286,16 @@ export async function runLink(options: LinkOptions): Promise<number> {
     });
   }
 
-  // Commit whatever of this run's candidate task files (`editedFiles`) turns out to actually be
-  // dirty — lore is the sole committer of `backlog/` (ADR-0012, design §3.6), so a `link` no longer
-  // leaves an edit (this run's, or a prior run's uncommitted drift, LORE-121) sitting uncommitted
-  // until the next `lore sync`. Scoped to `editedFiles`, so a `--no-back-ref` run (empty) commits
-  // nothing, a genuinely clean run finds nothing dirty among its candidates and stays a true no-op,
-  // and an unrelated dirty `backlog/` edit to some OTHER task's file is never swept in (ADR-0012 §1).
-  const backlogCommit = await commitBacklogFiles(editedFiles, options, LINK_COMMIT_MESSAGE);
+  // Persist this run's candidate tracker writes through the selected backend — under `backlog`,
+  // whatever of `refs` is actually dirty gets committed (lore remains the sole committer of
+  // `backlog/`, ADR-0012 §1, unrelated dirty files never swept); under any other backend zero git
+  // runs and a non-null reported file is refused loud (LCLI-333.1). Scoped to `refs`, so a
+  // `--no-back-ref` run (empty) persists nothing and a genuinely clean run stays a true no-op.
+  const backlogCommit = await persistTrackerWrites(resolveSelectedBackend(options.root, options.backend), refs, {
+    root: options.root,
+    message: LINK_COMMIT_MESSAGE,
+    gitSpawn: options.gitSpawn,
+  });
   const report: LinkReport = { concept: docPath, tasks, changed, backlogCommit };
   // A captured commit failure (backlogCommit.error) is drift too — routed through the same
   // ErrorEnvelope as a failed edit (LORE-58), never the success envelope on a nonzero exit.
@@ -343,10 +350,10 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
   }
 
   let anyBackRefFailed = false;
-  let editedFiles: readonly string[] = [];
+  let refs: readonly TrackerWriteRef[] = [];
   if (!noBackRef) {
     const removal = await removeBackRefs(adapter, taskIds, label, docPath);
-    editedFiles = removal.editedFiles;
+    refs = removal.refs;
     removal.outcomes.forEach((outcome, i) => {
       const entry = tasks[i] as UnlinkedTask;
       if (outcome.status === "fulfilled") {
@@ -358,7 +365,11 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
     });
   }
 
-  const backlogCommit = await commitBacklogFiles(editedFiles, options, UNLINK_COMMIT_MESSAGE);
+  const backlogCommit = await persistTrackerWrites(resolveSelectedBackend(options.root, options.backend), refs, {
+    root: options.root,
+    message: UNLINK_COMMIT_MESSAGE,
+    gitSpawn: options.gitSpawn,
+  });
   const report: UnlinkReport = { concept: docPath, tasks, changed, backlogCommit };
   // A captured commit failure (backlogCommit.error) is drift too — routed through the same
   // ErrorEnvelope as a failed edit (LORE-58), never the success envelope on a nonzero exit.
@@ -381,14 +392,14 @@ async function removeBackRefs(
   docPath: string,
 ): Promise<{
   readonly outcomes: readonly PromiseSettledResult<"removed" | "already-absent" | "skipped">[];
-  readonly editedFiles: readonly string[];
+  readonly refs: readonly TrackerWriteRef[];
 }> {
-  // The candidate task files for the caller's scoped commit — populated after either a successful
-  // `editTask`, or an "already-absent" no-edit outcome whose file might still carry a prior run's
-  // uncommitted drift (LORE-121's pattern, applied here per LORE-179); either way,
-  // `commitBacklogFiles`'s own `git status` (scoped to exactly these paths) is what decides which
-  // of them, if any, are actually dirty and worth staging (mirrors runLink's editedFiles).
-  const editedFiles: string[] = [];
+  // The candidate tracker writes for the caller's backend-owned persistence — populated after
+  // either a successful `editTask`, or an "already-absent" no-edit outcome whose file might still
+  // carry a prior run's uncommitted drift (LORE-121's pattern, applied here per LORE-179); the
+  // backlog branch's own `git status` (scoped to exactly these paths) is what decides which of
+  // them, if any, are actually dirty and worth staging (mirrors runLink's refs).
+  const refs: TrackerWriteRef[] = [];
   const outcomes = await runSequentially(taskIds, async (taskId) => {
     // `verifiedViewTask` (LORE-177) refuses a detail whose own `id` doesn't match `taskId` — never
     // used below to decide `hadLabel`/`hadDoc` or compute `removeDoc`'s result, which would
@@ -414,7 +425,7 @@ async function removeBackRefs(
       // reports nothing dirty and stays a true no-op (AC#3), while a dirty one gets picked up and
       // committed by this retry (AC#1) instead of silently no-opping forever.
       if (detail.file) {
-        editedFiles.push(detail.file);
+        refs.push({ taskId, file: detail.file });
       }
       return "already-absent" as const; // nothing to remove — skip the edit entirely
     }
@@ -423,12 +434,10 @@ async function removeBackRefs(
     // Backlog is left with whatever it already had (it cannot clear `--doc` via an empty value,
     // contract §2.4), so a stale annotation cosmetically lingers either way.
     await adapter.editTask(taskId, { removeLabels: [label], doc: removeDoc(detail.documentation, docPath) });
-    if (detail.file) {
-      editedFiles.push(detail.file);
-    }
+    refs.push({ taskId, file: detail.file });
     return "removed" as const;
   });
-  return { outcomes, editedFiles };
+  return { outcomes, refs };
 }
 
 /** One task's outcome after {@link moveBackRefs} moves its back-reference to a concept's new id/path. */
@@ -466,18 +475,19 @@ export async function moveBackRefs(
   newConceptId: string,
   oldDocPath: string,
   newDocPath: string,
-): Promise<{ readonly outcomes: readonly MovedBackRef[]; readonly editedFiles: readonly string[] }> {
+): Promise<{ readonly outcomes: readonly MovedBackRef[]; readonly refs: readonly TrackerWriteRef[] }> {
   const oldLabel = backRefLabel(oldConceptId);
   const newLabel = backRefLabel(newConceptId);
-  // The candidate task files for the caller's scoped commit — populated after a successful
-  // `editTask` (a `"moved"` outcome), AND after the "already fully migrated" no-edit outcome below
-  // whose file might still carry a prior run's uncommitted drift (LORE-121's pattern, applied here
-  // per LORE-179); `commitBacklogFiles`'s own `git status` (scoped to exactly these paths) is what
-  // decides which of them, if any, are actually dirty and worth staging. The OTHER `already-current`
-  // outcome (no trace of a back-ref at all — never linked) contributes nothing: unlike a completed
-  // migration, no prior run of *this* move could ever have applied an edit here, so there is no
-  // drift of this kind for it to hide. A `failed` edit likewise contributes nothing.
-  const editedFiles: string[] = [];
+  // The candidate tracker writes for the caller's backend-owned persistence — populated after a
+  // successful `editTask` (a `"moved"` outcome), AND after the "already fully migrated" no-edit
+  // outcome below whose file might still carry a prior run's uncommitted drift (LORE-121's
+  // pattern, applied here per LORE-179); the backlog branch's own `git status` (scoped to exactly
+  // these paths) is what decides which of them, if any, are actually dirty and worth staging. The
+  // OTHER `already-current` outcome (no trace of a back-ref at all — never linked) contributes
+  // nothing: unlike a completed migration, no prior run of *this* move could ever have applied an
+  // edit here, so there is no drift of this kind for it to hide. A `failed` edit likewise
+  // contributes nothing.
+  const refs: TrackerWriteRef[] = [];
   const settled = await runSequentially(taskIds, async (taskId) => {
     const detail = await verifiedViewTask(adapter, taskId);
     if (detail === null) {
@@ -512,7 +522,7 @@ export async function moveBackRefs(
       // dirty and stays a true no-op (AC#3), while a dirty one gets picked up and committed by this
       // retry (AC#2) instead of silently no-opping forever.
       if (detail.file) {
-        editedFiles.push(detail.file);
+        refs.push({ taskId, file: detail.file });
       }
       return "already-current" as const; // already fully migrated — nothing to move
     }
@@ -525,9 +535,7 @@ export async function moveBackRefs(
       removeLabels: staleLabel !== undefined ? [staleLabel] : undefined,
       doc: docs,
     });
-    if (detail.file) {
-      editedFiles.push(detail.file);
-    }
+    refs.push({ taskId, file: detail.file });
     return "moved" as const;
   });
   const outcomes = taskIds.map((task, i): MovedBackRef => {
@@ -537,7 +545,7 @@ export async function moveBackRefs(
     }
     return { task, backRef: "failed" as const, error: describeError(outcome.reason) };
   });
-  return { outcomes, editedFiles };
+  return { outcomes, refs };
 }
 
 // ── Shared setup ───────────────────────────────────────────────────────────────

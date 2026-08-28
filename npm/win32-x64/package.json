@@ -1,6 +1,6 @@
 {
   "name": "@opum-ai/lore-win32-x64",
-  "version": "0.3.2",
+  "version": "0.3.4",
   "description": "lore compiled binary for Windows (x64, baseline). Do not depend on this directly — install @opum-ai/lore.",
   "publishConfig": {
     "access": "public"

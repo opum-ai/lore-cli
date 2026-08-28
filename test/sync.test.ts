@@ -83,6 +83,7 @@ function baseOptions(overrides: Partial<SyncOptions> = {}): Omit<SyncOptions, "r
     gitAdapter: emptyGitAdapter(),
     resolveHead: () => FIXED_SHA,
     gitSpawn: cleanGitSpawn(),
+    backend: "backlog" as const,
     ...overrides,
   };
 }

@@ -3,14 +3,19 @@ id: LCLI-339
 title: >-
   Declare the reserved principal field on the success, error, and uncaught
   envelopes
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@lore-cli'
 created_date: '2026-08-17 15:21'
+updated_date: '2026-08-19 03:37'
 labels:
   - output-contract
   - opum-contract
   - cli
+  - 'doc:stories/harden-post-0-2-lore-correctness'
 dependencies: []
+documentation:
+  - docs/stories/harden-post-0-2-lore-correctness.md
 priority: high
 type: bug
 ordinal: 462000
@@ -45,9 +50,27 @@ Populating the field with a real value is explicitly out of scope: the contract'
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 SuccessEnvelope declares principal as its last top-level key, emitted as null
-- [ ] #2 The error envelope declares principal as its last top-level key, after input, emitted as null
-- [ ] #3 UncaughtEnvelope declares principal as its last top-level key, emitted as null
-- [ ] #4 A test asserts the principal key is present on each envelope shape and fails if the key is removed
-- [ ] #5 No non-null principal value ships without a prior ratifying amendment to opum-doc's command contract
+- [x] #1 SuccessEnvelope declares principal as its last top-level key, emitted as null
+- [x] #2 The error envelope declares principal as its last top-level key, after input, emitted as null
+- [x] #3 UncaughtEnvelope declares principal as its last top-level key, emitted as null
+- [x] #4 A test asserts the principal key is present on each envelope shape and fails if the key is removed
+- [x] #5 No non-null principal value ships without a prior ratifying amendment to opum-doc's command contract
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Audit all JSON envelope constructors. 2. Add null principal as final key for success, known errors, and uncaught errors. 3. Add shape/order regression tests. 4. Run focused output/error tests and report evidence.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Wave A: added principal:null as the final key on success, handled-error, and uncaught JSON envelopes; focused and cumulative validation passed.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented the reserved null principal slot on every envelope shape and asserted both presence and key ordering. Verified by focused envelope tests, cumulative 469-test suite, typecheck, lint, strict Lore gates, and diff hygiene.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -11,6 +11,9 @@ status: done
 tasks:
   - lcli-323
   - lcli-324
+  - lcli-335
+  - lcli-339
+  - lcli-340
 ---
 
 # Harden post-0.2 Lore correctness
@@ -40,6 +43,9 @@ hardening Story remains delivery evidence rather than an active bug queue.
 |---|---|---|
 | [LCLI-323](../../backlog/tasks/lcli-323%20-%20lore-check-strict-is-wall-clock-dependent-an-elapsed-stale_after-flips-a-green-bundle-to-exit-6-with-no-commit.md) | lore check --strict is wall-clock dependent: an elapsed stale_after flips a green bundle to exit 6 with no commit | Done |
 | [LCLI-324](../../backlog/tasks/lcli-324%20-%20lore-check-silently-skips-relative-links-that-leave-docs-so-a-green-check-overstates-what-it-verified.md) | lore check silently skips relative links that leave docs/, so a green check overstates what it verified | Done |
+| [LCLI-335](../../backlog/tasks/lcli-335%20-%20Prevent-Bun-environment-file-access-from-breaking-Lore-Backlog-probes.md) | Prevent Bun environment-file access from breaking Lore Backlog probes | Done |
+| [LCLI-339](../../backlog/tasks/lcli-339%20-%20Declare-the-reserved-principal-field-on-the-success-error-and-uncaught-envelopes.md) | Declare the reserved principal field on the success, error, and uncaught envelopes | Done |
+| [LCLI-340](../../backlog/tasks/lcli-340%20-%20Manifest-kind-registry-init-and-new-declare-bare-kinds-and-agents-other-emitted-kinds-are-undiscoverable.md) | Manifest kind registry: init and new declare bare kinds, and agent's other emitted kinds are undiscoverable | Done |
 <!-- lore:tasks:end -->
 
 ## Notes

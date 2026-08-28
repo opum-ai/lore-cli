@@ -1,4 +1,0 @@
-interface:
-  display_name: "Treehouse Worktrees"
-  short_description: "Safely manage reusable Git worktree pools"
-  default_prompt: "Use $treehouse-worktrees to audit and safely reconcile this repository’s Treehouse and Git worktrees."

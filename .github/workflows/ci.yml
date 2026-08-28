@@ -184,7 +184,17 @@ jobs:
     name: explorer browser qualification (chromium · firefox · webkit)
     if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 40m, not 20m: the install step is a COLD `bunx playwright install
+    # --with-deps chromium firefox webkit` — ~500MB across three engine
+    # downloads plus ~30 shared-lib apt packages from azure.archive.ubuntu.com.
+    # Under normal network windows that finishes in ~15m, but when the
+    # ubuntu mirror or Playwright CDN are in a slow burst the install alone
+    # can exceed 20m and the actual `test:browser` step never starts (see
+    # run 32296206324, jobs 96207965307 + 96237735458 — both cancelled mid
+    # `apt-get Get:28 librsvg2-2`). 40m leaves headroom for the install to
+    # finish and the three-engine Playwright test to run; it is still far
+    # below GitHub Actions' 360m per-job default.
+    timeout-minutes: 40
     env:
       PLAYWRIGHT_BROWSERS_PATH: .lore/cache/ms-playwright
     steps:

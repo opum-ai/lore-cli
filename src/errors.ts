@@ -85,6 +85,8 @@ export interface ErrorEnvelope {
   message: string;
   hint?: string;
   input?: unknown;
+  /** Reserved for a future ratified principal reference; null until then. */
+  principal: null;
 }
 
 /**
@@ -98,6 +100,8 @@ export interface ErrorEnvelope {
 interface UncaughtEnvelope {
   error_type: "uncaught";
   message: string;
+  /** Reserved for a future ratified principal reference; null until then. */
+  principal: null;
 }
 
 /**
@@ -223,7 +227,7 @@ export function toErrorEnvelope(err: LoreError): ErrorEnvelope {
   // §5.2 types `message`/`hint` as single-line strings. Coerce (a reassigned or
   // mis-typed value need not be a string) and collapse newlines, so the envelope
   // honors the contract regardless of what a caller stored on the error.
-  const envelope: ErrorEnvelope = { error_type: err.type, message: singleLine(asText(err.message)) };
+  const envelope: Omit<ErrorEnvelope, "principal"> = { error_type: err.type, message: singleLine(asText(err.message)) };
   // A hint counts as present only when it is non-empty; an empty hint would emit
   // a meaningless `"hint": ""` (and a dangling `hint:` line in text).
   if (err.hint) {
@@ -236,7 +240,9 @@ export function toErrorEnvelope(err: LoreError): ErrorEnvelope {
   if (typeof err.input === "object" && err.input !== null && !Array.isArray(err.input)) {
     envelope.input = err.input;
   }
-  return envelope;
+  // Keep the reserved slot last so consumers can depend on the envelope field
+  // order as well as its required presence.
+  return { ...envelope, principal: null };
 }
 
 /**
@@ -596,7 +602,7 @@ export function reportError(err: unknown, opts: { json: boolean; color?: boolean
     // uncaught diagnostic across stderr lines.
     const message = singleLine(deriveMessage(err));
     if (opts.json) {
-      const envelope: UncaughtEnvelope = { error_type: "uncaught", message };
+      const envelope: UncaughtEnvelope = { error_type: "uncaught", message, principal: null };
       stderr.write(`${safeStringify(envelope)}\n`);
     } else {
       stderr.write(`${errorHead(message, opts.color ?? false)}\n`);

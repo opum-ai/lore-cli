@@ -5,16 +5,19 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-16 18:04'
-updated_date: '2026-08-16 18:08'
+updated_date: '2026-08-19 00:27'
 labels:
   - backlog
   - workspace
   - sandbox
   - regression
+  - 'doc:stories/harden-post-0-2-lore-correctness'
 dependencies: []
 references:
   - >-
     /Volumes/external/repos/opum-doc/docs/runbooks/query-the-opum-family-lore-workspace.md
+documentation:
+  - docs/stories/harden-post-0-2-lore-correctness.md
 modified_files:
   - src/adapters/backlog.ts
   - test/backlog-probe.test.ts

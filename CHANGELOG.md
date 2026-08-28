@@ -5,19 +5,35 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.4] - 2026-08-27
+
+### Fixed
+
+- The Quest adapter now accepts the Quest 0.2.7 released structured criterion
+  contract — `acceptanceCriteria` and `definitionOfDone` items of the shape
+  `{index, text, checked}` — mapping them losslessly to Lore criteria with
+  the positional `index` deliberately dropped, and failing loud (drift) on
+  any other shape; 0.3.3 is incompatible with public Quest 0.2.7 (LCLI-352).
+
+## [0.3.3] - 2026-08-26
+
+### Fixed
+
+- The capability manifest now declares `agent.profiles` — the kind the primary
+  `agent list` action emits — as the agent command's default kind, restoring
+  the live-vs-manifest golden cross-check and registry discoverability;
+  `show` and `context` result kinds are unchanged (LCLI-350).
 
 ### Added
 
-- New bundles persist Quest as their tracker backend, and Lore can drive the
-  explicitly authorized, locally installed Quest `0.2.2` candidate's
+- New bundles persist Quest as their tracker backend, and Lore drives the
+  explicitly qualified, locally installed Quest `0.2.7` artifact's
   schema-versioned task contract without silent fallback or dual writes.
   Existing explicit Backlog and Jira selections remain unchanged; legacy
-  zero-config Backlog bundles must invoke Quest's receipt-backed, alias-preserving
+  zero-config Backlog bundles use Quest's receipt-backed, alias-preserving
   migration or pin Backlog explicitly (LCLI-315.4).
-- Delivery remains blocked because the installed Quest 0.2.2 native candidate
-  accepts actor-free migration writes and rejects the actor flags required by
-  QCLI-97.8; Lore does not weaken its adapter contract around that artifact.
+- The release remains an owner-gated, separately evidenced lifecycle; local
+  Quest qualification does not claim registry publication (LCLI-333).
 
 ## [0.3.2] - 2026-08-17
 

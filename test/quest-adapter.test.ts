@@ -54,8 +54,8 @@ function task(overrides: Record<string, unknown> = {}): Record<string, unknown> 
     documentation: ["docs/story.md"],
     modifiedFiles: ["src/a.ts"],
     subtasks: [{ id: "QUEST-3", title: "Child" }],
-    acceptanceCriteria: ["works"],
-    definitionOfDone: ["ships"],
+    acceptanceCriteria: [{ index: 0, text: "works", checked: false }],
+    definitionOfDone: [{ index: 0, text: "ships", checked: false }],
     description: "**Markdown**",
     plan: ["plan", "second step"],
     implementationNotes: ["notes"],
@@ -197,6 +197,7 @@ describe("Quest 0.2 tracker adapter", () => {
       dependencies: ["QUEST-0"],
       documentation: ["docs/story.md"],
       acceptanceCriteria: [{ text: "works", checked: false }],
+      definitionOfDone: [{ text: "ships", checked: false }],
       implementationPlan: "plan\nsecond step",
       parentTaskId: "QUEST-1",
     });
@@ -355,5 +356,116 @@ describe("Quest 0.2 tracker adapter", () => {
       return ok("task.status-flow", { statuses: ["To Do"], terminalStatuses: ["Done"] });
     };
     await expect(adapter(badFlow).probe()).rejects.toMatchObject({ type: "drift" });
+  });
+});
+
+describe("quest adapter structured criteria (Quest 0.2.7)", () => {
+  test("maps Quest 0.2.7 structured acceptanceCriteria and definitionOfDone losslessly (checked=true survives, index dropped)", async () => {
+    const spawn: QuestSpawn = async (args) => {
+      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+      if (args[0] === "manifest") return ok("manifest.registry", manifest());
+      if (args[0] === "task" && args[1] === "status-flow") return ok("task.status-flow", flow());
+      if (args[0] === "task" && args[1] === "view")
+        return ok("task.view", {
+          ...task(),
+          acceptanceCriteria: [
+            { index: 0, text: "Parent acceptance", checked: false },
+            { index: 1, text: "Ships", checked: true },
+          ],
+          definitionOfDone: [{ index: 0, text: "Done-Done", checked: true }],
+        });
+      return {
+        exitCode: 3,
+        stdout: "",
+        stderr: JSON.stringify({
+          error_type: "not_found",
+          message: "no such task",
+          hint: "check id",
+          input: { id: "QUEST-2" },
+        }),
+      };
+    };
+    const detail = await adapter(spawn).viewTask("QUEST-2");
+    expect(detail?.acceptanceCriteria).toEqual([
+      { text: "Parent acceptance", checked: false },
+      { text: "Ships", checked: true },
+    ]);
+    expect(detail?.definitionOfDone).toEqual([{ text: "Done-Done", checked: true }]);
+    expect(detail?.acceptanceCriteria[0]).not.toHaveProperty("index");
+  });
+
+  test("fails loud when criteria are not Quest 0.2.7 structured objects", async () => {
+    const spawnFor =
+      (payload: unknown): QuestSpawn =>
+      async (args) => {
+        if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+        if (args[0] === "manifest") return ok("manifest.registry", manifest());
+        if (args[0] === "task" && args[1] === "status-flow") return ok("task.status-flow", flow());
+        if (args[0] === "task" && args[1] === "view")
+          return ok("task.view", { ...task(), acceptanceCriteria: payload });
+        return {
+          exitCode: 3,
+          stdout: "",
+          stderr: JSON.stringify({
+            error_type: "not_found",
+            message: "no such task",
+            hint: "check id",
+            input: { id: "QUEST-2" },
+          }),
+        };
+      };
+    for (const payload of [
+      ["works"], // legacy string array — rejected per pinned 0.2.7 structured contract
+      { index: 0, text: "x", checked: 0 }, // non-boolean checked
+      { index: -1, text: "x", checked: false }, // negative index
+    ]) {
+      await expect(adapter(spawnFor(payload)).viewTask("QUEST-2")).rejects.toMatchObject({
+        type: "drift",
+        message: "Quest returned invalid acceptanceCriteria",
+        hint: "Quest 0.2.7 or 0.2.8 is required",
+      });
+    }
+  });
+
+  test("accepts exactly the supported Quest versions 0.2.7 and 0.2.8 in the version gate", async () => {
+    const spawnFor =
+      (version: string): QuestSpawn =>
+      async (args) => {
+        if (args[0] === "--version") return { exitCode: 0, stdout: `${version}\n`, stderr: "" };
+        if (args[0] === "manifest") return ok("manifest.registry", manifest());
+        if (args[0] === "task" && args[1] === "status-flow") return ok("task.status-flow", flow());
+        return {
+          exitCode: 3,
+          stdout: "",
+          stderr: JSON.stringify({
+            error_type: "not_found",
+            message: "no such task",
+            hint: "check id",
+            input: { id: "QUEST-2" },
+          }),
+        };
+      };
+    await expect(adapter(spawnFor("0.2.7")).probe()).resolves.toBeTruthy();
+    await expect(adapter(spawnFor("0.2.8")).probe()).resolves.toBeTruthy();
+  });
+
+  test("fails loud with a hint naming the supported set for unsupported Quest versions", async () => {
+    const spawnFor =
+      (version: string): QuestSpawn =>
+      async (args) => {
+        if (args[0] === "--version") return { exitCode: 0, stdout: `${version}\n`, stderr: "" };
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ schemaVersion: 1, kind: "manifest.registry", data: manifest() }),
+          stderr: "",
+        };
+      };
+    for (const version of ["0.1.0", "0.2.6", "0.2.9", "0.3.0", ""]) {
+      await expect(adapter(spawnFor(version)).probe()).rejects.toMatchObject({
+        type: "validation",
+        message: "`quest --version` did not return a supported Quest 0.2 version",
+        hint: "Quest 0.2.7 or 0.2.8 is required",
+      });
+    }
   });
 });

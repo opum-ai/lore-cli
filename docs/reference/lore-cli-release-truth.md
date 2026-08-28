@@ -21,7 +21,74 @@ availability claim.
 
 ### Current state
 
-`0.3.2` is the release candidate for the packaged Backlog-isolation repair.
+`0.3.4` is the release candidate for the Quest 0.2.7 structured-criterion
+compatibility repair (LCLI-352): the Quest adapter now maps the released
+`{index, text, checked}` acceptanceCriteria/definitionOfDone shapes
+losslessly and fails loud on any other shape, because published `0.3.3` is
+demonstrably incompatible with public Quest 0.2.7 (`lore link` exits 6). Its
+family manifests and exact optional-dependency pins are aligned at `0.3.4`.
+
+`0.3.3` is the release candidate for the agent manifest-kind contract repair
+(LCLI-350). Its seven package manifests and exact optional-dependency pins are
+aligned at `0.3.3`. The authoritative installable candidate family (six
+platform binaries plus root/platform tarballs) is built from corrected
+source tip `a4322b71df3afaa94e1d1065934513dd34683fa6` and staged immutable at
+`/tmp/lore-0.3.3-family-a4322b7`, digested by family manifest v1 with SHA-256
+`745628def534bd76375916c9b3ca57ecf967e3b2000ed5edb6047e959ebbc746`. It was
+qualified by audit `8a71a8b0ac14473ba15ba02ed449fed3` on lease branch
+`settle/release-truth-862a9b6d3b7c` under pinned Bun 1.3.14: lint/typecheck
+clean, full suite 2662 pass / 0 fail / 1 skip across 89 files, strict
+`lore check`/`validate` over 75 bundle files clean, fresh-prefix install of
+the launcher plus host platform tarball self-reports `0.3.3` and its
+`agent list --json` emission matches the manifest-declared
+`agent.profiles` kind. An earlier staging from pre-fix source
+`f299ec8c2e403f921165e84b2cacf12a8f8c5abc` (manifest SHA-256
+`d3c45374ae2f8f8641c4b076fd47ecb1446557ccda4ef6b2508afc0e8d90a5ea`) predates
+the LCLI-350 fix and is superseded by the staged rebuild; it is retained for
+audit trail only. The candidate is not released until a qualified tag,
+Release workflow artifact evidence, interactive publication, registry
+verification, and clean-install evidence all exist.
+
+Publication of this candidate under the `release-candidate` dist-tag was
+authorized by the recorded direct-user order (FMC correlation
+`960b5e3be42042628512c1e3e5e7d771`, replacing
+`e2343ae664dd45d69b1de178465eaf05`, Controller `opum-doc`), which resolves
+the ODOC-63.7 npm credential decision for this exact path. The accepted
+order is the recording instrument for the `release-candidate` tag choice —
+no earlier repository record names a candidate dist-tag. A `release-candidate`
+publication is a candidate availability event, not the "released"
+designation above; it never touches `latest`/`main`/production and follows
+the recorded candidate publication procedure in
+`docs/runbooks/release-publishing.md` §4.
+
+As verified on 2026-08-27 UTC, Lore CLI **0.3.3 is published as a release
+candidate**. The worker session could not complete npm's web-auth step-up
+under credential discipline (three bounded `--auth-type=web` windows closed
+without auth; exact evidence in LCLI-333), so the repository owner executed
+the seven publishes manually from their own authenticated terminal,
+platform-first and `@opum-ai/lore` root last, each `--access public --tag
+release-candidate`. Independent Controller verification and worker read-only
+registry reads agree:
+
+- all seven packages exist at `0.3.3`; every registry shasum and SHA-512
+  integrity equals the immutable candidate provenance row;
+- fresh registry downloads match the candidate SHA-256 values: root
+  `c7180ba1…`, darwin-arm64 `2f6ef049…`, darwin-x64 `5afbf29a…`,
+  linux-arm64 `f8ca4131…`, linux-x64 `cca0f8c2…`, win32-arm64 `81371972…`,
+  win32-x64 `bd162f43…` (provenance rows for Release run `32926368990`,
+  source commit `a4322b71df3afaa94e1d1065934513dd34683fa6`);
+- every package carries `release-candidate: 0.3.3` and `latest: 0.3.2` is
+  preserved on all seven;
+- a clean registry install of `@opum-ai/lore@release-candidate` reports
+  `lore --version` 0.3.3, and fresh `lore init --yes --tracker none
+  --codex`, `lore validate --strict`, and `lore check --strict` all pass.
+
+This is publication of a candidate, not the "released" designation: the
+immutable-tag, workflow-artifact, and GitHub-Release evidence list above
+still governs any future release claim for `0.3.3`.
+
+`0.3.2` is the release candidate for the packaged Backlog-isolation repair
+(superseded as the active candidate by `0.3.3` above).
 Its seven package manifests and exact optional-dependency pins are prepared for
 qualification, but it is not released until a qualified main tag, Release
 workflow artifact evidence, interactive publication, registry verification,

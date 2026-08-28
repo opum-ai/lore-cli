@@ -28,6 +28,12 @@ export interface TrackerCapability {
  * Implementations fail loud on capability and transport errors. Callers preserve bounded
  * concurrency around per-task fan-out and verify that a viewed task's returned id matches the id
  * requested; those safeguards remain obligations of this interface even though they live above it.
+ *
+ * Repository persistence is deliberately NOT part of this data contract (LCLI-333.1): whether a
+ * command run commits anything to this repository's git tree — and what domain it may commit — is
+ * owned by `tracker-persistence.ts`, keyed off the same single
+ * `resolveTrackerSelection`/`resolveSelectedBackend` decision that constructed this adapter. Do
+ * not re-add a per-adapter commit seam here.
  */
 export interface TrackerAdapter {
   /** Validate that the configured backend is reachable and supports the required operations. */
@@ -69,6 +75,14 @@ export function createConfiguredTrackerAdapter(root: string, options: TrackerAda
     );
   }
   const config: TrackerConfig = loadConfig({ root }).tracker;
+  if (config.backend === "none") {
+    throw new LoreError(
+      "validation",
+      "this bundle has issue-tracker coupling disabled",
+      "select a tracker with `lore init --tracker quest`, `lore init --tracker backlog`, or `lore init --tracker jira`",
+      { backend: "none" },
+    );
+  }
   return createTrackerAdapter(root, { ...config, backend: selection.backend }, options);
 }
 
@@ -96,10 +110,18 @@ export function createTrackerAdapter(
     }
     return createJiraAdapter(root, config.jira, options.jira);
   }
+  if (backend === "none") {
+    throw new LoreError(
+      "validation",
+      "this bundle has issue-tracker coupling disabled",
+      "select a tracker with `lore init --tracker quest`, `lore init --tracker backlog`, or `lore init --tracker jira`",
+      { backend },
+    );
+  }
   throw new LoreError(
     "validation",
     `unsupported tracker backend ${JSON.stringify(backend)}`,
-    'use "quest", "backlog", or "jira"',
+    'use "quest", "backlog", "jira", or "none"',
     { backend },
   );
 }

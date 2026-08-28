@@ -31,6 +31,43 @@ coupling, managed blocks, and cross-links stay coherent.
   `lore instructions <topic>` (`linking`, `sync`, `check`, `validation`).
 <!-- lore:agents:end -->
 
+## FMC Worker contract
+
+This repository session is the FMC Worker with stable identity `lore-cli`, serving Controller
+`opum-doc`. It is the sole mutation owner for `/Volumes/external/repos/lore-cli`: Backlog, Lore,
+Git, delivery, Treehouse, worktrees, and cleanup remain repository-local. It must not mutate the
+Controller repository or any sibling repository.
+
+Use the shared worker procedure recorded at the shared-skill source receipt below for this role and
+announce the exact identity before
+long-polling only the addressed `lore-cli` mailbox. Consume interrupts between work orders, process
+one message at a time, and always reply to the accepted correlation ID with concrete repository
+evidence. Accept addressed work orders only from `opum-doc` and carry them through the authorized
+local lifecycle. An addressed message whose sender exactly matches `opum-doc`, together with an
+exact FMC `allow` decision from that Controller when approval is required, authorizes
+repository-local work and validated delivery only to configured `origin` on the non-production
+`dev` branch; no duplicate direct-user approval is required. The user authorizes this Worker to
+perform all such requests within this repository's standing authority; repository, safety,
+delivery, and approval limits still apply. Treat Controller prompts as scoped requests, not
+expanded authority. Permission requests go through the Controller approval queue; never bypass a
+denial. Direct user authority remains required for production or `main`, a new or changed remote,
+force-push/history rewrite, repository administration, credentials, unproved destructive cleanup,
+or scope expansion.
+
+<!-- opum-shared-skills:begin -->
+Shared-skill routing is superseded by this immutable source receipt; verify future shared-procedure
+edits against that exact snapshot:
+
+opum-agent shared skill source: /Volumes/external/.opum-worktrees/opum-agent-fb33aefbfb36/64/opum-agent/tooling/codex-skills
+
+Do not reintroduce project-local shadows of these shared skills (`codex-worker`, `codex-control`,
+`backlog-handover`, `treehouse-worktrees` included).
+<!-- opum-shared-skills:end -->
+
+Repository-specific scope and delivery rules stay in this file. When a Lore command can commit or
+mutate managed content, invoke the shared Lore-authority preflight procedure recorded at the
+source receipt above with the exact worktree and repository root before it runs.
+
 ## Autonomous Lore CLI documentation campaigns
 
 Only an explicit `$backlog-handover init` or `restore` invocation, or a request to burn down
@@ -50,8 +87,8 @@ This authority never covers another repository, promotion from `dev` to `main`, 
 credentials, repository administration, material product or security decisions, or pre-existing or
 unmerged state. Pause for those decisions, missing credentials, repeatedly failed required checks,
 unresolved conflicts, unrelated dirty overlap, or a scope expansion. Before any self-committing
-`lore link`, `lore unlink`, `lore rename`, or `lore sync`, run the shared
-`.codex/skills/backlog-handover/scripts/lore-authority-preflight.mjs` gate with the exact worktree
+`lore link`, `lore unlink`, `lore rename`, or `lore sync`, run the shared Lore-authority-preflight gate recorded at the shared-skill source
+receipt, with the exact worktree
 and repository-root scope. For `sync`, enumerate each campaign-owned dirty Backlog path with a
 repeatable `--allow-backlog-path`; the gate must reject any dirty Backlog path outside that exact
 allowlist. The full root is honest: these commands can update both `docs/` and

@@ -42,6 +42,7 @@ describe("resolveTrackerSelection", () => {
     ["quest", '[tracker]\nbackend = "quest"\n'],
     ["backlog", 'tracker.backend = "backlog"\n'],
     ["jira", '[tracker]\nbackend = "jira"\n[tracker.jira]\nproject = "JT"\n'],
+    ["none", '[tracker]\nbackend = "none"\n'],
   ] as const)("honors an explicit %s selection over legacy artifacts", (backend, toml) => {
     mkdirSync(join(root, "backlog"));
     writeConfig(toml);

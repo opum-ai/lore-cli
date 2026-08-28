@@ -1,47 +1,10 @@
 {
   "name": "@opum-ai/lore",
-  "version": "0.3.2",
-  "description": "Thin, OKF-native documentation CLI that couples repo-resident docs to Backlog.md and serves them to agents and humans.",
-  "publishConfig": {
-    "access": "public"
-  },
-  "type": "module",
-  "bin": {
-    "lore": "bin/lore.cjs"
-  },
-  "license": "MIT",
+  "version": "0.3.4",
   "author": "Jeremy Newhouse",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/opum-ai/lore-cli.git"
-  },
-  "packageManager": "bun@1.3.14",
-  "engines": {
-    "bun": ">=1.3.14"
-  },
-  "files": [
-    "bin",
-    "README.md",
-    "LICENSE"
-  ],
-  "optionalDependencies": {
-    "@opum-ai/lore-darwin-arm64": "0.3.2",
-    "@opum-ai/lore-darwin-x64": "0.3.2",
-    "@opum-ai/lore-linux-arm64": "0.3.2",
-    "@opum-ai/lore-linux-x64": "0.3.2",
-    "@opum-ai/lore-win32-arm64": "0.3.2",
-    "@opum-ai/lore-win32-x64": "0.3.2"
-  },
-  "scripts": {
-    "lore": "bun run src/cli.ts",
-    "build": "bun build --compile src/compiled.ts --outfile dist/lore",
-    "typecheck": "tsc --noEmit",
-    "format": "biome format --write .",
-    "lint": "biome check .",
-    "lint:fix": "biome check --write .",
-    "test": "bun test",
-    "test:browser": "playwright test",
-    "test:coverage": "bun test --coverage"
   },
   "devDependencies": {
     "@ladybugdb/core": "0.19.0",
@@ -58,10 +21,47 @@
     "typescript": "^5",
     "zod": "4.4.3"
   },
+  "optionalDependencies": {
+    "@opum-ai/lore-darwin-arm64": "0.3.4",
+    "@opum-ai/lore-darwin-x64": "0.3.4",
+    "@opum-ai/lore-linux-arm64": "0.3.4",
+    "@opum-ai/lore-linux-x64": "0.3.4",
+    "@opum-ai/lore-win32-arm64": "0.3.4",
+    "@opum-ai/lore-win32-x64": "0.3.4"
+  },
+  "bin": {
+    "lore": "bin/lore.cjs"
+  },
+  "description": "Thin, OKF-native documentation CLI that couples repo-resident docs to Backlog.md and serves them to agents and humans.",
+  "engines": {
+    "bun": ">=1.3.14"
+  },
+  "files": [
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "packageManager": "bun@1.3.14",
+  "patchedDependencies": {
+    "@ladybugdb/core@0.19.0": "patches/@ladybugdb%2Fcore@0.19.0.patch"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "lore": "bun run src/cli.ts",
+    "build": "bun build --compile src/compiled.ts --outfile dist/lore",
+    "typecheck": "tsc --noEmit",
+    "format": "biome format --write .",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "test": "bun test",
+    "test:browser": "playwright test",
+    "test:coverage": "bun test --coverage"
+  },
   "trustedDependencies": [
     "@ladybugdb/core"
   ],
-  "patchedDependencies": {
-    "@ladybugdb/core@0.19.0": "patches/@ladybugdb%2Fcore@0.19.0.patch"
-  }
+  "type": "module"
 }

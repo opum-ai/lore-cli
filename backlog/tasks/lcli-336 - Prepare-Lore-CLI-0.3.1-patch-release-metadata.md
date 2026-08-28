@@ -1,17 +1,20 @@
 ---
 id: LCLI-336
 title: Prepare Lore CLI 0.3.1 patch release metadata
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-16 22:16'
-updated_date: '2026-08-16 22:24'
+updated_date: '2026-08-19 00:27'
 labels:
   - release
   - patch
   - npm
   - workspace
+  - 'doc:stories/prepare-the-first-lore-cli-release'
 dependencies: []
+documentation:
+  - docs/stories/prepare-the-first-lore-cli-release.md
 priority: high
 type: task
 ordinal: 459000
@@ -45,4 +48,12 @@ Prepare the 0.3.1 patch release for the delivered workspace-agent guidance and p
 
 <!-- SECTION:NOTES:BEGIN -->
 Candidate qualification passed: version/pin assertion; npm run build; bun test; npm run lint; npm run typecheck; npm run lore -- agents --check; npm run lore -- check --strict; npm run lore -- validate --strict; and git diff --check. The release runbook now requires artifacts from Release (publish=false), platform packages before root, registry verification, and a clean install. Delivery, tag/workflow, and owner publication remain pending.
+
+Superseded on 2026-08-18: current dev package version is 0.3.2; the retained 0.3.1 preparation candidate is older and PR #396 (27b0620) contains unrelated documentation-only unique work. No older-version promotion, tag, workflow qualification, or publication is valid.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Superseded: 0.3.1 release preparation is obsolete behind current 0.3.2 dev; retained PR #396 is unrelated and preserved.
+<!-- SECTION:FINAL_SUMMARY:END -->
