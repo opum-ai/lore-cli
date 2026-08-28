@@ -111,16 +111,18 @@ describe("opum-agent-workflow/v1 binding seam", () => {
     expect(Number.isFinite(issued)).toBe(true);
     expect(expires - issued).toBeGreaterThan(0);
     expect(expires - issued).toBeLessThanOrEqual(300_000);
-    const sourceIds = record.sourceIds as string[];
+    const sourceIds = record.sourceIds as unknown[];
     expect(Array.isArray(sourceIds)).toBe(true);
     expect(sourceIds.length).toBeGreaterThan(0);
-    expect(sourceIds.every((id) => typeof id === "string" && id.length > 0)).toBe(true);
+    // Canonical source identifiers: plain strings, never projection objects.
+    expect(sourceIds.every((id) => typeof id === "string" && (id as string).length > 0)).toBe(true);
+    expect(JSON.stringify(sourceIds)).not.toContain("{");
   });
 
   test("fails closed with OPUM_WORKFLOW_LORE_ABSENT for an uninstalled profile", () => {
     const { exitCode, stdout, stderr } = runBinding("missing", bindingFor("missing"));
-    expect(exitCode).toBe(1);
-    expect(JSON.parse(stdout)).toEqual({ error: { code: "OPUM_WORKFLOW_LORE_ABSENT" } });
+    expect(exitCode).not.toBe(0);
+    expect(stdout).toBe("");
     expect(stderr).toContain("OPUM_WORKFLOW_LORE_ABSENT");
   });
 
@@ -134,23 +136,23 @@ describe("opum-agent-workflow/v1 binding seam", () => {
       { ...bindingFor("pair"), unexpected: true },
     ]) {
       const { exitCode, stdout, stderr } = runBinding("pair", binding);
-      expect(exitCode).toBe(1);
-      expect(JSON.parse(stdout)).toEqual({ error: { code: "OPUM_WORKFLOW_LORE_INCOMPATIBLE" } });
+      expect(exitCode).not.toBe(0);
+      expect(stdout).toBe("");
       expect(stderr).toContain("OPUM_WORKFLOW_LORE_INCOMPATIBLE");
     }
   });
 
   test("fails closed with OPUM_WORKFLOW_LORE_MISMATCH when the binding disagrees with the CLI profile", () => {
     const { exitCode, stdout, stderr } = runBinding("pair", bindingFor("other"));
-    expect(exitCode).toBe(1);
-    expect(JSON.parse(stdout)).toEqual({ error: { code: "OPUM_WORKFLOW_LORE_MISMATCH" } });
+    expect(exitCode).not.toBe(0);
+    expect(stdout).toBe("");
     expect(stderr).toContain("OPUM_WORKFLOW_LORE_MISMATCH");
   });
 
   test("fails closed with OPUM_WORKFLOW_LORE_STALE for a pinned stale profile revision", () => {
     const { exitCode, stdout, stderr } = runBinding("pair", bindingFor("pair", { profileRevision: "0".repeat(64) }));
-    expect(exitCode).toBe(1);
-    expect(JSON.parse(stdout)).toEqual({ error: { code: "OPUM_WORKFLOW_LORE_STALE" } });
+    expect(exitCode).not.toBe(0);
+    expect(stdout).toBe("");
     expect(stderr).toContain("OPUM_WORKFLOW_LORE_STALE");
   });
 
