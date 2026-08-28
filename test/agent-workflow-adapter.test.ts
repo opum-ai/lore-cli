@@ -123,7 +123,7 @@ describe("opum-agent-workflow/v1 binding seam", () => {
     const { exitCode, stdout, stderr } = runBinding("missing", bindingFor("missing"));
     expect(exitCode).not.toBe(0);
     expect(stdout).toBe("");
-    expect(stderr).toContain("OPUM_WORKFLOW_LORE_ABSENT");
+    expect(stderr).toBe("OPUM_WORKFLOW_LORE_ABSENT\n");
   });
 
   test("fails closed with OPUM_WORKFLOW_LORE_INCOMPATIBLE for structurally invalid bindings", () => {
@@ -138,7 +138,7 @@ describe("opum-agent-workflow/v1 binding seam", () => {
       const { exitCode, stdout, stderr } = runBinding("pair", binding);
       expect(exitCode).not.toBe(0);
       expect(stdout).toBe("");
-      expect(stderr).toContain("OPUM_WORKFLOW_LORE_INCOMPATIBLE");
+      expect(stderr).toBe("OPUM_WORKFLOW_LORE_INCOMPATIBLE\n");
     }
   });
 
@@ -146,14 +146,14 @@ describe("opum-agent-workflow/v1 binding seam", () => {
     const { exitCode, stdout, stderr } = runBinding("pair", bindingFor("other"));
     expect(exitCode).not.toBe(0);
     expect(stdout).toBe("");
-    expect(stderr).toContain("OPUM_WORKFLOW_LORE_MISMATCH");
+    expect(stderr).toBe("OPUM_WORKFLOW_LORE_MISMATCH\n");
   });
 
   test("fails closed with OPUM_WORKFLOW_LORE_STALE for a pinned stale profile revision", () => {
     const { exitCode, stdout, stderr } = runBinding("pair", bindingFor("pair", { profileRevision: "0".repeat(64) }));
     expect(exitCode).not.toBe(0);
     expect(stdout).toBe("");
-    expect(stderr).toContain("OPUM_WORKFLOW_LORE_STALE");
+    expect(stderr).toBe("OPUM_WORKFLOW_LORE_STALE\n");
   });
 
   test("succeeds when the pinned profile revision matches the installed profile", () => {
