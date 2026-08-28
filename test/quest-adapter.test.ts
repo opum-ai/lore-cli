@@ -422,7 +422,49 @@ describe("quest adapter structured criteria (Quest 0.2.7)", () => {
       await expect(adapter(spawnFor(payload)).viewTask("QUEST-2")).rejects.toMatchObject({
         type: "drift",
         message: "Quest returned invalid acceptanceCriteria",
-        hint: "Quest 0.2.7 is required",
+        hint: "Quest 0.2.7 or 0.2.8 is required",
+      });
+    }
+  });
+
+  test("accepts exactly the supported Quest versions 0.2.7 and 0.2.8 in the version gate", async () => {
+    const spawnFor =
+      (version: string): QuestSpawn =>
+      async (args) => {
+        if (args[0] === "--version") return { exitCode: 0, stdout: `${version}\n`, stderr: "" };
+        if (args[0] === "manifest") return ok("manifest.registry", manifest());
+        if (args[0] === "task" && args[1] === "status-flow") return ok("task.status-flow", flow());
+        return {
+          exitCode: 3,
+          stdout: "",
+          stderr: JSON.stringify({
+            error_type: "not_found",
+            message: "no such task",
+            hint: "check id",
+            input: { id: "QUEST-2" },
+          }),
+        };
+      };
+    await expect(adapter(spawnFor("0.2.7")).probe()).resolves.toBeTruthy();
+    await expect(adapter(spawnFor("0.2.8")).probe()).resolves.toBeTruthy();
+  });
+
+  test("fails loud with a hint naming the supported set for unsupported Quest versions", async () => {
+    const spawnFor =
+      (version: string): QuestSpawn =>
+      async (args) => {
+        if (args[0] === "--version") return { exitCode: 0, stdout: `${version}\n`, stderr: "" };
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ schemaVersion: 1, kind: "manifest.registry", data: manifest() }),
+          stderr: "",
+        };
+      };
+    for (const version of ["0.1.0", "0.2.6", "0.2.9", "0.3.0", ""]) {
+      await expect(adapter(spawnFor(version)).probe()).rejects.toMatchObject({
+        type: "validation",
+        message: "`quest --version` did not return a supported Quest 0.2 version",
+        hint: "Quest 0.2.7 or 0.2.8 is required",
       });
     }
   });
