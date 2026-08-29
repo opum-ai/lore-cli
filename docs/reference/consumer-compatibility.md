@@ -18,8 +18,8 @@ across five consumers:
 |---|---|---|
 | **GitHub** | Default browse/diff/review surface | none — relative `.md` links just work |
 | **Obsidian** | Local editing + the *only* graph/backlinks view | recommended vault settings; optional committed `app.json` preset |
-| **MkDocs + Material** | Polished, searchable, browsable web site | `lore scaffold mkdocs` (config outside `docs/`) |
-| **Docusaurus** | Richer React docs site | `lore scaffold docusaurus` (config outside `docs/`) |
+| **MkDocs + Material** | Polished, searchable, browsable web site | `lore scaffold mkdocs` (`mkdocs.yml` at the repo root, plus the `docs/tags.md` tag-index page) |
+| **Docusaurus** | Richer React docs site | `lore scaffold docusaurus` (all config outside `docs/`) |
 | **Confluence** | One-way *publish* target (deferred) | publish-time rewrite, no on-disk constraint |
 
 This all hinges on **one load-bearing decision** and **two consumer-side config
@@ -98,8 +98,11 @@ managed-block escape case are in
 ## 3. Per-tool setup
 
 lore never mutates the bundle to satisfy a consumer. The browsable consumers get
-**additive config files scaffolded outside `docs/`** via `lore scaffold`; see
-[cli-surface.md](./cli-surface.md) for the command surface. Scaffolded configs
+**additive config files** via `lore scaffold` — files are only ever added, never moved,
+renamed, or rewritten. Most land outside `docs/`, but two consumers require a file inside
+the bundle (`mkdocs`'s `docs/tags.md` §3.3, `obsidian`'s `docs/.obsidian/*` §3.2); both are
+ordinary OKF-legal content, so a scaffolded bundle still passes `lore validate --strict`.
+See [cli-surface.md](./cli-surface.md) for the command surface. Scaffolded configs
 are user-owned — lore writes them once and does not re-overwrite.
 
 ### 3.1 GitHub

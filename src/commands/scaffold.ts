@@ -1,6 +1,8 @@
 /**
  * commands/scaffold.ts — `lore scaffold <target> [--force]`: generate a downstream documentation
- * consumer's config, additively and outside `docs/` (cli-surface §"Consumer scaffolding", ADR-0010).
+ * consumer's config, additively — only adding files, never moving, renaming, or rewriting authored
+ * bundle content (cli-surface §"Consumer scaffolding", ADR-0010 §2). Additive does not mean outside
+ * `docs/`: mkdocs adds `docs/tags.md` and obsidian adds `docs/.obsidian/*` (LCLI-357).
  *
  * The thin, side-effecting layer over the pure {@link buildMkdocsScaffold} / {@link buildDocusaurusScaffold} /
  * {@link buildObsidianScaffold} (`core/consumer-scaffold.ts`): it resolves the repo root, the active profile, and a clock, asks core for the exact bytes, and
@@ -242,7 +244,8 @@ export function runScaffold(options: ScaffoldOptions): number {
  * used — whenever there's nothing usable to reuse: `docs/tags.md` is absent or unreadable, its
  * YAML frontmatter doesn't parse at all (a genuinely malformed file must still flow through to
  * the normal "differs" collision path with *some* deterministic timestamp, not fail this whole
- * command), or its `timestamp` field isn't present as a string.
+ * command), or it records no reusable provenance instant — see {@link onDiskProvenanceInstant},
+ * which reads both the current `generated.at` and the pre-LCLI-357 legacy `timestamp` spelling.
  */
 function preservedTagsTimestamp(root: string, clock: () => Date): string {
   const fresh = () => clock().toISOString();
@@ -258,8 +261,32 @@ function preservedTagsTimestamp(root: string, clock: () => Date): string {
   } catch {
     return fresh(); // unparseable YAML -- let the normal "differs" collision path handle the file itself
   }
-  const timestamp = frontmatter?.timestamp;
-  return typeof timestamp === "string" ? timestamp : fresh();
+  return onDiskProvenanceInstant(frontmatter) ?? fresh();
+}
+
+/**
+ * The provenance instant recorded in an on-disk `docs/tags.md`'s frontmatter, or `undefined` when
+ * there is none to reuse. Reads BOTH spellings: OKF 0.2's `generated.at` (what
+ * {@link versionedProvenance} writes today) and the legacy bare `timestamp` key lore wrote into
+ * this file before LCLI-357, preferring `generated.at` when both are present.
+ *
+ * Be precise about what the legacy read buys, because the obvious claim is wrong: it does NOT
+ * preserve idempotency across the LCLI-357 upgrade. A pre-LCLI-357 `docs/tags.md` differs from
+ * today's plan by the provenance *key* itself, so it can never be byte-identical and always
+ * reaches the never-silent-clobber conflict no matter which instant is reused. What the legacy
+ * read buys is that the conflict is **deterministic**: the plan's instant comes off disk rather
+ * than off the wall clock, so a user re-running the command sees the same reported bytes each
+ * time instead of a diagnostic that drifts every second. `--force` is the documented upgrade
+ * path, and it re-stamps fresh by design.
+ */
+function onDiskProvenanceInstant(frontmatter: Record<string, unknown> | null): string | undefined {
+  const generated = frontmatter?.generated;
+  if (generated !== null && typeof generated === "object") {
+    const at = (generated as { at?: unknown }).at;
+    if (typeof at === "string") return at;
+  }
+  const legacy = frontmatter?.timestamp;
+  return typeof legacy === "string" ? legacy : undefined;
 }
 
 /**

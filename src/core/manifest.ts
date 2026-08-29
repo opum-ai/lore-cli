@@ -472,7 +472,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
   },
   {
     name: "scaffold",
-    summary: "Generate a downstream docs consumer's config, additively outside docs/",
+    summary: "Generate a downstream docs consumer's config additively, rewriting nothing",
     args: "<target>",
     flags: [{ name: "force", takesValue: false, summary: "Overwrite an existing generated config" }],
     json: true,

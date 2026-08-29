@@ -747,10 +747,20 @@ lore supersede adr/0007-old-decision adr/0012-new-decision
 ### `scaffold`
 
 Generate config for a downstream documentation **consumer**, written
-**additively outside `docs/`** so the OKF bundle stays the single source of
-truth and remains consumable with or without the scaffold (see
+**additively**: a scaffold run only adds files, and never moves, renames,
+restructures, or rewrites authored bundle content, so the OKF bundle stays the
+single source of truth and remains consumable with or without the scaffold (see
 [ADR-0010](../adr/0010-multi-consumer-docs-layer.md) and the
 [consumer compatibility reference](./consumer-compatibility.md)).
+
+Additive does **not** mean "outside `docs/`". Two of the three targets add new
+files inside the bundle, each because its consumer requires the file to live
+there: `mkdocs` writes `docs/tags.md` (Material's `tags` plugin renders the tag
+index from a page inside the docs tree) and `obsidian` writes
+`docs/.obsidian/app.json` and `docs/.obsidian/.gitignore` (Obsidian scopes a
+vault to its root directory). Only `docusaurus` writes entirely outside `docs/`.
+Every added file is itself OKF-legal, so a freshly scaffolded bundle still
+passes `lore validate --strict` and `lore check --strict`.
 
 ```
 lore scaffold mkdocs
