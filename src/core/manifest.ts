@@ -225,6 +225,11 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
         summary: "Preview and apply Quest's digest-approved Backlog migration before selecting Quest",
       },
       {
+        name: "keep-backlog-tasks",
+        takesValue: false,
+        summary: "Select Quest and deliberately leave an existing Backlog.md project in place",
+      },
+      {
         name: "adopt-manifest",
         takesValue: true,
         summary: "Coordinate a knowledge-adoption manifest with --migrate-backlog as one cutover",

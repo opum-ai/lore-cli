@@ -112,7 +112,10 @@ yes, but `--yes` installs nothing). A bare `lore init` off a TTY with no
 flags remains prompt-free (scaffold only, nothing else), but a newly created
 bundle now persists `backend = "quest"` under `[tracker]` so its selection is
 stable. Existing bundles that omit the tracker setting and contain a real
-`backlog/` directory are classified as legacy Backlog. Their first tracker
+Backlog.md **project** — a real `backlog/` directory holding a real
+`backlog/config.yml`, the file `backlog init` writes — are classified as legacy
+Backlog. A directory named `backlog/` without that marker is not a project and
+decides nothing. Their first tracker
 command fails loud with the exact choices `quest init` followed by `lore init
 --tracker quest --migrate-backlog`, or `lore init --tracker backlog`; Lore does
 not silently select or dual-write either backend. Migration preflights every
@@ -139,6 +142,18 @@ with the exact install command. The return to the tracker question is bounded at
 two passes, so no answer can make it loop. `--install-tracker` and
 `--no-install-tracker` are the prompt-free equivalents; nothing is ever installed
 without one of them or an explicit confirmation.
+
+**The tracker question is always asked, and migration follows it.** A Backlog
+project in the repository never removes a choice: `quest`, `backlog`, `jira`,
+and `none` are all offered regardless. Only once the answer settles on `quest`,
+and only when a real Backlog project exists, does `init` ask what should happen
+to the existing tasks — migrate them, keep them where they are, or use Backlog
+as the tracker after all. `--migrate-backlog` and `--keep-backlog-tasks` are
+the prompt-free equivalents, and a scripted `--tracker quest` over a real
+Backlog project fails without one of them rather than orphaning the tasks in
+silence. That gate reads the project, not the configuration: a bundle with
+`backend = "backlog"` already written reaches Quest through exactly the same
+two flags as a zero-config one.
 
 **Choosing `jira` configures it in the same run.** A jira selection is useless
 without a `[tracker.jira]` table — `createTrackerAdapter` refuses the backend
@@ -182,9 +197,9 @@ whatever already succeeded rather than erroring or duplicating anything.
 | | |
 |---|---|
 | **Args** | none |
-| **Key flags** | `--yes` / `--non-interactive` (skip the wizard even on a TTY) · `--tracker <quest\|backlog\|jira>` (persist the tracker choice without prompting) · `--migrate-backlog` (valid only with `--tracker quest` for a legacy zero-config Backlog bundle) · `--claude` (Claude Code bridge; `--agents` alias) · `--codex` (Codex bridge: `AGENTS.md` + `.codex/skills/lore/`) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-tracker` / `--no-tracker` (force/skip the selected tracker's capability check; `--check-backlog` / `--no-backlog` are aliases) · `--allow-no-git` (scaffold a docs-only bundle outside a git worktree) · `--install-tracker` / `--no-install-tracker` (install, or never install, a missing tracker binary) · `--jira-profile <name>` / `--jira-project <KEY>` (answer the jira configuration questions without prompting; both require `--tracker jira`) |
+| **Key flags** | `--yes` / `--non-interactive` (skip the wizard even on a TTY) · `--tracker <quest\|backlog\|jira>` (persist the tracker choice without prompting) · `--migrate-backlog` (valid only with `--tracker quest` over a real Backlog.md project) · `--keep-backlog-tasks` (select Quest and deliberately leave an existing Backlog project in place) · `--claude` (Claude Code bridge; `--agents` alias) · `--codex` (Codex bridge: `AGENTS.md` + `.codex/skills/lore/`) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-tracker` / `--no-tracker` (force/skip the selected tracker's capability check; `--check-backlog` / `--no-backlog` are aliases) · `--allow-no-git` (scaffold a docs-only bundle outside a git worktree) · `--install-tracker` / `--no-install-tracker` (install, or never install, a missing tracker binary) · `--jira-profile <name>` / `--jira-project <KEY>` (answer the jira configuration questions without prompting; both require `--tracker jira`) |
 | **Output** | `kind: init` — created/skipped scaffold paths, plus `interactive`/`scaffolds` always present (`false`/`[]` on the default path); `tracker` is present after a wizard or explicit `--tracker` choice; `migration` reports the applied digest, source fingerprint, mappings, survivors, and task fingerprints after a successful Backlog-to-Quest migration; `agents` (Claude), `codex`, and `trackerCheck` are present only when those steps ran; `trackerCheck` names the backend it probed, and the older `backlog` field is deprecated and now populated only for a Backlog bundle; `trackerEnvironment` reports what each backend's CLI and this repository looked like, and `installed` names a package this run installed |
-| **Exit** | `0` ok (the tracker check is advisory-only and never changes this) · `2` usage (bad flag/unknown `--scaffold` target, an invalid migration-flag combination, a missing `--tracker` value, a jira flag without `--tracker jira`, a non-interactive `--tracker jira` missing `--jira-profile`/`--jira-project`, or the wizard's stdin closed before finishing) · `3` not found (jira-cli has no credential profiles, the `jira` binary is missing, or the Jira project key does not resolve) · `4` permission denied · `5` a non-regular entry (directory/symlink) blocks a scaffold path, or a scaffold target collides with a differing hand-edited file · `6` malformed configuration, unknown tracker backend, a `--jira-profile` jira-cli does not know, legacy migration requirement, lossless-migration preflight failure, or the directory is not a git worktree and `--allow-no-git` was not passed |
+| **Exit** | `0` ok (the tracker check is advisory-only and never changes this) · `2` usage (bad flag/unknown `--scaffold` target, an invalid migration-flag combination, a missing `--tracker` value, a jira flag without `--tracker jira`, a non-interactive `--tracker jira` missing `--jira-profile`/`--jira-project`, or the wizard's stdin closed before finishing) · `3` not found (jira-cli has no credential profiles, the `jira` binary is missing, or the Jira project key does not resolve) · `4` permission denied · `5` a non-regular entry (directory/symlink) blocks a scaffold path, or a scaffold target collides with a differing hand-edited file · `6` malformed configuration, unknown tracker backend, a `--jira-profile` jira-cli does not know, a `--tracker quest` selection over a real Backlog project with neither `--migrate-backlog` nor `--keep-backlog-tasks`, lossless-migration preflight failure, or the directory is not a git worktree and `--allow-no-git` was not passed |
 
 ### `new`
 

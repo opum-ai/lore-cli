@@ -164,6 +164,7 @@ function scriptedPrompter(answers: {
   switchTracker?: boolean;
   jiraProfile?: string;
   jiraProject?: string;
+  backlogTasks?: string;
 }): InitPrompter {
   return {
     confirm: async (question, defaultValue) => {
@@ -178,8 +179,13 @@ function scriptedPrompter(answers: {
       if (question.includes("Hermes")) return answers.hermes ?? defaultValue;
       return answers.obsidian ?? defaultValue;
     },
-    choose: async (question, _choices, defaultValue) =>
-      question.includes("tracker") ? (answers.tracker ?? defaultValue) : (answers.site ?? defaultValue),
+    choose: async (question, _choices, defaultValue) => {
+      // Matched FIRST: LCLI-358.5's migration question ends "...or use Backlog as the tracker?", so
+      // the looser `tracker` branch below would otherwise answer it with the tracker backend.
+      if (question.includes("Backlog.md project")) return answers.backlogTasks ?? defaultValue;
+      if (question.includes("tracker")) return answers.tracker ?? defaultValue;
+      return answers.site ?? defaultValue;
+    },
     // Free-text answers (LCLI-358.4). `choose` cannot serve these: it lower-cases its answer, so a
     // profile named `Salient` or a key like `ENG` would never survive it.
     ask: async (question, defaultValue) => {
@@ -998,14 +1004,95 @@ describe("lore init — legacy zero-config tracker boundary", () => {
     );
   });
 
-  test("interactive onboarding offers only migration or an explicit Backlog pin", async () => {
+  test("an explicitly configured Backlog bundle can still reach Quest (AC#3)", async () => {
+    // The dead end this closes: with `backend = "backlog"` already written, `--tracker quest
+    // --migrate-backlog` was refused as "requires --tracker quest in a legacy zero-config Backlog
+    // bundle" — the flag it demanded was the flag that had been passed. Meanwhile bare `--tracker
+    // quest` succeeded in silence and orphaned every task.
     legacyBundle();
-    const choices: string[][] = [];
-    const base = scriptedPrompter({ tracker: "backlog", agents: false, site: "none", obsidian: false });
+    await init({ args: ["--tracker", "backlog"] });
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
+
+    const silent = expectError("validation", () =>
+      runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), args: ["--tracker", "quest"] }),
+    );
+    expect(silent.message).toContain("must be a deliberate choice");
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
+
+    const { result } = await init({
+      args: ["--tracker", "quest", "--migrate-backlog"],
+      migrateBacklog: async () => migrationResult,
+    });
+    expect(result.migration).toEqual(migrationResult);
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
+  });
+
+  test("--keep-backlog-tasks is the scripted 'leave them there' answer (AC#3)", async () => {
+    legacyBundle();
+    const { result } = await init({
+      args: ["--tracker", "quest", "--keep-backlog-tasks"],
+      migrateBacklog: async () => {
+        throw new Error("no migration must run for --keep-backlog-tasks");
+      },
+    });
+    expect(result.tracker).toBe("quest");
+    expect(result.migration).toBeUndefined();
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
+    expect(existsSync(join(root, "backlog", "config.yml"))).toBe(true);
+  });
+
+  test("a bare backlog/ directory imposes no migration answer at all (AC#2)", async () => {
+    mkdirSync(join(root, "backlog", "tasks"), { recursive: true });
+    const { result } = await init({ args: ["--tracker", "quest"] });
+    expect(result.tracker).toBe("quest");
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
+  });
+
+  test.each([
+    [
+      "a wrong --tracker value names the value passed",
+      ["--tracker", "backlog", "--migrate-backlog"],
+      "--tracker backlog was passed",
+    ],
+    ["no --tracker at all says so", ["--migrate-backlog"], "no --tracker was passed"],
+    [
+      "a missing project names the marker it looked for",
+      ["--tracker", "quest", "--migrate-backlog"],
+      "backlog/config.yml does not exist here",
+    ],
+    [
+      "the two opposite answers are mutually exclusive",
+      ["--tracker", "quest", "--migrate-backlog", "--keep-backlog-tasks"],
+      "mutually exclusive",
+    ],
+    [
+      "--keep-backlog-tasks outside a Quest selection is meaningless",
+      ["--tracker", "backlog", "--keep-backlog-tasks"],
+      "only means something with --tracker quest",
+    ],
+  ] as const)("--migrate-backlog refusals name the actual unmet condition: %s (AC#4)", (_name, args, expected) => {
+    // Deliberately NO Backlog project for the first four; the fifth is refused on flags alone. One
+    // shared sentence used to cover every one of these causes and named none of them.
+    const err = expectError("usage", () =>
+      runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), args: [...args] }),
+    );
+    expect(err.message).toContain(expected);
+  });
+
+  test("the tracker question is asked in full, and the migration question follows it (LCLI-358.5)", async () => {
+    legacyBundle();
+    const asked: { question: string; choices: string[] }[] = [];
+    const base = scriptedPrompter({
+      tracker: "quest",
+      backlogTasks: "backlog",
+      agents: false,
+      site: "none",
+      obsidian: false,
+    });
     const prompter: InitPrompter = {
       ...base,
       choose: async (question, values, defaultValue) => {
-        if (question.includes("Backlog tasks")) choices.push([...values]);
+        asked.push({ question, choices: [...values] });
         return base.choose(question, values, defaultValue);
       },
     };
@@ -1016,7 +1103,12 @@ describe("lore init — legacy zero-config tracker boundary", () => {
       adapter: fakeAdapter([], { probe: "ok" }),
       agentAvailability: () => ({ claude: false, codex: false }),
     });
-    expect(choices).toEqual([["migrate", "backlog"]]);
+    // The full vocabulary, in order: the tracker question first (AC#1), then the migration question
+    // it makes meaningful (AC#3). Neither replaces the other.
+    expect(asked[0]?.choices).toEqual(["quest", "backlog", "jira", "none"]);
+    expect(asked[1]?.choices).toEqual(["migrate", "keep", "backlog"]);
+    expect(asked[1]?.question).toContain("backlog/config.yml");
+    // Answering `backlog` to the migration question pins Backlog, as the old two-way choice did.
     expect(result.tracker).toBe("backlog");
     expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
   });
@@ -1026,7 +1118,13 @@ describe("lore init — legacy zero-config tracker boundary", () => {
     const { result } = await init({
       stdinIsTTY: true,
       stderrIsTTY: true,
-      prompter: scriptedPrompter({ tracker: "migrate", agents: false, site: "none", obsidian: false }),
+      prompter: scriptedPrompter({
+        tracker: "quest",
+        backlogTasks: "migrate",
+        agents: false,
+        site: "none",
+        obsidian: false,
+      }),
       adapter: fakeAdapter([], { probe: "ok" }),
       migrateBacklog: async () => migrationResult,
       agentAvailability: () => ({ claude: false, codex: false }),
@@ -1034,6 +1132,67 @@ describe("lore init — legacy zero-config tracker boundary", () => {
     expect(result.migration).toEqual(migrationResult);
     expect(result.tracker).toBe("quest");
     expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
+  });
+
+  test("jira and none stay reachable in a repository that has Backlog tasks (AC#1)", async () => {
+    // The regression: the tracker question used to be REPLACED by a migrate-or-pin choice whenever
+    // the bundle looked legacy, so these two backends could not be selected at all here.
+    legacyBundle();
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter: scriptedPrompter({ tracker: "none", agents: false, site: "none", obsidian: false }),
+      agentAvailability: () => ({ claude: false, codex: false }),
+    });
+    expect(result.tracker).toBe("none");
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("none");
+  });
+
+  test("`keep` selects Quest and leaves the Backlog project exactly as found (AC#3)", async () => {
+    legacyBundle();
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter: scriptedPrompter({
+        tracker: "quest",
+        backlogTasks: "keep",
+        agents: false,
+        site: "none",
+        obsidian: false,
+      }),
+      adapter: fakeAdapter([], { probe: "ok" }),
+      migrateBacklog: async () => {
+        throw new Error("no migration must run for `keep`");
+      },
+      agentAvailability: () => ({ claude: false, codex: false }),
+    });
+    expect(result.tracker).toBe("quest");
+    expect(result.migration).toBeUndefined();
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
+    expect(existsSync(join(root, "backlog", "config.yml"))).toBe(true);
+  });
+
+  test("no Backlog project means no migration question at all (AC#2)", async () => {
+    // A bare `backlog/` directory: present, but not a project. Nothing to migrate, nothing to ask.
+    mkdirSync(join(root, "backlog", "tasks"), { recursive: true });
+    const asked: string[] = [];
+    const base = scriptedPrompter({ tracker: "quest", agents: false, site: "none", obsidian: false });
+    const prompter: InitPrompter = {
+      ...base,
+      choose: async (question, values, defaultValue) => {
+        asked.push(question);
+        return base.choose(question, values, defaultValue);
+      },
+    };
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      adapter: fakeAdapter([], { probe: "ok" }),
+      agentAvailability: () => ({ claude: false, codex: false }),
+    });
+    expect(asked.some((question) => question.includes("Backlog.md project"))).toBe(false);
+    expect(result.tracker).toBe("quest");
   });
 });
 
