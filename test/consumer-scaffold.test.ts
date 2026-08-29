@@ -31,7 +31,9 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { load as yamlLoad } from "js-yaml";
+import { runCheck } from "../src/commands/check";
 import { runScaffold, type ScaffoldResult } from "../src/commands/scaffold";
+import { runValidate } from "../src/commands/validate";
 import { parseConcept } from "../src/core/concept";
 import {
   buildDocusaurusScaffold,
@@ -46,7 +48,9 @@ import {
   TAGS_INDEX_REL_PATH,
   WEBSITE_PACKAGE_JSON_REL_PATH,
 } from "../src/core/consumer-scaffold";
+import { buildScaffold } from "../src/core/scaffold";
 import { LoreError } from "../src/errors";
+import { VERSION } from "../src/meta";
 import type { OutputContext } from "../src/output";
 import { capture, expectError } from "./helpers";
 
@@ -130,10 +134,10 @@ describe("core/consumer-scaffold — buildMkdocsScaffold (pure)", () => {
     expect(raw).toContain("<!-- material/tags -->");
   });
 
-  test("stamps docs/tags.md's timestamp from the given option", () => {
+  test("stamps docs/tags.md's provenance instant from the given option", () => {
     const plan = buildMkdocsScaffold({ timestamp: "2026-01-02T03:04:05.000Z", siteName: "lore" });
     const raw = plan.files.find((f) => f.path === TAGS_INDEX_REL_PATH)?.contents ?? "";
-    expect(raw).toContain("timestamp: 2026-01-02T03:04:05.000Z");
+    expect(raw).toContain("  at: 2026-01-02T03:04:05.000Z");
   });
 });
 
@@ -196,7 +200,7 @@ describe("lore scaffold mkdocs — idempotent when unchanged (LORE-263)", () => 
     // because a same-clock re-run can pass even with the bug still present.
     runScaffold({ root, output: JSON_CTX, args: ["mkdocs"], stdout: capture(), clock: FIXED_CLOCK });
     const tagsBefore = readFileSync(join(root, TAGS_INDEX_REL_PATH), "utf8");
-    expect(tagsBefore).toContain("timestamp: 2026-07-11T12:00:00.000Z");
+    expect(tagsBefore).toContain("  at: 2026-07-11T12:00:00.000Z");
 
     const stdout = capture();
     const code = runScaffold({ root, output: JSON_CTX, args: ["mkdocs"], stdout, clock: SECOND_CLOCK });
@@ -906,5 +910,101 @@ describe("lore scaffold mkdocs — a pre-existing custom profile without Referen
       runScaffold({ root, output: JSON_CTX, args: ["mkdocs"], stdout: capture() }),
     );
     expect(err.type).toBe("validation");
+  });
+});
+
+describe("lore scaffold — a freshly scaffolded bundle still passes lore's own strict gates (LCLI-357)", () => {
+  /**
+   * The defect: `lore scaffold mkdocs` wrote `docs/tags.md` with a hardcoded legacy `timestamp:`
+   * key while every other lore-generated concept (the root `docs/index.md`, every `lore new`
+   * write) goes through {@link versionedProvenance} and emits `generated.at` under OKF 0.2. The
+   * validator warns on that legacy key, and `--strict` turns the warning into exit 6 — so scaffold
+   * alone regressed a bundle that had just passed. `lore check --strict` never caught it (the
+   * legacy-key finding is a validate-tier concern), which is why a repository gating solely on
+   * `check` shipped the file without noticing; both gates are asserted here for that reason.
+   *
+   * Written per-target rather than mkdocs-only: obsidian also writes inside `docs/`
+   * (`docs/.obsidian/*`), and docusaurus writes only outside it, so the loop pins that NO
+   * implemented target can regress the bundle's own strict gates regardless of where it writes.
+   */
+  const TARGETS = ["mkdocs", "docusaurus", "obsidian"] as const;
+
+  /** Lay down a real, strict-clean OKF bundle (init's own plan) at `root`. */
+  function initBundle(): void {
+    const plan = buildScaffold({ timestamp: "2026-07-11T12:00:00.000Z" });
+    for (const dir of plan.dirs) mkdirSync(join(root, dir), { recursive: true });
+    for (const file of plan.files) writeFileSync(join(root, file.path), file.contents);
+  }
+
+  const validateStrict = (): number =>
+    runValidate({ root, output: JSON_CTX, args: ["--strict"], stdout: capture(), stderr: capture() });
+  const checkStrict = async (): Promise<number> =>
+    await runCheck({
+      root,
+      output: JSON_CTX,
+      args: ["--strict"],
+      stdout: capture(),
+      stderr: capture(),
+      headCommitDate: () => null,
+    });
+
+  test("the un-scaffolded bundle is strict-clean to begin with, so a later failure is the scaffold's", async () => {
+    initBundle();
+    expect(validateStrict()).toBe(0);
+    expect(await checkStrict()).toBe(0);
+  });
+
+  for (const target of TARGETS) {
+    test(`lore scaffold ${target} leaves validate --strict and check --strict at exit 0`, async () => {
+      initBundle();
+      expect(scaffold([target]).code).toBe(0);
+      expect(validateStrict()).toBe(0);
+      expect(await checkStrict()).toBe(0);
+    });
+  }
+
+  test("a pre-LCLI-357 docs/tags.md carrying the legacy `timestamp` key upgrades cleanly, never crashing or silently clobbering", () => {
+    // The fix changed which frontmatter key holds the provenance instant, so a bundle scaffolded by
+    // an OLDER lore differs from today's plan by the key itself and can never be byte-identical.
+    // It must therefore reach the ordinary never-silent-clobber conflict -- not a crash, and not a
+    // silent overwrite of a file the user may have edited -- with `--force` as the upgrade path.
+    initBundle();
+    expect(scaffold(["mkdocs"]).code).toBe(0);
+    const current = readFileSync(join(root, TAGS_INDEX_REL_PATH), "utf8");
+    writeFileSync(
+      join(root, TAGS_INDEX_REL_PATH),
+      current.replace(`generated:\n  by: lore/${VERSION}\n  at: `, "timestamp: "),
+    );
+    const legacy = readFileSync(join(root, TAGS_INDEX_REL_PATH), "utf8");
+    expect(legacy).toContain("timestamp: 2026-07-11T12:00:00.000Z");
+
+    // A bare re-run under a LATER clock conflicts and leaves the file exactly as found.
+    expectError("conflict", () =>
+      runScaffold({ root, output: JSON_CTX, args: ["mkdocs"], stdout: capture(), clock: SECOND_CLOCK }),
+    );
+    expect(readFileSync(join(root, TAGS_INDEX_REL_PATH), "utf8")).toBe(legacy);
+
+    // --force is the upgrade path: it rewrites the file into the OKF 0.2 shape, and the upgraded
+    // bundle passes the strict gate the legacy key was failing.
+    const forced = runScaffold({
+      root,
+      output: JSON_CTX,
+      args: ["mkdocs", "--force"],
+      stdout: capture(),
+      clock: SECOND_CLOCK,
+    });
+    expect(forced).toBe(0);
+    const upgraded = readFileSync(join(root, TAGS_INDEX_REL_PATH), "utf8");
+    expect(upgraded).not.toContain("timestamp:");
+    expect(upgraded).toContain("  at: ");
+    expect(validateStrict()).toBe(0);
+  });
+
+  test("docs/tags.md carries OKF 0.2 `generated.at` provenance, not the legacy `timestamp` key", () => {
+    initBundle();
+    expect(scaffold(["mkdocs"]).code).toBe(0);
+    const fm = parseConcept(TAGS_INDEX_REL_PATH, readFileSync(join(root, TAGS_INDEX_REL_PATH), "utf8")).frontmatter;
+    expect(fm.timestamp).toBeUndefined();
+    expect(fm.generated).toEqual({ by: `lore/${VERSION}`, at: "2026-07-11T12:00:00.000Z" });
   });
 });
