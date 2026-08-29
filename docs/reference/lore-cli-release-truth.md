@@ -21,6 +21,38 @@ availability claim.
 
 ### Current state
 
+`0.3.5` is the release candidate for the Lore/Quest pairing repair
+(LCLI-356) and the scaffold strict-gate defect (LCLI-357). Its seven package
+manifests and exact optional-dependency pins are aligned at `0.3.5`.
+
+**Not yet published.** As of 2026-08-29 the published version remains `0.3.4`;
+this paragraph describes a candidate, and no availability claim about `0.3.5`
+is supported until the observations in "Release designation" below are recorded
+for it. `docs/index.md` deliberately names no version and points here instead
+(LCLI-361), so this paragraph is the single in-bundle statement of what is
+published — keep it honest about the difference between candidate and
+released.
+
+Why the release exists: published `0.3.4` carries a frozen
+`SUPPORTED_QUEST_VERSIONS = [0.2.7, 0.2.8]` and therefore refuses the published
+Quest `0.2.9`. As observed on 2026-08-28, the two then-current releases of the
+pair could not be used together at all — every tracker-touching command exited
+6 with `` `quest --version` did not return a supported Quest 0.2 version ``.
+`0.3.5` replaces that set with `MIN_QUEST_VERSION = 0.2.7` and a `>=`
+comparison (ADR-0020), evaluates the gate before persisting a tracker choice,
+and stops `lore scaffold mkdocs` generating a `docs/tags.md` that
+`lore validate --strict` rejects.
+
+Independent pre-candidate verification, recorded because it is evidence about
+the fix rather than about the artifact: the `opum-cli-e2e` harness ran its full
+407-row matrix against published Quest `0.2.9` using a source build of the
+LCLI-356 fix (`2e5a002`) and reported FIXED 10, REGRESSED 0, ADDED 0, REMOVED
+0 — the ten failing rows attributed to the version gate flipped and nothing
+else moved (evidence `evidence/lcli-356-verification/`, commit `c562432`).
+That build is a raw source build, not an installed artifact, so it verifies the
+fix without qualifying a release; the packed-candidate run is the
+qualification.
+
 `0.3.4` is the release candidate for the Quest 0.2.7 structured-criterion
 compatibility repair (LCLI-352): the Quest adapter now maps the released
 `{index, text, checked}` acceptanceCriteria/definitionOfDone shapes

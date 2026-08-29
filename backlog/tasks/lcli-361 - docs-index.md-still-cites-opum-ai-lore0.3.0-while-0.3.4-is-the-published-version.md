@@ -3,11 +3,11 @@ id: LCLI-361
 title: >-
   docs/index.md still cites @opum-ai/lore@0.3.0 while 0.3.4 is the published
   version
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-28 23:59'
-updated_date: '2026-08-29 23:37'
+updated_date: '2026-08-29 23:44'
 labels:
   - docs
   - release
