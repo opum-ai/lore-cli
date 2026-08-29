@@ -423,6 +423,44 @@ publish is explicitly marked public. Root `package.json` and all six
    README's stated current version and install behavior with this version bump;
    immutable historical evidence keeps its exact versions in the release-truth
    record rather than in the install examples.
+
+   **`docs/index.md` names no version, deliberately — do not add one back**
+   (LCLI-361). It is the first paragraph a reader or agent meets, so a stale
+   number there is the most-read wrong fact in the bundle, and a version pinned
+   in prose goes stale on every release. It points at
+   [Lore CLI release truth](../reference/lore-cli-release-truth.md) instead.
+   That reference is the one file in `docs/` that carries the current published
+   version; update it here, and leave every other in-bundle mention historical
+   and dated. Before finishing a release, re-run the sweep that proves no second
+   file has grown a current-state version claim — take its exit code without a
+   pipe, and treat any hit outside the release-truth record as a defect:
+
+   ```
+   grep -rn --include='*.md' -E '@opum-ai/lore@[0-9]' docs/ \
+     | grep -v 'reference/lore-cli-release-truth.md'
+   ```
+
+   Classify by what the sentence *claims*, never by which directory it sits in —
+   a directory exemption is a hand-scoped list wearing a costume, and an ADR can
+   grow a stale current-state claim just as easily as the index did. The test:
+   **does the sentence assert what is published now, undated?** If yes it is a
+   defect, wherever it lives. If it names a version *as of* a stated date, or as
+   the subject of a past release, it is a record and is fine.
+
+   The sweep is not expected to come back empty. Its exemptions are pinned here
+   individually, so a third hit appearing is a visible failure rather than a
+   silent one:
+
+   - `docs/runbooks/release-publishing.md` — the `0.1.0` post-publish smoke
+     evidence. A dated checklist result about one specific past release.
+   - `docs/adr/0020-tracker-version-gates-are-minimum-floors.md` — the
+     `0.3.4`/`0.2.9` pairing that motivated the floor decision, written "as
+     observed on 2026-08-28". A dated observation, not a current-state claim.
+
+   Any hit that is not one of those two is a defect to fix before releasing.
+   This sweep was proven by a negative control on 2026-08-29: a planted
+   `@opum-ai/lore@9.9.9` line in `docs/reference/cli-surface.md` was reported by
+   path and line, and the sweep returned to its two pinned rows once removed.
 4. Merge to `dev`, promote to `main`, and wait for the full `main` CI matrix.
    Tag that verified commit and push the tag — nothing triggers automatically
    from the tag.

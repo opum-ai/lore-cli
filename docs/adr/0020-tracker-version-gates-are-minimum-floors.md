@@ -32,9 +32,10 @@ tests asserting that everything else was rejected.
 
 The bounded set had a cost that was not priced in when it was chosen. Lore and
 Quest are separate packages with independent release cadences. The set went
-stale the moment Quest published 0.2.9: the two current published packages —
-`@opum-ai/lore@0.3.4` and `@opum-ai/quest@0.2.9`, which is what a user installing
-today actually gets — could not be used together at all. Every tracker-touching
+stale the moment Quest published 0.2.9: as observed on 2026-08-28, the two
+then-published packages — `@opum-ai/lore@0.3.4` and `@opum-ai/quest@0.2.9`, which
+is what a user installing on that date actually got — could not be used together
+at all. Every tracker-touching
 command exited 6 with `` `quest --version` did not return a supported Quest 0.2
 version ``. Restoring the pairing required a *third* release: a new Lore, shipped
 solely to add a string to a list.
