@@ -193,3 +193,25 @@ confirming exit 6 naming both files, and removing it.
 **Do not sweep with grep alone.** These shapes are semantic, so a verbatim search
 misses them by construction — and it also misses literal matches that wrap across
 two lines. Read the record.
+
+## Project-level skills: what is here on purpose
+
+This repository carries exactly three project-level skills, and each is here for a reason a reader
+should not have to re-derive (LCLI-362). **Nothing else belongs under `.claude/skills/` or
+`.codex/skills/`.**
+
+- **`.claude/skills/lore/SKILL.md` and `.codex/skills/lore/SKILL.md` are two deliberate copies, and
+  collapsing them would be a regression.** This repository *generates* both:
+  `src/core/agent-bridge.ts` owns `SKILL_REL_PATH = ".claude/skills/lore/SKILL.md"` and
+  `src/core/codex-bridge.ts` owns `CODEX_SKILL_REL_PATH = ".codex/skills/lore/SKILL.md"`. The prose
+  differs because it addresses different agents, and each entry document is written by its own
+  bridge — so CLAUDE.md citing `.claude/...` while AGENTS.md cites `.codex/...` is correct, not
+  drift. Change either through `lore agents` / `lore init --codex`, never by hand.
+- **`.claude/skills/handover/SKILL.md` shadows nothing.** There is no user-level `handover` package,
+  so this is the only copy. It is distinct from the user-level `backlog-handover` skill.
+- **No project-level copy of a shared skill.** `backlog-handover`, `codex-worker`, `codex-control`,
+  and `opum-worktrees` resolve to their user-level packages. A project-level copy is a silent fork:
+  nothing announces the substitution, and a partial copy — one carrying `SKILL.md` without the
+  `scripts/` and `references/` the procedure invokes — fails only once a session is already relying
+  on it. Empty leftover directories count: git does not track them, so they survive every
+  diff-based review and are visible only in a filesystem listing.
