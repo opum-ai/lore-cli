@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-28 23:59'
+updated_date: '2026-08-29 05:49'
 labels:
   - e2e
   - init
@@ -30,3 +31,9 @@ This matters more than usual because CLAUDE.md's own gate rules say a gate never
 - [ ] #1 docker/e2e/run-e2e.sh runs to completion in the container with every case added by LCLI-358.1/.2/.3 and LCLI-356 reported in results/report.jsonl
 - [ ] #2 Each of those cases is proven by a negative control: a deliberate violation makes it fail and names the offending condition
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-08-29: the premise 'never executed' is now too strong. The docker e2e harness job passed on PRs #445, #446, #447, and #449 — CI runs these cases on every PR. What remains true is that they have never run on this development host (`docker info` exits 1 here), so a local pre-push run cannot exercise them and a failure is only discovered in CI. Scope this task to that gap.
+<!-- SECTION:NOTES:END -->
