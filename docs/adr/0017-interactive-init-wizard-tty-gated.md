@@ -171,6 +171,70 @@ now stated precisely. `--non-interactive` is a plain alias for `--yes` with
 identical semantics, added so a script name can prefer whichever of AC#2's own
 two named examples reads more clearly at the call site.
 
+### Amendment (2026-08-28, LCLI-358.1): `--allow-no-git` is the one flag that does not skip the wizard
+
+`lore init` now requires a git worktree before it writes anything: `lore sync`
+shells `git rev-parse HEAD` and fails outright without a repository, and
+`quest init` refuses a non-worktree path, so a bundle scaffolded outside one is
+broken for everything except `lore check`. On a TTY the wizard asks first and
+runs `git init`; off a TTY, or when the prompt is declined, the run fails with
+a `validation` error before the first byte is written. `--allow-no-git` waives
+the requirement for the docs-only case that `lore check` still serves.
+
+That flag is a deliberate, single exception to this ADR's "any flag runs it
+non-interactively" rule. The rule holds because every other init flag *answers a
+wizard question*, so passing one means the caller already decided what the
+wizard would have asked. `--allow-no-git` answers a **preflight gate** instead:
+it waives a requirement rather than choosing a consumer. Folding it into that
+set would make `lore init --allow-no-git` scaffold-and-exit, leaving no way to
+reach the wizard at all from a non-git directory — the exact situation the flag
+exists for. It still suppresses its own prompt, so the 1:1 flag-per-question
+mapping this ADR rests on is preserved rather than broken.
+
+The same amendment moves the base scaffold to **after** every prompt. This
+ADR's BLOCKING-2 disposition (EOF is a classified `usage` error, never a silent
+exit 0) previously still left `docs/` and `.lore/` on disk from a run that then
+refused; a declined git prompt, a rejected flag combination, and an EOF now all
+leave the directory byte-for-byte unchanged. An accepted git prompt is recorded
+rather than executed for the same reason — `git init` is itself a write, so it
+runs alongside the scaffold once every question is answered, and a Ctrl-D at a
+later prompt leaves no `.git` behind either. A structurally blocked bundle (a
+symlink or wrong-shaped entry at a path the bundle needs) is refused before the
+first question rather than after the last one.
+
+### Amendment (2026-08-28, LCLI-358.2): the capability check follows the selected tracker
+
+This ADR calls the capability check "backlog-coupling" throughout, and the
+implementation matched: it probed the `backlog` binary no matter which backend
+the bundle had selected, so choosing Quest reported that Backlog.md was
+uninitialized. It now probes the selected backend, and the flags are spelled
+`--check-tracker`/`--no-tracker`, with `--check-backlog`/`--no-backlog` kept as
+aliases so this ADR's flag-per-question mapping still holds for every script
+already written against it. The `--json` result carries the outcome under
+`trackerCheck`, which names the backend it probed; the older `backlog` field is
+deprecated and populated only for a Backlog bundle.
+
+### Amendment (2026-08-28, LCLI-358.3): the tracker question is asked with the environment in view
+
+The wizard asked which backend to use while knowing nothing about the machine or
+the repository, and never checked the answer was usable — a repository could be
+pinned to Quest with no `quest` installed and no workspace, and nothing said so
+until the first tracker command failed. `init` now detects all three backends
+(PATH plus one marker file each) and prints that state before the question.
+
+Choosing a backend whose binary is missing offers to install its package. This
+adds a **new class of wizard question**: the others choose what `lore` writes
+inside the repository, while this one runs `npm install -g` and changes the
+machine. It is therefore never implied — it happens only on an explicit
+confirmation or an explicit `--install-tracker`, and `--no-install-tracker` opts
+out permanently. Declining offers one switch to a different backend; declining
+that exits with the exact install command.
+
+The return to the tracker question is **bounded at two passes**. A loop whose
+exit depends only on the operator eventually answering differently is a loop an
+automated or confused caller never escapes, so the bound is a property of the
+code rather than of the answers.
+
 ## Consequences
 
 ### Positive
@@ -195,8 +259,10 @@ two named examples reads more clearly at the call site.
   stderr half of the fix is exactly what makes `lore-setup.sh` safe to run
   unattended again.
 - **A fully scriptable equivalent EXISTS for every wizard option** — `lore
-  init --tracker jira --agents --obsidian --scaffold mkdocs` reaches every configuration the
-  wizard can reach, with zero prompts — but **`lore init --yes` is not that
+  init --tracker jira --jira-profile <name> --jira-project <KEY> --agents --obsidian --scaffold mkdocs`
+  reaches every configuration the wizard can reach, with zero prompts (the two
+  `--jira-*` flags joined this list with LCLI-358.4, which gave the jira branch
+  questions of its own) — but **`lore init --yes` is not that
   equivalent** (see the `--yes` clarification below); automation should name
   the flags for the options it actually wants rather than assume `--yes`
   mirrors a blind run through the wizard.

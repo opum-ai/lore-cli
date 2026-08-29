@@ -163,6 +163,8 @@ consequences. See the [ADR log](adr/index.md) for the full, ordered index.
 - [0016 — Confluence publish: one-way, Cloud/ADF, deferred](adr/0016-confluence-one-way-publish-deferred.md)
 - [0017 — Interactive init wizard, TTY-gated](adr/0017-interactive-init-wizard-tty-gated.md)
 - [0018 — Persistent local graph projection with LadybugDB](adr/0018-persistent-local-graph-projection-with-ladybugdb.md)
+- [0019 — Separate OKF lifecycle from Lore task progress](adr/0019-separate-okf-lifecycle-from-lore-task-progress.md)
+- [0020 — Tracker version gates are minimum floors, not bounded allowlists](adr/0020-tracker-version-gates-are-minimum-floors.md)
 
 ## Runbooks
 

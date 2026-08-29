@@ -135,7 +135,13 @@ describe("lore schema export — default (story-convention) profile", () => {
 
     const initRoot = mkdtempSync(join(tmpdir(), "lore-schema-init-"));
     try {
-      runInit({ root: initRoot, output: JSON_CTX, stdout: capture(), clock: () => new Date("2026-06-28T00:00:00Z") });
+      runInit({
+        root: initRoot,
+        args: ["--allow-no-git"],
+        output: JSON_CTX,
+        stdout: capture(),
+        clock: () => new Date("2026-06-28T00:00:00Z"),
+      });
       const scaffolded = readFileSync(join(initRoot, ".lore/schemas/adr.schema.json"), "utf8");
       expect(exported).toBe(scaffolded);
     } finally {

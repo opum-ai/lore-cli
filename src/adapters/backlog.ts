@@ -32,6 +32,7 @@ import { join } from "node:path";
 import * as yaml from "js-yaml";
 import { z } from "zod";
 import { deriveMessage, errnoCode, LoreError, readFileIfPresent, stderrHint } from "../errors";
+import { compareSemver, parseSemver } from "./semver";
 import type { TrackerAdapter } from "./tracker";
 
 /**
@@ -206,41 +207,11 @@ export interface BacklogCapability {
   readonly schemaVersion: number;
 }
 
-/** A parsed semantic version — just the numeric release triple the floor comparison needs. */
-interface Semver {
-  readonly major: number;
-  readonly minor: number;
-  readonly patch: number;
-  /** The `"major.minor.patch"` string, echoed into {@link BacklogCapability.version}. */
-  readonly raw: string;
-}
-
 /** The one hint pointing an operator at how to obtain a `--json`-capable Backlog.md. */
 const RUNBOOK_HINT = `lore needs a --json-capable Backlog.md. Install backlog.md>=${MIN_BACKLOG_VERSION} (npm install -g backlog.md, or your package manager's equivalent) and put its \`backlog\` binary on PATH; see docs/runbooks/backlog-json-patch.md.`;
 
 /** Upstream's stable diagnostic when a capable binary is invoked outside an initialized project. */
 const NO_BACKLOG_PROJECT_DIAGNOSTIC = /No Backlog\.md project found\b/i;
-
-/**
- * Parse the leading `major.minor.patch` from `backlog --version` output. Backlog prints a **bare**
- * semver plus a trailing newline (`"1.47.1\n"`) — no `v` prefix, no program name — so we anchor at the
- * start of the trimmed string and ignore any pre-release/build suffix. Returns `null` when the output
- * is not a recognizable semver (an empty string, a name-prefixed line, garbage), which the probe treats
- * as a fail-loud condition rather than guessing.
- */
-function parseSemver(output: string): Semver | null {
-  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(output.trim());
-  if (!match) {
-    return null;
-  }
-  const [, major, minor, patch] = match;
-  return { major: Number(major), minor: Number(minor), patch: Number(patch), raw: `${major}.${minor}.${patch}` };
-}
-
-/** Order two {@link Semver}s by release triple: negative if `a < b`, positive if `a > b`, else `0`. */
-function compareSemver(a: Semver, b: Semver): number {
-  return a.major - b.major || a.minor - b.minor || a.patch - b.patch;
-}
 
 /**
  * Raise the fail-loud "needs a `--json`-capable Backlog.md" error (contract §5): the binary is present

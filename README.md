@@ -142,10 +142,13 @@ three modes with precedence `--json` > `--plain` > pretty:
   stderr as `{error_type, message, hint, input}`.
 
 ```bash
-# 1. Scaffold the OKF bundle (docs/, .lore/, root index.md). On a bare TTY
-#    invocation this runs a guided wizard for the rest of onboarding too
-#    (agent bridge, doc-site scaffolds, backlog check); off a TTY (CI, this
-#    snippet) it's exactly this — the bundle only, non-interactively.
+# 1. Scaffold the OKF bundle (docs/, .lore/, root index.md). This needs a git
+#    repository — `lore sync` reads git history and the default tracker's own
+#    `quest init` refuses a non-worktree path. On a bare TTY invocation the
+#    wizard offers to run `git init` for you, then covers the rest of
+#    onboarding (agent bridge, doc-site scaffolds, tracker check); off a TTY
+#    (CI, this snippet) it's exactly this — the bundle only, non-interactively.
+#    Add `--allow-no-git` for a docs-only bundle outside a repository.
 lore init
 
 # 2. Create typed concepts from frontmatter templates.

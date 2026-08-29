@@ -4,16 +4,58 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { type ErrorType, errnoCode, LoreError } from "../errors";
 import type { BacklogComment, BacklogCriterion, BacklogTask, BacklogTaskDetail, ListTasksOptions } from "./backlog";
+import { atLeast } from "./semver";
 import type { TrackerAdapter, TrackerCapability } from "./tracker";
 
 export const QUEST_SCHEMA_VERSION = 1;
 export const QUEST_TIMEOUT_ENV_VAR = "LORE_QUEST_TIMEOUT_MS";
 export const DEFAULT_QUEST_TIMEOUT_MS = 30_000;
-const SUPPORTED_QUEST_VERSIONS = ["0.2.7", "0.2.8"] as const;
-const QUEST_VERSION_SET_HINT = `Quest ${SUPPORTED_QUEST_VERSIONS[0]} or ${SUPPORTED_QUEST_VERSIONS[1]} is required`;
-const QUEST_VERSION_GATE_MESSAGE = "`quest --version` did not return a supported Quest 0.2 version";
+/**
+ * The oldest Quest whose JSON contract this adapter is qualified against. A **minimum floor**, not a
+ * bounded set (LCLI-356).
+ *
+ * LCLI-353 deliberately froze an exact-match allowlist (`["0.2.7", "0.2.8"]`) and its tests asserted
+ * rejection of anything else. That design has a cost it was chosen without: Lore and Quest release
+ * independently, so the set went stale the moment Quest shipped 0.2.9 — the two current published
+ * packages could not be used together at all, and every later Quest patch would need a fresh Lore
+ * release before the pair worked again. Reversed by product-owner decision on 2026-08-28.
+ *
+ * A floor is safe here because the version is NOT what actually enforces compatibility. Every single
+ * Quest call already validates the envelope structurally — `schemaVersion === {@link
+ * QUEST_SCHEMA_VERSION}`, the exact `kind`, the presence of `data`, and {@link REQUIRED_COMMANDS}
+ * through the manifest — so a Quest that broke the contract would be rejected by those checks with a
+ * `drift` diagnostic naming what changed, whether or not its version number happened to sit inside
+ * some allowlist. The floor's job is only to give a clearly-too-old Quest a better message than a
+ * mid-call structural failure would.
+ */
+export const MIN_QUEST_VERSION = "0.2.7";
+
+/**
+ * The stable discriminator on a below-the-floor rejection, so a caller can act on THAT failure
+ * specifically without matching message text (LCLI-356).
+ *
+ * The distinction it enables is load-bearing: an installed Quest below the floor is a pairing that
+ * cannot work at all, and no action inside the repository fixes it — the operator must install a
+ * different Quest. Every other probe failure ("workspace is not initialized", "not on PATH") is one
+ * setup step away in the same directory, which is exactly why LORE-319 made the capability check
+ * advisory rather than fatal. `lore init` withholds a tracker selection for the first and keeps
+ * reporting the second as a warning.
+ */
+export const QUEST_VERSION_FLOOR_CODE = "quest.version-below-floor";
+
+/** Whether `error` is the below-the-floor rejection {@link QUEST_VERSION_FLOOR_CODE} marks. */
+export function isQuestVersionFloorFailure(error: unknown): boolean {
+  return (
+    error instanceof LoreError &&
+    typeof error.input === "object" &&
+    error.input !== null &&
+    (error.input as { code?: unknown }).code === QUEST_VERSION_FLOOR_CODE
+  );
+}
+const QUEST_VERSION_SET_HINT = `Quest ${MIN_QUEST_VERSION} or newer is required`;
+const QUEST_VERSION_GATE_MESSAGE = "`quest --version` did not report a supported Quest version";
 const ACTOR_FLAGS = ["--actor", "lore", "--actor-kind", "human"] as const;
-const INSTALL_HINT = "install @opum-ai/quest@0.2.7 (or @opum-ai/quest@0.2.8) and ensure the `quest` binary is on PATH";
+const INSTALL_HINT = `install @opum-ai/quest@>=${MIN_QUEST_VERSION} and ensure the \`quest\` binary is on PATH`;
 const REQUIRED_COMMANDS = [
   ["manifest", "manifest.registry", false],
   ["version", null, false],
@@ -158,10 +200,22 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
   async function probe(): Promise<TrackerCapability> {
     assertWorkspace();
     const versionResult = await invoke(["--version"], "--version");
-    const version = versionResult.stdout.trim();
-    const supported = (SUPPORTED_QUEST_VERSIONS as readonly string[]).includes(version);
-    if (versionResult.exitCode !== 0 || !version || !supported)
+    const reported = versionResult.stdout.trim();
+    if (versionResult.exitCode !== 0 || !reported)
       throw new LoreError("validation", QUEST_VERSION_GATE_MESSAGE, QUEST_VERSION_SET_HINT);
+    const comparison = atLeast(reported, MIN_QUEST_VERSION);
+    if (comparison === null)
+      throw new LoreError("validation", "`quest --version` did not print a bare semver", QUEST_VERSION_SET_HINT, {
+        reported,
+      });
+    if (!comparison.ok)
+      throw new LoreError(
+        "validation",
+        `Quest ${comparison.version.raw} is below the ${MIN_QUEST_VERSION} floor this adapter is qualified against`,
+        INSTALL_HINT,
+        { code: QUEST_VERSION_FLOOR_CODE, version: comparison.version.raw, floor: MIN_QUEST_VERSION },
+      );
+    const version = comparison.version.raw;
     const manifest = await run(["manifest", "--json"], "manifest --json");
     if (manifest.kind !== "manifest.registry")
       throw drift("manifest --json", `returned kind ${JSON.stringify(manifest.kind)}, expected "manifest.registry"`);
@@ -210,7 +264,7 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
       if (input.milestone !== undefined)
         throw new LoreError(
           "validation",
-          "Quest 0.2.7 does not support task-to-milestone attachment",
+          "Quest does not support task-to-milestone attachment",
           "omit the milestone or select a tracker backend that supports milestones",
           { milestone: input.milestone },
         );
