@@ -769,6 +769,9 @@ describe("lore sync — real git integration + router", () => {
     git(["commit", "-q", "-m", "add story"]);
 
     mkdirSync(join(root, "backlog", "tasks"), { recursive: true });
+    // The marker, not just the directory: since LCLI-358.5 a bare `backlog/` is not a Backlog
+    // project, so without this the run resolves to quest and commits nothing.
+    writeFileSync(join(root, "backlog", "config.yml"), "statuses:\n  - To Do\n");
     writeFileSync(join(root, "backlog", "tasks", "lore-1 - x.md"), "a real task file\n");
 
     const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
