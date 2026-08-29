@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-28 21:30'
-updated_date: '2026-08-28 23:15'
+updated_date: '2026-08-29 00:04'
 labels:
   - release
   - quest
@@ -15,6 +15,10 @@ labels:
   - e2e
 dependencies:
   - LCLI-353
+documentation:
+  - >-
+    backlog/docs/doc-26 -
+    Backlog-campaign-tracker-—-LCLI-358-lore-init-onboarding-rebuild.md
 priority: high
 type: bug
 ordinal: 477000

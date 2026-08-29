@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-28 21:46'
-updated_date: '2026-08-28 21:48'
+updated_date: '2026-08-29 00:04'
 labels:
   - init
   - onboarding
@@ -18,6 +18,10 @@ references:
     Quest version gate is tracked separately in LCLI-356 (exact-match allowlist
     rejects the shipped 0.2.9); cross-repo dependency is opum-ai/quest-cli
     QCLI-136.
+documentation:
+  - >-
+    backlog/docs/doc-26 -
+    Backlog-campaign-tracker-—-LCLI-358-lore-init-onboarding-rebuild.md
 ordinal: 479000
 ---
 
