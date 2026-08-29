@@ -471,8 +471,11 @@ default_labels = ["lore"]
 status_flow = ["To Do", "In Progress", "Done"]
 ```
 
-Run `lore init --tracker jira` to write the selection without prompts, or choose
-Jira in a bare interactive `lore init` wizard. `quest`, `backlog`, and `jira`
+Run `lore init --tracker jira --jira-profile <name> --jira-project <KEY>` to
+write the selection and this table without prompts, or choose Jira in a bare
+interactive `lore init` wizard, which asks the same two questions and validates
+the key live before writing anything. `init` never writes a credential; `board`
+is left to the operator. `quest`, `backlog`, and `jira`
 are accepted. Legacy zero-config bundles are offered only an explicit Quest
 migration or Backlog pin. Unknown keys remain tolerated for forward compatibility.
 

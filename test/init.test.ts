@@ -14,8 +14,10 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import type { BacklogAdapter } from "../src/adapters/backlog";
 import { type GitPreflight, realGitPreflight } from "../src/adapters/git-preflight";
+import type { JiraOnboarding, JiraProfile, JiraProjectSummary } from "../src/adapters/jira-onboarding";
 import { MIN_QUEST_VERSION, QUEST_VERSION_FLOOR_CODE } from "../src/adapters/quest";
 import { atLeast } from "../src/adapters/semver";
+import { createTrackerAdapter } from "../src/adapters/tracker";
 import {
   detectTrackerEnvironment,
   type TrackerEnvironment,
@@ -87,6 +89,7 @@ async function init(
     git?: GitPreflight;
     trackerEnvironment?: () => TrackerEnvironment;
     installTracker?: InitOptions["installTracker"];
+    jira?: JiraOnboarding;
   } = {},
 ): Promise<{ code: number; result: InitResult; stderr: string }> {
   const stdout = capture();
@@ -112,11 +115,40 @@ async function init(
     git: extra.git ?? gitStub(),
     trackerEnvironment: extra.trackerEnvironment,
     installTracker: extra.installTracker,
+    // Defaulted, never left to the real seam: without this a jira-selecting test would shell the
+    // machine's own `jira` binary and read whichever credential profiles the developer happens to
+    // have (LCLI-358.4).
+    jira: extra.jira ?? fakeJira(),
   };
   const code = await runInit(options);
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: InitResult };
   expect(envelope.kind).toBe("init.result");
   return { code, result: envelope.data, stderr: stderr.text() };
+}
+
+/**
+ * A fake {@link JiraOnboarding}. Every jira branch is driven from these values, so no test ever
+ * spawns jira-cli, reads a real credential profile, or reaches a real Jira site.
+ */
+function fakeJira(
+  overrides: {
+    profiles?: readonly JiraProfile[];
+    project?: JiraProjectSummary;
+    projectError?: unknown;
+    calls?: string[];
+  } = {},
+): JiraOnboarding {
+  return {
+    listProfiles: async () => {
+      overrides.calls?.push("listProfiles");
+      return overrides.profiles ?? [{ name: "salient", jiraUrl: "https://example.atlassian.net", isDefault: true }];
+    },
+    describeProject: async (key, profile) => {
+      overrides.calls?.push(`describeProject(${key}, ${profile})`);
+      if (overrides.projectError !== undefined) throw overrides.projectError;
+      return overrides.project ?? { key, name: `${key} project`, issueTypes: ["Story", "Task", "Bug", "Subtask"] };
+    },
+  };
 }
 
 /** A scripted {@link InitPrompter}; omitted answers fall through to each prompt's own default. */
@@ -130,6 +162,8 @@ function scriptedPrompter(answers: {
   git?: boolean;
   install?: boolean;
   switchTracker?: boolean;
+  jiraProfile?: string;
+  jiraProject?: string;
 }): InitPrompter {
   return {
     confirm: async (question, defaultValue) => {
@@ -146,6 +180,13 @@ function scriptedPrompter(answers: {
     },
     choose: async (question, _choices, defaultValue) =>
       question.includes("tracker") ? (answers.tracker ?? defaultValue) : (answers.site ?? defaultValue),
+    // Free-text answers (LCLI-358.4). `choose` cannot serve these: it lower-cases its answer, so a
+    // profile named `Salient` or a key like `ENG` would never survive it.
+    ask: async (question, defaultValue) => {
+      if (question.includes("jira-cli profile")) return answers.jiraProfile ?? defaultValue;
+      if (question.includes("project key")) return answers.jiraProject ?? defaultValue;
+      return defaultValue;
+    },
     close: () => {},
   };
 }
@@ -155,7 +196,7 @@ function forbiddenPrompter(): InitPrompter {
   const fail = (method: string) => (): never => {
     throw new Error(`InitPrompter.${method} should not have been called — the wizard must not run`);
   };
-  return { confirm: fail("confirm"), choose: fail("choose"), close: fail("close") };
+  return { confirm: fail("confirm"), choose: fail("choose"), ask: fail("ask"), close: fail("close") };
 }
 
 function legacyBundle(): void {
@@ -583,7 +624,7 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
 
   test("--tracker jira persists the choice without prompting", async () => {
     const { code, result } = await init({
-      args: ["--tracker", "jira"],
+      args: ["--tracker", "jira", "--jira-profile", "salient", "--jira-project", "ENG"],
       stdinIsTTY: true,
       stderrIsTTY: true,
       prompter: forbiddenPrompter(),
@@ -624,7 +665,7 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
       ].join("\n"),
     );
 
-    await init({ args: ["--tracker", "jira"] });
+    await init({ args: ["--tracker", "jira", "--jira-profile", "salient", "--jira-project", "ENG"] });
     const current = readFileSync(configPath, "utf8");
     expect(current).toContain('# retained\n[future]\ntracker.backend = "nested-value"');
     expect(current).toContain('[tracker]\nbackend = "jira"\nfuture_key = true');
@@ -999,7 +1040,14 @@ describe("lore init — legacy zero-config tracker boundary", () => {
 describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the locked design decision)", () => {
   test("offers exactly the shipped tracker choices and persists the selected backend", async () => {
     const choicesSeen: string[][] = [];
-    const base = scriptedPrompter({ tracker: "jira", agents: false, codex: false, site: "none", obsidian: false });
+    const base = scriptedPrompter({
+      tracker: "jira",
+      jiraProject: "ENG",
+      agents: false,
+      codex: false,
+      site: "none",
+      obsidian: false,
+    });
     const prompter: InitPrompter = {
       ...base,
       choose: async (question, choices, defaultValue) => {
@@ -1022,7 +1070,7 @@ describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the lock
   });
 
   test("wizard and --tracker write the identical tracker configuration", async () => {
-    await init({ args: ["--tracker", "jira"] });
+    await init({ args: ["--tracker", "jira", "--jira-profile", "salient", "--jira-project", "ENG"] });
     const fromFlag = readFileSync(join(root, ".lore/config.toml"), "utf8");
     rmSync(root, { recursive: true, force: true });
     mkdirSync(root, { recursive: true });
@@ -1030,7 +1078,14 @@ describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the lock
     await init({
       stdinIsTTY: true,
       stderrIsTTY: true,
-      prompter: scriptedPrompter({ tracker: "jira", agents: false, codex: false, site: "none", obsidian: false }),
+      prompter: scriptedPrompter({
+        tracker: "jira",
+        jiraProject: "ENG",
+        agents: false,
+        codex: false,
+        site: "none",
+        obsidian: false,
+      }),
       agentAvailability: () => ({ claude: false, codex: false }),
       adapter: fakeAdapter([], { probe: "ok" }),
     });
@@ -1226,6 +1281,7 @@ describe("lore init — EOF (Ctrl-D) mid-wizard is a `usage` error, not a silent
     const prompter: InitPrompter = {
       confirm: () => Promise.reject(eofError),
       choose: () => Promise.reject(eofError),
+      ask: () => Promise.reject(eofError),
       close: () => {
         closed = true;
       },
@@ -1253,6 +1309,7 @@ describe("lore init — EOF (Ctrl-D) mid-wizard is a `usage` error, not a silent
     const prompter: InitPrompter = {
       confirm: () => Promise.reject(eofError),
       choose: () => Promise.reject(eofError),
+      ask: () => Promise.reject(eofError),
       close: () => {},
     };
     const stdout = capture();
@@ -1402,6 +1459,7 @@ describe("lore init — the git preflight runs before the first byte is written 
         return defaultValue === true && question.includes("git repository");
       },
       choose: async (_question, _choices, defaultValue) => defaultValue,
+      ask: async (_question, defaultValue) => defaultValue,
       close: () => {},
     };
     await init({ git, stdinIsTTY: true, stderrIsTTY: true, prompter });
@@ -1416,6 +1474,9 @@ describe("lore init — the git preflight runs before the first byte is written 
         throw eof;
       },
       choose: async () => {
+        throw eof;
+      },
+      ask: async () => {
         throw eof;
       },
       close: () => {},
@@ -1490,6 +1551,9 @@ describe("lore init — review follow-ups: no write survives a refusal, and git 
       choose: async () => {
         throw eof;
       },
+      ask: async () => {
+        throw eof;
+      },
       close: () => {},
     };
     await expect(
@@ -1511,6 +1575,10 @@ describe("lore init — review follow-ups: no write survives a refusal, and git 
         return true;
       },
       choose: async (question, _choices, defaultValue) => {
+        asked.push(question);
+        return defaultValue;
+      },
+      ask: async (question, defaultValue) => {
         asked.push(question);
         return defaultValue;
       },
@@ -1585,17 +1653,19 @@ describe("lore init — the capability probe follows the selected tracker (LCLI-
     expect(stderr).not.toContain("backlog");
   });
 
-  test("selecting jira probes jira, and its missing configuration is an advisory, not a crash", async () => {
-    // `createTrackerAdapter` throws for jira with no [tracker.jira] table. That is a real fact about
-    // the operator's setup, so it belongs in the advisory the probe already emits — the scaffold
-    // itself succeeded.
-    const { code, result, stderr } = await init({ args: ["--tracker", "jira", "--check-tracker"] });
+  test("selecting jira leaves a bundle whose tracker adapter actually constructs (LCLI-358.4)", async () => {
+    // The regression this replaces: `--tracker jira` used to write `backend = "jira"` and no
+    // `[tracker.jira]` table, so `createTrackerAdapter` threw "tracker.jira configuration is
+    // required" on the very next tracker command and the probe reported that as an advisory. The
+    // configuration is now written with the selection, so the same construction succeeds.
+    const { code } = await init({ args: ["--tracker", "jira", "--jira-profile", "salient", "--jira-project", "ENG"] });
     expect(code).toBe(0);
-    expect(result.trackerCheck?.backend).toBe("jira");
-    expect(result.trackerCheck?.capable).toBe(false);
-    expect(result.trackerCheck?.warning).toContain("tracker.jira configuration is required");
-    expect(stderr).toContain("jira coupling unavailable");
-    expect(stderr).not.toContain("backlog");
+    const tracker = loadConfig({ root, env: {} }).tracker;
+    expect(tracker.backend).toBe("jira");
+    expect(tracker.jira?.profile).toBe("salient");
+    expect(tracker.jira?.project).toBe("ENG");
+    // Construction only — no `probe()`, so nothing here reaches a real `jira` binary or a real site.
+    expect(() => createTrackerAdapter(root, { backend: "jira", jira: tracker.jira })).not.toThrow();
   });
 
   test("selecting none runs no probe at all, even when --check-tracker asks for one", async () => {
@@ -1833,7 +1903,7 @@ describe("lore init — the tracker environment is detected before the choice (L
     const { result } = await init({
       stdinIsTTY: true,
       stderrIsTTY: true,
-      prompter: scriptedPrompter({ tracker: "jira", site: "none", obsidian: false }),
+      prompter: scriptedPrompter({ tracker: "jira", jiraProject: "ENG", site: "none", obsidian: false }),
       trackerEnvironment: () => env(),
       installTracker: async (entry) => {
         installs.push(entry.package);
@@ -1850,6 +1920,7 @@ describe("lore init — the tracker environment is detected before the choice (L
     const prompter: InitPrompter = {
       confirm: async (question) => !question.includes("not installed") && !question.includes("different tracker"),
       choose: async (question, _choices, defaultValue) => (question.includes("tracker") ? "jira" : defaultValue),
+      ask: async (_question, defaultValue) => defaultValue,
       close: () => {},
     };
     const err = await Promise.resolve(
@@ -1891,6 +1962,7 @@ describe("lore init — the tracker environment is detected before the choice (L
         trackerAsks += 1;
         return trackerAsks === 1 ? "jira" : "quest";
       },
+      ask: async (_question, defaultValue) => defaultValue,
       close: () => {},
     };
     const { result } = await init({
@@ -1913,6 +1985,7 @@ describe("lore init — the tracker environment is detected before the choice (L
         trackerAsks += 1;
         return "jira"; // never installed, never accepted — the adversarial answer
       },
+      ask: async (_question, defaultValue) => defaultValue,
       close: () => {},
     };
     const err = await Promise.resolve(
@@ -1939,7 +2012,7 @@ describe("lore init — the tracker environment is detected before the choice (L
   test("--install-tracker installs without prompting; --no-install-tracker never installs (AC#4)", async () => {
     const installs: string[] = [];
     const { result } = await init({
-      args: ["--tracker", "jira", "--install-tracker"],
+      args: ["--tracker", "jira", "--jira-profile", "salient", "--jira-project", "ENG", "--install-tracker"],
       trackerEnvironment: () => env(),
       installTracker: async (entry) => {
         installs.push(entry.package);
@@ -1950,7 +2023,7 @@ describe("lore init — the tracker environment is detected before the choice (L
     expect(result.installed).toBe("@salient-ai/jira-cli");
 
     const second = await init({
-      args: ["--tracker", "jira", "--no-install-tracker"],
+      args: ["--tracker", "jira", "--jira-profile", "salient", "--jira-project", "ENG", "--no-install-tracker"],
       trackerEnvironment: () => env(),
       installTracker: async () => {
         throw new Error("must not install");
@@ -1962,7 +2035,7 @@ describe("lore init — the tracker environment is detected before the choice (L
   test("nothing is ever installed without an explicit confirmation or flag", async () => {
     // A bare non-interactive run must never mutate the machine's global packages.
     const { result } = await init({
-      args: ["--tracker", "jira"],
+      args: ["--tracker", "jira", "--jira-profile", "salient", "--jira-project", "ENG"],
       trackerEnvironment: () => env(),
       installTracker: async () => {
         throw new Error("must not install");
@@ -2004,5 +2077,223 @@ describe("lore init — the tracker environment is detected before the choice (L
     expect(err?.type).toBe("not_found");
     expect(err?.message).toContain("is still not on PATH");
     expect(err?.hint).toContain("npm prefix -g");
+  });
+});
+
+describe("lore init — configuring the jira backend (LCLI-358.4)", () => {
+  /**
+   * The config file's ACTIVE lines — every comment stripped.
+   *
+   * The scaffolded template ships a fully commented-out `# [tracker.jira]` example, so a raw
+   * substring search cannot tell a written setting from the documentation of one. Stripping
+   * comments first is what makes "nothing was written" a real assertion rather than one the
+   * template satisfies on its own.
+   */
+  function configText(): string {
+    const path = join(root, ".lore/config.toml");
+    if (!existsSync(path)) return "";
+    return readFileSync(path, "utf8")
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("#"))
+      .join("\n");
+  }
+
+  test("zero jira-cli profiles exits naming `jira init`, and writes no configuration (AC#1)", async () => {
+    const err = await Promise.resolve(
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        clock: FIXED_CLOCK,
+        args: ["--tracker", "jira"],
+        jira: fakeJira({ profiles: [] }),
+      }),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught as LoreError,
+    );
+    expect(err?.type).toBe("not_found");
+    expect(err?.message).toContain("no credential profiles");
+    expect(err?.hint).toContain("jira init");
+    // The escape hatch is the operator running `jira init` themselves — Lore must never offer to
+    // run it, because it is interactive and handles credentials.
+    expect(err?.hint).toContain("Lore never does");
+    // Nothing partial: the selection is never persisted, so the bundle is not pinned to a backend
+    // it cannot use.
+    expect(configText()).not.toContain("jira");
+  });
+
+  test("the profile question lists every profile and defaults to jira-cli's own default (AC#2)", async () => {
+    const { result, stderr } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      // No `jiraProfile` answer: a bare Enter must resolve to the default profile.
+      prompter: scriptedPrompter({ tracker: "jira", jiraProject: "ENG", site: "none", obsidian: false }),
+      agentAvailability: () => ({ claude: false, codex: false }),
+      adapter: fakeAdapter([], { probe: "ok" }),
+      jira: fakeJira({
+        profiles: [
+          { name: "personal", jiraUrl: "https://personal.atlassian.net", isDefault: false },
+          { name: "Salient", jiraUrl: "https://salient.atlassian.net", isDefault: true },
+        ],
+      }),
+    });
+    expect(stderr).toContain("personal — https://personal.atlassian.net");
+    expect(stderr).toContain("Salient — https://salient.atlassian.net (jira-cli default)");
+    expect(result.tracker).toBe("jira");
+    // Mixed case survives: `choose` would have lower-cased this answer into no profile at all.
+    expect(loadConfig({ root, env: {} }).tracker.jira?.profile).toBe("Salient");
+  });
+
+  test("a profile name jira-cli does not know is rejected against the live list (AC#2)", async () => {
+    const err = await Promise.resolve(
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        clock: FIXED_CLOCK,
+        args: ["--tracker", "jira", "--jira-profile", "typo", "--jira-project", "ENG"],
+        jira: fakeJira(),
+      }),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught as LoreError,
+    );
+    expect(err?.type).toBe("validation");
+    expect(err?.hint).toContain("salient");
+    expect(configText()).not.toContain("[tracker.jira]");
+  });
+
+  test("an unresolvable project key fails with jira-cli's own reason, not a generic error (AC#3)", async () => {
+    const calls: string[] = [];
+    const err = await Promise.resolve(
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        clock: FIXED_CLOCK,
+        args: ["--tracker", "jira", "--jira-profile", "salient", "--jira-project", "NOPE"],
+        jira: fakeJira({
+          calls,
+          projectError: new LoreError(
+            "not_found",
+            "`jira project get NOPE` failed: No project could be found with key 'NOPE'.",
+            "check the Jira project key",
+          ),
+        }),
+      }),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught as LoreError,
+    );
+    expect(calls).toContain("describeProject(NOPE, salient)");
+    expect(err?.type).toBe("not_found");
+    expect(err?.message).toContain("No project could be found with key 'NOPE'.");
+    expect(configText()).not.toContain("[tracker.jira]");
+  });
+
+  test("a validated selection writes the non-secret table and no credential (AC#4)", async () => {
+    await init({
+      args: ["--tracker", "jira", "--jira-profile", "salient", "--jira-project", "ENG"],
+      jira: fakeJira({ project: { key: "ENG", name: "Engineering", issueTypes: ["Story", "Task", "Subtask"] } }),
+    });
+    const jira = loadConfig({ root, env: {} }).tracker.jira;
+    expect(jira).toEqual({
+      profile: "salient",
+      project: "ENG",
+      // Read from the project's own issue types, so a configured bundle cannot name one the
+      // project does not offer.
+      issueType: "Task",
+      defaultLabels: [],
+      statusFlow: ["To Do", "In Progress", "Done"],
+    });
+    const text = configText();
+    expect(text).toContain("[tracker.jira]");
+    for (const secret of ["token", "password", "api_key", "apiKey", "secret", "@"]) {
+      expect(text).not.toContain(secret);
+    }
+  });
+
+  test("issue_type falls back to the first non-subtask when the project has no Task type (AC#4)", async () => {
+    await init({
+      args: ["--tracker", "jira", "--jira-profile", "salient", "--jira-project", "ENG"],
+      jira: fakeJira({ project: { key: "ENG", name: "Engineering", issueTypes: ["Subtask", "Story"] } }),
+    });
+    expect(loadConfig({ root, env: {} }).tracker.jira?.issueType).toBe("Story");
+  });
+
+  test("re-running with a different project replaces the table rather than merging it (AC#4)", async () => {
+    await init({ args: ["--tracker", "jira", "--jira-profile", "salient", "--jira-project", "ENG"] });
+    await init({ args: ["--tracker", "jira", "--jira-profile", "salient", "--jira-project", "OPS"] });
+    const text = configText();
+    expect(loadConfig({ root, env: {} }).tracker.jira?.project).toBe("OPS");
+    expect(text).not.toContain('"ENG"');
+    expect(text.match(/\[tracker\.jira\]/gu)).toHaveLength(1);
+  });
+
+  test("both flags together reproduce the answers with the wizard never touched (AC#5)", async () => {
+    const calls: string[] = [];
+    const { code, result } = await init({
+      args: ["--tracker", "jira", "--jira-profile", "salient", "--jira-project", "ENG"],
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter: forbiddenPrompter(),
+      jira: fakeJira({ calls }),
+    });
+    expect(code).toBe(0);
+    expect(result.tracker).toBe("jira");
+    expect(calls).toEqual(["listProfiles", "describeProject(ENG, salient)"]);
+  });
+
+  test("--tracker jira without the flags is a usage error that writes no selection (AC#5)", async () => {
+    for (const args of [
+      ["--tracker", "jira"],
+      ["--tracker", "jira", "--jira-profile", "salient"],
+    ]) {
+      rmSync(root, { recursive: true, force: true });
+      mkdirSync(root, { recursive: true });
+      const err = await Promise.resolve(
+        runInit({
+          root,
+          git: gitStub(),
+          output: JSON_CTX,
+          stdout: capture(),
+          stderr: capture(),
+          clock: FIXED_CLOCK,
+          args,
+          jira: fakeJira(),
+        }),
+      ).then(
+        () => undefined,
+        (caught: unknown) => caught as LoreError,
+      );
+      expect(err?.type).toBe("usage");
+      expect(configText()).not.toContain("jira");
+    }
+  });
+
+  test("the jira flags are rejected outside --tracker jira", () => {
+    for (const args of [
+      ["--jira-profile", "salient"],
+      ["--tracker", "quest", "--jira-project", "ENG"],
+    ]) {
+      const err = expectError("usage", () =>
+        runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), args }),
+      );
+      expect(err.message).toContain("requires --tracker jira");
+    }
+  });
+
+  test("no other backend consults jira-cli at all", async () => {
+    const calls: string[] = [];
+    await init({ args: ["--tracker", "quest"], jira: fakeJira({ calls }) });
+    await init({ args: ["--tracker", "none"], jira: fakeJira({ calls }) });
+    expect(calls).toEqual([]);
   });
 });

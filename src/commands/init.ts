@@ -83,6 +83,7 @@ import { join } from "node:path";
 import * as readline from "node:readline/promises";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { type GitPreflight, realGitPreflight } from "../adapters/git-preflight";
+import { type JiraOnboarding, realJiraOnboarding } from "../adapters/jira-onboarding";
 import { createQuestBacklogMigration, isQuestVersionFloorFailure } from "../adapters/quest";
 import { createTrackerAdapter } from "../adapters/tracker";
 import {
@@ -93,7 +94,7 @@ import {
   type TrackerEnvironmentEntry,
   trackerEntry,
 } from "../adapters/tracker-environment";
-import { CONFIG_REL_PATH, loadConfig, TRACKER_BACKENDS, type TrackerBackend } from "../config";
+import { CONFIG_REL_PATH, type JiraTrackerConfig, loadConfig, TRACKER_BACKENDS, type TrackerBackend } from "../config";
 import { loadProfile } from "../core/profile";
 import { buildScaffold } from "../core/scaffold";
 import { ANSI, EXIT_OK, LoreError, paint, WarningCollector, type Writer } from "../errors";
@@ -187,6 +188,15 @@ export interface InitPrompter {
   confirm(question: string, defaultValue: boolean): Promise<boolean>;
   /** Ask the user to pick one of `choices`; an empty or unrecognized answer resolves to `defaultValue`. */
   choose(question: string, choices: readonly string[], defaultValue: string): Promise<string>;
+  /**
+   * Ask for a free-text value; an empty answer (bare Enter) resolves to `defaultValue`.
+   *
+   * Distinct from {@link choose}, which lower-cases the answer before matching it — correct for
+   * Lore's own fixed vocabularies (`quest`/`backlog`/`jira`, `mkdocs`/`none`) and wrong for anything
+   * named by someone else. A jira-cli profile or a Jira project key is that second kind: `choose`
+   * could never select a profile named `Salient` (LCLI-358.4).
+   */
+  ask(question: string, defaultValue: string): Promise<string>;
   /** Release the prompter's I/O resources (the real implementation's `readline` interface). */
   close(): void;
 }
@@ -264,6 +274,12 @@ export interface InitOptions {
    * decline, and `git init`-failure branches run without creating real repositories.
    */
   git?: GitPreflight;
+  /**
+   * The live jira-cli read seam (LCLI-358.4); defaults to the real `jira`-shelling
+   * {@link realJiraOnboarding}. Injected in tests so the profile-selection and project-validation
+   * branches run with neither jira-cli installed nor any credential on the machine.
+   */
+  jira?: JiraOnboarding;
 }
 
 export interface AgentAvailability {
@@ -303,6 +319,10 @@ interface InitArgs {
   installTracker: boolean;
   /** `--no-install-tracker`: never install, even when the binary is missing (LCLI-358.3). */
   noInstallTracker: boolean;
+  /** `--jira-profile <name>`: the jira-cli credential profile to record, without prompting (LCLI-358.4). */
+  jiraProfile?: string;
+  /** `--jira-project <KEY>`: the Jira project key to validate and record, without prompting (LCLI-358.4). */
+  jiraProject?: string;
 }
 
 /**
@@ -400,8 +420,16 @@ export function runInit(options: InitOptions): number | Promise<number> {
       .then((installedPackage) =>
         verifySelectedBackend(options, parsed).then((verified) => ({ installedPackage, verified })),
       )
-      .then(({ installedPackage, verified }) => {
-        persistTrackerBackend(options.root, parsed.tracker as TrackerBackend);
+      .then(({ installedPackage, verified }) =>
+        // LCLI-358.4: jira's configuration is resolved and validated in the same pre-persist window
+        // as every other backend's verification, so a run that cannot produce a usable
+        // `[tracker.jira]` table writes no selection at all.
+        (parsed.tracker === "jira" ? configureJira(options, parsed, undefined) : Promise.resolve(undefined)).then(
+          (jira) => ({ installedPackage, verified, jira }),
+        ),
+      )
+      .then(({ installedPackage, verified, jira }) => {
+        persistTrackerBackend(options.root, parsed.tracker as TrackerBackend, jira);
         return finishNonInteractive(
           options,
           parsed,
@@ -445,8 +473,9 @@ export function runInit(options: InitOptions): number | Promise<number> {
  *
  * `none`, `jira`, and `--no-tracker` are skipped entirely. `none` has nothing to verify;
  * `--no-tracker` is the documented opt-out for pinning a backend before installing its tooling;
- * and Lore cannot determine jira's readiness at all yet, because `lore init` never writes
- * `[tracker.jira]` — LCLI-358.4 adds that configuration and its verification together.
+ * and jira is verified by {@link configureJira} instead, which resolves a real credential profile
+ * and a real project key against the live CLI before either is written (LCLI-358.4). Probing it
+ * again here would spawn jira-cli a second time to re-learn what that step just proved.
  *
  * The interactive wizard deliberately does not call this. LCLI-358.6/.7 replace its tracker step
  * with an offer to install or initialize the chosen backend; failing the run outright in the
@@ -736,6 +765,7 @@ async function runInteractiveWizard(
   let migrateBacklog = false;
   let initializeGit = false;
   let installed: string | undefined;
+  let jira: JiraTrackerConfig | undefined;
   // Detected ONCE, before the tracker question, and re-read only after an install actually runs
   // (LCLI-358.3). Three PATH lookups and three `existsSync` calls — no backend is spawned, which is
   // what makes it affordable to describe every choice rather than only the one taken.
@@ -781,6 +811,13 @@ async function runInteractiveWizard(
       // this run installed something.
       environment = (options.trackerEnvironment ?? (() => detectTrackerEnvironment(options.root)))();
     }
+    if (tracker === "jira") {
+      // Asked here — immediately after the backend is settled and still before the first byte is
+      // written (LCLI-358.4). A jira selection Lore cannot configure ends the run with the
+      // directory untouched, rather than after five more questions the operator answered for
+      // nothing.
+      jira = await configureJira(options, parsed, prompter);
+    }
     const available = detectAgentAvailability(options);
     if (available.claude) {
       wantAgents = await prompter.confirm("Set up the Claude Code agent bridge (SKILL.md + CLAUDE.md nudge)?", true);
@@ -812,7 +849,7 @@ async function runInteractiveWizard(
   const base = applyBaseScaffold(options, plan);
 
   const migration = migrateBacklog ? await runBacklogMigration(options) : undefined;
-  persistTrackerBackend(options.root, tracker);
+  persistTrackerBackend(options.root, tracker, jira);
   if (migration !== undefined) clearPendingQuestMigration(options.root);
 
   const clock = options.clock ?? (() => new Date());
@@ -1090,6 +1127,11 @@ export function createRealPrompter(
       const raw = (await ask(`${question} (${choices.join("/")}) [${defaultValue}] `)).trim().toLowerCase();
       return choices.includes(raw) ? raw : defaultValue;
     },
+    async ask(question, defaultValue) {
+      const suffix = defaultValue === "" ? "" : ` [${defaultValue}]`;
+      const raw = (await ask(`${question}${suffix} `)).trim();
+      return raw === "" ? defaultValue : raw;
+    },
     close() {
       rl.close();
     },
@@ -1199,6 +1241,8 @@ function parseInitArgs(args: readonly string[]): InitArgs {
   const allowNoGit = parsed.flags.has("allow-no-git");
   const installTracker = parsed.flags.has("install-tracker");
   const noInstallTracker = parsed.flags.has("no-install-tracker");
+  const jiraProfile = singleOptionValue(parsed, "jira-profile");
+  const jiraProject = singleOptionValue(parsed, "jira-project");
   const adoptManifestValue = singleOptionValue(parsed, "adopt-manifest");
   const approvalDigestValue = singleOptionValue(parsed, "approval-digest");
   if (adoptManifestValue === "") {
@@ -1255,6 +1299,26 @@ function parseInitArgs(args: readonly string[]): InitArgs {
       "pass at most one of --no-tracker / --check-tracker (or their --no-backlog / --check-backlog aliases)",
     );
   }
+  // LCLI-358.4: both jira flags are answers to questions only the jira branch asks, so accepting
+  // them alongside another backend would record an answer that is never read — the silent kind of
+  // no-op a caller only discovers when the configuration they thought they set is missing.
+  for (const [flag, value] of [
+    ["--jira-profile", jiraProfile],
+    ["--jira-project", jiraProject],
+  ] as const) {
+    if (value === "") {
+      throw usage(
+        `${flag} needs a value`,
+        `pass a value, e.g. \`${flag} ${flag === "--jira-profile" ? "default" : "ENG"}\``,
+      );
+    }
+    if (value !== undefined && tracker !== "jira") {
+      throw usage(`${flag} requires --tracker jira`, "pass --tracker jira, or drop the jira flags", {
+        flag,
+        tracker: tracker ?? null,
+      });
+    }
+  }
   return {
     yes,
     agents,
@@ -1270,19 +1334,165 @@ function parseInitArgs(args: readonly string[]): InitArgs {
     allowNoGit,
     installTracker,
     noInstallTracker,
+    jiraProfile,
+    jiraProject,
   };
+}
+
+/** Jira's default workflow scheme, the starting `status_flow` for a freshly configured project. */
+const DEFAULT_JIRA_STATUS_FLOW = ["To Do", "In Progress", "Done"] as const;
+
+/**
+ * Resolve the `[tracker.jira]` table for this run: pick a jira-cli profile, then prove the project
+ * key resolves under it (LCLI-358.4).
+ *
+ * **Every question here is answered by jira-cli, not by Lore.** Lore does not know which sites the
+ * operator has credentials for, and must never learn: `jira init` is the interactive,
+ * credential-bearing setup, so the zero-profile case exits naming that command rather than
+ * attempting it (AC#1). What Lore persists is the *reference* — a profile name and a project key —
+ * and nothing that could authenticate anything.
+ *
+ * `prompter` is `undefined` on the non-interactive path, where both answers must arrive as flags.
+ * A missing flag there is a `usage` error raised before anything is written, so `--tracker jira`
+ * can no longer produce the bundle this task exists to fix: one pinned to jira with no
+ * `[tracker.jira]` table, which `createTrackerAdapter` rejects on the very next command.
+ */
+async function configureJira(
+  options: InitOptions,
+  parsed: InitArgs,
+  prompter: InitPrompter | undefined,
+): Promise<JiraTrackerConfig> {
+  const jira = options.jira ?? realJiraOnboarding(options.root);
+  const profiles = await jira.listProfiles();
+  if (profiles.length === 0) {
+    throw new LoreError(
+      "not_found",
+      "jira-cli has no credential profiles, so Lore cannot record which one to use",
+      "run `jira init` to create a profile (it is interactive and handles credentials — Lore never does), then rerun `lore init --tracker jira`",
+      { backend: "jira" },
+    );
+  }
+  const names = profiles.map((profile) => profile.name);
+  const fallback = profiles.find((profile) => profile.isDefault) ?? profiles[0];
+  const defaultProfile = (fallback as (typeof profiles)[number]).name;
+
+  let profile: string;
+  if (parsed.jiraProfile !== undefined) {
+    profile = parsed.jiraProfile;
+  } else if (prompter === undefined) {
+    throw usage(
+      "--tracker jira needs --jira-profile to know which jira-cli profile to record",
+      `pass --jira-profile with one of: ${names.join(", ")}`,
+      { backend: "jira", profiles: names },
+    );
+  } else {
+    (options.stderr ?? process.stderr).write(renderJiraProfiles(profiles));
+    profile = await prompter.ask("Which jira-cli profile should Lore use?", defaultProfile);
+  }
+  if (!names.includes(profile)) {
+    throw new LoreError(
+      "validation",
+      `jira-cli has no profile named ${JSON.stringify(profile)}`,
+      `use one of: ${names.join(", ")} — or run \`jira init\` to add another`,
+      { profile, profiles: names },
+    );
+  }
+
+  let project: string;
+  if (parsed.jiraProject !== undefined) {
+    project = parsed.jiraProject;
+  } else if (prompter === undefined) {
+    throw usage(
+      "--tracker jira needs --jira-project to know which Jira project to record",
+      "pass --jira-project with your project key, e.g. `--jira-project ENG`",
+      { backend: "jira" },
+    );
+  } else {
+    project = (await prompter.ask("Jira project key (e.g. ENG)?", "")).trim();
+  }
+  if (project === "") {
+    throw usage("no Jira project key was given", "pass --jira-project <KEY>, or answer the project-key prompt");
+  }
+
+  // The live check (AC#3). Its failure propagates carrying jira-cli's own reason, and it doubles as
+  // the source for `issue_type` below — validating and reading the vocabulary is one call, so a
+  // configured bundle cannot name an issue type the project does not actually offer.
+  const summary = await jira.describeProject(project, profile);
+  return {
+    profile,
+    project: summary.key,
+    issueType: defaultIssueType(summary.issueTypes),
+    defaultLabels: [],
+    statusFlow: [...DEFAULT_JIRA_STATUS_FLOW],
+  };
+}
+
+/**
+ * Choose the issue type Lore creates tasks as, from the project's own list. Prefers `Task`, the
+ * name of Jira's own default work-item type; otherwise the first type that is not a subtask, since
+ * a subtask cannot be created standalone. An empty list falls back to `Task` so the written table is
+ * still well-formed — the adapter's own probe reports it if the project genuinely lacks that type.
+ */
+function defaultIssueType(issueTypes: readonly string[]): string {
+  return issueTypes.find((name) => name === "Task") ?? issueTypes.find((name) => name !== "Subtask") ?? "Task";
+}
+
+/** Show what jira-cli reported, so the profile question is answered with the sites in view. */
+function renderJiraProfiles(profiles: readonly { name: string; jiraUrl: string | undefined; isDefault: boolean }[]) {
+  const lines = ["jira-cli credential profiles found:"];
+  for (const profile of profiles) {
+    const site = profile.jiraUrl === undefined ? "" : ` — ${profile.jiraUrl}`;
+    lines.push(`  ${profile.name}${site}${profile.isDefault ? " (jira-cli default)" : ""}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+/**
+ * Upsert the `[tracker.jira]` table, replacing it wholesale when one already exists.
+ *
+ * Deliberately coarser than {@link withTrackerBackend}, which upserts a single key: this table is
+ * written as one unit by one flow, so a per-key merge would preserve a stale `project` alongside a
+ * freshly validated one. Everything outside the table's own span is preserved byte-for-byte, and
+ * **no key here can hold a credential** — `config.ts` rejects secret-shaped keys under `tracker.`,
+ * and the five written below are a profile *name*, a project key, an issue-type name, labels, and
+ * a status list.
+ */
+function withJiraTracker(current: string, config: JiraTrackerConfig): string {
+  const eol = current.includes("\r\n") ? "\r\n" : "\n";
+  const body = [
+    `profile = ${JSON.stringify(config.profile ?? "")}`,
+    `project = ${JSON.stringify(config.project ?? "")}`,
+    `issue_type = ${JSON.stringify(config.issueType ?? "")}`,
+    `default_labels = [${config.defaultLabels.map((label) => JSON.stringify(label)).join(", ")}]`,
+    `status_flow = [${config.statusFlow.map((status) => JSON.stringify(status)).join(", ")}]`,
+  ].join(eol);
+  const table = `[tracker.jira]${eol}${body}${eol}`;
+
+  const header = /^[ \t]*\[[ \t]*tracker[ \t]*\.[ \t]*jira[ \t]*\][ \t]*(?:#.*)?(?:\r?\n|$)/mu.exec(current);
+  if (header !== null) {
+    const bodyStart = header.index + header[0].length;
+    const nextHeader = /^[ \t]*(?:\[[^\]\r\n]+\]|\[\[[^\]\r\n]+\]\])[ \t]*(?:#.*)?$/mu.exec(current.slice(bodyStart));
+    const bodyEnd = nextHeader === null ? current.length : bodyStart + nextHeader.index;
+    return current.slice(0, header.index) + table + current.slice(bodyEnd);
+  }
+  const separator = current.length === 0 ? "" : current.endsWith("\n") ? eol : `${eol}${eol}`;
+  return `${current}${separator}${table}`;
 }
 
 /** Persist one explicit tracker choice while preserving every unrelated config byte. */
 /** Upsert `[tracker].backend` in the bundle's config, validating the current file first. Exported for `tracker-cutover.ts`, whose final irreversible step is exactly this selection. */
-export function persistTrackerBackend(root: string, backend: TrackerBackend): void {
+export function persistTrackerBackend(root: string, backend: TrackerBackend, jira?: JiraTrackerConfig): void {
   assertNoSymlinkInPath(root, CONFIG_REL_PATH);
   // Validate the complete current file first, including credential guards and
   // unknown-value diagnostics. The base init scaffold guarantees it exists.
   loadConfig({ root });
   const absPath = join(root, CONFIG_REL_PATH);
   const current = readFileSync(absPath, "utf8");
-  const next = withTrackerBackend(current, backend);
+  // One write for both (LCLI-358.4): the selection and the configuration it needs are a single
+  // commitment, so they must never be observable apart — a bundle carrying `backend = "jira"` with
+  // no `[tracker.jira]` table is exactly the broken state this parameter exists to prevent.
+  const withBackend = withTrackerBackend(current, backend);
+  const next = jira === undefined ? withBackend : withJiraTracker(withBackend, jira);
   if (next !== current) {
     writeFileAtomic(absPath, next, CONFIG_REL_PATH);
   }

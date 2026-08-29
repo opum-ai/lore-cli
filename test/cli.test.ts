@@ -165,6 +165,7 @@ describe("cli — init dispatch", () => {
     const prompter: InitPrompter = {
       confirm: async (_q, defaultValue) => defaultValue,
       choose: async (_q, _choices, defaultValue) => defaultValue,
+      ask: async (_q, defaultValue) => defaultValue,
       close: () => {},
     };
     // The wizard always runs the (advisory-only) backlog check, so a fake adapter is injected here
@@ -207,6 +208,9 @@ describe("cli — init dispatch", () => {
       choose: () => {
         throw new Error("the wizard must not run");
       },
+      ask: () => {
+        throw new Error("the wizard must not run");
+      },
       close: () => {
         throw new Error("the wizard must not run");
       },
@@ -224,6 +228,9 @@ describe("cli — init dispatch", () => {
         throw new Error("the wizard must not run");
       },
       choose: () => {
+        throw new Error("the wizard must not run");
+      },
+      ask: () => {
         throw new Error("the wizard must not run");
       },
       close: () => {

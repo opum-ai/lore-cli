@@ -17,8 +17,9 @@
  *
  * Jira's `initialized` is deliberately `undefined` rather than `false`. Its readiness is
  * credential-profile state that `jira-cli` owns and that has no repository-local marker at all, so
- * reporting `false` would assert something this module cannot know. LCLI-358.4 adds the profile
- * check that can answer it.
+ * reporting `false` would assert something this module cannot know. `adapters/jira-onboarding.ts`
+ * answers it by asking jira-cli directly (LCLI-358.4) — but that costs a subprocess, so it runs
+ * only for a jira selection the operator actually made, never for all three backends up front.
  */
 
 import { existsSync } from "node:fs";

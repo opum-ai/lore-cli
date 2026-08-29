@@ -259,8 +259,10 @@ code rather than of the answers.
   stderr half of the fix is exactly what makes `lore-setup.sh` safe to run
   unattended again.
 - **A fully scriptable equivalent EXISTS for every wizard option** — `lore
-  init --tracker jira --agents --obsidian --scaffold mkdocs` reaches every configuration the
-  wizard can reach, with zero prompts — but **`lore init --yes` is not that
+  init --tracker jira --jira-profile <name> --jira-project <KEY> --agents --obsidian --scaffold mkdocs`
+  reaches every configuration the wizard can reach, with zero prompts (the two
+  `--jira-*` flags joined this list with LCLI-358.4, which gave the jira branch
+  questions of its own) — but **`lore init --yes` is not that
   equivalent** (see the `--yes` clarification below); automation should name
   the flags for the options it actually wants rather than assume `--yes`
   mirrors a blind run through the wizard.
