@@ -17,17 +17,36 @@
  * BLOCKING-1 — confirmed live: `lore init >/dev/null 2>&1` under a pty hung forever with zero
  * output). `--json` is a third, independent veto: a machine-readable run must never prompt even at a
  * genuinely interactive terminal. Every wizard question maps 1:1 to a flag (`--agents`,
- * `--scaffold <target>`, `--obsidian`, `--no-backlog`/`--check-backlog`), so a script gets the exact
+ * `--scaffold <target>`, `--obsidian`, `--no-tracker`/`--check-tracker`), so a script gets the exact
  * same outcome as answering the wizard, with zero prompts. This is documented in
  * [ADR-0017](../../docs/adr/0017-interactive-init-wizard-tty-gated.md) (an amendment to ADR-0004/
  * ADR-0005's non-interactive CLI contract).
+ *
+ * ## The git preflight, and why nothing is written before it (LCLI-358.1)
+ *
+ * `init` requires a git worktree. This is not a style rule: `lore sync` shells `git rev-parse HEAD`
+ * and fails outright without a repository, and `quest init` — the default tracker's own
+ * initializer — refuses a non-worktree path, so a bundle scaffolded outside one is broken for
+ * everything except `lore check`. On a TTY the wizard's FIRST question offers to run `git init`;
+ * off a TTY, or when that question is declined, the run raises {@link missingGitRepository}
+ * (`validation`, exit `6`). `--allow-no-git` waives the requirement for exactly the docs-only case
+ * `lore check` still serves, and is the one flag that does NOT force the non-interactive path —
+ * see {@link anyFlagGiven} for why, and the ADR-0017 amendment for the decision.
+ *
+ * The preflight only means something because **every check now runs before the first byte is
+ * written**: the base scaffold moved out of `runInit`'s body into {@link applyBaseScaffold}, which
+ * both paths call only once nothing can still refuse. Before that move, a declined prompt, a
+ * rejected flag combination, or a Ctrl-D left `docs/` and `.lore/` on disk from a run that then
+ * exited non-zero. `resolveTrackerSelection` is resolved lazily for the same reason — it reads
+ * `.lore/config.toml`, so eagerly resolving it would replace the scaffold's precise `conflict`
+ * diagnostic (naming the entry that blocks the path) with a config-read failure.
  *
  * **EOF (Ctrl-D) mid-wizard is a `usage` error, not a silent exit 0** (review round 2, BLOCKING-2):
  * `readline/promises`' `rl.question()` never settles on stdin EOF, so a naive implementation left the
  * wizard's promise abandoned forever — the process would exit 0 with `process.exitCode` never set,
  * zero stdout bytes even under `--json` (a parse error for a `| jq` consumer expecting either a valid
  * envelope or a classified failure), and a half-applied run (the base scaffold already written,
- * nothing else). {@link createRealPrompter} now races every question against the readline
+ * nothing else — no longer possible since LCLI-358.1 moved the scaffold after every prompt). {@link createRealPrompter} now races every question against the readline
  * interface's own `close` event and throws a `usage` {@link LoreError} on an early close, so the run
  * exits non-zero with a rendered diagnostic instead — chosen over silently falling back to each
  * question's default because BLOCKING-1's lesson applies here too: never silently do something the
@@ -63,9 +82,19 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as readline from "node:readline/promises";
 import type { BacklogAdapter } from "../adapters/backlog";
-import { createQuestBacklogMigration } from "../adapters/quest";
+import { type GitPreflight, realGitPreflight } from "../adapters/git-preflight";
+import { type JiraOnboarding, realJiraOnboarding } from "../adapters/jira-onboarding";
+import { createQuestBacklogMigration, isQuestVersionFloorFailure } from "../adapters/quest";
 import { createTrackerAdapter } from "../adapters/tracker";
-import { CONFIG_REL_PATH, loadConfig, TRACKER_BACKENDS, type TrackerBackend } from "../config";
+import {
+  detectTrackerEnvironment,
+  installCommandFor,
+  installTrackerPackage,
+  type TrackerEnvironment,
+  type TrackerEnvironmentEntry,
+  trackerEntry,
+} from "../adapters/tracker-environment";
+import { CONFIG_REL_PATH, type JiraTrackerConfig, loadConfig, TRACKER_BACKENDS, type TrackerBackend } from "../config";
 import { loadProfile } from "../core/profile";
 import { buildScaffold } from "../core/scaffold";
 import { ANSI, EXIT_OK, LoreError, paint, WarningCollector, type Writer } from "../errors";
@@ -80,11 +109,36 @@ import { resolveTrackerSelection, type TrackerSelection } from "../tracker-selec
 import { type AgentsResult, applyAgentsBridge, bridgeActionColor, renderTrailer } from "./agents";
 import { optionValues, parseCommandArgs, singleOptionValue, usage } from "./args";
 import { applyCodexBridge, type CodexBridgeResult } from "./codex-bridge";
-import { assertNoSymlinkInPath, createIfAbsent, ensureDir, writeFileAtomic } from "./fswrite";
+import { assertNoSymlinkInPath, assertScaffoldPathsFree, createIfAbsent, ensureDir, writeFileAtomic } from "./fswrite";
 import { applyHermesBridge, type HermesBridgeResult } from "./hermes-bridge";
 import { applyScaffold, TARGETS as SCAFFOLD_TARGETS, type ScaffoldResult } from "./scaffold";
 
-/** The backlog-coupling capability check's outcome, folded into {@link InitResult} when it ran. */
+/**
+ * The selected tracker's capability check outcome, folded into {@link InitResult} when it ran
+ * (LCLI-358.2).
+ *
+ * Supersedes {@link InitBacklogCheck}, which could only ever describe Backlog.md — the probe used
+ * to run against the `backlog` binary no matter which backend the bundle had actually selected, so
+ * choosing Quest produced a diagnostic about Backlog being uninitialized.
+ */
+export interface InitTrackerCheck {
+  /** Always `true` when this field is present at all, so a `--json` consumer can branch without an `in` check. */
+  readonly checked: true;
+  /** The backend that was probed — always the one this bundle selected. */
+  readonly backend: TrackerBackend;
+  /** Whether that backend's CLI answered with the capability lore requires. */
+  readonly capable: boolean;
+  /** The version the backend reported, when capable. */
+  readonly version?: string;
+  /** The advisory message (also written to stderr) when NOT capable. */
+  readonly warning?: string;
+}
+
+/**
+ * @deprecated Use {@link InitResult.trackerCheck}, which reports whichever backend was selected.
+ * Retained, and populated ONLY for a `backlog` bundle (its exact historical meaning), so the
+ * documented `--json` field does not change shape under existing consumers.
+ */
 export interface InitBacklogCheck {
   /** Always `true` when this field is present at all — kept explicit (vs. field presence alone) so a `--json` consumer can branch without an `in` check. */
   readonly checked: true;
@@ -114,7 +168,13 @@ export interface InitResult {
   hermes?: HermesBridgeResult;
   /** One entry per downstream doc-site/vault actually scaffolded this run (wizard picks, `--scaffold`, `--obsidian`); empty when none were requested. */
   scaffolds: ScaffoldResult[];
-  /** The backlog-coupling capability check's outcome, present iff it ran this invocation. */
+  /** What init detected about every backend's CLI and this repository, present iff detection ran. */
+  trackerEnvironment?: TrackerEnvironment;
+  /** The backend whose package this run installed, present iff an install actually happened. */
+  installed?: string;
+  /** The selected tracker's capability check outcome, present iff it ran this invocation. */
+  trackerCheck?: InitTrackerCheck;
+  /** @deprecated Use {@link InitResult.trackerCheck}. Present only for a `backlog` bundle whose check ran. */
   backlog?: InitBacklogCheck;
   /** Explicit tracker choice made by the wizard or `--tracker`; absent on the legacy bare path. */
   tracker?: TrackerBackend;
@@ -128,6 +188,15 @@ export interface InitPrompter {
   confirm(question: string, defaultValue: boolean): Promise<boolean>;
   /** Ask the user to pick one of `choices`; an empty or unrecognized answer resolves to `defaultValue`. */
   choose(question: string, choices: readonly string[], defaultValue: string): Promise<string>;
+  /**
+   * Ask for a free-text value; an empty answer (bare Enter) resolves to `defaultValue`.
+   *
+   * Distinct from {@link choose}, which lower-cases the answer before matching it — correct for
+   * Lore's own fixed vocabularies (`quest`/`backlog`/`jira`, `mkdocs`/`none`) and wrong for anything
+   * named by someone else. A jira-cli profile or a Jira project key is that second kind: `choose`
+   * could never select a profile named `Salient` (LCLI-358.4).
+   */
+  ask(question: string, defaultValue: string): Promise<string>;
   /** Release the prompter's I/O resources (the real implementation's `readline` interface). */
   close(): void;
 }
@@ -188,6 +257,29 @@ export interface InitOptions {
   migrateBacklog?: () => Promise<TrackerMigrationResult>;
   /** Injectable executable discovery for the interactive agent choices. */
   agentAvailability?: () => AgentAvailability;
+  /**
+   * Tracker CLI/repository detection (LCLI-358.3); defaults to the real PATH-and-marker probe.
+   * Injected in tests so the wizard's environment summary and install offers run without any
+   * tracker actually being installed on the machine running them.
+   */
+  trackerEnvironment?: () => TrackerEnvironment;
+  /**
+   * The package installer seam (LCLI-358.3); defaults to the real `npm install -g`. Injected in
+   * tests so no test ever mutates the machine's global packages.
+   */
+  installTracker?: (entry: TrackerEnvironmentEntry) => Promise<boolean>;
+  /**
+   * The git preflight seam (LCLI-358.1); defaults to the real `git`-shelling
+   * {@link realGitPreflight} rooted at {@link InitOptions.root}. Injected in tests so the accept,
+   * decline, and `git init`-failure branches run without creating real repositories.
+   */
+  git?: GitPreflight;
+  /**
+   * The live jira-cli read seam (LCLI-358.4); defaults to the real `jira`-shelling
+   * {@link realJiraOnboarding}. Injected in tests so the profile-selection and project-validation
+   * branches run with neither jira-cli installed nor any credential on the machine.
+   */
+  jira?: JiraOnboarding;
 }
 
 export interface AgentAvailability {
@@ -209,10 +301,10 @@ interface InitArgs {
   hermes: boolean;
   /** `--scaffold <target>` (repeatable) and/or `--obsidian`, deduped; targets from {@link SCAFFOLD_TARGETS}. */
   scaffolds: string[];
-  /** `--no-backlog`: skip the backlog-coupling capability check entirely. */
-  noBacklog: boolean;
-  /** `--check-backlog`: run the backlog-coupling capability check even with no other flag requesting it. */
-  checkBacklog: boolean;
+  /** `--no-tracker` (alias `--no-backlog`): skip the tracker-coupling capability check entirely. */
+  noTracker: boolean;
+  /** `--check-tracker` (alias `--check-backlog`): run the tracker-coupling capability check even with no other flag requesting it. */
+  checkTracker: boolean;
   /** `--tracker <quest|backlog|jira>`: persist the selected task backend without prompting. */
   tracker?: TrackerBackend;
   /** `--migrate-backlog`: preflight and preserve compatible Backlog ids while selecting Quest. */
@@ -221,6 +313,16 @@ interface InitArgs {
   adoptManifest?: string;
   /** `--approval-digest <digest>`: the adoption preview's approval digest binding the cutover's adoption leg. Required with `--adopt-manifest`. */
   approvalDigest?: string;
+  /** `--allow-no-git`: scaffold a docs-only bundle in a directory that is not a git worktree (LCLI-358.1). */
+  allowNoGit: boolean;
+  /** `--install-tracker`: install the selected backend's package when its binary is missing (LCLI-358.3). */
+  installTracker: boolean;
+  /** `--no-install-tracker`: never install, even when the binary is missing (LCLI-358.3). */
+  noInstallTracker: boolean;
+  /** `--jira-profile <name>`: the jira-cli credential profile to record, without prompting (LCLI-358.4). */
+  jiraProfile?: string;
+  /** `--jira-project <KEY>`: the Jira project key to validate and record, without prompting (LCLI-358.4). */
+  jiraProject?: string;
 }
 
 /**
@@ -248,11 +350,195 @@ export function runInit(options: InitOptions): number | Promise<number> {
   const interactive = stdinIsTTY && stderrIsTTY && !jsonRequested && !anyFlagGiven(parsed);
 
   const clock = options.clock ?? (() => new Date());
-  // Honor a pre-existing `.lore/profile.toml` so `init` scaffolds schemas for a project's custom
-  // types; with none present this is the built-in story-convention profile (zero-config).
-  const profile = loadProfile({ root: options.root });
-  const plan = buildScaffold({ timestamp: clock().toISOString(), profile });
+  // Build the scaffold plan and refuse a structurally blocked bundle FIRST (LCLI-358.1 review):
+  // a symlinked or wrong-shaped entry at a path the bundle needs makes the whole run impossible,
+  // so discovering it after five wizard questions — and after `git init` ran on the operator's
+  // behalf — is the wrong order. `loadProfile` tolerates an unreadable `.lore`, so this stays
+  // ahead of every config read and keeps the precise `conflict` (naming the blocking entry) as the
+  // first diagnostic on BOTH paths, rather than the interactive path degrading to a config-read
+  // failure.
+  const plan = buildScaffold({ timestamp: clock().toISOString(), profile: loadProfile({ root: options.root }) });
+  assertScaffoldPathsFree(
+    options.root,
+    plan.dirs,
+    plan.files.map((file) => file.path),
+  );
 
+  // `resolveTrackerSelection` tolerates a bundle that does not exist yet (no `.lore/config.toml`
+  // resolves to the zero-config default), which is what lets this — and every guard below — run
+  // BEFORE the scaffold is written rather than after it (LCLI-358.1).
+  //
+  // Resolved LAZILY, and that laziness is load-bearing: it reads `.lore/config.toml`, so on a root
+  // where `.lore` is a regular file (or any other non-directory) it raises a config-read failure.
+  // Before this reordering the scaffold ran first and reported that same root cause as the far more
+  // actionable `conflict` naming the blocking entry. Only a run that actually needs the prior
+  // selection pays for resolving it, so a bare `lore init` still reaches the scaffold — and its
+  // conflict diagnostic — untouched.
+  let cachedSelection: TrackerSelection | undefined;
+  const priorSelection = (): TrackerSelection => (cachedSelection ??= resolveTrackerSelection(options.root));
+  assertFlagCombinations(parsed, priorSelection);
+
+  const git = options.git ?? realGitPreflight(options.root);
+
+  if (interactive) {
+    return runInteractiveWizard(options, parsed, priorSelection(), git, plan);
+  }
+
+  // Non-interactive: detect only. A scripted run never silently creates a repository — it either
+  // already has one, opted out with `--allow-no-git`, or fails before writing a single byte.
+  if (!parsed.allowNoGit && !git.isRepository()) {
+    throw missingGitRepository();
+  }
+  const base = applyBaseScaffold(options, plan);
+  const created = base.created;
+
+  if (parsed.migrateBacklog) {
+    // Coordinated cutover (LCLI-333.1): with an adoption manifest, both legs run through the
+    // ordered, resumable coordinator — Quest selection happens only after BOTH legs verify AND
+    // backlog/ is verified-archived-and-deleted. The migration-only path is unchanged.
+    if (parsed.adoptManifest !== undefined) {
+      return runCoordinatedCutover(options, parsed).then((migration) =>
+        finishNonInteractive(options, parsed, base, clock, priorSelection, migration),
+      );
+    }
+    return runBacklogMigration(options).then((migration) => {
+      persistTrackerBackend(options.root, "quest");
+      clearPendingQuestMigration(options.root);
+      return finishNonInteractive(options, parsed, base, clock, priorSelection, migration);
+    });
+  }
+  if (parsed.tracker !== undefined) {
+    // LCLI-358.3 AC#4: `--install-tracker` is the non-interactive equivalent of the wizard's install
+    // offer. Without it nothing is ever installed, so a scripted run's behavior is unchanged unless
+    // the caller asked for the install explicitly.
+    // LCLI-356 AC#2: an EXPLICIT selection is verified before it is written. Persisting first and
+    // discovering the backend is unusable later is what produced the reported failure — `lore init
+    // --yes --tracker quest` exited 0 and wrote `backend = "quest"`, and every subsequent
+    // tracker-touching command then exited 6. The bundle scaffold above is idempotent and harmless;
+    // the *selection* is the commitment, so that is what a failed verification withholds.
+    return installSelectedBackendIfRequested(options, parsed)
+      .then((installedPackage) =>
+        verifySelectedBackend(options, parsed).then((verified) => ({ installedPackage, verified })),
+      )
+      .then(({ installedPackage, verified }) =>
+        // LCLI-358.4: jira's configuration is resolved and validated in the same pre-persist window
+        // as every other backend's verification, so a run that cannot produce a usable
+        // `[tracker.jira]` table writes no selection at all.
+        (parsed.tracker === "jira" ? configureJira(options, parsed, undefined) : Promise.resolve(undefined)).then(
+          (jira) => ({ installedPackage, verified, jira }),
+        ),
+      )
+      .then(({ installedPackage, verified, jira }) => {
+        persistTrackerBackend(options.root, parsed.tracker as TrackerBackend, jira);
+        return finishNonInteractive(
+          options,
+          parsed,
+          base,
+          clock,
+          priorSelection,
+          undefined,
+          verified,
+          installedPackage,
+        );
+      });
+  }
+  if (created.includes(CONFIG_REL_PATH)) {
+    // A newly created bundle is unambiguous. Persist rather than relying on a
+    // changing zero-config default, so an existing bundle is never switched.
+    //
+    // NOT verified, deliberately: this is a default, not a choice the operator expressed, and a
+    // bare `lore init` has never spawned a tracker subprocess. The advisory probe still reports the
+    // backend's readiness whenever this run has a reason to look.
+    persistTrackerBackend(options.root, "quest");
+  }
+
+  return finishNonInteractive(options, parsed, base, clock, priorSelection);
+}
+
+/**
+ * Verify an explicitly selected backend BEFORE the selection is persisted (LCLI-356 AC#2), letting
+ * the adapter's own classified {@link LoreError} propagate: an unusable backend must fail the run
+ * that chose it, not become an advisory warning attached to a bundle already committed to it.
+ *
+ * Returns the resulting {@link InitTrackerCheck} so the advisory step downstream reuses this
+ * probe's answer instead of spawning the tracker a second time.
+ *
+ * **Only a version-floor rejection is fatal.** That precision is the whole design. An installed
+ * Quest below the floor is a pairing that cannot work at all, and nothing the operator does inside
+ * this repository fixes it — they must install a different Quest, so committing the bundle to that
+ * backend first only guarantees a broken next command. Every other probe failure ("workspace is not
+ * initialized", "not on PATH", "no Backlog.md project") is one setup step away in the same
+ * directory, which is precisely why LORE-319 made this check advisory rather than fatal. This
+ * function does not reverse that decision; it carves out the one class LORE-319 was never about.
+ *
+ * `none`, `jira`, and `--no-tracker` are skipped entirely. `none` has nothing to verify;
+ * `--no-tracker` is the documented opt-out for pinning a backend before installing its tooling;
+ * and jira is verified by {@link configureJira} instead, which resolves a real credential profile
+ * and a real project key against the live CLI before either is written (LCLI-358.4). Probing it
+ * again here would spawn jira-cli a second time to re-learn what that step just proved.
+ *
+ * The interactive wizard deliberately does not call this. LCLI-358.6/.7 replace its tracker step
+ * with an offer to install or initialize the chosen backend; failing the run outright in the
+ * meantime would pre-empt that with a worse version of the same idea.
+ */
+async function installSelectedBackendIfRequested(options: InitOptions, parsed: InitArgs): Promise<string | undefined> {
+  const backend = parsed.tracker;
+  if (!parsed.installTracker || backend === undefined || backend === "none") {
+    return undefined;
+  }
+  const environment = (options.trackerEnvironment ?? (() => detectTrackerEnvironment(options.root)))();
+  const entry = trackerEntry(environment, backend);
+  if (entry === undefined || entry.installed) {
+    return undefined;
+  }
+  const install = options.installTracker ?? installTrackerPackage;
+  if (!(await install(entry))) {
+    throw new LoreError(
+      "not_found",
+      `\`${installCommandFor(entry)}\` completed but \`${entry.binary}\` is still not on PATH`,
+      "check your npm global prefix is on PATH (`npm prefix -g`), then rerun `lore init`",
+      { binary: entry.binary, package: entry.package },
+    );
+  }
+  return entry.package;
+}
+
+async function verifySelectedBackend(options: InitOptions, parsed: InitArgs): Promise<InitTrackerCheck | undefined> {
+  const backend = parsed.tracker;
+  if (backend === undefined || backend === "none" || backend === "jira" || parsed.noTracker) {
+    return undefined;
+  }
+  try {
+    const adapter = options.adapter ?? createConfiguredAdapterFor(options.root, backend);
+    const capability = await adapter.probe();
+    return { checked: true, backend, capable: true, version: capability.version };
+  } catch (err) {
+    if (isQuestVersionFloorFailure(err)) {
+      throw err;
+    }
+    // Anything else stays advisory: the downstream probe reports it as a warning, exactly as it did
+    // before this gate existed.
+    return undefined;
+  }
+}
+
+/** The base OKF bundle this run wrote (or found already present). */
+interface BaseScaffold {
+  root: string;
+  created: string[];
+  skipped: string[];
+}
+
+/**
+ * Write the base OKF bundle idempotently — `init`'s original, sole responsibility, extracted
+ * verbatim so BOTH paths can call it at the one point the preflight has finished (LCLI-358.1).
+ *
+ * The extraction is the whole point of this task's AC#4: this used to run before the wizard asked
+ * its first question, so a declined git prompt, a rejected flag combination, or a Ctrl-D left
+ * `docs/` and `.lore/` on disk with no tracker selected. Every caller now runs its checks first and
+ * calls this only once nothing can still refuse.
+ */
+function applyBaseScaffold(options: InitOptions, plan: ReturnType<typeof buildScaffold>): BaseScaffold {
   for (const dir of plan.dirs) {
     // LORE-77/LORE-93: ensureDir itself refuses a pre-existing symlink at (or above) this
     // directory before its mkdirSync gets a chance to transparently walk through it.
@@ -269,15 +555,24 @@ export function runInit(options: InitOptions): number | Promise<number> {
       skipped.push(file.path);
     }
   }
-  const base = { root: options.root, created, skipped };
-  const priorSelection = resolveTrackerSelection(options.root);
-  if (parsed.migrateBacklog && (parsed.tracker !== "quest" || priorSelection.source !== "legacy-backlog")) {
+  return { root: options.root, created, skipped };
+}
+
+/**
+ * The flag-combination guards, unchanged in wording and order but moved AHEAD of the scaffold
+ * (LCLI-358.1): a rejected combination now leaves the directory untouched instead of exiting `2`
+ * over a half-written bundle.
+ */
+function assertFlagCombinations(parsed: InitArgs, priorSelection: () => TrackerSelection): void {
+  // Each condition tests the cheap flag half FIRST so `priorSelection()` — which reads
+  // `.lore/config.toml` — is never resolved for a run whose flags could not trip the guard anyway.
+  if (parsed.migrateBacklog && (parsed.tracker !== "quest" || priorSelection().source !== "legacy-backlog")) {
     throw usage(
       "--migrate-backlog requires --tracker quest in a legacy zero-config Backlog bundle",
       "run `lore init --tracker quest --migrate-backlog` only after `quest init`",
     );
   }
-  if (priorSelection.source === "legacy-backlog" && parsed.tracker === "quest" && !parsed.migrateBacklog) {
+  if (parsed.tracker === "quest" && !parsed.migrateBacklog && priorSelection().source === "legacy-backlog") {
     throw new LoreError(
       "validation",
       "switching this legacy Backlog bundle to Quest requires an explicit task migration",
@@ -296,35 +591,26 @@ export function runInit(options: InitOptions): number | Promise<number> {
       "run `lore backlog adopt preview --manifest <path>` first and pass its approval.digest",
     );
   }
+}
 
-  if (interactive) {
-    return runInteractiveWizard(options, base, priorSelection);
-  }
-
-  if (parsed.migrateBacklog) {
-    // Coordinated cutover (LCLI-333.1): with an adoption manifest, both legs run through the
-    // ordered, resumable coordinator — Quest selection happens only after BOTH legs verify AND
-    // backlog/ is verified-archived-and-deleted. The migration-only path is unchanged.
-    if (parsed.adoptManifest !== undefined) {
-      return runCoordinatedCutover(options, parsed).then((migration) =>
-        finishNonInteractive(options, parsed, base, clock, migration),
-      );
-    }
-    return runBacklogMigration(options).then((migration) => {
-      persistTrackerBackend(options.root, "quest");
-      clearPendingQuestMigration(options.root);
-      return finishNonInteractive(options, parsed, base, clock, migration);
-    });
-  }
-  if (parsed.tracker !== undefined) {
-    persistTrackerBackend(options.root, parsed.tracker);
-  } else if (created.includes(CONFIG_REL_PATH)) {
-    // A newly created bundle is unambiguous. Persist rather than relying on a
-    // changing zero-config default, so an existing bundle is never switched.
-    persistTrackerBackend(options.root, "quest");
-  }
-
-  return finishNonInteractive(options, parsed, base, clock);
+/**
+ * The one diagnostic for "this directory is not a git worktree and the operator did not opt out"
+ * (LCLI-358.1), shared by the wizard's declined prompt and the non-interactive path so the two can
+ * never drift.
+ *
+ * `validation` (exit `6`) rather than `usage` (exit `2`): the command line was well-formed — the
+ * *repository* is what fails the requirement. The message names why lore needs git rather than
+ * asserting a bare rule: `lore sync` shells `git rev-parse HEAD` and fails outright without a
+ * repository, and `quest init` refuses a non-worktree path, so a bundle scaffolded here would be
+ * broken for everything except `lore check`. That last exception is exactly what `--allow-no-git`
+ * is for, so the hint offers it instead of leaving the reader stuck.
+ */
+function missingGitRepository(): LoreError {
+  return new LoreError(
+    "validation",
+    "`lore init` needs a git repository: this directory is not a git worktree",
+    "run `git init` here (or rerun `lore init` and accept the prompt) — `lore sync` and `quest init` both require git; pass `--allow-no-git` for a docs-only bundle that only `lore check` will serve",
+  );
 }
 
 function finishNonInteractive(
@@ -332,55 +618,98 @@ function finishNonInteractive(
   parsed: InitArgs,
   base: { root: string; created: string[]; skipped: string[] },
   clock: () => Date,
+  priorSelection: () => TrackerSelection,
   migration?: TrackerMigrationResult,
+  /** A selection-time verification's result (LCLI-356), reused so the tracker is probed once per run. */
+  verified?: InitTrackerCheck,
+  /** The package `--install-tracker` installed this run, if any (LCLI-358.3). */
+  installedPackage?: string,
 ): number | Promise<number> {
   const scaffoldTargets = [...new Set(parsed.scaffolds)];
+  // Detected on every run, not only the wizard's (LCLI-358.3): three PATH lookups and three
+  // `existsSync` calls, no subprocess — so the pre-LORE-260 "a bare init spawns no tracker"
+  // guarantee holds, and a `--json` consumer sees the same facts the wizard shows a human.
+  const environment = (options.trackerEnvironment ?? (() => detectTrackerEnvironment(options.root)))();
   const agents = parsed.agents ? applyAgentsBridge({ root: options.root, force: false, check: false }) : undefined;
   const codex = parsed.codex ? applyCodexBridge({ root: options.root, force: false, check: false }) : undefined;
   const hermes = parsed.hermes ? applyHermesBridge({ root: options.root, force: false, check: false }) : undefined;
   const scaffolds = scaffoldTargets.map((target) => applyScaffold({ root: options.root, target, force: false, clock }));
 
-  // The backlog check is advisory-only (never fails the run) and, off-TTY/via-flags, runs only when
-  // it's actually relevant: explicitly requested (`--check-backlog`), or implied by onboarding a
+  // The tracker check is advisory-only (never fails the run) and, off-TTY/via-flags, runs only when
+  // it's actually relevant: explicitly requested (`--check-tracker`), or implied by onboarding a
   // consumer that depends on the coupling (`--agents`/`--scaffold`/`--obsidian`) — unless the user
-  // opted all the way out with `--no-backlog`. A completely bare `lore init` therefore never spawns
-  // a `backlog` subprocess, exactly as before this task.
-  const shouldCheckBacklog =
-    parsed.checkBacklog ||
-    (parsed.tracker !== "none" && !parsed.noBacklog && (parsed.agents || parsed.codex || scaffoldTargets.length > 0));
-  if (!shouldCheckBacklog) {
-    const result: InitResult = {
-      ...base,
-      interactive: false,
-      agents,
-      codex,
-      hermes,
-      scaffolds,
-      backlog: undefined,
-      tracker: parsed.tracker,
-      migration,
-    };
-    emit(initRenderable(result), options.output, options.stdout);
+  // opted all the way out with `--no-tracker`. A completely bare `lore init` therefore never spawns
+  // a tracker subprocess, exactly as before LORE-260.
+  const backend = selectedBackendFor(parsed, priorSelection);
+  const shouldCheck =
+    (parsed.checkTracker || parsed.agents || parsed.codex || scaffoldTargets.length > 0) &&
+    !parsed.noTracker &&
+    backend !== "none";
+  if (!shouldCheck && verified === undefined) {
+    emit(
+      initRenderable({
+        ...base,
+        interactive: false,
+        agents,
+        codex,
+        hermes,
+        scaffolds,
+        trackerEnvironment: environment,
+        trackerCheck: undefined,
+        backlog: undefined,
+        installed: installedPackage,
+        tracker: parsed.tracker,
+        migration,
+      }),
+      options.output,
+      options.stdout,
+    );
     return EXIT_OK;
   }
 
   const warnings = new WarningCollector();
-  return probeBacklogCapability(options, warnings).then((backlog) => {
+  const probed =
+    verified !== undefined ? Promise.resolve(verified) : probeTrackerCapability(options, backend, warnings);
+  return probed.then((trackerCheck) => {
     warnings.flush({ color: options.output.color, stderr: options.stderr ?? process.stderr });
-    const result: InitResult = {
-      ...base,
-      interactive: false,
-      agents,
-      codex,
-      hermes,
-      scaffolds,
-      backlog,
-      tracker: parsed.tracker,
-      migration,
-    };
-    emit(initRenderable(result), options.output, options.stdout);
+    emit(
+      initRenderable({
+        ...base,
+        interactive: false,
+        agents,
+        codex,
+        hermes,
+        scaffolds,
+        trackerEnvironment: environment,
+        trackerCheck,
+        backlog: legacyBacklogCheck(trackerCheck),
+        installed: installedPackage,
+        tracker: parsed.tracker,
+        migration,
+      }),
+      options.output,
+      options.stdout,
+    );
     return EXIT_OK;
   });
+}
+
+/**
+ * Project the tracker check onto the deprecated `backlog` field — populated ONLY for a `backlog`
+ * bundle, which is exactly what that field has always meant. A Quest or Jira bundle leaves it
+ * absent rather than filling it with another backend's result, so no existing `--json` consumer
+ * reads a Quest probe as a Backlog one.
+ */
+function legacyBacklogCheck(check: InitTrackerCheck): InitBacklogCheck | undefined {
+  if (check.backend !== "backlog") {
+    return undefined;
+  }
+  return {
+    checked: true,
+    capable: check.capable,
+    ...(check.version === undefined ? {} : { version: check.version }),
+    ...(check.warning === undefined ? {} : { warning: check.warning }),
+  };
 }
 
 function runBacklogMigration(options: InitOptions): Promise<TrackerMigrationResult> {
@@ -422,8 +751,10 @@ function runCoordinatedCutover(options: InitOptions, parsed: InitArgs): Promise<
  */
 async function runInteractiveWizard(
   options: InitOptions,
-  base: { root: string; created: string[]; skipped: string[] },
+  parsed: InitArgs,
   priorSelection: TrackerSelection,
+  git: GitPreflight,
+  plan: ReturnType<typeof buildScaffold>,
 ): Promise<number> {
   const prompter = options.prompter ?? createRealPrompter();
   const scaffoldTargets: string[] = [];
@@ -432,7 +763,31 @@ async function runInteractiveWizard(
   let wantHermes = false;
   let tracker: TrackerBackend = "quest";
   let migrateBacklog = false;
+  let initializeGit = false;
+  let installed: string | undefined;
+  let jira: JiraTrackerConfig | undefined;
+  // Detected ONCE, before the tracker question, and re-read only after an install actually runs
+  // (LCLI-358.3). Three PATH lookups and three `existsSync` calls — no backend is spawned, which is
+  // what makes it affordable to describe every choice rather than only the one taken.
+  let environment = (options.trackerEnvironment ?? (() => detectTrackerEnvironment(options.root)))();
   try {
+    // The git preflight is the wizard's FIRST question and runs before every other prompt
+    // (LCLI-358.1) — a declined repository ends the run, so asking about trackers, agent bridges,
+    // or doc-site scaffolds first would collect answers that are then thrown away.
+    if (!parsed.allowNoGit && !git.isRepository()) {
+      const wantGit = await prompter.confirm(
+        "This directory is not a git repository, which `lore sync` and `quest init` both require. Run `git init` here?",
+        true,
+      );
+      if (!wantGit) {
+        throw missingGitRepository();
+      }
+      // Answer recorded, NOT acted on yet (LCLI-358.1 review): `git init` is itself a write, and a
+      // later question can still end the run — a Ctrl-D at the tracker prompt would otherwise leave
+      // a `.git` directory behind from a run that exited non-zero. It executes below, alongside the
+      // scaffold, once every prompt is answered.
+      initializeGit = true;
+    }
     if (priorSelection.source === "legacy-backlog") {
       const legacyChoice = await prompter.choose(
         "This bundle has Backlog tasks but no explicit tracker. Migrate to Quest or pin Backlog?",
@@ -442,16 +797,26 @@ async function runInteractiveWizard(
       migrateBacklog = legacyChoice === "migrate";
       tracker = migrateBacklog ? "quest" : "backlog";
     } else {
-      const trackerChoice = await prompter.choose("Which tracker backend should Lore use?", TRACKER_BACKENDS, "quest");
-      if (!TRACKER_BACKENDS.includes(trackerChoice as TrackerBackend)) {
-        throw new LoreError(
-          "validation",
-          `unsupported tracker backend ${JSON.stringify(trackerChoice)}`,
-          `use one of: ${TRACKER_BACKENDS.join(", ")}`,
-          { backend: trackerChoice },
-        );
-      }
-      tracker = trackerChoice as TrackerBackend;
+      const chosen = await chooseTracker(options, parsed, prompter, environment);
+      tracker = chosen.backend;
+      installed = chosen.installed;
+    }
+    if (installed === undefined && trackerEntry(environment, tracker)?.installed === false) {
+      // Only the legacy-backlog branch above reaches this: it pins its answer without going through
+      // `chooseTracker`, so its missing-binary case is handled here rather than twice.
+      installed = await resolveMissingBinary(options, parsed, prompter, environment, tracker);
+    }
+    if (installed !== undefined) {
+      // Re-detect so the emitted environment describes what is now true, not what was true before
+      // this run installed something.
+      environment = (options.trackerEnvironment ?? (() => detectTrackerEnvironment(options.root)))();
+    }
+    if (tracker === "jira") {
+      // Asked here — immediately after the backend is settled and still before the first byte is
+      // written (LCLI-358.4). A jira selection Lore cannot configure ends the run with the
+      // directory untouched, rather than after five more questions the operator answered for
+      // nothing.
+      jira = await configureJira(options, parsed, prompter);
     }
     const available = detectAgentAvailability(options);
     if (available.claude) {
@@ -475,8 +840,16 @@ async function runInteractiveWizard(
     prompter.close();
   }
 
+  // Every question is answered and nothing can still refuse: only now is the first byte written
+  // (LCLI-358.1, AC#4). An EOF/Ctrl-D or a declined git prompt above throws out of the `try` and
+  // reaches here never — leaving the directory exactly as the run found it, `.git` included.
+  if (initializeGit) {
+    git.initialize();
+  }
+  const base = applyBaseScaffold(options, plan);
+
   const migration = migrateBacklog ? await runBacklogMigration(options) : undefined;
-  persistTrackerBackend(options.root, tracker);
+  persistTrackerBackend(options.root, tracker, jira);
   if (migration !== undefined) clearPendingQuestMigration(options.root);
 
   const clock = options.clock ?? (() => new Date());
@@ -486,7 +859,10 @@ async function runInteractiveWizard(
   const scaffolds = scaffoldTargets.map((target) => applyScaffold({ root: options.root, target, force: false, clock }));
 
   const warnings = new WarningCollector();
-  const backlog = tracker === "none" ? undefined : await probeBacklogCapability(options, warnings);
+  // Probes the backend the operator just chose — not `backlog` regardless, which is what made
+  // choosing Quest report that Backlog.md was uninitialized (LCLI-358.2). Reuses the selection-time
+  // verification above when it ran, so the tracker is spawned once per wizard run.
+  const trackerCheck = tracker === "none" ? undefined : await probeTrackerCapability(options, tracker, warnings);
   warnings.flush({ color: options.output.color, stderr: options.stderr ?? process.stderr });
 
   const result: InitResult = {
@@ -496,12 +872,161 @@ async function runInteractiveWizard(
     codex,
     hermes,
     scaffolds,
-    backlog,
+    trackerEnvironment: environment,
+    installed,
+    trackerCheck,
+    backlog: trackerCheck === undefined ? undefined : legacyBacklogCheck(trackerCheck),
     tracker,
     migration,
   };
   emit(initRenderable(result), options.output, options.stdout);
   return EXIT_OK;
+}
+
+/** How many times the wizard may return to the tracker question. See {@link chooseTracker}. */
+const MAX_TRACKER_ATTEMPTS = 2;
+
+/**
+ * Render one line per backend describing what `lore init` found — installed or not, and whether this
+ * repository is already set up for it (LCLI-358.3 AC#1).
+ *
+ * Written to **stderr**, like every other part of the wizard's UI, so stdout stays exclusively the
+ * `init` envelope (cli-contract §4). It is a summary, not a question: the operator sees the state
+ * that makes the following choice informed, rather than picking a backend and finding out afterwards
+ * that nothing is installed.
+ */
+function renderTrackerEnvironment(environment: TrackerEnvironment): string {
+  const lines = ["Tracker backends found on this machine:"];
+  for (const entry of environment) {
+    const setup =
+      entry.initialized === undefined
+        ? "readiness is credential-based; checked when selected"
+        : entry.initialized
+          ? "initialized in this repository"
+          : "not initialized in this repository";
+    lines.push(
+      `  ${entry.backend}: ${entry.installed ? `installed — ${setup}` : `not installed (${installCommandFor(entry)})`}`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+/**
+ * Ask which tracker to use, with the detected environment in view, and resolve a missing binary
+ * before returning (LCLI-358.3 AC#1/AC#2/AC#3).
+ *
+ * **Bounded to {@link MAX_TRACKER_ATTEMPTS} passes.** The loop exists so an operator who declines to
+ * install one backend can pick a different one instead of having the run end on them — but a loop
+ * whose exit depends only on the operator answering differently is a loop that can spin forever
+ * against an automated or confused caller. Two passes is enough for "I picked wrong, let me pick
+ * again" and cannot become a prompt the run never escapes.
+ */
+async function chooseTracker(
+  options: InitOptions,
+  parsed: InitArgs,
+  prompter: InitPrompter,
+  environment: TrackerEnvironment,
+): Promise<{ backend: TrackerBackend; installed?: string }> {
+  (options.stderr ?? process.stderr).write(renderTrackerEnvironment(environment));
+  for (let attempt = 1; attempt <= MAX_TRACKER_ATTEMPTS; attempt += 1) {
+    const choice = await prompter.choose("Which tracker backend should Lore use?", TRACKER_BACKENDS, "quest");
+    if (!TRACKER_BACKENDS.includes(choice as TrackerBackend)) {
+      throw new LoreError(
+        "validation",
+        `unsupported tracker backend ${JSON.stringify(choice)}`,
+        `use one of: ${TRACKER_BACKENDS.join(", ")}`,
+        { backend: choice },
+      );
+    }
+    const backend = choice as TrackerBackend;
+    const entry = trackerEntry(environment, backend);
+    if (entry === undefined || entry.installed) {
+      return { backend };
+    }
+    const lastAttempt = attempt === MAX_TRACKER_ATTEMPTS;
+    if (await offerInstall(options, parsed, prompter, entry)) {
+      return { backend, installed: entry.package };
+    }
+    // Declined the install. Offer the way out that does not end the run — but only while an attempt
+    // remains, so the offer itself cannot become the loop.
+    if (!lastAttempt && (await prompter.confirm(`Choose a different tracker instead of ${backend}?`, true))) {
+      continue;
+    }
+    throw missingTrackerBinary(entry);
+  }
+  // Unreachable: every path above returns or throws. Present so the bound is a property of the code
+  // rather than of the reader's confidence in it.
+  throw new LoreError(
+    "usage",
+    "no tracker backend was selected",
+    `run \`lore init --tracker ${TRACKER_BACKENDS.join("|")}\``,
+  );
+}
+
+/**
+ * Offer to install one backend's package, returning whether its binary is available afterwards.
+ * Returns `false` when the operator declines; a *failed* install is an error, not a decline, because
+ * npm reporting a failure is information the operator needs rather than a fork in the wizard.
+ */
+async function offerInstall(
+  options: InitOptions,
+  parsed: InitArgs,
+  prompter: InitPrompter,
+  entry: TrackerEnvironmentEntry,
+): Promise<boolean> {
+  if (parsed.noInstallTracker) {
+    return false;
+  }
+  const command = installCommandFor(entry);
+  if (
+    !parsed.installTracker &&
+    !(await prompter.confirm(`${entry.binary} is not installed. Run \`${command}\`?`, true))
+  ) {
+    return false;
+  }
+  const install = options.installTracker ?? installTrackerPackage;
+  if (await install(entry)) {
+    return true;
+  }
+  // npm succeeded and the binary still is not on PATH — a real and confusing situation (a global
+  // prefix outside PATH), so it gets its own diagnostic rather than looking like a declined offer.
+  throw new LoreError(
+    "not_found",
+    `\`${command}\` completed but \`${entry.binary}\` is still not on PATH`,
+    "check your npm global prefix is on PATH (`npm prefix -g`), then rerun `lore init`",
+    { binary: entry.binary, package: entry.package },
+  );
+}
+
+/**
+ * Resolve a backend whose binary is missing outside {@link chooseTracker}'s own loop — the
+ * legacy-backlog branch, which pins its answer without asking the tracker question at all.
+ */
+async function resolveMissingBinary(
+  options: InitOptions,
+  parsed: InitArgs,
+  prompter: InitPrompter,
+  environment: TrackerEnvironment,
+  backend: TrackerBackend,
+): Promise<string | undefined> {
+  const entry = trackerEntry(environment, backend);
+  if (entry === undefined || entry.installed) {
+    return undefined;
+  }
+  if (!(await offerInstall(options, parsed, prompter, entry))) {
+    throw missingTrackerBinary(entry);
+  }
+  return entry.package;
+}
+
+/** The one diagnostic for "you chose a backend whose CLI is not installed and declined to install it". */
+function missingTrackerBinary(entry: TrackerEnvironmentEntry): LoreError {
+  return new LoreError(
+    "not_found",
+    `the \`${entry.binary}\` CLI is required for the ${entry.backend} tracker and is not on PATH`,
+    `run \`${installCommandFor(entry)}\`, then rerun \`lore init\` — or choose another backend with \`lore init --tracker <quest|backlog|jira|none>\``,
+    { backend: entry.backend, binary: entry.binary, package: entry.package },
+  );
 }
 
 /**
@@ -540,15 +1065,18 @@ export function createRealPrompter(
   },
 ): InitPrompter {
   const rl = readline.createInterface({ input: streams.input, output: streams.output });
+  // Whether the interface has already closed by the time a question is asked. Without this,
+  // `ask`'s race is decided by timing rather than by intent (LCLI-358.1): when stdin has ALREADY
+  // hit EOF, `rl.question()` rejects synchronously with Node's own "readline was closed", which
+  // wins the race against `closedEarly` and surfaces an internal message instead of the
+  // classified `usage` diagnostic. That was previously masked because the base scaffold ran before
+  // the wizard and gave `closedEarly` a head start; with the scaffold moved after the prompts the
+  // race is genuinely tight, so the outcome is now decided explicitly instead of by luck.
+  let alreadyClosed = false;
   const closedEarly = new Promise<never>((_resolve, reject) => {
     rl.once("close", () => {
-      reject(
-        new LoreError(
-          "usage",
-          "stdin closed or the wizard was interrupted before it finished (EOF/Ctrl-D or Ctrl-C)",
-          "answer every prompt, or run prompt-free with `lore init --yes` (or --claude/--codex/--scaffold <target>/--obsidian/--no-backlog/--check-backlog)",
-        ),
-      );
+      alreadyClosed = true;
+      reject(interrupted());
     });
   });
   // Prevents an "unhandled promise rejection" once the wizard finishes normally and its own
@@ -556,9 +1084,34 @@ export function createRealPrompter(
   // settled and nothing is awaiting `closedEarly` anymore — see the doc comment above.
   closedEarly.catch(() => {});
 
-  /** Race one `rl.question()` call against the interface's own `close` event (see the doc above). */
-  function ask(promptText: string): Promise<string> {
-    return Promise.race([rl.question(promptText), closedEarly]);
+  /** The one classified diagnostic for a wizard that lost its input, raised from both paths below. */
+  function interrupted(): LoreError {
+    return new LoreError(
+      "usage",
+      "stdin closed or the wizard was interrupted before it finished (EOF/Ctrl-D or Ctrl-C)",
+      "answer every prompt, or run prompt-free with `lore init --yes` (or --claude/--codex/--scaffold <target>/--obsidian/--no-tracker/--check-tracker)",
+    );
+  }
+
+  /**
+   * Race one `rl.question()` call against the interface's own `close` event (see the doc above),
+   * with the already-closed case decided up front rather than left to the race, and Node's own
+   * post-close rejection translated into the same classified error.
+   */
+  async function ask(promptText: string): Promise<string> {
+    if (alreadyClosed) {
+      throw interrupted();
+    }
+    try {
+      return await Promise.race([rl.question(promptText), closedEarly]);
+    } catch (cause) {
+      if (cause instanceof LoreError) {
+        throw cause;
+      }
+      // `rl.question()` on a closed interface rejects with an internal readline error; the operator
+      // needs the actionable EOF diagnostic, not that.
+      throw alreadyClosed ? interrupted() : cause;
+    }
   }
 
   return {
@@ -574,6 +1127,11 @@ export function createRealPrompter(
       const raw = (await ask(`${question} (${choices.join("/")}) [${defaultValue}] `)).trim().toLowerCase();
       return choices.includes(raw) ? raw : defaultValue;
     },
+    async ask(question, defaultValue) {
+      const suffix = defaultValue === "" ? "" : ` [${defaultValue}]`;
+      const raw = (await ask(`${question}${suffix} `)).trim();
+      return raw === "" ? defaultValue : raw;
+    },
     close() {
       rl.close();
     },
@@ -588,23 +1146,61 @@ export function createRealPrompter(
  * bridge/doc-site scaffold already applied) succeeded regardless of whether Backlog.md coupling is
  * available yet.
  */
-async function probeBacklogCapability(options: InitOptions, warnings: WarningCollector): Promise<InitBacklogCheck> {
-  // This onboarding diagnostic is intentionally Backlog-specific even when the
-  // newly selected production tracker is Jira. Jira readiness is validated by
-  // configured command construction after its non-secret project map is added.
-  const adapter = options.adapter ?? createTrackerAdapter(options.root, { backend: "backlog" });
+async function probeTrackerCapability(
+  options: InitOptions,
+  backend: TrackerBackend,
+  warnings: WarningCollector,
+): Promise<InitTrackerCheck> {
+  // Adapter construction lives INSIDE the try (LCLI-358.2): `createTrackerAdapter` itself throws
+  // for `jira` with no `[tracker.jira]` table, and that is exactly the kind of "your tracker is not
+  // ready yet" fact this advisory exists to report — not an uncaught error that fails a run whose
+  // scaffold already succeeded.
   try {
+    const adapter = options.adapter ?? createConfiguredAdapterFor(options.root, backend);
     const capability = await adapter.probe();
-    return { checked: true, capable: true, version: capability.version };
+    return { checked: true, backend, capable: true, version: capability.version };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const hint = err instanceof LoreError ? err.hint : undefined;
-    warnings.add(`backlog coupling unavailable: ${message}${hint ? ` — ${hint}` : ""}`);
-    return { checked: true, capable: false, warning: message };
+    warnings.add(`${backend} coupling unavailable: ${message}${hint ? ` — ${hint}` : ""}`);
+    return { checked: true, backend, capable: false, warning: message };
   }
 }
 
-/** Whether any of `lore init`'s own flags was passed — the signal that overrides a bare-TTY invocation into the non-interactive path (AC#2). */
+/**
+ * Build the adapter for one selected backend, supplying the non-secret configuration a backend
+ * needs. Only `jira` reads any: `createTrackerAdapter` requires its project map, and `loadConfig`
+ * is the single owner of that validation.
+ */
+function createConfiguredAdapterFor(root: string, backend: TrackerBackend) {
+  if (backend === "jira") {
+    return createTrackerAdapter(root, { backend, jira: loadConfig({ root }).tracker.jira });
+  }
+  return createTrackerAdapter(root, { backend });
+}
+
+/**
+ * Which backend this run actually selected, and therefore the ONE this command may probe or
+ * diagnose (LCLI-358.2). An explicit `--tracker` wins; otherwise the bundle's own resolved
+ * selection does. Never defaults to `backlog`: probing a backend the operator did not choose is
+ * the defect this function exists to prevent.
+ */
+function selectedBackendFor(parsed: InitArgs, priorSelection: () => TrackerSelection): TrackerBackend {
+  return parsed.tracker ?? priorSelection().backend;
+}
+
+/**
+ * Whether any of `lore init`'s own flags was passed — the signal that overrides a bare-TTY
+ * invocation into the non-interactive path (LORE-260 AC#2).
+ *
+ * **`--allow-no-git` is deliberately absent from this set** (LCLI-358.1). ADR-0017's rule is that
+ * any flag skips the wizard, and it holds because every other flag *answers a wizard question*, so
+ * passing one means the caller already decided what the wizard would have asked. `--allow-no-git`
+ * answers a **preflight gate** instead: it waives a requirement rather than choosing a consumer.
+ * Including it would make `lore init --allow-no-git` scaffold-and-exit, which leaves no way to
+ * reach the wizard at all from a non-git directory — the exact situation the flag exists for. It
+ * still suppresses its own prompt, so the 1:1 flag-to-question mapping is preserved.
+ */
 function anyFlagGiven(parsed: InitArgs): boolean {
   return (
     parsed.yes ||
@@ -612,8 +1208,10 @@ function anyFlagGiven(parsed: InitArgs): boolean {
     parsed.codex ||
     parsed.hermes ||
     parsed.scaffolds.length > 0 ||
-    parsed.noBacklog ||
-    parsed.checkBacklog ||
+    parsed.noTracker ||
+    parsed.checkTracker ||
+    parsed.installTracker ||
+    parsed.noInstallTracker ||
     parsed.migrateBacklog ||
     parsed.tracker !== undefined
   );
@@ -623,9 +1221,9 @@ function anyFlagGiven(parsed: InitArgs): boolean {
  * Parse `init`'s tokens: no positionals (unchanged from before LORE-260 — a bare/`--`-terminated
  * positional is still a `usage` error, byte-identical wording to the router's old blanket
  * `rejectCommandArgs` guard so every pre-existing regression test keeps passing), plus the boolean
- * `--yes` (alias `--non-interactive`, NIT-2)/`--agents`/`--obsidian`/`--no-backlog`/`--check-backlog`
+ * `--yes` (alias `--non-interactive`, NIT-2)/`--agents`/`--obsidian`/`--no-tracker`/`--check-tracker`
  * and the repeatable value flag `--scaffold <target>`. An unknown flag, an invalid `--scaffold`
- * target, a stray positional, or the mutually-exclusive `--no-backlog`+`--check-backlog` pair all
+ * target, a stray positional, or the mutually-exclusive `--no-tracker`+`--check-tracker` pair all
  * throw a `usage` {@link LoreError} (exit `2`) before any scaffold work runs.
  */
 function parseInitArgs(args: readonly string[]): InitArgs {
@@ -634,9 +1232,17 @@ function parseInitArgs(args: readonly string[]): InitArgs {
   const agents = parsed.flags.has("agents") || parsed.flags.has("claude");
   const codex = parsed.flags.has("codex");
   const hermes = parsed.flags.has("hermes");
-  const noBacklog = parsed.flags.has("no-backlog");
-  const checkBacklog = parsed.flags.has("check-backlog");
+  // `--no-tracker`/`--check-tracker` are the accurate spellings now that the probe follows the
+  // selected backend; the `-backlog` originals stay as aliases, the same way `--agents` aliases
+  // `--claude` (LCLI-358.2).
+  const noTracker = parsed.flags.has("no-tracker") || parsed.flags.has("no-backlog");
+  const checkTracker = parsed.flags.has("check-tracker") || parsed.flags.has("check-backlog");
   const migrateBacklog = parsed.flags.has("migrate-backlog");
+  const allowNoGit = parsed.flags.has("allow-no-git");
+  const installTracker = parsed.flags.has("install-tracker");
+  const noInstallTracker = parsed.flags.has("no-install-tracker");
+  const jiraProfile = singleOptionValue(parsed, "jira-profile");
+  const jiraProject = singleOptionValue(parsed, "jira-project");
   const adoptManifestValue = singleOptionValue(parsed, "adopt-manifest");
   const approvalDigestValue = singleOptionValue(parsed, "approval-digest");
   if (adoptManifestValue === "") {
@@ -681,11 +1287,37 @@ function parseInitArgs(args: readonly string[]): InitArgs {
       { command: "init", unexpected: [...parsed.positionals] },
     );
   }
-  if (noBacklog && checkBacklog) {
+  if (installTracker && noInstallTracker) {
     throw usage(
-      "--no-backlog and --check-backlog are mutually exclusive",
-      "pass at most one of --no-backlog / --check-backlog",
+      "--install-tracker and --no-install-tracker are mutually exclusive",
+      "pass at most one of --install-tracker / --no-install-tracker",
     );
+  }
+  if (noTracker && checkTracker) {
+    throw usage(
+      "--no-tracker and --check-tracker are mutually exclusive",
+      "pass at most one of --no-tracker / --check-tracker (or their --no-backlog / --check-backlog aliases)",
+    );
+  }
+  // LCLI-358.4: both jira flags are answers to questions only the jira branch asks, so accepting
+  // them alongside another backend would record an answer that is never read — the silent kind of
+  // no-op a caller only discovers when the configuration they thought they set is missing.
+  for (const [flag, value] of [
+    ["--jira-profile", jiraProfile],
+    ["--jira-project", jiraProject],
+  ] as const) {
+    if (value === "") {
+      throw usage(
+        `${flag} needs a value`,
+        `pass a value, e.g. \`${flag} ${flag === "--jira-profile" ? "default" : "ENG"}\``,
+      );
+    }
+    if (value !== undefined && tracker !== "jira") {
+      throw usage(`${flag} requires --tracker jira`, "pass --tracker jira, or drop the jira flags", {
+        flag,
+        tracker: tracker ?? null,
+      });
+    }
   }
   return {
     yes,
@@ -693,25 +1325,174 @@ function parseInitArgs(args: readonly string[]): InitArgs {
     codex,
     hermes,
     scaffolds,
-    noBacklog,
-    checkBacklog,
+    noTracker,
+    checkTracker,
     tracker,
     migrateBacklog,
     adoptManifest: adoptManifestValue,
     approvalDigest: approvalDigestValue,
+    allowNoGit,
+    installTracker,
+    noInstallTracker,
+    jiraProfile,
+    jiraProject,
   };
+}
+
+/** Jira's default workflow scheme, the starting `status_flow` for a freshly configured project. */
+const DEFAULT_JIRA_STATUS_FLOW = ["To Do", "In Progress", "Done"] as const;
+
+/**
+ * Resolve the `[tracker.jira]` table for this run: pick a jira-cli profile, then prove the project
+ * key resolves under it (LCLI-358.4).
+ *
+ * **Every question here is answered by jira-cli, not by Lore.** Lore does not know which sites the
+ * operator has credentials for, and must never learn: `jira init` is the interactive,
+ * credential-bearing setup, so the zero-profile case exits naming that command rather than
+ * attempting it (AC#1). What Lore persists is the *reference* — a profile name and a project key —
+ * and nothing that could authenticate anything.
+ *
+ * `prompter` is `undefined` on the non-interactive path, where both answers must arrive as flags.
+ * A missing flag there is a `usage` error raised before anything is written, so `--tracker jira`
+ * can no longer produce the bundle this task exists to fix: one pinned to jira with no
+ * `[tracker.jira]` table, which `createTrackerAdapter` rejects on the very next command.
+ */
+async function configureJira(
+  options: InitOptions,
+  parsed: InitArgs,
+  prompter: InitPrompter | undefined,
+): Promise<JiraTrackerConfig> {
+  const jira = options.jira ?? realJiraOnboarding(options.root);
+  const profiles = await jira.listProfiles();
+  if (profiles.length === 0) {
+    throw new LoreError(
+      "not_found",
+      "jira-cli has no credential profiles, so Lore cannot record which one to use",
+      "run `jira init` to create a profile (it is interactive and handles credentials — Lore never does), then rerun `lore init --tracker jira`",
+      { backend: "jira" },
+    );
+  }
+  const names = profiles.map((profile) => profile.name);
+  const fallback = profiles.find((profile) => profile.isDefault) ?? profiles[0];
+  const defaultProfile = (fallback as (typeof profiles)[number]).name;
+
+  let profile: string;
+  if (parsed.jiraProfile !== undefined) {
+    profile = parsed.jiraProfile;
+  } else if (prompter === undefined) {
+    throw usage(
+      "--tracker jira needs --jira-profile to know which jira-cli profile to record",
+      `pass --jira-profile with one of: ${names.join(", ")}`,
+      { backend: "jira", profiles: names },
+    );
+  } else {
+    (options.stderr ?? process.stderr).write(renderJiraProfiles(profiles));
+    profile = await prompter.ask("Which jira-cli profile should Lore use?", defaultProfile);
+  }
+  if (!names.includes(profile)) {
+    throw new LoreError(
+      "validation",
+      `jira-cli has no profile named ${JSON.stringify(profile)}`,
+      `use one of: ${names.join(", ")} — or run \`jira init\` to add another`,
+      { profile, profiles: names },
+    );
+  }
+
+  let project: string;
+  if (parsed.jiraProject !== undefined) {
+    project = parsed.jiraProject;
+  } else if (prompter === undefined) {
+    throw usage(
+      "--tracker jira needs --jira-project to know which Jira project to record",
+      "pass --jira-project with your project key, e.g. `--jira-project ENG`",
+      { backend: "jira" },
+    );
+  } else {
+    project = (await prompter.ask("Jira project key (e.g. ENG)?", "")).trim();
+  }
+  if (project === "") {
+    throw usage("no Jira project key was given", "pass --jira-project <KEY>, or answer the project-key prompt");
+  }
+
+  // The live check (AC#3). Its failure propagates carrying jira-cli's own reason, and it doubles as
+  // the source for `issue_type` below — validating and reading the vocabulary is one call, so a
+  // configured bundle cannot name an issue type the project does not actually offer.
+  const summary = await jira.describeProject(project, profile);
+  return {
+    profile,
+    project: summary.key,
+    issueType: defaultIssueType(summary.issueTypes),
+    defaultLabels: [],
+    statusFlow: [...DEFAULT_JIRA_STATUS_FLOW],
+  };
+}
+
+/**
+ * Choose the issue type Lore creates tasks as, from the project's own list. Prefers `Task`, the
+ * name of Jira's own default work-item type; otherwise the first type that is not a subtask, since
+ * a subtask cannot be created standalone. An empty list falls back to `Task` so the written table is
+ * still well-formed — the adapter's own probe reports it if the project genuinely lacks that type.
+ */
+function defaultIssueType(issueTypes: readonly string[]): string {
+  return issueTypes.find((name) => name === "Task") ?? issueTypes.find((name) => name !== "Subtask") ?? "Task";
+}
+
+/** Show what jira-cli reported, so the profile question is answered with the sites in view. */
+function renderJiraProfiles(profiles: readonly { name: string; jiraUrl: string | undefined; isDefault: boolean }[]) {
+  const lines = ["jira-cli credential profiles found:"];
+  for (const profile of profiles) {
+    const site = profile.jiraUrl === undefined ? "" : ` — ${profile.jiraUrl}`;
+    lines.push(`  ${profile.name}${site}${profile.isDefault ? " (jira-cli default)" : ""}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+/**
+ * Upsert the `[tracker.jira]` table, replacing it wholesale when one already exists.
+ *
+ * Deliberately coarser than {@link withTrackerBackend}, which upserts a single key: this table is
+ * written as one unit by one flow, so a per-key merge would preserve a stale `project` alongside a
+ * freshly validated one. Everything outside the table's own span is preserved byte-for-byte, and
+ * **no key here can hold a credential** — `config.ts` rejects secret-shaped keys under `tracker.`,
+ * and the five written below are a profile *name*, a project key, an issue-type name, labels, and
+ * a status list.
+ */
+function withJiraTracker(current: string, config: JiraTrackerConfig): string {
+  const eol = current.includes("\r\n") ? "\r\n" : "\n";
+  const body = [
+    `profile = ${JSON.stringify(config.profile ?? "")}`,
+    `project = ${JSON.stringify(config.project ?? "")}`,
+    `issue_type = ${JSON.stringify(config.issueType ?? "")}`,
+    `default_labels = [${config.defaultLabels.map((label) => JSON.stringify(label)).join(", ")}]`,
+    `status_flow = [${config.statusFlow.map((status) => JSON.stringify(status)).join(", ")}]`,
+  ].join(eol);
+  const table = `[tracker.jira]${eol}${body}${eol}`;
+
+  const header = /^[ \t]*\[[ \t]*tracker[ \t]*\.[ \t]*jira[ \t]*\][ \t]*(?:#.*)?(?:\r?\n|$)/mu.exec(current);
+  if (header !== null) {
+    const bodyStart = header.index + header[0].length;
+    const nextHeader = /^[ \t]*(?:\[[^\]\r\n]+\]|\[\[[^\]\r\n]+\]\])[ \t]*(?:#.*)?$/mu.exec(current.slice(bodyStart));
+    const bodyEnd = nextHeader === null ? current.length : bodyStart + nextHeader.index;
+    return current.slice(0, header.index) + table + current.slice(bodyEnd);
+  }
+  const separator = current.length === 0 ? "" : current.endsWith("\n") ? eol : `${eol}${eol}`;
+  return `${current}${separator}${table}`;
 }
 
 /** Persist one explicit tracker choice while preserving every unrelated config byte. */
 /** Upsert `[tracker].backend` in the bundle's config, validating the current file first. Exported for `tracker-cutover.ts`, whose final irreversible step is exactly this selection. */
-export function persistTrackerBackend(root: string, backend: TrackerBackend): void {
+export function persistTrackerBackend(root: string, backend: TrackerBackend, jira?: JiraTrackerConfig): void {
   assertNoSymlinkInPath(root, CONFIG_REL_PATH);
   // Validate the complete current file first, including credential guards and
   // unknown-value diagnostics. The base init scaffold guarantees it exists.
   loadConfig({ root });
   const absPath = join(root, CONFIG_REL_PATH);
   const current = readFileSync(absPath, "utf8");
-  const next = withTrackerBackend(current, backend);
+  // One write for both (LCLI-358.4): the selection and the configuration it needs are a single
+  // commitment, so they must never be observable apart — a bundle carrying `backend = "jira"` with
+  // no `[tracker.jira]` table is exactly the broken state this parameter exists to prevent.
+  const withBackend = withTrackerBackend(current, backend);
+  const next = jira === undefined ? withBackend : withJiraTracker(withBackend, jira);
   if (next !== current) {
     writeFileAtomic(absPath, next, CONFIG_REL_PATH);
   }
@@ -826,12 +1607,16 @@ function renderPretty(data: InitResult, opts: { color: boolean }): string {
       lines.push(`  ${paint(file.action, ANSI.green, opts.color)} ${file.path}`);
     }
   }
-  if (data.backlog) {
+  if (data.trackerCheck) {
+    const { backend, capable, version } = data.trackerCheck;
     lines.push(
-      data.backlog.capable
-        ? `backlog: --json-capable${data.backlog.version ? ` (v${data.backlog.version})` : ""}`
-        : paint("backlog: not --json-capable — see the warning above (coupling unavailable)", ANSI.yellow, opts.color),
+      capable
+        ? `${backend}: ready${version ? ` (v${version})` : ""}`
+        : paint(`${backend}: not ready — see the warning above (coupling unavailable)`, ANSI.yellow, opts.color),
     );
+  }
+  if (data.installed !== undefined) {
+    lines.push(`installed: ${data.installed}`);
   }
   if (data.tracker !== undefined) {
     lines.push(`tracker: ${data.tracker}`);
@@ -881,8 +1666,11 @@ function renderPlain(data: InitResult): string {
       lines.push(`scaffold-${scaffold.target}-${file.action} ${file.path}`);
     }
   }
-  if (data.backlog) {
-    lines.push(data.backlog.capable ? "backlog capable" : "backlog incapable");
+  if (data.trackerCheck) {
+    lines.push(`${data.trackerCheck.backend} ${data.trackerCheck.capable ? "capable" : "incapable"}`);
+  }
+  if (data.installed !== undefined) {
+    lines.push(`installed ${data.installed}`);
   }
   if (data.tracker !== undefined) {
     lines.push(`tracker ${data.tracker}`);

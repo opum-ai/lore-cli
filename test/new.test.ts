@@ -19,7 +19,7 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "lore-new-"));
   // `new` is run inside an initialized bundle: `init` creates `.lore/schemas/` (so a known
   // type gets its editor modeline) and `.lore/templates/` (where user-template tests drop files).
-  runInit({ root, output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
+  runInit({ root, args: ["--allow-no-git"], output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
 });
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });

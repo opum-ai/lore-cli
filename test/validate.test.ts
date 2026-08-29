@@ -553,7 +553,7 @@ describe("validate (command)", () => {
   let root: string;
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "lore-validate-"));
-    runInit({ root, output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
+    runInit({ root, args: ["--allow-no-git"], output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
   });
   afterEach(() => {
     rmSync(root, { recursive: true, force: true });
@@ -790,7 +790,7 @@ describe("validate (command) — LORE-144 reserved root index under a custom pro
     mkdirSync(join(root, ".lore"), { recursive: true });
     writeFileSync(join(root, PROFILE_REL_PATH), CUSTOM_PROFILE_TOML);
 
-    runInit({ root, output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
+    runInit({ root, args: ["--allow-no-git"], output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
 
     const stdout = capture();
     const code = runValidate({ root, output: JSON_CTX, args: [], stdout } satisfies ValidateOptions);

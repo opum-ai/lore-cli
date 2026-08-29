@@ -2,7 +2,12 @@
 
 import { readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import type { QuestBacklogMigration, QuestMigrationPreview, QuestMigrationReceipt } from "./adapters/quest";
+import {
+  MIN_QUEST_VERSION,
+  type QuestBacklogMigration,
+  type QuestMigrationPreview,
+  type QuestMigrationReceipt,
+} from "./adapters/quest";
 import { assertNoSymlinkInPath, ensureDir, writeFileAtomic } from "./commands/fswrite";
 import { LoreError } from "./errors";
 
@@ -140,7 +145,11 @@ function pendingPreview(value: unknown): QuestMigrationPreview {
 
 function assertPreview(preview: QuestMigrationPreview): void {
   if (!preview.requiresApproval || !preview.digest || !preview.sourceFingerprint || !validMappings(preview.mappings))
-    throw new LoreError("drift", "Quest returned an invalid Backlog migration preview", "Quest 0.2.7 is required");
+    throw new LoreError(
+      "drift",
+      "Quest returned an invalid Backlog migration preview",
+      `Quest ${MIN_QUEST_VERSION} or newer is required`,
+    );
 }
 
 function validMappings(value: unknown): value is readonly QuestMigrationMapping[] {

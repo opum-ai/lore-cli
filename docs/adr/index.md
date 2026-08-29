@@ -41,4 +41,5 @@ as of 2026-06-21.
 - [ADR-0017: Interactive `lore init` wizard, TTY-gated](0017-interactive-init-wizard-tty-gated.md)
 - [ADR-0018: Persistent local graph projection with LadybugDB](0018-persistent-local-graph-projection-with-ladybugdb.md)
 - [Separate OKF lifecycle from Lore task progress](0019-separate-okf-lifecycle-from-lore-task-progress.md)
+- [Tracker version gates are minimum floors, not bounded allowlists](0020-tracker-version-gates-are-minimum-floors.md)
 <!-- lore:index:end -->

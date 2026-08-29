@@ -148,6 +148,56 @@ export function assertNoSymlinkInAnyPath(root: string, relPaths: Iterable<string
 }
 
 /**
+ * Refuse a planned multi-file scaffold BEFORE its first write if any planned path is already
+ * occupied by an entry of the wrong shape (LCLI-358.1): a non-directory where a directory must go,
+ * or a non-regular file where a file must go, plus {@link assertNoSymlinkInAnyPath}'s existing
+ * symlinked-ancestor sweep.
+ *
+ * This is a read-only *early* detector, not a second implementation of the rule: it raises the same
+ * {@link conflictError} the write path itself raises (via `ensureDir`'s `mkdirSync` ENOTDIR/EEXIST
+ * and `createIfAbsent`'s non-regular branch), so a caller that skips this preflight still gets the
+ * identical diagnostic — just later. `lore init` needs it earlier because its wizard now asks every
+ * question before the first write: without this, an operator answers five prompts (and has had
+ * `git init` run for them) before being told the bundle cannot be written at all.
+ *
+ * Deliberately NOT a substitute for the write-time guards. Between this check and the write, the
+ * filesystem can change; `createIfAbsent`'s `wx` flag remains the actual TOCTOU-free enforcement.
+ */
+export function assertScaffoldPathsFree(root: string, dirs: Iterable<string>, files: Iterable<string>): void {
+  const dirPaths = [...dirs];
+  const filePaths = [...files];
+  assertNoSymlinkInAnyPath(root, [...dirPaths, ...filePaths]);
+  for (const relPath of dirPaths) {
+    const stat = lstatIfPresent(join(root, relPath));
+    if (stat !== undefined && !stat.isDirectory()) {
+      throw conflictError(relPath);
+    }
+  }
+  for (const relPath of filePaths) {
+    const stat = lstatIfPresent(join(root, relPath));
+    if (stat !== undefined && !stat.isFile()) {
+      throw conflictError(relPath);
+    }
+  }
+}
+
+/** `lstatSync` projected to "what is here, if anything" — a missing entry is the normal case. */
+function lstatIfPresent(absPath: string): ReturnType<typeof lstatSync> | undefined {
+  try {
+    return lstatSync(absPath);
+  } catch (cause) {
+    const code = errnoCode(cause);
+    // ENOTDIR means an ANCESTOR is not a directory; the ancestor's own entry in `dirs` reports it
+    // with a path the operator can act on, so this deeper path stays silent rather than raising a
+    // second, less useful conflict for the same root cause.
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      return undefined;
+    }
+    throw ioError(cause, absPath, "inspect");
+  }
+}
+
+/**
  * Atomically create a file only if it does not exist (`flag: "wx"`), returning `true`
  * when it was created and `false` when a regular file already existed. Using `wx` rather
  * than an `existsSync` precheck closes the TOCTOU window and guarantees the never-clobber

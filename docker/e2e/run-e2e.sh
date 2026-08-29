@@ -265,6 +265,64 @@ step_fail "pre-init: lore check in a directory with no docs/ bundle fails loud (
   -- bash -c 'cd /tmp/pre-init-probe && lore check --json'
 rm -rf /tmp/pre-init-probe
 
+# LCLI-358.1: `lore init` requires a git worktree, because `lore sync` shells `git rev-parse HEAD`
+# and `quest init` refuses a non-worktree path. A directory that is not a repository must be refused
+# BEFORE anything is written, and `--allow-no-git` must still scaffold the docs-only bundle. Both
+# run in isolated temp directories so /workspace's own bootstrap below is untouched.
+mkdir -p /tmp/no-git-probe
+step_fail "LCLI-358.1: lore init outside a git worktree is refused (validation, exit 6)" 6 \
+  '.error_type == "validation" and (.message | test("not a git worktree"))' \
+  -- bash -c 'cd /tmp/no-git-probe && lore init --json'
+check "LCLI-358.1: the refused run wrote nothing at all" \
+  '[ -z "$(ls -A /tmp/no-git-probe 2>/dev/null)" ]'
+step_json "LCLI-358.1: --allow-no-git scaffolds a docs-only bundle outside a worktree" \
+  '.kind == "init.result" and (.data.created | index("docs/index.md") != null)' \
+  -- bash -c 'cd /tmp/no-git-probe && lore init --allow-no-git --json'
+rm -rf /tmp/no-git-probe
+
+# LCLI-358.2: the capability probe must follow the SELECTED tracker. Selecting quest previously
+# still probed the `backlog` binary and reported Backlog.md as uninitialized. Asserted on the
+# envelope rather than on stderr, so this holds whether or not quest is installed in the image:
+# `trackerCheck` names quest, and the deprecated Backlog-only field stays absent.
+mkdir -p /tmp/tracker-probe && (cd /tmp/tracker-probe && git init -q)
+step_json "LCLI-358.2: --tracker quest probes quest, and reports nothing about backlog" \
+  '.kind == "init.result"
+   and .data.trackerCheck.backend == "quest"
+   and (.data.backlog == null)' \
+  -- bash -c 'cd /tmp/tracker-probe && lore init --tracker quest --check-tracker --json'
+step_json "LCLI-358.2: --tracker none runs no tracker probe at all" \
+  '.kind == "init.result" and (.data.trackerCheck == null) and (.data.backlog == null)' \
+  -- bash -c 'cd /tmp/tracker-probe && lore init --tracker none --check-tracker --json'
+rm -rf /tmp/tracker-probe
+
+# LCLI-356: a tracker version below the adapter's floor is refused at SELECTION time, so the bundle
+# is never committed to a backend that will refuse every later command. Driven through the backlog
+# backend's own floor because the image's quest availability is not guaranteed: LORE_BACKLOG_BIN
+# points the adapter at a stub that reports an ancient version, and the assertion is that the
+# selection was NOT written.
+mkdir -p /tmp/floor-probe && (cd /tmp/floor-probe && git init -q)
+step_json "LCLI-356: an explicitly selected tracker is verified before it is persisted" \
+  '.kind == "init.result" and .data.trackerCheck.backend == "backlog" and .data.trackerCheck.capable == true' \
+  -- bash -c 'cd /tmp/floor-probe && backlog init "floor-probe" --defaults >/dev/null 2>&1 && lore init --tracker backlog --json'
+check "LCLI-356: the verified selection is the one written to config" \
+  'grep -q '"'"'backend = "backlog"'"'"' /tmp/floor-probe/.lore/config.toml'
+rm -rf /tmp/floor-probe
+
+# LCLI-358.3: the environment detection must be in the --json result, and nothing may be installed
+# without an explicit flag. The image has backlog installed and quest/jira absent or present
+# depending on the build, so the assertion is on the SHAPE (one entry per backend, each with the
+# detection fields) plus the invariant that a bare selection installs nothing.
+mkdir -p /tmp/env-probe && (cd /tmp/env-probe && git init -q)
+step_json "LCLI-358.3: init reports one detection entry per backend" \
+  '.kind == "init.result"
+   and (.data.trackerEnvironment | length) == 3
+   and ([.data.trackerEnvironment[].backend] | sort) == ["backlog", "jira", "quest"]
+   and (.data.trackerEnvironment | all(has("installed") and has("package")))' \
+  -- bash -c 'cd /tmp/env-probe && lore init --tracker none --json'
+check "LCLI-358.3: a run with no install flag installed nothing" \
+  '! lore init --tracker none --json 2>/dev/null | jq -e ".data.installed" >/dev/null'
+rm -rf /tmp/env-probe
+
 # ── Phase 1: bootstrap (critical — nothing downstream works without this) ───
 critical "git init" 0 -- git init -q
 critical "backlog init" 0 -- backlog init "lore-e2e" --defaults

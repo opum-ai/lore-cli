@@ -7,7 +7,7 @@ import type { InitPrompter } from "../src/commands/init";
 import { buildManifest } from "../src/core/manifest";
 import { EXIT_CODES } from "../src/errors";
 import { VERSION } from "../src/meta";
-import { capture, fakeAdapter } from "./helpers";
+import { capture, fakeAdapter, gitRun } from "./helpers";
 
 /** Build an argv (`["bun", "lore", ...args]`) the way `run` slices it. */
 function argv(...args: string[]): string[] {
@@ -129,6 +129,9 @@ describe("cli — init dispatch", () => {
   let cwd: string;
   beforeEach(() => {
     cwd = mkdtempSync(join(tmpdir(), "lore-cli-init-"));
+    // LCLI-358.1: `lore init` now refuses a directory that is not a git worktree, and these
+    // tests drive the REAL router, which has no injectable preflight — so make it a real repository.
+    gitRun(cwd, ["init"]);
   });
   afterEach(() => {
     rmSync(cwd, { recursive: true, force: true });
@@ -162,6 +165,7 @@ describe("cli — init dispatch", () => {
     const prompter: InitPrompter = {
       confirm: async (_q, defaultValue) => defaultValue,
       choose: async (_q, _choices, defaultValue) => defaultValue,
+      ask: async (_q, defaultValue) => defaultValue,
       close: () => {},
     };
     // The wizard always runs the (advisory-only) backlog check, so a fake adapter is injected here
@@ -204,6 +208,9 @@ describe("cli — init dispatch", () => {
       choose: () => {
         throw new Error("the wizard must not run");
       },
+      ask: () => {
+        throw new Error("the wizard must not run");
+      },
       close: () => {
         throw new Error("the wizard must not run");
       },
@@ -221,6 +228,9 @@ describe("cli — init dispatch", () => {
         throw new Error("the wizard must not run");
       },
       choose: () => {
+        throw new Error("the wizard must not run");
+      },
+      ask: () => {
         throw new Error("the wizard must not run");
       },
       close: () => {
@@ -298,6 +308,9 @@ describe("cli — validate dispatch", () => {
   let cwd: string;
   beforeEach(() => {
     cwd = mkdtempSync(join(tmpdir(), "lore-cli-validate-"));
+    // LCLI-358.1: `lore init` now refuses a directory that is not a git worktree, and these
+    // tests drive the REAL router, which has no injectable preflight — so make it a real repository.
+    gitRun(cwd, ["init"]);
   });
   afterEach(() => {
     rmSync(cwd, { recursive: true, force: true });
@@ -466,6 +479,9 @@ describe("cli — WarningCollector.flush through a real command honors the stder
   let cwd: string;
   beforeEach(() => {
     cwd = mkdtempSync(join(tmpdir(), "lore-cli-flush-tty-"));
+    // LCLI-358.1: `lore init` now refuses a directory that is not a git worktree, and these
+    // tests drive the REAL router, which has no injectable preflight — so make it a real repository.
+    gitRun(cwd, ["init"]);
   });
   afterEach(() => {
     rmSync(cwd, { recursive: true, force: true });
