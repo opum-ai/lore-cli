@@ -3,7 +3,7 @@ id: doc-26
 title: Backlog campaign tracker — LCLI-358 lore init onboarding rebuild
 type: other
 created_date: '2026-08-28 23:59'
-updated_date: '2026-08-29 00:02'
+updated_date: '2026-08-29 00:23'
 ---
 # Backlog campaign tracker — LCLI-358 lore init onboarding rebuild
 
@@ -22,13 +22,13 @@ updated_date: '2026-08-29 00:02'
 | opum-cli-e2e | LCLI-356 AC#5 | opum-cli-e2e session | its own AGENTS.md | n/a | paired installed E2E vs quest 0.2.9 |
 
 ## Frontier
-- Resolved: 3 (LCLI-358.1, .2, .3). In flight: 1 (LCLI-356, AC#1–4 done, AC#5 delegated). Blocked: 1 (LCLI-358.6). Ready: 2 (LCLI-358.4, .5).
+- Resolved: 4 (LCLI-358.1, .2, .3, .4). In flight: 1 (LCLI-356, AC#1–4 done, AC#5 delegated). Blocked: 1 (LCLI-358.6). Ready: 1 (LCLI-358.5).
 - Parent LCLI-358 stays To Do until every subtask settles.
 - Excluded: LCLI-357 (another session's untracked task file, preserved, never staged).
 
 ## Queue
 | Order | Task | Dependencies | State | Likely paths |
-| 1 | LCLI-358.4 | none | ready | src/commands/init.ts, src/adapters/jira.ts, src/config.ts, tests |
+| 1 | LCLI-358.4 | none | done (2cef5bb) | src/adapters/jira-onboarding.ts, src/commands/init.ts, src/core/manifest.ts, docs, tests |
 | 2 | LCLI-358.5 | none | ready | src/tracker-selection.ts, src/commands/init.ts, tests |
 | 3 | LCLI-358.6 | quest-cli QCLI-136 (unreleased) | blocked | src/commands/init.ts, src/adapters/quest.ts |
 | 4 | LCLI-358 | .1–.6 | settlement candidate | backlog only |
@@ -42,9 +42,11 @@ updated_date: '2026-08-29 00:02'
 - LCLI-358.2 (0b3e1ae): the capability probe follows the selected tracker; `trackerCheck` added, `backlog` deprecated; `--check-tracker`/`--no-tracker`.
 - LCLI-356 (2e5a002): Quest version gate is a minimum floor, evaluated at tracker-selection time; ADR-0020.
 - LCLI-358.3 (d080b93): tracker binary and repository detection before the choice; bounded install offer; `--install-tracker`/`--no-install-tracker`.
+- LCLI-358.4 (2cef5bb): jira is configured and validated before the selection is persisted; new `src/adapters/jira-onboarding.ts`; `InitPrompter.ask`; `--jira-profile`/`--jira-project`.
 
 ## Evidence and gates
-- Every commit on this branch was verified with `bun test` (2718 pass / 0 fail / 1 skip at d080b93), `bun run lint`, `bun run typecheck`, and `lore check` — all exit 0, taken without a pipe.
+- Every commit on this branch was verified with `bun test` (2739 pass / 0 fail / 1 skip at 2cef5bb), `bun run lint`, `bun run typecheck`, and `lore check` — all exit 0, taken without a pipe.
+- LCLI-358.4 additionally ran the compiled binary against real jira-cli 1.0.2 and a real Jira project: a configured bundle probes `capable: true`; bad key / bad profile / missing flags exit 3 / 6 / 2 writing no configuration.
 - Wizard behavior confirmed live under a pty with `expect(1)`, not only through injected seams.
 - NOT verified: docker/e2e. `docker info` exits 1 on this host, so the seven cases added across LCLI-358.1/.2/.3 and LCLI-356 have never executed in the harness. Tracked as LCLI-360.
 
@@ -52,7 +54,10 @@ updated_date: '2026-08-29 00:02'
 - `Bun.spawnSync` snapshots the environment at process start: a `process.env` mutation is invisible to the child, so git's `GIT_TEST_ASSUME_DIFFERENT_OWNER` hook cannot be reached from inside a test process.
 - `git rev-parse --is-inside-work-tree` exits 128 both for "no repository" and for a valid worktree git refuses (dubious ownership). Only stderr distinguishes them.
 - `quest init` requires a git worktree and, at 0.2.9, accepts only `--agent-instructions`, `--json`, `--plain`.
-- `jira-cli` emits JSON by default; `jira config list-profiles` returns `data.profiles[]` with `name`, `jiraUrl`, `isDefault`.
+- `jira-cli` emits JSON by default; `jira config list-profiles` returns `data.profiles[]` with `name`, `jiraUrl`, `isDefault`. `jira project get <KEY>` returns `data.project.issue_types[]`; a failure exits 1 with `{success:false,error,status_code}` on **stderr**, not stdout.
+- `jira metadata statuses` is instance-wide (43 entries on the observed site, names duplicated across schemes), so it cannot yield one project's workflow order. `status_flow` is seeded from Jira's default scheme instead and left for the operator to edit.
+- `InitPrompter.choose` lower-cases its answer, so it can only ever select from a fixed lowercase vocabulary. Anything named by a third party (a jira-cli profile, a project key) needs `ask`.
+- The scaffolded `.lore/config.toml` ships a commented-out `# [tracker.jira]` example, so a raw substring assertion for "nothing was written" is vacuous. Strip comments before asserting.
 - `backlog init` is an interactive TUI that offers its own git init; `jira init` is interactive and credential-bearing. Lore drives only non-interactive initializers.
 - A newly created bundle pins `quest` even over an existing `backlog/` directory (init.ts's "a newly created bundle is unambiguous" rule). Whether that is right is LCLI-358.5's question.
 
