@@ -416,6 +416,38 @@ publish is explicitly marked public. Root `package.json` and all six
    pin and `license`/`author`/`repository` metadata, are consistent before
    compiling anything, so a missed file fails loud here rather than silently
    skipping an optional dependency later.
+
+   **In that same commit, refresh the three version-bearing Ladybug digest
+   baselines.** The bump alone turns the suite red, because the canonical
+   export embeds `lore/<version>` as provenance, so the export digest moves on
+   every release while nothing about the fixture content changes. This has now
+   caught three releases running (LCLI-338, LCLI-349, and the 0.3.5 cut), which
+   is why it is written down rather than rediscovered:
+
+   - `benchmark/ladybug/fixtures/v1/small.json` → `expected.canonicalExportSha256`
+   - `benchmark/ladybug/fixtures/v1/large.json` → `expected.canonicalExportSha256`
+   - `test/ladybug-benchmark-report.test.ts` → the `benchmarkDigest(json)`
+     baseline, which is downstream of the two above and moves with them.
+
+   Take the new values from the failure output — `bun test
+   test/ladybug-benchmark-fixture.test.ts` prints the expected/received pair —
+   then re-run the fixture suite and the report test.
+
+   **Prove the change is version-driven before you refresh anything.**
+   Refreshing a digest baseline is precisely the edit that can bury a real
+   regression under a "just the version bump" commit message, and a refreshed
+   baseline is indistinguishable from a correct one afterwards. Two checks,
+   both cheap:
+
+   - **Only `canonicalExportSha256` may move.** If `sourceInventorySha256` or
+     `taskSnapshotSha256` also changed, the *content* changed and you are
+     looking at a code regression, not a version bump. Stop and find it.
+   - **Negative control.** Revert only the root `package.json` version string
+     to the previous release, leaving all other source untouched, and re-run
+     `bun test test/ladybug-benchmark-fixture.test.ts`. It must return to
+     passing against the OLD baselines. If it does not, something other than
+     the version moved the digest. Restore the new version afterward.
+
 3. Keep the README's copyable install commands versionless (`npx
    @opum-ai/lore`, `bunx @opum-ai/lore`, and package-manager installs without
    an `@<version>` suffix), so they continue to resolve the current release
