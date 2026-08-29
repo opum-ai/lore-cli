@@ -3,7 +3,7 @@ id: doc-26
 title: Backlog campaign tracker — LCLI-358 lore init onboarding rebuild
 type: other
 created_date: '2026-08-28 23:59'
-updated_date: '2026-08-29 00:23'
+updated_date: '2026-08-29 05:44'
 ---
 # Backlog campaign tracker — LCLI-358 lore init onboarding rebuild
 
@@ -22,15 +22,15 @@ updated_date: '2026-08-29 00:23'
 | opum-cli-e2e | LCLI-356 AC#5 | opum-cli-e2e session | its own AGENTS.md | n/a | paired installed E2E vs quest 0.2.9 |
 
 ## Frontier
-- Resolved: 4 (LCLI-358.1, .2, .3, .4). In flight: 1 (LCLI-356, AC#1–4 done, AC#5 delegated). Blocked: 1 (LCLI-358.6). Ready: 1 (LCLI-358.5).
+- Resolved: 5 (LCLI-358.1, .2, .3, .4, .5). In flight: 1 (LCLI-356, AC#1–4 done, AC#5 delegated). Blocked: 1 (LCLI-358.6). Ready: 0 — the campaign queue is empty of startable work.
 - Parent LCLI-358 stays To Do until every subtask settles.
 - Excluded: LCLI-357 (another session's untracked task file, preserved, never staged).
 
 ## Queue
 | Order | Task | Dependencies | State | Likely paths |
 | 1 | LCLI-358.4 | none | done (2cef5bb) | src/adapters/jira-onboarding.ts, src/commands/init.ts, src/core/manifest.ts, docs, tests |
-| 2 | LCLI-358.5 | none | ready | src/tracker-selection.ts, src/commands/init.ts, tests |
-| 3 | LCLI-358.6 | quest-cli QCLI-136 (unreleased) | blocked | src/commands/init.ts, src/adapters/quest.ts |
+| 2 | LCLI-358.5 | none | done (5580207, PR #447) | src/tracker-selection.ts, src/commands/init.ts, src/core/manifest.ts, docs, tests |
+| 3 | LCLI-358.6 | quest-cli QCLI-136 (unreleased) | blocked — re-verified live 2026-08-29 | src/commands/init.ts, src/adapters/quest.ts |
 | 4 | LCLI-358 | .1–.6 | settlement candidate | backlog only |
 | 5 | LCLI-356 | opum-cli-e2e AC#5 receipt | in flight | none in this repository |
 | — | LCLI-359, LCLI-361 | release/decision boundaries | deferred | see each task |
@@ -43,10 +43,13 @@ updated_date: '2026-08-29 00:23'
 - LCLI-356 (2e5a002): Quest version gate is a minimum floor, evaluated at tracker-selection time; ADR-0020.
 - LCLI-358.3 (d080b93): tracker binary and repository detection before the choice; bounded install offer; `--install-tracker`/`--no-install-tracker`.
 - LCLI-358.4 (2cef5bb): jira is configured and validated before the selection is persisted; new `src/adapters/jira-onboarding.ts`; `InitPrompter.ask`; `--jira-profile`/`--jira-project`.
+- LCLI-358.5 (5580207): the tracker question is always asked; migration is gated on a real `backlog/config.yml` project, not on config provenance; three-answer migration question; `--keep-backlog-tasks`; one refusal message per unmet condition.
 
 ## Evidence and gates
 - Every commit on this branch was verified with `bun test` (2739 pass / 0 fail / 1 skip at 2cef5bb), `bun run lint`, `bun run typecheck`, and `lore check` — all exit 0, taken without a pipe.
 - LCLI-358.4 additionally ran the compiled binary against real jira-cli 1.0.2 and a real Jira project: a configured bundle probes `capable: true`; bad key / bad profile / missing flags exit 3 / 6 / 2 writing no configuration.
+- LCLI-358.5 was driven live under a pty against a real legacy fixture: jira reachable with no migration question; `keep` writes quest and leaves `backlog/tasks/` intact; `backlog` pins Backlog; every refusal read back from a real run.
+- PRs #445, #446, and #447 each passed all 8 required checks, **including the docker e2e harness**. LCLI-360's local-execution gap stands; its "never executed anywhere" premise does not.
 - Wizard behavior confirmed live under a pty with `expect(1)`, not only through injected seams.
 - NOT verified: docker/e2e. `docker info` exits 1 on this host, so the seven cases added across LCLI-358.1/.2/.3 and LCLI-356 have never executed in the harness. Tracked as LCLI-360.
 
@@ -59,7 +62,8 @@ updated_date: '2026-08-29 00:23'
 - `InitPrompter.choose` lower-cases its answer, so it can only ever select from a fixed lowercase vocabulary. Anything named by a third party (a jira-cli profile, a project key) needs `ask`.
 - The scaffolded `.lore/config.toml` ships a commented-out `# [tracker.jira]` example, so a raw substring assertion for "nothing was written" is vacuous. Strip comments before asserting.
 - `backlog init` is an interactive TUI that offers its own git init; `jira init` is interactive and credential-bearing. Lore drives only non-interactive initializers.
-- A newly created bundle pins `quest` even over an existing `backlog/` directory (init.ts's "a newly created bundle is unambiguous" rule). Whether that is right is LCLI-358.5's question.
+- A bare `backlog/` directory is not a Backlog project; `backlog/config.yml` is the marker, and `resolveTrackerSelection` now requires it — which changes resolution for `tracker-persistence.ts` and `adapters/tracker.ts` too, not only `lore init`.
+- 2026-08-29, live: installed and published Quest is 0.2.9, and `quest init --name --task-id-prefix` still exits `usage` with "init accepts only --agent-instructions, --json, and --plain". quest-cli PR #167 IS merged, but it is a backlog-tracking commit, not the flag implementation — a merged PR is not a shipped contract.
 
 ## Decisions taken
 - Quest version gating moved from a bounded allowlist to a minimum floor (product owner, 2026-08-28), reversing LCLI-353. Recorded in ADR-0020.
