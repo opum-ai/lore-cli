@@ -127,13 +127,26 @@ describe("core/manifest — shape and invariants", () => {
     }
   });
 
-  test("each command's declared kind matches the live handler's emitted kind (golden cross-check)", () => {
-    // The golden set is transcribed directly from each command handler's own `kind: "…"`
-    // literal (e.g. src/commands/check.ts's `kind: "check.report"`, src/commands/link.ts's
-    // `reportRenderable("link.result", …)` call site). It is INDEPENDENT of manifest.ts's
-    // `kind` field — mirroring the exitCodes golden cross-check above — so a manifest entry
-    // hand-edited (or left stale) to a `kind` the handler doesn't actually emit fails here,
-    // where test/help.test.ts:45-51 only ever checked `kind.length > 0`.
+  test("each command's declared kind matches an independently transcribed golden (manifest-drift cross-check)", () => {
+    // NAME CORRECTED (LCLI-365). This test used to be called "matches the live handler's emitted
+    // kind", which it does NOT do and never did. The golden set below is TRANSCRIBED BY HAND from
+    // each handler's own `kind: "…"` literal (e.g. src/commands/check.ts's `kind: "check.report"`,
+    // src/commands/link.ts's `reportRenderable("link.result", …)` call site). Nothing here runs a
+    // handler or reads an emitted envelope.
+    //
+    // What it therefore DOES catch: a manifest entry hand-edited, or left stale, to a kind that
+    // disagrees with the handler source — one-sided drift between two independent transcriptions,
+    // which is real and is LCLI-350's exact failure. Worth keeping.
+    //
+    // What it CANNOT catch: a handler whose `kind:` literal changes. The manifest and this golden
+    // then go stale together and agree with each other, and two documents agreeing prove nothing
+    // about what the command emits. That is the "gate validating the claim instead of the artifact"
+    // shape in CLAUDE.md, and it fails GREEN.
+    //
+    // Live coverage — a real envelope compared against the manifest — exists for exactly TWO of the
+    // 29 commands (`init` and `new`, in test/cli.test.ts). The other 27 are covered only by the
+    // transcription below. LCLI-365 tracks closing that; until it does, do not read a pass here as
+    // evidence that a command emits what it declares.
     const golden: Record<string, string> = {
       init: "init.result",
       backlog: "backlog.adoption.preview",
