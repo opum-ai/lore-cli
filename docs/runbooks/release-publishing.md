@@ -499,10 +499,46 @@ publish is explicitly marked public. Root `package.json` and all six
 5. Until LCLI-278 supplies an effective external approval control, dispatch
    `Release` with `publish: false` on that tag. Download only its
    `npm-packages` artifact, list and checksum the seven `.tgz` files, then
-   interactively publish those exact artifacts with 2FA: all six platform
-   packages first and `@opum-ai/lore` last. Do not run `npm pack` locally or
-   publish a rebuilt tarball. The workflow artifacts are the qualified release
-   inputs.
+   publish those exact artifacts: all six platform packages first and
+   `@opum-ai/lore` last. Do not run `npm pack` locally or publish a rebuilt
+   tarball. The workflow artifacts are the qualified release inputs.
+
+   **Use `scripts/publish-release.sh`** rather than typing the sequence by
+   hand — it encodes this step's ordering and refusals:
+
+   ```
+   gh run download <run-id> -n npm-packages -D scripts/release-<version>
+   scripts/publish-release.sh <version> <run-id> --dry-run
+   scripts/publish-release.sh <version> <run-id>
+   ```
+
+   It verifies every tarball's `sha256` against a `SHA256SUMS.txt` **before**
+   any registry write and refuses on a mismatch, a missing file, or a missing
+   sums file — so a locally rebuilt tarball cannot reach the registry by
+   accident. It publishes platform packages first and stops **before** the root
+   launcher if any of them fails, so the launcher is never resolvable before the
+   binary it execs. It is resumable, skipping versions already published, and
+   ends with a clean-temp-dir `npx` install smoke. Digest verification runs
+   ahead of the auth check, so a rehearsal proves the bytes are right even
+   before credentials exist.
+
+   **Authentication: use a granular access token, not `npm login`.** A web login
+   is still subject to "require 2FA for writes", so every publish and every
+   dist-tag move prompts for a one-time password — that is the EOTP wall that
+   blocked the `0.3.4` release. Granular access tokens (and classic *Automation*
+   tokens) bypass 2FA by design, which is what makes an unattended release
+   possible. Create one at <https://www.npmjs.com/settings/~/tokens> scoped to
+   the `@opum-ai/lore*` packages with read-and-write permission, then store it
+   once in the macOS Keychain:
+
+   ```
+   security add-generic-password -U -s npm-opum-ai-publish -a "$USER" -w
+   ```
+
+   The script reads it from there (falling back to `NPM_TOKEN`, then `~/.npmrc`),
+   never echoes it, and passes it through a temporary config rather than
+   rewriting `~/.npmrc`. A `401` from `npm whoami` means the stored token has
+   expired or been revoked; re-issue it rather than reaching for `npm login`.
 6. Verify every `name@version` in the registry and use a new temporary
    directory for a clean `npx @opum-ai/lore@<version> --version` install/run.
    Record the artifact run, registry, and clean-install evidence in the
