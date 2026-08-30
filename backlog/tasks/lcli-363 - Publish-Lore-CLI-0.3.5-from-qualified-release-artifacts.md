@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-30 00:07'
-updated_date: '2026-08-30 00:52'
+updated_date: '2026-08-30 01:55'
 labels:
   - release
   - quest
@@ -172,5 +172,25 @@ Step 4 (AC#6). Tell the opum-cli-e2e session (pane wK:pR, repo /Volumes/external
 ALSO TELL quest-cli (pane wS:pK) once it is live. They have explicitly said they will not describe lore as published until told, and QCLI-97.5 AC3 needs both halves published to close.
 
 WHAT IS NOT WAITING ON THIS. quest 0.3.0 is owner-deferred (2026-08-29, twice, citing no soak since 0.2.9) and is NOT a precondition for any of the above. lore 0.3.5's >= floor already accepts it whenever it lands, so no second lore release is needed for the pair.
+---
+
+author: @claude
+created: 2026-08-30 01:55
+---
+FIRST REAL PUBLISH ATTEMPT, 2026-08-29 — FAILED ON TOKEN PERMISSIONS, NOTHING PUBLISHED. Recorded in full because the failure exercised the safety design and found two defects in my own auth check.
+
+WHAT HAPPENED. Owner set a granular access token; all 7 artifact digests verified; the run reached the first publish and npm returned:
+  404 Not Found - PUT https://registry.npmjs.org/@opum-ai%2flore-darwin-arm64
+A 404 on PUT is npm's response for NO WRITE PERMISSION, not a missing package. Either the token was created Read-only rather than Read and write, or its package list is empty — a granular token starts with no packages selected and the seven @opum-ai/lore* names (or the @opum-ai scope) must be ticked explicitly.
+
+THE SAFETY DESIGN HELD, WHICH IS THE POINT OF RECORDING THIS. The publish loop stopped BEFORE the root launcher, so there is no state where @opum-ai/lore resolves to a platform binary that does not exist. Verified after the failure: @opum-ai/lore-darwin-arm64@0.3.5 ABSENT, @opum-ai/lore@0.3.5 ABSENT, latest still 0.3.4. One refused platform package cost nothing and left nothing behind.
+
+TWO DEFECTS IN MY OWN AUTH GATE, both found by this attempt, and the second is the same shape this whole session has been removing.
+1. TOO STRICT. The gate used 'npm whoami'. A granular token scoped to packages is NOT entitled to /-/whoami, which needs user-level read, so it returns 401 for a perfectly good publishing token. The gate rejected exactly the credential its own setup text tells you to create.
+2. VACUOUS. I replaced it with 'npm owner ls @opum-ai/lore', which succeeded — and then I checked whether it succeeds with NO TOKEN AT ALL. It does: owner data is public. The replacement certified nothing. A gate that passes unauthenticated is worse than one that is too strict, and I introduced it while fixing the first problem.
+
+THE CORRECTED SHAPE, and why it deliberately does less. There is no cheap read that proves WRITE capability, because write capability is only observable by writing. The gate no longer pretends: it confirms the registry is reachable and a token is configured, then lets the first publish be the authority. That is safe precisely BECAUSE the publish loop fails closed — a permissions failure costs one refused platform package, which is a better outcome than a green auth check that was not measuring permission. Proven by negative control: with an empty userconfig the script now exits 1 naming the missing token.
+
+TO RESUME: fix the token's permissions at https://www.npmjs.com/settings/~/tokens (it can be edited without regenerating) and re-run the same command. The script is resumable and skips anything already on the registry, so a partial success is safe to retry.
 ---
 <!-- COMMENTS:END -->

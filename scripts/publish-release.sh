@@ -113,11 +113,29 @@ else
 fi
 
 hr
-WHO="$(npm whoami 2>&1)"
-if [ $? -ne 0 ]; then
+# AUTHENTICATION CHECK -- and read why it is shaped this way before changing it, because the two
+# obvious forms are both wrong and both were tried here on 2026-08-29.
+#
+#   `npm whoami`   -- TOO STRICT. A granular access token scoped to packages is not entitled to
+#                     /-/whoami, which needs user-level read. It returns 401 for a perfectly good
+#                     publishing token, so gating on it rejects exactly the credential we ask for.
+#   `npm owner ls` -- VACUOUS. Owner data is PUBLIC: it succeeds with no token at all. Verified by
+#                     running it against an empty userconfig. A gate that passes unauthenticated
+#                     certifies nothing, which is worse than one that is too strict.
+#
+# There is no cheap read that proves WRITE capability, because write capability is only observable
+# by writing. So this does not pretend to: it confirms the registry is reachable and the token
+# PARSES, then lets the first `npm publish` be the real authority. The publish loop already fails
+# closed and stops before the root launcher, so a permissions failure costs one refused platform
+# package and nothing else -- which is exactly what happened on the first real run, and is a
+# better outcome than a green auth check that was not measuring permission.
+hr
+if ! npm ping >/dev/null 2>&1; then
+  die "cannot reach registry.npmjs.org -- check the network before blaming credentials"
+fi
+if [ -z "$(npm config get //registry.npmjs.org/:_authToken 2>/dev/null | tr -d '[:space:]')" ]; then
   cat >&2 <<'HELP'
-ERROR: not authenticated to registry.npmjs.org.
-
+ERROR: no registry.npmjs.org token is configured.
 ONE-TIME SETUP (no OTP needed afterwards):
 
   1. Open https://www.npmjs.com/settings/~/tokens  (avatar → Access Tokens)
@@ -156,7 +174,8 @@ that by design — that is what makes this durable.
 HELP
   exit 1
 fi
-say "authenticated as: $WHO"
+say "registry reachable; a token is configured. Write permission is proven by the first publish,"
+say "not before it -- a 404 on PUT there means the token lacks publish rights on that package."
 
 # ── Registry state ──────────────────────────────────────────────────────────
 published() { npm view "$1@$VERSION" version >/dev/null 2>&1; }
