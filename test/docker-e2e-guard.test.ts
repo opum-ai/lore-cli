@@ -148,6 +148,18 @@ describe("docker E2E helper library is actually shipped into the image (LCLI-360
     expect(script).toContain("refusing to run a suite that would assert nothing");
   });
 
+  test("the run asserts a non-vacuity floor, and the floor lives where the selftest can exercise it", () => {
+    // A suite that runs FEWER cases than it should fails GREEN: `$FAIL -gt 0` is false when
+    // nothing ran. The floor is the only thing that catches that, so it must exist AND be
+    // reachable by the selftest -- a guard nobody can exercise is a guard nobody has seen work.
+    const script = readFileSync(SCRIPT, "utf8");
+    expect(script).toContain("MIN_EXPECTED_CASES");
+    expect(script).toMatch(/assert_non_vacuous "\$MIN_EXPECTED_CASES" \|\| exit 1/);
+    // Defined in the sourceable library, not inline, so selftest.sh can drive it without Docker.
+    expect(readFileSync(STEPS_LIB, "utf8")).toContain("assert_non_vacuous()");
+    expect(readFileSync(join(ROOT, "docker", "e2e", "selftest.sh"), "utf8")).toContain("assert_non_vacuous");
+  });
+
   test("the selftest exists, is wired into CI, and runs before the container build", () => {
     const workflow = readFileSync(join(ROOT, ".github", "workflows", "ci.yml"), "utf8");
     const selftestAt = workflow.indexOf("docker/e2e/selftest.sh");

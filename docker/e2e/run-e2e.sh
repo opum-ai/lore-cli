@@ -1808,6 +1808,25 @@ check "LCLI-327: E2E identity was not persisted in the workspace Git config" \
 
 # ── Phase 25: tally ───────────────────────────────────────────────────────────────
 tally
+
+# NON-VACUITY FLOOR (LCLI-360). A suite that runs FEWER cases than it should is the most
+# dangerous way for this harness to fail, because it fails GREEN: `$FAIL -gt 0` is false when
+# nothing ran, so a run that died early, skipped a whole phase, or lost its assertions would
+# exit 0 and read as a clean sheet. That is exactly what happened when lib/steps.sh was missing
+# from the image -- every helper became "command not found", nothing was recorded, and only the
+# resulting non-zero from elsewhere saved it.
+#
+# So the run must prove it actually executed a plausible number of cases. This floor is a
+# DELIBERATE, RATCHETING constant:
+#   - Raise it when cases are added. That is the point -- it is what keeps the floor meaningful.
+#   - NEVER lower it to make a red run green. A drop in case count is either a deletion someone
+#     should have to justify in review, or a truncated run. Both deserve a failure, not an
+#     accommodation.
+# Set below the current total with headroom for ordinary churn, not at it, so removing one
+# obsolete case does not fail the build while losing a whole phase still does.
+MIN_EXPECTED_CASES="${MIN_EXPECTED_CASES:-330}"
+assert_non_vacuous "$MIN_EXPECTED_CASES" || exit 1
+
 # AC1: a report-write failure inside record()/check() (permission denied, disk
 # full, ...) must flip the overall exit code too, not just a failed test --
 # otherwise an all-PASS run whose report silently failed to write would still

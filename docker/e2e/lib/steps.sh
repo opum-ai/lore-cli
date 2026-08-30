@@ -148,6 +148,29 @@ tally() {
   fi
 }
 
+# assert_non_vacuous <min-expected-cases> -- returns non-zero when too few cases ran.
+#
+# A suite that runs FEWER cases than it should is the most dangerous way this harness can fail,
+# because it fails GREEN: a "$FAIL -gt 0" test is false when nothing ran, so a run that died
+# early, skipped a phase, or lost its assertions exits 0 and reads as a clean sheet. That is not
+# hypothetical -- when lib/steps.sh was missing from the image every helper became "command not
+# found" and nothing was recorded (LCLI-360).
+#
+# Lives here rather than inline in run-e2e.sh specifically so selftest.sh can prove it
+# discriminates without a container. A guard that cannot be tested is a guard nobody has seen work.
+assert_non_vacuous() {
+  local min="$1" total=$((PASS + FAIL))
+  if [ "$total" -lt "$min" ]; then
+    log ""
+    log "==== NON-VACUITY FAILURE: only $total cases ran, expected at least $min ===="
+    log "The suite did not assert what it claims to. Do NOT lower the floor to clear this."
+    log "Find the phase that stopped early, the assertions that stopped being defined, or the"
+    log "deletion that removed them."
+    return 1
+  fi
+  return 0
+}
+
 critical() {
   if ! step "$@"; then
     log ""

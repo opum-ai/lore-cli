@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-08-28 23:59'
-updated_date: '2026-08-30 00:50'
+updated_date: '2026-08-30 01:08'
 labels:
   - e2e
   - init
@@ -117,5 +117,29 @@ RESULT: none of the seven is vacuous. Each expectation constrains something a wr
 WHAT THIS DOES AND DOES NOT ESTABLISH. It establishes that no case is vacuous BY CONSTRUCTION of its filter. It does NOT establish AC#2's claim, which is that a deliberate violation makes each case fail and names the offending condition — that still requires running each case's variant in the container. AC#2 stays open.
 
 Remaining for step 3: per-case negative controls for these seven, plus the expected-case-COUNT non-vacuity assertion for run-e2e.sh's own full run (the selftest asserts non-vacuity only for its own probes). The count assertion is the cheaper half and protects every case, so do it first.
+---
+
+author: @claude
+created: 2026-08-30 01:08
+---
+STEP 2 COMPLETED 2026-08-29: the non-vacuity floor for the full run now exists and is PROVEN to discriminate. AC#2 still stays open — see the end.
+
+WHAT WAS MISSING. Phase 25 gated on '$FAIL -gt 0 || $REPORT_WRITE_FAILURES -gt 0'. Both are FALSE when nothing ran, so a suite that died early, skipped a phase, or lost its assertions would exit 0 and read as a clean sheet. That is the most dangerous failure this harness has, because it fails GREEN — and it is not hypothetical: when lib/steps.sh was missing from the image, every helper became 'command not found' and nothing was recorded.
+
+WHAT WAS ADDED. assert_non_vacuous <min> in docker/e2e/lib/steps.sh, called from Phase 25 with MIN_EXPECTED_CASES (330, against a current total of 353 — set BELOW the total with headroom so removing one obsolete case does not fail the build, while losing a whole phase still does).
+
+It lives in the LIBRARY, not inline in run-e2e.sh, and that placement is the point: selftest.sh can then drive it with no container. A guard nobody can exercise is a guard nobody has seen work, which is this task's entire complaint.
+
+The constant is documented as RATCHETING: raise it when cases are added; never lower it to make a red run green. A drop in case count is either a deletion someone should justify in review or a truncated run, and both deserve a failure rather than an accommodation.
+
+SIX NEW SELFTEST PROBES, both directions: accepts above the floor, accepts exactly at it, counts FAILures toward the total (a red suite still RAN), rejects one below, rejects a truncated run, and rejects the zero-cases green-failure case specifically. Selftest is now 22 ok / 0 bad.
+
+NEGATIVE CONTROL, exit codes taken without a pipe: replacing the floor's condition with 'if false' makes the selftest exit 1 and name all three rejection probes; restored, exit 0.
+
+A SELF-CORRECTION WORTH RECORDING. Adding these probes broke the selftest's own report-row assertion — it compared rows against total probes, but assert_non_vacuous inspects counters and writes no row, so the premise was wrong. Fixed by ORDERING the report assertion before the floor probes rather than by loosening it. Weakening an assertion to accommodate a new test is how a suite quietly stops asserting; the assertion was right and the arithmetic behind it was wrong.
+
+Also pinned statically in test/docker-e2e-guard.test.ts: the floor is called from Phase 25, defined in the library, and referenced by the selftest — so a future refactor that inlines it (making it untestable again) fails a unit test.
+
+AC#2 REMAINS OPEN. Steps 1 and 2 give a GENERAL guarantee covering every case in the file, including ones added later. Step 3 — per-case negative controls for the seven LCLI-358.1/.2/.3 and LCLI-356 cases — is a different and narrower claim, and AC#2 asks for that one. Do not check it on the strength of this.
 ---
 <!-- COMMENTS:END -->
