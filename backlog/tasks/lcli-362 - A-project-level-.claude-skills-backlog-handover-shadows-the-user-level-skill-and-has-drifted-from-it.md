@@ -3,11 +3,11 @@ id: LCLI-362
 title: >-
   A project-level .claude/skills/backlog-handover shadows the user-level skill
   and has drifted from it
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-28 23:59'
-updated_date: '2026-08-30 00:17'
+updated_date: '2026-08-30 01:38'
 labels:
   - agents
   - skills
@@ -81,5 +81,13 @@ REAL DEFECT FOUND AND FIXED. AGENTS.md's managed lore:agents block had DRIFTED f
 THE UNDERLYING GAP, which is the more useful finding and is NOT fixed by this AC: THERE IS NO DRIFT GATE FOR THE CODEX BRIDGE. 'lore agents --check' covers only the Claude bridge (.claude SKILL.md + the CLAUDE.md nudge); grep over .github/workflows/*.yml finds no job referencing codex at all. That is exactly why this drift accumulated silently and was found by an ad-hoc script rather than by CI. The Claude side has a gate and stayed current; the Codex side has none and rotted. Worth its own task: either extend 'lore agents --check' to cover the codex bridge, or add an equivalent check mode, and wire it into CI.
 
 SIDE OBSERVATION worth recording, because it nearly polluted this change: 'lore init --yes --codex' in an ALREADY-INITIALIZED repository also creates .lore/profile.toml, .lore/.gitignore and .lore/templates/.gitkeep, none of which this repository tracks. The generated profile.toml is entirely commented out and therefore inert — validate --strict and check both stayed at exit 0 with and without it — but it IS a file the profile loader would read, so a future edit to it would silently change validation behavior for a repository that deliberately uses the built-in profile. All three were removed; only the AGENTS.md line was kept. Anyone regenerating the codex bridge this way should check 'git status' afterwards rather than assuming the command touched only the bridge.
+---
+
+author: @claude
+created: 2026-08-30 01:38
+---
+CLOSED 2026-08-29. All three ACs met and the work is merged: the AGENTS.md drift fix as dev 7cb3d6c (PR #459), with AC#2's 'and is the same one' clause explicitly RETIRED rather than satisfied — collapsing the two skill roots would satisfy that clause literally and destroy the deliberate two-bridge design CLAUDE.md protects.
+
+Worth recording what this task produced beyond its own scope, because the follow-ups are the more valuable output: the drift it exposed had no gate behind it, which became LCLI-364 (now Done — 'lore agents' gates both bridges, conditionally, so Claude-only repositories stay green). LCLI-364 in turn surfaced three defects inside one change, all of the same shape, and that shape is now recorded in CLAUDE.md's gate-shapes list.
 ---
 <!-- COMMENTS:END -->
