@@ -1,11 +1,11 @@
 ---
 id: LCLI-363
 title: Publish Lore CLI 0.3.5 from qualified release artifacts
-status: To Do
+status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-30 00:07'
-updated_date: '2026-08-30 00:09'
+updated_date: '2026-08-30 00:19'
 labels:
   - release
   - quest
@@ -36,8 +36,8 @@ Do NOT publish a locally packed tarball. The runbook is explicit: the Release wo
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 dev is promoted to main, the full main CI matrix is green, and that exact verified commit is tagged v0.3.5 with the tag pushed
-- [ ] #2 Release is dispatched with publish:false on the tag; its npm-packages artifact is downloaded and the seven .tgz files are listed and checksummed
+- [x] #1 dev is promoted to main, the full main CI matrix is green, and that exact verified commit is tagged v0.3.5 with the tag pushed
+- [x] #2 Release is dispatched with publish:false on the tag; its npm-packages artifact is downloaded and the seven .tgz files are listed and checksummed
 - [ ] #3 Those exact workflow artifacts — never a locally rebuilt tarball — are published with interactive 2FA under explicit owner authorization: all six platform packages first, @opum-ai/lore last
 - [ ] #4 Every name@version is verified present in the registry and a clean 'npx @opum-ai/lore@0.3.5 --version' in a fresh temporary directory reports 0.3.5
 - [ ] #5 docs/reference/lore-cli-release-truth.md is updated from candidate to released with the immutable tag, workflow run, registry, and install evidence, and a non-draft non-prerelease GitHub Release exists for v0.3.5
@@ -73,5 +73,49 @@ Expect latest=0.3.5 on all seven.
 PRECONDITION WORTH REPEATING FROM 0.3.4: before moving any tag, prove the registry artifacts byte-match the qualified candidate — compare npm_shasum and npm_integrity for each of the six platform packages against the Release run's provenance. 0.3.4 did exactly this and recorded all six digests. A dist-tag move is the point of no return for users; verify the bytes first.
 
 Also still required and easy to forget: a non-draft, non-prerelease GitHub Release for v0.3.5 at the qualified source commit (AC#5 above), and the release-truth record flipped from 'candidate' to 'released'. The release-truth entry I wrote today says explicitly 'Not yet published' — that sentence must be replaced, not merely supplemented, or the bundle's single source of published-version truth will be lying.
+---
+
+author: @claude
+created: 2026-08-30 00:13
+---
+AC#1 DONE, 2026-08-29.
+
+Promotion: PR #457 merged dev -> main as fda122cace9451389bcf0377fe7bde554946f04e.
+Full main CI matrix on that exact commit: run 33282621112, completed/SUCCESS.
+Tagged v0.3.5 at fda122c (annotated, tag object 7bddce5de83ec01a14acc6b44a85d0ffa7998eca) and pushed. The head was re-read and byte-compared against the CI-verified sha before tagging, rather than assuming main had not moved.
+
+Independent verification of main's tree before the tag, not taken on trust:
+  all seven manifests            0.3.5
+  optionalDependencies           every pin 0.3.5 (single distinct value)
+  package.json bin.lore          bin/lore.cjs   (runbook step 1's flip, correctly NOT reverted)
+
+AC#2 IN FLIGHT: Release workflow dispatched on the v0.3.5 tag with publish:false — run 33282804802. When it completes, download ONLY its npm-packages artifact and list/checksum the seven .tgz files.
+
+AC#3 IS THE OWNER'S AND CANNOT BE DONE BY AN AGENT. It needs npm login plus a fresh OTP per operation. See the mechanics comment above for the exact command set and for the fail-closed rule proven at 0.3.4.
+
+Release notes for the GitHub Release (AC#5) are drafted and ready to publish alongside the tag.
+---
+
+author: @claude
+created: 2026-08-30 00:19
+---
+AC#2 DONE, 2026-08-29. Release run 33282804802 on tag v0.3.5 with publish:false completed SUCCESS. Its verify-versions job — which gates build and asserts all seven versions, the optionalDependencies pin, and license/author/repository metadata — passed, so the manifest alignment is confirmed by the workflow independently of my own check.
+
+npm-packages artifact downloaded. All seven .tgz present, each self-reporting 0.3.5 from its own package/package.json inside the tarball (not merely by filename):
+
+  opum-ai-lore-0.3.5.tgz                      9447  afad920523b8636f5be62044b6873b468e16212cf77100fc85080f8a94e1c86a
+  opum-ai-lore-darwin-arm64-0.3.5.tgz     29707805  b956a56de8d12c44a4d28de48d5b28ebf92e144ff06d1d9fcb14b0f54b29f900
+  opum-ai-lore-darwin-x64-0.3.5.tgz       32658319  b802571acad811982ae8fceeb5fa67600e58228cab64186b1bf3c0365056e788
+  opum-ai-lore-linux-arm64-0.3.5.tgz      46295162  7fb51afc80932c3587bc5b28ba2805aedb19965e9ccec15dafd3591fb33c5fa9
+  opum-ai-lore-linux-x64-0.3.5.tgz        46512850  679be3e1c4e7ba288f8dbf6cd31bac6c10c6100ff33e30b7c788df94509e4e1c
+  opum-ai-lore-win32-arm64-0.3.5.tgz      38337674  34172042c26e3cd2b2ec14375e4dd3811a10c46fbd8ab7b0687edb206ae3ccc9
+  opum-ai-lore-win32-x64-0.3.5.tgz        39384867  76c49557572d0e8a184841945eb553be2b4934666f122c8f9cfc0f3dbc69a969
+
+Staged at (this host, ephemeral scratch — re-download from the run if it is gone):
+  /private/tmp/claude-501/-Volumes-external-repos-lore-cli/1d74129c-dcf8-4437-a6d6-0d4fd1908282/scratchpad/release-0.3.5/
+
+These are the qualified release inputs. Publish THESE FILES. Do not run npm pack, and do not publish the local candidate pack built earlier for opum-cli-e2e qualification — its digests (4ebd7ab71a72..., 065b6e65c1ca...) deliberately DO NOT match the rows above, because it was hand-packed from a local bun build rather than produced by the workflow. If a digest you are about to publish matches a candidate-pack value rather than a row above, stop.
+
+AC#3 is now the only thing standing between this and a published release, and it is the owner's: npm login plus a fresh OTP per operation. AC#5's GitHub Release is deliberately NOT created yet — the drafted notes tell readers to upgrade, which is not true until the registry has it.
 ---
 <!-- COMMENTS:END -->
