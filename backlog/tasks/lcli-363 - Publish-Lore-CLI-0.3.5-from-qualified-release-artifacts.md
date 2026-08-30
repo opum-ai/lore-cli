@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-30 00:07'
-updated_date: '2026-08-30 07:14'
+updated_date: '2026-08-30 13:55'
 labels:
   - release
   - quest
@@ -40,7 +40,7 @@ Do NOT publish a locally packed tarball. The runbook is explicit: the Release wo
 - [x] #2 Release is dispatched with publish:false on the tag; its npm-packages artifact is downloaded and the seven .tgz files are listed and checksummed
 - [x] #3 Those exact workflow artifacts — never a locally rebuilt tarball — are published with interactive 2FA under explicit owner authorization: all six platform packages first, @opum-ai/lore last
 - [x] #4 Every name@version is verified present in the registry and a clean 'npx @opum-ai/lore@0.3.5 --version' in a fresh temporary directory reports 0.3.5
-- [ ] #5 docs/reference/lore-cli-release-truth.md is updated from candidate to released with the immutable tag, workflow run, registry, and install evidence, and a non-draft non-prerelease GitHub Release exists for v0.3.5
+- [x] #5 docs/reference/lore-cli-release-truth.md is updated from candidate to released with the immutable tag, workflow run, registry, and install evidence, and a non-draft non-prerelease GitHub Release exists for v0.3.5
 - [ ] #6 opum-cli-e2e re-runs the 407-row matrix against the published 0.3.5 at rank-1 (registry install), closing LCLI-363 on published-artifact evidence
 <!-- AC:END -->
 
@@ -288,5 +288,33 @@ THE TAG WAS MOVED, recorded rather than hidden. v0.3.5 originally pointed at fda
 ONE OPERATIONAL NOTE for whoever reads this during the next release: after publishing, @opum-ai/lore-linux-arm64 showed latest=0.3.4 on the registry packument for a couple of minutes while npm's CDN caught up, even though the publish log said '+ @opum-ai/lore-linux-arm64@0.3.5'. Trust the publish log over the packument for the first few minutes, and confirm with 'npm view <pkg>@<version> version'. I nearly reported a partial publish.
 
 AC#5 (release-truth flipped from candidate to released, plus a GitHub Release) and AC#6 (opum-cli-e2e rank-1 re-run against the published artifacts) remain. release-truth is updated in this branch; the GitHub Release is next.
+---
+
+author: @claude
+created: 2026-08-30 13:55
+---
+THE PAIR IS SHIPPED — 2026-08-30. Verified from the registry rather than accepted from a report.
+
+  @opum-ai/lore  latest 0.3.5, attestations present, 6/6 platform packages at 0.3.5
+  @opum-ai/quest latest 0.3.0, attestations present, 6/6 platform packages at 0.3.0
+
+INTEROPERABILITY PROVEN ON THE PUBLISHED ARTIFACTS, which is the only test that ever mattered. Installed both from the registry into a clean directory and ran this task's original repro:
+  lore 0.3.5 + quest 0.3.0
+  quest init --json                       exit 0
+  lore init --yes --tracker quest --json  exit 0
+  lore orphans --json                     exit 0   <- published 0.3.4 + 0.2.9 exited 6 here
+  lore tasks <unknown-id>                 error_type not_found   (was validation)
+The break this release existed to close is closed for anyone installing today.
+
+AC#5 met: release-truth flipped from candidate to released with the tag, run, registry and install evidence; GitHub Release v0.3.5 published non-draft, non-prerelease.
+
+THE ATTESTATION FIELD IS THE FINDING WORTH KEEPING FROM THIS WHOLE EPISODE. npm attaches provenance attestations automatically under trusted publishing, so the field is a permanent fossil of HOW a version was published. It distinguishes 'never published via OIDC' from every other cause of an E404 on PUT, and it is readable from the public packument with no credentials:
+  lore  0.3.4 attestations=no  (interactive OTP)   0.3.5 attestations=yes (OIDC)
+  quest 0.2.9 attestations=no                      0.3.0 attestations=yes
+That single check is what proved lore's trust relationship was created by a human between 0.3.4 and 0.3.5 — and therefore that quest's seven had simply never been done, rather than being broken. It resolved in one query what eight dispatches across two repositories could not.
+
+Pair it with the other lesson: npm returns E404 on PUT for at least FOUR distinct causes — token cannot write, token invalid, npm below 11.5.1 so OIDC was silently skipped, and no trust relationship — and gives no way to tell them apart. Both belong in the release runbook, and the runbook already carries the trusted-publishing setup they support.
+
+AC#6 REMAINS OPEN and is not mine to close: opum-cli-e2e is running rank 1 against both published releases now. That is the run that binds published tarballs, receipt and bundle as three independently produced sources.
 ---
 <!-- COMMENTS:END -->
