@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-08-28 23:59'
-updated_date: '2026-08-30 01:43'
+updated_date: '2026-08-30 01:48'
 labels:
   - e2e
   - init
@@ -175,5 +175,23 @@ WHAT IS ACTUALLY UNCOVERED. The refusal half of LCLI-356 AC#2 — that a below-t
 The comment now says what the cases do, names the missing coverage, and warns against restoring the old text without building what it describes.
 
 BEARING ON AC#2. This changes what 'each of those cases is proven by a negative control' costs. One of the seven cannot get a meaningful control until lore gains a binary override. Whoever picks up step 3 should decide explicitly whether to build that override, scope AC#2 to the six that can, or split it.
+---
+
+author: @claude
+created: 2026-08-30 01:48
+---
+TWO CORRECTIONS TO MY OWN ANALYSIS, 2026-08-29, the second of which is a false alarm I stopped before reporting.
+
+CORRECTION 1 — I OVERSTATED A PREREQUISITE. I wrote that adding an e2e case for the below-the-floor REFUSAL 'needs an adapter-level way to point at a stub binary, which lore does not offer'. That is wrong. src/adapters/backlog.ts spawns the binary BY NAME ('backlog'), so ordinary PATH shadowing substitutes it with no lore change at all. Verified: a stub 'backlog' earlier on PATH reporting 0.0.1 is the one the adapter resolves. No production env-var override is needed — and it should NOT be added, because an env var that changes which binary gets executed is an injection surface on a tool this repository has spent LCLI-69..81 hardening.
+
+CORRECTION 2 — A DEFECT I ALMOST REPORTED, AND DID NOT, BECAUSE THE REPRO WAS INVALID. Using a stub quest reporting 0.1.0 (below the 0.2.7 floor), 'lore init --yes --tracker quest' exited 0 and wrote backend = "quest" — which is exactly what LCLI-356 AC#2 forbids, and would have meant the just-tagged 0.3.5 did not satisfy its own criterion.
+
+It does. The repro never reached the version check. The init result shows trackerEnvironment quest {installed: true, INITIALIZED: FALSE} and NO trackerCheck field at all: the probe never ran, because the workspace is not initialized — a condition LORE-319 deliberately made advisory rather than fatal, and which LCLI-356 deliberately did not change. My stub answers '--version' and exits 1 for everything else, so it can never present an initialized workspace. The gate was not bypassed; it was not reached.
+
+The real coverage is test/init.test.ts:1923, '--tracker quest against an under-the-floor Quest fails and does NOT persist the backend', which injects a probe failing with QUEST_VERSION_FLOOR_CODE — the correct seam, because it tests the discrimination rather than a stub's ability to impersonate a whole CLI.
+
+WHAT THIS MEANS FOR STEP 3, concretely. A stub reaching the floor check must satisfy the workspace-initialized precondition too, so it has to fake 'init' and 'manifest --json' convincingly, not just '--version'. That is harder than PATH shadowing alone but not impossible, and it is the actual size of that one case. Anyone planning AC#2 should budget for it rather than assuming a one-line stub.
+
+RECORDED BECAUSE THE NEAR-MISS IS THE LESSON. An integration observation that contradicts a passing unit test is far more likely to be an invalid repro than a regression, and reporting it would have cast doubt on a release that is correct. Check what the run actually did — here, that trackerCheck was absent entirely — before concluding a gate failed to fire.
 ---
 <!-- COMMENTS:END -->
