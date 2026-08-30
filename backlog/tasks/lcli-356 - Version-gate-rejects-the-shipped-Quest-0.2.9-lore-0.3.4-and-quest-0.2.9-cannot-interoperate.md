@@ -3,11 +3,11 @@ id: LCLI-356
 title: >-
   Version gate rejects the shipped Quest 0.2.9: lore 0.3.4 and quest 0.2.9
   cannot interoperate
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-28 21:30'
-updated_date: '2026-08-29 00:04'
+updated_date: '2026-08-30 00:06'
 labels:
   - release
   - quest
@@ -54,7 +54,7 @@ Also unblocks LCLI-353 AC#3, which was BLOCKED on quest 0.2.8 never being publis
 - [x] #2 The gate is evaluated at tracker-selection time: 'lore init --tracker quest' against an unsupported quest fails with a classified diagnostic and does NOT write [tracker] backend=quest, so a user is never committed to a backend that will refuse every later command
 - [x] #3 A version rejection reports error_type=not_found for an unknown concept id rather than masking the id lookup behind the gate, so diagnostics stay truthful about what actually failed
 - [x] #4 The bounded-allow-list design is revisited or explicitly re-affirmed with its release-coupling cost recorded: as written, every Quest patch release requires a new Lore release before the pair works
-- [ ] #5 Paired installed E2E against the exact published quest 0.2.9 passes link/back-reference, sync, tasks rollup, and validate/check --strict, closing LCLI-353 AC#3
+- [x] #5 Paired installed E2E against the exact published quest 0.2.9 passes link/back-reference, sync, tasks rollup, and validate/check --strict, closing LCLI-353 AC#3
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -88,5 +88,37 @@ author: @claude
 created: 2026-08-28 23:15
 ---
 AC#1-#4 are complete and verified; the task stays In Progress because AC#5 is not doable in this repository. It requires a paired installed E2E against published quest 0.2.9, which lives in opum-cli-e2e and needs a packed or published Lore build carrying this change. A live session named e2e-qualify-lore-quest is already working in that repository. Do not close this task on AC#5 without that run.
+---
+
+author: @claude
+created: 2026-08-30 00:06
+---
+Packed-candidate verification, 2026-08-29. The task's exact repro was re-run against the lore 0.3.5 packed candidate (installed launcher, not a source build) and the real installed quest 0.2.9:
+
+  quest --version                        -> 0.2.9
+  quest init --json                      -> exit 0
+  lore init --yes --tracker quest --json -> exit 0, writes [tracker] backend = quest
+  lore orphans --json                    -> exit 0    (0.3.4 exited 6 here: this IS the break, closed)
+  lore tasks nonexistent-concept         -> error_type not_found   (was validation; AC#3)
+
+The live pairing break is closed on a packed artifact, not just in source. Candidate commit 557f152, merged to dev as a99391d (PR #455, all 8 CI checks green).
+---
+
+author: @claude
+created: 2026-08-30 00:06
+---
+AC#5 SATISFIED and closed, 2026-08-29, on opum-cli-e2e's paired installed E2E against the lore 0.3.5 packed candidate and the published quest 0.2.9.
+
+Result: FIXED 11, REGRESSED 1, OTHER 0, ADDED 1, REMOVED 1. 407 rows, 400 PASS / 6 FAIL / 1 BLOCKED. Evidence committed at opum-cli-e2e evidence/lore-0.3.5-candidate/ (commit 67945ca): report.json, matrix.md, and a README recording artifact digests, the candidate pair, the diff, and the attribution of the regression.
+
+FIXED 11 = this task's 10 rows plus LCLI-357's. All 39 contract/lore, all 32 lore/retrieval, and all 20 cross-product rows pass. The six that were this defect are back: orphans, impact, export, snapshot list, the manifest golden cross-check, and 'impact of unknown id' reporting not_found rather than validation (AC#3, independently confirmed). The four cross-product rows -- link back-ref, live rollup, missing-task not_found, unlink/rename repointing -- are AC#5's named surfaces and all pass.
+
+The prediction was stated to the harness IN ADVANCE so the run could falsify it: FIXED 11 with the lore/retrieval scaffold row flipping, plus an explicit instruction that if it did not flip I would pull the release rather than work around it. It flipped. The nominated falsifier did not fire.
+
+The 1 REGRESSED is NOT lore's. The quest/fault scale row went PASS -> BLOCKED because of the harness's own digest-binding tightening (opum-cli-e2e aab1235): pre-existing 0.2.9 scale evidence predates digest recording, so it can no longer bind and the row is unscored. That is the correct trade -- a check that would have passed against the wrong binary was replaced by one that blocks until real evidence exists.
+ADDED 1 / REMOVED 1 is the documented per-release rename of the identity row, which embeds the version string. Not coverage loss.
+The remaining 6 FAIL are QCLI-135 packaging native-execution receipts, owned by quest-cli, unchanged and unrelated.
+
+PROVENANCE, recorded honestly: rank-2 evidence. Both tarball sha256s were verified on receipt (4ebd7ab71a72..., 065b6e65c1ca...); the installed launcher reports 0.3.5. The identity row records '@opum-ai/lore@0.3.5 ABSENT from registry' and passes, because it asserts provenance is RECORDED, not published. This is a local candidate pack, not a registry artifact. A rank-1 re-run against the published 0.3.5 is tracked by LCLI-363 AC#6 and is not a precondition for closing this task.
 ---
 <!-- COMMENTS:END -->
