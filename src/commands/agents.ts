@@ -1,5 +1,6 @@
 /**
- * commands/agents.ts — `lore agents`: generate/refresh the Claude Code agent bridge.
+ * commands/agents.ts — `lore agents`: generate/refresh the agent bridges (Claude, and Codex where one
+ * already exists — see {@link hasCodexBridge}).
  *
  * The thin, side-effecting layer over the pure {@link planBridge} (core/agent-bridge.ts): it resolves
  * the two bridge paths, reads their current bytes, asks core what each file's next state should be,
@@ -16,6 +17,12 @@
 
 import { dirname, join } from "node:path";
 import { type BridgeAction, CLAUDE_MD_REL_PATH, planBridge, SKILL_REL_PATH } from "../core/agent-bridge";
+import {
+  AGENTS_MD_REL_PATH,
+  CODEX_AGENT_BLOCK_LABEL,
+  CODEX_SKILL_REL_PATH,
+  planCodexBridge,
+} from "../core/codex-bridge";
 import { ANSI, EXIT_CODES, EXIT_OK, paint, readFileIfPresent, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { parseCommandArgs, usage } from "./args";
@@ -82,13 +89,28 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
   // leaves the file `protected` again and CI stays red (LORE-129).
   const plan = planBridge({ skillOnDisk, claudeOnDisk, force, check });
 
+  // The codex bridge is planned alongside, but ONLY where one already exists (LCLI-364). See
+  // {@link hasCodexBridge} for why presence, not absence, is what arms it.
+  const codexSkillRaw = readFileIfPresent(join(root, CODEX_SKILL_REL_PATH), CODEX_SKILL_REL_PATH);
+  const agentsRaw = readFileIfPresent(join(root, AGENTS_MD_REL_PATH), AGENTS_MD_REL_PATH);
+  const agentsStyle = detectDiskStyle(agentsRaw);
+  const codexPlan = hasCodexBridge(codexSkillRaw, agentsRaw)
+    ? planCodexBridge({
+        skillOnDisk: normalizeOnDisk(codexSkillRaw),
+        agentsOnDisk: normalizeOnDisk(agentsRaw),
+        force,
+        check,
+      })
+    : { files: [] };
+  const files = [...plan.files, ...codexPlan.files];
+
   if (!check) {
-    const targets = plan.files.filter((file) => file.contents !== null).map((file) => file.path);
+    const targets = files.filter((file) => file.contents !== null).map((file) => file.path);
     // Swept as a whole before either file is written (LORE-93 AC#5) — `lore agents` writes two
     // files per run, and a bad target reached second in the loop must not leave the first already
     // written; ensureDir's own per-call guard alone is reactive to loop order.
     assertNoSymlinkInAnyPath(root, targets);
-    for (const file of plan.files) {
+    for (const file of files) {
       if (file.contents === null) {
         continue; // unchanged, or protected without --force — leave the file untouched
       }
@@ -97,7 +119,15 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
       // CLAUDE.md is a managed-block refresh over a user's hand-authored file: re-apply its
       // original BOM/EOL convention before writing (LORE-128). SKILL.md is wholesale-regenerated
       // (planSkill), so no such preservation applies there.
-      const contents = file.path === CLAUDE_MD_REL_PATH ? reapplyDiskStyle(file.contents, claudeStyle) : file.contents;
+      // CLAUDE.md and AGENTS.md are managed-block refreshes over hand-authored files, so each
+      // re-applies its OWN original BOM/EOL convention (LORE-128). Both SKILL.md files are
+      // wholesale-regenerated, so no such preservation applies to them.
+      const contents =
+        file.path === CLAUDE_MD_REL_PATH
+          ? reapplyDiskStyle(file.contents, claudeStyle)
+          : file.path === AGENTS_MD_REL_PATH
+            ? reapplyDiskStyle(file.contents, agentsStyle)
+            : file.contents;
       // Atomic (temp-write + rename): `lore agents` writes two files per run, one of them the user's
       // hand-authored root CLAUDE.md — a crash mid-write must never leave it truncated (fswrite.ts).
       writeFileAtomic(absPath, contents, file.path);
@@ -108,8 +138,36 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
     root,
     check,
     force,
-    files: plan.files.map((file) => ({ path: file.path, action: file.action })),
+    files: files.map((file) => ({ path: file.path, action: file.action })),
   };
+}
+
+/**
+ * Whether this repository has a **codex bridge to keep current** — the condition that arms the
+ * codex half of `lore agents` (LCLI-364).
+ *
+ * The conditional is the load-bearing part, not an optimization. Before this, `--check` gated only
+ * the Claude bridge and no workflow referenced codex at all, so `.codex/skills/lore/SKILL.md` and
+ * AGENTS.md's managed block could drift from their generators indefinitely — and did: AGENTS.md was
+ * found missing the `workspace` topic while CLAUDE.md, which has a gate, was current (LCLI-362).
+ * One artifact enumerated and checked, its twin not, and the green check on the first reading as
+ * coverage of both.
+ *
+ * But checking UNCONDITIONALLY would be its own defect. A repository that never opted into Codex has
+ * no `.codex/` tree and no `lore:agents` block in AGENTS.md; planning the codex bridge there reports
+ * `created` — drift — and turns every Claude-only repository permanently red. A gate everybody has
+ * to disable protects nothing. So presence arms it: `lore init --codex` is what opts a repository in,
+ * and from then on its codex bridge is held to the same standard as its Claude one.
+ *
+ * Either artifact alone counts. A repository whose AGENTS.md carries the block but whose SKILL.md was
+ * deleted is exactly the drift worth catching, and so is the reverse.
+ */
+function hasCodexBridge(codexSkillRaw: string | undefined, agentsRaw: string | undefined): boolean {
+  // `readFileIfPresent` signals "absent" with `undefined`, not `null` -- a `!== null` test here is
+  // true for a MISSING file and silently arms the codex half in every Claude-only repository,
+  // creating the very `.codex/` tree whose absence was supposed to disarm it.
+  if (codexSkillRaw !== undefined) return true;
+  return agentsRaw !== undefined && agentsRaw.includes(CODEX_AGENT_BLOCK_LABEL);
 }
 
 /**
