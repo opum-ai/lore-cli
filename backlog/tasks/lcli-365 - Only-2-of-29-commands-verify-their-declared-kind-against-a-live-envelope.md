@@ -5,6 +5,7 @@ status: To Do
 assignee:
   - '@claude'
 created_date: '2026-08-30 01:17'
+updated_date: '2026-08-30 01:20'
 labels:
   - manifest
   - contract
@@ -42,3 +43,25 @@ Design note: running all 29 commands in a unit test is not obviously right — m
 - [ ] #3 Proven by a negative control: changing one handler's emitted kind without touching the manifest makes the check fail and name that command
 - [ ] #4 If the hand-transcribed golden is retained, its name and comment state exactly what it covers and what it does not, so a pass is never read as live coverage
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: @claude
+created: 2026-08-30 01:20
+---
+MEASUREMENT THAT CORRECTS THIS TASK'S OWN DESCRIPTION, 2026-08-29. I filed it saying 27 of 29 commands are covered 'only by the hand transcription'. That understates what exists, and the correction points at a much cheaper fix than either design I proposed.
+
+WHAT I FOUND. docker/e2e/run-e2e.sh already asserts '.kind == "..."' in 67 places covering 18 DISTINCT KINDS, and it does so against the REAL BINARY's actual --json output. Those are live derivations of the emitted kind. 21 of the 29 manifest commands appear in the harness at all; the 8 that do not are agent, backlog, changed, explorer, impact, path, provenance, snapshot.
+
+SO THE GAP IS NARROWER AND DIFFERENTLY SHAPED THAN I WROTE. It is not that nothing observes emitted kinds — the e2e observes 18 of them live. It is that NOTHING TIES THAT OBSERVATION TO THE MANIFEST. The e2e compares emitted kind against a literal in the harness; help.test.ts compares the manifest against a literal in the test. Two independent literals, each correct, with no edge between them. A handler could change its kind and BOTH literals could be updated to match while the manifest stayed stale, or vice versa, and nothing would fail.
+
+THE CHEAP FIX THAT FALLS OUT OF THIS, and it is better than either option (a) or (b) in the description above: have the e2e assert the emitted kind equals THE MANIFEST'S DECLARED KIND, read from 'lore --json help' AT RUN TIME rather than from a literal. Both sides are then content-derived from the same running binary — the manifest side comes out of the binary's own help output, the emission side out of the command's actual envelope — and CLAUDE.md's 'never read the value out of the document being validated' is satisfied on both. The harness already invokes 'lore --json help', so the input is there.
+
+That closes 18 kinds immediately with no new fixtures and no new commands run. It does not close the 8 commands absent from the harness; those need cases of their own, and that is a separate, smaller piece of work worth sizing on its own rather than bundling.
+
+RETIRING OPTION (a): parsing handler source for 'kind:' literals. It is fragile by construction — the kinds appear in at least two shapes ('kind: "check.report"' and 'reportRenderable("link.result", ...)'), a regex that silently matches nothing yields a VACUOUS pass, and a vacuous gate is precisely the defect this task exists to remove. Do not do it.
+
+AC#1 as written asks for every command; the run-time-manifest approach gets 18 honestly and names the remainder. Whoever picks this up should either split AC#1 or be explicit that closing it requires the 8 missing e2e cases too.
+---
+<!-- COMMENTS:END -->
