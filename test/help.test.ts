@@ -498,16 +498,27 @@ describe("the kinds the docker E2E observes from the real binary are manifest-de
   const E2E_SCRIPT = join(import.meta.dir, "..", "docker", "e2e", "run-e2e.sh");
 
   /**
-   * The single exemption, justified individually and pinned so a second one is a visible failure
-   * rather than a silent widening.
+   * Every kind the manifest declares, across the WHOLE contract — not just `commands[]`.
    *
-   * `version` — `lore --version --json` emits `{kind: "version"}`, but the manifest declares
-   * `--version` only as a global FLAG and never states that it produces an envelope. That is a
-   * real registry-vs-runtime gap (LCLI-366), not a quirk of this test, and closing it needs a
-   * modelling decision about whether emissions can hang off a flag. Remove this entry when
-   * LCLI-366 lands; do not add to it to make a future failure go away.
+   * Reading only `commands[]` is what made the first version of this test unable to notice
+   * LCLI-366 being fixed: the fix declares the kind on `globalFlags[].kind`, so a commands-only
+   * set stayed unchanged and the "self-expiring" exemption would have quietly outlived its reason.
+   * An incomplete view of the contract turns an exemption into a permanent carve-out, which is the
+   * failure the exemption was supposed to be protected against. Keep this function the single
+   * definition of "declared", and widen it whenever the contract grows a new place to declare one.
    */
-  const KNOWN_UNDECLARED = new Set(["version"]);
+  function declaredKinds(): Set<string> {
+    const manifest = buildManifest();
+    const declared = new Set<string>();
+    for (const command of manifest.commands) {
+      declared.add(command.kind);
+      for (const extra of command.resultKinds ?? []) declared.add(extra);
+    }
+    for (const flag of manifest.globalFlags) {
+      if (flag.kind !== undefined) declared.add(flag.kind);
+    }
+    return declared;
+  }
 
   test("every kind asserted against the real binary is declared by the manifest", () => {
     const script = readFileSync(E2E_SCRIPT, "utf8");
@@ -516,28 +527,14 @@ describe("the kinds the docker E2E observes from the real binary are manifest-de
     // nothing, which is the exact defect this test exists to prevent.
     expect(observed.size).toBeGreaterThanOrEqual(15);
 
-    const manifest = buildManifest();
-    const declared = new Set<string>();
-    for (const command of manifest.commands) {
-      declared.add(command.kind);
-      for (const extra of command.resultKinds ?? []) declared.add(extra);
-    }
-
-    const undeclared = [...observed].filter((k) => !declared.has(k) && !KNOWN_UNDECLARED.has(k)).sort();
+    const undeclared = [...observed].filter((k) => !declaredKinds().has(k)).sort();
     expect(undeclared).toEqual([]);
   });
 
-  test("the pinned exemption is still real — it fails the moment LCLI-366 is fixed, forcing its removal", () => {
-    // An exemption that outlives its reason is how a carve-out becomes permanent. This asserts the
-    // gap still exists, so fixing LCLI-366 turns this test red and makes deleting the entry a
-    // required step rather than an optional tidy-up.
-    const declared = new Set<string>();
-    for (const command of buildManifest().commands) {
-      declared.add(command.kind);
-      for (const extra of command.resultKinds ?? []) declared.add(extra);
-    }
-    for (const exempt of KNOWN_UNDECLARED) {
-      expect(declared.has(exempt)).toBe(false);
-    }
+  test("the exemption set is empty — LCLI-366 closed the only gap, and a new one must be argued for", () => {
+    // There is no exemption list any more, and that is the assertion. Reintroducing one means
+    // adding a carve-out to a gate, which should be a visible, reviewed change rather than a
+    // constant quietly gaining an entry.
+    expect(declaredKinds().has("version")).toBe(true);
   });
 });
