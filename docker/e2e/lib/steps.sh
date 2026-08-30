@@ -158,6 +158,47 @@ tally() {
 #
 # Lives here rather than inline in run-e2e.sh specifically so selftest.sh can prove it
 # discriminates without a container. A guard that cannot be tested is a guard nobody has seen work.
+# step_declared_kind <command-name> -- <cmd...>
+#
+# Asserts the envelope a command actually EMITS carries the kind the manifest DECLARES for it,
+# with both sides read from the same running binary at check time (LCLI-365).
+#
+# The gap this closes: the harness already asserted `.kind == "orphans.report"` against real output,
+# and a unit test separately asserted the manifest says "orphans.report". Two independent literals,
+# each correct, with no edge between them -- a handler could change and both literals be updated
+# while the manifest went stale, and nothing would fail. Neither side here is a literal: the
+# declared kind comes out of `lore --json help`, the emitted kind out of the command's own envelope.
+# That is CLAUDE.md's "bind on content, re-derive at check time" applied to the manifest contract.
+#
+# Fails when the manifest declares NO kind for the named command, rather than treating an empty
+# expectation as satisfied -- an absent declaration is the exact defect worth catching, and a
+# comparison against "" would pass vacuously for every command at once.
+step_declared_kind() {
+  local command_name="$1"
+  shift
+  [ "${1:-}" = "--" ] && shift
+  local out err rc status declared emitted
+  out="$(mktemp)"
+  err="$(mktemp)"
+  declared="$(lore --json help 2>/dev/null | jq -r --arg n "$command_name" \
+    '.data.commands[] | select(.name == $n) | .kind' 2>/dev/null)"
+  "$@" >"$out" 2>"$err"
+  rc=$?
+  emitted="$(jq -r '.kind // empty' "$out" 2>/dev/null)"
+  if [ -n "$declared" ] && [ "$declared" != "null" ] && [ "$rc" -eq 0 ] && [ "$emitted" = "$declared" ]; then
+    status=PASS
+    PASS=$((PASS + 1))
+  else
+    status=FAIL
+    FAIL=$((FAIL + 1))
+  fi
+  record "$command_name: emitted kind matches the manifest-declared kind (declared='$declared' emitted='$emitted')" \
+    "$status" 0 "$rc" "$out" "$err"
+  log "[$status] $command_name emitted='$emitted' declared='$declared'"
+  rm -f "$out" "$err"
+  [ "$status" = "PASS" ]
+}
+
 assert_non_vacuous() {
   local min="$1" total=$((PASS + FAIL))
   if [ "$total" -lt "$min" ]; then
