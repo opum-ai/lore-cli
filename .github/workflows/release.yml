@@ -623,6 +623,32 @@ jobs:
         # satisfies the floor assertion below) while narrowing that window to versions
         # that predate any such compromise landing on a new major.
         run: npm install -g npm@^11
+      - name: Assert no token is shadowing OIDC (quest-cli QCLI finding, 2026-08-30)
+        # THE FAILURE THIS PREVENTS IS SILENT AND COSTS HOURS. `actions/setup-node` with
+        # `registry-url` writes `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` into the
+        # job's .npmrc. If NODE_AUTH_TOKEN holds a REAL token, npm authenticates with it and
+        # NEVER ATTEMPTS OIDC -- so a "harmless fallback" token stands in front of the mechanism
+        # it was meant to back up, and a dead or wrongly-scoped one produces E404 on PUT that
+        # looks exactly like a missing trust relationship. quest-cli spent six dispatches on
+        # this before finding it; lore has only ever published because the secret is unset and
+        # setup-node substitutes its placeholder.
+        #
+        # That is an invariant nobody wrote down, so adding an NPM_TOKEN secret later would
+        # silently switch this job's auth mode with no diagnostic. Assert it instead.
+        #
+        # npm gives E404 on PUT for at least four distinct causes -- token cannot write, token
+        # invalid, npm too old so OIDC was skipped, and no trust relationship -- and no way to
+        # tell them apart. Every cause we CAN rule out before touching the registry is one that
+        # cannot masquerade as another later.
+        run: |
+          token="$(npm config get //registry.npmjs.org/:_authToken 2>/dev/null | tr -d '[:space:]')"
+          case "$token" in
+            ""|undefined|null|XXXXX-XXXXX-XXXXX-XXXXX)
+              echo "no real registry token configured — OIDC will be used" ;;
+            *)
+              echo "::error::a registry auth token is configured for this job, which makes npm authenticate with it and SKIP OIDC entirely. Remove the NPM_TOKEN secret / node-auth-token input from the publish job; trusted publishing needs no stored credential."
+              exit 1 ;;
+          esac
       - name: Assert npm CLI meets the OIDC trusted-publishing floor (docs/runbooks/release-publishing.md Prerequisites)
         # Post-condition check for the upgrade step above — fail loud here, before
         # touching the registry, rather than letting an unmet floor surface as a
