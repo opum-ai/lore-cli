@@ -6,12 +6,11 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-28 21:47'
-updated_date: '2026-08-28 21:47'
+updated_date: '2026-08-30 17:28'
 labels:
   - init
   - tracker
   - quest
-  - blocked
 dependencies: []
 references:
   - >-
@@ -43,3 +42,25 @@ Gate on the Quest minimum version from LCLI-358.2's floor, not on an exact versi
 - [ ] #3 quest init is never left to prompt: Lore always drives it non-interactively
 - [ ] #4 A Quest workspace already initialized in this repository is detected and not re-provisioned
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: @lore-cli
+created: 2026-08-30 17:28
+---
+QCLI-136 CONFIRMED SHIPPED, 2026-08-30 — this task's premise was verified stale and is corrected here, not just noted.
+
+Live check against the installed quest 0.3.0 binary (not assumed from a version bump):
+
+    $ quest init --help
+    ...flags: --name, --task-id-prefix, --agent-instructions
+
+    $ quest init --name demo --task-id-prefix DEMO --agent-instructions --json   (throwaway git worktree)
+    {"schemaVersion":1,"kind":"workspace.initialized","data":{...,"configuration":{"name":"demo","taskIdPrefix":"DEMO"},...}}
+
+The exact repro this task recorded as blocking (`quest init --name demo --task-id-prefix DEMO --json` rejected with "init accepts only --agent-instructions, --json, and --plain") now succeeds cleanly with all three setup answers accepted as flags. The "blocked" label is removed accordingly.
+
+This does NOT close the task — `lore init` still does not drive `quest init` with these flags itself (that is AC#1-#4, unimplemented). It only removes the cross-repo blocker: whoever picks this up starts from a Quest that accepts the answers, per AC#2's "gate on the Quest minimum version from LCLI-358.2's floor, not on an exact version" — MIN_QUEST_VERSION is 0.2.7, so gate on >=0.2.7 (or the exact version QCLI-136 actually landed in, if quest-cli confirms a higher floor is required for these flags specifically — worth a quick check with quest-cli-27 before implementing AC#2).
+---
+<!-- COMMENTS:END -->
