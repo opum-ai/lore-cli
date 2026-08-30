@@ -60,6 +60,23 @@ export interface ManifestFlag {
   readonly repeatable?: boolean;
   /** One-line description of what the flag does. */
   readonly summary: string;
+  /**
+   * The `--json` envelope `kind` this flag produces, when the flag itself terminates the run with
+   * an envelope rather than modifying a command's behaviour (LCLI-366). Only `--version` does this
+   * today: `lore --version --json` emits `{kind: "version"}`.
+   *
+   * Optional and absent on every ordinary flag, which is what keeps this additive — a consumer that
+   * does not know the field is unaffected. It exists because the alternative models are both worse.
+   * Inventing a `version` COMMAND would put a name in `commands[]` that `cli.ts` does not dispatch
+   * and no user can type, so the manifest would describe a CLI that does not exist. Leaving it
+   * undeclared, which is what shipped through 0.3.5, means an agent enumerating the manifest to
+   * discover emittable kinds never learns `version` exists — the registry-vs-runtime mismatch this
+   * field closes, and the same defect as LCLI-350 here and QCLI-151 in Quest.
+   *
+   * A consumer collecting every kind this CLI can emit must therefore read `commands[].kind`,
+   * `commands[].resultKinds`, AND `globalFlags[].kind`.
+   */
+  readonly kind?: string;
 }
 
 /** One command in the manifest: everything an agent needs to invoke it correctly. */
@@ -164,7 +181,7 @@ const GLOBAL_FLAGS: readonly ManifestFlag[] = deepFreeze([
     summary: "Machine-readable JSON output (the {schemaVersion, kind, data} envelope)",
   },
   { name: "plain", takesValue: false, summary: "ANSI-free text output (auto-selected when stdout is piped)" },
-  { name: "version", alias: "v", takesValue: false, summary: "Print the version and exit" },
+  { name: "version", alias: "v", takesValue: false, summary: "Print the version and exit", kind: "version" },
   { name: "help", alias: "h", takesValue: false, summary: "Show help and exit" },
 ]);
 
@@ -761,7 +778,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
   },
   {
     name: "agents",
-    summary: "Regenerate this bridge (SKILL.md + the CLAUDE.md nudge)",
+    summary: "Regenerate the agent bridges (SKILL.md + the CLAUDE.md/AGENTS.md nudge)",
     args: "",
     flags: [
       { name: "force", takesValue: false, summary: "Overwrite hand-edited generated files" },

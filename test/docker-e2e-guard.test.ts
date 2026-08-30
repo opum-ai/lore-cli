@@ -104,3 +104,70 @@ describe("docker E2E nested-checkout accounting (LORE-273)", () => {
     );
   });
 });
+
+describe("docker E2E helper library is actually shipped into the image (LCLI-360)", () => {
+  /**
+   * `run-e2e.sh` sources its assertion helpers from `lib/steps.sh` RELATIVE TO ITSELF. The
+   * Dockerfile copies the script to `/usr/local/bin/`, so the library has to be copied beside it —
+   * existing in the build context is not enough. It was not, on the first push of the extraction,
+   * and the harness died at startup before a single case ran.
+   *
+   * That branch cannot be exercised on a host: the LORE-269 container guard fires first, by design,
+   * before the source line is reached. So the coupling is pinned statically here instead — the same
+   * shape as the existing "guard and Dockerfile signal remain structurally coupled" test above.
+   */
+  const STEPS_LIB = join(ROOT, "docker", "e2e", "lib", "steps.sh");
+
+  test("the helper library exists and defines every helper run-e2e.sh calls", () => {
+    const lib = readFileSync(STEPS_LIB, "utf8");
+    for (const fn of ["log", "record", "step", "step_json", "step_fail", "check", "tally", "critical"]) {
+      expect(lib).toContain(`${fn}(`);
+    }
+    // ...and run-e2e.sh no longer defines them itself, so there is one definition, not a fork.
+    const script = readFileSync(SCRIPT, "utf8");
+    expect(script).not.toMatch(/^step_fail\(\) \{/m);
+    expect(script).toContain("/lib/steps.sh");
+  });
+
+  test("the Dockerfile copies lib/ beside the script it is sourced from", () => {
+    const dockerfile = readFileSync(DOCKERFILE, "utf8");
+    const scriptDest = dockerfile.match(/COPY[^\n]*docker\/e2e\/run-e2e\.sh\s+(\S+)/)?.[1];
+    const libDest = dockerfile.match(/COPY[^\n]*docker\/e2e\/lib\s+(\S+)/)?.[1];
+    expect(scriptDest).toBeDefined();
+    expect(libDest).toBeDefined();
+    // `dirname "$scriptDest"/lib` must equal `libDest`, or the source resolves to nothing.
+    const scriptDir = (scriptDest as string).replace(/\/[^/]+$/, "");
+    expect(libDest).toBe(`${scriptDir}/lib`);
+  });
+
+  test("run-e2e.sh fails closed when the library is unreadable, rather than running zero assertions", () => {
+    // `set -uo pipefail` omits -e, so a bare failed `.` would print one error and continue with
+    // every helper undefined -- a green-looking tally over nothing. The script must refuse instead.
+    const script = readFileSync(SCRIPT, "utf8");
+    expect(script).toMatch(/if \[ ! -r "\$E2E_LIB" \]; then/);
+    expect(script).toContain("refusing to run a suite that would assert nothing");
+  });
+
+  test("the run asserts a non-vacuity floor, and the floor lives where the selftest can exercise it", () => {
+    // A suite that runs FEWER cases than it should fails GREEN: `$FAIL -gt 0` is false when
+    // nothing ran. The floor is the only thing that catches that, so it must exist AND be
+    // reachable by the selftest -- a guard nobody can exercise is a guard nobody has seen work.
+    const script = readFileSync(SCRIPT, "utf8");
+    expect(script).toContain("MIN_EXPECTED_CASES");
+    expect(script).toMatch(/assert_non_vacuous "\$MIN_EXPECTED_CASES" \|\| exit 1/);
+    // Defined in the sourceable library, not inline, so selftest.sh can drive it without Docker.
+    expect(readFileSync(STEPS_LIB, "utf8")).toContain("assert_non_vacuous()");
+    expect(readFileSync(join(ROOT, "docker", "e2e", "selftest.sh"), "utf8")).toContain("assert_non_vacuous");
+  });
+
+  test("the selftest exists, is wired into CI, and runs before the container build", () => {
+    const workflow = readFileSync(join(ROOT, ".github", "workflows", "ci.yml"), "utf8");
+    const selftestAt = workflow.indexOf("docker/e2e/selftest.sh");
+    const harnessAt = workflow.indexOf("docker/e2e/docker-compose.yml up --build");
+    expect(selftestAt).toBeGreaterThan(-1);
+    expect(harnessAt).toBeGreaterThan(-1);
+    // Ordering is deliberate: a broken assertion helper invalidates every case in the harness, and
+    // the selftest costs seconds against the harness's minutes, so it must fail first and fast.
+    expect(selftestAt).toBeLessThan(harnessAt);
+  });
+});

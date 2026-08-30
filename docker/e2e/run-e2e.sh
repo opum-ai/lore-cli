@@ -81,141 +81,23 @@ BROKEN_FIXTURES="$LORE_REPO/test/fixtures/okf-bundle/broken"
 mkdir -p "$RESULTS_DIR"
 : > "$REPORT"
 
-PASS=0
-FAIL=0
-REPORT_WRITE_FAILURES=0
-
-log() { printf '%s\n' "$*" >&2; }
-
-# report_write_failed <name> — record() and check() route their append failures
-# here instead of letting them pass silently: under `set -uo pipefail` (no -e)
-# a failed `>>"$REPORT"` (permission denied, disk full, ...) would otherwise
-# just vanish, since neither function's caller inspects its exit status. This
-# still lets the run continue (the harness itself stays informative on stderr
-# even if the report file is unwritable) but makes sure the failure is loud
-# and reflected in the script's own final exit code (see the Phase 25 tally).
-report_write_failed() {
-  REPORT_WRITE_FAILURES=$((REPORT_WRITE_FAILURES + 1))
-  log "REPORT WRITE FAILED: could not append '$1' to $REPORT"
-}
-
-record() {
-  local name="$1" status="$2" expected="$3" actual="$4" out="$5" err="$6"
-  jq -nc \
-    --arg name "$name" --arg status "$status" \
-    --argjson expected "$expected" --argjson actual "$actual" \
-    --rawfile stdout "$out" --rawfile stderr "$err" \
-    '{name:$name,status:$status,expected_exit:$expected,actual_exit:$actual,stdout:$stdout,stderr:$stderr}' \
-    >>"$REPORT" || report_write_failed "$name"
-}
-
-# step <name> <expected_exit> -- <cmd...>
-step() {
-  local name="$1" expected="$2"
-  shift 2
-  [ "${1:-}" = "--" ] && shift
-  local out err rc status
-  out="$(mktemp)"
-  err="$(mktemp)"
-  "$@" >"$out" 2>"$err"
-  rc=$?
-  if [ "$rc" -eq "$expected" ]; then
-    status=PASS
-    PASS=$((PASS + 1))
-  else
-    status=FAIL
-    FAIL=$((FAIL + 1))
-  fi
-  record "$name" "$status" "$expected" "$rc" "$out" "$err"
-  log "[$status] $name (exit $rc, expected $expected)"
-  rm -f "$out" "$err"
-  [ "$status" = "PASS" ]
-}
-
-# step_json <name> <jq-filter> -- <cmd...>  -- expects exit 0 AND the filter true on stdout
-step_json() {
-  local name="$1" filter="$2"
-  shift 2
-  [ "${1:-}" = "--" ] && shift
-  local out err rc status
-  out="$(mktemp)"
-  err="$(mktemp)"
-  "$@" >"$out" 2>"$err"
-  rc=$?
-  if [ "$rc" -eq 0 ] && jq -e "$filter" "$out" >/dev/null 2>&1; then
-    status=PASS
-    PASS=$((PASS + 1))
-  else
-    status=FAIL
-    FAIL=$((FAIL + 1))
-  fi
-  record "$name (jq: $filter)" "$status" 0 "$rc" "$out" "$err"
-  log "[$status] $name (exit $rc, jq: $filter)"
-  rm -f "$out" "$err"
-  [ "$status" = "PASS" ]
-}
-
-# step_fail <name> <expected_exit> <jq-filter> -- <cmd...>
-# Asserts the --json failure-output contract (cli-contract.md S5.2): the expected exit code,
-# EMPTY stdout, and a jq filter over the stderr ErrorEnvelope JSON (error_type/message/hint/input).
-# A command that scans the whole bundle (loadBundle) can print `warning: ...` advisory lines to
-# stderr AHEAD of the envelope (unrelated to the failure under test), so the ErrorEnvelope is only
-# guaranteed to be the LAST line of stderr, not the whole file -- that's what gets parsed.
-step_fail() {
-  local name="$1" expected="$2" filter="$3"
-  shift 3
-  [ "${1:-}" = "--" ] && shift
-  local out err rc status envelope
-  out="$(mktemp)"
-  err="$(mktemp)"
-  "$@" >"$out" 2>"$err"
-  rc=$?
-  envelope="$(tail -n1 "$err")"
-  if [ "$rc" -eq "$expected" ] && [ ! -s "$out" ] && printf '%s' "$envelope" | jq -e "$filter" >/dev/null 2>&1; then
-    status=PASS
-    PASS=$((PASS + 1))
-  else
-    status=FAIL
-    FAIL=$((FAIL + 1))
-  fi
-  record "$name (jq: $filter)" "$status" "$expected" "$rc" "$out" "$err"
-  log "[$status] $name (exit $rc, stdout empty: $([ -s "$out" ] && echo no || echo yes), jq: $filter)"
-  rm -f "$out" "$err"
-  [ "$status" = "PASS" ]
-}
-
-# check <name> <bash-boolean-expression-string> -- a plain assertion, not a subprocess-under-test
-check() {
-  local name="$1" expr="$2" status
-  if eval "$expr"; then
-    status=PASS
-    PASS=$((PASS + 1))
-  else
-    status=FAIL
-    FAIL=$((FAIL + 1))
-  fi
-  jq -nc --arg name "$name" --arg status "$status" '{name:$name,status:$status}' >>"$REPORT" \
-    || report_write_failed "$name"
-  log "[$status] $name"
-  [ "$status" = "PASS" ]
-}
-
-tally() {
-  log ""
-  log "==== E2E summary: $PASS passed, $FAIL failed (report: $REPORT) ===="
-  if [ "$REPORT_WRITE_FAILURES" -gt 0 ]; then
-    log "==== WARNING: $REPORT_WRITE_FAILURES report write(s) to $REPORT failed (see REPORT WRITE FAILED lines above) ===="
-  fi
-}
-
-critical() {
-  if ! step "$@"; then
-    log ""
-    log "CRITICAL bootstrap step failed: $1 -- aborting the remaining phases"
-    tally
-    exit 1
-  fi
-}
+# The assertion helpers (log/record/step/step_json/step_fail/check/tally/critical) and the
+# PASS/FAIL/REPORT_WRITE_FAILURES counters live in lib/steps.sh so that selftest.sh can prove each
+# one DISCRIMINATES without a container (LCLI-360). One definition, two consumers -- a second copy
+# here would be a fork that rots. RESULTS_DIR and REPORT above are the contract it expects.
+# Fail CLOSED if the library is missing. `set -uo pipefail` omits -e, so a failed `.` would print
+# one error and CONTINUE with every helper undefined -- each later `step`/`step_fail` becoming a
+# "command not found" that the harness never records, ending in a green-looking tally over zero
+# real assertions. That is the vacuous pass this whole extraction exists to prevent, so it must
+# abort here instead. docker/e2e/Dockerfile must COPY lib/ beside the script; a test in
+# test/docker-e2e-guard.test.ts pins that, since this line cannot be exercised without Docker.
+E2E_LIB="$(dirname "${BASH_SOURCE[0]}")/lib/steps.sh"
+if [ ! -r "$E2E_LIB" ]; then
+  echo "run-e2e.sh: cannot read its assertion helpers at $E2E_LIB -- refusing to run a suite that would assert nothing." >&2
+  exit 1
+fi
+# shellcheck source=lib/steps.sh
+. "$E2E_LIB"
 
 # Guarded (LORE-269) as defense-in-depth on top of the container check above: this is the
 # literal `cd /workspace` the original bug report cited. The guard above already refuses to
@@ -295,11 +177,21 @@ step_json "LCLI-358.2: --tracker none runs no tracker probe at all" \
   -- bash -c 'cd /tmp/tracker-probe && lore init --tracker none --check-tracker --json'
 rm -rf /tmp/tracker-probe
 
-# LCLI-356: a tracker version below the adapter's floor is refused at SELECTION time, so the bundle
-# is never committed to a backend that will refuse every later command. Driven through the backlog
-# backend's own floor because the image's quest availability is not guaranteed: LORE_BACKLOG_BIN
-# points the adapter at a stub that reports an ancient version, and the assertion is that the
-# selection was NOT written.
+# LCLI-356: an explicitly selected tracker is VERIFIED BEFORE it is persisted. These two cases
+# cover the ACCEPTANCE path only: a capable backend is probed, reported capable, and written to
+# config.
+#
+# COMMENT CORRECTED (LCLI-360). This block previously claimed it drove the below-the-floor
+# REJECTION via "LORE_BACKLOG_BIN points the adapter at a stub that reports an ancient version"
+# and asserted "the selection was NOT written" -- the exact opposite of what the cases below do,
+# using machinery that does not exist. LORE_BACKLOG_BIN is set nowhere in this repository and read
+# nowhere: src/adapters/backlog.ts hardcodes BACKLOG_BINARY = "backlog" with no env override. A
+# reader auditing coverage would have concluded the refusal path was exercised here. It is not.
+#
+# So the refusal half of LCLI-356 AC#2 has NO e2e coverage. It is covered by unit tests, so the
+# behaviour is not unverified -- but this harness does not exercise it, and adding a case that
+# does needs a way to point the adapter at a stub binary, which lore does not currently offer.
+# Tracked on LCLI-360; do not restore the old comment without also building what it describes.
 mkdir -p /tmp/floor-probe && (cd /tmp/floor-probe && git init -q)
 step_json "LCLI-356: an explicitly selected tracker is verified before it is persisted" \
   '.kind == "init.result" and .data.trackerCheck.backend == "backlog" and .data.trackerCheck.capable == true' \
@@ -1924,8 +1816,52 @@ rm -rf /tmp/nested-e2e
 check "LCLI-327: E2E identity was not persisted in the workspace Git config" \
   '! git config --local --get-regexp "^user\\.(name|email)$" >/dev/null 2>&1'
 
+# ── Phase 24c: manifest-vs-emission cross-check (LCLI-365) ───────────────────────
+# Every kind below is compared with NEITHER side a literal: the declared kind is read from
+# `lore --json help` at run time, the emitted kind from the command's own envelope, both out of the
+# same binary. Before this, the harness asserted `.kind == "orphans.report"` against real output
+# while a unit test separately asserted the manifest says "orphans.report" -- two independent
+# literals, each correct, with no edge between them. A handler could change and both be updated
+# while the manifest went stale, and nothing would fail.
+#
+# Placed at the END on purpose: the bundle is fully built by here, so these are read-only commands
+# against known-good state and cannot disturb any earlier phase. Every command listed is one the
+# harness already exercises elsewhere; this adds the manifest edge, not new surface area.
+#
+# Not exhaustive, and deliberately so. Commands needing special state or arguments (backlog adopt,
+# snapshot/changed/provenance, explorer, agent) are absent rather than given a contrived invocation
+# just to make a list look complete -- a case that has to be bent to fit tests the bending. Adding
+# them is tracked on LCLI-365.
+step_declared_kind check    -- lore check --json
+step_declared_kind validate -- lore validate --json
+step_declared_kind orphans  -- lore orphans --json
+step_declared_kind graph    -- lore graph --json
+step_declared_kind export   -- lore export --json
+step_declared_kind query    -- lore query "orders" --json
+step_declared_kind help     -- lore help --json
+step_declared_kind agents   -- lore agents --check --json
+
 # ── Phase 25: tally ───────────────────────────────────────────────────────────────
 tally
+
+# NON-VACUITY FLOOR (LCLI-360). A suite that runs FEWER cases than it should is the most
+# dangerous way for this harness to fail, because it fails GREEN: `$FAIL -gt 0` is false when
+# nothing ran, so a run that died early, skipped a whole phase, or lost its assertions would
+# exit 0 and read as a clean sheet. That is exactly what happened when lib/steps.sh was missing
+# from the image -- every helper became "command not found", nothing was recorded, and only the
+# resulting non-zero from elsewhere saved it.
+#
+# So the run must prove it actually executed a plausible number of cases. This floor is a
+# DELIBERATE, RATCHETING constant:
+#   - Raise it when cases are added. That is the point -- it is what keeps the floor meaningful.
+#   - NEVER lower it to make a red run green. A drop in case count is either a deletion someone
+#     should have to justify in review, or a truncated run. Both deserve a failure, not an
+#     accommodation.
+# Set below the current total with headroom for ordinary churn, not at it, so removing one
+# obsolete case does not fail the build while losing a whole phase still does.
+MIN_EXPECTED_CASES="${MIN_EXPECTED_CASES:-330}"
+assert_non_vacuous "$MIN_EXPECTED_CASES" || exit 1
+
 # AC1: a report-write failure inside record()/check() (permission denied, disk
 # full, ...) must flip the overall exit code too, not just a failed test --
 # otherwise an all-PASS run whose report silently failed to write would still

@@ -3,11 +3,11 @@ id: LCLI-357
 title: >-
   lore scaffold mkdocs generates a docs/tags.md that lore validate --strict then
   rejects
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-28 21:30'
-updated_date: '2026-08-29 23:34'
+updated_date: '2026-08-30 00:06'
 labels:
   - scaffold
   - validate

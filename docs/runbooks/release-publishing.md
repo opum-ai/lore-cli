@@ -416,6 +416,38 @@ publish is explicitly marked public. Root `package.json` and all six
    pin and `license`/`author`/`repository` metadata, are consistent before
    compiling anything, so a missed file fails loud here rather than silently
    skipping an optional dependency later.
+
+   **In that same commit, refresh the three version-bearing Ladybug digest
+   baselines.** The bump alone turns the suite red, because the canonical
+   export embeds `lore/<version>` as provenance, so the export digest moves on
+   every release while nothing about the fixture content changes. This has now
+   caught three releases running (LCLI-338, LCLI-349, and the 0.3.5 cut), which
+   is why it is written down rather than rediscovered:
+
+   - `benchmark/ladybug/fixtures/v1/small.json` → `expected.canonicalExportSha256`
+   - `benchmark/ladybug/fixtures/v1/large.json` → `expected.canonicalExportSha256`
+   - `test/ladybug-benchmark-report.test.ts` → the `benchmarkDigest(json)`
+     baseline, which is downstream of the two above and moves with them.
+
+   Take the new values from the failure output — `bun test
+   test/ladybug-benchmark-fixture.test.ts` prints the expected/received pair —
+   then re-run the fixture suite and the report test.
+
+   **Prove the change is version-driven before you refresh anything.**
+   Refreshing a digest baseline is precisely the edit that can bury a real
+   regression under a "just the version bump" commit message, and a refreshed
+   baseline is indistinguishable from a correct one afterwards. Two checks,
+   both cheap:
+
+   - **Only `canonicalExportSha256` may move.** If `sourceInventorySha256` or
+     `taskSnapshotSha256` also changed, the *content* changed and you are
+     looking at a code regression, not a version bump. Stop and find it.
+   - **Negative control.** Revert only the root `package.json` version string
+     to the previous release, leaving all other source untouched, and re-run
+     `bun test test/ladybug-benchmark-fixture.test.ts`. It must return to
+     passing against the OLD baselines. If it does not, something other than
+     the version moved the digest. Restore the new version afterward.
+
 3. Keep the README's copyable install commands versionless (`npx
    @opum-ai/lore`, `bunx @opum-ai/lore`, and package-manager installs without
    an `@<version>` suffix), so they continue to resolve the current release
@@ -467,10 +499,95 @@ publish is explicitly marked public. Root `package.json` and all six
 5. Until LCLI-278 supplies an effective external approval control, dispatch
    `Release` with `publish: false` on that tag. Download only its
    `npm-packages` artifact, list and checksum the seven `.tgz` files, then
-   interactively publish those exact artifacts with 2FA: all six platform
-   packages first and `@opum-ai/lore` last. Do not run `npm pack` locally or
-   publish a rebuilt tarball. The workflow artifacts are the qualified release
-   inputs.
+   publish those exact artifacts: all six platform packages first and
+   `@opum-ai/lore` last. Do not run `npm pack` locally or publish a rebuilt
+   tarball. The workflow artifacts are the qualified release inputs.
+
+   **Use `scripts/publish-release.sh`** rather than typing the sequence by
+   hand — it encodes this step's ordering and refusals:
+
+   ```
+   gh run download <run-id> -n npm-packages -D scripts/release-<version>
+   scripts/publish-release.sh <version> <run-id> --dry-run
+   scripts/publish-release.sh <version> <run-id>
+   ```
+
+   It verifies every tarball's `sha256` against a `SHA256SUMS.txt` **before**
+   any registry write and refuses on a mismatch, a missing file, or a missing
+   sums file — so a locally rebuilt tarball cannot reach the registry by
+   accident. It publishes platform packages first and stops **before** the root
+   launcher if any of them fails, so the launcher is never resolvable before the
+   binary it execs. It is resumable, skipping versions already published, and
+   ends with a clean-temp-dir `npx` install smoke. Digest verification runs
+   ahead of the auth check, so a rehearsal proves the bytes are right even
+   before credentials exist.
+
+   **Prefer trusted publishing (OIDC) over any token — the token path is now a
+   maintenance liability by construction.** npm disabled classic token creation
+   in November 2025 and **permanently revoked every existing classic token on
+   9 December 2025**; granular access tokens, the only remaining type, are
+   capped at 90 days, require 2FA, and must be created on the website. So a
+   token-based release stops working inside a quarter, every quarter, and the
+   failure surfaces as a stalled release rather than a warning. That is not a
+   hypothetical: two granular tokens were rejected outright on 2026-08-29,
+   401 on `npm whoami` even in an isolated config, and the 0.3.5 publish stalled.
+
+   `.github/workflows/release.yml` **already contains the whole OIDC path** — a
+   `publish (npm, OIDC trusted publishing)` job with `id-token: write` scoped to
+   that job alone, `environment: release`, and an explicit npm upgrade to clear
+   the `>= 11.5.1` floor. What is missing is the npmjs.com side. Configure it
+   once per package at `https://www.npmjs.com/package/<name>/access` — **not**
+   the general settings page:
+
+   | field | value |
+   |---|---|
+   | Organization | `opum-ai` |
+   | Repository | `lore-cli` |
+   | Workflow filename | `release.yml` (filename only, not a path) |
+   | Environment | `release` |
+   | Allowed actions | `npm publish` |
+
+   All seven package names need it separately — the launcher and its six
+   platform packages are separate packages with separate settings. Every field
+   is case-sensitive, and **npm does not validate the configuration when you
+   save it**, so a typo surfaces only as a failed publish. A brand-new package
+   must be bootstrapped with one manual publish before a trusted publisher can
+   be attached to it, which is the same constraint the `0.1.0` first-release
+   exception above describes.
+
+   **The `publish: true` prohibition was lifted by owner decision on 2026-08-29**
+   (recorded on LCLI-278). Trusted publishing fixes *authentication*, not
+   *approval*: the `release` environment still has no protection rules and
+   administrator bypass, so a dispatch has no second-party approval. That
+   exposure was weighed and accepted, because the alternative was not a safer
+   publish but a publish that keeps failing — a credential that expires inside a
+   quarter and strands the release when it does. **LCLI-278 stays open**: the
+   control it asks for still does not exist, and if the billing plan later
+   supports required reviewers, configure one and the waiver stops being needed.
+
+   Once trusted publishing is configured, a release is one dispatch:
+
+   ```
+   gh workflow run release.yml --ref v<version> -f publish=true
+   ```
+
+   **If you must use a token anyway: a granular access token, not `npm login`.** A web login
+   is still subject to "require 2FA for writes", so every publish and every
+   dist-tag move prompts for a one-time password — that is the EOTP wall that
+   blocked the `0.3.4` release. Granular access tokens (and classic *Automation*
+   tokens) bypass 2FA by design, which is what makes an unattended release
+   possible. Create one at <https://www.npmjs.com/settings/~/tokens> scoped to
+   the `@opum-ai/lore*` packages with read-and-write permission, then store it
+   once in the macOS Keychain:
+
+   ```
+   security add-generic-password -U -s npm-opum-ai-publish -a "$USER" -w
+   ```
+
+   The script reads it from there (falling back to `NPM_TOKEN`, then `~/.npmrc`),
+   never echoes it, and passes it through a temporary config rather than
+   rewriting `~/.npmrc`. A `401` from `npm whoami` means the stored token has
+   expired or been revoked; re-issue it rather than reaching for `npm login`.
 6. Verify every `name@version` in the registry and use a new temporary
    directory for a clean `npx @opum-ai/lore@<version> --version` install/run.
    Record the artifact run, registry, and clean-install evidence in the

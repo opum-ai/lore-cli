@@ -170,6 +170,22 @@ recognize a shape faster.
   `tail`'s status, so a failing tool reads as a pass and looks identical to a
   real one. Take the code without a pipe — `tool >/dev/null 2>&1; echo $?` — and
   do not cite an exit code obtained any other way.
+- **A gate validating the claim instead of the artifact.** The check reads a
+  digest, path, or version out of a *document* and compares it to another
+  document, never deriving it from the bytes it is supposed to be about. Two
+  records agreeing with each other prove nothing — they can be wrong together —
+  and it fails **green**, which is worse than failing. Three instances surfaced
+  on 2026-08-29 across three repositories: `opum-cli-e2e` bound scale evidence to
+  a launcher **path**, so a different binary at the same path would have bound
+  and PASSED; that same harness's packaging receipts compared an *asserted*
+  digest against the digest *asserted* in a platform manifest, never touching the
+  shipped binary; and `quest-cli`'s release gate keyed on `import.meta.main`,
+  which is absent on older Node, so `main()` never ran and the process exited 0 —
+  a publication gate that passed by doing nothing. The rule that removes all
+  three: **bind on content, re-derive it at check time, and never read the value
+  out of the document being validated.** Applies to this repository's own
+  evidence records, which is why a refreshed digest baseline needs a negative
+  control proving what actually moved it.
 - **Treating the fix as exempt.** Closing a loophole is an authoring event, so
   the sentence written to close one is subject to this same test — the shape
   tends to reappear inside its own remediation. Two further consequences: a

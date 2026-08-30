@@ -18,15 +18,16 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { commandHandlerNames, run } from "../src/cli";
-import { type AgentsResult, bridgeActionColor, runAgents } from "../src/commands/agents";
+import { type AgentsResult, applyAgentsBridge, bridgeActionColor, runAgents } from "../src/commands/agents";
 import {
   buildNudgeBody,
   buildSkillDoc,
@@ -35,6 +36,14 @@ import {
   planBridge,
   SKILL_REL_PATH,
 } from "../src/core/agent-bridge";
+import {
+  AGENTS_MD_REL_PATH,
+  buildCodexNudgeBody,
+  buildCodexSkillDoc,
+  CODEX_AGENT_BLOCK_LABEL,
+  CODEX_SKILL_REL_PATH,
+} from "../src/core/codex-bridge";
+import { upsertManagedBlock } from "../src/core/managed-block";
 import { ANSI, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
@@ -585,5 +594,111 @@ describe("command-surface lockstep — the bridge names only real commands", () 
     for (const name of dispatched) {
       expect(advertised.has(name)).toBe(true);
     }
+  });
+});
+
+describe("lore agents — the codex bridge is covered too, but only where one already exists (LCLI-364)", () => {
+  /**
+   * The gap this closes: `lore agents --check` gated ONLY the Claude bridge, and no workflow
+   * referenced codex at all, so `.codex/skills/lore/SKILL.md` and AGENTS.md's managed block could
+   * drift from their generators indefinitely. That is not hypothetical — AGENTS.md was found
+   * missing the `workspace` topic on 2026-08-29 (LCLI-362) while CLAUDE.md, which HAS a gate, was
+   * current. One artifact enumerated and checked, its twin not, and the green check on the first
+   * reading as coverage of both.
+   *
+   * The load-bearing constraint is the CONDITIONAL: a repository that never opted into Codex has
+   * no `.codex/` tree and no `lore:agents` block in AGENTS.md, and must stay at exit 0. Checking
+   * unconditionally would report `created` — drift — for every Claude-only repository and turn a
+   * real gate into one everybody disables. Presence, not absence, is what arms the codex half.
+   */
+  const codexSkillAbs = (): string => join(root, CODEX_SKILL_REL_PATH);
+  const agentsMdAbs = (): string => join(root, AGENTS_MD_REL_PATH);
+
+  /** Lay down a current codex bridge beside the Claude one. */
+  function withCodexBridge(): void {
+    mkdirSync(dirname(codexSkillAbs()), { recursive: true });
+    writeFileSync(codexSkillAbs(), buildCodexSkillDoc());
+    writeFileSync(
+      agentsMdAbs(),
+      upsertManagedBlock("", { label: CODEX_AGENT_BLOCK_LABEL, body: buildCodexNudgeBody() }),
+    );
+  }
+
+  test("a Claude-only repository is untouched and stays at exit 0 — no codex file is reported or created", () => {
+    agents();
+    const { code, result } = agents(["--check"]);
+    expect(code).toBe(0);
+    expect(result.files.some((f) => f.path === CODEX_SKILL_REL_PATH)).toBe(false);
+    expect(result.files.some((f) => f.path === AGENTS_MD_REL_PATH)).toBe(false);
+    expect(existsSync(codexSkillAbs())).toBe(false);
+    expect(existsSync(agentsMdAbs())).toBe(false);
+  });
+
+  test("applyAgentsBridge does NOT touch codex by default — `lore init --claude` is a scoped request", () => {
+    // Caught by the docker E2E harness, not by this suite, on the first version of LCLI-364:
+    // `lore init --claude` shares applyAgentsBridge, and covering codex unconditionally made a
+    // scoped "set up the Claude bridge" request report and regenerate files the user never asked
+    // about. The E2E case LCLI-298 AC3 pins that file list to exactly the two Claude files, and it
+    // went red. `lore init --codex` owns the other half; only `lore agents` wants both.
+    agents();
+    withCodexBridge();
+    const scoped = applyAgentsBridge({ root, force: false, check: true });
+    expect(scoped.files.map((f) => f.path).sort()).toEqual([CLAUDE_MD_REL_PATH, SKILL_REL_PATH].sort());
+    // ...while `lore agents` itself, which means "the bridges are current", does cover both.
+    expect(agents(["--check"]).result.files.length).toBe(4);
+  });
+
+  test("a current codex bridge is reported unchanged and the run stays at exit 0", () => {
+    agents();
+    withCodexBridge();
+    const { code, result } = agents(["--check"]);
+    expect(code).toBe(0);
+    expect(actionFor(result, CODEX_SKILL_REL_PATH)).toBe("unchanged");
+    expect(actionFor(result, AGENTS_MD_REL_PATH)).toBe("unchanged");
+  });
+
+  test("a drifted AGENTS.md managed block fails the gate at exit 6 and NAMES AGENTS.md", () => {
+    // This is the exact defect LCLI-362 found by hand: the block loses a topic the generator emits.
+    agents();
+    withCodexBridge();
+    const drifted = readFileSync(agentsMdAbs(), "utf8").replace(", `workspace`", "");
+    expect(drifted).not.toBe(readFileSync(agentsMdAbs(), "utf8")); // the edit actually landed
+    writeFileSync(agentsMdAbs(), drifted);
+    const { code, result } = agents(["--check"]);
+    expect(code).toBe(6);
+    expect(actionFor(result, AGENTS_MD_REL_PATH)).not.toBe("unchanged");
+    // ...and reports it without repairing it.
+    expect(readFileSync(agentsMdAbs(), "utf8")).toBe(drifted);
+  });
+
+  test("a drifted .codex SKILL.md fails the gate at exit 6 and names that file", () => {
+    agents();
+    withCodexBridge();
+    writeFileSync(codexSkillAbs(), `${buildCodexSkillDoc()}\ndrifted`);
+    const { code, result } = agents(["--check"]);
+    expect(code).toBe(6);
+    expect(actionFor(result, CODEX_SKILL_REL_PATH)).not.toBe("unchanged");
+  });
+
+  test("a plain run regenerates a drifted AGENTS.md block, so the gate has a remedy that works", () => {
+    agents();
+    withCodexBridge();
+    const current = readFileSync(agentsMdAbs(), "utf8");
+    writeFileSync(agentsMdAbs(), current.replace(", `workspace`", ""));
+    expect(agents().code).toBe(0);
+    expect(readFileSync(agentsMdAbs(), "utf8")).toBe(current);
+    expect(agents(["--check"]).code).toBe(0);
+  });
+
+  test("a --check run leaves NO untracked files behind: it must compare, never regenerate in place", () => {
+    // A check implemented by shelling out to `lore init --codex` would create .lore/profile.toml
+    // and friends as a side effect (observed 2026-08-29). Assert the codex tree is exactly what
+    // was laid down -- the check adds nothing.
+    agents();
+    withCodexBridge();
+    const before = readdirSync(join(root, ".codex/skills/lore")).sort();
+    agents(["--check"]);
+    expect(readdirSync(join(root, ".codex/skills/lore")).sort()).toEqual(before);
+    expect(existsSync(join(root, ".lore/profile.toml"))).toBe(false);
   });
 });
