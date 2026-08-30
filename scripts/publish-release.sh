@@ -136,7 +136,17 @@ ONE-TIME SETUP (no OTP needed afterwards):
 
      ...then paste the token at the prompt and press Return.
 
-     Or, if you prefer an env var:  export NPM_TOKEN=<token>
+     If that fails with "User interaction is not allowed", the login keychain is
+     locked and cannot prompt. Either unlock it first:
+
+       security unlock-keychain ~/Library/Keychains/login.keychain-db
+
+     ...or skip the keychain entirely and store the token in ~/.npmrc, which is
+     equally durable and is what this script falls back to:
+
+       npm config set //registry.npmjs.org/:_authToken=<token>
+
+     Or, for one shell only:  export NPM_TOKEN=<token>
 
   5. Re-run this script.
 

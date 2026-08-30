@@ -86,6 +86,39 @@ printf '== check: boolean discrimination ==\n'
 expect pass "check accepts a true expression"  -- check "probe" '[ 1 = 1 ]'
 expect fail "check REJECTS a false expression" -- check "probe" '[ 1 = 2 ]'
 
+printf '== step_declared_kind: manifest-vs-emission, neither side a literal ==\n'
+# Driven with a stub `lore` on PATH so the helper can be exercised with no real binary. The stub
+# answers `--json help` with a tiny manifest and `probe` with an envelope, which is enough to prove
+# the comparison discriminates in every direction that matters.
+_stub_dir="$(mktemp -d)"
+cat > "$_stub_dir/lore" <<'STUB'
+#!/usr/bin/env bash
+if [ "$1" = "--json" ] && [ "$2" = "help" ]; then
+  printf '{"data":{"commands":[{"name":"good","kind":"good.result"},{"name":"nokind","kind":null}]}}'
+  exit 0
+fi
+exit 0
+STUB
+chmod +x "$_stub_dir/lore"
+PATH="$_stub_dir:$PATH"
+
+expect pass "accepts an emission matching the declared kind" \
+  -- step_declared_kind good -- printf '{"kind":"good.result"}'
+expect fail "REJECTS an emission that differs from the declared kind" \
+  -- step_declared_kind good -- printf '{"kind":"good.WRONG"}'
+expect fail "REJECTS a non-zero exit even when the kind matches" \
+  -- step_declared_kind good -- bash -c 'printf "{\"kind\":\"good.result\"}"; exit 3'
+expect fail "REJECTS output that is not JSON" \
+  -- step_declared_kind good -- printf 'not json'
+# The vacuity case: a command the manifest declares NO kind for must FAIL, not pass by comparing
+# an empty emission against an empty declaration -- otherwise one missing declaration would make
+# every such command pass at once, which is the defect this helper exists to catch.
+expect fail "REJECTS a command the manifest declares no kind for (null declaration)" \
+  -- step_declared_kind nokind -- printf '{"kind":""}'
+expect fail "REJECTS a command absent from the manifest entirely" \
+  -- step_declared_kind not-a-command -- printf '{"kind":"anything"}'
+rm -rf "$_stub_dir"
+
 printf '== non-vacuity: the report actually recorded every probe ==\n'
 # Runs BEFORE the assert_non_vacuous probes on purpose: those inspect counters rather than
 # recording a case, so counting them here would compare rows against probes that never write one.

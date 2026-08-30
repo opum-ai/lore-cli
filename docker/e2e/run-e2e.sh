@@ -1806,6 +1806,31 @@ rm -rf /tmp/nested-e2e
 check "LCLI-327: E2E identity was not persisted in the workspace Git config" \
   '! git config --local --get-regexp "^user\\.(name|email)$" >/dev/null 2>&1'
 
+# ── Phase 24c: manifest-vs-emission cross-check (LCLI-365) ───────────────────────
+# Every kind below is compared with NEITHER side a literal: the declared kind is read from
+# `lore --json help` at run time, the emitted kind from the command's own envelope, both out of the
+# same binary. Before this, the harness asserted `.kind == "orphans.report"` against real output
+# while a unit test separately asserted the manifest says "orphans.report" -- two independent
+# literals, each correct, with no edge between them. A handler could change and both be updated
+# while the manifest went stale, and nothing would fail.
+#
+# Placed at the END on purpose: the bundle is fully built by here, so these are read-only commands
+# against known-good state and cannot disturb any earlier phase. Every command listed is one the
+# harness already exercises elsewhere; this adds the manifest edge, not new surface area.
+#
+# Not exhaustive, and deliberately so. Commands needing special state or arguments (backlog adopt,
+# snapshot/changed/provenance, explorer, agent) are absent rather than given a contrived invocation
+# just to make a list look complete -- a case that has to be bent to fit tests the bending. Adding
+# them is tracked on LCLI-365.
+step_declared_kind check    -- lore check --json
+step_declared_kind validate -- lore validate --json
+step_declared_kind orphans  -- lore orphans --json
+step_declared_kind graph    -- lore graph --json
+step_declared_kind export   -- lore export --json
+step_declared_kind query    -- lore query "orders" --json
+step_declared_kind help     -- lore help --json
+step_declared_kind agents   -- lore agents --check --json
+
 # ── Phase 25: tally ───────────────────────────────────────────────────────────────
 tally
 
