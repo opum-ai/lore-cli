@@ -111,10 +111,14 @@ mean removed as a product surface, and it does not mean erased from history.
 - HISTORY — completed records, dated logs, changelogs → leave alone. Rewriting a
   Done record to remove a word falsifies it.
 - PRODUCT SURFACE shipped to external users → leave alone. `lore init --codex`
-  stays for this reason, as does opum-doc's OpenCode Worker subsystem.
+  stays for this reason: it is a public flag in a published package that external
+  Codex CLI users invoke. Internal tooling that merely runs a retired runtime is
+  not product surface and does not qualify.
 
-Treehouse is retired outright: binary and both pools deleted 2026-08-30, so any
-instruction to run `treehouse ...` will now fail. Use the `opum-worktrees` skill.
+Treehouse, Codex and OpenCode are all retired. Treehouse outright — binary and both
+pools deleted 2026-08-30, so any instruction to run `treehouse ...` will now fail;
+use the `opum-worktrees` skill. Codex and OpenCode are retired as agent runtimes
+this fleet builds on or dispatches to, including tooling that drives them.
 FMC is retired as the mechanism these five sessions use to coordinate; that is not
 a ruling about any repository's own delivery machinery.
 
