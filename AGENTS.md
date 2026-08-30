@@ -35,7 +35,7 @@ coupling, managed blocks, and cross-links stay coherent.
 
 This repository session is the FMC Worker with stable identity `lore-cli`, serving Controller
 `opum-doc`. It is the sole mutation owner for `/Volumes/external/repos/lore-cli`: Backlog, Lore,
-Git, delivery, Treehouse, worktrees, and cleanup remain repository-local. It must not mutate the
+Git, delivery, worktrees, and cleanup remain repository-local. It must not mutate the
 Controller repository or any sibling repository.
 
 Use the shared worker procedure recorded at the shared-skill source receipt below for this role and
@@ -61,7 +61,7 @@ edits against that exact snapshot:
 opum-agent shared skill source: /Volumes/external/.opum-worktrees/opum-agent-fb33aefbfb36/64/opum-agent/tooling/codex-skills
 
 Do not reintroduce project-local shadows of these shared skills (`codex-worker`, `codex-control`,
-`backlog-handover`, `treehouse-worktrees` included).
+`backlog-handover`, `opum-worktrees` included).
 <!-- opum-shared-skills:end -->
 
 Repository-specific scope and delivery rules stay in this file. When a Lore command can commit or
@@ -79,7 +79,7 @@ Lore, integration, and delivery state; workers receive an isolated worktree and 
 
 Within that scope, keep looping through ready tasks, independent cumulative review, commits,
 `dev` pull requests and merges, task/tracker settlement, campaign-created cleanup, and newly ready
-waves. Use the widest safe wave of up to three Terra/medium agents and fenced Treehouse worktrees
+waves. Use the widest safe wave of up to three Terra/medium agents and fenced `opum-worktrees` leases
 when available. A successful wave, PR, merge, cleanup pass, pending-but-progressing check, or
 subjective session-size preference is not a stopping point.
 
