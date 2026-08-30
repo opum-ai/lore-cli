@@ -16,9 +16,12 @@ okf_version: "0.1"
 
 # lore documentation
 
-**lore** is a thin, OKF-native documentation CLI — Bun + TypeScript, released
-on npm as `@opum-ai/lore@0.3.0` (bin `lore`). It makes repo-resident markdown
-a first-class, agent-readable [Open Knowledge Format](reference/okf-conformance.md)
+**lore** is a thin, OKF-native documentation CLI — Bun + TypeScript, published
+on npm as [`@opum-ai/lore`](https://www.npmjs.com/package/@opum-ai/lore)
+(bin `lore`); the current version and its release evidence live in
+[Lore CLI release truth](reference/lore-cli-release-truth.md). It makes
+repo-resident markdown a first-class, agent-readable
+[Open Knowledge Format](reference/okf-conformance.md)
 bundle, couples that bundle to [Backlog.md](runbooks/backlog-json-patch.md)
 tasks, and serves it to both humans and coding agents through a deterministic,
 non-interactive CLI. The repository is the single source of truth.
@@ -56,7 +59,12 @@ Use these records before inferring task or release state:
   — the controlling distribution decision.
 - [lore design](specs/lore-design.md) — the controlling end-to-end Spec.
 - [Lore CLI release truth](reference/lore-cli-release-truth.md) — the immutable
-  tag, workflow, registry, install, and owner-control evidence for `0.3.0`.
+  tag, workflow, registry, install, and owner-control evidence for the current
+  published release. **This index deliberately names no version** (LCLI-361): a
+  version written into prose is a fact that goes stale on every release, and this
+  is the first paragraph a reader meets, so a wrong number here is the most-read
+  wrong fact in the bundle. One file carries the number; everything else points
+  at it.
 - [Lore CLI documentation ownership](reference/lore-cli-documentation-ownership.md)
   — local and cross-repository authority boundaries.
 - [Consolidated Lore documentation](https://github.com/opum-ai/opum-doc/tree/dev/docs/lore)

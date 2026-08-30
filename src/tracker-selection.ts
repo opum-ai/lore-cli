@@ -25,11 +25,24 @@ export interface TrackerSelection {
 export const LEGACY_BACKLOG_DIR = "backlog";
 
 /**
+ * The file `backlog init` writes, and the only durable evidence that `backlog/` is a Backlog.md
+ * project rather than a directory that happens to share its name (LCLI-358.5).
+ *
+ * `adapters/tracker-environment.ts` already treats this exact path as the backend's marker; before
+ * this constant existed the two disagreed, and the looser of them — a bare directory — decided both
+ * the legacy tracker interpretation and whether `lore init` demanded a task migration.
+ */
+export const BACKLOG_PROJECT_MARKER = `${LEGACY_BACKLOG_DIR}/config.yml`;
+
+/**
  * Resolve the tracker for `root` without mutating the repository or invoking a
  * tracker. Explicit `[tracker].backend` (including TOML's root dotted
  * `tracker.backend` spelling) always wins. When omitted, a real `backlog/`
  * directory preserves the legacy backend; a new/empty repository defaults to
  * Quest.
+ *
+ * "A real `backlog/` directory" means a real Backlog.md *project* — see {@link hasBacklogProject};
+ * a directory that merely shares the name is not one.
  *
  * Configuration validation remains exclusively owned by {@link loadConfig}.
  * The subsequent raw TOML read answers only the provenance question that its
@@ -40,7 +53,7 @@ export function resolveTrackerSelection(root: string): TrackerSelection {
   if (hasExplicitTrackerBackend(root)) {
     return { backend: config.tracker.backend, source: "explicit" };
   }
-  if (hasLegacyBacklogArtifacts(root)) {
+  if (hasBacklogProject(root)) {
     return { backend: "backlog", source: "legacy-backlog" };
   }
   return { backend: "quest", source: "default" };
@@ -68,31 +81,48 @@ function hasExplicitTrackerBackend(root: string): boolean {
 }
 
 /**
- * Backlog's repository-owned state is rooted in a real `backlog/` directory.
- * A symlink is deliberately not an artifact: following it could let a sibling
- * repository change this repository's selection. Missing roots are normal;
- * permission failures retain Lore's standard denied diagnostic.
+ * Whether `root` holds a real Backlog.md project: a real `backlog/` directory containing a real
+ * {@link BACKLOG_PROJECT_MARKER} file.
+ *
+ * **A bare `backlog/` directory is not a project** (LCLI-358.5). It used to be, and that was wrong
+ * in both directions: any repository with a directory by that name was interpreted as a legacy
+ * Backlog bundle, and `lore init` demanded a task migration before it would select Quest — over a
+ * directory that might hold no tasks at all. `backlog init` writes `config.yml`, and the `backlog`
+ * CLI does not operate without it, so a directory lacking it is not a tracker this repository can
+ * use.
+ *
+ * A symlink is deliberately not evidence, at either level: following one could let a sibling
+ * repository decide this repository's tracker. Missing paths are normal; permission failures retain
+ * Lore's standard denied diagnostic.
  */
-function hasLegacyBacklogArtifacts(root: string): boolean {
-  const path = join(root, LEGACY_BACKLOG_DIR);
+export function hasBacklogProject(root: string): boolean {
+  const dir = statOrAbsent(root, LEGACY_BACKLOG_DIR);
+  if (dir === undefined || dir.isSymbolicLink() || !dir.isDirectory()) {
+    return false;
+  }
+  const marker = statOrAbsent(root, BACKLOG_PROJECT_MARKER);
+  if (marker === undefined) {
+    return false;
+  }
+  // `lstat` never follows, so a symlink is already neither a file nor a directory here. The check
+  // stays explicit anyway: it is the sentence that says a planted link must not count.
+  return marker.isFile() && !marker.isSymbolicLink();
+}
+
+/** `lstat` one repository-relative path: `undefined` when absent, `denied` when unreadable. */
+function statOrAbsent(root: string, rel: string): ReturnType<typeof lstatSync> | undefined {
   try {
-    const stat = lstatSync(path);
-    return stat.isDirectory() && !stat.isSymbolicLink();
+    return lstatSync(join(root, rel));
   } catch (cause) {
     const code = errnoCode(cause);
     if (code === "ENOENT" || code === "ENOTDIR") {
-      return false;
+      return undefined;
     }
     if (code === "EACCES" || code === "EPERM") {
-      throw new LoreError(
-        "denied",
-        `cannot inspect ${LEGACY_BACKLOG_DIR}`,
-        `check filesystem permissions on ${LEGACY_BACKLOG_DIR}`,
-        {
-          path: LEGACY_BACKLOG_DIR,
-          code,
-        },
-      );
+      throw new LoreError("denied", `cannot inspect ${rel}`, `check filesystem permissions on ${rel}`, {
+        path: rel,
+        code,
+      });
     }
     throw cause;
   }

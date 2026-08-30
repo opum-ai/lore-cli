@@ -225,6 +225,11 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
         summary: "Preview and apply Quest's digest-approved Backlog migration before selecting Quest",
       },
       {
+        name: "keep-backlog-tasks",
+        takesValue: false,
+        summary: "Select Quest and deliberately leave an existing Backlog.md project in place",
+      },
+      {
         name: "adopt-manifest",
         takesValue: true,
         summary: "Coordinate a knowledge-adoption manifest with --migrate-backlog as one cutover",
@@ -467,7 +472,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
   },
   {
     name: "scaffold",
-    summary: "Generate a downstream docs consumer's config, additively outside docs/",
+    summary: "Generate a downstream docs consumer's config additively, rewriting nothing",
     args: "<target>",
     flags: [{ name: "force", takesValue: false, summary: "Overwrite an existing generated config" }],
     json: true,

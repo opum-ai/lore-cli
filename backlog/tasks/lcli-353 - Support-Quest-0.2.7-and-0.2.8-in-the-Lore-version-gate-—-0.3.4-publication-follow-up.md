@@ -3,10 +3,11 @@ id: LCLI-353
 title: >-
   Support Quest 0.2.7 and 0.2.8 in the Lore version gate — 0.3.4 publication
   follow-up
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-08-28 00:02'
-updated_date: '2026-08-28 00:15'
+updated_date: '2026-08-29 23:39'
 labels:
   - release
   - quest
@@ -20,7 +21,7 @@ ordinal: 474000
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 #1 Version gate accepts exactly Quest 0.2.7 and 0.2.8 (bounded set, no unbounded range) with structured-criteria validation retained; test-first coverage proves acceptance of both and rejection of other versions with hints naming the supported set; #2 install/drift hints name the supported set everywhere the old single-version hint appeared; #3 paired packed/installed E2E against the exact Quest 0.2.8 candidate: link/back-reference, sync, tasks rollup, validate/check strict, and the public quest task-binding contract through the Opum facade; #4 0.3.4 candidate/provenance/dry-run regenerated only after merge to dev, earlier f4aefe3 candidate invalidated; no npm publish/login/MFA/auth/dist-tag or registry writes
+- [x] #1 #1 Version gate accepts exactly Quest 0.2.7 and 0.2.8 (bounded set, no unbounded range) with structured-criteria validation retained; test-first coverage proves acceptance of both and rejection of other versions with hints naming the supported set; #2 install/drift hints name the supported set everywhere the old single-version hint appeared; #3 paired packed/installed E2E against the exact Quest 0.2.8 candidate: link/back-reference, sync, tasks rollup, validate/check strict, and the public quest task-binding contract through the Opum facade; #4 0.3.4 candidate/provenance/dry-run regenerated only after merge to dev, earlier f4aefe3 candidate invalidated; no npm publish/login/MFA/auth/dist-tag or registry writes
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -32,5 +33,13 @@ ordinal: 474000
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Dual-version gate implemented test-first (bd9b0d5, PR #430 green-merged to dev c26180d): frozen SUPPORTED_QUEST_VERSIONS=[0.2.7,0.2.8]; probe() gate accepts exactly that set; 16 hint sites + INSTALL_HINT + schemaVersion message now name the supported set; structured-criteria validation from LCLI-352 retained. Focused 15/15 (2 new gate tests: accept both; reject 0.1.0/0.2.6/0.2.9/0.3.0/empty with set-naming hint); full suite 2667/0/1; typecheck/lint clean. Paired packed/installed E2E vs npm quest@0.2.7 (0.2.7 arm, repo e2e-0.3.4-dual): link.result added+backRef, sync, rollup, validate/check --strict clean, quest backref present. AC#3 0.2.8 arm: BLOCKED on the external quest candidate — registry shows @opum-ai/quest versions [0.1.0, 0.2.7] only (checked 2026-08-27); the exact-candidate paired E2E (incl. quest task binding contract through the fixed facade) runs when quest-cli publishes 0.2.8 under correlation 90183b29; the 0.2.8 acceptance arm is proven by the focused gate tests meanwhile. Candidate regeneration DONE: Release run 33128763035 (publish:false, success) on dev c26180d; artifact 9669482580 staged at /Volumes/external/.opum-candidates/opum-doc-qualification-2026-08-27/final-lore-c26180d (provenance.json sha256-OK with 7 tarball rows incl. supported_quest_versions field, SHA256SUMS.txt, inventory, fresh all-seven dry-run). Earlier candidate final-lore-a4322b7 INVALIDATED (INVALIDATED.md marker: superseded by the dual-version gate; do not publish).
+Settled 2026-08-29 as SUPERSEDED BY LCLI-356, not as delivered-as-written. Read AC#1 before treating this as a normal completion: it required 'exactly Quest 0.2.7 and 0.2.8 (bounded set, no unbounded range)'. That design was deliberately REVERSED by a product-owner decision on 2026-08-28, so this task's own acceptance criterion no longer describes what ships. It is checked because the work it stood for is done, by a different and better design; it is not checked because a bounded set was built and kept.
+
+What actually shipped (LCLI-356, on dev): SUPPORTED_QUEST_VERSIONS is gone. MIN_QUEST_VERSION = '0.2.7' with a >= comparison replaces it, matching src/adapters/backlog.ts's MIN_BACKLOG_VERSION shape. backlog.ts's private parseSemver/compareSemver were extracted to a shared adapters/semver.ts rather than copied, so both adapters compare versions one way. This task's merged tests (PR #430) asserted REJECTION of 0.2.9 and had to be rewritten, not extended.
+
+Why the reversal was right, recorded so nobody re-litigates it: the bounded set went stale the moment quest published 0.2.9, and the two then-published packages could not be used together at all. Restoring the pair required a third release shipped solely to add a string to a list. The rationale and the release-coupling cost are in docs/adr/0020-tracker-version-gates-are-minimum-floors.md. A floor is safe because the version is not what enforces compatibility — every Quest call already validates schemaVersion, envelope kind, data presence, and the required command set, so a contract break is caught structurally.
+
+AC#3's blocker is also resolved but the AC itself is NOT closed here. It required a paired E2E against an exact quest 0.2.8 candidate, and 0.2.8 was never published. Quest 0.2.9 IS published, so the pairing is now qualifiable — and that qualification is tracked as LCLI-356 AC#5, owned by the opum-cli-e2e session (a live session named e2e-qualify-lore-quest). Do not read this task's closure as evidence the pair has been qualified. LCLI-356 stays In Progress precisely because it has not been.
+
+Cross-repository state confirmed with the quest-cli session on 2026-08-29: quest's TRACKER_CONTRACT_VERSION is still 1, and its v0.2.9..dev diff is purely additive (task list filters 2 -> 13, added task edit operations, no required command removed or renamed). Lore's verifyManifest is a per-command subset check asserting only name/schemaVersion/kind/mutates, so that growth is invisible to it. Quest is cutting 0.3.0; the >= floor accepts it with no further lore change.
 <!-- SECTION:NOTES:END -->

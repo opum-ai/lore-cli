@@ -155,7 +155,7 @@ type anchors is addressed in [ADR-0004](0002-backlog-integration-json-only.md).
 - **Docusaurus/MkDocs front-matter conventions as the substrate.** Rejected. These are
   *renderer* conventions, not an interchange standard; coupling the substrate to one
   renderer would undercut cross-renderer portability. Instead lore treats them as
-  downstream consumers it scaffolds for, outside `docs/`
+  downstream consumers it scaffolds *additively* for, never reshaping the bundle to suit one
   ([consumer compatibility](../reference/consumer-compatibility.md)).
 - **Plain markdown with no frontmatter standard.** Rejected. Without a typed,
   machine-readable frontmatter contract there is no graph, no validation, and no

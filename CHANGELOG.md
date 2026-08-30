@@ -5,6 +5,58 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.5] - 2026-08-29
+
+### Fixed
+
+- The Quest version gate is a **minimum floor**, not a frozen allow-list, so
+  Lore and Quest can be released independently. `MIN_QUEST_VERSION` is `0.2.7`
+  and any Quest at or above it is accepted; 0.3.4's frozen
+  `SUPPORTED_QUEST_VERSIONS = [0.2.7, 0.2.8]` refused the published Quest
+  `0.2.9`, so **the two current releases of the pair could not be used
+  together at all** — every tracker-touching command exited 6. The floor is
+  safe because the version is not what enforces compatibility: every Quest call
+  already validates `schemaVersion`, envelope kind, data presence, and the
+  required command set (LCLI-356, ADR-0020).
+- `lore init --tracker quest` now evaluates that gate **before** persisting the
+  choice. It previously exited 0 and wrote `[tracker] backend = quest` against
+  an unsupported Quest, committing the user to a backend that then refused
+  every later command. Only a below-the-floor rejection is fatal; every other
+  probe failure stays advisory, as LORE-319 intended (LCLI-356).
+- A version rejection no longer masks concept-id lookup: `lore tasks
+  <unknown-id>` reports `not_found` again rather than `validation`, so
+  diagnostics stay truthful about what actually failed (LCLI-356).
+- `lore scaffold mkdocs` no longer generates a `docs/tags.md` that Lore's own
+  validator rejects. It carried a legacy `timestamp` frontmatter key, which
+  `lore validate --strict` treats as an error — so scaffolding regressed a
+  bundle that had just passed. It now emits OKF 0.2 `generated.at` through the
+  same helper every other Lore-written concept uses (LCLI-357).
+- `lore init` requires a git worktree and runs every check before its first
+  write, so a refused run leaves nothing behind; git failures are classified
+  rather than conflated, and `git init` is deferred (LCLI-358.1).
+- `lore init`'s Backlog migration is gated on a real Backlog project and no
+  longer hijacks the tracker question (LCLI-358.5).
+
+### Added
+
+- `lore init` detects which tracker backends are installed **before** asking
+  which to use, offers to install one, and probes the backend the bundle
+  actually selected rather than assuming Backlog (LCLI-358.2, LCLI-358.3).
+- `lore init` can configure Jira, validating the configuration before
+  persisting it (LCLI-358.4).
+
+### Changed
+
+- `lore scaffold`'s documented contract. It said configs are written
+  "additively **outside** `docs/`"; two of the three targets contradict that —
+  `mkdocs` adds `docs/tags.md` and `obsidian` adds `docs/.obsidian/*`, each
+  required by its consumer. The real invariant is **additive**: scaffolding
+  only adds files and never moves, renames, restructures, or rewrites authored
+  content. ADR-0010 §2 carries a dated retraction (LCLI-357).
+- `docs/index.md` no longer names a published version. It points at
+  `docs/reference/lore-cli-release-truth.md`, which is now the single file in
+  the bundle carrying the current release number (LCLI-361).
+
 ## [0.3.4] - 2026-08-27
 
 ### Fixed

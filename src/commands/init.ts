@@ -105,7 +105,13 @@ import {
   migrateBacklogTasksToQuest,
   type TrackerMigrationResult,
 } from "../tracker-migration";
-import { resolveTrackerSelection, type TrackerSelection } from "../tracker-selection";
+import {
+  BACKLOG_PROJECT_MARKER,
+  hasBacklogProject,
+  LEGACY_BACKLOG_DIR,
+  resolveTrackerSelection,
+  type TrackerSelection,
+} from "../tracker-selection";
 import { type AgentsResult, applyAgentsBridge, bridgeActionColor, renderTrailer } from "./agents";
 import { optionValues, parseCommandArgs, singleOptionValue, usage } from "./args";
 import { applyCodexBridge, type CodexBridgeResult } from "./codex-bridge";
@@ -309,6 +315,8 @@ interface InitArgs {
   tracker?: TrackerBackend;
   /** `--migrate-backlog`: preflight and preserve compatible Backlog ids while selecting Quest. */
   migrateBacklog: boolean;
+  /** `--keep-backlog-tasks`: select Quest and deliberately leave an existing Backlog.md project in place (LCLI-358.5). */
+  keepBacklogTasks: boolean;
   /** `--adopt-manifest <path>`: coordinate a knowledge-adoption manifest with `--migrate-backlog` as one cutover (LCLI-333.1). */
   adoptManifest?: string;
   /** `--approval-digest <digest>`: the adoption preview's approval digest binding the cutover's adoption leg. Required with `--adopt-manifest`. */
@@ -376,12 +384,15 @@ export function runInit(options: InitOptions): number | Promise<number> {
   // conflict diagnostic — untouched.
   let cachedSelection: TrackerSelection | undefined;
   const priorSelection = (): TrackerSelection => (cachedSelection ??= resolveTrackerSelection(options.root));
-  assertFlagCombinations(parsed, priorSelection);
+  assertFlagCombinations(parsed, options.root);
 
   const git = options.git ?? realGitPreflight(options.root);
 
   if (interactive) {
-    return runInteractiveWizard(options, parsed, priorSelection(), git, plan);
+    // No `priorSelection()` here any more (LCLI-358.5): the wizard asks the tracker question
+    // unconditionally, so the prior selection no longer steers a single prompt — and the
+    // interactive path stops paying for a config read it does not use.
+    return runInteractiveWizard(options, parsed, git, plan);
   }
 
   // Non-interactive: detect only. A scripted run never silently creates a repository — it either
@@ -559,24 +570,55 @@ function applyBaseScaffold(options: InitOptions, plan: ReturnType<typeof buildSc
 }
 
 /**
- * The flag-combination guards, unchanged in wording and order but moved AHEAD of the scaffold
- * (LCLI-358.1): a rejected combination now leaves the directory untouched instead of exiting `2`
- * over a half-written bundle.
+ * The flag-combination guards, run AHEAD of the scaffold (LCLI-358.1) so a rejected combination
+ * leaves the directory untouched instead of exiting `2` over a half-written bundle.
+ *
+ * Every condition tests its cheap flag half FIRST, so {@link hasBacklogProject} — two `lstat` calls
+ * against the repository — is never reached by a run whose flags could not trip the guard anyway.
  */
-function assertFlagCombinations(parsed: InitArgs, priorSelection: () => TrackerSelection): void {
-  // Each condition tests the cheap flag half FIRST so `priorSelection()` — which reads
-  // `.lore/config.toml` — is never resolved for a run whose flags could not trip the guard anyway.
-  if (parsed.migrateBacklog && (parsed.tracker !== "quest" || priorSelection().source !== "legacy-backlog")) {
+function assertFlagCombinations(parsed: InitArgs, root: string): void {
+  if (parsed.migrateBacklog && parsed.keepBacklogTasks) {
     throw usage(
-      "--migrate-backlog requires --tracker quest in a legacy zero-config Backlog bundle",
-      "run `lore init --tracker quest --migrate-backlog` only after `quest init`",
+      "--migrate-backlog and --keep-backlog-tasks are mutually exclusive",
+      "pass at most one: they are opposite answers to the same question",
     );
   }
-  if (parsed.tracker === "quest" && !parsed.migrateBacklog && priorSelection().source === "legacy-backlog") {
+  // One message per unmet condition (LCLI-358.5 AC#4). These used to share a single sentence that
+  // named neither cause: "--migrate-backlog requires --tracker quest in a legacy zero-config
+  // Backlog bundle" was raised for a wrong `--tracker` value, for a missing project, AND — because
+  // it also demanded `source === "legacy-backlog"` — for the exact command its own hint recommended
+  // once `backend = "backlog"` had been written.
+  if (parsed.migrateBacklog && parsed.tracker !== "quest") {
+    throw usage(
+      `--migrate-backlog requires --tracker quest; ${parsed.tracker === undefined ? "no --tracker was passed" : `--tracker ${parsed.tracker} was passed`}`,
+      "run `lore init --tracker quest --migrate-backlog`",
+      { tracker: parsed.tracker ?? null },
+    );
+  }
+  if (parsed.migrateBacklog && !hasBacklogProject(root)) {
+    throw usage(
+      `--migrate-backlog needs a Backlog.md project to migrate, and ${BACKLOG_PROJECT_MARKER} does not exist here`,
+      "run `lore init --tracker quest` on its own; there is nothing to migrate",
+      { marker: BACKLOG_PROJECT_MARKER },
+    );
+  }
+  // A scripted Quest selection over real Backlog tasks must state what happens to them (AC#3).
+  // Whether the bundle reached Backlog through an explicit `backend = "backlog"` or through the
+  // zero-config legacy default is irrelevant: the tasks are equally real either way, and the old
+  // `source === "legacy-backlog"` gate let the explicit case succeed in silence.
+  if (parsed.tracker === "quest" && !parsed.migrateBacklog && !parsed.keepBacklogTasks && hasBacklogProject(root)) {
     throw new LoreError(
       "validation",
-      "switching this legacy Backlog bundle to Quest requires an explicit task migration",
-      "run `quest init`, then `lore init --tracker quest --migrate-backlog`; or pin Backlog with `lore init --tracker backlog`",
+      `selecting Quest here would leave the Backlog.md project at ${LEGACY_BACKLOG_DIR}/ behind, and that must be a deliberate choice`,
+      "run `quest init`, then `lore init --tracker quest --migrate-backlog` to bring the tasks across; `--keep-backlog-tasks` to leave them in place; or `lore init --tracker backlog` to keep using Backlog",
+      { marker: BACKLOG_PROJECT_MARKER },
+    );
+  }
+  if (parsed.keepBacklogTasks && parsed.tracker !== "quest") {
+    throw usage(
+      "--keep-backlog-tasks only means something with --tracker quest",
+      "it answers what happens to an existing Backlog.md project when Quest is selected",
+      { tracker: parsed.tracker ?? null },
     );
   }
   if (parsed.adoptManifest !== undefined && !parsed.migrateBacklog) {
@@ -752,7 +794,6 @@ function runCoordinatedCutover(options: InitOptions, parsed: InitArgs): Promise<
 async function runInteractiveWizard(
   options: InitOptions,
   parsed: InitArgs,
-  priorSelection: TrackerSelection,
   git: GitPreflight,
   plan: ReturnType<typeof buildScaffold>,
 ): Promise<number> {
@@ -788,28 +829,39 @@ async function runInteractiveWizard(
       // scaffold, once every prompt is answered.
       initializeGit = true;
     }
-    if (priorSelection.source === "legacy-backlog") {
-      const legacyChoice = await prompter.choose(
-        "This bundle has Backlog tasks but no explicit tracker. Migrate to Quest or pin Backlog?",
-        ["migrate", "backlog"],
-        "backlog",
-      );
-      migrateBacklog = legacyChoice === "migrate";
-      tracker = migrateBacklog ? "quest" : "backlog";
-    } else {
-      const chosen = await chooseTracker(options, parsed, prompter, environment);
-      tracker = chosen.backend;
-      installed = chosen.installed;
-    }
-    if (installed === undefined && trackerEntry(environment, tracker)?.installed === false) {
-      // Only the legacy-backlog branch above reaches this: it pins its answer without going through
-      // `chooseTracker`, so its missing-binary case is handled here rather than twice.
-      installed = await resolveMissingBinary(options, parsed, prompter, environment, tracker);
-    }
+    // The tracker question is ALWAYS asked (LCLI-358.5 AC#1). It used to be replaced by a
+    // migrate-or-pin choice whenever the bundle looked legacy, which quietly removed `jira` and
+    // `none` from the wizard for any repository that happened to contain a `backlog/` directory —
+    // the existing tasks decided the backend, and the operator was never asked.
+    const chosen = await chooseTracker(options, parsed, prompter, environment);
+    tracker = chosen.backend;
+    installed = chosen.installed;
     if (installed !== undefined) {
-      // Re-detect so the emitted environment describes what is now true, not what was true before
-      // this run installed something.
+      // Re-detect so the environment the migration question is decided against describes what is
+      // now true, not what was true before this run installed something.
       environment = (options.trackerEnvironment ?? (() => detectTrackerEnvironment(options.root)))();
+    }
+    // Only NOW, with the backend settled, is the migration question meaningful (AC#2/AC#3). It is
+    // gated on a real Backlog project existing — not on `priorSelection.source`, whose
+    // `legacy-backlog` value made an explicitly configured Backlog bundle unable to reach Quest at
+    // all while a zero-config one silently orphaned its tasks.
+    if (tracker === "quest" && hasBacklogProject(options.root)) {
+      const answer = await prompter.choose(
+        `This repository has a Backlog.md project (${BACKLOG_PROJECT_MARKER}). Migrate its tasks to Quest, keep them where they are, or use Backlog as the tracker?`,
+        ["migrate", "keep", "backlog"],
+        "migrate",
+      );
+      migrateBacklog = answer === "migrate";
+      if (answer === "backlog") {
+        tracker = "backlog";
+        // A different backend than `chooseTracker` resolved, so its binary has not been checked.
+        installed = await resolveMissingBinary(options, parsed, prompter, environment, "backlog");
+        if (installed !== undefined) {
+          environment = (options.trackerEnvironment ?? (() => detectTrackerEnvironment(options.root)))();
+        }
+      }
+      // `keep` needs no branch: Quest is selected and `backlog/` is left exactly as found. It exists
+      // so that outcome is something the operator CHOSE rather than something that happened to them.
     }
     if (tracker === "jira") {
       // Asked here — immediately after the backend is settled and still before the first byte is
@@ -1213,6 +1265,7 @@ function anyFlagGiven(parsed: InitArgs): boolean {
     parsed.installTracker ||
     parsed.noInstallTracker ||
     parsed.migrateBacklog ||
+    parsed.keepBacklogTasks ||
     parsed.tracker !== undefined
   );
 }
@@ -1238,6 +1291,7 @@ function parseInitArgs(args: readonly string[]): InitArgs {
   const noTracker = parsed.flags.has("no-tracker") || parsed.flags.has("no-backlog");
   const checkTracker = parsed.flags.has("check-tracker") || parsed.flags.has("check-backlog");
   const migrateBacklog = parsed.flags.has("migrate-backlog");
+  const keepBacklogTasks = parsed.flags.has("keep-backlog-tasks");
   const allowNoGit = parsed.flags.has("allow-no-git");
   const installTracker = parsed.flags.has("install-tracker");
   const noInstallTracker = parsed.flags.has("no-install-tracker");
@@ -1329,6 +1383,7 @@ function parseInitArgs(args: readonly string[]): InitArgs {
     checkTracker,
     tracker,
     migrateBacklog,
+    keepBacklogTasks,
     adoptManifest: adoptManifestValue,
     approvalDigest: approvalDigestValue,
     allowNoGit,

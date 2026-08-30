@@ -53,7 +53,7 @@ detail with `lore instructions <topic>`:
 - `tasks`         Show the live status rollup for a concept's linked tasks
 - `orphans`       Report tasks with no owning doc + docs whose linked task vanished
 - `schema`        Export the profile's editor JSON Schemas to .lore/schemas/
-- `scaffold`      Generate a downstream docs consumer's config, additively outside docs/
+- `scaffold`      Generate a downstream docs consumer's config additively, rewriting nothing
 - `graph`         Emit the bundle's cross-link graph as json or dot
 - `path`          Find bounded paths across exact authored concept and task edges
 - `impact`        Expand bounded impact across exact authored concept and task edges

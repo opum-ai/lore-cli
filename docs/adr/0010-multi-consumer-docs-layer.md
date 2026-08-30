@@ -1,7 +1,7 @@
 ---
 type: ADR
 title: "ADR-0010: Multi-consumer docs layer & link convention"
-description: Generated cross-links are relative, URL-encoded, .md-suffixed, with no leading slash and no wikilinks — the one form that resolves across GitHub, Obsidian, MkDocs/Material, and Docusaurus — and lore scaffolds per-tool configs additively outside docs/ while linting for non-portable syntax without guaranteeing cross-renderer parity.
+description: Generated cross-links are relative, URL-encoded, .md-suffixed, with no leading slash and no wikilinks — the one form that resolves across GitHub, Obsidian, MkDocs/Material, and Docusaurus — and lore scaffolds per-tool configs additively (adding files, rewriting none) while linting for non-portable syntax without guaranteeing cross-renderer parity.
 tags: [adr, links, portability, consumers, mkdocs, docusaurus, obsidian, scaffolding]
 summary: lore emits portable relative Markdown links, scaffolds consumer configuration, and warns about renderer-specific syntax.
 timestamp: 2026-06-21T00:00:00Z
@@ -61,8 +61,8 @@ else; the in-renderer graph is, by design, an Obsidian-only affordance.
 ## Decision
 
 **lore generates exactly one cross-link form, scaffolds per-tool configs additively
-outside `docs/`, and lints for non-portable syntax — but does not guarantee that every
-renderer produces identical output.**
+(adding files, rewriting none), and lints for non-portable syntax — but does not
+guarantee that every renderer produces identical output.**
 
 ### 1. The canonical link form
 
@@ -97,11 +97,11 @@ shared by [ADR-0003](0003-okf-substrate.md) and applied by every link-writing co
 and `lore supersede`. The form is a deliberate, OKF §5-permitted override of §5's
 `/`-absolute *recommendation*; both are §5-allowed.
 
-### 2. Scaffolding is additive and lives outside `docs/`
+### 2. Scaffolding is additive
 
-`lore scaffold <mkdocs|docusaurus|obsidian>` writes each consumer's config files **next
-to**, never inside, the OKF bundle, so `docs/` stays a pure, renderer-agnostic OKF
-directory:
+`lore scaffold <mkdocs|docusaurus|obsidian>` only **adds** files. It never moves, renames,
+restructures, or rewrites authored content, so `docs/` stays a pure, renderer-agnostic OKF
+directory no consumer has bent to its own shape:
 
 - `lore scaffold mkdocs` — `mkdocs.yml` (Material theme, `docs_dir: docs`), pointing the
   site at the existing bundle.
@@ -110,6 +110,22 @@ directory:
   handling set to **`warn`** (a dangling link warns rather than failing the build).
 - `lore scaffold obsidian` — a `.obsidian/` vault config tuned for relative-link
   resolution, so the graph and backlinks operate over the canonical link form.
+
+> **Correction (LCLI-357, 2026-08-29).** As originally written, this section said scaffolded
+> configs live **outside** `docs/` — "next to, never inside" the bundle. That was never true of
+> the implemented targets and is retracted. `mkdocs` writes `docs/tags.md` (Material's `tags`
+> plugin renders the tag index from a page inside the docs tree) and `obsidian` writes
+> `docs/.obsidian/app.json` and `docs/.obsidian/.gitignore` (Obsidian scopes a vault to its root
+> directory); only `docusaurus` writes entirely outside. The decision this ADR actually made, and
+> which the code has always honoured, is that scaffolding is **additive** — location was never the
+> load-bearing part. The claim is corrected here rather than in the code because the generated
+> files are legitimate and required by their consumers.
+>
+> A second defect followed from the same sentence: because `docs/tags.md` was not thought of as
+> bundle content, it was written with a legacy `timestamp` frontmatter key instead of the OKF 0.2
+> `generated.at` every other lore-written concept carries, and `lore validate --strict` then exited
+> 6 on a bundle scaffold had just touched. Anything lore adds under `docs/` is an OKF concept and
+> must satisfy lore's own gates; that is now pinned by a per-target regression test.
 
 Scaffolding is additive and idempotent: it does not move, rename, or restructure files
 under `docs/`, and re-running it produces a clean diff. Consumers can also be configured
@@ -139,9 +155,11 @@ handling differ per renderer, and reconciling them is the consumers' job, not lo
 - **One link form, four renderers.** The single canonical link resolves on GitHub, in
   Obsidian's graph/backlinks, and through MkDocs and Docusaurus builds, so the OKF graph
   stays intact wherever the bundle is read.
-- **`docs/` stays pure OKF.** Because every scaffolded config lives outside the bundle,
-  `docs/` remains a renderer-agnostic OKF directory — portable, `cat`-able, and
-  consumable with or without lore ([ADR-0003](0003-okf-substrate.md)).
+- **`docs/` stays pure OKF.** Because scaffolding only adds files and rewrites none, `docs/`
+  remains a renderer-agnostic OKF directory — portable, `cat`-able, and consumable with or
+  without lore ([ADR-0003](0003-okf-substrate.md)). The files two targets add *inside* the
+  bundle (`docs/tags.md`, `docs/.obsidian/*`) are ordinary OKF-legal content, so a scaffolded
+  bundle still passes `lore validate --strict` and `lore check --strict`.
 - **Deterministic, agent-safe link generation.** Every link-writing command emits the
   same form with no LLM dependency, so graph-aware rewrites
   ([refactoring & graph operations](../reference/cli-surface.md)) and managed
@@ -170,7 +188,7 @@ handling differ per renderer, and reconciling them is the consumers' job, not lo
 - **Graph is Obsidian-only in-renderer.** Humans who want an interactive concept graph
   must use Obsidian or `lore graph`; MkDocs/Docusaurus/GitHub render pages and links but
   no graph. This is an accepted limitation, not a defect.
-- **Scaffold drift.** Tool configs scaffolded outside `docs/` are not regenerated on
+- **Scaffold drift.** Scaffolded tool configs are not regenerated on
   every `lore sync`; if a consumer's expectations change (e.g. a Docusaurus major
   upgrade), the scaffolded config can fall behind and must be re-scaffolded or
   hand-maintained.
