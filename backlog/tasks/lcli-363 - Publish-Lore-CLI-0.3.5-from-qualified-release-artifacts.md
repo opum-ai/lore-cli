@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-30 00:07'
-updated_date: '2026-08-30 01:40'
+updated_date: '2026-08-30 02:36'
 labels:
   - release
   - quest
@@ -188,5 +188,25 @@ THE IDENTITY RESHAPE IS AN UPGRADE, not collateral damage. Nine rows that derive
 A TRAP THEIR REHEARSAL CAUGHT BEFORE THE LIVE RUN, and it is relevant here because it would have been misread as a quest defect: six 50-packaging rows read package.json from the MUTABLE SIBLING CHECKOUT via --quest-repo rather than from the bundle under test. A worktree that moves between bundle build and matrix run fails six rows on a version mismatch that has nothing to do with the candidate. Same shape as everything else found today — the artifact being qualified is the bundle, and the version is being read from something that can move independently of it.
 
 RELEVANCE TO THIS TASK: none of it changes lore 0.3.5's own qualification, which was 401 PASS / 6 FAIL / 0 BLOCKED against PUBLISHED quest 0.2.9 with no candidate binding involved. It matters for AC#6's eventual rank-1 re-run and for anyone reading the quest-side numbers alongside lore's.
+---
+
+author: @claude
+created: 2026-08-30 02:36
+---
+PUBLISH ATTEMPTS FAILED ON CREDENTIALS, AND THE ROOT CAUSE IS STRUCTURAL — 2026-08-29. Nothing was published on either attempt.
+
+WHAT HAPPENED. Two granular access tokens were tried. Both returned 401 on 'npm whoami' EVEN IN AN ISOLATED CONFIG containing only the token line, which rules out ~/.npmrc contents, package scoping and this script. The publish itself returned '404 Not Found - PUT' on the first platform package — npm's response for no write permission.
+
+THE SAFETY DESIGN HELD BOTH TIMES, which is the reason to record this rather than just the failure: the loop stopped BEFORE the root launcher, so there is no state where @opum-ai/lore resolves to a platform binary that does not exist. Verified after each attempt — all seven names ABSENT at 0.3.5, latest still 0.3.4.
+
+THE STRUCTURAL CAUSE, researched rather than guessed. npm DISABLED CLASSIC TOKEN CREATION in November 2025 and PERMANENTLY REVOKED every existing classic token on 9 DECEMBER 2025. Granular access tokens, the only remaining token type, are capped at 90 days, require 2FA, and must be created on the website. So a token-based release path is now a maintenance liability by construction: it expires inside a quarter and the release stops until a human notices. That is exactly the failure this task hit.
+
+I ALSO GAVE THE OWNER WRONG ADVICE AND AM CORRECTING IT HERE: I recommended a classic 'Automation' token as the simple fallback. That option no longer exists.
+
+THE ANSWER IS TRUSTED PUBLISHING (OIDC), AND THIS REPOSITORY IS ALREADY BUILT FOR IT. .github/workflows/release.yml has a complete 'publish (npm, OIDC trusted publishing)' job: id-token: write scoped to that job alone, environment: release, Node 24, and an explicit npm upgrade to clear the >= 11.5.1 OIDC floor. It has never been switched on. What is missing is configuration on npmjs.com, per package, at npmjs.com/package/<name>/access — organization opum-ai, repository lore-cli, workflow filename release.yml, environment release. Fourteen packages across lore and quest. Fields are case-sensitive and npm does NOT validate them on save, so a typo surfaces only as a failed publish.
+
+WHAT IT DOES NOT SOLVE: LCLI-278. Trusted publishing fixes AUTHENTICATION, not approval. The release environment still has zero protection rules with administrator bypass, so anyone who can dispatch the workflow can publish. Smaller exposure than a long-lived token in a file, but a deliberate trade rather than a free win.
+
+Also observed while researching: 'gh api repos/opum-ai/lore-cli --jq .private' returns FALSE. CLAUDE.md states this repository is private. That is drift, reported rather than silently corrected — and it matters here, because npm provenance requires a public source repository, so the public state is what makes provenance work.
 ---
 <!-- COMMENTS:END -->

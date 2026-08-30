@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-08-28 23:59'
-updated_date: '2026-08-30 01:43'
+updated_date: '2026-08-30 02:36'
 labels:
   - e2e
   - init
@@ -175,5 +175,21 @@ WHAT IS ACTUALLY UNCOVERED. The refusal half of LCLI-356 AC#2 — that a below-t
 The comment now says what the cases do, names the missing coverage, and warns against restoring the old text without building what it describes.
 
 BEARING ON AC#2. This changes what 'each of those cases is proven by a negative control' costs. One of the seven cannot get a meaningful control until lore gains a binary override. Whoever picks up step 3 should decide explicitly whether to build that override, scope AC#2 to the six that can, or split it.
+---
+
+author: @claude
+created: 2026-08-30 02:36
+---
+TWO CORRECTIONS TO MY OWN ANALYSIS, 2026-08-29, the second of which is a false alarm I stopped before reporting.
+
+CORRECTION 1 — I OVERSTATED A PREREQUISITE. I wrote that an e2e case for the below-the-floor REFUSAL 'needs an adapter-level way to point at a stub binary, which lore does not offer'. Wrong. src/adapters/backlog.ts spawns the binary BY NAME, so ordinary PATH shadowing substitutes it with no lore change. Verified with a stub reporting 0.0.1. And such an override should NOT be added: an env var that changes which binary gets executed is an injection surface on a tool this repository spent LCLI-69..81 hardening.
+
+CORRECTION 2 — A DEFECT I ALMOST REPORTED AND DID NOT, BECAUSE THE REPRO WAS INVALID. With a stub quest reporting 0.1.0 (below the 0.2.7 floor), 'lore init --yes --tracker quest' exited 0 and wrote backend = quest — which LCLI-356 AC#2 forbids, and would have meant the just-tagged 0.3.5 failed its own criterion.
+
+It does not. The repro never reached the version check. The init result shows quest {installed: true, INITIALIZED: FALSE} and NO trackerCheck field at all: the probe never ran, because the workspace is not initialized — a condition LORE-319 deliberately made advisory. My stub answers '--version' and exits 1 for everything else, so it can never present an initialized workspace. The gate was not bypassed; it was not reached. Real coverage is test/init.test.ts:1923, which injects a probe failing with QUEST_VERSION_FLOOR_CODE — the correct seam, testing the discrimination rather than a stub's ability to impersonate a whole CLI.
+
+THE NEAR-MISS IS THE LESSON: an integration observation that contradicts a passing unit test is far more likely to be an invalid repro than a regression, and reporting it would have cast doubt on a correct release. Check what the run actually DID — here, that trackerCheck was absent entirely — before concluding a gate failed to fire.
+
+SIZING FOR STEP 3: a stub that reaches the floor check must fake 'init' and 'manifest --json' convincingly, not just '--version'.
 ---
 <!-- COMMENTS:END -->

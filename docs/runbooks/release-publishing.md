@@ -522,7 +522,56 @@ publish is explicitly marked public. Root `package.json` and all six
    ahead of the auth check, so a rehearsal proves the bytes are right even
    before credentials exist.
 
-   **Authentication: use a granular access token, not `npm login`.** A web login
+   **Prefer trusted publishing (OIDC) over any token — the token path is now a
+   maintenance liability by construction.** npm disabled classic token creation
+   in November 2025 and **permanently revoked every existing classic token on
+   9 December 2025**; granular access tokens, the only remaining type, are
+   capped at 90 days, require 2FA, and must be created on the website. So a
+   token-based release stops working inside a quarter, every quarter, and the
+   failure surfaces as a stalled release rather than a warning. That is not a
+   hypothetical: two granular tokens were rejected outright on 2026-08-29,
+   401 on `npm whoami` even in an isolated config, and the 0.3.5 publish stalled.
+
+   `.github/workflows/release.yml` **already contains the whole OIDC path** — a
+   `publish (npm, OIDC trusted publishing)` job with `id-token: write` scoped to
+   that job alone, `environment: release`, and an explicit npm upgrade to clear
+   the `>= 11.5.1` floor. What is missing is the npmjs.com side. Configure it
+   once per package at `https://www.npmjs.com/package/<name>/access` — **not**
+   the general settings page:
+
+   | field | value |
+   |---|---|
+   | Organization | `opum-ai` |
+   | Repository | `lore-cli` |
+   | Workflow filename | `release.yml` (filename only, not a path) |
+   | Environment | `release` |
+   | Allowed actions | `npm publish` |
+
+   All seven package names need it separately — the launcher and its six
+   platform packages are separate packages with separate settings. Every field
+   is case-sensitive, and **npm does not validate the configuration when you
+   save it**, so a typo surfaces only as a failed publish. A brand-new package
+   must be bootstrapped with one manual publish before a trusted publisher can
+   be attached to it, which is the same constraint the `0.1.0` first-release
+   exception above describes.
+
+   **The `publish: true` prohibition was lifted by owner decision on 2026-08-29**
+   (recorded on LCLI-278). Trusted publishing fixes *authentication*, not
+   *approval*: the `release` environment still has no protection rules and
+   administrator bypass, so a dispatch has no second-party approval. That
+   exposure was weighed and accepted, because the alternative was not a safer
+   publish but a publish that keeps failing — a credential that expires inside a
+   quarter and strands the release when it does. **LCLI-278 stays open**: the
+   control it asks for still does not exist, and if the billing plan later
+   supports required reviewers, configure one and the waiver stops being needed.
+
+   Once trusted publishing is configured, a release is one dispatch:
+
+   ```
+   gh workflow run release.yml --ref v<version> -f publish=true
+   ```
+
+   **If you must use a token anyway: a granular access token, not `npm login`.** A web login
    is still subject to "require 2FA for writes", so every publish and every
    dist-tag move prompts for a one-time password — that is the EOTP wall that
    blocked the `0.3.4` release. Granular access tokens (and classic *Automation*
