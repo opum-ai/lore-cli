@@ -60,6 +60,18 @@ export interface ApplyAgentsOptions {
   force: boolean;
   /** `--check`: report drift without writing. */
   check: boolean;
+  /**
+   * Also plan the Codex bridge, where one already exists (LCLI-364). Opt-in, and the opt-in is
+   * load-bearing: only `lore agents` sets it.
+   *
+   * `lore init --claude` shares this function but is a SCOPED request — set up the Claude bridge —
+   * and `lore init --codex` has its own {@link applyCodexBridge} for the other half. Covering codex
+   * here unconditionally made `--claude` report and regenerate files the user did not ask about,
+   * which the E2E harness caught: `LCLI-298 AC3` pins `lore init --claude`'s reported file list to
+   * exactly the two Claude bridge files. `lore agents`, by contrast, means "the bridges are
+   * current", so it wants both.
+   */
+  includeCodex?: boolean;
 }
 
 /**
@@ -72,7 +84,7 @@ export interface ApplyAgentsOptions {
  * itself, or fold it into a larger structured result for `lore init`).
  */
 export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
-  const { root, force, check } = options;
+  const { root, force, check, includeCodex = false } = options;
 
   const skillOnDisk = normalizeOnDisk(readFileIfPresent(join(root, SKILL_REL_PATH), SKILL_REL_PATH));
   const claudeRaw = readFileIfPresent(join(root, CLAUDE_MD_REL_PATH), CLAUDE_MD_REL_PATH);
@@ -94,14 +106,15 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
   const codexSkillRaw = readFileIfPresent(join(root, CODEX_SKILL_REL_PATH), CODEX_SKILL_REL_PATH);
   const agentsRaw = readFileIfPresent(join(root, AGENTS_MD_REL_PATH), AGENTS_MD_REL_PATH);
   const agentsStyle = detectDiskStyle(agentsRaw);
-  const codexPlan = hasCodexBridge(codexSkillRaw, agentsRaw)
-    ? planCodexBridge({
-        skillOnDisk: normalizeOnDisk(codexSkillRaw),
-        agentsOnDisk: normalizeOnDisk(agentsRaw),
-        force,
-        check,
-      })
-    : { files: [] };
+  const codexPlan =
+    includeCodex && hasCodexBridge(codexSkillRaw, agentsRaw)
+      ? planCodexBridge({
+          skillOnDisk: normalizeOnDisk(codexSkillRaw),
+          agentsOnDisk: normalizeOnDisk(agentsRaw),
+          force,
+          check,
+        })
+      : { files: [] };
   const files = [...plan.files, ...codexPlan.files];
 
   if (!check) {
@@ -178,7 +191,8 @@ function hasCodexBridge(codexSkillRaw: string | undefined, agentsRaw: string | u
  */
 export function runAgents(options: AgentsOptions): number {
   const { force, check } = parseAgentsArgs(options.args);
-  const result = applyAgentsBridge({ root: options.root, force, check });
+  // `lore agents` means "the bridges are current", so it covers Codex too where one exists.
+  const result = applyAgentsBridge({ root: options.root, force, check, includeCodex: true });
   const drift = result.files.some((file) => file.action !== "unchanged");
   emit(agentsRenderable(result), options.output, options.stdout);
   return check && drift ? EXIT_CODES.drift : EXIT_OK;

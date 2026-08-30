@@ -834,6 +834,10 @@ like their Claude counterparts. A repository that never opted into Codex has
 neither, so nothing codex-related is reported or created and the run stays at
 exit `0`.
 
+This applies to `lore agents`, which means "the bridges are current" — **not**
+to `lore init --claude`, which is a scoped request for the Claude bridge and
+reports only its two files. `lore init --codex` owns the other half.
+
 That conditional is the design, not an optimization. Checking unconditionally
 would report `created` — drift — for every Claude-only repository, turning the
 CI gate into one everybody disables. `lore init --codex` is what opts a

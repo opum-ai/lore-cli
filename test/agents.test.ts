@@ -27,7 +27,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { commandHandlerNames, run } from "../src/cli";
-import { type AgentsResult, bridgeActionColor, runAgents } from "../src/commands/agents";
+import { type AgentsResult, applyAgentsBridge, bridgeActionColor, runAgents } from "../src/commands/agents";
 import {
   buildNudgeBody,
   buildSkillDoc,
@@ -632,6 +632,20 @@ describe("lore agents — the codex bridge is covered too, but only where one al
     expect(result.files.some((f) => f.path === AGENTS_MD_REL_PATH)).toBe(false);
     expect(existsSync(codexSkillAbs())).toBe(false);
     expect(existsSync(agentsMdAbs())).toBe(false);
+  });
+
+  test("applyAgentsBridge does NOT touch codex by default — `lore init --claude` is a scoped request", () => {
+    // Caught by the docker E2E harness, not by this suite, on the first version of LCLI-364:
+    // `lore init --claude` shares applyAgentsBridge, and covering codex unconditionally made a
+    // scoped "set up the Claude bridge" request report and regenerate files the user never asked
+    // about. The E2E case LCLI-298 AC3 pins that file list to exactly the two Claude files, and it
+    // went red. `lore init --codex` owns the other half; only `lore agents` wants both.
+    agents();
+    withCodexBridge();
+    const scoped = applyAgentsBridge({ root, force: false, check: true });
+    expect(scoped.files.map((f) => f.path).sort()).toEqual([CLAUDE_MD_REL_PATH, SKILL_REL_PATH].sort());
+    // ...while `lore agents` itself, which means "the bridges are current", does cover both.
+    expect(agents(["--check"]).result.files.length).toBe(4);
   });
 
   test("a current codex bridge is reported unchanged and the run stays at exit 0", () => {
