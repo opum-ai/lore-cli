@@ -87,6 +87,8 @@ expect pass "check accepts a true expression"  -- check "probe" '[ 1 = 1 ]'
 expect fail "check REJECTS a false expression" -- check "probe" '[ 1 = 2 ]'
 
 printf '== non-vacuity: the report actually recorded every probe ==\n'
+# Runs BEFORE the assert_non_vacuous probes on purpose: those inspect counters rather than
+# recording a case, so counting them here would compare rows against probes that never write one.
 RECORDED=$(grep -c '' "$REPORT" 2>/dev/null || echo 0)
 if [ "$RECORDED" -ge "$SELF_PASS" ] && [ "$RECORDED" -gt 0 ]; then
   SELF_PASS=$((SELF_PASS + 1))
@@ -95,6 +97,21 @@ else
   SELF_FAIL=$((SELF_FAIL + 1))
   printf '[BAD]  report.jsonl has %s rows -- helpers ran without recording\n' "$RECORDED" >&2
 fi
+
+printf '== assert_non_vacuous: the floor that catches a suite asserting nothing ==\n'
+# This is the guard against failing GREEN, so it gets probed in both directions. The harness's
+# own "$FAIL -gt 0" test cannot catch a run where nothing ran; this can, but only if it actually
+# discriminates -- so prove that rather than assume it.
+_probe_floor() { local p="$1" f="$2" min="$3" bp=$PASS bf=$FAIL rc
+  PASS=$p; FAIL=$f; assert_non_vacuous "$min" >/dev/null 2>&1; rc=$?
+  PASS=$bp; FAIL=$bf; return $rc; }
+expect pass "accepts a run comfortably above the floor"    -- _probe_floor 350 0 330
+expect pass "accepts a run exactly at the floor"           -- _probe_floor 330 0 330
+expect pass "counts FAILures toward the total, not just PASSes -- a red suite still ran" \
+  -- _probe_floor 300 30 330
+expect fail "REJECTS a run one case below the floor"       -- _probe_floor 329 0 330
+expect fail "REJECTS a truncated run"                      -- _probe_floor 12 0 330
+expect fail "REJECTS a run where NOTHING ran -- the green-failure case"  -- _probe_floor 0 0 330
 
 printf '\n==== harness selftest: %s ok, %s bad ====\n' "$SELF_PASS" "$SELF_FAIL"
 [ "$SELF_FAIL" -eq 0 ] || exit 1
