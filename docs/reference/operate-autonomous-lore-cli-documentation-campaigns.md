@@ -75,10 +75,10 @@ next action. It tells the operator to run `/clear`, start a new Codex session in
 `$backlog-handover restore`, and continue without reconfirmation. Queue-empty completion removes the
 cursor and passes the lifecycle audit in complete mode.
 
-### Treehouse and cleanup hygiene
+### Worktree and cleanup hygiene
 
-The repository-local `treehouse-worktrees` skill leases up to three reusable worktrees under the
-ignored `.treehouse/` root. The coordinator records the returned path, immutable lease ID, holder,
+The user-level `opum-worktrees` skill leases native Git worktrees under the Opum worktree root.
+The coordinator records the returned path, immutable lease ID, holder,
 task, and pinned base; workers never return their own lease. Identity-fenced return occurs only after
 the work is merged, patch-equivalent, or every unique change is preserved on an owned branch.
 

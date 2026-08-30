@@ -3,7 +3,7 @@ id: doc-7
 title: Backlog campaign tracker — local graph roadmap (round 6)
 type: other
 created_date: '2026-08-02 03:36'
-updated_date: '2026-08-03 14:07'
+updated_date: '2026-08-30 15:17'
 ---
 # Backlog campaign tracker — local graph roadmap (round 6)
 
@@ -17,6 +17,8 @@ updated_date: '2026-08-03 14:07'
 - The user also approved adding LCLI-283.2 as the formal dependency of LCLI-283.3.1; that correction was applied through the Backlog CLI at init.
 
 ## Treehouse worktree and branch policy
+
+> **RETIRED 2026-08-30.** Treehouse is retired in this repository. The policy below is a historical record of how this campaign ran; do not follow it. Worktree leases now go through the user-level `opum-worktrees` skill over native Git worktrees. `treehouse.toml` and the ignored `.treehouse/` pool are removed.
 
 - Treehouse v2.1.0 is installed. Repository config is `treehouse.toml` with `root = "../"` and `max_trees = 4`; its pool is beside the repository on the same external filesystem. Do not use the default user-home pool for this repository.
 - Campaign execution remains sequential by default. Treehouse manages isolation and warm reuse; it does not itself authorize subagents, concurrent waves, commits, pushes, PRs, merges, returns, pruning, or deletion.
