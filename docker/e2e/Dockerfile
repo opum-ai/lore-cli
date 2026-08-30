@@ -87,6 +87,12 @@ RUN if [ "$PGID" != "1000" ]; then groupmod -o -g "$PGID" bun; fi \
     && chown -R bun:bun /home/bun /workspace /results /opt/lore
 
 COPY --chmod=0755 docker/e2e/run-e2e.sh /usr/local/bin/run-e2e.sh
+# run-e2e.sh sources its assertion helpers from lib/steps.sh RELATIVE TO ITSELF
+# (`dirname "${BASH_SOURCE[0]}"/lib/steps.sh`), so the library has to land beside the script inside
+# the image, not just exist in the build context. Omitting this makes the harness die at startup
+# with "No such file or directory" before a single case runs -- which is exactly what happened on
+# the first push of LCLI-360. Keep this COPY adjacent to the one above so they move together.
+COPY --chmod=0755 docker/e2e/lib /usr/local/bin/lib
 
 USER bun
 WORKDIR /workspace

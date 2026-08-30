@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-30 00:19'
-updated_date: '2026-08-30 00:27'
+updated_date: '2026-08-30 00:38'
 labels:
   - agents
   - codex
@@ -64,3 +64,21 @@ Documented surface updated to match: the manifest/help summary is now 'Regenerat
 
 Validation: bun test 2764 pass / 0 fail / 1 skip (42/42 in agents.test.ts, 7 new). typecheck 0, lint 0, lore check 0, lore validate --strict 0, lore agents --check 0 -- each exit code taken without a pipe.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: @claude
+created: 2026-08-30 00:38
+---
+CORRECTION 2026-08-29, before this is read as clean: the FIRST version of this fix had a real defect, and the docker E2E harness caught it — no unit test did.
+
+WHAT WENT WRONG. I added codex coverage inside applyAgentsBridge unconditionally. That function is shared with 'lore init --claude', which is a SCOPED request — set up the Claude bridge — and whose other half is 'lore init --codex' with its own applyCodexBridge. So '--claude' began reporting and regenerating files the user never asked about. E2E case 'LCLI-298 AC3: lore init --claude creates the Claude Code bridge' pins that reported file list to exactly ['.claude/skills/lore/SKILL.md', 'CLAUDE.md'] and went red: 352 passed, 1 failed.
+
+WHY MY OWN TESTS MISSED IT. All seven tests I wrote asked whether the gate FIRES — does drift produce exit 6, does a Claude-only repo stay at 0. None asked whether the change stayed inside the command that wanted it. Testing that a feature works is not the same as testing that it did not reach somewhere it should not.
+
+THE FIX. Codex coverage is now opt-in through ApplyAgentsOptions.includeCodex, set ONLY by runAgents. 'lore agents' means 'the bridges are current' and wants both; 'lore init --claude' does not, and now gets exactly its two files again. A unit test asserts BOTH directions — applyAgentsBridge's default reports the two Claude files, and 'lore agents --check' reports four — so this is no longer held only by the E2E. docs/reference/cli-surface.md states the distinction explicitly.
+
+THIS IS THE SECOND BUG THE NEGATIVE CASE CAUGHT IN THIS ONE CHANGE. The first was the undefined-vs-null slip in hasCodexBridge, caught by 'a Claude-only repository stays at exit 0'. Both were cases of the change reaching further than intended, and in both the assertions about the intended behaviour all passed. Worth remembering when extending a shared helper: the risk is not that the new path is wrong, it is that an existing caller silently acquires it.
+---
+<!-- COMMENTS:END -->

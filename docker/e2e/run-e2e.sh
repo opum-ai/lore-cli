@@ -85,8 +85,19 @@ mkdir -p "$RESULTS_DIR"
 # PASS/FAIL/REPORT_WRITE_FAILURES counters live in lib/steps.sh so that selftest.sh can prove each
 # one DISCRIMINATES without a container (LCLI-360). One definition, two consumers -- a second copy
 # here would be a fork that rots. RESULTS_DIR and REPORT above are the contract it expects.
+# Fail CLOSED if the library is missing. `set -uo pipefail` omits -e, so a failed `.` would print
+# one error and CONTINUE with every helper undefined -- each later `step`/`step_fail` becoming a
+# "command not found" that the harness never records, ending in a green-looking tally over zero
+# real assertions. That is the vacuous pass this whole extraction exists to prevent, so it must
+# abort here instead. docker/e2e/Dockerfile must COPY lib/ beside the script; a test in
+# test/docker-e2e-guard.test.ts pins that, since this line cannot be exercised without Docker.
+E2E_LIB="$(dirname "${BASH_SOURCE[0]}")/lib/steps.sh"
+if [ ! -r "$E2E_LIB" ]; then
+  echo "run-e2e.sh: cannot read its assertion helpers at $E2E_LIB -- refusing to run a suite that would assert nothing." >&2
+  exit 1
+fi
 # shellcheck source=lib/steps.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib/steps.sh"
+. "$E2E_LIB"
 
 # Guarded (LORE-269) as defense-in-depth on top of the container check above: this is the
 # literal `cd /workspace` the original bug report cited. The guard above already refuses to
