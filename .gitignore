@@ -89,3 +89,11 @@ opencode.jsonc
 # Repository-local tracker-cutover evidence (never published, never committed).
 .lore/archive/
 .lore/cutover/
+
+# npm pack output landing in the REPOSITORY ROOT. `dist-npm/` above covers the release
+# workflow's own destination; this covers the case that bit us. `npm pack` writes into the
+# CURRENT directory, so a pack run from the root leaves a tarball where `git add -A` would
+# commit it — which nearly happened on 2026-08-29, when a stray `npm pack .` left
+# opum-ai-lore-0.3.5.tgz in the root mid-commit. Release tarballs are large build output and
+# a committed one is a second, unverified copy of a release artifact.
+*.tgz
