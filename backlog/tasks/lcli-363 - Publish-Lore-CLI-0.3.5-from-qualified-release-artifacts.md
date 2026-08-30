@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-30 00:07'
-updated_date: '2026-08-30 00:19'
+updated_date: '2026-08-30 00:48'
 labels:
   - release
   - quest
@@ -117,5 +117,35 @@ Staged at (this host, ephemeral scratch — re-download from the run if it is go
 These are the qualified release inputs. Publish THESE FILES. Do not run npm pack, and do not publish the local candidate pack built earlier for opum-cli-e2e qualification — its digests (4ebd7ab71a72..., 065b6e65c1ca...) deliberately DO NOT match the rows above, because it was hand-packed from a local bun build rather than produced by the workflow. If a digest you are about to publish matches a candidate-pack value rather than a row above, stop.
 
 AC#3 is now the only thing standing between this and a published release, and it is the owner's: npm login plus a fresh OTP per operation. AC#5's GitHub Release is deliberately NOT created yet — the drafted notes tell readers to upgrade, which is not true until the registry has it.
+---
+
+author: @claude
+created: 2026-08-30 00:48
+---
+PRE-PUBLISH SMOKE ON THE REAL WORKFLOW ARTIFACTS, 2026-08-29. Done BEFORE publication deliberately: a broken artifact is cheap to catch now and expensive once it is on the registry and users have resolved it.
+
+These are the Release run 33282804802 artifacts — the exact bytes to publish — not the hand-packed candidate. Installed root + darwin-arm64 into a throwaway prefix:
+  npm i <darwin-arm64>.tgz <root>.tgz   -> 'added 2 packages'
+  lore --version                        -> 0.3.5, exit 0
+  lore help                             -> exit 0
+  lore --json help                      -> kind help.manifest, 29 commands
+
+BOTH DEFECTS THIS RELEASE EXISTS TO FIX ARE VERIFIED FIXED ON THE SHIPPING ARTIFACT, against the real installed quest 0.2.9:
+  LCLI-356 (the pairing break)
+    quest --version                          -> 0.2.9
+    quest init --json                        -> exit 0
+    lore init --yes --tracker quest --json   -> exit 0
+    lore orphans --json                      -> exit 0    (published 0.3.4 exits 6 here)
+    lore tasks <unknown-id>                  -> not_found (AC#3; was validation)
+  LCLI-357 (scaffold rejected by lore's own strict gate)
+    validate --strict before scaffold        -> exit 0
+    scaffold mkdocs --json                   -> exit 0
+    validate --strict after scaffold         -> exit 0    (published 0.3.4 exits 6 here)
+
+CROSS-PLATFORM COVERAGE, recorded so nobody wonders whether that smoke was darwin-only. It was — but the Release run separately qualified ALL SIX platform packages on their own matching hosts (darwin-arm64, darwin-x64, linux-arm64, linux-x64, win32-arm64, win32-x64), plus 'package + install-sanity (dry-run)' and the verify-versions gate. Neither covers the other: CI cannot run the quest interop repro, and this host cannot execute five of the six binaries. The 'publish (npm, OIDC trusted publishing)' job shows SKIPPED, which is the publish:false input behaving correctly and is the evidence the run touched no registry. If a future run shows that job as success, the release was published by the workflow rather than interactively, which is not the sanctioned path while LCLI-278 is open.
+
+This DOES NOT check AC#4. A local install of the same bytes is evidence about the ARTIFACT, not about the registry; AC#4's clean 'npx @opum-ai/lore@0.3.5 --version' cannot run until the registry has it.
+
+Artifacts remain staged at the ephemeral scratch path recorded earlier. If that directory is gone, re-download from run 33282804802 and re-verify the seven sha256 rows before publishing.
 ---
 <!-- COMMENTS:END -->
