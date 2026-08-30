@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-08-28 23:59'
-updated_date: '2026-08-30 01:13'
+updated_date: '2026-08-30 01:43'
 labels:
   - e2e
   - init
@@ -155,5 +155,25 @@ CI CONFIRMATION 2026-08-29: the non-vacuity floor is live and ran on the real ha
 Both halves of the guard are now observed working in the environment they protect, not just on a developer host: the selftest proves the floor DISCRIMINATES (it rejects 329, a truncated run, and zero cases), and the real run proves it does not fire on a healthy suite. A guard that only ever passes is indistinguishable from one that cannot fail; these two observations together rule that out.
 
 Steps 1 and 2 are complete. AC#2 remains open for step 3 — per-case negative controls for the seven LCLI-358.1/.2/.3 and LCLI-356 cases. That is a narrower claim than the general guarantee steps 1-2 provide, and it is the one AC#2 actually asks for.
+---
+
+author: @claude
+created: 2026-08-30 01:43
+---
+FALSE-COVERAGE COMMENT FOUND AND CORRECTED, 2026-08-29. This is worth more than the negative controls I went looking for, because it is the failure those controls exist to prevent, already present in the file.
+
+WHAT IT SAID. The LCLI-356 block in docker/e2e/run-e2e.sh claimed: 'a tracker version below the adapter's floor is refused at SELECTION time ... LORE_BACKLOG_BIN points the adapter at a stub that reports an ancient version, and the assertion is that the selection was NOT written.'
+
+WHAT IT DOES. Runs a REAL 'backlog init', asserts trackerCheck.capable == true, and its companion check asserts the selection WAS written to config. The acceptance path, not the refusal — the exact opposite of the comment.
+
+THE MACHINERY DOES NOT EXIST. LORE_BACKLOG_BIN is set nowhere in this repository and read nowhere. src/adapters/backlog.ts hardcodes BACKLOG_BINARY = 'backlog' with no env override, so there is no way to point the adapter at a stub even if a case wanted to.
+
+WHY IT MATTERS MORE THAN A MISSING CONTROL. A missing negative control leaves a gap. A comment describing a control that does not exist CLAIMS the gap is filled. Anyone auditing this harness for LCLI-356 AC#2 coverage would have read that paragraph and concluded the refusal path was exercised. It is not. False coverage reads as proof and is the most confident possible wrong answer — the same shape as everything else found today, one level up: the comment is a claim about the case, and nobody had checked the claim against the case.
+
+WHAT IS ACTUALLY UNCOVERED. The refusal half of LCLI-356 AC#2 — that a below-the-floor backend is rejected at selection time and the selection is NOT persisted — has no e2e coverage. It IS covered by unit tests, so the behaviour is not unverified; the harness simply does not exercise it. Adding a case that does needs an adapter-level way to point at a stub binary, which lore does not offer. That is a real prerequisite, not a small omission, and it should be sized before AC#2 is planned around it.
+
+The comment now says what the cases do, names the missing coverage, and warns against restoring the old text without building what it describes.
+
+BEARING ON AC#2. This changes what 'each of those cases is proven by a negative control' costs. One of the seven cannot get a meaningful control until lore gains a binary override. Whoever picks up step 3 should decide explicitly whether to build that override, scope AC#2 to the six that can, or split it.
 ---
 <!-- COMMENTS:END -->

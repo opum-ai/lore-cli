@@ -177,11 +177,21 @@ step_json "LCLI-358.2: --tracker none runs no tracker probe at all" \
   -- bash -c 'cd /tmp/tracker-probe && lore init --tracker none --check-tracker --json'
 rm -rf /tmp/tracker-probe
 
-# LCLI-356: a tracker version below the adapter's floor is refused at SELECTION time, so the bundle
-# is never committed to a backend that will refuse every later command. Driven through the backlog
-# backend's own floor because the image's quest availability is not guaranteed: LORE_BACKLOG_BIN
-# points the adapter at a stub that reports an ancient version, and the assertion is that the
-# selection was NOT written.
+# LCLI-356: an explicitly selected tracker is VERIFIED BEFORE it is persisted. These two cases
+# cover the ACCEPTANCE path only: a capable backend is probed, reported capable, and written to
+# config.
+#
+# COMMENT CORRECTED (LCLI-360). This block previously claimed it drove the below-the-floor
+# REJECTION via "LORE_BACKLOG_BIN points the adapter at a stub that reports an ancient version"
+# and asserted "the selection was NOT written" -- the exact opposite of what the cases below do,
+# using machinery that does not exist. LORE_BACKLOG_BIN is set nowhere in this repository and read
+# nowhere: src/adapters/backlog.ts hardcodes BACKLOG_BINARY = "backlog" with no env override. A
+# reader auditing coverage would have concluded the refusal path was exercised here. It is not.
+#
+# So the refusal half of LCLI-356 AC#2 has NO e2e coverage. It is covered by unit tests, so the
+# behaviour is not unverified -- but this harness does not exercise it, and adding a case that
+# does needs a way to point the adapter at a stub binary, which lore does not currently offer.
+# Tracked on LCLI-360; do not restore the old comment without also building what it describes.
 mkdir -p /tmp/floor-probe && (cd /tmp/floor-probe && git init -q)
 step_json "LCLI-356: an explicitly selected tracker is verified before it is persisted" \
   '.kind == "init.result" and .data.trackerCheck.backend == "backlog" and .data.trackerCheck.capable == true' \
