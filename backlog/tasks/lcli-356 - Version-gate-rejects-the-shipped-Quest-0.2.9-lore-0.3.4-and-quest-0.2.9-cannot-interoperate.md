@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-28 21:30'
-updated_date: '2026-08-30 00:06'
+updated_date: '2026-08-30 01:09'
 labels:
   - release
   - quest
@@ -120,5 +120,24 @@ ADDED 1 / REMOVED 1 is the documented per-release rename of the identity row, wh
 The remaining 6 FAIL are QCLI-135 packaging native-execution receipts, owned by quest-cli, unchanged and unrelated.
 
 PROVENANCE, recorded honestly: rank-2 evidence. Both tarball sha256s were verified on receipt (4ebd7ab71a72..., 065b6e65c1ca...); the installed launcher reports 0.3.5. The identity row records '@opum-ai/lore@0.3.5 ABSENT from registry' and passes, because it asserts provenance is RECORDED, not published. This is a local candidate pack, not a registry artifact. A rank-1 re-run against the published 0.3.5 is tracked by LCLI-363 AC#6 and is not a precondition for closing this task.
+---
+
+author: @claude
+created: 2026-08-30 01:09
+---
+CORRECTION TO THIS TASK'S RECORD, 2026-08-29, plus the final clean qualification number.
+
+FACTUAL CORRECTION FIRST. My AC#5 comment described the six remaining QCLI-135 rows as 'the committed receipt is pinned to quest-cli 01456d7d and every platform digest mismatches 0.2.9'. The second half is WRONG and I am correcting it rather than leaving it to be cited later. quest-cli hashed all six binaries npm serves and they DO match the digests declared at v0.2.9. The rows fail because opum-cli-e2e's repository holds a receipt pinned to a different quest-cli build — two artifacts, one stale — and because no CI run exists at that commit to prove each binary EXECUTED on its own target. Declared-digests-match and execution-proven are different claims, and I conflated them. quest-cli is deliberately not hand-forging an execution proof for a version nobody will re-cut, which is the right call; those six bind on the next quest release instead.
+
+FINAL CLEAN QUALIFICATION, superseding the 400/6/1 recorded in my AC#5 comment:
+  407 rows: 401 PASS / 6 FAIL / 0 BLOCKED
+  FIXED 11   REGRESSED 0   OTHER 0   ADDED 1   REMOVED 1
+Same lore 0.3.5 candidate (557f152, installed launcher sha256 0259e7748f77...), same published quest 0.2.9. Evidence at opum-cli-e2e evidence/lore-0.3.5-candidate/ commit 4bd6133.
+
+The single REGRESSED row in the earlier run is gone, and it is worth recording WHY rather than just noting the better number. That row was blocked by opum-cli-e2e's own digest-binding tightening — the fix I asked them to make step-3 blocking. Their regenerated scale evidence (10,000 tasks, 100,001 mutating operations, 0 hard failures, integrity allOk, 81.7 min) now binds on questLauncherSha256 4c4a8013... and questNativeSha256 cf10a0fe... rather than on a launcher PATH. So the row is not merely PASS again; it is a BETTER pass than the one in baselines/v0.2.9, which was true by luck of the path matching rather than by the bytes.
+
+FIXED 11 is independently reproduced across both runs — this task's 10 rows plus LCLI-357's scaffold row. Two runs, produced from different scale evidence, agreeing on the same 11. That is the number this task closed on and it is confirmed, not revised.
+
+Nothing here reopens this task. Recorded because the earlier comment is now partly superseded and partly wrong, and a task record that stays wrong is worse than one that admits a correction.
 ---
 <!-- COMMENTS:END -->
