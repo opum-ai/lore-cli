@@ -1,11 +1,11 @@
 ---
 id: LCLI-363
 title: Publish Lore CLI 0.3.5 from qualified release artifacts
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-30 00:07'
-updated_date: '2026-08-30 05:49'
+updated_date: '2026-08-30 14:10'
 labels:
   - release
   - quest

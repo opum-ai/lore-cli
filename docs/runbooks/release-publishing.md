@@ -491,7 +491,8 @@ publish is explicitly marked public. Root `package.json` and all six
 
    Any hit that is not one of those two is a defect to fix before releasing.
    This sweep was proven by a negative control on 2026-08-29: a planted
-   `@opum-ai/lore@9.9.9` line in `docs/reference/cli-surface.md` was reported by
+   `@opum-ai/lore@<a-version-that-does-not-exist>` line in
+   `docs/reference/cli-surface.md` was reported by
    path and line, and the sweep returned to its two pinned rows once removed.
 4. Merge to `dev`, promote to `main`, and wait for the full `main` CI matrix.
    Tag that verified commit and push the tag — nothing triggers automatically
