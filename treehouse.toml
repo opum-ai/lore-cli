@@ -1,3 +1,0 @@
-# Keep the reusable Codex-agent pool inside the Lore CLI repository sandbox.
-max_trees = 3
-root = "."
