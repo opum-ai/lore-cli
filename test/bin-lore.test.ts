@@ -14,7 +14,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -63,7 +63,20 @@ function installFakePackageWithRestrictedExports(): void {
  * (`ci.yml`) runs on GitHub-hosted runners, which ship Node preinstalled on `PATH`.
  */
 function runLauncher(args: readonly string[]): { stdout: string; stderr: string; code: number } {
-  const result = Bun.spawnSync(["node", LAUNCHER, ...args], {
+  // Run a COPY of the launcher from inside the fixture directory, not the repository's own
+  // bin/lore.cjs (LCLI-369). NODE_PATH is only a FALLBACK: Node first walks up from the script's
+  // own location looking for node_modules, and the repository is an ancestor of bin/lore.cjs.
+  // Since lore lists its platform packages as optionalDependencies at the version under
+  // development, publishing 0.3.5 caused `bun install` to place lore's own compiled binary at
+  // <repo>/node_modules/@opum-ai/lore-darwin-arm64 -- which then wins the ancestor walk and
+  // shadows the fixture these tests install. Before the publish that directory did not exist, so
+  // NODE_PATH won by default and these tests passed BY ACCIDENT.
+  //
+  // Copying the launcher into nodePathDir puts the fixture's node_modules on the ancestor path,
+  // so resolution finds the stub for the same reason a real install finds the real package.
+  const launcher = join(nodePathDir, "lore.cjs");
+  copyFileSync(LAUNCHER, launcher);
+  const result = Bun.spawnSync(["node", launcher, ...args], {
     env: { ...process.env, NODE_PATH: nodePathDir },
     stdout: "pipe",
     stderr: "pipe",

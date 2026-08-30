@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: lore documentation
-description: Root index for the lore documentation bundle — a thin, OKF-native documentation CLI (Bun + TypeScript) that couples repo-resident docs to Backlog.md and serves them to agents and humans. This is the progressive-disclosure entry point into the bundle's references, design, decisions, and runbooks.
+description: Root index for the lore documentation bundle — a thin, OKF-native documentation CLI (Bun + TypeScript) that couples repo-resident docs to a task tracker (Quest or Backlog.md) and serves them to agents and humans. This is the progressive-disclosure entry point into the bundle's references, design, decisions, and runbooks.
 tags:
   - lore
   - okf
@@ -22,16 +22,14 @@ on npm as [`@opum-ai/lore`](https://www.npmjs.com/package/@opum-ai/lore)
 [Lore CLI release truth](reference/lore-cli-release-truth.md). It makes
 repo-resident markdown a first-class, agent-readable
 [Open Knowledge Format](reference/okf-conformance.md)
-bundle, couples that bundle to [Backlog.md](runbooks/backlog-json-patch.md)
-tasks, and serves it to both humans and coding agents through a deterministic,
-non-interactive CLI. The repository is the single source of truth.
-Its canonical GitHub location is
-[`opum-ai/lore-cli`](https://github.com/opum-ai/lore-cli), which is **private** —
-the published package is public, the source repository is not, so that URL is
-not a destination to send a reader to.
+bundle, couples that bundle to a **task tracker** — Quest or
+[Backlog.md](runbooks/backlog-json-patch.md), selected per bundle — and serves it
+to both humans and coding agents through a deterministic, non-interactive CLI.
+The repository is the single source of truth. Its canonical GitHub location is
+[`opum-ai/lore-cli`](https://github.com/opum-ai/lore-cli).
 
-lore is deliberately **thin** and **zero-config**: it does not reimplement
-Backlog.md, Confluence, or the documentation consumers (MkDocs, Docusaurus,
+lore is deliberately **thin** and **zero-config**: it does not reimplement its
+tracker backends, Confluence, or the documentation consumers (MkDocs, Docusaurus,
 Obsidian). Its core is deterministic with **no LLM dependency** — every command
 is reproducible, idempotent, CI- and agent-safe (non-interactive by default,
 stable exit codes, machine-readable `--json`). The agent bridge is a generated

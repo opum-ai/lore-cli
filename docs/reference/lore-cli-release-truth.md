@@ -21,37 +21,41 @@ availability claim.
 
 ### Current state
 
-`0.3.5` is the release candidate for the Lore/Quest pairing repair
-(LCLI-356) and the scaffold strict-gate defect (LCLI-357). Its seven package
-manifests and exact optional-dependency pins are aligned at `0.3.5`.
+`0.3.5` is **RELEASED**. Published 2026-08-30 from tag `v0.3.5` at
+`744d099263b5`, by Release run `33296350640` via npm **OIDC trusted
+publishing** — no credential was involved at any point.
 
-**Not yet published.** As of 2026-08-29 the published version remains `0.3.4`;
-this paragraph describes a candidate, and no availability claim about `0.3.5`
-is supported until the observations in "Release designation" below are recorded
-for it. `docs/index.md` deliberately names no version and points here instead
-(LCLI-361), so this paragraph is the single in-bundle statement of what is
-published — keep it honest about the difference between candidate and
-released.
+Registry evidence, all seven package names at `0.3.5` with `latest` moved:
+`@opum-ai/lore`, and `@opum-ai/lore-{darwin-arm64,darwin-x64,linux-arm64,linux-x64,win32-arm64,win32-x64}`.
+Clean-install smoke from a fresh temporary directory against the real registry:
+`npx --yes @opum-ai/lore@0.3.5 --version` returns `0.3.5`.
 
-Why the release exists: published `0.3.4` carries a frozen
-`SUPPORTED_QUEST_VERSIONS = [0.2.7, 0.2.8]` and therefore refuses the published
+Why the release exists: published `0.3.4` carried a frozen
+`SUPPORTED_QUEST_VERSIONS = [0.2.7, 0.2.8]` and therefore refused the published
 Quest `0.2.9`. As observed on 2026-08-28, the two then-current releases of the
 pair could not be used together at all — every tracker-touching command exited
-6 with `` `quest --version` did not return a supported Quest 0.2 version ``.
-`0.3.5` replaces that set with `MIN_QUEST_VERSION = 0.2.7` and a `>=`
+6. `0.3.5` replaces that set with `MIN_QUEST_VERSION = 0.2.7` and a `>=`
 comparison (ADR-0020), evaluates the gate before persisting a tracker choice,
 and stops `lore scaffold mkdocs` generating a `docs/tags.md` that
 `lore validate --strict` rejects.
 
-Independent pre-candidate verification, recorded because it is evidence about
-the fix rather than about the artifact: the `opum-cli-e2e` harness ran its full
-407-row matrix against published Quest `0.2.9` using a source build of the
-LCLI-356 fix (`2e5a002`) and reported FIXED 10, REGRESSED 0, ADDED 0, REMOVED
-0 — the ten failing rows attributed to the version gate flipped and nothing
-else moved (evidence `evidence/lcli-356-verification/`, commit `c562432`).
-That build is a raw source build, not an installed artifact, so it verifies the
-fix without qualifying a release; the packed-candidate run is the
-qualification.
+**The tag was MOVED, and that is recorded rather than hidden.** `v0.3.5`
+originally pointed at `fda122c`, which could not publish: the release workflow
+globbed `dist-npm/*.tgz`, and npm parses a bare relative path containing a slash
+as a GitHub shorthand, so every publish resolved to `github:dist-npm/...` and
+tried to `git clone` it. That bug had never been seen because `publish: true`
+had never run once — LCLI-278 prohibited it from the day the workflow was
+written, so the only job that exists solely for release time was never executed.
+Moving the tag rather than burning `0.3.6` on a workflow-only fix was safe and
+correct: **nothing was ever published under the original tag**, verified against
+the registry with all seven names absent at `0.3.5`, so no artifact resolved it.
+Tag immutability exists to keep version, tag and shipped bytes consistent, and
+moving it restored that rather than breaking it.
+
+Qualification: opum-cli-e2e's 407-row matrix, `402 PASS / 0 FAIL / 0 BLOCKED`
+against the quest 0.3.0 candidate bundle, plus the workflow's own six
+matching-host platform qualifications carried forward by artifact and
+re-verified by digest at assembly.
 
 `0.3.4` is the release candidate for the Quest 0.2.7 structured-criterion
 compatibility repair (LCLI-352): the Quest adapter now maps the released

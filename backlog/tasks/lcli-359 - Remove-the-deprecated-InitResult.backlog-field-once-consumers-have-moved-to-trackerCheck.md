@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-28 23:59'
-updated_date: '2026-08-30 00:06'
+updated_date: '2026-08-30 14:10'
 labels:
   - init
   - tracker
@@ -51,5 +51,20 @@ Before starting this:
 3. Check known in-repo and cross-repo consumers of InitResult for direct reads of the 'backlog' field -- opum-cli-e2e's contract suites assert on 'lore init --json' output and are the most likely reader.
 
 The shim is cheap: one field plus legacyBacklogCheck in src/commands/init.ts, populated only when the selected backend is backlog, so it cannot misreport a Quest probe. Carrying it another release costs almost nothing; removing it early costs a consumer a broken parse with no version to fall back to.
+---
+
+author: @claude
+created: 2026-08-30 14:10
+---
+PRECONDITION NOW MET, 2026-08-30 — this is unblocked and can be picked up.
+
+I recorded on 2026-08-29 that this was NOT actionable, because its title conditions it on 'consumers having moved to trackerCheck' and trackerCheck had never shipped. It has now: lore 0.3.5 is published, so trackerCheck exists in a released artifact and a consumer has something to migrate TO.
+
+That does not make it due immediately. The three things I named as prerequisites still apply and only the first is satisfied:
+1. DONE — 0.3.5 published, so trackerCheck is in a released artifact.
+2. NOT DONE — at least one further release should carry BOTH fields, so a consumer has a version to pin while migrating. 0.3.5 is the first release with trackerCheck; removing the shim in 0.3.6 would give a zero-release migration window.
+3. NOT DONE — check known consumers for direct reads of the 'backlog' field. opum-cli-e2e's contract suites assert on 'lore init --json' output and are the most likely reader; ask them rather than grepping this repository alone.
+
+AC#3 asks for the removal to be recorded 'against a specific release'. Do not default that to whatever comes next — pick it from evidence that consumers have migrated. The shim is one field plus legacyBacklogCheck in src/commands/init.ts, populated only when the selected backend is backlog, so it cannot misreport a Quest probe. Carrying it another release costs almost nothing.
 ---
 <!-- COMMENTS:END -->

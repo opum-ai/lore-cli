@@ -65,12 +65,18 @@ Five traps that local context will not warn you about:
   "I checked, it exists" is not a check and will confirm a stale citation.
   Read the owner back and compare it to what you were about to write:
   `gh api repos/<owner>/<repo> --jq .full_name`.
-- **A public package does not imply a public repository.** `@opum-ai/lore` is
-  published, public, and MIT-licensed, while `opum-ai/lore-cli` is private — the
-  product owner deliberately waived the release gate that required otherwise.
-  So never hand the repository URL to a reader as somewhere they can go: it
-  returns 404 to anyone outside the org. Mark it private at every citation, and
-  point users at the npm package instead. See
+- **Repository visibility is a dated observation, not a standing fact — read it
+  back before citing it.** This bullet said for months that `opum-ai/lore-cli` is
+  private and told you to mark it private at every citation. As observed on
+  2026-08-30, `gh api repos/opum-ai/lore-cli --jq .private` returns **false**, and
+  so does `quest-cli`. Both are public. The old sentence was true when written and
+  went stale silently, which is exactly the failure this file's own
+  "say then-current, never current" rule exists to prevent — it had a date nowhere
+  and a reader had no way to know it was expired.
+  Visibility is not cosmetic: **npm provenance attestations require a public source
+  repository**, so a wrong answer here changes whether trusted publishing can attest
+  a release at all. Check it, do not remember it:
+  `gh api repos/<owner>/<repo> --jq .private`. See
   [Lore CLI release truth](docs/reference/lore-cli-release-truth.md).
 - **Quest is published; this file's earlier "not installable" rule is retired.**
   As observed on 2026-08-28, `https://registry.npmjs.org/@opum-ai%2Fquest`
@@ -209,6 +215,54 @@ confirming exit 6 naming both files, and removing it.
 **Do not sweep with grep alone.** These shapes are semantic, so a verbatim search
 misses them by construction — and it also misses literal matches that wrap across
 two lines. Read the record.
+
+## The three sessions that ship this pair
+
+Lore is released as half of a **pair**, and the qualification that proves it works lives in a
+third repository. Three live agent sessions carry that, and none of them can finish alone:
+
+| session | repository | owns |
+|---|---|---|
+| **lore-cli** (this one) | `opum-ai/lore-cli` | the CLI, its release, the Quest adapter |
+| **quest-cli** | `opum-ai/quest-cli` | Quest's CLI, its release, the tracker contract |
+| **opum-cli-e2e** | `opum-ai/opum-cli-e2e` | the 400-row matrix that qualifies the pair |
+
+Reach them with `herdr` (see the same-host bullet above) — `herdr agent list` for the pane id,
+`herdr agent prompt <pane> "..."`, then `herdr agent read <pane>` to confirm delivery. Address
+one pane per repository.
+
+**The pairing is a hard constraint, not a courtesy.** Lore's Quest adapter pins
+`schemaVersion`, envelope `kind`, `mutates` and a required-command set; Quest's releases move
+independently. On 2026-08-29 published lore 0.3.4 refused published quest 0.2.9 outright and the
+two current releases could not be used together at all. Before changing anything that touches
+`src/adapters/quest.ts`, ask quest-cli what is landing on their side — and tell them before you
+change what lore requires.
+
+### What actually worked, and is worth repeating
+
+Everything below was earned the expensive way on 2026-08-29/30. It is not process for its own
+sake.
+
+- **Verify a peer's claim instead of accepting it — especially a retraction.** When lore-cli
+  retracted a wrong finding, opum-cli-e2e re-read `release.yml` and confirmed it with line
+  numbers rather than taking the correction on trust. Three separate wrong claims were caught
+  this way, each by the session that did *not* make it. Nobody catches their own.
+- **Recompute, never compare two descriptions.** Three defects in one day were "two things
+  assumed to describe the same artifact": a receipt against a bundle, a tag against a qualified
+  commit, a packed candidate against a published tarball. Every one was resolved by recomputing
+  a digest from bytes, and not one was caught by reading.
+- **State a falsifier before a run, not after.** Handing over a candidate with "if row X does not
+  flip, the release is pulled" turns a confirmation into a test. It flipped; had it not, the
+  prediction was already on the record.
+- **Say what a number does NOT cover.** "Six targets attested → one target executed plus six
+  artifacts digest-bound; stronger for darwin-arm64, silent for the other five" survived three
+  reports unchanged because it was written down before the run.
+- **Report the run you are not citing.** opum-cli-e2e disclosed a green 402-row run they refused
+  to use, because its bundle was misattributed. A green number from the wrong artifact is the
+  most confident possible false clear.
+- **A wrong premise costs more than a wrong answer, because peers act on it.** A finding filed
+  here was propagated to both other sessions before being caught; one had already planned around
+  it. Say plainly when something is unverified.
 
 ## Project-level skills: what is here on purpose
 
