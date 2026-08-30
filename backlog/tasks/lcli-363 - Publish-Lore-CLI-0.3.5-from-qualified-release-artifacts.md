@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-30 00:07'
-updated_date: '2026-08-30 00:52'
+updated_date: '2026-08-30 01:40'
 labels:
   - release
   - quest
@@ -172,5 +172,21 @@ Step 4 (AC#6). Tell the opum-cli-e2e session (pane wK:pR, repo /Volumes/external
 ALSO TELL quest-cli (pane wS:pK) once it is live. They have explicitly said they will not describe lore as published until told, and QCLI-97.5 AC3 needs both halves published to close.
 
 WHAT IS NOT WAITING ON THIS. quest 0.3.0 is owner-deferred (2026-08-29, twice, citing no soak since 0.2.9) and is NOT a precondition for any of the above. lore 0.3.5's >= floor already accepts it whenever it lands, so no second lore release is needed for the pair.
+---
+
+author: @claude
+created: 2026-08-30 01:40
+---
+CROSS-REPOSITORY NUMBERS I RELAYED, NOW CORRECTED, 2026-08-29. Recorded so the predicted figures are not cited from this task later.
+
+WHAT I PASSED ON AND WHAT IS TRUE. I relayed opum-cli-e2e's prediction that binding a quest candidate bundle would show '~6 REMOVED / 2 ADDED' in the diff. Measured against a real rehearsal it is 407 rows -> 402, REMOVED 15, ADDED 10 (identity 9 removed / 8 added; packaging 6 removed / 2 added). Binding --quest-candidate reshapes the 00-identity suite as well as 50-packaging; the prediction came from reading suite 50 and stopping there.
+
+THE METHOD CORRECTION MATTERS MORE THAN THE NUMBER. I had pushed 'read the code, then answer' at that session after they caught a wrong premise of mine. This is its limit: reading gave the correct MECHANISM and the wrong MAGNITUDE. Only running it gave both. The rule should be read, then RUN, then answer — and when only one is possible, say which the number came from. My 6/2 was their prediction repeated by me with neither of us executing anything.
+
+THE IDENTITY RESHAPE IS AN UPGRADE, not collateral damage. Nine rows that derive provenance from whatever commit a sibling worktree happens to sit on are replaced by eight deriving it from digest-pinned tarball bytes. Exactly one row is genuinely lost — the candidate's git identity (branch, base SHA, dirty paths), which a tarball family cannot carry. The packaging trade is unchanged and still the sentence to lead with: six targets attested -> one target executed plus six artifacts digest-bound.
+
+A TRAP THEIR REHEARSAL CAUGHT BEFORE THE LIVE RUN, and it is relevant here because it would have been misread as a quest defect: six 50-packaging rows read package.json from the MUTABLE SIBLING CHECKOUT via --quest-repo rather than from the bundle under test. A worktree that moves between bundle build and matrix run fails six rows on a version mismatch that has nothing to do with the candidate. Same shape as everything else found today — the artifact being qualified is the bundle, and the version is being read from something that can move independently of it.
+
+RELEVANCE TO THIS TASK: none of it changes lore 0.3.5's own qualification, which was 401 PASS / 6 FAIL / 0 BLOCKED against PUBLISHED quest 0.2.9 with no candidate binding involved. It matters for AC#6's eventual rank-1 re-run and for anyone reading the quest-side numbers alongside lore's.
 ---
 <!-- COMMENTS:END -->

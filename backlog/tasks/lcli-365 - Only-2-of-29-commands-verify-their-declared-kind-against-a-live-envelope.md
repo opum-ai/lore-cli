@@ -1,11 +1,11 @@
 ---
 id: LCLI-365
 title: Only 2 of 29 commands verify their declared kind against a live envelope
-status: To Do
+status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-30 01:17'
-updated_date: '2026-08-30 01:20'
+updated_date: '2026-08-30 01:38'
 labels:
   - manifest
   - contract
@@ -63,5 +63,19 @@ That closes 18 kinds immediately with no new fixtures and no new commands run. I
 RETIRING OPTION (a): parsing handler source for 'kind:' literals. It is fragile by construction — the kinds appear in at least two shapes ('kind: "check.report"' and 'reportRenderable("link.result", ...)'), a regex that silently matches nothing yields a VACUOUS pass, and a vacuous gate is precisely the defect this task exists to remove. Do not do it.
 
 AC#1 as written asks for every command; the run-time-manifest approach gets 18 honestly and names the remainder. Whoever picks this up should either split AC#1 or be explicit that closing it requires the 8 missing e2e cases too.
+---
+
+author: @claude
+created: 2026-08-30 01:38
+---
+IN PROGRESS 2026-08-29: the stronger form is implemented and open as PR #466, not yet merged.
+
+step_declared_kind in docker/e2e/lib/steps.sh compares the manifest-declared kind against the emitted one with NEITHER side a literal — declared read from 'lore --json help' at run time, emitted from the command's own envelope, both out of the same binary. Eight cases in a new Phase 24c, placed at the end so they run read-only against a fully built bundle and cannot disturb an earlier phase.
+
+Proven discriminating BEFORE any case was wired to it, six selftest probes: match, mismatch, non-zero exit with a matching kind, non-JSON output, a NULL declaration, and a command absent from the manifest. The null-declaration probe is the one that matters most — comparing an empty emission against an empty declaration would pass vacuously for every undeclared command at once, which is precisely the defect this helper exists to catch.
+
+AC#1 IS NOT YET SATISFIABLE AS WRITTEN and I am not checking it. It asks for EVERY command. Eight are covered. The rest divide into two groups: commands needing special state (backlog adopt, snapshot, changed, provenance, explorer, agent) which were left out rather than given a contrived invocation — a case bent to fit tests the bending — and the eight commands absent from the harness entirely (agent, backlog, changed, explorer, impact, path, provenance, snapshot). Closing AC#1 means adding harness cases for those, which is a separate and larger piece than the edge itself.
+
+AC#4's negative control is satisfied for the helper (the six probes above) but not yet per-command; the planted-kind control in test/help.test.ts covers the manifest side.
 ---
 <!-- COMMENTS:END -->
