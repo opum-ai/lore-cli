@@ -1,11 +1,11 @@
 ---
 id: LCLI-363
 title: Publish Lore CLI 0.3.5 from qualified release artifacts
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-30 00:07'
-updated_date: '2026-08-30 05:49'
+updated_date: '2026-08-30 14:10'
 labels:
   - release
   - quest
@@ -38,10 +38,10 @@ Do NOT publish a locally packed tarball. The runbook is explicit: the Release wo
 <!-- AC:BEGIN -->
 - [x] #1 dev is promoted to main, the full main CI matrix is green, and that exact verified commit is tagged v0.3.5 with the tag pushed
 - [x] #2 Release is dispatched with publish:false on the tag; its npm-packages artifact is downloaded and the seven .tgz files are listed and checksummed
-- [ ] #3 Those exact workflow artifacts — never a locally rebuilt tarball — are published with interactive 2FA under explicit owner authorization: all six platform packages first, @opum-ai/lore last
-- [ ] #4 Every name@version is verified present in the registry and a clean 'npx @opum-ai/lore@0.3.5 --version' in a fresh temporary directory reports 0.3.5
-- [ ] #5 docs/reference/lore-cli-release-truth.md is updated from candidate to released with the immutable tag, workflow run, registry, and install evidence, and a non-draft non-prerelease GitHub Release exists for v0.3.5
-- [ ] #6 opum-cli-e2e re-runs the 407-row matrix against the published 0.3.5 at rank-1 (registry install), closing LCLI-363 on published-artifact evidence
+- [x] #3 Those exact workflow artifacts — never a locally rebuilt tarball — are published with interactive 2FA under explicit owner authorization: all six platform packages first, @opum-ai/lore last
+- [x] #4 Every name@version is verified present in the registry and a clean 'npx @opum-ai/lore@0.3.5 --version' in a fresh temporary directory reports 0.3.5
+- [x] #5 docs/reference/lore-cli-release-truth.md is updated from candidate to released with the immutable tag, workflow run, registry, and install evidence, and a non-draft non-prerelease GitHub Release exists for v0.3.5
+- [x] #6 opum-cli-e2e re-runs the 407-row matrix against the published 0.3.5 at rank-1 (registry install), closing LCLI-363 on published-artifact evidence
 <!-- AC:END -->
 
 ## Comments
@@ -265,5 +265,77 @@ MY OWN ERROR WORTH RECORDING: I spent hours attributing the publish failure to c
 STILL NOT PUBLISHED: registry shows lore 0.3.4, and @opum-ai/lore-darwin-arm64@0.3.5 absent. Nothing partial landed — the loop stops before the launcher by design, and it stopped on the first package.
 
 NEXT: re-dispatch on the tag once the path fix is on main. Whether OIDC trusted publishing is configured is STILL UNKNOWN — this run never reached npm's auth layer, because it failed while resolving the package spec.
+---
+
+author: @claude
+created: 2026-08-30 07:14
+---
+PUBLISHED 2026-08-30. AC#3 and AC#4 met.
+
+  Release run 33296350640, publish job SUCCESS, via OIDC TRUSTED PUBLISHING — no credential involved
+  tag v0.3.5 at 744d099263b5 (moved; see below)
+  all seven names at 0.3.5 with latest moved
+  npx --yes @opum-ai/lore@0.3.5 --version -> 0.3.5, fresh temp dir, real registry
+
+TRUSTED PUBLISHING WAS ALREADY CONFIGURED THE WHOLE TIME. Nobody touched npmjs.com. The OIDC trust relationship for lore's seven packages already existed, and we never knew because the first dispatch died BEFORE reaching npm's auth layer. Every hour I spent attributing failure to credentials was wrong about the workflow path — the local script's 404 was a genuine token problem, but the workflow's was not, and the two were never the same failure.
+
+THE ACTUAL BLOCKER was the path bug: all_tgz=(dist-npm/*.tgz), and npm parses a bare relative path containing a slash as a GitHub shorthand, so every publish resolved to github:dist-npm/... and tried to git-clone it. Fixed by './dist-npm/*.tgz'. It survived because publish:true had NEVER RUN — LCLI-278 prohibited it from the day the workflow was written, so the one job that exists solely for release time was never executed once.
+
+MY OWN PROCESS ERROR, and the reason this took as long as it did: I treated 'the owner must configure trusted publishing first' as a PRECONDITION FOR LEARNING ANYTHING. It was an untested assumption, not a precondition, and testing it cost one CI run. I had a tag and a dispatch available for hours. A dispatch was free, non-destructive, and the publish job runs last and fails closed. The general rule: when a blocker is attributed to someone else's pending action, check whether the attribution is testable before waiting on it.
+
+THE TAG WAS MOVED, recorded rather than hidden. v0.3.5 originally pointed at fda122c which could not publish. Nothing was ever published under it — verified against the registry, all seven names absent at 0.3.5 — so no artifact resolved it, and moving it kept version, tag and shipped bytes consistent rather than burning 0.3.6 on a workflow-only fix.
+
+ONE OPERATIONAL NOTE for whoever reads this during the next release: after publishing, @opum-ai/lore-linux-arm64 showed latest=0.3.4 on the registry packument for a couple of minutes while npm's CDN caught up, even though the publish log said '+ @opum-ai/lore-linux-arm64@0.3.5'. Trust the publish log over the packument for the first few minutes, and confirm with 'npm view <pkg>@<version> version'. I nearly reported a partial publish.
+
+AC#5 (release-truth flipped from candidate to released, plus a GitHub Release) and AC#6 (opum-cli-e2e rank-1 re-run against the published artifacts) remain. release-truth is updated in this branch; the GitHub Release is next.
+---
+
+author: @claude
+created: 2026-08-30 13:55
+---
+THE PAIR IS SHIPPED — 2026-08-30. Verified from the registry rather than accepted from a report.
+
+  @opum-ai/lore  latest 0.3.5, attestations present, 6/6 platform packages at 0.3.5
+  @opum-ai/quest latest 0.3.0, attestations present, 6/6 platform packages at 0.3.0
+
+INTEROPERABILITY PROVEN ON THE PUBLISHED ARTIFACTS, which is the only test that ever mattered. Installed both from the registry into a clean directory and ran this task's original repro:
+  lore 0.3.5 + quest 0.3.0
+  quest init --json                       exit 0
+  lore init --yes --tracker quest --json  exit 0
+  lore orphans --json                     exit 0   <- published 0.3.4 + 0.2.9 exited 6 here
+  lore tasks <unknown-id>                 error_type not_found   (was validation)
+The break this release existed to close is closed for anyone installing today.
+
+AC#5 met: release-truth flipped from candidate to released with the tag, run, registry and install evidence; GitHub Release v0.3.5 published non-draft, non-prerelease.
+
+THE ATTESTATION FIELD IS THE FINDING WORTH KEEPING FROM THIS WHOLE EPISODE. npm attaches provenance attestations automatically under trusted publishing, so the field is a permanent fossil of HOW a version was published. It distinguishes 'never published via OIDC' from every other cause of an E404 on PUT, and it is readable from the public packument with no credentials:
+  lore  0.3.4 attestations=no  (interactive OTP)   0.3.5 attestations=yes (OIDC)
+  quest 0.2.9 attestations=no                      0.3.0 attestations=yes
+That single check is what proved lore's trust relationship was created by a human between 0.3.4 and 0.3.5 — and therefore that quest's seven had simply never been done, rather than being broken. It resolved in one query what eight dispatches across two repositories could not.
+
+Pair it with the other lesson: npm returns E404 on PUT for at least FOUR distinct causes — token cannot write, token invalid, npm below 11.5.1 so OIDC was silently skipped, and no trust relationship — and gives no way to tell them apart. Both belong in the release runbook, and the runbook already carries the trusted-publishing setup they support.
+
+AC#6 REMAINS OPEN and is not mine to close: opum-cli-e2e is running rank 1 against both published releases now. That is the run that binds published tarballs, receipt and bundle as three independently produced sources.
+---
+
+author: @claude
+created: 2026-08-30 14:03
+---
+AC#6 CLOSED — full rank-1 against BOTH published releases. 403 rows, 403 PASS, 0 FAIL, 0 BLOCKED, exit 0. quest 0.3.0 and lore 0.3.5 both installed with npm i from the registry. Corroboration row 6/6 across bundle + receipt + published. Evidence at opum-cli-e2e evidence/rank1-pair-published/ (commit 3c0a550). LCLI-363 is Done.
+
+AN ERROR OF MINE THAT THIS RUN CAUGHT, and it is the most useful thing on this task. I told opum-cli-e2e their earlier 403/403 'stands entirely, because a packed candidate byte-identical to the published tarball measures the same artifact'. They checked rather than accepted it:
+
+  lore launcher package/bin/lore.cjs   published 0259e7748f77...  candidate 0259e7748f77...  IDENTICAL
+  lore native   package/bin/lore       published e40154bd757d...  candidate 46818b7b6552...  DIFFERENT
+
+Independently verified here by pulling the published tarball and recomputing: published e40154bd757d, candidate 46818b7b6552. Confirmed.
+
+I HAD BOTH FACTS NEEDED TO KNOW BETTER. I told them myself, when I sent the candidate, that it was a local 'bun run build' packed by hand and to record it as a local candidate pack rather than a registry artifact. And quest-cli's measured finding is that Bun's --compile is not byte-reproducible across machines. Those two premises make byte-identity impossible, and I asserted it anyway. The launcher matched because it is plain JavaScript copied verbatim; only the compiled binary differs — which is exactly the half that matters and exactly the half a casual check would skip.
+
+CONSEQUENCE FOR THE RECORD: the earlier 402/402 and 403/403 runs measured a real lore 0.3.5 build but NOT the one that shipped. Their scope line — rank 1 for quest, rank 2 for lore — was accurate, and accurate for a sharper reason than either of us had articulated: not 'lore is unpublished' but 'the candidate binary is not the published binary'. Only this final run measures what users actually install.
+
+THE PATTERN, third instance today: receipt vs bundle, tag vs qualified commit, and now candidate vs published. Every one resolved by RECOMPUTING A DIGEST rather than accepting that two things described the same artifact. That is the same shape as the five gate defects recorded in CLAUDE.md, and this instance is mine.
+
+STILL OPEN AND FILED SEPARATELY: the corroboration row has three sources on the QUEST side only. lore has no equivalent. lore's platformTarballSha256 is a genuine third source — the package job recomputes it and refuses to assemble on mismatch, so it is load-bearing inside our pipeline rather than a convenient number — but it is TARBALL granularity, not executable, and formatted 'sha256:<hex>'. opum-cli-e2e has offered to build it and should.
 ---
 <!-- COMMENTS:END -->

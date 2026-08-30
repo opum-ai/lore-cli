@@ -5,7 +5,7 @@ status: To Do
 assignee:
   - '@lore-cli'
 created_date: '2026-08-14 18:09'
-updated_date: '2026-08-27 21:14'
+updated_date: '2026-08-30 14:10'
 labels:
   - release
   - quest
@@ -59,3 +59,19 @@ Live-MFA publication attempt (correlation 20fd73dc, user present): three mechani
 
 Publication COMPLETE (2026-08-27, settlement correlation e2887ec9): the repository owner executed the seven publishes manually (--access public --tag release-candidate, platforms first, root last) after the worker's three bounded web-auth windows closed without auth. Controller verification + worker read-only registry reads agree: all seven packages at 0.3.3, registry shasum/integrity exactly equal candidate provenance rows (run 32926368990, source a4322b7), release-candidate=0.3.3 and latest=0.3.2 preserved on all seven, clean registry install reports lore --version 0.3.3 with fresh init/validate/check --strict passing. Registry reads recorded in docs/reference/lore-cli-release-truth.md via PR #426. AC#1 (verified public Quest 0.2.7) remains UNMET — public npm @opum-ai/quest still 0.1.0 — so this task remains open and unsettled; release-truth continues to gate any 'released' designation on the full evidence list.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: @claude
+created: 2026-08-30 14:10
+---
+STATUS AGAINST THE 2026-08-30 RELEASE, so this is not read as untouched.
+
+Both halves of the pair are now published: @opum-ai/lore 0.3.5 and @opum-ai/quest 0.3.0, verified from the registry with provenance attestations on both. That removes the dependency this task was originally blocked behind — AC#1 asks for a release that 'depends on a verified public Quest version', and Quest 0.3.0 is public, verified, and qualified against lore 0.3.5 by opum-cli-e2e's 403/403 rank-1 run against both PUBLISHED artifacts.
+
+WHAT THIS TASK STILL ASKS FOR AND DID NOT GET. It is about making Quest the explicit DEFAULT for new bundles. 0.3.5 makes Quest fully supported and selectable, and LCLI-358.2/.3 made 'lore init' detect and probe whichever backend is chosen — but the default-selection behaviour, the migration-or-pin path for existing Backlog bundles (AC#2), and the manifest/documentation agreement that Quest is the new-bundle default (AC#3) are not delivered. Its three subtasks LCLI-333.1/.2/.3 carry their own state.
+
+So: unblocked, not done. Anyone picking this up starts from a published, mutually qualified pair rather than from an unavailable Quest, which is a materially better starting position than when this was filed.
+---
+<!-- COMMENTS:END -->
