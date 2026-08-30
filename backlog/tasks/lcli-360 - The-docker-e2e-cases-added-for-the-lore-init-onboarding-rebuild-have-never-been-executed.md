@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-08-28 23:59'
-updated_date: '2026-08-30 00:38'
+updated_date: '2026-08-30 00:50'
 labels:
   - e2e
   - init
@@ -91,5 +91,31 @@ WIRED INTO CI ahead of the container build, deliberately: seconds rather than mi
 WHAT REMAINS FOR AC#2 — step 3: per-case negative controls for the seven cases LCLI-358.1/.2/.3 and LCLI-356 added, plus the expected-case-count non-vacuity assertion for the full run. Steps 1 and 2 give a general guarantee that protects every case in the file including ones added later; step 3 gives per-case proof for the seven this task was opened about. Do not check AC#2 until step 3 lands — the general guarantee is not the same claim.
 
 Unrelated but found by this same harness today, and worth noting as evidence it earns its keep: it caught a real scoping defect in LCLI-364 that no unit test caught — 'lore init --claude' had begun reporting codex bridge files it was never asked about (case LCLI-298 AC3). Fixed, with a unit test added so the E2E is not the only thing holding it.
+---
+
+author: @claude
+created: 2026-08-30 00:50
+---
+VACUITY AUDIT of the seven cases' assertions, 2026-08-29 — a partial step toward AC#2, recorded because a negative finding is still a finding and nobody should redo it.
+
+The specific risk audited: a jq filter that MATCHES ANYTHING makes its case a vacuous pass while looking like a real assertion, and the harness selftest (step 1) cannot catch that — it proves the HELPERS discriminate, not that each case's expectation is specific. This is the per-case risk step 3 exists to cover, and it is cheap to check by reading.
+
+RESULT: none of the seven is vacuous. Each expectation constrains something a wrong implementation could violate:
+  LCLI-358.1 refusal      .error_type == "validation" and (.message | test("not a git worktree"))
+                          — pins the classification AND the message, so a differently-caused
+                            validation error would not satisfy it.
+  LCLI-358.1 --allow-no-git  .data.created | index("docs/index.md") != null
+                          — asserts a specific path was created, not merely that a list exists.
+  LCLI-358.2 --tracker none  .data.trackerCheck == null and .data.backlog == null
+                          — a negative assertion, and correctly tolerant of absent-vs-null since
+                            jq treats a missing field as null. Note it will still hold after
+                            LCLI-359 removes .data.backlog, which is fine for this case's intent.
+  LCLI-356 selection-time  .data.trackerCheck.backend == "backlog" and .data.trackerCheck.capable == true
+                          — and if trackerCheck were null, jq yields null.backend == "backlog" ->
+                            false, so a missing probe fails rather than silently passing.
+
+WHAT THIS DOES AND DOES NOT ESTABLISH. It establishes that no case is vacuous BY CONSTRUCTION of its filter. It does NOT establish AC#2's claim, which is that a deliberate violation makes each case fail and names the offending condition — that still requires running each case's variant in the container. AC#2 stays open.
+
+Remaining for step 3: per-case negative controls for these seven, plus the expected-case-COUNT non-vacuity assertion for run-e2e.sh's own full run (the selftest asserts non-vacuity only for its own probes). The count assertion is the cheaper half and protects every case, so do it first.
 ---
 <!-- COMMENTS:END -->
