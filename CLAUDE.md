@@ -85,9 +85,17 @@ knows why you went quiet and nothing sits stalled unnoticed.
 ### Ownership
 
 You are the sole mutation owner of your own repository. Filesystem access to a
-sibling is not authority over it. Deliver to `origin` `dev`; `main`, force-push,
-history rewrite, remotes, credentials, and destructive cleanup need direct user
-authority.
+sibling is not authority over it. Deliver to `origin` `dev`.
+
+Promoting `dev` to `main` by a reviewed PR, with the branch's required checks
+green, is ordinary delivery and an orchestrator decision — you do not need your
+own user for it. What needs your user's DIRECT authority is the dangerous set:
+pushing straight to `main` or otherwise bypassing review, force-push, history
+rewrite, adding or changing remotes, credentials, and destructive cleanup. The
+gate is the nature of the operation, not the name of the branch.
+
+If a required check cannot pass, or the ruleset wants a human, that part goes to
+your user even though the decision to promote came from the orchestrator.
 
 Before removing any worktree, check it for uncommitted work. Branches with unique
 unmerged commits are unlanded work, not clutter — they stay.
