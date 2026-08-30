@@ -291,6 +291,14 @@ jobs:
       # checked out owned by the runner's uid), and run-e2e.sh Phase 25 deliberately exits
       # 1 whenever REPORT_WRITE_FAILURES>0 (LCLI-103 AC1) — so the job fails even when
       # every scenario passes, and the report artifact never exists on the host.
+      # Runs BEFORE the container build, deliberately: it is seconds rather than minutes, needs no
+      # Docker at all, and a broken assertion helper invalidates every case in the harness below.
+      # It proves each helper DISCRIMINATES -- reports FAIL when it should -- which nothing did
+      # before (LCLI-360). step_fail asserts a conjunction (exit code AND empty stdout AND a
+      # matching stderr envelope), so a dropped conjunct would let a whole class of cases pass
+      # vacuously with the suite still green. Each conjunct is violated independently.
+      - name: Prove the E2E assertion helpers discriminate
+        run: bash docker/e2e/selftest.sh
       - name: Build and run the E2E harness
         run: PUID="$(id -u)" PGID="$(id -g)" docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e
       # Always attempt this (even after a failing run above) — the structured

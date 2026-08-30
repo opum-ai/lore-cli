@@ -3,10 +3,10 @@ id: LCLI-360
 title: >-
   The docker e2e cases added for the lore init onboarding rebuild have never
   been executed
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-28 23:59'
-updated_date: '2026-08-30 00:10'
+updated_date: '2026-08-30 00:38'
 labels:
   - e2e
   - init
@@ -28,7 +28,7 @@ This matters more than usual because CLAUDE.md's own gate rules say a gate never
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 docker/e2e/run-e2e.sh runs to completion in the container with every case added by LCLI-358.1/.2/.3 and LCLI-356 reported in results/report.jsonl
+- [x] #1 docker/e2e/run-e2e.sh runs to completion in the container with every case added by LCLI-358.1/.2/.3 and LCLI-356 reported in results/report.jsonl
 - [ ] #2 Each of those cases is proven by a negative control: a deliberate violation makes it fail and names the offending condition
 <!-- AC:END -->
 
@@ -61,5 +61,35 @@ PROPOSED SPLIT, strongest-value-first:
 WHY 1 AND 2 BEFORE 3: a discriminating helper plus a non-vacuity assertion protects every case in the file, including ones added later by someone who never reads this task. Per-case controls protect exactly the cases they cover and rot as cases change. Do the general guarantee first; then the seven.
 
 HOST CONSTRAINT, unchanged: 'docker info' exits 1 on this development host, so all of this is authored blind and first observed in CI. That is precisely the argument for the selftest mode -- it turns 'I could not run it' into 'CI proves the harness can fail', which is the guarantee that was missing.
+---
+
+author: @claude
+created: 2026-08-30 00:38
+---
+PROGRESS 2026-08-29: steps 1 and 2 of the proposed approach are DONE and merged-pending; step 3 is NOT. AC#2 stays OPEN deliberately — read this before checking it.
+
+AC#1 CHECKED. Already true and recorded in the 2026-08-29 note: the docker e2e job runs these cases on every PR. Confirmed again today across #453, #455, #456, #457, #459 and #460.
+
+STEP 1 DONE — the helpers are now PROVEN to discriminate.
+Extracted log/record/step/step_json/step_fail/check/tally/critical from run-e2e.sh into docker/e2e/lib/steps.sh (one definition, two consumers — a second copy would be a fork that rots), and added docker/e2e/selftest.sh. It drives each helper with true/false/printf instead of lore and asserts the helper's OWN verdict in BOTH directions. 16 assertions.
+
+The point of the extraction is that the selftest needs NO container, NO lore binary and NO mutating work, so it runs on this development host — the one where 'docker info' exits 1. That converts this task's core complaint, 'authored blind and first observed in CI', into 'proven locally before it is pushed'. The cases still need the container; their helpers no longer do.
+
+step_fail got the most attention because it asserts a CONJUNCTION — expected exit code AND empty stdout AND a jq filter over the stderr envelope. Drop any single conjunct and a whole class of cases passes vacuously while the suite stays green. Each conjunct is violated INDEPENDENTLY, and the documented tolerance (advisory warning lines ahead of the envelope, since only the last stderr line is parsed) is separately pinned so a future 'tightening' cannot silently remove it.
+
+NEGATIVE CONTROLS RUN, because a gate never observed failing is not known to work:
+  baseline                                          selftest exit 0
+  drop step_fail's empty-stdout conjunct            exit 1, naming 'step_fail REJECTS non-empty stdout (conjunct 2)'
+  make step_json ignore its filter                  exit 1, naming TWO assertions
+  restored                                          exit 0
+Exit codes taken without a pipe.
+
+STEP 2 DONE (partially): the selftest asserts report.jsonl is non-empty and recorded a row per probe, so a run whose helpers execute without recording fails rather than reporting a clean sheet. The equivalent assertion for run-e2e.sh's own full run — an expected case COUNT — is NOT added yet and belongs with step 3.
+
+WIRED INTO CI ahead of the container build, deliberately: seconds rather than minutes, no Docker needed, and a broken assertion helper invalidates every case below it, so it should fail first and fast.
+
+WHAT REMAINS FOR AC#2 — step 3: per-case negative controls for the seven cases LCLI-358.1/.2/.3 and LCLI-356 added, plus the expected-case-count non-vacuity assertion for the full run. Steps 1 and 2 give a general guarantee that protects every case in the file including ones added later; step 3 gives per-case proof for the seven this task was opened about. Do not check AC#2 until step 3 lands — the general guarantee is not the same claim.
+
+Unrelated but found by this same harness today, and worth noting as evidence it earns its keep: it caught a real scoping defect in LCLI-364 that no unit test caught — 'lore init --claude' had begun reporting codex bridge files it was never asked about (case LCLI-298 AC3). Fixed, with a unit test added so the E2E is not the only thing holding it.
 ---
 <!-- COMMENTS:END -->

@@ -761,7 +761,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
   },
   {
     name: "agents",
-    summary: "Regenerate this bridge (SKILL.md + the CLAUDE.md nudge)",
+    summary: "Regenerate the agent bridges (SKILL.md + the CLAUDE.md/AGENTS.md nudge)",
     args: "",
     flags: [
       { name: "force", takesValue: false, summary: "Overwrite hand-edited generated files" },

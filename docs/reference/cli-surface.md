@@ -823,17 +823,35 @@ The agent bridge is CLI-generated, not a separate runtime (see
 
 ### `agents`
 
-Generate/refresh the Claude Code agent bridge: write
-`.claude/skills/lore/SKILL.md` (how an agent should drive lore) and a small
-`CLAUDE.md` nudge. (The `AGENTS.md` `@import` shim is deferred.) Idempotent —
+Generate/refresh the agent bridges: write `.claude/skills/lore/SKILL.md` (how
+an agent should drive lore) and a small `CLAUDE.md` nudge. Idempotent —
 regenerating with no change is byte-identical.
+
+**The Codex bridge is covered too, but only where one already exists**
+(LCLI-364). When `.codex/skills/lore/SKILL.md` is present, or `AGENTS.md`
+carries the `lore:agents` managed block, both are planned and checked exactly
+like their Claude counterparts. A repository that never opted into Codex has
+neither, so nothing codex-related is reported or created and the run stays at
+exit `0`.
+
+This applies to `lore agents`, which means "the bridges are current" — **not**
+to `lore init --claude`, which is a scoped request for the Claude bridge and
+reports only its two files. `lore init --codex` owns the other half.
+
+That conditional is the design, not an optimization. Checking unconditionally
+would report `created` — drift — for every Claude-only repository, turning the
+CI gate into one everybody disables. `lore init --codex` is what opts a
+repository in; from then on its Codex bridge is held to the same standard as
+its Claude one. Either artifact alone arms the check: an `AGENTS.md` block whose
+`SKILL.md` was deleted is exactly the drift worth catching, and so is the
+reverse.
 
 | | |
 |---|---|
 | **Args** | none |
 | **Key flags** | `--force` (overwrite hand-edited generated files) · `--check` (report drift without writing — CI gate for a stale bridge) |
-| **Output** | `kind: agents.result` — files written/updated |
-| **Exit** | `0` ok · `6` `--check` found the bridge out of date |
+| **Output** | `kind: agents.result` — each bridge file and what happened to it, so a failing `--check` names the artifact that drifted |
+| **Exit** | `0` ok · `6` `--check` found a bridge out of date |
 
 ### `instructions`
 
