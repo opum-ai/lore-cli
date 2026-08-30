@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { commandHandlerNames, run } from "../src/cli";
 import { type HelpOptions, renderTopLevelHelp, runHelp } from "../src/commands/help";
 import { LORE_COMMANDS } from "../src/core/agent-bridge";
@@ -127,13 +129,26 @@ describe("core/manifest — shape and invariants", () => {
     }
   });
 
-  test("each command's declared kind matches the live handler's emitted kind (golden cross-check)", () => {
-    // The golden set is transcribed directly from each command handler's own `kind: "…"`
-    // literal (e.g. src/commands/check.ts's `kind: "check.report"`, src/commands/link.ts's
-    // `reportRenderable("link.result", …)` call site). It is INDEPENDENT of manifest.ts's
-    // `kind` field — mirroring the exitCodes golden cross-check above — so a manifest entry
-    // hand-edited (or left stale) to a `kind` the handler doesn't actually emit fails here,
-    // where test/help.test.ts:45-51 only ever checked `kind.length > 0`.
+  test("each command's declared kind matches an independently transcribed golden (manifest-drift cross-check)", () => {
+    // NAME CORRECTED (LCLI-365). This test used to be called "matches the live handler's emitted
+    // kind", which it does NOT do and never did. The golden set below is TRANSCRIBED BY HAND from
+    // each handler's own `kind: "…"` literal (e.g. src/commands/check.ts's `kind: "check.report"`,
+    // src/commands/link.ts's `reportRenderable("link.result", …)` call site). Nothing here runs a
+    // handler or reads an emitted envelope.
+    //
+    // What it therefore DOES catch: a manifest entry hand-edited, or left stale, to a kind that
+    // disagrees with the handler source — one-sided drift between two independent transcriptions,
+    // which is real and is LCLI-350's exact failure. Worth keeping.
+    //
+    // What it CANNOT catch: a handler whose `kind:` literal changes. The manifest and this golden
+    // then go stale together and agree with each other, and two documents agreeing prove nothing
+    // about what the command emits. That is the "gate validating the claim instead of the artifact"
+    // shape in CLAUDE.md, and it fails GREEN.
+    //
+    // Live coverage — a real envelope compared against the manifest — exists for exactly TWO of the
+    // 29 commands (`init` and `new`, in test/cli.test.ts). The other 27 are covered only by the
+    // transcription below. LCLI-365 tracks closing that; until it does, do not read a pass here as
+    // evidence that a command emits what it declares.
     const golden: Record<string, string> = {
       init: "init.result",
       backlog: "backlog.adoption.preview",
@@ -462,5 +477,64 @@ describe("cli — help wiring", () => {
     run(argv("help"), { stdout: viaCommand, stderr: capture(), isTTY: false, env: {} });
     expect(viaFlag.text()).toContain("lore <command> [options]");
     expect(viaCommand.text()).toContain("lore <command> [options]");
+  });
+});
+
+describe("the kinds the docker E2E observes from the real binary are manifest-declared (LCLI-365)", () => {
+  /**
+   * The missing edge. `docker/e2e/run-e2e.sh` asserts `.kind == "..."` against the REAL binary's
+   * `--json` output, so those literals are content-derived: CI proves the binary emits them.
+   * `manifest.ts` separately declares a kind per command. Nothing compared the two sets, so a
+   * handler could change and both literals be updated while the manifest went stale — two
+   * documents agreeing with each other, the shape CLAUDE.md records as "validating the claim
+   * instead of the artifact".
+   *
+   * This closes that direction: every kind the harness observes must be one the manifest declares.
+   * It is deliberately ONE direction — the reverse (every declared kind is observed) would need a
+   * per-case command mapping the harness does not expose, and guessing one would be more fragile
+   * than useful. LCLI-365 tracks the stronger form, where the harness reads the declared kind from
+   * `lore --json help` at run time instead of from a literal.
+   */
+  const E2E_SCRIPT = join(import.meta.dir, "..", "docker", "e2e", "run-e2e.sh");
+
+  /**
+   * Every kind the manifest declares, across the WHOLE contract — not just `commands[]`.
+   *
+   * Reading only `commands[]` is what made the first version of this test unable to notice
+   * LCLI-366 being fixed: the fix declares the kind on `globalFlags[].kind`, so a commands-only
+   * set stayed unchanged and the "self-expiring" exemption would have quietly outlived its reason.
+   * An incomplete view of the contract turns an exemption into a permanent carve-out, which is the
+   * failure the exemption was supposed to be protected against. Keep this function the single
+   * definition of "declared", and widen it whenever the contract grows a new place to declare one.
+   */
+  function declaredKinds(): Set<string> {
+    const manifest = buildManifest();
+    const declared = new Set<string>();
+    for (const command of manifest.commands) {
+      declared.add(command.kind);
+      for (const extra of command.resultKinds ?? []) declared.add(extra);
+    }
+    for (const flag of manifest.globalFlags) {
+      if (flag.kind !== undefined) declared.add(flag.kind);
+    }
+    return declared;
+  }
+
+  test("every kind asserted against the real binary is declared by the manifest", () => {
+    const script = readFileSync(E2E_SCRIPT, "utf8");
+    const observed = new Set([...script.matchAll(/\.kind == "([a-z][a-z.]*)"/g)].map((m) => m[1] as string));
+    // Non-vacuity: a regex that silently stopped matching would make this pass while asserting
+    // nothing, which is the exact defect this test exists to prevent.
+    expect(observed.size).toBeGreaterThanOrEqual(15);
+
+    const undeclared = [...observed].filter((k) => !declaredKinds().has(k)).sort();
+    expect(undeclared).toEqual([]);
+  });
+
+  test("the exemption set is empty — LCLI-366 closed the only gap, and a new one must be argued for", () => {
+    // There is no exemption list any more, and that is the assertion. Reintroducing one means
+    // adding a carve-out to a gate, which should be a visible, reviewed change rather than a
+    // constant quietly gaining an entry.
+    expect(declaredKinds().has("version")).toBe(true);
   });
 });
