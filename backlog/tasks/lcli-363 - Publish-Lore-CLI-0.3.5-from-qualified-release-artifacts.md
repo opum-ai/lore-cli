@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-30 00:07'
-updated_date: '2026-08-30 03:57'
+updated_date: '2026-08-30 05:49'
 labels:
   - release
   - quest
@@ -236,5 +236,34 @@ THE MOST IMPORTANT LINE IN THEIR REPORT IS THE ONE ABOUT THEIR OWN ERROR. An ear
 They also named the check that would have caught it independently: when the packages publish, the PUBLISHED TARBALLS, THE RECEIPT AND THE BUNDLE must all carry the same six digests. That is a three-way agreement, not two documents agreeing, and it is worth building into AC#6's rank-1 re-run rather than treating that re-run as a formality.
 
 AC#6 REMAINS OPEN and this does not close it: it asks for a re-run against the PUBLISHED release at rank 1 (registry install). This is rank 2 against candidates. opum-cli-e2e will run it and bind the receipt once both packages are on the registry.
+---
+
+author: @claude
+created: 2026-08-30 05:49
+---
+FIRST EVER publish:true DISPATCH — 2026-08-30, run 33295294957. It FAILED, nothing was published, and it found a real bug that had been sitting in the release workflow since the day it was written.
+
+WHAT HAPPENED. Every job passed — matrix, verify-versions, both Ladybug qualifications, all six matching-host platform qualifications, evidence assembly, and package + install-sanity. Then the publish job died on the FIRST platform package:
+
+  npm error code 128
+  npm error command git --no-replace-objects ls-remote ssh://git@github.com/dist-npm/opum-ai-lore-darwin-arm64-0.3.5.tgz.git
+  npm error git@github.com: Permission denied (publickey).
+
+THE CAUSE IS NOT CREDENTIALS. npm parses a BARE RELATIVE PATH CONTAINING A SLASH as a GitHub shorthand. 'npm publish dist-npm/x.tgz' resolves to 'github:dist-npm/x.tgz' and tries to git-clone it. The workflow built its list as all_tgz=(dist-npm/*.tgz), so every path it published had that shape.
+
+REPRODUCED LOCALLY AND THE FIX VERIFIED, both without touching the registry:
+  npm publish --dry-run dist-npm/<tarball>    -> EALLOWGIT, 'Refusing to fetch github:dist-npm/...'
+  npm publish --dry-run ./dist-npm/<tarball>  -> npm notice name: @opum-ai/lore-darwin-arm64, version 0.3.5
+The './' prefix forces the file interpretation. Fixed at .github/workflows/release.yml by changing the glob to './dist-npm/*.tgz', with the reason recorded inline so nobody 'tidies' it away. Verified the platform/root classification still works with the prefix — its patterns are '*-<name>-*', unaffected.
+
+WHY THIS MATTERS BEYOND THE ONE-CHARACTER FIX. This job had NEVER RUN. LCLI-278 prohibited publish:true from the day the workflow was written, so the only job that exists solely to run at release time was never executed even once. Every other job in that workflow has run on every dispatch; this one was written, reviewed, and shipped untested. A prohibition intended to control WHO can release also prevented anyone from learning whether the release path worked at all.
+
+That is worth stating as a general lesson rather than a one-off: a gate that blocks an action also blocks the evidence that the action works. If a control must stay, the guarded path still needs a rehearsal mode — which is exactly what publish:false gives for build and package, and did not give for publish.
+
+MY OWN ERROR WORTH RECORDING: I spent hours attributing the publish failure to credentials, and the local script's 404 genuinely was a token problem — but the WORKFLOW's failure was not, and I could have discovered that at any point by dispatching. I treated 'the owner must configure trusted publishing first' as a precondition for learning anything, when a dispatch was free, non-destructive, and diagnostic. The publish job fails closed and runs last, so the cost of trying was one CI run.
+
+STILL NOT PUBLISHED: registry shows lore 0.3.4, and @opum-ai/lore-darwin-arm64@0.3.5 absent. Nothing partial landed — the loop stops before the launcher by design, and it stopped on the first package.
+
+NEXT: re-dispatch on the tag once the path fix is on main. Whether OIDC trusted publishing is configured is STILL UNKNOWN — this run never reached npm's auth layer, because it failed while resolving the package spec.
 ---
 <!-- COMMENTS:END -->

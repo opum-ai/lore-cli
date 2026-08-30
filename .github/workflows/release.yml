@@ -717,7 +717,19 @@ jobs:
           read -r -a platform_names <<< "$PLATFORM_NAMES_SPACE"
           expected_platform_count=${#platform_names[@]}
           expected_total_count=$((expected_platform_count + 1))
-          all_tgz=(dist-npm/*.tgz)
+          # `./` is LOAD-BEARING, not style. npm parses a bare relative path containing a slash
+          # as a GitHub shorthand: `npm publish dist-npm/x.tgz` resolves to
+          # `github:dist-npm/x.tgz` and fails trying to `git ls-remote
+          # ssh://git@github.com/dist-npm/x.tgz.git`. The `./` prefix forces the file
+          # interpretation. Reproduced locally on 2026-08-30: the bare form errors EALLOWGIT
+          # ("Refusing to fetch github:dist-npm/..."), the `./` form reads the tarball and
+          # reports the right name and version.
+          #
+          # This bit the FIRST EVER `publish: true` dispatch (run 33295294957) -- every job
+          # before it passed, then the publish died on the first platform package. The path had
+          # never been exercised because LCLI-278 prohibited that input, so a bug in the one job
+          # that only runs at release time sat here from the day it was written.
+          all_tgz=(./dist-npm/*.tgz)
           if [ "${#all_tgz[@]}" -ne "$expected_total_count" ]; then
             echo "::error::expected ${expected_total_count} tarballs in dist-npm (${expected_platform_count} platform + 1 launcher), found ${#all_tgz[@]}"
             ls -la dist-npm
