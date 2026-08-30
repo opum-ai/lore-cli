@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { commandHandlerNames, run } from "../src/cli";
 import { type HelpOptions, renderTopLevelHelp, runHelp } from "../src/commands/help";
 import { LORE_COMMANDS } from "../src/core/agent-bridge";
@@ -475,5 +477,67 @@ describe("cli — help wiring", () => {
     run(argv("help"), { stdout: viaCommand, stderr: capture(), isTTY: false, env: {} });
     expect(viaFlag.text()).toContain("lore <command> [options]");
     expect(viaCommand.text()).toContain("lore <command> [options]");
+  });
+});
+
+describe("the kinds the docker E2E observes from the real binary are manifest-declared (LCLI-365)", () => {
+  /**
+   * The missing edge. `docker/e2e/run-e2e.sh` asserts `.kind == "..."` against the REAL binary's
+   * `--json` output, so those literals are content-derived: CI proves the binary emits them.
+   * `manifest.ts` separately declares a kind per command. Nothing compared the two sets, so a
+   * handler could change and both literals be updated while the manifest went stale — two
+   * documents agreeing with each other, the shape CLAUDE.md records as "validating the claim
+   * instead of the artifact".
+   *
+   * This closes that direction: every kind the harness observes must be one the manifest declares.
+   * It is deliberately ONE direction — the reverse (every declared kind is observed) would need a
+   * per-case command mapping the harness does not expose, and guessing one would be more fragile
+   * than useful. LCLI-365 tracks the stronger form, where the harness reads the declared kind from
+   * `lore --json help` at run time instead of from a literal.
+   */
+  const E2E_SCRIPT = join(import.meta.dir, "..", "docker", "e2e", "run-e2e.sh");
+
+  /**
+   * The single exemption, justified individually and pinned so a second one is a visible failure
+   * rather than a silent widening.
+   *
+   * `version` — `lore --version --json` emits `{kind: "version"}`, but the manifest declares
+   * `--version` only as a global FLAG and never states that it produces an envelope. That is a
+   * real registry-vs-runtime gap (LCLI-366), not a quirk of this test, and closing it needs a
+   * modelling decision about whether emissions can hang off a flag. Remove this entry when
+   * LCLI-366 lands; do not add to it to make a future failure go away.
+   */
+  const KNOWN_UNDECLARED = new Set(["version"]);
+
+  test("every kind asserted against the real binary is declared by the manifest", () => {
+    const script = readFileSync(E2E_SCRIPT, "utf8");
+    const observed = new Set([...script.matchAll(/\.kind == "([a-z][a-z.]*)"/g)].map((m) => m[1] as string));
+    // Non-vacuity: a regex that silently stopped matching would make this pass while asserting
+    // nothing, which is the exact defect this test exists to prevent.
+    expect(observed.size).toBeGreaterThanOrEqual(15);
+
+    const manifest = buildManifest();
+    const declared = new Set<string>();
+    for (const command of manifest.commands) {
+      declared.add(command.kind);
+      for (const extra of command.resultKinds ?? []) declared.add(extra);
+    }
+
+    const undeclared = [...observed].filter((k) => !declared.has(k) && !KNOWN_UNDECLARED.has(k)).sort();
+    expect(undeclared).toEqual([]);
+  });
+
+  test("the pinned exemption is still real — it fails the moment LCLI-366 is fixed, forcing its removal", () => {
+    // An exemption that outlives its reason is how a carve-out becomes permanent. This asserts the
+    // gap still exists, so fixing LCLI-366 turns this test red and makes deleting the entry a
+    // required step rather than an optional tidy-up.
+    const declared = new Set<string>();
+    for (const command of buildManifest().commands) {
+      declared.add(command.kind);
+      for (const extra of command.resultKinds ?? []) declared.add(extra);
+    }
+    for (const exempt of KNOWN_UNDECLARED) {
+      expect(declared.has(exempt)).toBe(false);
+    }
   });
 });
