@@ -133,49 +133,20 @@ hr
 if ! npm ping >/dev/null 2>&1; then
   die "cannot reach registry.npmjs.org -- check the network before blaming credentials"
 fi
-if [ -z "$(npm config get //registry.npmjs.org/:_authToken 2>/dev/null | tr -d '[:space:]')" ]; then
-  cat >&2 <<'HELP'
-ERROR: no registry.npmjs.org token is configured.
-ONE-TIME SETUP (no OTP needed afterwards):
-
-  1. Open https://www.npmjs.com/settings/~/tokens  (avatar → Access Tokens)
-  2. "Generate New Token" → "Granular Access Token"
-       Name        : lore-cli release
-       Expiration  : your choice (90 days is a reasonable default)
-       Packages    : "Select packages" → the seven @opum-ai/lore* packages,
-                     or choose the @opum-ai scope to cover future ones
-       Permissions : Read and write
-     (A classic "Automation" token also works and never expires. Granular is
-      preferred: scoped to these packages and revocable without affecting anything else.)
-  3. Copy the token — it is shown exactly once.
-  4. Store it in the macOS Keychain (recommended — no plaintext token on disk):
-
-       security add-generic-password -U -s npm-opum-ai-publish -a "$USER" -w
-
-     ...then paste the token at the prompt and press Return.
-
-     If that fails with "User interaction is not allowed", the login keychain is
-     locked and cannot prompt. Either unlock it first:
-
-       security unlock-keychain ~/Library/Keychains/login.keychain-db
-
-     ...or skip the keychain entirely and store the token in ~/.npmrc, which is
-     equally durable and is what this script falls back to:
-
-       npm config set //registry.npmjs.org/:_authToken=<token>
-
-     Or, for one shell only:  export NPM_TOKEN=<token>
-
-  5. Re-run this script.
-
-Why not `npm login`? A web login is still subject to "require 2FA for writes", so every
-publish and every dist-tag move would prompt for an OTP. Granular/automation tokens bypass
-that by design — that is what makes this durable.
-HELP
-  exit 1
-fi
-say "registry reachable; a token is configured. Write permission is proven by the first publish,"
-say "not before it -- a 404 on PUT there means the token lacks publish rights on that package."
+# NO TOKEN-PRESENCE CHECK. `npm config get //registry.npmjs.org/:_authToken` returns EMPTY even
+# when a valid token is configured -- npm redacts auth values rather than printing them. Gating on
+# that is a false negative that blocks a correctly configured machine, which is what happened on
+# the second real run (2026-08-29). Reading ~/.npmrc directly is no better: npm merges several
+# config sources and the token may legitimately live in any of them, or in an env var.
+#
+# So detection is abandoned rather than approximated. Three failed forms are now on record --
+# whoami (too strict), owner ls (vacuous), config get (false negative) -- and the lesson common to
+# all three is that this script cannot cheaply observe what it actually needs, which is WRITE
+# PERMISSION on seven specific packages. Only writing observes that. The publish loop below fails
+# closed and stops before the root launcher, so letting it be the authority costs one refused
+# package and leaves nothing behind.
+say "registry reachable. Auth is NOT pre-checked: write permission is only observable by writing."
+say "A 404 on PUT below means the token lacks publish rights on that package -- not that it is missing."
 
 # ── Registry state ──────────────────────────────────────────────────────────
 published() { npm view "$1@$VERSION" version >/dev/null 2>&1; }
