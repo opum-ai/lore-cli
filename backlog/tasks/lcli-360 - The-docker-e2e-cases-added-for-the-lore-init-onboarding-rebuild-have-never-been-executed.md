@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-08-28 23:59'
-updated_date: '2026-08-30 01:08'
+updated_date: '2026-08-30 01:13'
 labels:
   - e2e
   - init
@@ -141,5 +141,19 @@ A SELF-CORRECTION WORTH RECORDING. Adding these probes broke the selftest's own 
 Also pinned statically in test/docker-e2e-guard.test.ts: the floor is called from Phase 25, defined in the library, and referenced by the selftest — so a future refactor that inlines it (making it untestable again) fails a unit test.
 
 AC#2 REMAINS OPEN. Steps 1 and 2 give a GENERAL guarantee covering every case in the file, including ones added later. Step 3 — per-case negative controls for the seven LCLI-358.1/.2/.3 and LCLI-356 cases — is a different and narrower claim, and AC#2 asks for that one. Do not check it on the strength of this.
+---
+
+author: @claude
+created: 2026-08-30 01:13
+---
+CI CONFIRMATION 2026-08-29: the non-vacuity floor is live and ran on the real harness. Merged as dev d91ac8e (PR #463, all 8 checks green).
+
+  harness selftest: 22 ok, 0 bad          <- includes the six new assert_non_vacuous probes
+  E2E summary: 353 passed, 0 failed       <- 353 against a floor of 330, so the floor is armed
+                                             with 23 cases of headroom and did not fire spuriously
+
+Both halves of the guard are now observed working in the environment they protect, not just on a developer host: the selftest proves the floor DISCRIMINATES (it rejects 329, a truncated run, and zero cases), and the real run proves it does not fire on a healthy suite. A guard that only ever passes is indistinguishable from one that cannot fail; these two observations together rule that out.
+
+Steps 1 and 2 are complete. AC#2 remains open for step 3 — per-case negative controls for the seven LCLI-358.1/.2/.3 and LCLI-356 cases. That is a narrower claim than the general guarantee steps 1-2 provide, and it is the one AC#2 actually asks for.
 ---
 <!-- COMMENTS:END -->
