@@ -3,11 +3,11 @@ id: LCLI-364
 title: >-
   The codex bridge has no drift gate, so AGENTS.md and .codex/skills rot
   silently
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-30 00:19'
-updated_date: '2026-08-30 00:38'
+updated_date: '2026-08-30 00:48'
 labels:
   - agents
   - codex
@@ -80,5 +80,24 @@ WHY MY OWN TESTS MISSED IT. All seven tests I wrote asked whether the gate FIRES
 THE FIX. Codex coverage is now opt-in through ApplyAgentsOptions.includeCodex, set ONLY by runAgents. 'lore agents' means 'the bridges are current' and wants both; 'lore init --claude' does not, and now gets exactly its two files again. A unit test asserts BOTH directions — applyAgentsBridge's default reports the two Claude files, and 'lore agents --check' reports four — so this is no longer held only by the E2E. docs/reference/cli-surface.md states the distinction explicitly.
 
 THIS IS THE SECOND BUG THE NEGATIVE CASE CAUGHT IN THIS ONE CHANGE. The first was the undefined-vs-null slip in hasCodexBridge, caught by 'a Claude-only repository stays at exit 0'. Both were cases of the change reaching further than intended, and in both the assertions about the intended behaviour all passed. Worth remembering when extending a shared helper: the risk is not that the new path is wrong, it is that an existing caller silently acquires it.
+---
+
+author: @claude
+created: 2026-08-30 00:48
+---
+CLOSED 2026-08-29, merged as dev 3d7efdd (PR #460, all 8 CI checks green).
+
+CI evidence, the part that matters:
+  harness selftest: 16 ok, 0 bad          <- the new gate RAN in CI and passed
+  E2E summary: 353 passed, 0 failed       <- up from 352 passed / 1 failed on the broken version
+
+Read that 352/1 -> 353/0 literally: the failing row was LCLI-298 AC3, which caught my scoping defect, and it is green again because the defect was FIXED, not because the assertion was relaxed.
+
+THREE DEFECTS WERE FOUND AND FIXED INSIDE THIS ONE CHANGE, all the same shape — the change reaching somewhere it was not meant to:
+1. undefined-vs-null in hasCodexBridge. readFileIfPresent signals absence with 'undefined', so '!== null' was TRUE for a missing file: it armed the codex half in every Claude-only repository and created the very .codex/ tree whose absence should have disarmed it. Caught by the negative-case unit test ('a Claude-only repository stays at exit 0').
+2. Scoping. applyAgentsBridge is shared with 'lore init --claude', so unconditional coverage made a scoped request report and regenerate files nobody asked about. Caught by the docker E2E; NO unit test caught it.
+3. The extracted lib was never COPYed into the image, so run-e2e.sh died at startup — and because 'set -uo pipefail' omits -e, it KEPT RUNNING with every helper undefined, hundreds of 'command not found' lines, asserting nothing. Caught by CI, and it is why the script now fails closed on an unreadable library.
+
+In all three, every assertion about the INTENDED behaviour passed. The durable lesson: when extending a shared helper, the risk is not that the new path is wrong — it is that an existing caller silently acquires it. Test the callers you did not change.
 ---
 <!-- COMMENTS:END -->
