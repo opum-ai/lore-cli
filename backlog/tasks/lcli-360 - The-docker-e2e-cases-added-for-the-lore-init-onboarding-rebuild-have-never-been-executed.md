@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-28 23:59'
-updated_date: '2026-08-29 05:49'
+updated_date: '2026-08-30 00:10'
 labels:
   - e2e
   - init
@@ -37,3 +37,29 @@ This matters more than usual because CLAUDE.md's own gate rules say a gate never
 <!-- SECTION:NOTES:BEGIN -->
 2026-08-29: the premise 'never executed' is now too strong. The docker e2e harness job passed on PRs #445, #446, #447, and #449 — CI runs these cases on every PR. What remains true is that they have never run on this development host (`docker info` exits 1 here), so a local pre-push run cannot exercise them and a failure is only discovered in CI. Scope this task to that gap.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: @claude
+created: 2026-08-30 00:10
+---
+Approach proposal, 2026-08-29, written after reading docker/e2e/run-e2e.sh rather than from the task text. Not started -- recording it so whoever picks this up does not re-derive it, and so the scope decision is made deliberately.
+
+AC#1 IS ALREADY SATISFIED and the 2026-08-29 note above says so: the docker e2e harness job runs these cases on every PR and passed again today on #453, #454, #455 and the #457 promotion. What is left is AC#2 alone: each case proven by a negative control.
+
+THE HONEST DIFFICULTY. A case here is three things -- a helper (step / step_json / step_fail), an expected value, and a command. A 'negative control per case' read literally means 30-odd deliberately-violated variants, which is a large amount of throwaway assertion code that then has to be maintained. Read too loosely, it becomes 'we eyeballed it', which is the false-clear this task exists to prevent.
+
+PROPOSED SPLIT, strongest-value-first:
+
+1. HELPER DISCRIMINATION (cheap, high value, do this first). Add a self-test mode -- RUN_SELFTEST=1 or a --selftest flag -- that exercises each helper against a deliberately wrong expectation and asserts it reports FAIL, not PASS. Specifically: step with a command whose real exit differs from expected; step_json with a filter that is false against real output AND with a command that exits non-zero while the filter would match; step_fail with each of its three conjuncts violated INDEPENDENTLY -- wrong exit code, non-empty stdout, and a filter that does not match the envelope. That third one matters most: step_fail asserts a conjunction, so a helper bug that silently drops one conjunct would let a whole class of cases pass vacuously, and nothing in the current suite would notice. opum-cli-e2e did exactly this shape for its own harness today (their selftest went 344 -> 357 assertions with a negative control that names both digests) -- copy the pattern, not the code.
+
+2. NON-VACUITY. Assert the run executed the expected number of cases and that results/report.jsonl is non-empty with no case name appearing zero times. A mis-globbed or early-exiting run must FAIL rather than report a clean sheet. CLAUDE.md's gate rules call this out specifically and the harness does not currently do it.
+
+3. PER-CASE CONTROLS for the seven LCLI-358.1/.2/.3 and LCLI-356 cases only -- the ones this task was actually opened about -- rather than all thirty. Each gets one deliberate violation proving the case fails AND that the failure names the offending condition.
+
+WHY 1 AND 2 BEFORE 3: a discriminating helper plus a non-vacuity assertion protects every case in the file, including ones added later by someone who never reads this task. Per-case controls protect exactly the cases they cover and rot as cases change. Do the general guarantee first; then the seven.
+
+HOST CONSTRAINT, unchanged: 'docker info' exits 1 on this development host, so all of this is authored blind and first observed in CI. That is precisely the argument for the selftest mode -- it turns 'I could not run it' into 'CI proves the harness can fail', which is the guarantee that was missing.
+---
+<!-- COMMENTS:END -->

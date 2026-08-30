@@ -5,6 +5,7 @@ status: To Do
 assignee:
   - '@claude'
 created_date: '2026-08-30 00:07'
+updated_date: '2026-08-30 00:09'
 labels:
   - release
   - quest
@@ -42,3 +43,35 @@ Do NOT publish a locally packed tarball. The runbook is explicit: the Release wo
 - [ ] #5 docs/reference/lore-cli-release-truth.md is updated from candidate to released with the immutable tag, workflow run, registry, and install evidence, and a non-draft non-prerelease GitHub Release exists for v0.3.5
 - [ ] #6 opum-cli-e2e re-runs the 407-row matrix against the published 0.3.5 at rank-1 (registry install), closing LCLI-363 on published-artifact evidence
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: @claude
+created: 2026-08-30 00:09
+---
+MECHANICS FROM THE 0.3.4 PRECEDENT (LCLI-355), recorded before execution so the operator is not surprised mid-release. The publish is TWO PHASES, not one, and my AC list above collapses them — read this alongside it.
+
+Phase A: publish the artifacts. The Release workflow's npm-packages artifact holds the seven .tgz files. Publish those exact files — never a locally rebuilt tarball, and never 'npm pack' output. Order: all six platform packages first, @opum-ai/lore LAST, so the launcher never resolves before its binary exists. At 0.3.4 these landed under a 'release-candidate' dist-tag rather than 'latest'.
+
+Phase B: move the 'latest' dist-tag, and this is where 0.3.4 stalled. Every dist-tag move needs a fresh OTP:
+
+  npm dist-tag add @opum-ai/lore-darwin-arm64@0.3.5 latest --otp=<code>
+  npm dist-tag add @opum-ai/lore-darwin-x64@0.3.5   latest --otp=<code>
+  npm dist-tag add @opum-ai/lore-linux-arm64@0.3.5  latest --otp=<code>
+  npm dist-tag add @opum-ai/lore-linux-x64@0.3.5    latest --otp=<code>
+  npm dist-tag add @opum-ai/lore-win32-arm64@0.3.5  latest --otp=<code>
+  npm dist-tag add @opum-ai/lore-win32-x64@0.3.5    latest --otp=<code>
+  npm dist-tag add @opum-ai/lore@0.3.5              latest --otp=<code>
+
+At 0.3.4 an agent probe hit EOTP ('this operation requires a one-time password'). The correct handling was recorded there and should be repeated: FAIL CLOSED after exactly one attempt. No retry loop, no browser or MFA interaction, no attempt to source a code. The operator runs these; an agent's only job afterwards is read-only verification.
+
+Verification after Phase B, read-only:
+  npm view @opum-ai/lore dist-tags          # and each of the six platform packages
+Expect latest=0.3.5 on all seven.
+
+PRECONDITION WORTH REPEATING FROM 0.3.4: before moving any tag, prove the registry artifacts byte-match the qualified candidate — compare npm_shasum and npm_integrity for each of the six platform packages against the Release run's provenance. 0.3.4 did exactly this and recorded all six digests. A dist-tag move is the point of no return for users; verify the bytes first.
+
+Also still required and easy to forget: a non-draft, non-prerelease GitHub Release for v0.3.5 at the qualified source commit (AC#5 above), and the release-truth record flipped from 'candidate' to 'released'. The release-truth entry I wrote today says explicitly 'Not yet published' — that sentence must be replaced, not merely supplemented, or the bundle's single source of published-version truth will be lying.
+---
+<!-- COMMENTS:END -->
