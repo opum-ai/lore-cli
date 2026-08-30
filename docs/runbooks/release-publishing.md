@@ -555,10 +555,21 @@ publish is explicitly marked public. Root `package.json` and all six
    be attached to it, which is the same constraint the `0.1.0` first-release
    exception above describes.
 
-   This changes nothing about LCLI-278. Trusted publishing fixes
-   *authentication*, not *approval*: the `release` environment still has no
-   protection rules, so a `publish: true` dispatch remains prohibited on the
-   grounds stated there, not on credential grounds.
+   **The `publish: true` prohibition was lifted by owner decision on 2026-08-29**
+   (recorded on LCLI-278). Trusted publishing fixes *authentication*, not
+   *approval*: the `release` environment still has no protection rules and
+   administrator bypass, so a dispatch has no second-party approval. That
+   exposure was weighed and accepted, because the alternative was not a safer
+   publish but a publish that keeps failing — a credential that expires inside a
+   quarter and strands the release when it does. **LCLI-278 stays open**: the
+   control it asks for still does not exist, and if the billing plan later
+   supports required reviewers, configure one and the waiver stops being needed.
+
+   Once trusted publishing is configured, a release is one dispatch:
+
+   ```
+   gh workflow run release.yml --ref v<version> -f publish=true
+   ```
 
    **If you must use a token anyway: a granular access token, not `npm login`.** A web login
    is still subject to "require 2FA for writes", so every publish and every
