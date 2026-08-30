@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-30 00:07'
-updated_date: '2026-08-30 02:36'
+updated_date: '2026-08-30 03:57'
 labels:
   - release
   - quest
@@ -208,5 +208,33 @@ THE ANSWER IS TRUSTED PUBLISHING (OIDC), AND THIS REPOSITORY IS ALREADY BUILT FO
 WHAT IT DOES NOT SOLVE: LCLI-278. Trusted publishing fixes AUTHENTICATION, not approval. The release environment still has zero protection rules with administrator bypass, so anyone who can dispatch the workflow can publish. Smaller exposure than a long-lived token in a file, but a deliberate trade rather than a free win.
 
 Also observed while researching: 'gh api repos/opum-ai/lore-cli --jq .private' returns FALSE. CLAUDE.md states this repository is private. That is drift, reported rather than silently corrected — and it matters here, because npm provenance requires a public source repository, so the public state is what makes provenance work.
+---
+
+author: @claude
+created: 2026-08-30 03:57
+---
+PAIR QUALIFICATION COMPLETE, 2026-08-29 — 402 rows, 402 PASS, 0 FAIL, 0 BLOCKED, runner exit 0. opum-cli-e2e reports this is the FIRST fully qualified run that harness has produced; bin/opum-e2e.mjs exits 0 only when every row passes and never had before.
+
+WHAT WAS MEASURED:
+  quest 0.3.0  candidate bundle, sourceCommit 98ab4c7858ce, CI run 33288065896, native sha256 6a6267dfaa77
+  lore  0.3.5  packed candidate, commit 557f152, launcher sha256 0259e7748f77
+  scale        10,000 tasks / 100,001 mutating operations, 0 hard failures, integrity allOk, 67.9 min,
+               BOUND BY DIGEST rather than by launcher path
+  per surface  contract/lore 39, cross-product 20, lore/lifecycle 27, lore/retrieval 32,
+               lore/workspace 15, packaging 42, identity 17, parity/backlog 39 — all green
+  vs baseline  FIXED 11, REGRESSED 0, OTHER 0, ADDED 22, REMOVED 27, every removed row accounted
+               for BY NAME in the evidence README rather than by a bare --allow-removed
+Evidence at opum-cli-e2e evidence/pair-quest030-lore035/ (commit c69b58a).
+
+WHAT IT DOES NOT SAY, and this is recorded verbatim because the wording was argued over and agreed across three sessions:
+- Packaging shape is 'six targets attested -> ONE TARGET EXECUTED PLUS SIX ARTIFACTS DIGEST-BOUND. Stronger for darwin-arm64, silent for the other five.' The native-execution receipt covers those five and validates independently, but was deliberately NOT bound here because it attests an unpublished 0.3.0.
+- It says NOTHING about soak. One host, one run, no time-in-use.
+- NEITHER PACKAGE IS PUBLISHED. This qualifies CANDIDATES, not a release. Do not cite it as release evidence.
+
+THE MOST IMPORTANT LINE IN THEIR REPORT IS THE ONE ABOUT THEIR OWN ERROR. An earlier bundle at sourceCommit 5ef5e578 was MISATTRIBUTED — 0 of 6 digests matched the receipt — and it had also produced a 402-row run. They are explicitly NOT citing that run as qualification, and they put both facts in the record rather than only the good one. A green number from a misattributed artifact is precisely the false clear this whole day's work has been about, and they caught it in their own evidence and disclosed it unprompted.
+
+They also named the check that would have caught it independently: when the packages publish, the PUBLISHED TARBALLS, THE RECEIPT AND THE BUNDLE must all carry the same six digests. That is a three-way agreement, not two documents agreeing, and it is worth building into AC#6's rank-1 re-run rather than treating that re-run as a formality.
+
+AC#6 REMAINS OPEN and this does not close it: it asks for a re-run against the PUBLISHED release at rank 1 (registry install). This is rank 2 against candidates. opum-cli-e2e will run it and bind the receipt once both packages are on the registry.
 ---
 <!-- COMMENTS:END -->
