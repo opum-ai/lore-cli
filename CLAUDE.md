@@ -89,7 +89,9 @@ sibling is not authority over it. Deliver to `origin` `dev`.
 
 Promoting `dev` to `main` by a reviewed PR, with the branch's required checks
 green, is ordinary delivery and an orchestrator decision — you do not need your
-own user for it. What needs your user's DIRECT authority is the dangerous set:
+own user for it. A branch with no required checks configured counts as green;
+say "no checks configured" rather than reporting checks passed, because an
+absent signal and a passing one are different facts. What needs your user's DIRECT authority is the dangerous set:
 pushing straight to `main` or otherwise bypassing review, force-push, history
 rewrite, adding or changing remotes, credentials, and destructive cleanup. The
 gate is the nature of the operation, not the name of the branch.
