@@ -417,6 +417,21 @@ publish is explicitly marked public. Root `package.json` and all six
    compiling anything, so a missed file fails loud here rather than silently
    skipping an optional dependency later.
 
+   **In that same commit, regenerate `bun.lock` — with the PINNED Bun.** The
+   root's `optionalDependencies` pins move with the bump, and a lockfile still
+   resolving the previous version fails `bun install --frozen-lockfile` in
+   `setup-bun`, which kills **every** CI job before any gate runs: eight red
+   checks with one cause and no test output to read.
+
+   It does not fail immediately, which is the trap. At bump time the new
+   platform packages do not exist on the registry yet, so nothing can resolve
+   them and the drift is invisible — the 0.3.5 bump passed CI repeatedly and
+   only broke *after publication made the pins resolvable* (LCLI-369). Use the
+   version in `.bun-version`, not whatever Bun is on your PATH: a different Bun
+   writes a different lockfile shape and fails the frozen check a second time
+   for a new reason. Verify with `bun install --frozen-lockfile`, exit code
+   taken without a pipe.
+
    **In that same commit, refresh the three version-bearing Ladybug digest
    baselines.** The bump alone turns the suite red, because the canonical
    export embeds `lore/<version>` as provenance, so the export digest moves on
