@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-30 00:07'
-updated_date: '2026-08-30 00:48'
+updated_date: '2026-08-30 00:52'
 labels:
   - release
   - quest
@@ -147,5 +147,30 @@ CROSS-PLATFORM COVERAGE, recorded so nobody wonders whether that smoke was darwi
 This DOES NOT check AC#4. A local install of the same bytes is evidence about the ARTIFACT, not about the registry; AC#4's clean 'npx @opum-ai/lore@0.3.5 --version' cannot run until the registry has it.
 
 Artifacts remain staged at the ephemeral scratch path recorded earlier. If that directory is gone, re-download from run 33282804802 and re-verify the seven sha256 rows before publishing.
+---
+
+author: @claude
+created: 2026-08-30 00:52
+---
+REMAINING STEPS, written so this task is a self-sufficient handoff — someone with no session context should be able to finish from here without asking anything.
+
+NOTHING BELOW IS BLOCKED ON AN AGENT. AC#1 and AC#2 are done; AC#3 needs npm login and a fresh OTP per operation, and everything after it follows from that.
+
+Step 1 (AC#3, the human step).
+  Artifacts: staged at the ephemeral scratch path in the AC#2 comment. IF THAT DIRECTORY IS GONE — likely, it is session-scoped — re-download: 'gh run download 33282804802 -n npm-packages -D <dir>' and re-verify the seven sha256 rows recorded in the AC#2 comment before publishing anything.
+  Publish those exact files. Six platform packages FIRST, @opum-ai/lore LAST, so the launcher never resolves before its binary exists. Never 'npm pack'; never the hand-packed candidate whose digests (4ebd7ab71a72..., 065b6e65c1ca...) deliberately differ.
+  Then the dist-tag moves, one fresh OTP each — the exact command set is in the MECHANICS comment above.
+
+Step 2 (AC#4). 'npm view <pkg> dist-tags' for all seven; expect latest=0.3.5. Then, in a FRESH temporary directory, 'npx @opum-ai/lore@0.3.5 --version'. That must be a real registry install — the pre-publish smoke recorded above is a local install of the same bytes and is deliberately not counted here.
+
+Step 3 (AC#5). Two artifacts:
+  (a) docs/reference/lore-cli-release-truth.md — the 0.3.5 paragraph currently says 'Not yet published' in bold. REPLACE that sentence; do not merely add a released one beside it, or the bundle's single source of published-version truth contradicts itself. Fill in the immutable tag (v0.3.5 at fda122cace9451389bcf0377fe7bde554946f04e), the Release run (33282804802), registry evidence, and the install smoke.
+  (b) A non-draft, non-prerelease GitHub Release for v0.3.5. The content already exists and is durable: CHANGELOG.md's [0.3.5] section, written in the release commit. Use it rather than re-deriving; the headline is that lore 0.3.4 and quest 0.2.9 could not be used together at all, and this fixes it.
+
+Step 4 (AC#6). Tell the opum-cli-e2e session (pane wK:pR, repo /Volumes/external/repos/opum-cli-e2e) that 0.3.5 is on the registry and ask for the rank-1 re-run — a baseline cut from a real registry install rather than the local candidate pack. They have already agreed to this and can turn 407 rows around in about 2.4 minutes. Expect the same 400/6/1: the six remaining failures are QCLI-135 packaging receipts, owned by quest-cli.
+
+ALSO TELL quest-cli (pane wS:pK) once it is live. They have explicitly said they will not describe lore as published until told, and QCLI-97.5 AC3 needs both halves published to close.
+
+WHAT IS NOT WAITING ON THIS. quest 0.3.0 is owner-deferred (2026-08-29, twice, citing no soak since 0.2.9) and is NOT a precondition for any of the above. lore 0.3.5's >= floor already accepts it whenever it lands, so no second lore release is needed for the pair.
 ---
 <!-- COMMENTS:END -->
