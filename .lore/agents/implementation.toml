@@ -1,7 +1,0 @@
-schema_version = 1
-name = "implementation"
-description = "Lore implementation specialist: architecture, CLI-first design constraints, and task-scoped context for code-change work."
-kind = "specialist"
-max_tokens = 6000
-pinned = ["reference/architecture#2-the-cli-is-primary", "adr/0014-core-has-no-llm-dependency"]
-sources = ["specs/lore-design", "specs/agent-profile-context-retrieval", "reference/cli-contract", "runbooks/agent-profile-operation", "adr/0007-validation-and-coherence", "stories/retrieve-task-scoped-context-with-agent-profiles"]

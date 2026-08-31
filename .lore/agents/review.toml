@@ -1,7 +1,0 @@
-schema_version = 1
-name = "review"
-description = "Lore code-review specialist: OKF and CLI conformance, ADR policy, and documentation contracts for an independent second read."
-kind = "specialist"
-max_tokens = 5000
-pinned = ["adr/0007-validation-and-coherence"]
-sources = ["specs/lore-design", "reference/cli-contract", "reference/okf-conformance", "adr/0008-managed-block-remark-ast", "stories/retrieve-task-scoped-context-with-agent-profiles"]
