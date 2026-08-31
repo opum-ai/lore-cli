@@ -617,14 +617,14 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
     expect(readFileSync(join(import.meta.dir, "..", CODEX_SKILL_REL_PATH), "utf8")).toBe(buildCodexSkillDoc());
   });
 
-  test("no flags at all: a new bundle pins Quest without probing it", async () => {
+  test("no flags at all: a new bundle pins Backlog without probing it", async () => {
     const { result, stderr } = await init();
     expect(result.agents).toBeUndefined();
     expect(result.scaffolds).toEqual([]);
     expect(result.backlog).toBeUndefined();
     expect(result.tracker).toBeUndefined();
-    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).toEndWith('[tracker]\nbackend = "quest"\n');
-    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
+    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).toEndWith('[tracker]\nbackend = "backlog"\n');
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
     expect(stderr).toBe("");
   });
 
@@ -859,7 +859,7 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
     expect(result.trackerCheck?.capable).toBe(false);
     expect(result.trackerCheck?.warning).toContain("not found on PATH");
     expect(stderr).toContain("warning:");
-    expect(stderr).toContain("quest coupling unavailable");
+    expect(stderr).toContain("backlog coupling unavailable");
   });
 
   test("an uninitialized Backlog.md project recommends backlog init in JSON and stderr without failing init", async () => {
@@ -1303,9 +1303,11 @@ describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the lock
     expect(result.interactive).toBe(true);
     expect(result.agents).toBeDefined();
     expect(result.scaffolds.map((s) => s.target)).toEqual(["mkdocs", "obsidian"]);
-    // The wizard's tracker question defaults to quest, so the probe follows quest — not backlog.
-    expect(result.trackerCheck).toEqual({ checked: true, backend: "quest", capable: true, version: "1.49.0" });
-    expect(result.backlog).toBeUndefined();
+    // The wizard's tracker question defaults to backlog, so the probe follows backlog — and the
+    // legacy `result.backlog` mirror is now populated too, since that field tracks the backlog
+    // backend specifically (legacyBacklogCheck), not "none was checked".
+    expect(result.trackerCheck).toEqual({ checked: true, backend: "backlog", capable: true, version: "1.49.0" });
+    expect(result.backlog).toEqual({ checked: true, capable: true, version: "1.49.0" });
     expect(existsSync(join(root, "mkdocs.yml"))).toBe(true);
     expect(existsSync(join(root, "docs/.obsidian/app.json"))).toBe(true);
   });
@@ -1851,12 +1853,11 @@ describe("lore init — the capability probe follows the selected tracker (LCLI-
 
   test("a brand-new bundle over an existing backlog/ directory probes what it just persisted", async () => {
     // Documents a real seam rather than asserting it is desirable: a newly created bundle pins
-    // `quest` (init.ts's "a newly created bundle is unambiguous" rule), so that is what the probe
-    // follows — even though a real `backlog/` project sits right there. Whether init should pin
-    // quest over existing Backlog tasks at all is LCLI-358.5's question, not this probe's.
+    // `backlog` (init.ts's "a newly created bundle is unambiguous" rule, flipped from `quest` by
+    // opag ruling 2, 2026-08-31), so that is what the probe follows.
     mkdirSync(join(root, "backlog"));
     const { result } = await init({ args: ["--agents"], adapter: fakeAdapter([], { probe: "ok" }) });
-    expect(result.trackerCheck?.backend).toBe("quest");
+    expect(result.trackerCheck?.backend).toBe("backlog");
   });
 
   test("no tracker binary is spawned for a bare run", async () => {

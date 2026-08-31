@@ -457,10 +457,14 @@ export function runInit(options: InitOptions): number | Promise<number> {
     // A newly created bundle is unambiguous. Persist rather than relying on a
     // changing zero-config default, so an existing bundle is never switched.
     //
+    // `backlog`, not `quest` (opag ruling 2, 2026-08-31): this is the tracker actually installed
+    // fleet-wide, unlike Quest, which has open defects and no discriminated floor-failure class of
+    // its own (LCLI-370 follow-up filed) — see LORE-260 for why this default still is not verified.
+    //
     // NOT verified, deliberately: this is a default, not a choice the operator expressed, and a
-    // bare `lore init` has never spawned a tracker subprocess. The advisory probe still reports the
-    // backend's readiness whenever this run has a reason to look.
-    persistTrackerBackend(options.root, "quest");
+    // bare `lore init` has never spawned a tracker subprocess (LORE-260). The advisory probe still
+    // reports the backend's readiness whenever this run has a reason to look.
+    persistTrackerBackend(options.root, "backlog");
   }
 
   return finishNonInteractive(options, parsed, base, clock, priorSelection);
@@ -514,11 +518,17 @@ async function installSelectedBackendIfRequested(options: InitOptions, parsed: I
   return entry.package;
 }
 
-async function verifySelectedBackend(options: InitOptions, parsed: InitArgs): Promise<InitTrackerCheck | undefined> {
-  const backend = parsed.tracker;
-  if (backend === undefined || backend === "none" || backend === "jira" || parsed.noTracker) {
-    return undefined;
-  }
+/**
+ * The narrow, shared probe every persisted selection now runs before it is written (LCLI-356
+ * AC#2, extended fleet-wide by opag ruling 2026-08-31 to every path that persists a backend, not
+ * only the explicit `--tracker` one — the commitment is the selection, however it was arrived at).
+ * Re-throws only a below-the-floor rejection; every other outcome, including "not installed",
+ * stays advisory, because only a floor failure is not one setup step away in the same directory.
+ */
+async function verifyBackendReadiness(
+  options: InitOptions,
+  backend: TrackerBackend,
+): Promise<InitTrackerCheck | undefined> {
   try {
     const adapter = options.adapter ?? createConfiguredAdapterFor(options.root, backend);
     const capability = await adapter.probe();
@@ -531,6 +541,16 @@ async function verifySelectedBackend(options: InitOptions, parsed: InitArgs): Pr
     // before this gate existed.
     return undefined;
   }
+}
+
+/** The explicit `--tracker` path's use of {@link verifyBackendReadiness}: `none`, `jira` (verified by
+ * {@link configureJira} instead), and `--no-tracker` are exempt. */
+async function verifySelectedBackend(options: InitOptions, parsed: InitArgs): Promise<InitTrackerCheck | undefined> {
+  const backend = parsed.tracker;
+  if (backend === undefined || backend === "none" || backend === "jira" || parsed.noTracker) {
+    return undefined;
+  }
+  return verifyBackendReadiness(options, backend);
 }
 
 /** The base OKF bundle this run wrote (or found already present). */
@@ -802,7 +822,7 @@ async function runInteractiveWizard(
   let wantAgents = false;
   let wantCodex = false;
   let wantHermes = false;
-  let tracker: TrackerBackend = "quest";
+  let tracker: TrackerBackend = "backlog";
   let migrateBacklog = false;
   let initializeGit = false;
   let installed: string | undefined;
@@ -901,6 +921,17 @@ async function runInteractiveWizard(
   const base = applyBaseScaffold(options, plan);
 
   const migration = migrateBacklog ? await runBacklogMigration(options) : undefined;
+  // LCLI-356 AC#2, extended to the wizard (opag ruling, 2026-08-31): verified BEFORE persisting,
+  // exactly like the explicit `--tracker` path — the commitment is the selection, whether the
+  // operator typed it or accepted the prompt's default. Unlike the silent zero-config default
+  // (LORE-260), the wizard already spawns a subprocess unconditionally via `chooseTracker`'s
+  // binary check, so this closes a real gap at no new cost. `none` has nothing to verify; `jira`
+  // is verified by `configureJira` above instead; a completed migration already proves Quest
+  // usable by actually using it, so re-probing it here would only spawn the same binary twice.
+  const verified =
+    tracker === "none" || tracker === "jira" || migrateBacklog
+      ? undefined
+      : await verifyBackendReadiness(options, tracker);
   persistTrackerBackend(options.root, tracker, jira);
   if (migration !== undefined) clearPendingQuestMigration(options.root);
 
@@ -914,7 +945,8 @@ async function runInteractiveWizard(
   // Probes the backend the operator just chose — not `backlog` regardless, which is what made
   // choosing Quest report that Backlog.md was uninitialized (LCLI-358.2). Reuses the selection-time
   // verification above when it ran, so the tracker is spawned once per wizard run.
-  const trackerCheck = tracker === "none" ? undefined : await probeTrackerCapability(options, tracker, warnings);
+  const trackerCheck =
+    tracker === "none" ? undefined : (verified ?? (await probeTrackerCapability(options, tracker, warnings)));
   warnings.flush({ color: options.output.color, stderr: options.stderr ?? process.stderr });
 
   const result: InitResult = {
@@ -981,7 +1013,7 @@ async function chooseTracker(
 ): Promise<{ backend: TrackerBackend; installed?: string }> {
   (options.stderr ?? process.stderr).write(renderTrackerEnvironment(environment));
   for (let attempt = 1; attempt <= MAX_TRACKER_ATTEMPTS; attempt += 1) {
-    const choice = await prompter.choose("Which tracker backend should Lore use?", TRACKER_BACKENDS, "quest");
+    const choice = await prompter.choose("Which tracker backend should Lore use?", TRACKER_BACKENDS, "backlog");
     if (!TRACKER_BACKENDS.includes(choice as TrackerBackend)) {
       throw new LoreError(
         "validation",
