@@ -7,6 +7,20 @@ on:
     # push just re-ran the identical bytes (444 redundant runs in the last
     # campaign). `main` stays as the cross-OS + e2e integration checkpoint
     # (dev is fast-forwarded onto main).
+    #
+    # THIS IS NOT A GAP TO FIX. dev's branch ruleset requires 3 status checks
+    # (docker e2e harness, lint/typecheck/test windows-latest, operating block
+    # digest) on every push, but a direct push to dev triggers no workflow run
+    # at all -- so those checks can never be satisfied and GitHub refuses the
+    # push outright (GH013, confirmed 2026-08-31 attempting exactly this).
+    # That is not incidental: it is what makes landing on dev structurally
+    # impossible except through a PR (whose `pull_request` trigger below does
+    # run CI), in a fleet where PR-into-dev is otherwise only a convention.
+    # Do not copy this `branches: [main]`-only shape into a sibling repo
+    # (opum-agent, opum-doc, quest-cli, opum-cli-e2e) without checking whether
+    # that repo's own dev ruleset depends on it the same way -- for a repo that
+    # promotes dev->main by direct push rather than PR, this exact shape would
+    # make a routine dev push permanently unable to go green.
     branches: [main]
     # Docs/metadata-only pushes to main don't need the compute pipeline. NOTE:
     # applied to `push` ONLY — `pull_request` is intentionally left unfiltered
