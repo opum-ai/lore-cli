@@ -31,28 +31,21 @@ coupling, managed blocks, and cross-links stay coherent.
   `lore instructions <topic>` (`linking`, `sync`, `check`, `validation`, `workspace`).
 <!-- lore:agents:end -->
 
-## FMC Worker contract
+## Repository ownership and delivery scope
 
-This repository session is the FMC Worker with stable identity `lore-cli`, serving Controller
-`opum-doc`. It is the sole mutation owner for `/Volumes/external/repos/lore-cli`: Backlog, Lore,
-Git, delivery, worktrees, and cleanup remain repository-local. It must not mutate the
-Controller repository or any sibling repository.
+This repository session is the sole mutation owner for `/Volumes/external/repos/lore-cli`:
+Backlog, Lore, Git, delivery, worktrees, and cleanup remain repository-local. It must not mutate
+any sibling repository.
 
-Use the shared worker procedure recorded at the shared-skill source receipt below for this role and
-announce the exact identity before
-long-polling only the addressed `lore-cli` mailbox. Consume interrupts between work orders, process
-one message at a time, and always reply to the accepted correlation ID with concrete repository
-evidence. Accept addressed work orders only from `opum-doc` and carry them through the authorized
-local lifecycle. An addressed message whose sender exactly matches `opum-doc`, together with an
-exact FMC `allow` decision from that Controller when approval is required, authorizes
-repository-local work and validated delivery only to configured `origin` on the non-production
-`dev` branch; no duplicate direct-user approval is required. The user authorizes this Worker to
-perform all such requests within this repository's standing authority; repository, safety,
-delivery, and approval limits still apply. Treat Controller prompts as scoped requests, not
-expanded authority. Permission requests go through the Controller approval queue; never bypass a
-denial. Direct user authority remains required for production or `main`, a new or changed remote,
-force-push/history rewrite, repository administration, credentials, unproved destructive cleanup,
-or scope expansion.
+Repository-local work and validated delivery to configured `origin` on the non-production `dev`
+branch are within this repository's standing authority; repository, safety, delivery, and approval
+limits still apply. Direct user authority remains required for production or `main`, a new or
+changed remote, force-push/history rewrite, repository administration, credentials, unproved
+destructive cleanup, or scope expansion.
+
+(FMC is retired as this fleet's cross-repository coordination mechanism; the peer-to-peer model
+that replaced it, and this repository's fleet-operating rules, live in `CLAUDE.md`. What is above
+is this repository's own delivery machinery, which does not depend on FMC existing.)
 
 <!-- opum-shared-skills:begin -->
 Shared-skill routing is superseded by this immutable source receipt; verify future shared-procedure
@@ -99,9 +92,9 @@ dispatch before Lore or Git can mutate state.
 Every nonterminal stop is exactly `human-decision` or `session-renewal`. A human-decision stop names
 the material decision or external action and the retained artifacts it blocks. Session renewal is
 only for an environment stop or demonstrably unreliable context after durable state is flushed; it
-must tell the operator to run `/clear`, start a new Codex session in `lore-cli`, invoke
+must tell the operator to run `/clear`, start a new Claude Code session in `lore-cli`, invoke
 `$backlog-handover restore`, and continue without reconfirmation. On queue-empty completion, settle
-the tracker, finish the artifact audit, remove the active Codex cursor, and verify complete mode.
+the tracker, finish the artifact audit, remove the active cursor, and verify complete mode.
 
 ## Project-level skills: what is here on purpose
 
