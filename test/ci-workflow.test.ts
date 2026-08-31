@@ -60,6 +60,7 @@ describe("ci.yml exact-host LadybugDB qualification", () => {
     const jobs = loadWorkflow().jobs;
     expect(Object.keys(jobs)).toEqual([
       "check",
+      "operating-block",
       "ladybug-benchmark-smoke",
       "build",
       "explorer-browser-qualification",
