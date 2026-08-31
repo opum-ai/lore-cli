@@ -178,6 +178,8 @@ None known. Checked 2026-08-30: this repository carries no Treehouse or Codex de
 `lore init --codex` is KEPT. It is a public flag in a published package and external users who run Codex CLI depend on it. Codex being retired as this fleet's internal runtime does not reach shipped surface.
 
 `.lore/cache/graph` generations are written mode-locked read-only, so `rm -rf` on a lore worktree fails with permission errors that look like a sandbox denial. `chmod -R u+w` first.
+
+`dev`'s branch ruleset requires 3 status checks on every push (docker e2e harness, lint/typecheck/test windows-latest, operating block digest), but `.github/workflows/ci.yml`'s `push` trigger is `branches: [main]` only — a direct push to `dev` runs no workflow at all, so those checks can never be satisfied and GitHub refuses the push (confirmed 2026-08-31: `GH013`, attempting exactly this). This is not a gap: it is what makes landing on `dev` structurally impossible except through a PR, in a fleet where PR-into-dev is otherwise only a convention. Do not "fix" `ci.yml`'s push trigger to include `dev` without checking this coupling first — restoring it reintroduces the 444-redundant-run problem LCLI-251 removed, and does nothing to loosen the actual gate, which is the ruleset, not the workflow trigger.
 <!-- opum:repo-profile:end -->
 
 <!-- lore:agents:begin -->
