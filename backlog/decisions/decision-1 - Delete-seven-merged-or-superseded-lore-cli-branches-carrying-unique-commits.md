@@ -114,3 +114,35 @@ not open-ended — that is exactly what this addendum is for.
 
 Both branches are gone as of this addendum.
 
+## Correction, 2026-08-31: two task ids in `retain/primary-untracked-estate-20260828` were reused, not landed under the same id
+
+This addendum's "superseded" claim for `retain/primary-untracked-estate-20260828` was imprecise
+for two of its seven files, and the imprecision matters for anyone who later greps for them.
+Caught by opum-agent checking the branch's actual frontmatter directly, then independently
+re-verified here by reading commit `9a314cb`'s bytes (`git show 9a314cb -- .`) before trusting
+either account:
+
+The branch's task files were `id: LCLI-348` ("Fix agent manifest default kind: declare
+agent.profiles for agent list") and `id: LCLI-349` ("Prepare Lore CLI 0.3.3 release metadata
+(candidate family)"). Dev's *current* `LCLI-348` and `LCLI-349` are unrelated, unconnected tasks
+("Expose opum-agent-workflow/v1 through lore agent context via --contract facade" and "Archive
+and delete cutover leg is not failure-atomic...") — both `Done`, both real work, neither
+descended from the branch's content. The ids were reused, not reoccupied by continuation work —
+this is the same class of legacy Backlog.md defect this repository's own CLAUDE.md names for the
+LORE-195/LORE-53 case, not a duplicate-and-discard.
+
+The original work was not lost, though: it is present on dev under different ids.
+`backlog/tasks/lcli-350 - Fix-agent-manifest-default-kind-declare-agent.profiles-for-agent-list.md`
+and `backlog/tasks/lcli-351 - Prepare-Lore-CLI-0.3.3-release-metadata-candidate-family.md` carry
+the exact same titles as the deleted `LCLI-348`/`LCLI-349`, both `status: Done`. The agent-manifest
+fix is live in code at `src/core/manifest.ts` (`kind: "agent.profiles"`), and the 0.3.3 release task
+did what it says — `package.json` is now at `0.3.5`, two releases past it.
+
+**A reader who greps `LCLI-348` or `LCLI-349` on dev today will find those unrelated current
+tasks and reasonably conclude nothing was lost — that conclusion would be wrong for the ids, right
+for the content.** This decision record is now the only place the original `LCLI-348`/`LCLI-349`
+titles, ids, and branch provenance can be found together; they cannot be restored under those ids
+without colliding with the current occupants. Deletion was still correct — the substance survived
+under `LCLI-350`/`LCLI-351` — but "superseded" should have been stated in exactly these terms from
+the start, not inferred from a title match without checking the id.
+
