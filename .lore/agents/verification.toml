@@ -1,0 +1,7 @@
+schema_version = 1
+name = "verification"
+description = "Lore verification specialist: test gates, the e2e harness, release and CI delivery checks for test-and-verify work."
+kind = "specialist"
+max_tokens = 5000
+pinned = ["runbooks/agent-profile-operation"]
+sources = ["runbooks/docker-e2e-testing-environment", "reference/cli-contract", "specs/lore-design#9-testing-strategy", "stories/harden-lore-cli-correctness-and-safety", "reference/lore-cli-release-truth"]

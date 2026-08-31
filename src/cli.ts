@@ -46,7 +46,11 @@ import { runSync } from "./commands/sync";
 import { runTasks } from "./commands/tasks";
 import { runValidate } from "./commands/validate";
 import { buildManifest } from "./core/manifest";
-import { loadRetrievalGraph, type RetrievalGraphLoader } from "./core/retrieval";
+import {
+  loadReferenceRetrievalGraph,
+  loadRetrievalGraph,
+  type RetrievalGraphLoader,
+} from "./core/retrieval";
 import { EXIT_OK, EXIT_UNCAUGHT, LoreError, reportError, type Writer } from "./errors";
 import { VERSION } from "./meta";
 import { emit, errorRenderOpts, type OutputContext, type Renderable, resolveOutput } from "./output";
@@ -624,7 +628,10 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
       stdout: context.stdout,
       stderr: context.stderr,
       adapter: context.adapter,
-      retrieval: context.retrieval ?? loadRetrievalGraph,
+      // Agent profiles need several complete concept bodies. The indexed graph
+      // intentionally materializes metadata and edges without every body, so
+      // using it here produced empty evidence packs for an indexed repository.
+      retrieval: context.retrieval ?? loadReferenceRetrievalGraph,
     }),
   instructions: (args, context, output) => runInstructions({ output, args, stdout: context.stdout }),
   agents: (args, context, output) =>
