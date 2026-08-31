@@ -117,6 +117,7 @@ jobs:
     # otherwise depend on a peer session noticing drift. No cross-repo auth: the canonical doc
     # lives in opum-doc (private), so this compares against a pinned digest, not a live fetch.
     name: operating block digest
+    if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
