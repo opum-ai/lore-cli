@@ -43,7 +43,9 @@ Delete all seven, having independently verified each one's unique content alread
    LCLI-327 is now `status: Done` after many further sync commits ending in "chore(backlog): settle
    LCLI-327", and `doc-18` no longer exists (campaign closed). This branch is also the direct
    superset parent of `retain/legacy-primary-dev-44047a5` (verified via
-   `git merge-base --is-ancestor`), which carried only its first two commits.
+   `git merge-base --is-ancestor`), which carried only its first two commits (`e34ac66`, `44047a5`).
+   **This parent branch is now deleted.** `retain/legacy-primary-dev-44047a5` is therefore the only
+   ref anywhere still holding those two commit objects — see the note under Consequences below.
 
 5. **`origin/feat/lcli-364-codex-drift-gate`** (3 commits: `0ecedef`, `3b38d9e`, `2778e34`) — this
    is the pre-squash working history for LCLI-364. The same feature landed on dev as squash-merged
@@ -72,6 +74,15 @@ gitignored local scratch, and an `opencode.jsonc` intentionally removed under th
 retirement ruling). That evidence is recorded here for completeness, but those two branches were
 **not deleted** — the question of whether to act on this trace is with the user directly per
 opum-agent, unanswered as of this record.
+
+**This changes what keeping `retain/legacy-primary-dev-44047a5` means.** Before this cleanup, it
+was a redundant duplicate of two commits also reachable through
+`origin/docs/odoc-55-4-1-authority-sweep`. That parent is now deleted (item 4 above), so
+`retain/legacy-primary-dev-44047a5` is currently the *only* ref anywhere holding `e34ac66` and
+`44047a5`. If those two commits are ever deleted from this branch too, they become unreachable and
+eligible for GC — permanently, not "recoverable from another branch." The content itself is still
+judged superseded (LCLI-327 is Done via many later commits); this note is about what deleting the
+*ref* would mean, not a reversal of that judgment.
 
 ## Consequences
 
