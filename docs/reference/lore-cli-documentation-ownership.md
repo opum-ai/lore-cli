@@ -63,11 +63,19 @@ For active Lore-wide and Quest-wide policy, use the consolidated
 [Lore authority surface](https://github.com/opum-ai/opum-doc/blob/dev/docs/lore/index.md)
 and [Quest external routing and provenance](https://github.com/opum-ai/opum-doc/blob/dev/docs/quest/quest-external-routing-and-provenance.md)
 records instead of routing directly to `lore-doc` or `quest-doc`.
-Every repository named on this page is private, so each `github.com` link above
-is access-gated rather than a destination: it returns 404 to anyone without
-access. Treat such a link as a citation for a reader who can resolve it, confirm
-access before relying on one, and never place one on a public surface, where it
-is broken by construction.
+Repository visibility on this page is not uniform, and it is not a standing
+fact — read it back rather than trusting this paragraph. As observed
+2026-08-31 via `gh api repos/<owner>/<repo> --jq .private`, sourced from live
+GitHub state rather than any cached record: `opum-ai/lore-cli` (this
+repository) and `opum-ai/quest-cli` are **public**; `opum-ai/opum-doc` and
+`jeremy-newhouse/saws` are **private**. A `github.com` link to a private
+repository above is access-gated rather than a destination — it returns 404 to
+anyone without access — and should be treated as a citation for a reader who
+can resolve it, confirmed before relying on one, and never placed on a public
+surface, where it is broken by construction. A link to `lore-cli` or
+`quest-cli` carries no such gate. Re-check before citing either fact forward;
+this paragraph goes stale the moment any of these repositories' visibility
+changes again.
 
 A conflict between this repository and an owner record is drift, and drift is a
 defect. This repository is authoritative for what Lore CLI currently ships; the

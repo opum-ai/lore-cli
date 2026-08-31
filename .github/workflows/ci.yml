@@ -111,6 +111,32 @@ jobs:
             bun test --isolate --timeout=10000
           fi
 
+  operating-block:
+    # Verifies the CLAUDE.md `opum:fleet-operating` block against the fleet-wide digest — the
+    # block is byte-identical across all five repos by design, and this is the check that would
+    # otherwise depend on a peer session noticing drift. No cross-repo auth: the canonical doc
+    # lives in opum-doc (private), so this compares against a pinned digest, not a live fetch.
+    name: operating block digest
+    if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      EXPECTED_DIGEST: f4f86992e7321116
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: CLAUDE.md operating block matches the fleet digest
+        run: |
+          set -euo pipefail
+          block=$(awk '/opum:fleet-operating:begin/,/opum:fleet-operating:end/' CLAUDE.md)
+          if [ -z "$block" ]; then echo "::error::no opum:fleet-operating block in CLAUDE.md"; exit 1; fi
+          actual=$(printf '%s\n' "$block" | sha256sum | cut -c1-16)
+          echo "expected $EXPECTED_DIGEST"
+          echo "actual   $actual"
+          if [ "$actual" != "$EXPECTED_DIGEST" ]; then
+            echo "::error::operating block has drifted. It is byte-identical in all five repos by design; a local edit here is a defect. To change it deliberately: update the canonical doc in opum-doc, propagate to all five CLAUDE.md files, then update EXPECTED_DIGEST in all five workflows."
+            exit 1
+          fi
+
   ladybug-benchmark-smoke:
     # Functional evidence only: --smoke uses one measured repetition, reports
     # every gate as inconclusive, and exits successfully when parity/schema/
