@@ -110,14 +110,8 @@ default"), **not** "answer every question with its own default"; the two
 diverge on the agent-bridge question in particular (its wizard default is
 yes, but `--yes` installs nothing). A bare `lore init` off a TTY with no
 flags remains prompt-free (scaffold only, nothing else), but a newly created
-bundle now persists `backend = "backlog"` under `[tracker]` so its selection is
-stable (flipped from `quest`, 2026-08-31 — Backlog is what every bundle in
-this fleet actually runs; Quest carries open defects). This default is never
-probed before being written (LORE-260: a bare `lore init` spawns no tracker
-subprocess), unlike the wizard's own default answer to the same question,
-which now is verified before persisting like any other wizard selection — see
-LCLI-370 for the gap this asymmetry still leaves in the unprobed default.
-Existing bundles that omit the tracker setting and contain a real
+bundle now persists `backend = "quest"` under `[tracker]` so its selection is
+stable. Existing bundles that omit the tracker setting and contain a real
 Backlog.md **project** — a real `backlog/` directory holding a real
 `backlog/config.yml`, the file `backlog init` writes — are classified as legacy
 Backlog. A directory named `backlog/` without that marker is not a project and
