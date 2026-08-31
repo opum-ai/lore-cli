@@ -91,3 +91,26 @@ objects may still be recoverable via `git cat-file -p <sha>` until GitHub/local 
 unreachable objects, but `git log` on the branch name no longer works — this record, and the
 commit hashes named above, are the durable trace of why each deletion was safe.
 
+## Addendum, 2026-08-31: the two retain/* branches, deleted on the user's direct ruling
+
+The two branches traced above but left untouched — `retain/legacy-primary-dev-44047a5`
+(`44047a5`, "chore(backlog): sync task changes") and `retain/primary-untracked-estate-20260828`
+(`9a314cb`, "chore: preserve primary-checkout untracked estate before dev sync") — were both
+local-only (no `origin` counterpart; reconfirmed via `git fetch --prune` immediately before
+deletion). The user ruled directly, later the same day, to delete both. That ruling is what
+authorized this addendum; it did not change the underlying evidence, which stands as traced above
+and in the Context section: every file either branch preserved was independently confirmed already
+superseded on dev.
+
+What this addendum changes is the fact named in item 4 and in the paragraph above it:
+`retain/legacy-primary-dev-44047a5` was, at time of writing, the *only* ref anywhere still holding
+commits `e34ac66` and `44047a5` — its named superset parent
+(`origin/docs/odoc-55-4-1-authority-sweep`) had already been deleted in this same pass. Deleting
+this branch is therefore not "one more redundant copy removed" — it is the literal last reachable
+path to those two commit objects. After this deletion they become unreachable and eligible for GC,
+recoverable only via `git cat-file -p e34ac66` / `44047a5` until that happens, and not at all after.
+A future reader who wants those two commits back needs to know that window exists and is closing,
+not open-ended — that is exactly what this addendum is for.
+
+Both branches are gone as of this addendum.
+
