@@ -40,6 +40,18 @@
           }
         ]
       }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt|idle_prompt|agent_needs_input",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh '/Volumes/external/repos/opum-agent/tooling/opum-fleet/hooks/notify-orchestrator.sh'",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
