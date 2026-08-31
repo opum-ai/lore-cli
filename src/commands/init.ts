@@ -457,14 +457,10 @@ export function runInit(options: InitOptions): number | Promise<number> {
     // A newly created bundle is unambiguous. Persist rather than relying on a
     // changing zero-config default, so an existing bundle is never switched.
     //
-    // `backlog`, not `quest` (opag ruling 2, 2026-08-31): this is the tracker actually installed
-    // fleet-wide, unlike Quest, which has open defects and no discriminated floor-failure class of
-    // its own (LCLI-370 follow-up filed) — see LORE-260 for why this default still is not verified.
-    //
     // NOT verified, deliberately: this is a default, not a choice the operator expressed, and a
     // bare `lore init` has never spawned a tracker subprocess (LORE-260). The advisory probe still
     // reports the backend's readiness whenever this run has a reason to look.
-    persistTrackerBackend(options.root, "backlog");
+    persistTrackerBackend(options.root, "quest");
   }
 
   return finishNonInteractive(options, parsed, base, clock, priorSelection);
@@ -822,7 +818,7 @@ async function runInteractiveWizard(
   let wantAgents = false;
   let wantCodex = false;
   let wantHermes = false;
-  let tracker: TrackerBackend = "backlog";
+  let tracker: TrackerBackend = "quest";
   let migrateBacklog = false;
   let initializeGit = false;
   let installed: string | undefined;
@@ -1013,7 +1009,7 @@ async function chooseTracker(
 ): Promise<{ backend: TrackerBackend; installed?: string }> {
   (options.stderr ?? process.stderr).write(renderTrackerEnvironment(environment));
   for (let attempt = 1; attempt <= MAX_TRACKER_ATTEMPTS; attempt += 1) {
-    const choice = await prompter.choose("Which tracker backend should Lore use?", TRACKER_BACKENDS, "backlog");
+    const choice = await prompter.choose("Which tracker backend should Lore use?", TRACKER_BACKENDS, "quest");
     if (!TRACKER_BACKENDS.includes(choice as TrackerBackend)) {
       throw new LoreError(
         "validation",

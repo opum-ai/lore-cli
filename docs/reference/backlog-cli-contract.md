@@ -366,16 +366,11 @@ Coupling commands depend on the backend-neutral `TrackerAdapter` contract in
 `src/adapters/tracker.ts`. Production code loads the resolved repository
 selection and constructs a concrete backend through
 `createConfiguredTrackerAdapter(root)`; `createTrackerAdapter(root, config)`
-and injected adapters remain explicit test seams. New bundles persist Backlog
-as their selected backend (flipped from Quest, 2026-08-31, since Backlog is
-what every bundle in this fleet actually runs and Quest carries open defects).
-A bundle with no explicit selection and a real
+and injected adapters remain explicit test seams. New bundles persist Quest as
+their selected backend. A bundle with no explicit selection and a real
 `backlog/` directory is classified as legacy Backlog; its first tracker command
 fails loud with exact migration and pin commands instead of silently switching.
-An omitted selection without that legacy artifact resolves to Backlog, and this
-default is never probed before being written (LORE-260: a bare `lore init`
-spawns no tracker subprocess) — see LCLI-370 for the resulting gap this leaves
-open. Jira
+An omitted selection without that legacy artifact resolves to Quest. Jira
 Cloud is reachable through the installed `@salient-ai/jira-cli` executable
 when the backend is `jira`; Lore
 does not call Jira REST or read Jira credentials. Quest is reached through the
