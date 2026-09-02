@@ -15,7 +15,11 @@ import { PassThrough } from "node:stream";
 import type { BacklogAdapter } from "../src/adapters/backlog";
 import { type GitPreflight, realGitPreflight } from "../src/adapters/git-preflight";
 import type { JiraOnboarding, JiraProfile, JiraProjectSummary } from "../src/adapters/jira-onboarding";
-import { MIN_QUEST_VERSION, QUEST_VERSION_FLOOR_CODE } from "../src/adapters/quest";
+import {
+  MIN_QUEST_VERSION,
+  QUEST_VERSION_FLOOR_CODE,
+  QUEST_WORKSPACE_NOT_INITIALIZED_CODE,
+} from "../src/adapters/quest";
 import { atLeast } from "../src/adapters/semver";
 import { createTrackerAdapter } from "../src/adapters/tracker";
 import {
@@ -1031,6 +1035,7 @@ describe("lore init — legacy zero-config tracker boundary", () => {
     legacyBundle();
     const { result } = await init({
       args: ["--tracker", "quest", "--keep-backlog-tasks"],
+      adapter: fakeAdapter([], { probe: "ok" }),
       migrateBacklog: async () => {
         throw new Error("no migration must run for --keep-backlog-tasks");
       },
@@ -1043,7 +1048,7 @@ describe("lore init — legacy zero-config tracker boundary", () => {
 
   test("a bare backlog/ directory imposes no migration answer at all (AC#2)", async () => {
     mkdirSync(join(root, "backlog", "tasks"), { recursive: true });
-    const { result } = await init({ args: ["--tracker", "quest"] });
+    const { result } = await init({ args: ["--tracker", "quest"], adapter: fakeAdapter([], { probe: "ok" }) });
     expect(result.tracker).toBe("quest");
     expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
   });
@@ -1621,7 +1626,7 @@ describe("lore init — the git preflight runs before the first byte is written 
       ask: async (_question, defaultValue) => defaultValue,
       close: () => {},
     };
-    await init({ git, stdinIsTTY: true, stderrIsTTY: true, prompter });
+    await init({ git, stdinIsTTY: true, stderrIsTTY: true, prompter, adapter: fakeAdapter([], { probe: "ok" }) });
     expect(asked.some((question) => question.includes("git repository"))).toBe(false);
     expect(git.initCalls).toBe(0);
   });
@@ -1941,6 +1946,38 @@ describe("lore init — an unsupported tracker version is rejected at selection 
     expect(err?.type).toBe("validation");
     expect(err?.message).toContain("below the 0.2.7 floor");
     // The scaffold is idempotent and harmless; the SELECTION is the commitment that is withheld.
+    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).not.toContain('backend = "quest"');
+  });
+
+  test("--tracker quest against an uninitialized Quest workspace fails and does NOT persist the backend (LCLI-376)", async () => {
+    // The reported defect: init exited 0, wrote backend = "quest" with quest init never run, and
+    // lore check stayed green throughout -- a silent broken state rather than a loud one. This is
+    // the one probe failure LORE-319 left advisory that LCLI-376 promoted to fatal, alongside the
+    // pre-existing version-floor case above.
+    const workspaceNotInitialized = fakeAdapter([], {
+      probe: new LoreError("validation", "Quest workspace is not initialized", "run `quest init`", {
+        code: QUEST_WORKSPACE_NOT_INITIALIZED_CODE,
+        workspace: join(root, ".quest", "workspace.toml"),
+      }),
+    });
+    const err = await Promise.resolve(
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        clock: FIXED_CLOCK,
+        args: ["--tracker", "quest"],
+        adapter: workspaceNotInitialized,
+      }),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught as LoreError,
+    );
+    expect(err).toBeInstanceOf(LoreError);
+    expect(err?.type).toBe("validation");
+    expect(err?.message).toBe("Quest workspace is not initialized");
+    expect(err?.hint).toBe("run `quest init`");
     expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).not.toContain('backend = "quest"');
   });
 
@@ -2451,7 +2488,7 @@ describe("lore init — configuring the jira backend (LCLI-358.4)", () => {
 
   test("no other backend consults jira-cli at all", async () => {
     const calls: string[] = [];
-    await init({ args: ["--tracker", "quest"], jira: fakeJira({ calls }) });
+    await init({ args: ["--tracker", "quest"], jira: fakeJira({ calls }), adapter: fakeAdapter([], { probe: "ok" }) });
     await init({ args: ["--tracker", "none"], jira: fakeJira({ calls }) });
     expect(calls).toEqual([]);
   });

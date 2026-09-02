@@ -164,7 +164,10 @@ describe("Quest 0.2 tracker adapter", () => {
     const loreError = error as LoreError;
     expect(loreError.type).toBe("validation");
     expect(loreError.hint).toBe("run `quest init`");
-    expect(loreError.input).toEqual({ workspace: join("/repo", ".quest", "workspace.toml") });
+    expect(loreError.input).toEqual({
+      code: "quest.workspace-not-initialized",
+      workspace: join("/repo", ".quest", "workspace.toml"),
+    });
     expect(calls).toBe(0);
   });
 

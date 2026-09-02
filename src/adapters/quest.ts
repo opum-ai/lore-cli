@@ -38,8 +38,11 @@ export const MIN_QUEST_VERSION = "0.2.7";
  * cannot work at all, and no action inside the repository fixes it — the operator must install a
  * different Quest. Every other probe failure ("workspace is not initialized", "not on PATH") is one
  * setup step away in the same directory, which is exactly why LORE-319 made the capability check
- * advisory rather than fatal. `lore init` withholds a tracker selection for the first and keeps
- * reporting the second as a warning.
+ * advisory rather than fatal. `lore init` withholds a tracker selection for the first and kept
+ * reporting the second as a warning — until LCLI-376: an uninitialized workspace produced a
+ * SILENT broken state (`backend = "quest"` persisted, `lore check` staying green) rather than the
+ * loud, later failure "one setup step away" implied, so the user reversed that half of LORE-319's
+ * call. "Not on PATH" (the package genuinely missing) is unchanged and stays advisory here.
  */
 export const QUEST_VERSION_FLOOR_CODE = "quest.version-below-floor";
 
@@ -50,6 +53,19 @@ export function isQuestVersionFloorFailure(error: unknown): boolean {
     typeof error.input === "object" &&
     error.input !== null &&
     (error.input as { code?: unknown }).code === QUEST_VERSION_FLOOR_CODE
+  );
+}
+
+/** The stable discriminator on an uninitialized-workspace rejection (LCLI-376), mirroring {@link QUEST_VERSION_FLOOR_CODE}. */
+export const QUEST_WORKSPACE_NOT_INITIALIZED_CODE = "quest.workspace-not-initialized";
+
+/** Whether `error` is the uninitialized-workspace rejection {@link QUEST_WORKSPACE_NOT_INITIALIZED_CODE} marks. */
+export function isQuestWorkspaceNotInitializedFailure(error: unknown): boolean {
+  return (
+    error instanceof LoreError &&
+    typeof error.input === "object" &&
+    error.input !== null &&
+    (error.input as { code?: unknown }).code === QUEST_WORKSPACE_NOT_INITIALIZED_CODE
   );
 }
 const QUEST_VERSION_SET_HINT = `Quest ${MIN_QUEST_VERSION} or newer is required`;
@@ -161,6 +177,7 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
   function assertWorkspace(): void {
     if (!workspaceInitialized(root))
       throw new LoreError("validation", "Quest workspace is not initialized", "run `quest init`", {
+        code: QUEST_WORKSPACE_NOT_INITIALIZED_CODE,
         workspace: join(root, ".quest", "workspace.toml"),
       });
   }
