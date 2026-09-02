@@ -4,6 +4,7 @@ title: Rebase and land the ODOC-63.1 agent-context full-body retrieval fix
 status: In Progress
 assignee: []
 created_date: '2026-08-31 18:54'
+updated_date: '2026-09-02 20:12'
 labels: []
 dependencies: []
 references:
@@ -39,3 +40,17 @@ lore agent context used loadRetrievalGraph (the indexed graph), which intentiona
 <!-- SECTION:PLAN:BEGIN -->
 Rebase feat/odoc-63.1-agent-profiles onto current origin/dev (151 commits of drift -- expect conflicts, especially in run-e2e.sh which has grown substantially). Verify loadReferenceRetrievalGraph still exists with the same signature. Re-run the new e2e phase and full test suite. Open a PR once green.
 <!-- SECTION:PLAN:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-09-02 20:12
+---
+Independent cross-check, 2026-09-02: an unverified issues dump from other agents' lore/quest sessions (relayed via opum-agent) reported two symptoms that trace to this exact defect. Verified both live against current dev source (bun run src/cli.ts, unpatched):
+
+- Whole-doc pin -> agent context body is empty, contentDigest = sha256("") = e3b0c442...b855.
+- Heading-anchor pin on a heading that genuinely exists -> "references missing heading" validation error, because src/core/agent-profile.ts's validateAgentProfileReferences computes headingSlugs(concept.body) from the SAME empty body.
+
+Then patched src/cli.ts line 627 alone (context.retrieval ?? loadRetrievalGraph -> loadReferenceRetrievalGraph, matching this task's already-committed fix on feat/odoc-63.1-agent-profiles) and re-ran both cases: both now return correct non-empty bodies and real digests. Confirms this task's fix, once landed, resolves both symptoms -- no separate task needed for either.
+---
+<!-- COMMENTS:END -->
