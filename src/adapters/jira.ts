@@ -377,6 +377,10 @@ function mapSummary(issue: Record<string, unknown>, vocab: JiraVocabulary): Back
     labels: stringArray(fields.labels, "Jira labels"),
     milestone: versions[0] === undefined ? null : stringAt(versions[0], "name", "Jira fixVersion"),
     parentTaskId: parent === null ? null : stringAt(parent, "key", "Jira parent"),
+    // Lore's own documentation metadata is parsed out of the managed description block
+    // (mapDetail/parseManagedDescription), which the bulk search payload here does not carry —
+    // always empty at summary tier, same bulk-list gap as Backlog.md's (LCLI-374).
+    documentation: [],
   };
 }
 

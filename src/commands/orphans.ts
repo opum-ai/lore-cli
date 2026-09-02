@@ -5,11 +5,14 @@
  * coupling `lore link`/`sync` maintain has gaps. Two directions, one envelope:
  *
  *   - **orphanTasks** — tasks with **no owning doc**: no concept lists the task in its `tasks:`
- *     frontmatter AND the task carries no `doc:<conceptId>` back-reference label AND (LORE-261) no
- *     ancestor in its Backlog `parentTaskId` chain is owned either — a subtask of an already-linked
- *     parent task is not reported, since linking the parent does not stamp each subtask with its own
- *     back-reference (see {@link hasOwnedAncestor}). Work that exists in Backlog but is documented
- *     nowhere, at any level of its parent/subtask hierarchy.
+ *     frontmatter AND the task carries no `doc:<conceptId>` back-reference label AND (LCLI-374) the
+ *     backend's own `--doc` flag recorded no documentation either AND (LORE-261) no ancestor in its
+ *     Backlog `parentTaskId` chain is owned either — a subtask of an already-linked parent task is
+ *     not reported, since linking the parent does not stamp each subtask with its own back-reference
+ *     (see {@link hasOwnedAncestor}). Work that exists in Backlog but is documented nowhere, at any
+ *     level of its parent/subtask hierarchy. `--doc` and `tasks:`/`doc:` are two independent
+ *     references lore never synchronizes for you — a task can carry one without the other, and
+ *     `lore link` is what reconciles them; see {@link hasDocumentation}.
  *   - **danglingLinks** — docs whose linked task **vanished**: a `tasks:` id the current-branch
  *     Backlog snapshot no longer knows. A doc pointing at a task that has been deleted or renamed.
  *
@@ -199,7 +202,10 @@ export function computeOrphans(
   const orphanTasks = snapshot
     .filter(
       (task) =>
-        !referenced.has(task.id.toLowerCase()) && !hasDocLabel(task) && !hasOwnedAncestor(task, referenced, byId),
+        !referenced.has(task.id.toLowerCase()) &&
+        !hasDocLabel(task) &&
+        !hasDocumentation(task) &&
+        !hasOwnedAncestor(task, referenced, byId),
     )
     .map((task): OrphanTask => ({ id: task.id, title: task.title, status: task.status }))
     .sort((a, b) => compareLower(a.id, b.id));
@@ -247,6 +253,19 @@ export const DEFAULT_ORPHANS_LIMIT = 20;
 /** Whether a task claims an owning doc via a `doc:<conceptId>` back-reference label (case-insensitive). */
 function hasDocLabel(task: BacklogTask): boolean {
   return task.labels.some((label) => label.toLowerCase().startsWith("doc:"));
+}
+
+/**
+ * LCLI-374: whether the backend's own `--doc` flag recorded any documentation for `task`, at no
+ * extra fetch cost — {@link BacklogTask.documentation} is already present in the same bulk
+ * snapshot `orphans` reads, so this stays a pure set-arithmetic check like {@link hasDocLabel}.
+ * `--doc` alone never writes a `tasks:`/`doc:` back-reference (only `lore link` does), so without
+ * this a task created with `--doc` and never linked read as a silent orphan. Same scope boundary
+ * as `hasDocLabel`: any non-empty value exempts the task, even one whose path does not resolve to
+ * a real concept — `orphans` reports the *coupling* gap, not the target's existence.
+ */
+function hasDocumentation(task: BacklogTask): boolean {
+  return task.documentation.length > 0;
 }
 
 /**

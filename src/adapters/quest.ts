@@ -561,6 +561,9 @@ function summary(value: unknown): BacklogTask {
     labels: strings(task.labels ?? [], "labels"),
     milestone: nullableString(task.milestone, "milestone"),
     parentTaskId: nullableString(task.parentId ?? task.parentTaskId, "parent task id"),
+    // Unlike Backlog.md, Quest's own `task list --json` already carries the full documentation
+    // array per item (LCLI-374) -- no extra per-task fetch needed to read it here.
+    documentation: strings(task.documentation ?? [], "documentation"),
   };
 }
 function list(value: unknown, opts?: ListTasksOptions): BacklogTask[] {
