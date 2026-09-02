@@ -166,7 +166,13 @@ rm -rf /tmp/no-git-probe
 # still probed the `backlog` binary and reported Backlog.md as uninitialized. Asserted on the
 # envelope rather than on stderr, so this holds whether or not quest is installed in the image:
 # `trackerCheck` names quest, and the deprecated Backlog-only field stays absent.
-mkdir -p /tmp/tracker-probe && (cd /tmp/tracker-probe && git init -q)
+#
+# LCLI-376 made an uninitialized Quest workspace a FATAL probe failure (not just advisory), and
+# that check (assertWorkspace) is a pure `.quest/workspace.toml` existence test that runs before
+# quest's own binary is ever probed -- so it fires regardless of whether quest is installed in
+# this image. The marker file's content is never read here (only its presence), so a placeholder
+# is enough to clear the gate and let the rest of probe() proceed exactly as before LCLI-376.
+mkdir -p /tmp/tracker-probe && (cd /tmp/tracker-probe && git init -q && mkdir -p .quest && : > .quest/workspace.toml)
 step_json "LCLI-358.2: --tracker quest probes quest, and reports nothing about backlog" \
   '.kind == "init.result"
    and .data.trackerCheck.backend == "quest"
