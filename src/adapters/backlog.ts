@@ -561,6 +561,15 @@ export interface BacklogTask {
   readonly labels: readonly string[];
   readonly milestone: string | null;
   readonly parentTaskId: string | null;
+  /**
+   * Raw documentation paths the backend's own `--doc` flag recorded (LCLI-374). This is a
+   * backend-native reference, distinct from — and not synchronized with — the `tasks:`
+   * frontmatter / `doc:` label coupling `lore link` writes: a task can carry `documentation`
+   * here while still being unlinked in lore's own sense. Always `[]` for a backend whose bulk
+   * list command does not expose it (Backlog.md's `task list --json` summary shape does not;
+   * only its per-id `task view` does), not a signal that no `--doc` was ever given.
+   */
+  readonly documentation: readonly string[];
 }
 
 /**
@@ -578,7 +587,6 @@ export interface BacklogTaskDetail extends BacklogTask {
   readonly updatedAt: string | null;
   readonly dependencies: readonly string[];
   readonly references: readonly string[];
-  readonly documentation: readonly string[];
   readonly modifiedFiles: readonly string[];
   readonly subtasks: readonly { readonly id: string; readonly title: string }[];
   readonly acceptanceCriteria: readonly BacklogCriterion[];
@@ -602,6 +610,9 @@ function mapSummary(item: z.infer<typeof TaskSummarySchema>): BacklogTask {
     labels: item.labels,
     milestone: item.milestone,
     parentTaskId: item.parentTaskId,
+    // Backlog.md's task-list/search summary shape does not carry documentation at all (only its
+    // per-id `task view` does) — always empty here, not evidence that no --doc was ever given.
+    documentation: [],
   };
 }
 

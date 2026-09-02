@@ -185,6 +185,7 @@ function toSummary(task: BacklogTaskDetail): BacklogTask {
     labels: task.labels,
     milestone: task.milestone,
     parentTaskId: task.parentTaskId,
+    documentation: task.documentation,
   };
 }
 

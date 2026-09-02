@@ -102,6 +102,9 @@ const BacklogTaskSchema = z.strictObject({
   labels: z.array(z.string()),
   milestone: z.string().min(1).nullable(),
   parentTaskId: z.string().min(1).nullable(),
+  // Optional/defaulted so existing recorded snapshots (predating BacklogTask.documentation,
+  // LCLI-374) keep parsing unchanged; benchmark fixtures never exercise --doc.
+  documentation: z.array(z.string()).default([]),
 });
 const TaskSnapshotSchema = z.strictObject({
   schema: z.literal(LADYBUG_BENCHMARK_TASK_SNAPSHOT_SCHEMA),
@@ -418,6 +421,7 @@ function buildTasks(spec: LadybugBenchmarkFixtureSpec): BacklogTask[] {
     labels: ordinal % 7 === 0 ? ["common", "qualification"] : ["qualification"],
     milestone: ordinal % 13 === 0 ? "m-benchmark" : null,
     parentTaskId: null,
+    documentation: [],
   }));
 }
 

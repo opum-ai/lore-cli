@@ -93,6 +93,19 @@ describe("computeOrphans — the pure set arithmetic (AC#1)", () => {
     expect(report.orphanTasks).toEqual([]);
   });
 
+  test("a task carrying backend documentation (--doc) but no doc: label or forward ref is NOT an orphan (LCLI-374)", () => {
+    // Quest's --doc records into the task's own documentation array without ever writing a
+    // tasks:/doc: back-reference -- only `lore link` does that. Before this fix that gap read
+    // as a silent orphan.
+    const report = computeOrphans([], [makeTask("LORE-9", { documentation: ["docs/stories/gone.md"] })], NO_FLAGS);
+    expect(report.orphanTasks).toEqual([]);
+  });
+
+  test("a task with an empty documentation array is still an orphan (LCLI-374 does not weaken the base case)", () => {
+    const report = computeOrphans([], [makeTask("LORE-9", { documentation: [] })], NO_FLAGS);
+    expect(report.orphanTasks).toEqual([{ id: "LORE-9", title: "Title for LORE-9", status: "To Do" }]);
+  });
+
   test("forward-link ownership is case-insensitive (concept lists lore-1, snapshot has LORE-1)", () => {
     const report = computeOrphans([concept("stories/bulk", { tasks: ["lore-1"] })], [makeTask("LORE-1")], NO_FLAGS);
     expect(report.orphanTasks).toEqual([]);
