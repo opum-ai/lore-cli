@@ -4,7 +4,7 @@ title: 'lore check does not detect stale lore:index managed blocks'
 status: To Do
 assignee: []
 created_date: '2026-09-02 21:51'
-updated_date: '2026-09-02 22:36'
+updated_date: '2026-09-02 23:07'
 labels: []
 dependencies: []
 references:
@@ -47,5 +47,24 @@ opum-agent independently investigated the root cause (read-only, verified before
 Design decision (mine to make, per opag): ERROR, not warning. Agreeing with opag's own lean and for the same reason: sync fixes this automatically, and a drift that's trivially auto-repairable but silently ignored is exactly how three real documents went missing from an index without anyone noticing (opum-agent's own incident). A warning would let that recur; check's whole role is being the definition of done, so a mechanically-verifiable drift it could catch should be fatal, not advisory.
 
 Deferring implementation to a fresh session (current session is at ~180+ minutes / high context, mid a large duplicate-id fix + several other bugs today) -- this is well-scoped enough that a fresh session can pick it up directly from this note plus opag's root-cause comment on the finding, without re-deriving either.
+---
+
+created: 2026-09-02 23:07
+---
+Attempted this (2026-09-02), got a working draft, then found it was genuinely bigger than opag's outside read suggested -- discarded the code rather than land something risky. Recording exactly where the real complexity is, since that's worth more to the next session than a half-fixed patch.
+
+The caller-plus-comparison shape IS right: add indexDriftFindings(existing, regenerated) to core/check.ts mirroring reconcileDriftFindings' style (error severity, "run lore sync" hint), and in commands/check.ts, when isDocsRoot(bundle.label), build a BundleGraph via loadBundle(docsRoot, {profile}), call generateIndexes(graph, {existing: readIndexBytes(docsRoot)}), and diff. That part works and is a small diff.
+
+THREE real problems surfaced once tested against the actual suite, not against my own assumption:
+
+1. FALSE POSITIVE on every never-synced bundle. generateIndexes appends a listing block to any index.md that doesn't have markers yet (documented behavior). So a brand-new lore init + lore new with zero lore sync runs -- the ordinary scaffold-then-write workflow -- gets flagged as drift on the very first check, which is a much bigger behavior change than closing "an index that WAS current fell stale." First attempt broke 49 of 294 check.test.ts tests for exactly this reason. Fix: only flag drift when the EXISTING on-disk bytes already contain the <!-- lore:index:begin --> marker (proof sync touched this file before) -- narrows to 8 failures.
+
+2. Calling loadBundle a SECOND time, raw, breaks this file's own hard-won error-isolation guarantee. tryConceptsForBundle exists specifically so a malformed concept becomes a FINDING, not a thrown error that aborts the whole command (LORE-89, LORE-27 round 9 -- both cited in this file's own comments as past incidents from getting this wrong). My second loadBundle call for index generation doesn't go through that tolerant path, so a bundle with a pre-existing validation problem (already correctly reported elsewhere) now ALSO throws uncaught, turning a clean finding-based failure into a crashed command. Test: "a tasks:-linked concept violating a custom-profile-required field is caught by check's own scan" -- was exit 6 via a proper finding, became an uncaught throw.
+
+3. Even with fix #1's marker check, at least one existing test fixture (docs/index.md with hand-typed, marker-present-but-not-byte-exact content, in the reserved-stem-concept test) collides with a real generateIndexes comparison on pure formatting grounds unrelated to what that test is actually about. Suggests other hand-written fixtures across the suite may carry the same risk, not just the ones I happened to hit.
+
+None of these are visible from reading the code alone -- all three only surfaced by running the actual suite. Recommend, for whoever picks this up: implement the caller+comparison as above, run the FULL suite (not just a subset) before considering it done, wrap the loadBundle call so a throw there is treated as "cannot verify index drift this run" rather than propagated, and expect to touch some existing check.test.ts fixtures to add real synced-index content rather than assuming the shape above lands without any test-suite changes.
+
+Design decision (error vs warning) still stands as ERROR, per my earlier note and opag's ruling -- that part isn't in question, only the blast radius of wiring it in safely.
 ---
 <!-- COMMENTS:END -->
