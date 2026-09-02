@@ -84,7 +84,11 @@ import * as readline from "node:readline/promises";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { type GitPreflight, realGitPreflight } from "../adapters/git-preflight";
 import { type JiraOnboarding, realJiraOnboarding } from "../adapters/jira-onboarding";
-import { createQuestBacklogMigration, isQuestVersionFloorFailure } from "../adapters/quest";
+import {
+  createQuestBacklogMigration,
+  isQuestVersionFloorFailure,
+  isQuestWorkspaceNotInitializedFailure,
+} from "../adapters/quest";
 import { createTrackerAdapter } from "../adapters/tracker";
 import {
   detectTrackerEnvironment,
@@ -518,8 +522,12 @@ async function installSelectedBackendIfRequested(options: InitOptions, parsed: I
  * The narrow, shared probe every persisted selection now runs before it is written (LCLI-356
  * AC#2, extended fleet-wide by opag ruling 2026-08-31 to every path that persists a backend, not
  * only the explicit `--tracker` one — the commitment is the selection, however it was arrived at).
- * Re-throws only a below-the-floor rejection; every other outcome, including "not installed",
- * stays advisory, because only a floor failure is not one setup step away in the same directory.
+ * Re-throws a below-the-floor rejection and (LCLI-376) an uninitialized-Quest-workspace rejection;
+ * every other outcome, including "not installed", stays advisory. The workspace check used to be
+ * advisory too — "one setup step away in the same directory" — but that step-away framing assumed
+ * the failure would surface loudly later; it did not. `backend = "quest"` persisted silently, and
+ * `lore check` never caught it, so LCLI-376 promoted it to fatal alongside the floor failure. This
+ * is deliberately narrow: it only refuses the selection, never invokes `quest init` itself.
  */
 async function verifyBackendReadiness(
   options: InitOptions,
@@ -530,7 +538,7 @@ async function verifyBackendReadiness(
     const capability = await adapter.probe();
     return { checked: true, backend, capable: true, version: capability.version };
   } catch (err) {
-    if (isQuestVersionFloorFailure(err)) {
+    if (isQuestVersionFloorFailure(err) || isQuestWorkspaceNotInitializedFailure(err)) {
       throw err;
     }
     // Anything else stays advisory: the downstream probe reports it as a warning, exactly as it did
