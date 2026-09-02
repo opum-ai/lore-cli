@@ -261,8 +261,8 @@ describe("cli — new dispatch", () => {
     const manifest = buildManifest().commands.find((command) => command.name === "new");
     if (manifest === undefined) throw new Error("new manifest entry is missing");
     expect(envelope.kind).toBe(manifest.kind);
-    expect(envelope.data.path).toBe("docs/adr/use-soft-deletes.md");
-    expect(existsSync(join(cwd, "docs/adr/use-soft-deletes.md"))).toBe(true);
+    expect(envelope.data.path).toBe("docs/adr/0001-use-soft-deletes.md");
+    expect(existsSync(join(cwd, "docs/adr/0001-use-soft-deletes.md"))).toBe(true);
   });
 
   test("the router passes command flags (`--var`, `--summary`) through to the command", () => {
@@ -300,7 +300,7 @@ describe("cli — new dispatch", () => {
     const c = ctx({ cwd });
     // `--json` must precede `--`; anything after the terminator is a positional (the title).
     expect(run(argv("new", "adr", "--json", "--", "-5 minute timeout"), c)).toBe(0);
-    expect(existsSync(join(cwd, "docs/adr/5-minute-timeout.md"))).toBe(true);
+    expect(existsSync(join(cwd, "docs/adr/0001-5-minute-timeout.md"))).toBe(true);
   });
 });
 

@@ -15,7 +15,7 @@
  * creates a *new* concept and must never overwrite or silently no-op onto an existing file.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { loadBundleState } from "../core/bundle";
 import { idFromPath } from "../core/concept";
@@ -261,9 +261,34 @@ function resolveDocPath(parsed: NewArgs, type: string, root: string): string {
   if (slug === "") {
     throw usage(`could not derive a filename from title "${parsed.title}"`, "pass an explicit path with --out <path>");
   }
-  const docPath = posix.join(DOCS_DIR, typeDirectory(type), `${slug}.md`);
+  // LCLI-373: ADR is the one type this repo (and every OKF-native ADR set) numbers by convention
+  // — 0001-, 0002-, ... — rather than by slug alone. `--out` above already lets a caller opt out.
+  const filename = type === "ADR" ? `${nextAdrNumber(root)}-${slug}.md` : `${slug}.md`;
+  const docPath = posix.join(DOCS_DIR, typeDirectory(type), filename);
   assertNotReservedStem(idFromPath(docPath), "create");
   return docPath;
+}
+
+/** An existing ADR filename's leading ordinal, e.g. `"0007"` from `0007-cli-contract.md`. */
+const ADR_NUMBER_PREFIX = /^(\d+)-/;
+
+/**
+ * The next unused ADR ordinal for `docs/adr/`, zero-padded to at least 4 digits to match this
+ * repo's existing 0001-, 0002-, ... convention: one past the highest NNNN- prefix already in the
+ * directory, or `"0001"` if the directory does not exist yet or has no numbered files in it.
+ */
+function nextAdrNumber(root: string): string {
+  const dir = join(root, DOCS_DIR, "adr");
+  let highest = 0;
+  if (existsSync(dir)) {
+    for (const entry of readdirSync(dir)) {
+      const match = ADR_NUMBER_PREFIX.exec(entry);
+      if (match !== null) {
+        highest = Math.max(highest, Number.parseInt(match[1] as string, 10));
+      }
+    }
+  }
+  return String(highest + 1).padStart(4, "0");
 }
 
 /**

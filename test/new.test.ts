@@ -50,8 +50,8 @@ describe("lore new — scaffolding a known type", () => {
   test("writes to the conventional per-type path and returns id/path/type", () => {
     const { code, result } = newCmd(["adr", "Use soft deletes"]);
     expect(code).toBe(0);
-    expect(result).toEqual({ id: "adr/use-soft-deletes", path: "docs/adr/use-soft-deletes.md", type: "ADR" });
-    expect(existsSync(join(root, "docs/adr/use-soft-deletes.md"))).toBe(true);
+    expect(result).toEqual({ id: "adr/0001-use-soft-deletes", path: "docs/adr/0001-use-soft-deletes.md", type: "ADR" });
+    expect(existsSync(join(root, "docs/adr/0001-use-soft-deletes.md"))).toBe(true);
   });
 
   test("accepts a case-insensitive type token and writes the canonical type", () => {
@@ -155,21 +155,21 @@ describe("lore new — scaffolding a known type", () => {
 
   test("a `--` terminator lets a title begin with a dash", () => {
     const { result } = newCmd(["adr", "--", "-5 minute timeout"]);
-    expect(result.path).toBe("docs/adr/5-minute-timeout.md");
+    expect(result.path).toBe("docs/adr/0001-5-minute-timeout.md");
     // The dash-leading title is YAML-quoted structurally (never corrupts the frontmatter).
     expect(readFileSync(join(root, result.path), "utf8")).toContain('title: "-5 minute timeout"');
   });
 
   test("a trimmed title: surrounding whitespace is dropped from frontmatter and slug alike", () => {
     const { result } = newCmd(["adr", "  Soft deletes  "]);
-    expect(result.path).toBe("docs/adr/soft-deletes.md");
+    expect(result.path).toBe("docs/adr/0001-soft-deletes.md");
     expect(readFileSync(join(root, result.path), "utf8")).toContain("title: Soft deletes\n");
   });
 
   test("a --var shadowing an auto token is ignored with a warning, not silently dropped", () => {
     const { stderr } = newCmd(["adr", "Real Title", "--var", "title=Ignored"]);
     expect(stderr.text()).toContain("ignoring --var title");
-    expect(readFileSync(join(root, "docs/adr/real-title.md"), "utf8")).toContain("title: Real Title");
+    expect(readFileSync(join(root, "docs/adr/0001-real-title.md"), "utf8")).toContain("title: Real Title");
   });
 });
 
@@ -211,6 +211,34 @@ describe("lore new — stamps the OKF `resource` from the profile's resource_bas
     // The scaffolded (commented) profile leaves resource_base empty → the default behavior.
     const { result } = newCmd(["adr", "Use soft deletes"]);
     expect(readFileSync(join(root, result.path), "utf8")).not.toContain("resource:");
+  });
+});
+
+describe("lore new adr — auto-numbers to the existing NNNN- convention (LCLI-373)", () => {
+  test("the first ADR in an empty/nonexistent docs/adr/ gets 0001-", () => {
+    const { result } = newCmd(["adr", "First decision"]);
+    expect(result.path).toBe("docs/adr/0001-first-decision.md");
+  });
+
+  test("a later ADR continues one past the highest existing NNNN- prefix, gaps and all", () => {
+    mkdirSync(join(root, "docs/adr"), { recursive: true });
+    writeFileSync(join(root, "docs/adr/0001-first.md"), "");
+    writeFileSync(join(root, "docs/adr/0002-second.md"), "");
+    writeFileSync(join(root, "docs/adr/0010-tenth.md"), ""); // a gap above 2 -- the max wins, not the count
+    const { result } = newCmd(["adr", "Eleventh decision"]);
+    expect(result.path).toBe("docs/adr/0011-eleventh-decision.md");
+  });
+
+  test("--out bypasses auto-numbering entirely, matching every other type", () => {
+    const { result } = newCmd(["adr", "Manual path", "--out", "docs/adr/custom-name"]);
+    expect(result.path).toBe("docs/adr/custom-name.md");
+  });
+
+  test("a non-ADR type is never numbered", () => {
+    mkdirSync(join(root, "docs/reference"), { recursive: true });
+    writeFileSync(join(root, "docs/reference/0001-decoy.md"), ""); // an ADR-shaped name elsewhere must not leak in
+    const { result } = newCmd(["reference", "Plain reference"]);
+    expect(result.path).toBe("docs/reference/plain-reference.md");
   });
 });
 
@@ -473,18 +501,22 @@ describe("lore new — unknown types are accepted (OKF tolerance)", () => {
 });
 
 describe("lore new — never clobbers an existing target (exit 5)", () => {
+  // Uses "reference" rather than "adr": ADR auto-numbers each new file to a fresh, unused
+  // ordinal (LCLI-373), so two "adr" runs with the same title no longer collide on their own —
+  // that behavior gets its own dedicated tests below. The never-clobber mechanism this block
+  // tests is not ADR-specific, so a type without special numbering isolates it correctly.
   test("a second run at the same path is a conflict, not an overwrite", () => {
-    newCmd(["adr", "Use soft deletes"]);
-    const before = readFileSync(join(root, "docs/adr/use-soft-deletes.md"), "utf8");
+    newCmd(["reference", "Orders table"]);
+    const before = readFileSync(join(root, "docs/reference/orders-table.md"), "utf8");
 
-    const err = expectError(["adr", "Use soft deletes"]);
+    const err = expectError(["reference", "Orders table"]);
     expect(err.type).toBe("conflict");
-    expect(readFileSync(join(root, "docs/adr/use-soft-deletes.md"), "utf8")).toBe(before);
+    expect(readFileSync(join(root, "docs/reference/orders-table.md"), "utf8")).toBe(before);
   });
 
   test("a directory occupying the target path is a conflict, not a crash", () => {
-    mkdirSync(join(root, "docs/adr/use-soft-deletes.md"), { recursive: true });
-    expect(expectError(["adr", "Use soft deletes"]).type).toBe("conflict");
+    mkdirSync(join(root, "docs/reference/orders-table.md"), { recursive: true });
+    expect(expectError(["reference", "Orders table"]).type).toBe("conflict");
   });
 });
 
@@ -632,7 +664,7 @@ describe("lore new — output rendering", () => {
       clock: FIXED_CLOCK,
       stdout,
     });
-    expect(stdout.lines()).toEqual(["created docs/adr/use-soft-deletes.md"]);
+    expect(stdout.lines()).toEqual(["created docs/adr/0001-use-soft-deletes.md"]);
   });
 
   test("pretty mode summarizes the created concept", () => {
@@ -644,6 +676,6 @@ describe("lore new — output rendering", () => {
       clock: FIXED_CLOCK,
       stdout,
     });
-    expect(stdout.text()).toContain("Created ADR adr/use-soft-deletes");
+    expect(stdout.text()).toContain("Created ADR adr/0001-use-soft-deletes");
   });
 });
