@@ -3,10 +3,11 @@ id: LCLI-368
 title: >-
   No corroboration row for lore: published tarballs are never compared against
   the qualification reports
-status: To Do
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-30 14:04'
+updated_date: '2026-09-02 22:35'
 labels:
   - release
   - evidence
@@ -41,3 +42,19 @@ opum-cli-e2e has offered to build it and is the right owner — the row lives in
 - [ ] #3 A source that cannot be produced, or produces an unparseable digest, BLOCKS the row rather than silently reducing the number of sources
 - [ ] #4 Proven by a negative control: substituting one platform's tarball for a different build makes the row fail and name that platform and both digests
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-09-02 22:35
+---
+Lore-side scope confirmed and executed live (2026-09-02), not just checked for feasibility:
+
+1. The qualification report artifact IS retrievable for a published release: Release run 33296350640 (v0.3.5, published 2026-08-30) still has all six ladybug-package-qualification-<platform>-33296350640-1 artifacts, non-expired, downloadable via `gh run download`.
+2. platformTarballSha256 IS present for all six platforms (darwin-x64/arm64, linux-x64/arm64, win32-x64/arm64) -- confirmed by reading each report JSON directly.
+
+Went further and actually ran the full three-way corroboration by hand, since the artifacts were already in hand: for every platform, recomputed sha256 over the downloaded candidate tarball's real bytes and confirmed it equals the report's platformTarballSha256 (all 6 match), then separately computed sha1 over the same tarball and confirmed it equals `npm view @opum-ai/lore-<platform>@0.3.5 dist.shasum` -- the actual currently-published registry artifact (all 6 match). Published tarball == candidate bundle == qualification report, for real, right now, not asserted.
+
+This closes lore-cli's side. The row itself (opum-cli-e2e's harness, ACs #1-4) is out of scope here -- opum-cli-e2e owns it and has the exact digests above if useful for building it.
+---
+<!-- COMMENTS:END -->

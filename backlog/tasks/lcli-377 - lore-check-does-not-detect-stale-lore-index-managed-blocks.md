@@ -4,6 +4,7 @@ title: 'lore check does not detect stale lore:index managed blocks'
 status: To Do
 assignee: []
 created_date: '2026-09-02 21:51'
+updated_date: '2026-09-02 22:36'
 labels: []
 dependencies: []
 references:
@@ -35,3 +36,16 @@ A directory index's managed <!-- lore:index:begin -->...<!-- lore:index:end --> 
 <!-- SECTION:PLAN:BEGIN -->
 Reproduced against dev source: lore new reference "Second Doc" after an initial lore sync left docs/reference/index.md showing only the first doc; lore check and lore check --strict both reported 0 errors, 0 warnings. check.ts has no lore:index-aware code path at all (grep confirms). The generation logic already lives in src/core/indexes.ts and is exactly what a check-time comparison should call, matching the same function sync.ts uses rather than re-deriving the format independently.
 <!-- SECTION:PLAN:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-09-02 22:36
+---
+opum-agent independently investigated the root cause (read-only, verified before I build on it): check.ts never imports core/indexes at all -- generateIndexes() is called by sync.ts/rename.ts/discover.ts/replace.ts but not check.ts, so there's no expected-index comparison to skip or weaken; it simply doesn't exist. check.ts already loads the same bundle graph generateIndexes takes as input, so the fix is a caller, not new generation logic.
+
+Design decision (mine to make, per opag): ERROR, not warning. Agreeing with opag's own lean and for the same reason: sync fixes this automatically, and a drift that's trivially auto-repairable but silently ignored is exactly how three real documents went missing from an index without anyone noticing (opum-agent's own incident). A warning would let that recur; check's whole role is being the definition of done, so a mechanically-verifiable drift it could catch should be fatal, not advisory.
+
+Deferring implementation to a fresh session (current session is at ~180+ minutes / high context, mid a large duplicate-id fix + several other bugs today) -- this is well-scoped enough that a fresh session can pick it up directly from this note plus opag's root-cause comment on the finding, without re-deriving either.
+---
+<!-- COMMENTS:END -->

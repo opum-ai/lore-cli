@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-30 01:17'
-updated_date: '2026-08-30 01:38'
+updated_date: '2026-09-02 22:39'
 labels:
   - manifest
   - contract
@@ -77,5 +77,29 @@ Proven discriminating BEFORE any case was wired to it, six selftest probes: matc
 AC#1 IS NOT YET SATISFIABLE AS WRITTEN and I am not checking it. It asks for EVERY command. Eight are covered. The rest divide into two groups: commands needing special state (backlog adopt, snapshot, changed, provenance, explorer, agent) which were left out rather than given a contrived invocation — a case bent to fit tests the bending — and the eight commands absent from the harness entirely (agent, backlog, changed, explorer, impact, path, provenance, snapshot). Closing AC#1 means adding harness cases for those, which is a separate and larger piece than the edge itself.
 
 AC#4's negative control is satisfied for the helper (the six probes above) but not yet per-command; the planted-kind control in test/help.test.ts covers the manifest side.
+---
+
+created: 2026-09-02 22:37
+---
+Handover, deferring to a fresh session per opag's explicit standing ruling (a rebase/design task deserves fresh context, not a tired continuation).
+
+State: not started beyond the investigation already in the task description (which is thorough and current -- re-read it first, it already names the two candidate approaches and the reasoning for preferring (b)).
+
+What I'd do next, concretely: approach (b) -- add live kind assertions to docker/e2e/run-e2e.sh for every command that already has a case there (most do), rather than (a) deriving a golden at unit-test time via fixture invocation. Reasoning already in the task: (b) is cheaper, covers more commands honestly, and the e2e harness already drives the real compiled binary, which is the actual claim ("declared kind matches the live handler's emitted kind") -- a unit test invoking the handler directly with a minimal fixture proves less (source-level, not binary-level). Before starting: grep docker/e2e/run-e2e.sh for which of the 29 manifest commands already have a step_json case with a .kind assertion, and which don't -- that count determines whether (b) alone closes AC#1 or needs a few new e2e cases added for commands the harness doesn't touch yet. AC#3's negative control (change one handler's kind, confirm the check fails and names the command) needs to be provable against the e2e path specifically, which is a different shape than a unit-test negative control -- worth thinking through before writing the fix, not after.
+
+No blocking decision needed from opag -- this is lore-cli's own test-infrastructure design, and the path is scoped, just not started.
+---
+
+created: 2026-09-02 22:39
+---
+RULING from opag (supersedes my own "option (b)" recommendation above -- read this comment, not just the one before it):
+
+Implement a third option, not (a) or (b): have the e2e assert the emitted kind equals the MANIFEST's declared kind, read from `lore --json help` AT RUN TIME -- not a hardcoded expected string per step. Reasoning: the e2e already observes emitted kinds live (18 commands); help.test.ts already checks the manifest against a literal. Two independent literals, each correct, with NO EDGE between them. Adding that edge -- comparing the live envelope's kind against the live manifest's declared kind for the same command, both read from the same running binary -- is the actual fix, and it satisfies bind-on-content on both sides rather than one.
+
+On the 8 commands the e2e harness doesn't currently exercise (agent, backlog, changed, explorer, impact, path, provenance, snapshot): do NOT block the fix on covering them, and do NOT paper over them. Ship the manifest-derived assertion for the 21 already-driven commands. For the 8, add a minimal harness case only where genuinely cheap; where not, name them explicitly as uncovered in the test's own comment -- "these 21 are live-verified, these 8 are not" is honest; implying 29 when only 21 are covered is the exact failure this task exists to correct.
+
+Amend AC#1 if landing with partial (21/29) coverage -- write the reason on the record rather than quietly satisfying a lower bar than what's written. Do not trade away AC#3's negative control (one handler's kind changed without touching the manifest must fail the check and name the command) even if other scope gets trimmed -- an unwatched gate is worth little, which is this task's own history.
+
+Not started -- deferred to a fresh session per opag's standing ruling on context. The ruling above is complete and actionable; a fresh session should implement directly from it rather than re-deriving the design.
 ---
 <!-- COMMENTS:END -->
