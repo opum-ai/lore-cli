@@ -51,6 +51,28 @@ import type { TrackerAdapter } from "./tracker";
 export const MIN_BACKLOG_VERSION = "1.49.0";
 
 /**
+ * The stable discriminator on a below-the-floor rejection (LCLI-370), mirroring
+ * `QUEST_VERSION_FLOOR_CODE` in `./quest` exactly: a caller acts on THIS failure specifically
+ * without matching message text. Before this code existed, a below-the-floor Backlog.md and a
+ * merely-uninitialized one (`noBacklogProject`) both surfaced as the same undiscriminated
+ * `validation` LoreError, so `verifyBackendReadiness` could treat a below-floor Quest as fatal
+ * before persisting the selection but never a below-floor Backlog.md -- an explicit
+ * `--tracker backlog` user got weaker protection than a `--tracker quest` user, purely because
+ * one adapter had a discriminated code and the other did not.
+ */
+export const BACKLOG_VERSION_FLOOR_CODE = "backlog.version-below-floor";
+
+/** Whether `error` is the below-the-floor rejection {@link BACKLOG_VERSION_FLOOR_CODE} marks. */
+export function isBacklogVersionFloorFailure(error: unknown): boolean {
+  return (
+    error instanceof LoreError &&
+    typeof error.input === "object" &&
+    error.input !== null &&
+    (error.input as { code?: unknown }).code === BACKLOG_VERSION_FLOOR_CODE
+  );
+}
+
+/**
  * The `schemaVersion` every `--json` envelope carries — upstream's real envelope, a **number**
  * (`1`), shared by the capability probe and the full read adapter now that both target the same
  * contract (LORE-53 migrated the probe alone first; LORE-54 migrated the rest and retired the
@@ -275,6 +297,7 @@ export async function probeBacklog(spawn: BacklogSpawn): Promise<BacklogCapabili
   const floor = parseSemver(MIN_BACKLOG_VERSION);
   if (floor && compareSemver(version, floor) < 0) {
     notJsonCapable(`version ${version.raw} is below the ${MIN_BACKLOG_VERSION} floor`, {
+      code: BACKLOG_VERSION_FLOOR_CODE,
       version: version.raw,
       floor: MIN_BACKLOG_VERSION,
     });

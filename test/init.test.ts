@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
-import type { BacklogAdapter } from "../src/adapters/backlog";
+import { BACKLOG_VERSION_FLOOR_CODE, type BacklogAdapter } from "../src/adapters/backlog";
 import { type GitPreflight, realGitPreflight } from "../src/adapters/git-preflight";
 import type { JiraOnboarding, JiraProfile, JiraProjectSummary } from "../src/adapters/jira-onboarding";
 import {
@@ -1947,6 +1947,47 @@ describe("lore init — an unsupported tracker version is rejected at selection 
     expect(err?.message).toContain("below the 0.2.7 floor");
     // The scaffold is idempotent and harmless; the SELECTION is the commitment that is withheld.
     expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).not.toContain('backend = "quest"');
+  });
+
+  /** A tracker adapter whose probe fails exactly the way an under-the-floor Backlog.md does (LCLI-370). */
+  function belowFloorBacklogAdapter(): BacklogAdapter {
+    return fakeAdapter([], {
+      probe: new LoreError(
+        "validation",
+        "The `backlog` binary is not --json-capable: version 1.40.0 is below the 1.49.0 floor",
+        "install a newer Backlog.md",
+        {
+          code: BACKLOG_VERSION_FLOOR_CODE,
+          version: "1.40.0",
+          floor: "1.49.0",
+        },
+      ),
+    });
+  }
+
+  test("--tracker backlog against an under-the-floor Backlog.md fails and does NOT persist the backend (LCLI-370)", async () => {
+    // Before this fix, only Quest's floor failure carried a discriminated code -- a below-floor
+    // Backlog.md and a merely-uninitialized one both surfaced as the same undiscriminated
+    // validation error, so this exact scenario silently persisted backend = "backlog" instead of
+    // being refused the way the Quest case above already was.
+    const err = await Promise.resolve(
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        clock: FIXED_CLOCK,
+        args: ["--tracker", "backlog"],
+        adapter: belowFloorBacklogAdapter(),
+      }),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught as LoreError,
+    );
+    expect(err).toBeInstanceOf(LoreError);
+    expect(err?.type).toBe("validation");
+    expect(err?.message).toContain("below the 1.49.0 floor");
+    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).not.toContain('backend = "backlog"');
   });
 
   test("--tracker quest against an uninitialized Quest workspace fails and does NOT persist the backend (LCLI-376)", async () => {
