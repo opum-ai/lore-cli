@@ -258,6 +258,19 @@ describe("lore new — user templates override built-ins (AC#2)", () => {
     expect(err.type).toBe("validation");
     expect(err.message).toContain("{{owner}}");
   });
+
+  test("a template beginning with its own frontmatter fence fails loud (LCLI-372, validation, exit 6), not silently written as a double-frontmatter file", () => {
+    writeFileSync(
+      join(root, ".lore/templates/reference.md"),
+      "---\ntype: Reference\ntitle: PLACEHOLDER\nsummary: PLACEHOLDER\ntags: []\n---\n# {{title}}\n\nbody\n",
+    );
+    const err = expectError(["reference", "Orders table"]);
+    expect(err.type).toBe("validation");
+    expect(err.message).toMatch(/\.lore\/templates\/reference\.md/i);
+    expect(err.message).toContain("---");
+    // Confirm nothing was written -- the check happens before renderBody, not after.
+    expect(existsSync(join(root, "docs/reference/orders-table.md"))).toBe(false);
+  });
 });
 
 describe("lore new — --template is confined to .lore/templates/ (LORE-72)", () => {

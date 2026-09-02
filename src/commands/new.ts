@@ -423,8 +423,9 @@ function readTemplateFile(absPath: string, relPath: string, root: string, checkS
       );
     }
   }
+  let text: string;
   try {
-    return readFileSync(absPath, "utf8");
+    text = readFileSync(absPath, "utf8");
   } catch (cause) {
     const code = errnoCode(cause);
     if (code === "ENOENT") {
@@ -438,7 +439,26 @@ function readTemplateFile(absPath: string, relPath: string, root: string, checkS
     }
     throw cause;
   }
+  // LCLI-372: a template is body-only markdown -- `buildNewConcept` generates and owns the
+  // frontmatter structurally, so it never parses or strips one out of the template text. A
+  // template that itself starts with a `---` fence therefore lands verbatim as literal body
+  // text after the real frontmatter, producing a file with two frontmatter blocks that both
+  // `lore validate` and `lore check` silently pass (the second block just reads as body prose).
+  // Rejecting it here, before it ever reaches renderBody, is cheaper and more honest than
+  // teaching validate/check to detect a stray fence in already-written body content.
+  if (LEADING_FRONTMATTER_FENCE.test(text)) {
+    throw new LoreError(
+      "validation",
+      `${relPath} begins with its own YAML frontmatter fence ("---")`,
+      "a lore template is body-only markdown -- lore generates and writes the frontmatter itself, so remove the leading `---` block from the template and keep only the body content",
+      { path: relPath },
+    );
+  }
+  return text;
 }
+
+/** A template's first non-blank line is a bare `---` fence -- the shape of a full concept file's frontmatter opener, never valid body-only template content. */
+const LEADING_FRONTMATTER_FENCE = /^---[ \t]*\r?\n/;
 
 // ── Output ───────────────────────────────────────────────────────────────────────
 
