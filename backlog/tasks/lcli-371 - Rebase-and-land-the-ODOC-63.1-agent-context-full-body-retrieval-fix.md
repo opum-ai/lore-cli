@@ -4,7 +4,7 @@ title: Rebase and land the ODOC-63.1 agent-context full-body retrieval fix
 status: In Progress
 assignee: []
 created_date: '2026-08-31 18:54'
-updated_date: '2026-09-02 20:12'
+updated_date: '2026-09-02 22:37'
 labels: []
 dependencies: []
 references:
@@ -52,5 +52,20 @@ Independent cross-check, 2026-09-02: an unverified issues dump from other agents
 - Heading-anchor pin on a heading that genuinely exists -> "references missing heading" validation error, because src/core/agent-profile.ts's validateAgentProfileReferences computes headingSlugs(concept.body) from the SAME empty body.
 
 Then patched src/cli.ts line 627 alone (context.retrieval ?? loadRetrievalGraph -> loadReferenceRetrievalGraph, matching this task's already-committed fix on feat/odoc-63.1-agent-profiles) and re-ran both cases: both now return correct non-empty bodies and real digests. Confirms this task's fix, once landed, resolves both symptoms -- no separate task needed for either.
+---
+
+created: 2026-09-02 22:37
+---
+Handover, deferring to a fresh session per opag's explicit standing ruling (a large rebase deserves fresh context; the risk under low context/time-pressure is exactly --force or discarding conflicts, which must never happen here -- both commits are real, wanted work).
+
+Current drift, measured just now (2026-09-02, not the earlier 174 estimate): 187 commits behind origin/dev. Growing daily as dev accumulates merges; re-measure at pickup time rather than trusting this number.
+
+Concrete risk assessment, so a fresh session doesn't have to re-derive it: checked which of the two touched files have actually drifted since the branch's base (7171eb1).
+- src/cli.ts: ZERO commits touched it in that whole window. The actual functional fix (switching context.retrieval's default from loadRetrievalGraph to loadReferenceRetrievalGraph at the agent: dispatcher) should apply with NO conflict. Low risk.
+- docker/e2e/run-e2e.sh: 9 commits touched it, 270 lines changed (135 insertions/135 deletions -- heavy edits, likely phase renumbering/insertions similar to what I did myself several times today). The new Phase 22b this branch adds will almost certainly conflict and need manual re-placement into whatever the current phase structure looks like, not a clean patch apply. This is where the real time goes.
+
+Recommended approach for the fresh session: `git rebase origin/dev` (not merge) so each of the 2 commits' conflicts are resolved individually rather than as one combined diff; expect the run-e2e.sh commit (fe5cfcd, or possibly both since 5a3115c also touches it) to need manual conflict resolution, not auto-merge. After rebase: re-run docker e2e locally if possible (or at minimum the new Phase 22b's assertions) before opening the PR, since the surrounding phases it references may have shifted.
+
+Not blocked on any decision -- purely a matter of doing the rebase carefully with the context budget it deserves.
 ---
 <!-- COMMENTS:END -->
