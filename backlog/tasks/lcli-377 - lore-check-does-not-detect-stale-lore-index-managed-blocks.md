@@ -5,12 +5,13 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-09-02 21:51'
-updated_date: '2026-09-03 00:30'
+updated_date: '2026-09-03 00:39'
 labels: []
 dependencies: []
 references:
   - Found by opum-agent using lore rather than testing it
   - 2026-09-02; independently reproduced
+  - 'Follow-up: LCLI-378 (unlocated third index-drift source in the e2e harness; masked by a defensive sync at the top of Phase 24c)'
 modified_files:
   - src/commands/check.ts
   - src/core/indexes.ts
@@ -49,6 +50,8 @@ A directory index's managed <!-- lore:index:begin -->...<!-- lore:index:end --> 
 Implemented directly from opag's/prior session's detailed root-cause notes on the task record; did not re-derive them. Verification: full bun test suite 2784 pass/1 skip/0 fail (91 files, 3 net new); tsc --noEmit clean; biome lint clean (1 pre-existing unrelated warning in agents.ts); lore check --strict on this repo's own docs/ bundle: 0 errors/0 warnings (confirms no false positive against real, already-synced content). Design decision (ERROR not WARNING) implemented unconditionally, not gated behind --strict, per opag's explicit ruling recorded on this task.
 
 STRONGEST EVIDENCE FOR THIS TASK'S ERROR SEVERITY (opag): once wired in, this check found 2 LIVE instances of its own bug class in this repo's own e2e harness bundle on first contact against real CI -- not a synthetic fixture, the real thing. Phase 16: 'lore new ADR "E2E successor decision"' (the supersede successor) was never synced afterward, leaving adr/index.md stale through Phase 17a's own 'full unscoped check is clean' checkpoint. Phase 17b: the deliberately-kept custom-type doc (docs/e2e-custom-type/...) left the bundle ROOT index stale (a brand-new top-level directory with no listing entry) through the rest of the harness, undetected until this check existed. Both were real, silent staleness of exactly the shape the original bug report described -- found in THIS repository's own dogfood bundle, not invented to exercise the check. This is better proof the error-severity design decision was justified than AC#3's synthetic regression test: the synthetic test proves the check CAN catch the shape; these two prove it DOES, unprompted, against real accumulated usage. Both fixed with one lore sync each at the natural end of the responsible phase (docker/e2e/run-e2e.sh), landed on the same PR (#519).
+
+Filed LCLI-378 to track the unlocated third drift source per opag's ruling: the defensive sync at the top of Phase 24c is an accepted interim fix (Phase 17a still owns bundle-cleanliness and passes on its own), but the drift itself must not be left permanently masked without a tracked follow-up -- that is the exact silent-drift shape this task exists to prevent.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
