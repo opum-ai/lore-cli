@@ -202,6 +202,18 @@
 - 2026-08-18T19:32:30-05:00 754a3d485c22a8873b40dd7b49fbc115eab494ff docs: reconcile Lore Story ownership
 - 2026-08-18T19:44:43-05:00 61d21b154cd26769859e5a497de6e30f8472ab98 docs: finalize ODOC-66 closeout
 - 2026-08-18T22:38:03-05:00 baca608ad6d2bfbd0fdf11ab802e47dd74f5fd86 feat: complete wave A correctness and interoperability
+- 2026-08-26T18:18:25-05:00 7a35d5ec0f79bb3b66b804b2b12559b36466536e chore(lore): regenerate docs/log.md from git history for release-truth settlement
+- 2026-08-27T11:07:07-05:00 85c3c254c8d835414334c055a8b6239a38c8fbeb docs(release): record the RC dist-tag publication procedure and 0.3.3 rc authorization
+- 2026-08-27T16:15:20-05:00 52c363b160ef121009a87884249cfe4c31686553 docs(release): record the completed 0.3.3 release-candidate publication and reconcile tag wording
+- 2026-08-28T17:17:43-05:00 1c4767742c768f0fd40dcf361ef30416704c59a9 feat(init): require a git worktree, and run every check before the first write (LCLI-358.1)
+- 2026-08-28T17:44:28-05:00 92fc1076b812cc36b86083001b152086399a9809 fix(init): classify git failures, defer `git init`, and refuse a blocked bundle first
+- 2026-08-28T18:01:08-05:00 0b3e1aebc9ff1faae6ac7c970279c171b617d140 feat(init): probe the tracker the bundle actually selected (LCLI-358.2)
+- 2026-08-28T18:15:19-05:00 2e5a002ca4db8ca6e1b301aeb7a1c6e4d9f12778 fix(quest): accept every Quest at or above a minimum floor, and gate at selection (LCLI-356)
+- 2026-08-28T18:29:41-05:00 d080b9329cc0a6bbc48157815232315e3a42d143 feat(init): detect tracker backends before the choice, and offer to install one (LCLI-358.3)
+- 2026-08-28T19:23:24-05:00 2cef5bbda5a812274319988caa910607d1129c19 feat(init): configure jira in lore init, and validate it before persisting (LCLI-358.4)
+- 2026-08-29T18:39:23-05:00 44781e3674d364ceba0d8fe0a0afb00f81f9afa3 fix(scaffold): stop generating a docs/tags.md lore's own strict gate rejects (LCLI-357) (#453)
+- 2026-08-29T18:44:49-05:00 137eda14d4c3f4ff09b824e0d326e9d723c5c5e9 docs: stop pinning a version in the bundle's most-read paragraph (LCLI-361) (#454)
+- 2026-08-30T09:31:38-05:00 d80b2c4bd8416e7c4294fb6c6595d389e01c766b docs: correct a stale repo-visibility claim, name the three-session pairing, refresh the tracker framing (#477)
 
 ## docs/adr
 
@@ -248,6 +260,15 @@
 - 2026-08-25T20:17:57-05:00 67fd24ca04196deca37a907ba36ea9ca9fd6ea1b chore(release): align the package family at 0.3.3 and refresh version-bearing baselines (LCLI-349)
 - 2026-08-25T21:29:13-05:00 935cef2cd26db06dcd4afb07e71929e3073dccb9 chore(backlog): renumber campaign tasks LCLI-348/349 to LCLI-350/351
 - 2026-08-26T18:11:47-05:00 6fdb8fa7a5639eb0de4a6a90aad3266cb08f0bf3 chore(release): pin the 0.3.3 candidate family truth to corrected tip (LCLI-351)
+- 2026-08-27T18:03:27-05:00 7becd24ea8e7d04ccf754f214e604b154548cf0e chore(release): align the package family at 0.3.4 for the Quest 0.2.7 criteria compatibility patch (LCLI-352)
+- 2026-08-27T19:42:12-05:00 d11c2894183de2d6f5112ffa3c69535c11510197 feat(agent): public opum-agent-workflow/v1 binding seam on lore agent context (LCLI-354)
+- 2026-08-29T00:38:10-05:00 5580207da7031c2932649cbc9a4ba953b10e08c7 fix(init): gate the Backlog migration on a real project, and stop hijacking the tracker question (LCLI-358.5)
+- 2026-08-29T18:59:46-05:00 a99391d4165d948d0411789ba218fbe395e49ba7 chore(release): align the package family at 0.3.5 and refresh version-bearing baselines (#455)
+- 2026-08-29T19:47:40-05:00 3d7efdd13fa453272b33fd969eeab1e96dc9c65b feat(agents): gate the codex bridge too, where one exists (LCLI-364) (#460)
+- 2026-08-30T10:17:23-05:00 7b7ec1bec55d1bf0e5273c899b121ece8559918d chore: retire Treehouse from Lore CLI
+- 2026-08-31T11:53:41-05:00 f5f3e1f2689f827034f7a278b621658559ff2d3b docs: fix stale repo-visibility claim and retired Codex campaign cursor
+- 2026-08-31T12:03:05-05:00 2531e1d39c4e45df31a386108e24f36788b86d05 fix: verify tracker backend before persisting in the wizard, default new bundles to backlog
+- 2026-08-31T12:12:58-05:00 3c4c239899563461e78d68c024ea3a6b9205f1be revert: keep lore init's default tracker backend as quest
 
 ## docs/runbooks
 
@@ -270,6 +291,10 @@
 - 2026-07-26T11:36:20-05:00 5c38ff8f171a3bfc951d18f65d6ebae884d09009 docs(runbooks): fix stale --exit-code-from e2e claim and 1643→1642 comment cite
 - 2026-07-26T11:36:20-05:00 a22f41d8a03207fe4e8497628575d25d3c6755e5 fix(docker-e2e): close three falsifiable claims in LORE-269's new text
 - 2026-08-14T07:16:03-05:00 13386102daa2365666639555aa35367817ca9020 fix: prevent E2E git identity leakage
+- 2026-08-29T19:11:51-05:00 2f973f85f18efa459ec099abc1e5e1c4998454db docs(release): write down the version-bearing Ladybug baseline refresh (#456)
+- 2026-08-29T20:12:04-05:00 a19172e84d8228b50894db52cbc1075f4c88e561 feat(release): script the npm publish, with durable auth instead of an OTP wall (#462)
+- 2026-08-29T22:48:39-05:00 d27ee3036ed76f4139e48e73bf92e593bb764d88 docs(release): make trusted publishing the documented path, and file the qualification gap it exposed (#471)
+- 2026-09-02T19:29:28-05:00 63e46d814ac3aab96e903969bda31f65596dedbd fix(agents): full-body retrieval for agent context packs (ODOC-63.1) (#518)
 
 ## docs/specs
 
