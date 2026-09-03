@@ -1,11 +1,11 @@
 ---
 id: LCLI-365
 title: Only 2 of 29 commands verify their declared kind against a live envelope
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-30 01:17'
-updated_date: '2026-09-03 00:30'
+updated_date: '2026-09-03 00:46'
 labels:
   - manifest
   - contract
@@ -128,3 +128,9 @@ Amend AC#1 if landing with partial (21/29) coverage -- write the reason on the r
 Not started -- deferred to a fresh session per opag's standing ruling on context. The ruling above is complete and actionable; a fresh session should implement directly from it rather than re-deriving the design.
 ---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Widened docker/e2e/lib/steps.sh's step_declared_kind (PR #466's manifest-vs-emission edge) from 8 to 16 of the manifest's 29 commands: added init/new/sync/tasks/context/instructions/schema/scaffold, each verified with a real, non-fabricated invocation (no-arg, fixed-enum-arg, idempotent re-run, or the bundle's reserved 'index' concept). Amended AC#1 to 16/29 per opag's ruling and named the remaining 13 explicitly in the phase's own comment: 8 the harness never runs (backlog/changed/explorer/impact/path/provenance/snapshot/agent), 5 it runs elsewhere but only against a fabricated target (replace/rename/supersede/link/unlink). AC#2-4 (content-derived at check time, negative control, honest golden naming) already satisfied by PR #466. Landed on PR #521, all 8 new assertions confirmed PASS live in CI's docker e2e job. Closure ruling from opag: 16/29 accepted, no further widening required -- the ruling's own '21 driven' figure included 5 that would prove nothing real once fabricated targets were ruled out.
+<!-- SECTION:FINAL_SUMMARY:END -->

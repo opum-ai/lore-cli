@@ -1,17 +1,19 @@
 ---
 id: LCLI-377
 title: 'lore check does not detect stale lore:index managed blocks'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-02 21:51'
-updated_date: '2026-09-03 00:39'
+updated_date: '2026-09-03 00:46'
 labels: []
 dependencies: []
 references:
   - Found by opum-agent using lore rather than testing it
   - 2026-09-02; independently reproduced
-  - 'Follow-up: LCLI-378 (unlocated third index-drift source in the e2e harness; masked by a defensive sync at the top of Phase 24c)'
+  - >-
+    Follow-up: LCLI-378 (unlocated third index-drift source in the e2e harness;
+    masked by a defensive sync at the top of Phase 24c)
 modified_files:
   - src/commands/check.ts
   - src/core/indexes.ts
@@ -85,3 +87,9 @@ None of these are visible from reading the code alone -- all three only surfaced
 Design decision (error vs warning) still stands as ERROR, per my earlier note and opag's ruling -- that part isn't in question, only the blast radius of wiring it in safely.
 ---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added indexDriftFindings (core/check.ts) + tryIndexDriftForBundle (commands/check.ts): lore check now detects a stale <!-- lore:index --> managed block by recomputing it via the same generateIndexes lore sync uses, reporting index-drift as an unconditional error. Guarded against two real risks a prior attempt surfaced by running the full suite: never flags a bundle that was never synced (marker-presence guard), and never lets a second, full-bundle loadBundle call break check's error-isolation contract (wrapped, treated as cannot-verify-this-run on throw). All 3 ACs verified with objective evidence: 3 new regression tests (positive, negative-control, heals-on-sync) plus the full suite (2784 pass/1 skip/0 fail), typecheck, lint, and lore check --strict on this repo's own docs/ bundle (0/0). Landed on PR #519, merged to dev. Strongest evidence for the ERROR severity decision: once wired in, the check found 2 live, previously-invisible instances of its own bug class in this repo's own e2e harness bundle (Phase 16's unsynced ADR successor, Phase 17b's unsynced custom-type doc), both fixed with a targeted lore sync at the responsible phase. A third, unlocated instance surfaced between Phase 17a and Phase 24c; rather than keep spending CI round-trips on a harness-hygiene hunt, a defensive sync was added at the top of Phase 24c (accepted by opag) and LCLI-378 filed to track finding the real source, linked from this task.
+<!-- SECTION:FINAL_SUMMARY:END -->
