@@ -20,12 +20,12 @@
         "zod": "4.4.3",
       },
       "optionalDependencies": {
-        "@opum-ai/lore-darwin-arm64": "0.3.5",
-        "@opum-ai/lore-darwin-x64": "0.3.5",
-        "@opum-ai/lore-linux-arm64": "0.3.5",
-        "@opum-ai/lore-linux-x64": "0.3.5",
-        "@opum-ai/lore-win32-arm64": "0.3.5",
-        "@opum-ai/lore-win32-x64": "0.3.5",
+        "@opum-ai/lore-darwin-arm64": "0.4.0",
+        "@opum-ai/lore-darwin-x64": "0.4.0",
+        "@opum-ai/lore-linux-arm64": "0.4.0",
+        "@opum-ai/lore-linux-x64": "0.4.0",
+        "@opum-ai/lore-win32-arm64": "0.4.0",
+        "@opum-ai/lore-win32-x64": "0.4.0",
       },
     },
   },
@@ -67,18 +67,6 @@
     "@ladybugdb/core-linux-x64": ["@ladybugdb/core-linux-x64@0.19.0", "", { "os": "linux", "cpu": "x64" }, "sha512-aJOh7+XbTzCLNloK+KlDXuRmHgr7nLqyQwR/BR8fP/XsWVnxCKGpVVL8s+Lms7JNQAh6vEsvExttGgUq9hAu1Q=="],
 
     "@ladybugdb/core-win32-x64": ["@ladybugdb/core-win32-x64@0.19.0", "", { "os": "win32", "cpu": "x64" }, "sha512-y2/IOMKmydo4ZfQPDZuZhiFC104VJQ9lwc0w1KVdvb4Z2RIUUL8/tn5QD4Uq8DUrJGxQhoEESPnlkk69cKaaDQ=="],
-
-    "@opum-ai/lore-darwin-arm64": ["@opum-ai/lore-darwin-arm64@0.3.5", "", { "os": "darwin", "cpu": "arm64" }, "sha512-rmUH3BwL5xARfRjetpG40wwWFKWA5NmC4bJFN9lCBS1OPY1i0/Ed8oZyvvZZ86cNekIRpn97bSR37L/GLbEPtw=="],
-
-    "@opum-ai/lore-darwin-x64": ["@opum-ai/lore-darwin-x64@0.3.5", "", { "os": "darwin", "cpu": "x64" }, "sha512-e1VclNGGVB4BwsDlirwuGH/PfogOmr5Be7epxzCp3foh71TQX3ejpFQQNvK31uxDr21E6j2KzQ5k1iFFSesvbQ=="],
-
-    "@opum-ai/lore-linux-arm64": ["@opum-ai/lore-linux-arm64@0.3.5", "", { "os": "linux", "cpu": "arm64" }, "sha512-L2D3W3g8DKkPsckQvRg+Ahaf5SCBXGuKMzU+hDwotLzT7wTjL+3QBLPQpDVupsv98aNtDabmAqFaHuUUm92uJQ=="],
-
-    "@opum-ai/lore-linux-x64": ["@opum-ai/lore-linux-x64@0.3.5", "", { "os": "linux", "cpu": "x64" }, "sha512-2LEBpcBuTI+LDBxPgXaJoo5Qhtzv9v3rLZxA4x8l4v8SvF7IX76hQccciovBM2KuGodYCdP2YfL7SgYTm4Jniw=="],
-
-    "@opum-ai/lore-win32-arm64": ["@opum-ai/lore-win32-arm64@0.3.5", "", { "os": "win32", "cpu": "arm64" }, "sha512-q/f0I5oWbLBqdH+A/O2Cz3AARh4oRu9hvjS8CucUXxJ0mBt94SARNXU6nUB2THTmnRqt85X9mpJaLfMLYQ/4Bw=="],
-
-    "@opum-ai/lore-win32-x64": ["@opum-ai/lore-win32-x64@0.3.5", "", { "os": "win32", "cpu": "x64" }, "sha512-tJRDlQFU6C/oMb2T/UzyyskPMeRgwG52pbjjqrj/84aMoRHLhUs4nssc822tWOwUO5ZcrUbTuN5FZ+UC6GLpzw=="],
 
     "@playwright/test": ["@playwright/test@1.62.1", "", { "dependencies": { "playwright": "1.62.1" }, "bin": { "playwright": "cli.js" } }, "sha512-DTcUc8qii+cpHvtOwggMtBRMjKZHXYWdw8syRYu2vtzuq4Wxphqq4NfCs5Zt44L6mA8rfDfj+PHnxFc/FeK6mQ=="],
 
