@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-09-03 00:39'
+updated_date: '2026-09-03 00:48'
 labels:
   - e2e
   - harness
@@ -29,3 +30,9 @@ While implementing LCLI-377 (lore check now detects stale lore:index managed blo
 - [ ] #2 Either that command gains its own targeted lore sync immediately after it (matching the Phase 16 / Phase 17b fix pattern already on LCLI-377), or a documented reason is recorded for why the defensive sync at the top of Phase 24c is the correct permanent fix instead
 - [ ] #3 If a targeted fix lands, the defensive sync at the top of Phase 24c is reconsidered -- removed if redundant, or its comment updated to name the now-known source if kept as a second line of defense
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+METHOD NOTE for whoever picks this up: static tracing through this 1900+ line script (grepping for lore new/rename/supersede, reading phase-by-phase) found and fixed 2 real sources (Phase 16, Phase 17b) but failed to isolate the third even with two already found the same way and a narrower search window (Phase 17a to Phase 24c only). That's a real signal about the method, not just the symptom: expect to need actual bisection -- temporarily comment out or short-circuit sections of the harness (or insert a diagnostic 'lore check --json' probe after each phase between 17a and 24c) and rerun, rather than reading harder. Reading found the first two because they were single, obvious lore new calls; whatever remains is apparently NOT that -- possibly split across multiple small state changes, or produced by a command whose docs/-touching side effect isn't obvious from its name (a scaffold/agents/instructions call, or an interaction between two calls neither of which is individually suspicious).
+<!-- SECTION:NOTES:END -->
