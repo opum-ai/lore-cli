@@ -1830,22 +1830,38 @@ check "LCLI-327: E2E identity was not persisted in the workspace Git config" \
 # literals, each correct, with no edge between them. A handler could change and both be updated
 # while the manifest went stale, and nothing would fail.
 #
-# Placed at the END on purpose: the bundle is fully built by here, so these are read-only commands
-# against known-good state and cannot disturb any earlier phase. Every command listed is one the
-# harness already exercises elsewhere; this adds the manifest edge, not new surface area.
+# Placed at the END on purpose: the bundle is fully built by here, so the read-only commands below
+# run against known-good state and cannot disturb any earlier phase. The handful that mutate (`new`,
+# `sync`, `schema`, `scaffold`) are ordered LAST, after every read-only assertion, and `new` is
+# immediately followed by `sync` so the bundle is left clean again -- nothing in this file reads
+# bundle content after this phase but Phase 25 is a tally, not a no-op, so this still isn't "read-only"
+# top to bottom the way it was before LCLI-365 widened it.
 #
-# Not exhaustive, and deliberately so. Commands needing special state or arguments (backlog adopt,
-# snapshot/changed/provenance, explorer, agent) are absent rather than given a contrived invocation
-# just to make a list look complete -- a case that has to be bent to fit tests the bending. Adding
-# them is tracked on LCLI-365.
-step_declared_kind check    -- lore check --json
-step_declared_kind validate -- lore validate --json
-step_declared_kind orphans  -- lore orphans --json
-step_declared_kind graph    -- lore graph --json
-step_declared_kind export   -- lore export --json
-step_declared_kind query    -- lore query "orders" --json
-step_declared_kind help     -- lore help --json
-step_declared_kind agents   -- lore agents --check --json
+# 16 of the manifest's 29 commands are covered here (8 pre-existing + 8 added by LCLI-365: `init`,
+# `new`, `sync`, `tasks`, `context`, `instructions`, `schema`, `scaffold` -- each either takes no
+# required argument or resolves against the bundle's one reserved, always-present concept, `index`).
+# Not exhaustive, and deliberately so. Two groups stay uncovered rather than given a contrived
+# invocation just to make a list look complete -- a case that has to be bent to fit tests the
+# bending: commands the harness never runs at all (`backlog`, `snapshot`, `changed`, `provenance`,
+# `explorer`, `agent`, `path`, `impact`), and commands the harness DOES run elsewhere but only
+# against a specific target/task id this phase would have to fabricate (`replace`, `rename`,
+# `supersede`, `link`, `unlink`). Widening either group is tracked on LCLI-365.
+step_declared_kind check        -- lore check --json
+step_declared_kind validate     -- lore validate --json
+step_declared_kind orphans      -- lore orphans --json
+step_declared_kind graph        -- lore graph --json
+step_declared_kind export       -- lore export --json
+step_declared_kind query        -- lore query "orders" --json
+step_declared_kind help         -- lore help --json
+step_declared_kind agents       -- lore agents --check --json
+step_declared_kind tasks        -- lore tasks index --json
+step_declared_kind context      -- lore context index --json
+step_declared_kind instructions -- lore instructions --json
+step_declared_kind schema       -- lore schema export --json
+step_declared_kind scaffold     -- lore scaffold mkdocs --json
+step_declared_kind init         -- lore init --json
+step_declared_kind new          -- lore new reference "LCLI-365 Phase 24c declared-kind smoke doc" --json
+step_declared_kind sync         -- lore sync --json
 
 # ── Phase 25: tally ───────────────────────────────────────────────────────────────
 tally
