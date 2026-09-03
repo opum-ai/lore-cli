@@ -2,9 +2,10 @@
 id: LCLI-371
 title: Rebase and land the ODOC-63.1 agent-context full-body retrieval fix
 status: In Progress
-assignee: []
+assignee:
+  - '@claude'
 created_date: '2026-08-31 18:54'
-updated_date: '2026-09-02 22:37'
+updated_date: '2026-09-03 00:12'
 labels: []
 dependencies: []
 references:
@@ -28,11 +29,11 @@ lore agent context used loadRetrievalGraph (the indexed graph), which intentiona
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 src/cli.ts's agent context handler switches to loadReferenceRetrievalGraph, rebased cleanly onto current origin/dev
-- [ ] #2 docker/e2e/run-e2e.sh phase 22b (ODOC-63.1 packed agent-context surface guard through the compiled binary) lands, including its throwaway e2e-pack-surface/e2e-pack-bad fixture teardown
-- [ ] #3 the pre-existing AC4 jq filter bug in the agents --check healing test (missing bracket grouping, filter passed vacuously) is fixed
-- [ ] #4 docs/runbooks/agent-profile-operation.md example TOML is corrected (schema_version field, max_tokens rename) to match the real schema
-- [ ] #5 full bun test suite, typecheck, lint, and lore check all pass on the rebased branch before it is opened as a PR
+- [x] #1 src/cli.ts's agent context handler switches to loadReferenceRetrievalGraph, rebased cleanly onto current origin/dev
+- [x] #2 docker/e2e/run-e2e.sh phase 22b (ODOC-63.1 packed agent-context surface guard through the compiled binary) lands, including its throwaway e2e-pack-surface/e2e-pack-bad fixture teardown
+- [x] #3 the pre-existing AC4 jq filter bug in the agents --check healing test (missing bracket grouping, filter passed vacuously) is fixed
+- [x] #4 docs/runbooks/agent-profile-operation.md example TOML is corrected (schema_version field, max_tokens rename) to match the real schema
+- [x] #5 full bun test suite, typecheck, lint, and lore check all pass on the rebased branch before it is opened as a PR
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -40,6 +41,16 @@ lore agent context used loadRetrievalGraph (the indexed graph), which intentiona
 <!-- SECTION:PLAN:BEGIN -->
 Rebase feat/odoc-63.1-agent-profiles onto current origin/dev (151 commits of drift -- expect conflicts, especially in run-e2e.sh which has grown substantially). Verify loadReferenceRetrievalGraph still exists with the same signature. Re-run the new e2e phase and full test suite. Open a PR once green.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Picked up fresh session per handover, opag directive 2026-09-02. Verified branch state: feat/odoc-63.1-agent-profiles is 2 commits ahead of origin/dev (5a3115c, fe5cfcd), both real/wanted. Proceeding with git rebase origin/dev per prior comment's plan.
+
+Verified: rebase was already clean (0 conflicts) before this session touched it -- confirmed independently and cross-checked against opag's concurrent read-only verification (matched). Ran full suite post-rebase: bun test 2783 pass/1 skip/0 fail (92 files); tsc --noEmit clean; biome lint clean after auto-fixing 2 pre-existing format drifts in cli.ts/test file (151-commit-old formatting vs current biome config); lore check --strict: 76 files, 0 errors, 0 warnings. Found and fixed a real defect while verifying AC#3: the committed jq filter for the AC4 nudge-block healing check was NOT actually fixed by the original commit despite its message -- diff shows it replaced VALID jq ((.data.files | all(.action == "unchanged"))) with an invalid bracket sequence that is a hard jq compile error, not the vacuous pass it claimed to close. Restored the valid form (matches the other 3 occurrences in the file). Spot-checked jq syntax on all 4 new Phase 22b filters -- all parse. Opened PR #518 -> dev. Phase 22b not executed against real docker (no local docker in this session) -- verified by static review only.
+
+PR #518 CI: all 9 checks pass, including docker e2e harness which live-exercised Phase 22b (all 6 assertions PASS with real jq output confirmed via job log) and confirmed the AC4 jq fix works live (exit 0). AC#2 now checked with real execution evidence, not static review. All 5 ACs verified.
+<!-- SECTION:NOTES:END -->
 
 ## Comments
 
