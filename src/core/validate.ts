@@ -40,7 +40,7 @@
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { LoreError, singleLine, stripAnsiAndControls, WarningCollector } from "../errors";
 import { effectiveProfileFor, nodeText } from "./bundle";
-import { type Concept, tryParseConcept } from "./concept";
+import { type Concept, hasStrayFrontmatterFence, tryParseConcept } from "./concept";
 import type { Finding as BaseFinding, Severity } from "./finding";
 import { decodeTarget } from "./links";
 import type { BundleState } from "./okf-version";
@@ -144,6 +144,13 @@ export function validateConceptText(
   findings.push(...requiredSectionFindings(concept.type, concept.body, effective));
   findings.push(...resourceDriftFindings(path, concept, effective));
   findings.push(...quoteSafetyFindings(raw));
+  if (hasStrayFrontmatterFence(concept.body)) {
+    findings.push({
+      severity: "error",
+      rule: "frontmatter",
+      message: `${path} contains a second frontmatter fence in its body (LCLI-372) -- likely a template that embedded its own frontmatter; remove the stray '---' block so only one frontmatter fence remains`,
+    });
+  }
 
   return finalize(path, concept.type, findings);
 }

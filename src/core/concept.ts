@@ -536,6 +536,28 @@ function splitFrontmatter(path: string, raw: string): FrontmatterSplit {
 }
 
 /**
+ * Detect a stray second frontmatter fence at the very start of a concept's body (LCLI-372): a
+ * leading `---` fence enclosing a parseable YAML mapping, immediately after the real frontmatter
+ * block already closed. `lore new` rejects this shape in the source *template* at scaffold time
+ * (src/commands/new.ts's `LEADING_FRONTMATTER_FENCE` check); this is the defense-in-depth catch
+ * for a file that reaches disk another way -- hand-edited, copied from elsewhere, or written by a
+ * future scaffold path that does not funnel through that same guard.
+ *
+ * Reuses {@link splitFrontmatter}'s own fence/mapping parsing on the body, so "does this look
+ * like frontmatter" is judged once, the same way, everywhere it matters. A body that merely
+ * *opens* with a thematic-break `---` (no mapping following) is not flagged: `splitFrontmatter`
+ * already draws that exact distinction for the top-level parse, and this reuses it rather than
+ * re-deriving a looser heuristic that would false-positive on ordinary Markdown.
+ */
+export function hasStrayFrontmatterFence(body: string): boolean {
+  try {
+    return splitFrontmatter("<body>", body.replace(/^\n+/, "")).present;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The `validation` {@link LoreError} {@link parseConcept} raises when frontmatter
  * is absent — the strict-parse counterpart to {@link tryParseConcept} returning
  * `null`. The message matches the absent `reason` so the diagnostic points at the
