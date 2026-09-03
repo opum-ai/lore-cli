@@ -4,7 +4,7 @@ title: 'lore check does not detect stale lore:index managed blocks'
 status: To Do
 assignee: []
 created_date: '2026-09-02 21:51'
-updated_date: '2026-09-02 23:07'
+updated_date: '2026-09-03 00:30'
 labels: []
 dependencies: []
 references:
@@ -36,6 +36,12 @@ A directory index's managed <!-- lore:index:begin -->...<!-- lore:index:end --> 
 <!-- SECTION:PLAN:BEGIN -->
 Reproduced against dev source: lore new reference "Second Doc" after an initial lore sync left docs/reference/index.md showing only the first doc; lore check and lore check --strict both reported 0 errors, 0 warnings. check.ts has no lore:index-aware code path at all (grep confirms). The generation logic already lives in src/core/indexes.ts and is exactly what a check-time comparison should call, matching the same function sync.ts uses rather than re-deriving the format independently.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+STRONGEST EVIDENCE FOR THIS TASK'S ERROR SEVERITY (opag): once wired in, this check found 2 LIVE instances of its own bug class in this repo's own e2e harness bundle on first contact against real CI -- not a synthetic fixture, the real thing. Phase 16: 'lore new ADR "E2E successor decision"' (the supersede successor) was never synced afterward, leaving adr/index.md stale through Phase 17a's own 'full unscoped check is clean' checkpoint. Phase 17b: the deliberately-kept custom-type doc (docs/e2e-custom-type/...) left the bundle ROOT index stale (a brand-new top-level directory with no listing entry) through the rest of the harness, undetected until this check existed. Both were real, silent staleness of exactly the shape the original bug report described -- found in THIS repository's own dogfood bundle, not invented to exercise the check. This is better proof the error-severity design decision was justified than AC#3's synthetic regression test: the synthetic test proves the check CAN catch the shape; these two prove it DOES, unprompted, against real accumulated usage. Both fixed with one lore sync each at the natural end of the responsible phase (docker/e2e/run-e2e.sh), landed on the same PR (#519).
+<!-- SECTION:NOTES:END -->
 
 ## Comments
 
