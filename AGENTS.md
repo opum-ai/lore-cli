@@ -1,3 +1,29 @@
+<!-- What this file is. Read before adding to it. -->
+<!--
+AGENTS.md is NOT where this repository's rules live. CLAUDE.md is: the fleet
+operating block, the repository profile, ownership and the dangerous set.
+
+Two things read this file, and neither is Claude Code, which does not load it:
+
+  1. opum-agent's `assertNoMigrationLaunchFence`, which requires the
+     `opum-agent shared skill source: ...` marker line below. It is a substring
+     check, so reformatting is safe and dropping the line is not; deleting this
+     file as a Codex artifact broke that fence fleet-wide on 2026-08-30.
+  2. The `backlog-handover` skill, whose step 2 says to read every applicable
+     AGENTS.md and whose SKILL.md:107 calls it "the authority ledger". That is
+     what the autonomous-docs block below is -- a standing campaign grant that
+     NARROWS authority. Do not delete it as boilerplate.
+
+The AUTHORITY LEDGER for this repository is CLAUDE.md's `opum:fleet-operating`
+block, section "Ownership", as narrowed by the autonomous-docs block below. Note
+that this repository gates `dev`, not `main`; the profile in CLAUDE.md records
+why, and it is the fleet's deliberate exception.
+
+Because nothing loads this file automatically, prose written here drifts unseen.
+Put new repository rules in CLAUDE.md. Add to this file only what one of the two
+consumers above actually reads.
+-->
+
 <!-- QUEST WORKFLOW GUIDELINES START -->
 <CRITICAL_INSTRUCTION>
 
@@ -90,10 +116,13 @@ unmerged state. Pause for those decisions, missing credentials, repeatedly faile
 unresolved conflicts, unrelated dirty overlap, or a scope expansion. Before any self-committing
 `lore link`, `lore unlink`, `lore rename`, or `lore sync`, run the shared Lore-authority-preflight gate recorded at the shared-skill source
 receipt, with the exact worktree
-and repository-root scope. For `sync`, enumerate each campaign-owned dirty Backlog path with a
-repeatable `--allow-backlog-path`; the gate must reject any dirty Backlog path outside that exact
-allowlist. The full root is honest: these commands can update both `docs/` and
-`backlog/`, while the gate rejects narrower or symlinked scopes. Standing delivery authority is valid only for this repository and a `dev`
+and repository-root scope. For `sync`, enumerate each campaign-owned dirty tracker path with a
+repeatable `--allow-tracker-path`; the gate must reject any dirty tracker path outside that exact
+allowlist. `--allow-backlog-path` is the deprecated spelling and still resolves, but the gate's
+TRACKER_ROOTS are `backlog` and `.quest`, and this repository has only `.quest` since the
+2026-09-03 cutover — an allowlist written in the old spelling against a `backlog/` path that no
+longer exists allowlists nothing. The full root is honest: these commands can update both `docs/`
+and `.quest/`, while the gate rejects narrower or symlinked scopes. Standing delivery authority is valid only for this repository and a `dev`
 integration destination; absent explicit commit authority or that scoped standing authority denies
 dispatch before Lore or Git can mutate state.
 
