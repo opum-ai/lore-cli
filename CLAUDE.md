@@ -1,28 +1,35 @@
 
 <!-- Canonical ordering: read AGENTS.md first. It supplies campaign authority and the Lore commit-side-effect preflight before this generated Lore bridge. -->
 
-<!-- BACKLOG.MD GUIDELINES START -->
+<!-- QUEST WORKFLOW GUIDELINES START -->
 <CRITICAL_INSTRUCTION>
 
-## Backlog.md Workflow
+## Quest Workflow
 
-This project uses Backlog.md for task and project management.
+This project cut LCLI over from Backlog to Quest as its tracker of record on 2026-09-03
+(425 records migrated; digest 1dd84c5eb53d6c76672031e0343dfa4e0f77a5394f8bf0a756bf53c4da3d8640).
+`.quest/` is committed and tracked — never gitignore it. `backlog/` remains on disk but holds
+only the 297 excluded LORE-family records (a separate family, not yet migrated); it is not the
+system of record for LCLI tasks and must not be written to for them.
 
-**For every user request in this project, run `backlog instructions overview` before answering or taking action.**
+**For every user request in this project, run `quest instructions overview` before answering or taking action.**
 
-Use the overview to decide whether to search, read, create, or update Backlog tasks.
+Use the overview to decide whether to search, read, create, or update Quest tasks.
 
 Use the detailed guides when needed:
-- `backlog instructions task-creation` for creating or splitting tasks
-- `backlog instructions task-execution` for planning and implementation workflow
-- `backlog instructions task-finalization` for completion and handoff
+- `quest instructions task-creation` for creating or splitting tasks
+- `quest instructions task-execution` for planning and implementation workflow
+- `quest instructions task-finalization` for completion and handoff
 
-Use `backlog <command> --help` before running unfamiliar commands. Help shows options, fields, and examples.
+Use `quest <command> --help` before running unfamiliar commands. Help shows options, fields, and examples.
 
-Do not edit Backlog task, draft, document, decision, or milestone markdown files directly. Use the `backlog` CLI so metadata, relationships, and history stay consistent.
+Do not edit `.quest/tasks/*.json` directly. Use the `quest` CLI so metadata, relationships, and
+history stay consistent. Every write needs an explicit actor: `--actor <id> --actor-kind human`
+for a human operator, or `--actor-kind delegated-agent --accountable-human <id>` for an agent
+session acting on someone's behalf — a missing or wrong `--actor-kind` is rejected, not defaulted.
 
 </CRITICAL_INSTRUCTION>
-<!-- BACKLOG.MD GUIDELINES END -->
+<!-- QUEST WORKFLOW GUIDELINES END -->
 
 <!-- opum:fleet-operating:begin -->
 ## Opum fleet operating instructions
@@ -180,6 +187,8 @@ None known. Checked 2026-08-30: this repository carries no Treehouse or Codex de
 `.lore/cache/graph` generations are written mode-locked read-only, so `rm -rf` on a lore worktree fails with permission errors that look like a sandbox denial. `chmod -R u+w` first.
 
 `dev`'s branch ruleset requires 3 status checks on every push (docker e2e harness, lint/typecheck/test windows-latest, operating block digest), but `.github/workflows/ci.yml`'s `push` trigger is `branches: [main]` only — a direct push to `dev` runs no workflow at all, so those checks can never be satisfied and GitHub refuses the push (confirmed 2026-08-31: `GH013`, attempting exactly this). This is not a gap: it is what makes landing on `dev` structurally impossible except through a PR, in a fleet where PR-into-dev is otherwise only a convention. Do not "fix" `ci.yml`'s push trigger to include `dev` without checking this coupling first — restoring it reintroduces the 444-redundant-run problem LCLI-251 removed, and does nothing to loosen the actual gate, which is the ruleset, not the workflow trigger.
+
+Quest is this repository's tracker of record as of the 2026-09-03 cutover (`.lore/config.toml` `[tracker].backend = "quest"`; 425 LCLI records migrated, digest `1dd84c5eb53d6c76672031e0343dfa4e0f77a5394f8bf0a756bf53c4da3d8640`). `.quest/` is committed and tracked — never gitignore it. **297 LORE-family records were excluded from that migration and exist only in `backlog/`** — a second, un-migrated family in the same backlog, migrated separately since `quest migration backlog` takes one `--source-family` per run. This is the largest excluded family in the fleet and the reason `backlog/` cannot simply be removed; migrating or archiving it is a separate decision, not yet made. 48 dotted subtask ids (e.g. `LCLI-283.1`) were renumbered to flat Quest ids with the dotted spelling retained as a resolving alias — verified directly on this repo's real data, not assumed: `quest task view LCLI-283.1` and `quest task view LCLI-380` return byte-identical records. Every Quest write needs an explicit actor: `--actor-kind human` for a human operator, or `--actor-kind delegated-agent --accountable-human <user id>` for an agent session acting on someone's behalf.
 <!-- opum:repo-profile:end -->
 
 <!-- lore:agents:begin -->
@@ -424,10 +433,17 @@ sake.
 
 ## Project-level skills: what is here on purpose
 
-This repository carries exactly three project-level skills, and each is here for a reason a reader
-should not have to re-derive (LCLI-362). **Nothing else belongs under `.claude/skills/` or
-`.codex/skills/`.**
+This repository carries exactly four project-level skills, and each is here for a reason a reader
+should not have to re-derive (LCLI-362, raised from three on 2026-09-03 for `quest`). **Nothing
+else belongs under `.claude/skills/` or `.codex/skills/`.**
 
+- **`.claude/skills/quest/SKILL.md` is the fourth, added by the Backlog-to-Quest cutover.** The
+  three-skill cap existed to stop skill sprawl, not to freeze the count — `quest` is now this
+  repo's tracker CLI, the same reason `lore` earns a skill: it is the tool every session is
+  expected to drive rather than hand-edit around. Installed and kept current via
+  `quest agents --update-instructions` (`quest agents --check --require-installed` must exit 0),
+  never by hand. Asymmetric with the `lore` pair below by the installer's own design, not drift:
+  it writes only `.claude/skills/quest/`, no `.codex/skills/quest/` counterpart.
 - **`.claude/skills/lore/SKILL.md` and `.codex/skills/lore/SKILL.md` are two deliberate copies, and
   collapsing them would be a regression.** This repository *generates* both:
   `src/core/agent-bridge.ts` owns `SKILL_REL_PATH = ".claude/skills/lore/SKILL.md"` and

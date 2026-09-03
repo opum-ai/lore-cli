@@ -763,13 +763,14 @@ anything = true
     expect(loadConfig({ root: repoRoot(toml), env: {} })).toEqual(DEFAULTS);
   });
 
-  test("lore's own committed .lore/config.toml mirrors the built-in defaults (AC#1)", () => {
-    // The committed sample documents itself as a no-op over the defaults, so pin it
-    // to defaultConfig(): an edit that sets a genuinely non-default value must also
-    // update the sample's header, and this makes that drift loud rather than letting
-    // the shipped "documents the defaults" sample silently diverge. Resolved from
-    // this file's location (not cwd) so it is invocation-robust.
+  test("lore's own committed .lore/config.toml matches its documented cutover to Quest (AC#1)", () => {
+    // Pinned to defaultConfig() plus exactly the one override this repo's committed
+    // header documents (the 2026-09-03 Backlog-to-Quest cutover): an edit that sets
+    // any further non-default value must also update the sample's header, and this
+    // makes that drift loud rather than letting the shipped "documents its overrides"
+    // sample silently diverge. Resolved from this file's location (not cwd) so it is
+    // invocation-robust.
     const config = loadConfig({ root: join(import.meta.dir, ".."), env: {} });
-    expect(config).toEqual(DEFAULTS);
+    expect(config).toEqual({ ...DEFAULTS, tracker: { ...DEFAULTS.tracker, backend: "quest" } });
   });
 });

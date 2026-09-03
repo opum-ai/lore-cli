@@ -1,15 +1,18 @@
 # .lore/config.toml — lore's own configuration.
 #
-# Most keys are optional. This repository explicitly pins Backlog because it
-# predates Quest becoming the new-bundle default and still owns live Backlog
-# tasks. See docs/adr/0013-lore-state-directory.md for the full contract.
+# Most keys are optional. This repository cut over LCLI's live tasks from
+# Backlog to Quest on 2026-09-03 (see .quest/workspace.toml and
+# docs/reference/backlog-to-quest-cutover-runbook.md, opum-agent/dev). The
+# 297 excluded LORE-family records remain in backlog/ pending a separate
+# migration decision. See docs/adr/0013-lore-state-directory.md for the full
+# tracker-backend contract.
 #
 # The Confluence API token is NEVER stored here — it is read only from
 # $LORE_CONFLUENCE_TOKEN, and a token committed under [confluence] is rejected
 # with a fail-loud validation error.
 
 [tracker]
-backend = "backlog"
+backend = "quest"
 
 [reconcile]
 # Status roll-up policy for `lore sync` / `lore check`:

@@ -85,8 +85,11 @@ const PROVENANCE_EXEMPT = new Map([
 ]);
 
 /**
- * Every file Git tracks, excluding `backlog/`, whose task and campaign records are
- * immutable provenance of past decisions rather than operational instructions.
+ * Every file Git tracks, excluding `backlog/` and `.quest/tasks/` (plus
+ * `.quest/migrations/`, which embeds a full copy of every migrated record),
+ * whose task and campaign records are immutable provenance of past decisions
+ * rather than operational instructions. `.quest/workspace.toml` stays in
+ * scope — it is operational configuration, not task provenance.
  *
  * Tracked, not on-disk: a brand-new file is invisible here until it is staged,
  * which is the right boundary for a gate about what this repository *records* and
@@ -96,7 +99,13 @@ const PROVENANCE_EXEMPT = new Map([
 function everyTrackedFile(): string[] {
   return execFileSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "utf8" })
     .split("\0")
-    .filter((path) => path !== "" && !path.startsWith("backlog/"));
+    .filter(
+      (path) =>
+        path !== "" &&
+        !path.startsWith("backlog/") &&
+        !path.startsWith(".quest/tasks/") &&
+        !path.startsWith(".quest/migrations/"),
+    );
 }
 
 /** Every tracked markdown document: the whole `docs/` bundle plus root-level markdown. */

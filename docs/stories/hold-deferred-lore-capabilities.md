@@ -38,10 +38,10 @@ authorization to reactivate it.
 <!-- lore:tasks:begin -->
 | Task | Title | Status |
 |---|---|---|
-| [LCLI-42](../../backlog/tasks/lcli-42%20-%20lore-mcp-server-deferred-v2.md) | Local lore MCP server (on hold) | To Do |
-| [LCLI-43](../../backlog/tasks/lcli-43%20-%20Confluence-one-way-publish-adapter-deferred.md) | Confluence one-way publish adapter (deferred) | To Do |
-| [LCLI-44](../../backlog/tasks/lcli-44%20-%20Confluence-production-mirror-deferred.md) | Confluence production mirror (deferred) | To Do |
-| [LCLI-45](../../backlog/tasks/lcli-45%20-%20Deferred-Typed-importable-library-build-.d.ts-subpath-exports.md) | [Deferred] Typed importable library build (.d.ts + subpath exports) | To Do |
+| LCLI-42 | Local lore MCP server (on hold) | To Do |
+| LCLI-43 | Confluence one-way publish adapter (deferred) | To Do |
+| LCLI-44 | Confluence production mirror (deferred) | To Do |
+| LCLI-45 | [Deferred] Typed importable library build (.d.ts + subpath exports) | To Do |
 <!-- lore:tasks:end -->
 
 ## Notes
