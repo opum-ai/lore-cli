@@ -48,8 +48,8 @@ without absorbing every worker's documents.
 <!-- lore:tasks:begin -->
 | Task | Title | Status |
 |---|---|---|
-| [LCLI-289](../../backlog/tasks/lcli-289%20-%20Add-task-scoped-agent-context-profiles.md) | Add task-scoped agent context profiles | Done |
-| [LCLI-334](../../backlog/tasks/lcli-334%20-%20Teach-agents-to-select-and-query-Lore-workspaces.md) | Teach agents to select and query Lore workspaces | Done |
+| LCLI-289 | Add task-scoped agent context profiles | Done |
+| LCLI-334 | Teach agents to select and query Lore workspaces | Done |
 <!-- lore:tasks:end -->
 
 ## Notes

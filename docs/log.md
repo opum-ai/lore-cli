@@ -214,6 +214,7 @@
 - 2026-08-29T18:39:23-05:00 44781e3674d364ceba0d8fe0a0afb00f81f9afa3 fix(scaffold): stop generating a docs/tags.md lore's own strict gate rejects (LCLI-357) (#453)
 - 2026-08-29T18:44:49-05:00 137eda14d4c3f4ff09b824e0d326e9d723c5c5e9 docs: stop pinning a version in the bundle's most-read paragraph (LCLI-361) (#454)
 - 2026-08-30T09:31:38-05:00 d80b2c4bd8416e7c4294fb6c6595d389e01c766b docs: correct a stale repo-visibility claim, name the three-session pairing, refresh the tracker framing (#477)
+- 2026-09-03T02:03:00Z 8d59e477a314acd9d7fe04fb6a72f9ca9c1c88ed chore(backlog): correct LCLI-372/373/374/376 status after AC re-check (#525)
 
 ## docs/adr
 
@@ -223,6 +224,7 @@
 - 2026-07-26T07:33:17-05:00 135bb3bf718cc92d513fb230182a593a13da8200 docs(adr): fix --label-vs-add-label drift found in LORE-265's wider sweep
 - 2026-07-26T07:33:17-05:00 24010c650030d6d384ef4b0c6881ef3399a39a7c docs(adr-0009): correct §2's orphans data-source and ownership-rule claims
 - 2026-07-26T21:25:31-05:00 dccfabfe1eea13ceeee034c70cc21ab68d52c8b1 docs(wave2-integration): fix label-flag comment/test contradictions and ADR-0002 item 6
+- 2026-09-03T02:33:01Z 043939c049ed1fe53d4b21ead70d9d39db1bb349 docs(new,adr): document the NNNN- ADR auto-numbering scheme (LCLI-373) (#527)
 
 ## docs/reference
 

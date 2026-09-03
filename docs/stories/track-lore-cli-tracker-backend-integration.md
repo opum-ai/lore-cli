@@ -36,9 +36,9 @@ Quest-backend task lineage. LCLI-315.4 delivered Lore's Quest `0.2.7` default-se
 <!-- lore:tasks:begin -->
 | Task | Title | Status |
 |---|---|---|
-| [LCLI-315](../../backlog/tasks/lcli-315%20-%20Pluggable-tracker-backends-choose-the-issue-tracker-instead-of-hardcoding-Backlog.md.md) | Pluggable tracker backends: choose the issue tracker instead of hardcoding Backlog.md | Done |
-| [LCLI-333](../../backlog/tasks/lcli-333%20-%20Release-Lore-with-Quest-as-the-default-tracker-backend.md) | Release Lore with Quest as the default tracker backend | To Do |
-| [LCLI-343](../../backlog/tasks/lcli-343%20-%20Allow-lore-init-without-an-issue-tracker.md) | Allow lore init without an issue tracker | Done |
+| LCLI-315 | Pluggable tracker backends: choose the issue tracker instead of hardcoding Backlog.md | Done |
+| LCLI-333 | Release Lore with Quest as the default tracker backend | To Do |
+| LCLI-343 | Allow lore init without an issue tracker | Done |
 <!-- lore:tasks:end -->
 
 ## Notes

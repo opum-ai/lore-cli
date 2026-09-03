@@ -23,7 +23,7 @@ tasks:
 <!-- lore:tasks:begin -->
 | Task | Title | Status |
 |---|---|---|
-| [LCLI-344](../../backlog/tasks/lcli-344%20-%20Add-Hermes-Agent-integration-support.md) | Add Hermes Agent integration support | Done |
+| LCLI-344 | Add Hermes Agent integration support | Done |
 <!-- lore:tasks:end -->
 
 ## Notes

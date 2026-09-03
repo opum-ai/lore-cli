@@ -51,20 +51,20 @@ product or release state.
 <!-- lore:tasks:begin -->
 | Task | Title | Status |
 |---|---|---|
-| [LCLI-293](../../backlog/tasks/lcli-293%20-%20Reconcile-Lore-CLI-release-truth-handover-lifecycle-and-Story-ownership.md) | Reconcile Lore CLI release truth handover lifecycle and Story ownership | Done |
-| [LCLI-292](../../backlog/tasks/lcli-292%20-%20Adapt-backlog-handover-skill-for-Lore-CLI.md) | Adapt backlog-handover skill for Lore CLI | Done |
-| [LCLI-294](../../backlog/tasks/lcli-294%20-%20Transfer-Lore-CLI-repository-to-opum-ai-and-reconcile-canonical-location.md) | Transfer Lore CLI repository to opum-ai and reconcile canonical location | Done |
-| [LCLI-322](../../backlog/tasks/lcli-322%20-%20Restore-single-active-cursor-hygiene-for-ignored-handover-archives.md) | Restore single-active-cursor hygiene for ignored handover archives | Done |
-| [LCLI-325](../../backlog/tasks/lcli-325%20-%20README-Install-section-still-pins-0.1.0-and-describes-the-shipped-0.2.0-install-fix-as-a-future-release.md) | README Install section still pins 0.1.0 and describes the shipped 0.2.0 install fix as a future release | Done |
-| [LCLI-329](../../backlog/tasks/lcli-329%20-%20Adopt-the-autonomous-documentation-campaign-fast-lane.md) | Adopt the autonomous documentation campaign fast lane | Done |
-| [LCLI-328](../../backlog/tasks/lcli-328%20-%20backlog-handover-can-invoke-self-committing-Lore-commands-without-commit-authority.md) | backlog-handover can invoke self-committing Lore commands without commit authority | Done |
-| [LCLI-308](../../backlog/tasks/lcli-308%20-%20Route-fleet-cross-repo-questions-to-opum-doc-and-correct-the-stale-Quest-CLI-owner.md) | Route fleet cross-repo questions to opum-doc and correct the stale Quest CLI owner | Done |
-| [LCLI-309](../../backlog/tasks/lcli-309%20-%20Correct-the-stale-herdr-delivery-derivation-and-the-fact-shaped-instructions-it-exposed.md) | Correct the stale herdr delivery derivation and the fact-shaped instructions it exposed | Done |
-| [LCLI-310](../../backlog/tasks/lcli-310%20-%20Close-adverb-shaped-prohibitions-ownership-without-prohibition-and-the-second-hand-listed-gate.md) | Close adverb-shaped prohibitions, ownership-without-prohibition, and the second hand-listed gate | Done |
-| [LCLI-311](../../backlog/tasks/lcli-311%20-%20Make-the-loophole-guidance-a-general-rule-not-a-curated-list-of-shapes.md) | Make the loophole guidance a general rule, not a curated list of shapes | Done |
-| [LCLI-341](../../backlog/tasks/lcli-341%20-%20Align-FMC-Worker-identity-and-user-level-skill-authority.md) | Align FMC Worker identity and user-level skill authority | Done |
-| [LCLI-342](../../backlog/tasks/lcli-342%20-%20Record-exact-FMC-Controller-authorization-delegation.md) | Record exact FMC Controller authorization delegation | Done |
-| [LCLI-345](../../backlog/tasks/lcli-345%20-%20Reconcile-Lore-Story-ownership-for-the-ODOC-66-documentation-closeout.md) | Reconcile Lore Story ownership for the ODOC-66 documentation closeout | Done |
+| LCLI-293 | Reconcile Lore CLI release truth handover lifecycle and Story ownership | Done |
+| LCLI-292 | Adapt backlog-handover skill for Lore CLI | Done |
+| LCLI-294 | Transfer Lore CLI repository to opum-ai and reconcile canonical location | Done |
+| LCLI-322 | Restore single-active-cursor hygiene for ignored handover archives | Done |
+| LCLI-325 | README Install section still pins 0.1.0 and describes the shipped 0.2.0 install fix as a future release | Done |
+| LCLI-329 | Adopt the autonomous documentation campaign fast lane | Done |
+| LCLI-328 | backlog-handover can invoke self-committing Lore commands without commit authority | Done |
+| LCLI-308 | Route fleet cross-repo questions to opum-doc and correct the stale Quest CLI owner | Done |
+| LCLI-309 | Correct the stale herdr delivery derivation and the fact-shaped instructions it exposed | Done |
+| LCLI-310 | Close adverb-shaped prohibitions, ownership-without-prohibition, and the second hand-listed gate | Done |
+| LCLI-311 | Make the loophole guidance a general rule, not a curated list of shapes | Done |
+| LCLI-341 | Align FMC Worker identity and user-level skill authority | Done |
+| LCLI-342 | Record exact FMC Controller authorization delegation | Done |
+| LCLI-345 | Reconcile Lore Story ownership for the ODOC-66 documentation closeout | Done |
 <!-- lore:tasks:end -->
 
 ## Notes
