@@ -90,19 +90,44 @@ This is a reporting duty, not a routing change. Questions only your own user can
 answer still go to them — but tell the orchestrator you are asking, so the fleet
 knows why you went quiet and nothing sits stalled unnoticed.
 
+**Ask your user with the `AskUserQuestion` tool, not with prose in your final
+message.** A question written as ordinary text ends your turn indistinguishably
+from finishing work: the harness reports both as `idle_prompt`, so the
+orchestrator's notification hook cannot tell a stalled decision from a completed
+one and files it as quiet. Measured on 2026-09-03, 108 of 130 logged
+notifications were `idle_prompt` and not one carried a signal that a human
+decision was pending. `AskUserQuestion` is detectable in the transcript, so the
+hook can route it as a decision and name what you asked about. Use it whenever
+you are genuinely blocked on a person — two options, a recommendation, and the
+trade-off between them.
+
 ### Ownership
 
 You are the sole mutation owner of your own repository. Filesystem access to a
 sibling is not authority over it. Deliver to `origin` `dev`.
 
-Promoting `dev` to `main` by a reviewed PR, with the branch's required checks
-green, is ordinary delivery and an orchestrator decision — you do not need your
-own user for it. A branch with no required checks configured counts as green;
-say "no checks configured" rather than reporting checks passed, because an
-absent signal and a passing one are different facts. What needs your user's DIRECT authority is the dangerous set:
-pushing straight to `main` or otherwise bypassing review, force-push, history
-rewrite, adding or changing remotes, credentials, and destructive cleanup. The
-gate is the nature of the operation, not the name of the branch.
+Promoting `dev` to `main` is ordinary delivery and an orchestrator decision —
+you do not need your own user for it. The shape is: open a PR from `dev`, let the
+required checks go green on that exact SHA, then land it with
+`git push origin dev:main`. GitHub auto-marks the PR MERGED and no merge commit
+is created. A branch with no required checks configured counts as green; say
+"no checks configured" rather than reporting checks passed, because an absent
+signal and a passing one are different facts.
+
+**That push is not "pushing straight to `main`" and does not need your user.**
+The two are easy to conflate and this block used to read as if it forbade the
+thing it requires. The distinction is enforcement, not mechanism: branch
+protection applies required checks to a direct push exactly as it does to a
+merge — opum-cli-e2e's first attempt was rejected with "2 of 3 required status
+checks queued". A fast-forward promotion therefore satisfies the review gates
+rather than bypassing them. Do NOT use GitHub's merge button: it staples a merge
+commit onto `main` that never reaches `dev`, so `main` stops being an ancestor
+and can never fast-forward again.
+
+What needs your user's DIRECT authority is the dangerous set: pushing to `main`
+a ref that is NOT a fast-forward of reviewed `dev`, force-push, history rewrite,
+adding or changing remotes, credentials, and destructive cleanup. The gate is the
+nature of the operation, not the name of the branch.
 
 If a required check cannot pass, or the ruleset wants a human, that part goes to
 your user even though the decision to promote came from the orchestrator.
@@ -172,6 +197,8 @@ a heading that has no entries yet.
 ### Role
 
 The lore documentation CLI, published as `@opum-ai/lore`. Owns the `lore` command surface every fleet repository depends on for its docs gate.
+
+This CLAUDE.md did not previously name the `opum-sdlc` skill anywhere, though it is projected here through slot 64 and already carries the correct four-condition promotion test. Consult it before creating a branch, opening or merging a PR, promoting `dev` to `main`, deleting a branch, provisioning a worktree, or auditing the estate for stale branches and orphan leases — it is the fleet's development lifecycle reference, not something to rediscover from this profile alone.
 
 ### Retirement machinery carried here
 
