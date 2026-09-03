@@ -57,7 +57,7 @@ import * as yaml from "js-yaml";
 import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { extractLinkTargets, nodeText, walkMdast } from "./bundle";
-import { idFromPath, normalizeInput, tryReadFrontmatter } from "./concept";
+import { hasStrayFrontmatterFence, idFromPath, normalizeInput, tryReadFrontmatter } from "./concept";
 import type { Finding, Severity } from "./finding";
 import { INDEX_BLOCK_BEGIN } from "./indexes";
 import { decodeTarget, isExternalTarget, pathPart, validateLink } from "./links";
@@ -74,7 +74,9 @@ export type CheckSeverity = Severity;
  * `status-drift`/`managed-block-drift`/`unsupported-task-coupling`/`index-drift` are all
  * error-tier gate findings; `unknown-type`/`portability` are warn-tier lints; `external-link`
  * is the opt-in, non-deterministic liveness advisory (`--external`) that never fails the gate
- * (ADR-0007).
+ * (ADR-0007). `double-frontmatter` (LCLI-372) is error-tier defense-in-depth: a file whose body
+ * itself opens with a second, parseable `---` frontmatter fence -- the shape `lore new` already
+ * rejects at scaffold time, caught here for a file that reaches disk another way.
  */
 export type CheckRule =
   | "broken-link"
@@ -89,7 +91,8 @@ export type CheckRule =
   | "okf-version"
   | "unknown-type"
   | "portability"
-  | "external-link";
+  | "external-link"
+  | "double-frontmatter";
 
 /**
  * One problem found in the bundle, attributed to the file that carries it: the shared
@@ -404,6 +407,14 @@ export function checkBundle(
       }
     }
     findings.push(...portabilityScan(tree, file.path));
+    if (hasStrayFrontmatterFence(bodyText(file.raw))) {
+      findings.push({
+        severity: "error",
+        rule: "double-frontmatter",
+        file: file.path,
+        message: `${file.path} contains a second frontmatter fence in its body (LCLI-372) -- likely a template that embedded its own frontmatter; remove the stray '---' block so only one frontmatter fence remains`,
+      });
+    }
   }
 
   return summarize(findings, files.length, skippedOutOfBundleLinkCount);

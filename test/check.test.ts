@@ -503,6 +503,34 @@ sources:
   });
 });
 
+// ── checkBundle: double frontmatter, defense-in-depth (LCLI-372) ────────────────
+
+describe("checkBundle — double frontmatter (LCLI-372 AC2)", () => {
+  test("a hand-planted double-frontmatter file is flagged as an error, not silently passed", () => {
+    // Mirrors the exact scaffold-time shape `lore new` rejects at write time (new.test.ts's
+    // LCLI-372 AC1 test): the real frontmatter closes, and the template's own frontmatter fence
+    // lands immediately after it as literal body text, with no heading in between.
+    const raw =
+      "---\ntype: Reference\ntitle: Orders table\nsummary: A ref.\n---\n" +
+      "---\ntype: Reference\ntitle: PLACEHOLDER\nsummary: PLACEHOLDER\ntags: []\n---\n# Orders table\n\nbody\n";
+    const file: CheckInputFile = { path: "reference/orders-table.md", raw };
+    const report = checkBundle([file]);
+    expect(report.findings.some((f) => f.rule === "double-frontmatter" && f.severity === "error")).toBe(true);
+    expect(report.errorCount).toBeGreaterThan(0);
+  });
+
+  test("a body that merely opens with a thematic-break `---` is not flagged as double frontmatter", () => {
+    // The dash line is the very first thing in the body (matching the true shape a stray-fence
+    // scan must tell apart), but it is a bare thematic break -- no YAML mapping follows it.
+    const raw =
+      "---\ntype: Reference\ntitle: Orders\nsummary: A ref.\n---\n" +
+      "---\n\nJust a horizontal rule, not a second frontmatter block.\n";
+    const file: CheckInputFile = { path: "reference/orders.md", raw };
+    const report = checkBundle([file]);
+    expect(report.findings.some((f) => f.rule === "double-frontmatter")).toBe(false);
+  });
+});
+
 // ── checkBundle: heading-anchor validation (AC#1) ────────────────────────────────
 
 describe("checkBundle — anchor rot (AC#1)", () => {

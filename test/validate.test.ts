@@ -126,6 +126,30 @@ made_up_key: 1
     expect(report.findings).toEqual([]);
     expect(report.type).toBeUndefined();
   });
+
+  test("LCLI-372 AC2: a hand-planted double-frontmatter file is flagged as an error, not silently passed", () => {
+    // Mirrors the exact scaffold-time shape `lore new` rejects at write time (new.test.ts's
+    // LCLI-372 AC1 test): the real frontmatter closes, and the template's own frontmatter fence
+    // lands immediately after it as literal body text, with no heading in between.
+    const raw =
+      "---\ntype: Reference\ntitle: Orders table\nsummary: A ref.\n---\n" +
+      "---\ntype: Reference\ntitle: PLACEHOLDER\nsummary: PLACEHOLDER\ntags: []\n---\n# Orders table\n\nbody\n";
+    const report = validateConceptText("docs/reference/orders-table.md", raw);
+    expect(report.ok).toBe(false);
+    expect(
+      report.findings.some(
+        (f) => f.severity === "error" && f.rule === "frontmatter" && /second frontmatter fence/.test(f.message),
+      ),
+    ).toBe(true);
+  });
+
+  test("a body that merely opens with a thematic-break `---` is not flagged as double frontmatter", () => {
+    const raw =
+      "---\ntype: Reference\ntitle: Orders\nsummary: A ref.\n---\n" +
+      "---\n\nJust a horizontal rule, not a second frontmatter block.\n";
+    const report = validateConceptText("docs/reference/orders.md", raw);
+    expect(report.findings.some((f) => /second frontmatter fence/.test(f.message))).toBe(false);
+  });
 });
 
 // ── Core engine: required body sections (tier 2) ───────────────────────────────
