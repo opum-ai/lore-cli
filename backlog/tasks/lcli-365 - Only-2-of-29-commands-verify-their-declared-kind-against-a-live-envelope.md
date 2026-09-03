@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-30 01:17'
-updated_date: '2026-09-02 22:39'
+updated_date: '2026-09-03 00:21'
 labels:
   - manifest
   - contract
@@ -38,11 +38,34 @@ Design note: running all 29 commands in a unit test is not obviously right — m
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every command in the manifest has its declared kind verified against a kind actually emitted by running that command, not against a transcription
-- [ ] #2 The verification derives the kind at check time rather than reading it from any committed document, per CLAUDE.md's bind-on-content rule
-- [ ] #3 Proven by a negative control: changing one handler's emitted kind without touching the manifest makes the check fail and name that command
-- [ ] #4 If the hand-transcribed golden is retained, its name and comment state exactly what it covers and what it does not, so a pass is never read as live coverage
+- [x] #1 16 of the manifest's 29 commands have their declared kind verified against a kind actually emitted by running that command (not a transcription) -- amended down from 'every command' per opag's ruling (comment #4): the remaining 13 are named explicitly, split into 8 the e2e harness never runs at all (backlog, changed, explorer, impact, path, provenance, snapshot, agent) and 5 the harness runs elsewhere but only against a specific target/task id this phase would have to fabricate (replace, rename, supersede, link, unlink) -- widening either group stays open work, tracked here
+- [x] #2 The verification derives the kind at check time rather than reading it from any committed document, per CLAUDE.md's bind-on-content rule
+- [x] #3 Proven by a negative control: changing one handler's emitted kind without touching the manifest makes the check fail and name that command
+- [x] #4 If the hand-transcribed golden is retained, its name and comment state exactly what it covers and what it does not, so a pass is never read as live coverage
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Implement directly from opag's RULING comment (#4, supersedes my own earlier 'option (b)' recommendation): widen the ALREADY-LANDED (PR #466) manifest-vs-emission edge (docker/e2e/lib/steps.sh's step_declared_kind, live in Phase 24c) to cover more of the 21 commands the e2e harness already drives, using the SAME helper -- no new design needed, just more call sites.
+
+1. Grep run-e2e.sh for which of the 29 manifest commands already have a step_json/.kind== case somewhere (opag's count: 21 driven, 8 absent entirely: agent, backlog, changed, explorer, impact, path, provenance, snapshot).
+2. Of the 13 driven-but-not-yet-in-Phase-24c (init, new, replace, rename, supersede, link, unlink, sync, tasks, schema, scaffold, context, instructions), find which have a genuinely cheap (no fabricated target/task-id) invocation:
+   - tasks/context: both take a required <id> -- verified locally that the bundle's one reserved, always-present concept ('index') resolves cleanly for both (tasks index --json -> tasks.rollup; context index --json -> context.export).
+   - instructions: no args needed.
+   - schema export / scaffold mkdocs: idempotent no-ops by Phase 24c (both already run multiple times earlier in the harness -- Phase 17/18 -- confirmed against the script, not assumed).
+   - init: idempotent re-run on an already-initialized bundle (verified locally: created:[] on a second run).
+   - new + sync: genuinely mutate, so ordered LAST in the phase (after every read-only assertion), new immediately followed by sync to leave the bundle clean.
+   - replace/rename/supersede/link/unlink: need a real, specific existing target/task id at that exact point in a 1900+ line script -- left uncovered rather than fabricated, per opag's explicit permission.
+3. Verified each new invocation's exact CLI syntax + JSON shape locally (bun run src/cli.ts, no docker available in this environment) before writing it into the script; cross-checked schema/scaffold against the script's OWN earlier Phase 17/18 precedent rather than assuming.
+4. Amend AC#1 with the real ratio (16/29, not 21/29) and name the still-uncovered 13 explicitly in the Phase 24c comment block itself, split into 'never driven at all' (8) vs 'driven elsewhere but needs a fabricated target' (5: replace/rename/supersede/link/unlink).
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Verified locally (no docker in this environment): each new invocation's exact JSON output shape and exit code, via 'bun run src/cli.ts' against a scratch bundle -- tasks/context both resolve cleanly against the bundle's reserved root concept 'index'; schema export and scaffold mkdocs are confirmed idempotent no-ops by Phase 24c against the SCRIPT's own earlier Phase 17/18 precedent (both already run there multiple times, including LORE-263 AC1's own 're-run on unchanged scaffold is a no-op' assertion); init re-run on an already-initialized bundle is idempotent (created:[]); new+sync ordered last (mutating), after every read-only assertion, sync immediately healing the drift new introduces. docker/e2e/selftest.sh: 28 ok/0 bad (step_declared_kind helper itself untouched, still discriminates). Full bun test suite unaffected (2781 pass/1 skip/0 fail -- this change touches only docker/e2e/run-e2e.sh, no TS). bash -n: clean. Not yet run against real docker (unavailable in this session) -- will be validated by the PR's own CI docker-e2e job, same as PR #518/#519 were.
+<!-- SECTION:NOTES:END -->
 
 ## Comments
 
