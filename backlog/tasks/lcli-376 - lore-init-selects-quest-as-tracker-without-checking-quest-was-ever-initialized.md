@@ -1,9 +1,10 @@
 ---
 id: LCLI-376
 title: lore init selects quest as tracker without checking quest was ever initialized
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-02 20:19'
+updated_date: '2026-09-03 01:54'
 labels: []
 dependencies: []
 references:
@@ -26,9 +27,9 @@ lore init --tracker quest (or the interactive wizard choosing quest) persists [t
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 when persisting backend = "quest" (interactive or --tracker quest), lore init checks for quest's init marker (.quest/workspace.toml) and refuses with a clear message ("quest backend selected but quest init hasn't run -- run it first") if it is missing, rather than silently persisting the selection
-- [ ] #2 the check does not attempt to invoke quest init itself, pass through its flags, or handle its failures -- refusal only, per the user's own stated scope
-- [ ] #3 regression test runs lore init --tracker quest in a repo where quest was never initialized and asserts a refusal rather than a silent 0-exit persist
+- [x] #1 when persisting backend = "quest" (interactive or --tracker quest), lore init checks for quest's init marker (.quest/workspace.toml) and refuses with a clear message ("quest backend selected but quest init hasn't run -- run it first") if it is missing, rather than silently persisting the selection
+- [x] #2 the check does not attempt to invoke quest init itself, pass through its flags, or handle its failures -- refusal only, per the user's own stated scope
+- [x] #3 regression test runs lore init --tracker quest in a repo where quest was never initialized and asserts a refusal rather than a silent 0-exit persist
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -36,3 +37,9 @@ lore init --tracker quest (or the interactive wizard choosing quest) persists [t
 <!-- SECTION:PLAN:BEGIN -->
 Confirmed 2026-09-02 against dev source: lore init --yes --tracker quest in a fresh repo with quest never initialized wrote backend = "quest" to .lore/config.toml, exited 0, and left .quest/ nonexistent; lore check afterward still reported 0 errors/0 warnings. The init marker to check is .quest/workspace.toml (workspaceConfigurationPath, src/application/workspaces/workspaces.ts:33 in quest-cli, written by initializeWorkspace() since QCLI-126/132) -- confirmed independently by running quest init in a scratch repo and observing exactly that file get created, with nothing else. NOTE: opum-agent's original relay said the marker was CLAUDE.md/AGENTS.md and pointed at QCLI-159 as a blocking dependency; qcli corrected this directly -- QCLI-159 is scoped to which agent instruction file(s) quest init writes (a docs-target question), unrelated to workspace-init state. Do not gate this on QCLI-159 and do not check for CLAUDE.md/AGENTS.md presence.
 <!-- SECTION:PLAN:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+All 3 ACs verified. Fixed by PR #512, merged to dev 2026-09-02. AC1: src/commands/init.ts:533-546 refuses backend=quest when .quest/workspace.toml is missing (isQuestWorkspaceNotInitializedFailure). AC2: doc comment at init.ts:533 confirms the guard is refusal-only, never invokes quest init or handles its failures. AC3: test/init.test.ts:1993 (LCLI-376) exercises exactly this scenario and passes -- 273/273 tests pass overall.
+<!-- SECTION:FINAL_SUMMARY:END -->
