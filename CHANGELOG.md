@@ -5,6 +5,51 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-09-02
+
+### Changed
+
+- **Breaking: `lore check` and `lore validate` now flag double-frontmatter
+  files as errors.** A concept whose body opens with a second, parseable
+  `---` frontmatter fence — reachable by hand-editing, copying, or a future
+  scaffold path, not just `lore new` (already rejected at scaffold time) —
+  now fails the gate with a new error-tier `double-frontmatter` check rule
+  and a matching `validate` finding. A bundle that exited 0 under 0.3.5 can
+  exit non-zero under 0.4.0 with no other change, since a clean `lore check`
+  is this project's definition of a compliant docs bundle (LCLI-372).
+
+### Added
+
+- `lore orphans --json` now separates `pendingLinks` (a Quest `--doc`-created
+  task with recorded documentation but no `tasks:`/`doc:`/ancestor linkage
+  yet — run `lore link`) from `orphanTasks` (documented nowhere at all), so a
+  pending task no longer reads as fully healthy and trains a user to skip
+  `lore link` (LCLI-374).
+- `lore new adr --help` and `docs/adr/index.md` now document the existing
+  `NNNN-` ADR auto-numbering convention for hand-authored ADRs (LCLI-373).
+
+### Fixed
+
+- `lore orphans`'s `danglingLinks` section no longer misreports a Done,
+  correctly-linked Quest task as dangling. Quest 0.2.7–0.3.0's bulk `task
+  list` silently drops terminal-status tasks; `orphans` now confirms only the
+  specific suspect ids against a per-task view before reporting them,
+  matching `lore check`'s existing per-task resolution (LCLI-375).
+- `lore check` now detects a stale `<!-- lore:index -->` managed block — a
+  directory whose committed index no longer matches what `lore sync` would
+  regenerate — as an always-on error, not gated behind `--strict` (LCLI-377).
+- `lore init --tracker backlog` now reports a discriminated, fatal error code
+  for a below-floor Backlog.md install, matching the existing Quest
+  version-floor behavior; previously it read identically to a
+  merely-uninitialized install (LCLI-370).
+- `lore init --tracker quest` (and the setup wizard) no longer persists
+  `backend = "quest"` when the Quest package is installed but the workspace
+  itself was never initialized. Previously `lore check` stayed green over a
+  fully broken tracker selection (LCLI-376).
+- `lore agent context` now retrieves full concept bodies for an indexed
+  bundle instead of the metadata-only indexed retrieval graph, which
+  previously produced empty agent evidence packs (LCLI-371 / ODOC-63.1).
+
 ## [0.3.5] - 2026-08-29
 
 ### Fixed
