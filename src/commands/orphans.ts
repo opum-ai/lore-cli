@@ -2,17 +2,24 @@
  * commands/orphans.ts — `lore orphans [--tasks-only | --docs-only] [--limit <n>]` (cli-surface §orphans).
  *
  * The read-only, **bidirectional** doc↔task coupling report: the CI/agent signal that the
- * coupling `lore link`/`sync` maintain has gaps. Two directions, one envelope:
+ * coupling `lore link`/`sync` maintain has gaps. Three buckets, one envelope:
  *
- *   - **orphanTasks** — tasks with **no owning doc**: no concept lists the task in its `tasks:`
- *     frontmatter AND the task carries no `doc:<conceptId>` back-reference label AND (LCLI-374) the
- *     backend's own `--doc` flag recorded no documentation either AND (LORE-261) no ancestor in its
- *     Backlog `parentTaskId` chain is owned either — a subtask of an already-linked parent task is
- *     not reported, since linking the parent does not stamp each subtask with its own back-reference
- *     (see {@link hasOwnedAncestor}). Work that exists in Backlog but is documented nowhere, at any
- *     level of its parent/subtask hierarchy. `--doc` and `tasks:`/`doc:` are two independent
- *     references lore never synchronizes for you — a task can carry one without the other, and
- *     `lore link` is what reconciles them; see {@link hasDocumentation}.
+ *   - **orphanTasks** — tasks with **no owning doc and no pending link either**: no concept lists
+ *     the task in its `tasks:` frontmatter, the task carries no `doc:<conceptId>` back-reference
+ *     label, the backend's own `--doc` flag recorded no documentation either, AND (LORE-261) no
+ *     ancestor in its Backlog `parentTaskId` chain is owned either — a subtask of an already-linked
+ *     parent task is not reported, since linking the parent does not stamp each subtask with its
+ *     own back-reference (see {@link hasOwnedAncestor}). Work that exists in Backlog but is
+ *     documented nowhere, at any level of its parent/subtask hierarchy.
+ *   - **pendingLinks** (LCLI-374 AC2) — tasks the backend's `--doc` flag already documented, but
+ *     that are not (yet) forward-referenced, `doc:`-labeled, or owned via an ancestor. `--doc` and
+ *     `tasks:`/`doc:` are two independent references lore never synchronizes for you — a task can
+ *     carry one without the other, and `lore link` is what reconciles them (see
+ *     {@link hasDocumentation}). Reporting this as fully healthy (folded silently into neither
+ *     bucket, LCLI-374 AC1's original fix) would train a user to never run `lore link`; reporting it
+ *     as an ordinary `orphanTask` would overstate the gap (the doc reference already exists). This
+ *     third, non-error bucket says exactly what is true: linkage is incomplete, not absent. `lore
+ *     check` does not gate on it, matching `orphanTasks`'s own "report, not a gate" status below.
  *   - **danglingLinks** — docs whose linked task **vanished**: a `tasks:` id the current-branch
  *     Backlog snapshot no longer knows. A doc pointing at a task that has been deleted or renamed.
  *
@@ -48,15 +55,16 @@
  * never consulted) — so a doc still linking an archived task surfaces here as a dangling link, exactly
  * as `lore tasks` drops that same id from its rollup. That is intentional and consistent, not a
  * distinction lore could draw. Output follows the uniform CLI modes: the `{schemaVersion, kind:
- * "orphans.report", data}` envelope under `--json` — `data` an object `{ orphanTasks?, danglingLinks? }`
- * (object-wrapped so the contract can grow additively; the section a flag excludes is **omitted**, not
- * emitted empty, so `--docs-only --json` never shows a misleading `orphanTasks: []`) — and otherwise an
- * aligned text report.
+ * "orphans.report", data}` envelope under `--json` — `data` an object
+ * `{ orphanTasks?, pendingLinks?, danglingLinks? }` (object-wrapped so the contract can grow
+ * additively; the section(s) a flag excludes are **omitted**, not emitted empty, so `--docs-only
+ * --json` never shows a misleading `orphanTasks: []`) — and otherwise an aligned text report.
+ * `pendingLinks` shares `orphanTasks`'s `--tasks-only`/`--docs-only` gate (both are task-side).
  *
  * ## Bounded output (cli-contract §3)
  *
  * `orphans` is named alongside `query`/`graph`/`context` as a read-heavy command that must cap its
- * output rather than dump an unbounded snapshot into a CI log or an agent's context window. Its two
+ * output rather than dump an unbounded snapshot into a CI log or an agent's context window. Its
  * sections are independent (an unrelated task backlog and an unrelated doc set), so each is capped —
  * and reports its own `total`/`shown`/`truncated` — separately against the same `--limit` (default
  * {@link DEFAULT_ORPHANS_LIMIT}), mirroring `query`'s single-section shape once per section.
@@ -120,16 +128,17 @@ export interface DanglingLink {
 }
 
 /**
- * The `orphans.report` payload. Both keys are optional: a run with no flag carries both, `--tasks-only`
- * carries only the orphan-task fields, `--docs-only` only the dangling-link fields. An excluded section
- * is entirely absent (not `[]`) so a consumer can tell "not requested" from "requested, found none".
+ * The `orphans.report` payload. All keys are optional: a run with no flag carries every section,
+ * `--tasks-only` carries only the task-side fields ({@link orphanTasks} + {@link pendingLinks}),
+ * `--docs-only` only the dangling-link fields. An excluded section is entirely absent (not `[]`)
+ * so a consumer can tell "not requested" from "requested, found none".
  *
  * Each section carries its own `total`/`shown`/`truncated` (cli-contract §3) rather than one combined
- * triple — `orphanTasks` and `danglingLinks` count unrelated things (a task backlog vs. a doc set), so a
- * single combined cap would make one section's truncation state say nothing about the other.
+ * triple — the sections count unrelated things (a task backlog vs. a doc set), so a single combined
+ * cap would make one section's truncation state say nothing about the others.
  */
 export interface OrphansReport {
-  /** Tasks with no owning doc, sorted by id (case-insensitive), capped to `--limit`. Omitted under `--docs-only`. */
+  /** Tasks with no owning doc AND no pending `--doc` linkage, sorted by id, capped to `--limit`. Omitted under `--docs-only`. */
   readonly orphanTasks?: readonly OrphanTask[];
   /** The full count of orphan tasks before the `--limit` cap. Present iff {@link orphanTasks} is. */
   readonly orphanTasksTotal?: number;
@@ -137,6 +146,21 @@ export interface OrphansReport {
   readonly orphanTasksShown?: number;
   /** `true` when the `--limit` cap dropped orphan tasks. */
   readonly orphanTasksTruncated?: boolean;
+  /**
+   * LCLI-374 AC2: tasks the backend's `--doc` flag already documented, but which no concept's
+   * `tasks:` forward-reference or `doc:` label (nor an owned ancestor) has yet linked — a distinct,
+   * non-error "run `lore link`" state, never folded into {@link orphanTasks} (fully undocumented)
+   * or silently treated as fully healthy (LCLI-374 AC1's original fix). `lore check` does not gate
+   * on this section any more than it gates on `orphanTasks` — `orphans` stays a report, not a gate.
+   * Sorted by id, capped to `--limit`. Omitted under `--docs-only`.
+   */
+  readonly pendingLinks?: readonly OrphanTask[];
+  /** The full count of pending-link tasks before the `--limit` cap. Present iff {@link pendingLinks} is. */
+  readonly pendingLinksTotal?: number;
+  /** The number of pending-link tasks actually returned (`pendingLinksShown <= pendingLinksTotal`). */
+  readonly pendingLinksShown?: number;
+  /** `true` when the `--limit` cap dropped pending-link tasks. */
+  readonly pendingLinksTruncated?: boolean;
   /** Docs whose linked task vanished, sorted by (concept, task), capped to `--limit`. Omitted under `--tasks-only`. */
   readonly danglingLinks?: readonly DanglingLink[];
   /** The full count of dangling links before the `--limit` cap. Present iff {@link danglingLinks} is. */
@@ -179,9 +203,11 @@ export async function runOrphans(options: OrphansOptions): Promise<number> {
  * or a subprocess.
  *
  * A single pass over the concepts builds the forward `tasks:` set (for the orphan-task test) and the
- * flat list of every `(concept, taskId)` reference (for the dangling test) at once; `orphanTasks` then
- * filters the snapshot and `danglingLinks` filters the references, both against case-insensitive id
- * sets. Both outputs are sorted for a deterministic, diff-stable report.
+ * flat list of every `(concept, taskId)` reference (for the dangling test) at once; a single pass over
+ * the snapshot then classifies each task as linked (reported nowhere), `pendingLinks` (documented via
+ * `--doc` but not yet linked), or `orphanTasks` (documented nowhere), and `danglingLinks` filters the
+ * references against the snapshot's case-insensitive known-id set. All three outputs are sorted for a
+ * deterministic, diff-stable report.
  */
 export function computeOrphans(
   concepts: Iterable<Concept>,
@@ -199,16 +225,23 @@ export function computeOrphans(
 
   const known = new Set(snapshot.map((task) => task.id.toLowerCase())); // lower-cased ids Backlog knows
   const byId = new Map(snapshot.map((task) => [task.id.toLowerCase(), task])); // for the parent-chain walk below
-  const orphanTasks = snapshot
-    .filter(
-      (task) =>
-        !referenced.has(task.id.toLowerCase()) &&
-        !hasDocLabel(task) &&
-        !hasDocumentation(task) &&
-        !hasOwnedAncestor(task, referenced, byId),
-    )
-    .map((task): OrphanTask => ({ id: task.id, title: task.title, status: task.status }))
-    .sort((a, b) => compareLower(a.id, b.id));
+  // A task is "linked" through any of the three exemption paths lore already recognizes (forward
+  // ref, direct doc: label, or an owned ancestor) -- linked tasks are reported nowhere. An unlinked
+  // task then splits two ways (LCLI-374 AC2): `--doc` already documented it (pendingLinks -- run
+  // `lore link`) or it has no documentation at all (orphanTasks -- genuinely undocumented).
+  const orphanTasks: OrphanTask[] = [];
+  const pendingLinks: OrphanTask[] = [];
+  for (const task of snapshot) {
+    const linked =
+      referenced.has(task.id.toLowerCase()) || hasDocLabel(task) || hasOwnedAncestor(task, referenced, byId);
+    if (linked) {
+      continue;
+    }
+    const row: OrphanTask = { id: task.id, title: task.title, status: task.status };
+    (hasDocumentation(task) ? pendingLinks : orphanTasks).push(row);
+  }
+  orphanTasks.sort((a, b) => compareLower(a.id, b.id));
+  pendingLinks.sort((a, b) => compareLower(a.id, b.id));
   const danglingLinks = references
     .filter((ref) => !known.has(ref.task.toLowerCase()))
     .sort((a, b) => compareLower(a.concept, b.concept) || compareLower(a.task, b.task));
@@ -225,6 +258,10 @@ export function computeOrphans(
     orphanTasksTotal?: number;
     orphanTasksShown?: number;
     orphanTasksTruncated?: boolean;
+    pendingLinks?: OrphanTask[];
+    pendingLinksTotal?: number;
+    pendingLinksShown?: number;
+    pendingLinksTruncated?: boolean;
     danglingLinks?: DanglingLink[];
     danglingLinksTotal?: number;
     danglingLinksShown?: number;
@@ -236,6 +273,12 @@ export function computeOrphans(
     report.orphanTasksTotal = orphanTasks.length;
     report.orphanTasksShown = shown.length;
     report.orphanTasksTruncated = shown.length < orphanTasks.length;
+
+    const pendingShown = pendingLinks.slice(0, limit);
+    report.pendingLinks = pendingShown;
+    report.pendingLinksTotal = pendingLinks.length;
+    report.pendingLinksShown = pendingShown.length;
+    report.pendingLinksTruncated = pendingShown.length < pendingLinks.length;
   }
   if (!parsed.tasksOnly) {
     const shown = danglingLinks.slice(0, limit);
@@ -402,11 +445,15 @@ const LIMIT_HINT = "raise --limit to see more";
  * only on the header, and only when `color`.
  */
 function renderReport(data: OrphansReport, color: boolean): string {
-  const { orphanTasks, danglingLinks } = data;
+  const { orphanTasks, pendingLinks, danglingLinks } = data;
   const counts: string[] = [];
   if (orphanTasks !== undefined) {
     const total = data.orphanTasksTotal as number;
     counts.push(`${total} orphan ${total === 1 ? "task" : "tasks"}`);
+  }
+  if (pendingLinks !== undefined) {
+    const total = data.pendingLinksTotal as number;
+    counts.push(`${total} pending ${total === 1 ? "link" : "links"}`);
   }
   if (danglingLinks !== undefined) {
     const total = data.danglingLinksTotal as number;
@@ -429,6 +476,18 @@ function renderReport(data: OrphansReport, color: boolean): string {
       lines.push(footer);
     }
   }
+  if (pendingLinks !== undefined && pendingLinks.length > 0) {
+    lines.push("", "tasks documented via --doc but not yet `lore link`ed:");
+    for (const row of renderTaskSummaryRows(pendingLinks)) {
+      lines.push(row);
+    }
+    const footer = renderTruncationLine(
+      truncation(data.pendingLinksTotal as number, data.pendingLinksShown as number, LIMIT_HINT),
+    );
+    if (footer !== "") {
+      lines.push(footer);
+    }
+  }
   if (danglingLinks !== undefined && danglingLinks.length > 0) {
     const conceptWidth = maxLen(danglingLinks, (link) => link.concept.length);
     lines.push("", "docs with a vanished linked task:");
@@ -443,7 +502,7 @@ function renderReport(data: OrphansReport, color: boolean): string {
     }
   }
 
-  const allClear = allClearLine(orphanTasks, danglingLinks);
+  const allClear = allClearLine(orphanTasks, pendingLinks, danglingLinks);
   if (allClear !== undefined) {
     lines.push(allClear);
   }
@@ -456,13 +515,15 @@ function renderReport(data: OrphansReport, color: boolean): string {
  * sections that were actually computed: under `--tasks-only`/`--docs-only` the excluded side (an
  * `undefined` argument) was never checked, so it is left out of the sentence rather than falsely
  * declared clean. At least one side is always requested (the parser rejects both flags), so the line is
- * never empty.
+ * never empty. `pendingLinks` shares `orphanTasks`'s request gate (both task-side), so one clause
+ * covers both — a non-empty `pendingLinks` alone is still "not every task has an owning doc yet".
  */
 function allClearLine(
   orphanTasks: readonly OrphanTask[] | undefined,
+  pendingLinks: readonly OrphanTask[] | undefined,
   danglingLinks: readonly DanglingLink[] | undefined,
 ): string | undefined {
-  if ((orphanTasks?.length ?? 0) > 0 || (danglingLinks?.length ?? 0) > 0) {
+  if ((orphanTasks?.length ?? 0) > 0 || (pendingLinks?.length ?? 0) > 0 || (danglingLinks?.length ?? 0) > 0) {
     return undefined;
   }
   const clauses: string[] = [];

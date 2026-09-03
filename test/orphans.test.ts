@@ -93,12 +93,43 @@ describe("computeOrphans — the pure set arithmetic (AC#1)", () => {
     expect(report.orphanTasks).toEqual([]);
   });
 
-  test("a task carrying backend documentation (--doc) but no doc: label or forward ref is NOT an orphan (LCLI-374)", () => {
+  test("a task carrying backend documentation (--doc) but no doc: label or forward ref is a pendingLink, not an orphan (LCLI-374)", () => {
     // Quest's --doc records into the task's own documentation array without ever writing a
-    // tasks:/doc: back-reference -- only `lore link` does that. Before this fix that gap read
-    // as a silent orphan.
+    // tasks:/doc: back-reference -- only `lore link` does that. Before AC1's fix that gap read
+    // as a silent orphan; AC2 makes it its own distinct "run lore link" bucket rather than
+    // silently folding it into fully-healthy.
     const report = computeOrphans([], [makeTask("LORE-9", { documentation: ["docs/stories/gone.md"] })], NO_FLAGS);
     expect(report.orphanTasks).toEqual([]);
+    expect(report.pendingLinks).toEqual([{ id: "LORE-9", title: "Title for LORE-9", status: "To Do" }]);
+  });
+
+  test("a task with --doc documentation AND a forward ref is fully linked -- in neither orphanTasks nor pendingLinks (LCLI-374 AC2)", () => {
+    const report = computeOrphans(
+      [concept("stories/bulk", { tasks: ["LORE-9"] })],
+      [makeTask("LORE-9", { documentation: ["docs/stories/bulk.md"] })],
+      NO_FLAGS,
+    );
+    expect(report.orphanTasks).toEqual([]);
+    expect(report.pendingLinks).toEqual([]);
+  });
+
+  test("--docs-only omits pendingLinks entirely, alongside orphanTasks (LCLI-374 AC2)", () => {
+    const report = computeOrphans([], [makeTask("LORE-9", { documentation: ["docs/stories/gone.md"] })], {
+      tasksOnly: false,
+      docsOnly: true,
+    });
+    expect("pendingLinks" in report).toBe(false);
+  });
+
+  test("--tasks-only carries pendingLinks with total/shown/truncated fields (LCLI-374 AC2)", () => {
+    const report = computeOrphans([], [makeTask("LORE-9", { documentation: ["docs/stories/gone.md"] })], {
+      tasksOnly: true,
+      docsOnly: false,
+    });
+    expect(report.pendingLinks).toEqual([{ id: "LORE-9", title: "Title for LORE-9", status: "To Do" }]);
+    expect(report.pendingLinksTotal).toBe(1);
+    expect(report.pendingLinksShown).toBe(1);
+    expect(report.pendingLinksTruncated).toBe(false);
   });
 
   test("a task with an empty documentation array is still an orphan (LCLI-374 does not weaken the base case)", () => {
@@ -442,6 +473,33 @@ describe("runOrphans — text rendering", () => {
     expect(text).toContain("stories/bulk  -> GONE-9");
   });
 
+  test("plain renders the pendingLinks section under its own header, distinct from orphan tasks (LCLI-374 AC2)", async () => {
+    const adapter = okAdapter([makeTask("LORE-9", { title: "Pending doc", documentation: ["docs/stories/gone.md"] })]);
+    const stdout = capture();
+    const code = await runOrphans({
+      root,
+      output: PLAIN_CTX,
+      stdout,
+      stderr: capture(),
+      args: ["--tasks-only"],
+      adapter,
+    });
+    expect(code).toBe(0);
+    const text = stdout.text();
+    expect(text).toContain("orphans: 0 orphan tasks, 1 pending link");
+    expect(text).toContain("tasks documented via --doc but not yet `lore link`ed:");
+    expect(text).toContain("LORE-9");
+    expect(text).toContain("Pending doc");
+    expect(text).not.toContain("tasks with no owning doc:"); // no orphanTasks entries -- block omitted
+  });
+
+  test("a non-empty pendingLinks section withholds the all-clear line, even with zero true orphans (LCLI-374 AC2)", async () => {
+    const adapter = okAdapter([makeTask("LORE-9", { documentation: ["docs/stories/gone.md"] })]);
+    const stdout = capture();
+    await runOrphans({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: ["--tasks-only"], adapter });
+    expect(stdout.text()).not.toContain("(none —");
+  });
+
   test("a fully clean report renders the all-clear line", async () => {
     writeStory("bulk", ["LORE-1"]);
     const adapter = okAdapter([makeTask("LORE-1", { labels: ["doc:stories/bulk"] })]);
@@ -509,6 +567,15 @@ describe("runOrphans — text rendering", () => {
     const { data } = await reportJson(["--tasks-only", "--limit", "1"], adapter);
     expect(data).toMatchObject({ orphanTasksTotal: 3, orphanTasksShown: 1, orphanTasksTruncated: true });
     expect(data.orphanTasks).toHaveLength(1);
+  });
+
+  test("--json carries pendingLinks' own total/shown/truncated fields (LCLI-374 AC2)", async () => {
+    const tasks = Array.from({ length: 3 }, (_, i) => makeTask(`LORE-${i}`, { documentation: ["docs/x.md"] }));
+    const adapter = okAdapter(tasks);
+    const { data } = await reportJson(["--tasks-only", "--limit", "1"], adapter);
+    expect(data).toMatchObject({ pendingLinksTotal: 3, pendingLinksShown: 1, pendingLinksTruncated: true });
+    expect(data.pendingLinks).toHaveLength(1);
+    expect(data.orphanTasksTotal).toBe(0);
   });
 });
 
