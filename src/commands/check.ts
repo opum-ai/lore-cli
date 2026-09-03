@@ -44,12 +44,14 @@ import {
   collectExternalLinks,
   type ExternalLink,
   hasDateSensitiveCheckRules,
+  indexDriftFindings,
   isAddressLiteral,
   isIsoCalendarDate,
   reconcileDriftFindings,
   tallySeverity,
 } from "../core/check";
 import { type Concept, parseConcept, tryReadFrontmatter } from "../core/concept";
+import { generateIndexes } from "../core/indexes";
 import { type BundleState, type BundleVersionIssue, resolveBundleState, taskRollupFieldFor } from "../core/okf-version";
 import { loadProfile, type Profile, profileForBundle, profileTypeDeclaresField } from "../core/profile";
 import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
@@ -67,7 +69,7 @@ import {
 } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { parseCommandArgs, singleOptionValue } from "./args";
-import { canonicalIdentity, readSource } from "./discover";
+import { canonicalIdentity, readIndexBytes, readSource } from "./discover";
 import { dedupeTaskIds, defaultAdapter } from "./link";
 import {
   gatherReconciliation,
@@ -224,9 +226,12 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
   // type does not declare it as an explicit gate finding before any Backlog IO.
   const conceptBundleResults = bundles.map((bundle) => tryConceptsForBundle(bundle, profile));
   const multi = bundles.length > 1;
-  const scanFindings = conceptBundleResults.flatMap((result) =>
-    result.findings.map((finding) => prefixFinding(finding, result.bundle.label, multi)),
-  );
+  const scanFindings = [
+    ...conceptBundleResults.flatMap((result) =>
+      result.findings.map((finding) => prefixFinding(finding, result.bundle.label, multi)),
+    ),
+    ...bundles.flatMap((bundle) => tryIndexDriftForBundle(options.root, bundle, profile, multi)),
+  ];
   const baseReport = mergeFindings(linkReport, scanFindings);
   const needsReconciliation = conceptBundleResults.some(
     (result) => result.error !== null || taskBlockConcepts(result.concepts).length > 0,
@@ -395,6 +400,41 @@ function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleRe
     }
   }
   return { bundle, concepts, findings, error };
+}
+
+/**
+ * Best-effort index-drift scan for one bundle root: whether its committed `index.md` files match
+ * what `lore sync` would regenerate for them ({@link indexDriftFindings}, LCLI-377). Scoped to the
+ * `docs/` bundle only ({@link isDocsRoot}) — {@link readIndexBytes}'s own advisory labeling is
+ * docs/-root-specific (it always attributes under the `DOCS_DIR` constant regardless of the root
+ * path handed in), so extending this past the default root needs that fixed first, not assumed to
+ * already work.
+ *
+ * Building the {@link BundleGraph} {@link generateIndexes} needs means parsing every concept in the
+ * bundle, not just the `tasks:`-linked ones {@link tryConceptsForBundle} already parses — so this
+ * makes its OWN `loadBundle` call, mirroring the raw call already made once above (this file's own
+ * agent-profile-validation seam, LORE-84's precedent). A malformed concept `loadBundle` throws on is
+ * exactly as invisible to `lore check` today as it was before this function existed (only `lore
+ * validate` fully parses every concept) — this adds a gate, it does not add a new gap. So a throw
+ * here (from either the parse or the disk read) is caught and treated as "cannot verify index drift
+ * this run": one best-effort check being unable to run must never abort the whole gate when the
+ * rest of the report is unaffected by it.
+ */
+function tryIndexDriftForBundle(root: string, bundle: Bundle, profile: Profile, multi: boolean): CheckFinding[] {
+  if (!isDocsRoot(bundle.label)) {
+    return [];
+  }
+  const docsRoot = join(root, DOCS_DIR);
+  try {
+    const graph = loadBundle(docsRoot, { profile });
+    const existing = readIndexBytes(docsRoot);
+    const regenerated = generateIndexes(graph, { existing });
+    return indexDriftFindings({ existing, regenerated, fixable: true }).map((finding) =>
+      prefixFinding(finding, bundle.label, multi),
+    );
+  } catch {
+    return [];
+  }
 }
 
 /** The gate's exit code from a {@link CheckReport}: `6` on any error, or any warning under `--strict`. */

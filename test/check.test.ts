@@ -5,6 +5,9 @@ import { join } from "node:path";
 import type { BacklogAdapter } from "../src/adapters/backlog";
 import { run } from "../src/cli";
 import { driftFindingsForBundle, type FetchLike, isDocsRoot, type ResolveHost, runCheck } from "../src/commands/check";
+import { runInit } from "../src/commands/init";
+import { runNew } from "../src/commands/new";
+import { runSync } from "../src/commands/sync";
 import {
   bodyText,
   type CheckInputFile,
@@ -2424,7 +2427,11 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
   test("a reserved-stem concept (index/log) is never reconciled even if it carries tasks:", async () => {
     writeFileSync(
       join(root, "docs", "index.md"),
-      "---\ntype: Reference\ntitle: Documentation\ntasks:\n  - lore-1\n---\n# Documentation\n\n<!-- lore:index:begin -->\n<!-- lore:index:end -->\n",
+      // The index block's bytes match what `generateIndexes` actually regenerates for an empty
+      // listing (a blank line between the markers, not adjacent lines) so this fixture reads as
+      // genuinely synced rather than tripping the unrelated index-drift check (LCLI-377) this test
+      // isn't about.
+      "---\ntype: Reference\ntitle: Documentation\ntasks:\n  - lore-1\n---\n# Documentation\n\n<!-- lore:index:begin -->\n\n<!-- lore:index:end -->\n",
     );
     const poison = new Proxy(
       {},
@@ -2547,6 +2554,147 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
 
     const o = { root, output: JSON_CTX, args: ["b", "a"], adapter, stdout: capture(), stderr: capture() };
     await expect(runCheck(o)).rejects.toThrow(/invalid Story frontmatter/);
+  });
+});
+
+describe("runCheck — index-drift (LCLI-377)", () => {
+  let root: string;
+  const FIXED_CLOCK = (): Date => new Date("2026-06-25T12:00:00Z");
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "lore-cli-check-index-drift-"));
+    runInit({ root, args: ["--allow-no-git"], output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("a doc scaffolded via `lore new` after the last `lore sync` leaves its directory's index stale, and `lore check` flags it", async () => {
+    // First doc, then a REAL sync — establishes a genuinely-synced reference/index.md (the exact
+    // bytes `generateIndexes` produces), not a hand-typed approximation that would collide with
+    // the drift comparison on formatting grounds alone.
+    runNew({
+      root,
+      output: JSON_CTX,
+      args: ["reference", "First Doc"],
+      clock: FIXED_CLOCK,
+      stdout: capture(),
+      stderr: capture(),
+    });
+    const syncCode = await runSync({
+      root,
+      output: JSON_CTX,
+      args: [],
+      stdout: capture(),
+      stderr: capture(),
+      resolveHead: () => null,
+    });
+    expect(syncCode).toBe(EXIT_OK);
+
+    // Second doc scaffolded WITHOUT a follow-up sync — reference/index.md now lists only the
+    // first doc. This is LCLI-377's exact reproduction: `lore new` never touches the index.
+    runNew({
+      root,
+      output: JSON_CTX,
+      args: ["reference", "Second Doc"],
+      clock: FIXED_CLOCK,
+      stdout: capture(),
+      stderr: capture(),
+    });
+
+    const stdout = capture();
+    const code = await runCheck({
+      root,
+      output: JSON_CTX,
+      args: [],
+      stdout,
+      stderr: capture(),
+      headCommitDate: () => "2026-06-25",
+    });
+    expect(code).toBe(EXIT_CODES.validation);
+    const envelope = JSON.parse(stdout.text()) as { data: { findings: Array<{ rule: string; file: string }> } };
+    expect(envelope.data.findings.some((f) => f.rule === "index-drift" && f.file === "reference/index.md")).toBe(true);
+    // The root index was never touched by the second `new` (reference/ was already a known child
+    // directory before it) — the drift stays scoped to the one stale sub-index.
+    expect(envelope.data.findings.some((f) => f.rule === "index-drift" && f.file === "index.md")).toBe(false);
+  });
+
+  test("a never-synced bundle (no `<!-- lore:index:begin -->` marker yet) is not flagged as drift", async () => {
+    // `lore init` + `lore new`, zero `lore sync` runs — the ordinary scaffold-then-write workflow.
+    // `generateIndexes` APPENDS a block to an index with no markers yet; that first-ever append is
+    // not "stale content", and must not be reported as index-drift (the false positive the prior
+    // attempt at this task hit against 49/294 of this file's own tests).
+    runNew({
+      root,
+      output: JSON_CTX,
+      args: ["reference", "First Doc"],
+      clock: FIXED_CLOCK,
+      stdout: capture(),
+      stderr: capture(),
+    });
+
+    const stdout = capture();
+    const code = await runCheck({
+      root,
+      output: JSON_CTX,
+      args: [],
+      stdout,
+      stderr: capture(),
+      headCommitDate: () => "2026-06-25",
+    });
+    expect(code).toBe(EXIT_OK);
+    const envelope = JSON.parse(stdout.text()) as { data: { findings: Array<{ rule: string }> } };
+    expect(envelope.data.findings.some((f) => f.rule === "index-drift")).toBe(false);
+  });
+
+  test("a fresh `lore sync` immediately after heals the drift", async () => {
+    runNew({
+      root,
+      output: JSON_CTX,
+      args: ["reference", "First Doc"],
+      clock: FIXED_CLOCK,
+      stdout: capture(),
+      stderr: capture(),
+    });
+    await runSync({ root, output: JSON_CTX, args: [], stdout: capture(), stderr: capture(), resolveHead: () => null });
+    runNew({
+      root,
+      output: JSON_CTX,
+      args: ["reference", "Second Doc"],
+      clock: FIXED_CLOCK,
+      stdout: capture(),
+      stderr: capture(),
+    });
+    const driftCode = await runCheck({
+      root,
+      output: JSON_CTX,
+      args: [],
+      stdout: capture(),
+      stderr: capture(),
+      headCommitDate: () => "2026-06-25",
+    });
+    expect(driftCode).toBe(EXIT_CODES.validation);
+
+    const syncCode = await runSync({
+      root,
+      output: JSON_CTX,
+      args: [],
+      stdout: capture(),
+      stderr: capture(),
+      resolveHead: () => null,
+    });
+    expect(syncCode).toBe(EXIT_OK);
+
+    const cleanCode = await runCheck({
+      root,
+      output: JSON_CTX,
+      args: [],
+      stdout: capture(),
+      stderr: capture(),
+      headCommitDate: () => "2026-06-25",
+    });
+    expect(cleanCode).toBe(EXIT_OK);
   });
 });
 

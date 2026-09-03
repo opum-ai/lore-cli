@@ -1337,6 +1337,15 @@ step_fail "AC4: --depth without a root <id> is a usage error (exit 2)" 2 \
   '.error_type == "usage"' \
   -- lore graph --depth 2 --json
 
+# `lore new ADR "E2E successor decision"` above (the supersede successor) scaffolded a new ADR
+# without a follow-up sync, exactly the LCLI-377 gap `lore check`'s index-drift finding now
+# catches: adr/index.md still lists only the pre-successor ADRs. Nothing between here and Phase
+# 17a's first full unscoped check heals it otherwise, and Phase 17a asserts a genuinely clean
+# bundle (LORE-68 AC3) -- so sync here, not to appease the new check, but because that IS the
+# correct real-world remedy `lore check`'s hint already names.
+step_json "lore sync: heal the ADR index left stale by Phase 16's unsynced `lore new`" \
+  '.kind == "sync.result"' -- lore sync --json
+
 # ── Phase 17: schema export ─────────────────────────────────────────────────────
 step_json "lore schema export" '.kind == "schema.result"' -- lore schema export --json
 for T in epic story spec adr runbook reference attested-computation; do
@@ -1553,6 +1562,15 @@ for T in epic story spec adr runbook reference attested-computation; do
   check "default schema for $T restored after the profile subsystem probe" \
     "jq -e . .lore/schemas/${T}.schema.json >/dev/null 2>&1"
 done
+
+# The custom-type doc itself (docs/e2e-custom-type/e2e-custom-type-doc.md) is deliberately NOT
+# deleted -- unlike the custom profile/template above, it stays so later phases keep exercising a
+# genuine unknown-type warning under the default profile. But `lore new` never scaffolded it into
+# any index, and this whole custom-profile excursion never synced, so both the bundle root index
+# (a brand-new top-level directory) and this new directory's own index are stale (LCLI-377). Heal
+# it the same way Phase 16 did.
+step_json "lore sync: heal the root + e2e-custom-type indexes left stale by this profile excursion" \
+  '.kind == "sync.result"' -- lore sync --json
 
 # ── Phase 18: scaffold mkdocs + a real build ────────────────────────────────────
 step "lore scaffold mkdocs" 0 -- lore scaffold mkdocs
@@ -1935,6 +1953,18 @@ check "LCLI-327: E2E identity was not persisted in the workspace Git config" \
 # `explorer`, `agent`, `path`, `impact`), and commands the harness DOES run elsewhere but only
 # against a specific target/task id this phase would have to fabricate (`replace`, `rename`,
 # `supersede`, `link`, `unlink`). Widening either group is tracked on LCLI-365.
+#
+# `step_declared_kind check` below requires `lore check`'s own exit to be 0 -- it is asserting
+# kind-matching, not bundle cleanliness, and a real index-drift error (LCLI-377) would make it
+# fail for an unrelated reason. Phase 17a already owns "is the bundle clean" (LORE-68 AC3) and
+# passes before this phase ever runs; CI found this exact interaction live -- two specific,
+# now-fixed spots (Phase 16's unsynced ADR successor, Phase 17b's unsynced custom-type doc) plus
+# at least one further accumulation between Phase 17a and here that direct tracing did not
+# isolate. Rather than keep chasing individual sources one CI round-trip at a time, sync once
+# here, defensively: this phase's own job is unaffected by whether the bundle happened to need
+# one.
+step_json "lore sync: defensive heal before the kind cross-check phase" \
+  '.kind == "sync.result"' -- lore sync --json
 step_declared_kind check        -- lore check --json
 step_declared_kind validate     -- lore validate --json
 step_declared_kind orphans      -- lore orphans --json
