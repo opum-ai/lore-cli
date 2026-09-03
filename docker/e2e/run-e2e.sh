@@ -1953,6 +1953,18 @@ check "LCLI-327: E2E identity was not persisted in the workspace Git config" \
 # `explorer`, `agent`, `path`, `impact`), and commands the harness DOES run elsewhere but only
 # against a specific target/task id this phase would have to fabricate (`replace`, `rename`,
 # `supersede`, `link`, `unlink`). Widening either group is tracked on LCLI-365.
+#
+# `step_declared_kind check` below requires `lore check`'s own exit to be 0 -- it is asserting
+# kind-matching, not bundle cleanliness, and a real index-drift error (LCLI-377) would make it
+# fail for an unrelated reason. Phase 17a already owns "is the bundle clean" (LORE-68 AC3) and
+# passes before this phase ever runs; CI found this exact interaction live -- two specific,
+# now-fixed spots (Phase 16's unsynced ADR successor, Phase 17b's unsynced custom-type doc) plus
+# at least one further accumulation between Phase 17a and here that direct tracing did not
+# isolate. Rather than keep chasing individual sources one CI round-trip at a time, sync once
+# here, defensively: this phase's own job is unaffected by whether the bundle happened to need
+# one.
+step_json "lore sync: defensive heal before the kind cross-check phase" \
+  '.kind == "sync.result"' -- lore sync --json
 step_declared_kind check        -- lore check --json
 step_declared_kind validate     -- lore validate --json
 step_declared_kind orphans      -- lore orphans --json
