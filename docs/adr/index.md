@@ -19,6 +19,11 @@ graph links. Statuses follow the usual lifecycle: `Proposed` → `Accepted` →
 (`Deprecated` | `Superseded`). All records currently in this log are **Accepted**
 as of 2026-06-21.
 
+Filenames follow an `NNNN-slug.md` convention (e.g. `0001-runtime-build-distribution.md`),
+zero-padded and monotonically increasing. `lore new adr "<title>"` auto-numbers this for
+you — it always picks the next unused `NNNN-` prefix — so a hand-authored ADR should follow
+the same convention rather than a bare `slug.md`.
+
 ## Index
 
 <!-- lore:index:begin -->

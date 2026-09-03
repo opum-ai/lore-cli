@@ -333,7 +333,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     exitCodes: exitCodesFor(["profile", "read", "write"], [6]),
     examples: [
       'lore new story "Bulk archive completed orders"',
-      'lore new adr "Use soft deletes" --tags retention,orders',
+      'lore new adr "Use soft deletes" --tags retention,orders  # -> docs/adr/NNNN-use-soft-deletes.md, auto-numbered to the next unused NNNN- prefix',
     ],
   },
   {

@@ -360,7 +360,14 @@ const SPEC_TEMPLATE = `
 ## Open questions
 `;
 
-/** ADR: an architecture decision record, starting in the Proposed state. */
+/**
+ * ADR: an architecture decision record, starting in the Proposed state.
+ *
+ * `lore new adr "<title>"` auto-numbers the output filename to the next unused
+ * `docs/adr/NNNN-` prefix (LCLI-373) -- this template supplies only the body; the
+ * numbered `docs/adr/NNNN-<slug>.md` path itself comes from `new.ts`'s
+ * `nextAdrNumber()`, not from this template.
+ */
 const ADR_TEMPLATE = `
 # {{title}}
 
