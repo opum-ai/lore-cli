@@ -1,9 +1,10 @@
 ---
 id: LCLI-375
 title: lore orphans false-flags Done Quest tasks as dangling links
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-02 20:19'
+updated_date: '2026-09-03 02:43'
 labels: []
 dependencies: []
 references:
@@ -30,14 +31,26 @@ After a task is correctly linked (lore link) and then driven to Quest's terminal
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 lore orphans' known-tasks resolution does not rely solely on the bulk listTasks snapshot for existence checks -- either query per-task state (matching reconcile-shared.ts's already-correct verifiedViewTask approach) or otherwise avoid the terminal-status blind spot
-- [ ] #2 a Done, correctly-linked task is never reported as a danglingLink by lore orphans
-- [ ] #3 regression test links a task, drives it to Done via the tracker, and asserts lore orphans reports it as linked/healthy rather than dangling
-- [ ] #4 if closing this fully depends on a Quest-side fix (Quest 0.3.0 has no way via task list to retrieve terminal-status tasks at all), that dependency is stated explicitly rather than assumed fixable in lore-cli alone -- coordinate with quest-cli before committing to a specific lore-side approach
+- [x] #1 lore orphans' known-tasks resolution does not rely solely on the bulk listTasks snapshot for existence checks -- either query per-task state (matching reconcile-shared.ts's already-correct verifiedViewTask approach) or otherwise avoid the terminal-status blind spot
+- [x] #2 a Done, correctly-linked task is never reported as a danglingLink by lore orphans
+- [x] #3 regression test links a task, drives it to Done via the tracker, and asserts lore orphans reports it as linked/healthy rather than dangling
+- [x] #4 if closing this fully depends on a Quest-side fix (Quest 0.3.0 has no way via task list to retrieve terminal-status tasks at all), that dependency is stated explicitly rather than assumed fixable in lore-cli alone -- coordinate with quest-cli before committing to a specific lore-side approach
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-Confirmed 2026-09-02 against dev source + quest 0.3.0. Linked T-1 to a Story via lore link, drove it To Do -> In Progress -> Done via quest task complete. Bare quest task list --json then returned data:[] (T-1 missing); quest task list --status Done --json and --status done --json BOTH also returned [] -- no working flag found to retrieve it via task list. quest task view T-1 --json and quest search <text> --json both correctly showed status Done. lore orphans --json then reported the Story under danglingLinks. Separately, lore check did NOT stay green (exit 6, status-drift + managed-block-drift) because reconcile-shared.ts's verifiedViewTask is per-task and correctly resolved Done -- so orphans and check actively disagree on this exact state. Needs coordination with quest-cli: confirm whether a stable flag/flag-combination to retrieve terminal tasks via task list exists or is planned, since orphans.ts's fix shape depends on it.
+1. Refined shape per opum-agent's second (corrected) ruling: keep bulk listTasks as the primary source; per-task resolve ONLY the ids a candidate danglingLink actually names (the suspects the bulk snapshot failed to return), reusing reconcile-shared.ts's existing resolveTaskDetails/verifiedViewTask machinery -- version-agnostic, zero extra cost when every candidate is a true dangling link (Quest 0.3.1+, or Backlog). 2. Refactor orphans.ts: extract classify() (pure bucket computation, unchanged behavior) and assembleReport() (limit/section assembly) out of computeOrphans, so computeOrphans stays pure/sync for existing tests while runOrphans adds the async confirmDanglingLinks() step before assembling the final report. 3. Skip confirmation entirely under --tasks-only (danglingLinks isn't requested) and when there are zero candidates. 4. Extend test/helpers.ts's fakeAdapter with bulkListDrops to simulate the exact Quest 0.2.7-0.3.0 shape (bare listTasks silently omits an id that viewTask still resolves). 5. Regression tests: Done+linked task dropped from bulk list is not dangling; a genuinely deleted task still is; a viewTask failure on a suspect fails toward reporting; distinct-id dedup across multiple referencing concepts; --tasks-only never triggers confirmation; computeOrphans itself stays bulk-only (pinned). 6. AC4: state the now-evidence-based dependency (QCLI-165, fixed in quest 0.3.1; lore-cli's own MIN_QUEST_VERSION floor is below that fix, so lore-cli needs this fix regardless of what any one installed quest does).
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+src/commands/orphans.ts: added confirmDanglingLinks(adapter, candidates) -- dedupes candidate danglingLinks to distinct suspect ids, resolves them via reconcile-shared.ts's resolveTaskDetails (bounded concurrency, identity-verified viewTask), and drops any that resolve alive. runOrphans calls it after classify(), before assembleReport(); computeOrphans (the pure export, used directly by ~70 existing tests plus tracker-adapter-parity.test.ts) is UNCHANGED -- it still trusts the bulk snapshot alone, by design, since it has no adapter to confirm against. test/helpers.ts's fakeAdapter gained bulkListDrops to simulate the exact bug shape. bun test test/orphans.test.ts: 73/73 pass (6 new). Full bun test: 2802 pass, 1 pre-existing skip, 0 fail. tsc --noEmit clean; biome check: only the pre-existing unrelated agents.ts warning.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+AC1-AC4 closed. src/commands/orphans.ts: runOrphans now confirms every candidate danglingLink against a live per-task view (confirmDanglingLinks, reusing reconcile-shared.ts's resolveTaskDetails/verifiedViewTask) before trusting it -- bounded to the distinct suspect ids a candidate actually names, skipped entirely under --tasks-only or when there are no candidates. computeOrphans (the pure export ~70 existing tests + tracker-adapter-parity.test.ts call directly) is unchanged -- it has no adapter to confirm against, by design; the fix lives in runOrphans. AC4, evidence-based per opum-agent's correction: the terminal-status blind spot is QCLI-165, fixed in quest 0.3.1 (verified: 5902ba6 is an ancestor of quest's published 0.3.1 gitHead), but lore-cli's own qualified floor (MIN_QUEST_VERSION = 0.2.7, src/adapters/quest.ts:31) sits three releases below that fix, so every 0.2.7-0.3.0 install still hits it -- this fix is required in lore-cli regardless of which quest a user has installed, not merely a workaround for one bad release. Raising MIN_QUEST_VERSION to 0.3.1 was explicitly ruled out of this task's scope (a separate compatibility decision). Verified: bun test test/orphans.test.ts 73/73 pass (6 new, covering Done-task confirmation, genuine-deletion no-false-negative, viewTask-failure fail-toward-reporting, suspect dedup, --tasks-only skip, and computeOrphans's unchanged purity); full suite 2802 pass/1 pre-existing skip/0 fail; tsc --noEmit clean; biome check unchanged.
+<!-- SECTION:FINAL_SUMMARY:END -->

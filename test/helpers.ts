@@ -219,6 +219,11 @@ export function storyDoc(title: string, taskIds: readonly string[], status?: str
  *   drift path `lore orphans` propagates). Omitted → `listTasks` throws "not implemented", preserving
  *   the loud guard that a command NOT expected to take a full Backlog snapshot (link/rename/tasks)
  *   fails visibly if it ever starts.
+ * @param opts.bulkListDrops (LCLI-375) ids `listTasks` silently omits from its BARE (no `status`
+ *   filter) call, while `viewTask` still resolves them normally — the exact shape of Quest
+ *   0.2.7-0.3.0's terminal-status bug (QCLI-165, fixed in 0.3.1): the bulk snapshot is an incomplete
+ *   existence oracle, but per-task resolution is not. Only applies when no `status` filter is passed
+ *   (a filtered call is a different code path this option does not touch); case-insensitive.
  */
 export function fakeAdapter(
   seed: readonly BacklogTaskDetail[],
@@ -227,6 +232,7 @@ export function fakeAdapter(
     poisonViews?: readonly string[];
     probe?: "ok" | Error;
     listTasks?: "ok" | Error;
+    bulkListDrops?: readonly string[];
   } = {},
 ): BacklogAdapter & { calls: EditCall[] } {
   const tasks = new Map<string, BacklogTaskDetail>();
@@ -235,6 +241,7 @@ export function fakeAdapter(
   }
   const poison = new Set((opts.poisonEdits ?? []).map((id) => id.toLowerCase()));
   const poisonViews = new Set((opts.poisonViews ?? []).map((id) => id.toLowerCase()));
+  const bulkListDrops = new Set((opts.bulkListDrops ?? []).map((id) => id.toLowerCase()));
   const calls: EditCall[] = [];
   const notImplemented = (name: string) => (): never => {
     throw new Error(`fakeAdapter: ${name} is not implemented`);
@@ -260,6 +267,9 @@ export function fakeAdapter(
               throw mode;
             }
             let out = [...tasks.values()].map(toSummary);
+            if (listOpts?.status === undefined && bulkListDrops.size > 0) {
+              out = out.filter((task) => !bulkListDrops.has(task.id.toLowerCase()));
+            }
             if (listOpts?.status !== undefined) {
               const want = listOpts.status.toLowerCase();
               out = out.filter((task) => task.status.toLowerCase() === want);
