@@ -1,11 +1,11 @@
 ---
 id: LCLI-371
 title: Rebase and land the ODOC-63.1 agent-context full-body retrieval fix
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-31 18:54'
-updated_date: '2026-09-03 00:29'
+updated_date: '2026-09-03 00:46'
 labels: []
 dependencies: []
 references:
@@ -82,3 +82,9 @@ Recommended approach for the fresh session: `git rebase origin/dev` (not merge) 
 Not blocked on any decision -- purely a matter of doing the rebase carefully with the context budget it deserves.
 ---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Rebased feat/odoc-63.1-agent-profiles onto current origin/dev (git rebase, no --force, 0 conflicts -- the branch's cli.ts fix was already conflict-free per the prior session's own risk assessment). Landed the ODOC-63.1 fix: agent context handler switches to loadReferenceRetrievalGraph for full concept bodies. Fixed a real defect found while verifying AC#3: the branch's own prior commit had claimed to fix the AC4 jq-bracket bug but left invalid jq syntax in place instead -- a 'gate asserting its own claim instead of the artifact' instance (commit message trusted over its own diff). Restored valid jq matching the file's other 3 occurrences. All 5 ACs verified with objective evidence: full bun test suite (2783 pass/1 skip/0 fail), typecheck, lint, lore check --strict all clean pre-PR; PR #518's CI (9/9 checks) confirmed live, including a real docker e2e run of Phase 22b (all 6 assertions PASS) and the jq fix working live. Landed on PR #518, merged to dev; backlog record updates on PR #520 and #522.
+<!-- SECTION:FINAL_SUMMARY:END -->
