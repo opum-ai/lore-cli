@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-30 01:17'
-updated_date: '2026-09-03 00:21'
+updated_date: '2026-09-03 00:30'
 labels:
   - manifest
   - contract
@@ -65,6 +65,8 @@ Implement directly from opag's RULING comment (#4, supersedes my own earlier 'op
 
 <!-- SECTION:NOTES:BEGIN -->
 Verified locally (no docker in this environment): each new invocation's exact JSON output shape and exit code, via 'bun run src/cli.ts' against a scratch bundle -- tasks/context both resolve cleanly against the bundle's reserved root concept 'index'; schema export and scaffold mkdocs are confirmed idempotent no-ops by Phase 24c against the SCRIPT's own earlier Phase 17/18 precedent (both already run there multiple times, including LORE-263 AC1's own 're-run on unchanged scaffold is a no-op' assertion); init re-run on an already-initialized bundle is idempotent (created:[]); new+sync ordered last (mutating), after every read-only assertion, sync immediately healing the drift new introduces. docker/e2e/selftest.sh: 28 ok/0 bad (step_declared_kind helper itself untouched, still discriminates). Full bun test suite unaffected (2781 pass/1 skip/0 fail -- this change touches only docker/e2e/run-e2e.sh, no TS). bash -n: clean. Not yet run against real docker (unavailable in this session) -- will be validated by the PR's own CI docker-e2e job, same as PR #518/#519 were.
+
+CLOSURE RULING (opag, 2026-09-02): 16/29 ACCEPTED and closes this task, no further widening required. Reasoning on record: the ruling asked for the 21 commands the harness drives and to name the rest honestly; verification found 5 of that 21 (replace/rename/supersede/link/unlink) only run elsewhere against a target this phase would have to fabricate, a real distinction not available when the ruling was written. 16 live-verified with the remaining 13 split into two honestly-reasoned groups (8 never run at all, 5 fabricated-target-only) is the correct stopping point -- stretching to 21 to match the number in the ruling, once that number was shown to include 5 that would prove nothing real, would have been satisfying the letter of the ruling over its actual intent.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
