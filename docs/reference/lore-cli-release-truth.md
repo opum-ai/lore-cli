@@ -21,7 +21,72 @@ availability claim.
 
 ### Current state
 
-`0.3.5` is **RELEASED**. Published 2026-08-30 from tag `v0.3.5` at
+`0.4.0` is **RELEASED**. Published 2026-09-03 from tag `v0.4.0` at
+`b18b7e5c0b42`, by Release run `33712959361` via npm **OIDC trusted
+publishing** — no credential was involved at any point. Promoted `dev` to
+`main` by PR #531, landed with a local fast-forward push
+(`git push origin dev:main`, not the merge button) so `main` picked up no
+merge commit; the full `main` CI matrix (including the push-only macOS job)
+passed on `b18b7e5` before tagging.
+
+Registry evidence, all seven package names at `0.4.0` with `latest` moved,
+verified directly against `registry.npmjs.org` (not the local npm CLI
+cache): `@opum-ai/lore`, and
+`@opum-ai/lore-{darwin-arm64,darwin-x64,linux-arm64,linux-x64,win32-arm64,win32-x64}`.
+Clean-install smoke from a fresh temporary directory against the real
+registry: `npx --yes @opum-ai/lore@0.4.0 --version` returns `0.4.0`.
+
+**`@opum-ai/lore-linux-arm64` was briefly unreadable after a successful
+publish — recorded because it looked like a partial-publish failure and
+was not one.** Its `npm publish` step completed and printed npm's own
+success confirmation (`+ @opum-ai/lore-linux-arm64@0.4.0`), but also printed
+a notice none of the other six packages in the same run received: `Your
+package is being processed and may take a few minutes to become available.`
+For several minutes afterward, `npm view`/the registry API reported no
+`0.4.0` version for that package alone — root `@opum-ai/lore` was already
+live at `0.4.0` with `latest` moved, so its `optionalDependencies` pin was
+briefly unresolvable for that one platform. Verified via the registry API
+directly (bypassing the npm CLI) rather than assumed: the packument
+resolved `0.4.0` on a later check, matching a benign npm-side deferred
+processing/scan queue for that package specifically (it is the largest of
+the six platform tarballs), not a publish failure requiring the resumable
+retry the runbook's Rollback section describes.
+
+Why the release exists: `0.3.5`'s `lore check`/`lore validate` never
+flagged a concept file whose body opened with a second, parseable `---`
+frontmatter fence (LCLI-372) — reachable by hand-editing, copying, or a
+future scaffold path, not just `lore new` (already rejected at scaffold
+time since `0.3.5`'s own `LCLI-372` AC1). `0.4.0` adds that as a new
+error-tier `double-frontmatter` check rule, which is why the bump is minor
+rather than patch: a bundle that exited 0 under `0.3.5` can exit non-zero
+under `0.4.0` with no change on the consumer's side, and this project
+treats a clean `lore check` as the definition of a compliant docs bundle.
+`0.4.0` also fixes `lore orphans` misreporting a Done, correctly-linked
+Quest task as dangling (LCLI-375), adds a `pendingLinks` bucket to
+`lore orphans --json` (LCLI-374), detects a stale `lore:index` managed
+block as an always-on error (LCLI-377), and three smaller `lore init`/
+`lore agent context` fixes (LCLI-370, LCLI-376, LCLI-371). See
+CHANGELOG.md's `[0.4.0]` entry for the full list.
+
+Pre-publish gate: `lore check`, built from the release commit and run from
+each of the five fleet repositories' own root (no path argument — see
+LCLI-379 below for why an explicit path argument gives a different,
+currently-wrong answer), was clean everywhere: opum-agent 12 files,
+opum-doc 134, lore-cli 76, quest-cli 63, opum-cli-e2e 7 — 0 errors, 0
+warnings, no `double-frontmatter` hits anywhere in the fleet.
+
+**Filed, not fixed, in this release: LCLI-379.** `lore check .` and
+`lore check` (no argument) disagree sharply from the same directory —
+opum-doc's repo root reports 134 files/0 errors/92 out-of-bundle-links-
+skipped with no argument, versus 555 files/14 errors/0 skipped with `.`,
+because the explicit-path run walks `.herdr/`, a gitignored 1.2 GB vendored
+toolchain the docs bundle does not own. Reproduced identically on installed
+`0.3.5` and on the `0.4.0` source, so it predates this release and is not a
+regression introduced by it; held out of `0.4.0` per opum-agent's ruling
+and tracked as its own task rather than folded into this record's evidence
+for what actually shipped.
+
+`0.3.5` was **RELEASED**. Published 2026-08-30 from tag `v0.3.5` at
 `744d099263b5`, by Release run `33296350640` via npm **OIDC trusted
 publishing** — no credential was involved at any point.
 
