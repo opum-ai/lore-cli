@@ -3,8 +3,10 @@
 # Most keys are optional. This repository cut over LCLI's live tasks from
 # Backlog to Quest on 2026-09-03 (see .quest/workspace.toml and
 # docs/reference/backlog-to-quest-cutover-runbook.md, opum-agent/dev). The
-# 297 excluded LORE-family records remain in backlog/ pending a separate
-# migration decision. See docs/adr/0013-lore-state-directory.md for the full
+# 297 excluded LORE-family records were all proven non-unique (twins in the
+# migrated LCLI family, or an archived draft against an already-retired
+# subsystem) and removed at commit f84f586; they remain in git history, not
+# on disk. See docs/adr/0013-lore-state-directory.md for the full
 # tracker-backend contract.
 #
 # The Confluence API token is NEVER stored here — it is read only from
@@ -27,7 +29,7 @@ promote_portability = false # the portability lint stays a warning, not an error
 # publish adapter is deferred, LCLI-43). When enabled, set base_url / space /
 # parent_page_id / format here and provide the token via $LORE_CONFLUENCE_TOKEN.
 
-# [tracker.jira] — omitted: this repository explicitly uses Backlog. When
+# [tracker.jira] — omitted: this repository explicitly uses Quest. When
 # enabled, set profile / project / board / issue_type /
 # default_labels / status_flow here. jira-cli owns credentials; run
 # `jira init --yes` instead of storing any Jira credential in this file.

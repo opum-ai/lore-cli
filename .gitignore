@@ -40,9 +40,6 @@ docker/e2e/results/*
 .lore/cache/
 .lore/explorer/
 
-# Backlog.md transient lockfiles
-backlog/.locks/
-
 # Rendered-docs build output (configs are committed; build artifacts are not)
 site/
 website/build/

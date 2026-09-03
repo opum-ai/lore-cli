@@ -5,9 +5,10 @@
 
 This project cut LCLI over from Backlog to Quest as its tracker of record on 2026-09-03
 (425 records migrated; digest 1dd84c5eb53d6c76672031e0343dfa4e0f77a5394f8bf0a756bf53c4da3d8640).
-`.quest/` is committed and tracked — never gitignore it. `backlog/` remains on disk but holds
-only the 297 excluded LORE-family records (a separate family, not yet migrated); it is not the
-system of record for LCLI tasks and must not be written to for them.
+`.quest/` is committed and tracked — never gitignore it. `backlog/` no longer exists on disk:
+its 297 excluded LORE-family records were all proven non-unique and removed at commit f84f586,
+recoverable from git history if ever needed. Do not recreate `backlog/` or write LCLI tasks
+there — Quest is the only system of record.
 
 **For every user request in this project, run `quest instructions overview` before answering or taking action.**
 
