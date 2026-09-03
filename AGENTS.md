@@ -10,14 +10,17 @@ Two things read this file, and neither is Claude Code, which does not load it:
      check, so reformatting is safe and dropping the line is not; deleting this
      file as a Codex artifact broke that fence fleet-wide on 2026-08-30.
   2. The `backlog-handover` skill, whose step 2 says to read every applicable
-     AGENTS.md and whose SKILL.md:107 calls it "the authority ledger". That is
-     what the autonomous-docs block below is -- a standing campaign grant that
-     NARROWS authority. Do not delete it as boilerplate.
+     AGENTS.md and whose SKILL.md:107 calls it "the authority ledger". Two
+     sections below are that ledger -- "Repository ownership and delivery scope"
+     and "Autonomous Lore CLI documentation campaigns" -- and both NARROW
+     authority rather than granting it. Do not delete either as boilerplate.
+     Unlike opum-doc's and quest-cli's, they are plain headings rather than
+     marker-delimited blocks, so a tool that edits by marker will not see them.
 
 The AUTHORITY LEDGER for this repository is CLAUDE.md's `opum:fleet-operating`
-block, section "Ownership", as narrowed by the autonomous-docs block below. Note
-that this repository gates `dev`, not `main`; the profile in CLAUDE.md records
-why, and it is the fleet's deliberate exception.
+block, section "Ownership", as narrowed by those two sections. Note that this
+repository gates `dev`, not `main`; the profile in CLAUDE.md records why, and it
+is the fleet's deliberate exception.
 
 Because nothing loads this file automatically, prose written here drifts unseen.
 Put new repository rules in CLAUDE.md. Add to this file only what one of the two
