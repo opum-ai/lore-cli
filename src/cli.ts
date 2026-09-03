@@ -46,11 +46,7 @@ import { runSync } from "./commands/sync";
 import { runTasks } from "./commands/tasks";
 import { runValidate } from "./commands/validate";
 import { buildManifest } from "./core/manifest";
-import {
-  loadReferenceRetrievalGraph,
-  loadRetrievalGraph,
-  type RetrievalGraphLoader,
-} from "./core/retrieval";
+import { loadReferenceRetrievalGraph, loadRetrievalGraph, type RetrievalGraphLoader } from "./core/retrieval";
 import { EXIT_OK, EXIT_UNCAUGHT, LoreError, reportError, type Writer } from "./errors";
 import { VERSION } from "./meta";
 import { emit, errorRenderOpts, type OutputContext, type Renderable, resolveOutput } from "./output";

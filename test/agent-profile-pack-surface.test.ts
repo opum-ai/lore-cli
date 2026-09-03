@@ -79,9 +79,7 @@ function writeProfile(name: string, toml: string): void {
 }
 
 /** Drive the real CLI router (the seam `bin/lore.cjs` and the compiled binary wrap). */
-async function runCli(
-  args: readonly string[],
-): Promise<{ code: number; out: string; err: string }> {
+async function runCli(args: readonly string[]): Promise<{ code: number; out: string; err: string }> {
   const stdout = capture();
   const stderr = capture();
   const code = await run(["bun", "lore", ...args], { cwd: root, stdout, stderr, isTTY: false });

@@ -1662,7 +1662,7 @@ check "AC4: the hand-written prose BEFORE and AFTER the block survived byte-for-
 check "AC4: the corrupted line INSIDE the block was regenerated back to the real content" \
   '! grep -q "CORRUPTED-SKILL-LABEL:" CLAUDE.md && grep -q "Skill:" CLAUDE.md'
 step_json "AC4: lore agents --check is clean again after healing the nudge block" \
-  '.kind == "agents.result" and ([.data.files[] | all(.action == "unchanged"))]' \
+  '.kind == "agents.result" and (.data.files | all(.action == "unchanged"))' \
   -- lore agents --check --json
 
 # ── Phase 22b: agent-context pack through the COMPILED binary (ODOC-63.1) ────────
