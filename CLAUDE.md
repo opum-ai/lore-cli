@@ -8,9 +8,10 @@
 
 This project cut LCLI over from Backlog to Quest as its tracker of record on 2026-09-03
 (425 records migrated; digest 1dd84c5eb53d6c76672031e0343dfa4e0f77a5394f8bf0a756bf53c4da3d8640).
-`.quest/` is committed and tracked — never gitignore it. `backlog/` remains on disk but holds
-only the 297 excluded LORE-family records (a separate family, not yet migrated); it is not the
-system of record for LCLI tasks and must not be written to for them.
+`.quest/` is committed and tracked — never gitignore it. `backlog/` no longer exists on disk:
+its 297 excluded LORE-family records were all proven non-unique and removed at commit f84f586,
+recoverable from git history if ever needed. Do not recreate `backlog/` or write LCLI tasks
+there — Quest is the only system of record.
 
 **For every user request in this project, run `quest instructions overview` before answering or taking action.**
 
@@ -188,7 +189,9 @@ None known. Checked 2026-08-30: this repository carries no Treehouse or Codex de
 
 `dev`'s branch ruleset requires 3 status checks on every push (docker e2e harness, lint/typecheck/test windows-latest, operating block digest), but `.github/workflows/ci.yml`'s `push` trigger is `branches: [main]` only — a direct push to `dev` runs no workflow at all, so those checks can never be satisfied and GitHub refuses the push (confirmed 2026-08-31: `GH013`, attempting exactly this). This is not a gap: it is what makes landing on `dev` structurally impossible except through a PR, in a fleet where PR-into-dev is otherwise only a convention. Do not "fix" `ci.yml`'s push trigger to include `dev` without checking this coupling first — restoring it reintroduces the 444-redundant-run problem LCLI-251 removed, and does nothing to loosen the actual gate, which is the ruleset, not the workflow trigger.
 
-Quest is this repository's tracker of record as of the 2026-09-03 cutover (`.lore/config.toml` `[tracker].backend = "quest"`; 425 LCLI records migrated, digest `1dd84c5eb53d6c76672031e0343dfa4e0f77a5394f8bf0a756bf53c4da3d8640`). `.quest/` is committed and tracked — never gitignore it. **297 LORE-family records were excluded from that migration and exist only in `backlog/`** — a second, un-migrated family in the same backlog, migrated separately since `quest migration backlog` takes one `--source-family` per run. This is the largest excluded family in the fleet and the reason `backlog/` cannot simply be removed; migrating or archiving it is a separate decision, not yet made. 48 dotted subtask ids (e.g. `LCLI-283.1`) were renumbered to flat Quest ids with the dotted spelling retained as a resolving alias — verified directly on this repo's real data, not assumed: `quest task view LCLI-283.1` and `quest task view LCLI-380` return byte-identical records. Every Quest write needs an explicit actor: `--actor-kind human` for a human operator, or `--actor-kind delegated-agent --accountable-human <user id>` for an agent session acting on someone's behalf.
+Quest is this repository's tracker of record as of the 2026-09-03 cutover (`.lore/config.toml` `[tracker].backend = "quest"`; 425 LCLI records migrated, digest `1dd84c5eb53d6c76672031e0343dfa4e0f77a5394f8bf0a756bf53c4da3d8640`). `.quest/` is committed and tracked — never gitignore it. 48 dotted subtask ids (e.g. `LCLI-283.1`) were renumbered to flat Quest ids with the dotted spelling retained as a resolving alias — verified directly on this repo's real data, not assumed: `quest task view LCLI-283.1` and `quest task view LCLI-380` return byte-identical records. Every Quest write needs an explicit actor: `--actor-kind human` for a human operator, or `--actor-kind delegated-agent --accountable-human <user id>` for an agent session acting on someone's behalf.
+
+**`backlog/` no longer exists in this repository.** It held 297 LORE-family records that the migration excluded (`quest migration backlog` takes one `--source-family` per run; LORE was never migrated). All 297 were proven non-unique — status breakdown, hand-checked non-terminal records, a content-diff-proven twin, and a structural pass over all 297 showed every one has a twin in the migrated LCLI family or, for the one DRAFT record, is an archived draft against the already-retired OpenCode Worker subsystem (parent ODOC-71, retired under OPAG-8) — so `git rm -r backlog/` landed at commit `f84f586` rather than leaving a second, un-migrated-looking tracker sitting next to the real one. Every byte is still in git history at and before that commit; nothing here was destroyed, only removed from the working tree.
 <!-- opum:repo-profile:end -->
 
 <!-- lore:agents:begin -->
