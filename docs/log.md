@@ -215,6 +215,7 @@
 - 2026-08-29T18:44:49-05:00 137eda14d4c3f4ff09b824e0d326e9d723c5c5e9 docs: stop pinning a version in the bundle's most-read paragraph (LCLI-361) (#454)
 - 2026-08-30T09:31:38-05:00 d80b2c4bd8416e7c4294fb6c6595d389e01c766b docs: correct a stale repo-visibility claim, name the three-session pairing, refresh the tracker framing (#477)
 - 2026-09-03T02:03:00Z 8d59e477a314acd9d7fe04fb6a72f9ca9c1c88ed chore(backlog): correct LCLI-372/373/374/376 status after AC re-check (#525)
+- 2026-09-03T07:24:09-05:00 d02869894540672867e4b7ccfee96e4ad4f8d2da feat(quest): cut LCLI over from Backlog to Quest as tracker of record
 
 ## docs/adr
 
