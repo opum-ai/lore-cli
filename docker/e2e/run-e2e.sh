@@ -1665,6 +1665,95 @@ step_json "AC4: lore agents --check is clean again after healing the nudge block
   '.kind == "agents.result" and (.data.files | all(.action == "unchanged"))' \
   -- lore agents --check --json
 
+# ── Phase 22b: agent-context pack through the COMPILED binary (ODOC-63.1) ────────
+# Consumer-surface regression guard for `lore agent context`. Unit tests cover the
+# compileAgentContext source seam; a stale or mis-packaged platform binary can still
+# accept .lore/agents/*.toml while emitting EMPTY section bodies (contentDigest =
+# sha256 of "" = e3b0c442...) or dropping existing heading anchors. The `lore` on PATH
+# here is the real compiled artifact this image built (Dockerfile: bun build --compile),
+# so these steps fail in CI if the packaging path ever regresses to that behavior.
+# Throwaway fixture concepts/profiles are torn down at the end of the phase, leaving
+# the bundle pristine for later phases (LORE-63's leave-no-induced-state convention).
+mkdir -p .lore/agents docs/e2e-agent-profile
+cat > docs/e2e-agent-profile/e2e-agent-arch.md <<'ODOCDOCFENCE'
+---
+type: Reference
+title: E2E Agent Architecture
+summary: Scratch concept for the packed agent-profile surface check.
+tags: [e2e]
+---
+# E2E Agent Architecture
+
+Pinned rule body for the packed-surface regression.
+
+## Must Keep
+
+Never expose credentials in an agent context pack body.
+ODOCDOCFENCE
+cat > docs/e2e-agent-profile/e2e-agent-notes.md <<'ODOCDOCFENCE'
+---
+type: Reference
+title: E2E Agent Notes
+summary: Ranked scratch source for the packed agent-profile surface check.
+tags: [e2e]
+---
+# E2E Agent Notes
+
+Ranked source content about checkout form validation errors.
+ODOCDOCFENCE
+cat > .lore/agents/e2e-pack-surface.toml <<'ODOCDOCFENCE'
+schema_version = 1
+name = "e2e-pack-surface"
+description = "Packed-surface e2e profile; throwaway fixture."
+kind = "specialist"
+max_tokens = 4000
+pinned = ["e2e-agent-profile/e2e-agent-arch#must-keep"]
+sources = ["e2e-agent-profile/e2e-agent-notes"]
+ODOCDOCFENCE
+
+step_json "ODOC-63.1: lore agent list (compiled binary) reports the fixture profile" \
+  '.kind == "agent.profiles" and ([.data.profiles[] | select(.name == "e2e-pack-surface")] | length) == 1' \
+  -- lore agent list --json
+
+step_json "ODOC-63.1: lore agent show (compiled binary) resolves pinned and source references" \
+  '.kind == "agent.profile"
+   and (.data.pinned | index("e2e-agent-profile/e2e-agent-arch#must-keep")) != null
+   and (.data.sources | index("e2e-agent-profile/e2e-agent-notes")) != null' \
+  -- lore agent show e2e-pack-surface --json
+
+step_json "ODOC-63.1: lore agent context (compiled binary) compiles a non-empty pack with real digests" \
+  '.kind == "agent.context.export"
+   and ((.data.pinned | length) > 0)
+   and ((.data.pinned[0].body | length) > 0)
+   and (.data.pinned[0].body | contains("Never expose credentials"))
+   and (.data.pinned[0].contentDigest | test("^sha256:[a-f0-9]{64}$"))
+   and (.data.pinned[0].contentDigest != "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+   and (.data.packDigest | test("^sha256:[a-f0-9]{64}$"))
+   and (.data.tokenEstimate > 0)' \
+  -- lore agent context e2e-pack-surface --task "checkout form validation errors" --json
+
+# Negative: a bogus heading anchor must fail loud (exit 6, validation) through the
+# packed binary, not be silently dropped from the pack.
+cat > .lore/agents/e2e-pack-bad.toml <<'ODOCDOCFENCE'
+schema_version = 1
+name = "e2e-pack-bad"
+description = "Deliberately bad heading anchor for the packed-surface check."
+kind = "specialist"
+pinned = ["e2e-agent-profile/e2e-agent-arch#not-a-real-heading"]
+ODOCDOCFENCE
+step_fail "ODOC-63.1: bogus heading anchor is rejected (exit 6, validation) by the compiled binary" 6 \
+  '.error_type == "validation"' \
+  -- lore agent show e2e-pack-bad --json
+rm -f .lore/agents/e2e-pack-bad.toml .lore/agents/e2e-pack-surface.toml
+rm -f docs/e2e-agent-profile/e2e-agent-arch.md docs/e2e-agent-profile/e2e-agent-notes.md
+rmdir docs/e2e-agent-profile 2>/dev/null || true
+
+step_json "ODOC-63.1 teardown: fixture profile removed, agent list empty again" \
+  '.kind == "agent.profiles" and ((.data.profiles | length) == 0)' \
+  -- lore agent list --json
+check "ODOC-63.1 teardown: fixture concept files removed" \
+  '[ ! -d docs/e2e-agent-profile ]'
+
 # ── Phase 23: help ────────────────────────────────────────────────────────────────
 step_json "lore help --json (capability manifest)" '.kind == "help.manifest"' -- lore help --json
 check "help manifest mentions sync and check" \

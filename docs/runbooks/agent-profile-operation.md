@@ -31,10 +31,11 @@ execution.
 Create a strict TOML file. A specialist selects its own evidence:
 
 ```toml
+schema_version = 1
 name = "frontend-dev"
 description = "Implements the browser-facing application surface."
 kind = "specialist"
-default_max_tokens = 4000
+max_tokens = 4000
 pinned = ["specs/design-system#accessibility"]
 sources = ["reference/architecture", "runbooks/frontend-testing"]
 ```
@@ -45,6 +46,7 @@ whole concept and one of its headings in the same profile.
 An orchestrator names direct delegates instead of selecting their evidence:
 
 ```toml
+schema_version = 1
 name = "delivery-lead"
 description = "Routes implementation work to repository specialists."
 kind = "orchestrator"
