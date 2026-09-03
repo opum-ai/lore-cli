@@ -1,10 +1,11 @@
 ---
 id: LCLI-377
 title: 'lore check does not detect stale lore:index managed blocks'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-02 21:51'
-updated_date: '2026-09-02 23:07'
+updated_date: '2026-09-03 00:12'
 labels: []
 dependencies: []
 references:
@@ -26,16 +27,27 @@ A directory index's managed <!-- lore:index:begin -->...<!-- lore:index:end --> 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 lore check (at minimum in --strict mode) detects when a directory's committed lore:index block does not match what lore sync would regenerate for it, and reports it as an error or warning rather than passing silently
-- [ ] #2 the check recomputes the expected index content the same way lore sync does (src/core/indexes.ts), rather than comparing two static documents, per this repo's own bind-on-content rule
-- [ ] #3 regression test scaffolds a doc via lore new without running sync afterward, and asserts lore check flags the resulting index drift
+- [x] #1 lore check (at minimum in --strict mode) detects when a directory's committed lore:index block does not match what lore sync would regenerate for it, and reports it as an error or warning rather than passing silently
+- [x] #2 the check recomputes the expected index content the same way lore sync does (src/core/indexes.ts), rather than comparing two static documents, per this repo's own bind-on-content rule
+- [x] #3 regression test scaffolds a doc via lore new without running sync afterward, and asserts lore check flags the resulting index drift
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-Reproduced against dev source: lore new reference "Second Doc" after an initial lore sync left docs/reference/index.md showing only the first doc; lore check and lore check --strict both reported 0 errors, 0 warnings. check.ts has no lore:index-aware code path at all (grep confirms). The generation logic already lives in src/core/indexes.ts and is exactly what a check-time comparison should call, matching the same function sync.ts uses rather than re-deriving the format independently.
+1. core/check.ts: add indexDriftFindings(existing, regenerated, fixable) mirroring reconcileDriftFindings's style; add 'index-drift' to CheckRule (error severity, matches opag's ERROR ruling).
+2. commands/check.ts: add tryIndexDriftForBundle(root, bundle, profile, multi) -- scoped to isDocsRoot(bundle.label) only; makes its own loadBundle(docsRoot, {profile}) call (needed for the FULL concept graph, not just tasks:-linked ones tryConceptsForBundle already parses) wrapped in try/catch treating any throw as 'cannot verify this run' rather than propagating (fixes prior session's problem #2 -- error-isolation regression).
+3. Guard against prior session's problem #1 (false positive on never-synced bundles): only flag drift when existing bytes already contain the <!-- lore:index:begin --> marker.
+4. Fix prior session's problem #3: hand-written check.test.ts fixture (reserved-stem test) had markers present but wrong formatting (no blank line for empty listing) vs real generateIndexes output -- corrected the fixture's bytes rather than weakening the check.
+5. Regression tests (3, new describe block): (a) lore new after a real lore sync leaves the sub-index stale and lore check flags it as index-drift + exit 6 (AC#3); (b) never-synced bundle is NOT flagged (negative control for the marker guard); (c) a follow-up lore sync heals the drift.
+6. Verify against the FULL suite (not a subset) per prior session's explicit warning -- ran clean.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented directly from opag's/prior session's detailed root-cause notes on the task record; did not re-derive them. Verification: full bun test suite 2784 pass/1 skip/0 fail (91 files, 3 net new); tsc --noEmit clean; biome lint clean (1 pre-existing unrelated warning in agents.ts); lore check --strict on this repo's own docs/ bundle: 0 errors/0 warnings (confirms no false positive against real, already-synced content). Design decision (ERROR not WARNING) implemented unconditionally, not gated behind --strict, per opag's explicit ruling recorded on this task.
+<!-- SECTION:NOTES:END -->
 
 ## Comments
 
