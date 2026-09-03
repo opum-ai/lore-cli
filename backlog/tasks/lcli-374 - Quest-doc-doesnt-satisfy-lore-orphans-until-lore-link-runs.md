@@ -4,7 +4,7 @@ title: Quest --doc doesn't satisfy lore orphans until lore link runs
 status: Done
 assignee: []
 created_date: '2026-09-02 20:19'
-updated_date: '2026-09-03 02:34'
+updated_date: '2026-09-03 02:39'
 labels: []
 dependencies: []
 references:
@@ -12,6 +12,7 @@ references:
     Reported in an issues dump relayed via opum-agent from other agents'
     lore/quest sessions
   - 2026-09-02; independently reproduced against quest 0.3.0
+  - opum-cli-e2e TASK-25
 modified_files:
   - src/commands/orphans.ts
   - src/adapters/quest.ts
@@ -43,6 +44,8 @@ Quest's task create/edit --doc <path> writes only Quest's own documentation arra
 
 <!-- SECTION:NOTES:BEGIN -->
 src/commands/orphans.ts: computeOrphans now classifies each unlinked snapshot task into pendingLinks or orphanTasks via hasDocumentation(); OrphansReport/renderReport/allClearLine updated to carry and render the new section under the same --tasks-only/--docs-only gate as orphanTasks. No check.ts changes needed -- check never called orphans (module docstring, unchanged). bun test test/orphans.test.ts: 67/67 pass (6 new). Full bun test: 2792 pass, 1 pre-existing skip, 0 fail. tsc --noEmit clean; biome check: only the pre-existing unrelated agents.ts warning.
+
+AC3 integration follow-up filed and tracked: opum-cli-e2e TASK-25 ('lore orphans: qualify the pendingLinks bucket end-to-end (LCLI-374)'), pushed to opum-cli-e2e's origin/dev at a68e458 -- the real quest+lore --doc -> lore link -> orphans pendingLinks end-to-end path this task's unit coverage does not cover.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

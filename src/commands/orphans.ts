@@ -23,15 +23,25 @@
  *   - **danglingLinks** — docs whose linked task **vanished**: a `tasks:` id the current-branch
  *     Backlog snapshot no longer knows. A doc pointing at a task that has been deleted or renamed.
  *
- * ## One snapshot, pure set arithmetic — not a per-task probe
+ * ## One snapshot, pure set arithmetic — plus bounded per-suspect confirmation (LCLI-375)
  *
  * Unlike `lore tasks` (which `viewTask`s each of *one* concept's linked ids), `orphans` spans the
  * whole bundle, so it reads Backlog **once**: `adapter.listTasks()` returns the current-branch
  * on-disk truth across every status (backlog-cli-contract.md §: `task list --json` — "Never
- * `backlog board`"), and both directions fall out of set arithmetic against the loaded graph:
- * `orphanTasks` from the snapshot minus the forward `tasks:` set (and the `doc:` labels the snapshot
- * itself carries), `danglingLinks` from each concept's `tasks:` minus the snapshot's known ids. No
- * N+1 per-id reads.
+ * `backlog board`"), and every direction falls out of set arithmetic against the loaded graph:
+ * `orphanTasks`/`pendingLinks` from the snapshot minus the forward `tasks:` set (and the `doc:`
+ * labels/`--doc` documentation the snapshot itself carries), `danglingLinks` from each concept's
+ * `tasks:` minus the snapshot's known ids. No N+1 per-id reads for the *common* case.
+ *
+ * The bulk snapshot is not always a complete existence oracle, though (LCLI-375): a tracker can
+ * silently drop a live, terminal-status task from its bulk listing while still resolving it
+ * correctly per-task (confirmed against Quest 0.2.7-0.3.0, QCLI-165, fixed in 0.3.1 — but lore-cli's
+ * own `MIN_QUEST_VERSION` floor sits below that fix, so this stays a real gap independent of any one
+ * installed Quest). `runOrphans` therefore confirms every CANDIDATE `danglingLink` against a live
+ * per-task view before trusting it — bounded to the *distinct suspect ids* a candidate actually
+ * names, never every task in the repo, and skipped entirely when `danglingLinks` isn't even
+ * requested (`--tasks-only`) or there are no candidates to confirm (see {@link confirmDanglingLinks}).
+ * The pure {@link computeOrphans} (no adapter) does not do this confirmation — see its own doc.
  *
  * ## A report, never a gate
  *
@@ -89,6 +99,7 @@ import {
 } from "../output";
 import { assertFlagAtMostOnce, parseCommandArgs, singleOptionValue, usage } from "./args";
 import { dedupeTaskIds, defaultAdapter } from "./link";
+import { resolveTaskDetails } from "./reconcile-shared";
 
 /** Options for {@link runOrphans}; `root`, the streams, and the adapter are injectable for tests. */
 export interface OrphansOptions {
@@ -192,7 +203,16 @@ export async function runOrphans(options: OrphansOptions): Promise<number> {
   await adapter.probe();
   const snapshot = await adapter.listTasks();
 
-  emit(orphansRenderable(computeOrphans(graph.concepts.values(), snapshot, parsed)), options.output, options.stdout);
+  const buckets = classify(graph.concepts.values(), snapshot);
+  // LCLI-375: the bulk snapshot is not always trustworthy for EXISTENCE — a tracker can silently
+  // drop a live, terminal-status task from its bulk listing while still resolving it correctly
+  // per-task (confirmed against Quest 0.2.7-0.3.0). Confirm only the candidates that would
+  // otherwise be reported dangling, and only when danglingLinks is actually requested — see
+  // {@link confirmDanglingLinks}.
+  const danglingLinks = parsed.tasksOnly ? [] : await confirmDanglingLinks(adapter, buckets.danglingLinks);
+  const report = assembleReport({ ...buckets, danglingLinks }, parsed);
+
+  emit(orphansRenderable(report), options.output, options.stdout);
   return EXIT_OK;
 }
 
@@ -202,18 +222,37 @@ export async function runOrphans(options: OrphansOptions): Promise<number> {
  * concepts + the snapshot array in, a report out) so it is exercised directly in tests without a bundle
  * or a subprocess.
  *
- * A single pass over the concepts builds the forward `tasks:` set (for the orphan-task test) and the
- * flat list of every `(concept, taskId)` reference (for the dangling test) at once; a single pass over
- * the snapshot then classifies each task as linked (reported nowhere), `pendingLinks` (documented via
- * `--doc` but not yet linked), or `orphanTasks` (documented nowhere), and `danglingLinks` filters the
- * references against the snapshot's case-insensitive known-id set. All three outputs are sorted for a
- * deterministic, diff-stable report.
+ * Trusts the bulk snapshot alone for `danglingLinks` existence — unlike {@link runOrphans}, which
+ * additionally confirms each candidate against a live per-task view (LCLI-375) before trusting it.
+ * That confirmation needs the adapter and is therefore I/O; this function stays pure and is exactly
+ * what a caller with only a snapshot in hand (no adapter) can compute, which is what every direct test
+ * of this function does.
  */
 export function computeOrphans(
   concepts: Iterable<Concept>,
   snapshot: readonly BacklogTask[],
   parsed: OrphansArgs,
 ): OrphansReport {
+  return assembleReport(classify(concepts, snapshot), parsed);
+}
+
+/** The three uncapped, sorted coupling-gap buckets {@link classify} derives from one bundle + snapshot pass. */
+interface OrphanBuckets {
+  readonly orphanTasks: OrphanTask[];
+  readonly pendingLinks: OrphanTask[];
+  readonly danglingLinks: DanglingLink[];
+}
+
+/**
+ * A single pass over the concepts builds the forward `tasks:` set (for the orphan-task test) and the
+ * flat list of every `(concept, taskId)` reference (for the dangling test) at once; a single pass over
+ * the snapshot then classifies each task as linked (reported nowhere), `pendingLinks` (documented via
+ * `--doc` but not yet linked), or `orphanTasks` (documented nowhere), and `danglingLinks` filters the
+ * references against the snapshot's case-insensitive known-id set. All three outputs are sorted for a
+ * deterministic, diff-stable report. `danglingLinks` here is a CANDIDATE list against the bulk snapshot
+ * alone — {@link runOrphans} confirms it further (LCLI-375); {@link computeOrphans} does not.
+ */
+function classify(concepts: Iterable<Concept>, snapshot: readonly BacklogTask[]): OrphanBuckets {
   const referenced = new Set<string>(); // lower-cased task ids any concept forward-links
   const references: DanglingLink[] = []; // every (concept, taskId) pair, for the dangling test
   for (const concept of concepts) {
@@ -223,7 +262,6 @@ export function computeOrphans(
     }
   }
 
-  const known = new Set(snapshot.map((task) => task.id.toLowerCase())); // lower-cased ids Backlog knows
   const byId = new Map(snapshot.map((task) => [task.id.toLowerCase(), task])); // for the parent-chain walk below
   // A task is "linked" through any of the three exemption paths lore already recognizes (forward
   // ref, direct doc: label, or an owned ancestor) -- linked tasks are reported nowhere. An unlinked
@@ -242,17 +280,66 @@ export function computeOrphans(
   }
   orphanTasks.sort((a, b) => compareLower(a.id, b.id));
   pendingLinks.sort((a, b) => compareLower(a.id, b.id));
+
+  const known = new Set(snapshot.map((task) => task.id.toLowerCase())); // lower-cased ids Backlog knows
   const danglingLinks = references
     .filter((ref) => !known.has(ref.task.toLowerCase()))
     .sort((a, b) => compareLower(a.concept, b.concept) || compareLower(a.task, b.task));
 
+  return { orphanTasks, pendingLinks, danglingLinks };
+}
+
+/**
+ * LCLI-375: confirm each CANDIDATE dangling link against a live per-task view before trusting it, since
+ * a tracker's bulk listing is not always a complete existence oracle — Quest 0.2.7-0.3.0's bare
+ * `task list` silently drops every terminal-status task, while `task view`/`search` still resolve them
+ * correctly (fixed upstream in Quest 0.3.1, QCLI-165; lore-cli's own floor, `MIN_QUEST_VERSION`, is
+ * below that fix, so this stays a real gap regardless of what any one installed Quest does).
+ *
+ * Resolves only the DISTINCT ids `candidates` actually names (never every task in the repo), reusing
+ * {@link resolveTaskDetails}'s existing bounded-concurrency, identity-verified `viewTask` machinery —
+ * the same one `reconcile-shared.ts` already trusts for per-task resolution. A candidate whose id
+ * resolves (an `ok: true` {@link TaskResolution}) is confirmed ALIVE and dropped; a genuine not-found or
+ * any resolution error leaves it dangling, unchanged (fail toward reporting, the same conservative
+ * default {@link hasOwnedAncestor} already uses elsewhere in this module).
+ *
+ * Costs nothing extra when every candidate is a true dangling link or `candidates` is empty (the common
+ * case, and always true against a Quest 0.3.1+ or Backlog snapshot): the bulk call already ran, and no
+ * confirmation ids means no additional Backlog I/O at all.
+ */
+async function confirmDanglingLinks(
+  adapter: BacklogAdapter,
+  candidates: readonly DanglingLink[],
+): Promise<DanglingLink[]> {
+  if (candidates.length === 0) {
+    return [];
+  }
+  // One representative original-case spelling per lower-cased id — resolution is case-insensitive
+  // (verifiedViewTask), so a single call per distinct id is enough regardless of how many links share it.
+  const suspectIds = [...new Map(candidates.map((link) => [link.task.toLowerCase(), link.task])).values()];
+  const resolutions = await resolveTaskDetails(adapter, suspectIds);
+  const confirmedAlive = new Set(
+    [...resolutions].filter(([, resolution]) => resolution.ok).map(([lowerId]) => lowerId),
+  );
+  return candidates.filter((link) => !confirmedAlive.has(link.task.toLowerCase()));
+}
+
+/**
+ * Apply the `--limit` cap and `--tasks-only`/`--docs-only` section filter to a pre-computed
+ * {@link OrphanBuckets}, producing the final envelope shape. Shared by the pure {@link computeOrphans}
+ * (bulk-only) and {@link runOrphans} (bulk + LCLI-375 confirmation) so the two paths can never disagree
+ * about how a bucket becomes a report.
+ *
+ * Compute both directions unconditionally (both are cheap and share the same inputs), then omit the
+ * section a flag excluded — omission, not an empty array, is how the envelope says "not requested".
+ * Each section is capped to `limit` independently and carries its own total/shown/truncated (§3):
+ * the two counts are unrelated, so one combined cap would make one section's truncation state say
+ * nothing about the other.
+ */
+function assembleReport(buckets: OrphanBuckets, parsed: OrphansArgs): OrphansReport {
+  const { orphanTasks, pendingLinks, danglingLinks } = buckets;
   const limit = parsed.limit ?? DEFAULT_ORPHANS_LIMIT;
 
-  // Compute both directions unconditionally (both are cheap and share the same inputs), then omit the
-  // section a flag excluded — omission, not an empty array, is how the envelope says "not requested".
-  // Each section is capped to `limit` independently and carries its own total/shown/truncated (§3):
-  // the two counts are unrelated, so one combined cap would make one section's truncation state say
-  // nothing about the other.
   const report: {
     orphanTasks?: OrphanTask[];
     orphanTasksTotal?: number;

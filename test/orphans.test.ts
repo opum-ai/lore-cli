@@ -393,6 +393,84 @@ describe("runOrphans — integration over a bundle + snapshot (AC#2)", () => {
   });
 });
 
+describe("runOrphans — dangling-link confirmation against a per-task view (LCLI-375)", () => {
+  test("AC1/AC2: a Done, correctly-linked task the bulk snapshot silently drops is NOT reported as dangling", async () => {
+    // Reproduces Quest 0.2.7-0.3.0's terminal-status bug: LORE-1 is linked (doc: label) and Done, but
+    // the bare (unfiltered) listTasks call silently omits it -- exactly what the bulk `known` set used
+    // to trust blindly. viewTask still resolves it correctly (real Quest's task view/search do too).
+    writeStory("bulk", ["LORE-1"]);
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done", labels: ["doc:stories/bulk"] })], {
+      probe: "ok",
+      listTasks: "ok",
+      bulkListDrops: ["LORE-1"],
+    });
+    const { code, data } = await reportJson([], adapter);
+    expect(code).toBe(0);
+    expect(data.danglingLinks).toEqual([]);
+  });
+
+  test("a genuinely deleted task (absent from BOTH listTasks and viewTask) still reports as dangling", async () => {
+    // Confirmation must not turn every bulk-list miss into a free pass -- only a suspect that actually
+    // resolves per-task is spared.
+    writeStory("bulk", ["GONE-9"]);
+    const adapter = okAdapter([makeTask("LORE-1")]);
+    const { data } = await reportJson([], adapter);
+    expect(data.danglingLinks).toEqual([{ concept: "stories/bulk", task: "GONE-9" }]);
+  });
+
+  test("a viewTask failure on a suspect leaves it dangling (fail toward reporting)", async () => {
+    writeStory("bulk", ["LORE-1"]);
+    const adapter = fakeAdapter([makeTask("LORE-1", { labels: ["doc:stories/bulk"] })], {
+      probe: "ok",
+      listTasks: "ok",
+      bulkListDrops: ["LORE-1"],
+      poisonViews: ["LORE-1"],
+    });
+    const { data } = await reportJson([], adapter);
+    expect(data.danglingLinks).toEqual([{ concept: "stories/bulk", task: "LORE-1" }]);
+  });
+
+  test("confirmation resolves each distinct suspect id at most once, even with multiple referencing concepts", async () => {
+    // Two concepts both reference LORE-1, and the bulk snapshot drops it -- two candidate danglingLinks
+    // sharing one suspect id. Both must resolve alive from a single underlying view, not two.
+    writeStory("bulk-a", ["LORE-1"]);
+    writeStory("bulk-b", ["LORE-1"]);
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })], {
+      probe: "ok",
+      listTasks: "ok",
+      bulkListDrops: ["LORE-1"],
+    });
+    const { data } = await reportJson([], adapter);
+    expect(data.danglingLinks).toEqual([]);
+  });
+
+  test("--tasks-only never triggers dangling confirmation (danglingLinks isn't requested)", async () => {
+    // A poisoned view would throw if confirmation ran; --tasks-only must never reach it, since
+    // danglingLinks is entirely omitted from that request.
+    writeStory("bulk", ["LORE-1"]);
+    const adapter = fakeAdapter([makeTask("LORE-1", { labels: ["doc:stories/bulk"] })], {
+      probe: "ok",
+      listTasks: "ok",
+      bulkListDrops: ["LORE-1"],
+      poisonViews: ["LORE-1"],
+    });
+    const { code, data } = await reportJson(["--tasks-only"], adapter);
+    expect(code).toBe(0);
+    expect("danglingLinks" in data).toBe(false);
+  });
+
+  test("computeOrphans (the pure, bulk-only path) is UNAFFECTED by LCLI-375 -- it still trusts the bulk snapshot alone", () => {
+    // computeOrphans has no adapter to confirm against; runOrphans is where the fix actually lives.
+    // This pins that computeOrphans keeps its pre-LCLI-375 pure contract, not a regression.
+    const report = computeOrphans(
+      [concept("stories/bulk", { tasks: ["LORE-1"] })],
+      [], // the task is entirely absent from the snapshot passed in -- computeOrphans cannot know better
+      NO_FLAGS,
+    );
+    expect(report.danglingLinks).toEqual([{ concept: "stories/bulk", task: "LORE-1" }]);
+  });
+});
+
 describe("runOrphans — Backlog seam discipline", () => {
   test("the capability probe runs UP FRONT and an incapable binary surfaces as validation (exit 6)", async () => {
     writeStory("bulk", ["LORE-1"]);
