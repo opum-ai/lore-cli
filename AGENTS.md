@@ -1,25 +1,32 @@
-<!-- BACKLOG.MD GUIDELINES START -->
+<!-- QUEST WORKFLOW GUIDELINES START -->
 <CRITICAL_INSTRUCTION>
 
-## Backlog.md Workflow
+## Quest Workflow
 
-This project uses Backlog.md for task and project management.
+This project cut LCLI over from Backlog to Quest as its tracker of record on 2026-09-03
+(425 records migrated; digest 1dd84c5eb53d6c76672031e0343dfa4e0f77a5394f8bf0a756bf53c4da3d8640).
+`.quest/` is committed and tracked — never gitignore it. `backlog/` remains on disk but holds
+only the 297 excluded LORE-family records (a separate family, not yet migrated); it is not the
+system of record for LCLI tasks and must not be written to for them.
 
-**For every user request in this project, run `backlog instructions overview` before answering or taking action.**
+**For every user request in this project, run `quest instructions overview` before answering or taking action.**
 
-Use the overview to decide whether to search, read, create, or update Backlog tasks.
+Use the overview to decide whether to search, read, create, or update Quest tasks.
 
 Use the detailed guides when needed:
-- `backlog instructions task-creation` for creating or splitting tasks
-- `backlog instructions task-execution` for planning and implementation workflow
-- `backlog instructions task-finalization` for completion and handoff
+- `quest instructions task-creation` for creating or splitting tasks
+- `quest instructions task-execution` for planning and implementation workflow
+- `quest instructions task-finalization` for completion and handoff
 
-Use `backlog <command> --help` before running unfamiliar commands. Help shows options, fields, and examples.
+Use `quest <command> --help` before running unfamiliar commands. Help shows options, fields, and examples.
 
-Do not edit Backlog task, draft, document, decision, or milestone markdown files directly. Use the `backlog` CLI so metadata, relationships, and history stay consistent.
+Do not edit `.quest/tasks/*.json` directly. Use the `quest` CLI so metadata, relationships, and
+history stay consistent. Every write needs an explicit actor: `--actor <id> --actor-kind human`
+for a human operator, or `--actor-kind delegated-agent --accountable-human <id>` for an agent
+session acting on someone's behalf — a missing or wrong `--actor-kind` is rejected, not defaulted.
 
 </CRITICAL_INSTRUCTION>
-<!-- BACKLOG.MD GUIDELINES END -->
+<!-- QUEST WORKFLOW GUIDELINES END -->
 
 <!-- lore:agents:begin -->
 This repo uses **lore** — an OKF-native documentation CLI — for the docs bundle under `docs/`.
@@ -117,3 +124,9 @@ should not have to re-derive (LCLI-362). **Nothing else belongs under `.claude/s
   `scripts/` and `references/` the procedure invokes — fails only once a session is already relying
   on it. Empty leftover directories count: git does not track them, so they survive every
   diff-based review and are visible only in a filesystem listing.
+
+<!-- quest:agent-instructions:begin -->
+# Quest agent instructions
+
+This project uses Quest CLI 0.3.1 for tracker operations. Run `quest manifest --json` to discover the supported command contract. Use `quest instructions --json` for the current versioned protocol. For Backlog tracker cutover, run `quest migration backlog preview --source <project> --json`, review its digest and mappings, then apply it with `quest migration backlog apply --source <project> --digest <digest> --actor <id> --actor-kind human --json`. Quest writes require an explicit actor declaration; do not edit Quest-authored records directly. CI should run `quest agents --check --require-installed`: current instructions exit 0, while missing, drifted, or malformed managed instructions exit 6. Quest does not retry write conflicts automatically; callers should read the latest task state and perform their own bounded retry when a command returns conflict/exit 5.
+<!-- quest:agent-instructions:end -->
