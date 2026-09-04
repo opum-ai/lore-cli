@@ -1602,8 +1602,18 @@ step "mkdocs build (real)" 0 -- mkdocs build --site-dir /tmp/mkdocs-site
 check "mkdocs produced index.html" '[ -f /tmp/mkdocs-site/index.html ]'
 
 # ── Phase 19: scaffold docusaurus + a real build ────────────────────────────────
+# `npm install` reads from /opt/npm-cache (LCLI-430): docker-compose.yml bind-mounts
+# docker/e2e/.npm-cache there and ci.yml restores/saves it across CI runs via actions/cache,
+# keyed on src/core/consumer-scaffold.ts (where DOCUSAURUS_VERSION/REACT_VERSION are pinned). A
+# warm cache (the steady state after the first run) means this required check no longer depends
+# on the live registry's uptime at all. `--prefer-offline`, not `--offline`: a genuinely cold or
+# evicted cache still falls back to the network and re-warms itself, rather than hard-failing a
+# check that has nothing wrong with it -- the actual regression this task guards is a registry
+# hiccup turning into a false-negative required check, not "no network ever". Either way this is
+# still the real `npm`/docusaurus binaries end to end (ADR-0002's no-mocking mandate).
 step "lore scaffold docusaurus" 0 -- lore scaffold docusaurus
-step "docusaurus npm install (real)" 0 -- bash -c 'cd website && npm install'
+step "docusaurus npm install (real, prefer-offline cache)" 0 \
+  -- bash -c 'cd website && npm install --prefer-offline --cache /opt/npm-cache'
 step "docusaurus npm run build (real)" 0 -- bash -c 'cd website && npm run build'
 check "docusaurus produced build/index.html" '[ -f website/build/index.html ]'
 

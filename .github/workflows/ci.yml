@@ -339,6 +339,23 @@ jobs:
       # vacuously with the suite still green. Each conjunct is violated independently.
       - name: Prove the E2E assertion helpers discriminate
         run: bash docker/e2e/selftest.sh
+      # LCLI-430: Phase 19 of run-e2e.sh (`lore scaffold docusaurus` + `npm install`) used to hit
+      # the live public npm registry on every run of this REQUIRED check -- a transient registry
+      # hiccup failed the check with no visible cause (375/378 assertions passing, the 3 reds all
+      # one root cause: the install's exit 1 starved the downstream build of a binary, exit 127).
+      # docker-compose.yml bind-mounts docker/e2e/.npm-cache into the container at /opt/npm-cache;
+      # restoring/saving it here across runs means a warm cache (the steady state after the first
+      # run) never touches the registry at all. Keyed on src/core/consumer-scaffold.ts because
+      # that's where DOCUSAURUS_VERSION/REACT_VERSION are pinned -- any change to that file
+      # (a version bump or otherwise) invalidates the cache rather than risk serving a stale
+      # dependency set. run-e2e.sh's Phase 19 uses `--prefer-offline`, not `--offline`, so a cold
+      # or evicted cache still falls back to the network and re-warms itself instead of hard-
+      # failing a check that has nothing actually wrong with it.
+      - name: Restore Docusaurus npm cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: docker/e2e/.npm-cache
+          key: docusaurus-npm-cache-${{ hashFiles('src/core/consumer-scaffold.ts') }}
       - name: Build and run the E2E harness
         run: PUID="$(id -u)" PGID="$(id -g)" docker compose -f docker/e2e/docker-compose.yml up --build --exit-code-from e2e
       # Always attempt this (even after a failing run above) — the structured

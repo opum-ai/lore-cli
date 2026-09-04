@@ -28,3 +28,8 @@ services:
         PGID: ${PGID:-1000}
     volumes:
       - ./results:/results
+      # LCLI-430: a host-side npm cache for `lore scaffold docusaurus`'s pinned deps. ci.yml
+      # restores/saves docker/e2e/.npm-cache across CI runs via actions/cache; run-e2e.sh's
+      # Phase 19 points `npm install --prefer-offline` here so a warm cache never hits the live
+      # registry.
+      - ./.npm-cache:/opt/npm-cache
