@@ -216,6 +216,7 @@
 - 2026-08-30T09:31:38-05:00 d80b2c4bd8416e7c4294fb6c6595d389e01c766b docs: correct a stale repo-visibility claim, name the three-session pairing, refresh the tracker framing (#477)
 - 2026-09-03T02:03:00Z 8d59e477a314acd9d7fe04fb6a72f9ca9c1c88ed chore(backlog): correct LCLI-372/373/374/376 status after AC re-check (#525)
 - 2026-09-03T07:24:09-05:00 d02869894540672867e4b7ccfee96e4ad4f8d2da feat(quest): cut LCLI over from Backlog to Quest as tracker of record
+- 2026-09-03T07:26:25-05:00 99d3e4f3256f0f1087c9416a08322bbdc86044c8 chore(quest): log the cutover commit and file the sync link-drop bug (LCLI-428)
 
 ## docs/adr
 
@@ -272,6 +273,7 @@
 - 2026-08-31T11:53:41-05:00 f5f3e1f2689f827034f7a278b621658559ff2d3b docs: fix stale repo-visibility claim and retired Codex campaign cursor
 - 2026-08-31T12:03:05-05:00 2531e1d39c4e45df31a386108e24f36788b86d05 fix: verify tracker backend before persisting in the wizard, default new bundles to backlog
 - 2026-08-31T12:12:58-05:00 3c4c239899563461e78d68c024ea3a6b9205f1be revert: keep lore init's default tracker backend as quest
+- 2026-09-03T04:07:07Z 24efbabb81619131bec90cfe0e060fa8845e4e70 docs(reference): record 0.4.0 as released in lore-cli release truth (#532)
 
 ## docs/runbooks
 
