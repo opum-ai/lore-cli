@@ -78,13 +78,25 @@ RUN bun install --frozen-lockfile --linker=isolated \
 # the host's real uid/gid (passed as build args, see docker-compose.yml)
 # makes container-side writes land as files the host user already owns.
 # Defaults (1000/1000) preserve the prior fixed-uid behavior byte-for-byte.
+#
+# /opt/npm-cache follows the identical pattern for a second bind mount
+# (LCLI-430): docker-compose.yml also mounts ./docker/e2e/.npm-cache there,
+# and ci.yml restores/saves that host directory across CI runs via
+# actions/cache, keyed on src/core/consumer-scaffold.ts (the pinned
+# Docusaurus/React dependency versions live there). Phase 19 of run-e2e.sh
+# points `npm install --prefer-offline` at it, so a warm cache (the steady
+# state after the first run) never touches the live npm registry -- the
+# required check this repository gates `dev` on is no longer coupled to
+# registry uptime except on a genuinely cold cache. The chown here is
+# defense-in-depth for a direct (non-Compose) container run; the bind mount
+# is what makes it work under CI, exactly like /results already does.
 ARG PUID=1000
 ARG PGID=1000
 RUN if [ "$PGID" != "1000" ]; then groupmod -o -g "$PGID" bun; fi \
     && if [ "$PUID" != "1000" ]; then usermod -o -u "$PUID" bun; fi \
     && usermod --shell /bin/bash bun \
-    && mkdir -p /workspace /results \
-    && chown -R bun:bun /home/bun /workspace /results /opt/lore
+    && mkdir -p /workspace /results /opt/npm-cache \
+    && chown -R bun:bun /home/bun /workspace /results /opt/lore /opt/npm-cache
 
 COPY --chmod=0755 docker/e2e/run-e2e.sh /usr/local/bin/run-e2e.sh
 # run-e2e.sh sources its assertion helpers from lib/steps.sh RELATIVE TO ITSELF

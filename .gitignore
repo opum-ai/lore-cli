@@ -36,6 +36,13 @@ lore-setup.sh
 docker/e2e/results/*
 !docker/e2e/results/.gitkeep
 
+# Docker E2E harness's offline npm cache for the docusaurus scaffold's pinned deps (LCLI-430) —
+# populated at runtime and restored/saved by ci.yml via actions/cache; the directory itself is
+# committed (mirroring docker/e2e/results/ above) so docker-compose.yml's bind mount has
+# somewhere to land locally, but its contents are npm's own cache, not durable source.
+docker/e2e/.npm-cache/*
+!docker/e2e/.npm-cache/.gitkeep
+
 # lore CLI state (config.toml and sync-state.json ARE committed; generated state is not)
 .lore/cache/
 .lore/explorer/

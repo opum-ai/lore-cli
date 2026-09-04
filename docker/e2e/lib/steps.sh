@@ -27,6 +27,19 @@ REPORT_WRITE_FAILURES=0
 
 log() { printf '%s\n' "$*" >&2; }
 
+# log_stderr_tail <err-file> — on a FAIL, print the last lines of the captured stderr to the CI
+# log (LCLI-430). Without this, a failing step's console line is only "[FAIL] name (exit N,
+# expected M)" — the underlying reason (e.g. npm's real registry error) exists only in
+# $RESULTS_DIR/report.jsonl, an artifact nobody reads without downloading it first. This does not
+# change report.jsonl's own contract (record() already writes the full stdout/stderr there) — it
+# only makes the same bytes visible where a reader actually looks first.
+log_stderr_tail() {
+  local err="$1"
+  [ -s "$err" ] || return 0
+  log "  stderr (last 20 lines):"
+  tail -n 20 "$err" | sed 's/^/    /' >&2
+}
+
 # report_write_failed <name> — record() and check() route their append failures
 # here instead of letting them pass silently: under `set -uo pipefail` (no -e)
 # a failed `>>"$REPORT"` (permission denied, disk full, ...) would otherwise
@@ -68,6 +81,7 @@ step() {
   fi
   record "$name" "$status" "$expected" "$rc" "$out" "$err"
   log "[$status] $name (exit $rc, expected $expected)"
+  [ "$status" = "FAIL" ] && log_stderr_tail "$err"
   rm -f "$out" "$err"
   [ "$status" = "PASS" ]
 }
@@ -91,6 +105,7 @@ step_json() {
   fi
   record "$name (jq: $filter)" "$status" 0 "$rc" "$out" "$err"
   log "[$status] $name (exit $rc, jq: $filter)"
+  [ "$status" = "FAIL" ] && log_stderr_tail "$err"
   rm -f "$out" "$err"
   [ "$status" = "PASS" ]
 }
@@ -120,6 +135,7 @@ step_fail() {
   fi
   record "$name (jq: $filter)" "$status" "$expected" "$rc" "$out" "$err"
   log "[$status] $name (exit $rc, stdout empty: $([ -s "$out" ] && echo no || echo yes), jq: $filter)"
+  [ "$status" = "FAIL" ] && log_stderr_tail "$err"
   rm -f "$out" "$err"
   [ "$status" = "PASS" ]
 }
