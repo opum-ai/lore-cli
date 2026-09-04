@@ -60,32 +60,32 @@ capabilities while keeping Git-authored Markdown authoritative.
 <!-- lore:tasks:begin -->
 | Task | Title | Status |
 |---|---|---|
-| LCLI-283 | Build the persistent local graph platform | Done |
-| LCLI-380 | Adopt LadybugDB for persistent local indexing | Done |
-| LCLI-381 | Freeze the LadybugDB projection schema and lifecycle | Done |
-| LCLI-382 | Implement the deterministic LadybugDB projection lifecycle | Done |
-| LCLI-383 | Route graph query and context through indexed retrieval | Done |
-| LCLI-384 | Establish LadybugDB performance packaging and scale gates | Done |
-| LCLI-385 | Audit and qualify the supported LadybugDB dependency version | Done |
-| LCLI-386 | Ship the local graph explorer | Done |
-| LCLI-387 | Freeze the graph explorer data and interaction contract | Done |
-| LCLI-388 | Build the static graph explorer and CLI entrypoint | Done |
-| LCLI-389 | Harden explorer accessibility performance and offline packaging | Done |
-| LCLI-286 | Delegate SSRF address parsing and CIDR matching to ipaddr.js | Done |
-| LCLI-390 | Add LadybugDB-enabled local graph capabilities | Done |
-| LCLI-391 | Define explicit local workspaces and cross-repository identity | Done |
-| LCLI-392 | Index and retrieve across workspace repositories | Done |
-| LCLI-393 | Add bounded path and impact operations | Done |
-| LCLI-394 | Add snapshot change and provenance workflows | Done |
-| LCLI-284 | Migrate CLI argument parsing and routing to Commander | Done |
-| LCLI-285 | Delegate terminal display-width calculation to string-width | Done |
-| LCLI-287 | Delegate GitHub heading-anchor slugging to github-slugger | Done |
-| LCLI-288 | Consolidate Lore config shape validation on Zod | Done |
-| LCLI-301 | Remove Ladybug install-script approval from global Lore installation | Done |
-| LCLI-302 | Native LadybugDB backend never activates in the compiled/published lore binary -- every graph-family command silently falls back to the reference index | Done |
-| LCLI-303 | Unknown --workspace --repository member id crashes uncaught (exit 1) instead of a clean validation error (exit 6) | Done |
-| LCLI-317 | LCLI-302's native LadybugDB fix is not reliable across fixture/filesystem shapes -- 0/3 fresh-fixture activations vs 4/4 real-bundle activations on the identical installed binary | Done |
-| LCLI-318 | LCLI-303's `unknown workspace member <id>` validation message does not fire in single-member workspaces -- masked by an earlier, unrelated validation failure | Done |
+| [LCLI-283](../../.quest/tasks/LCLI-283.json) | Build the persistent local graph platform | Done |
+| [LCLI-380](../../.quest/tasks/LCLI-380.json) | Adopt LadybugDB for persistent local indexing | Done |
+| [LCLI-381](../../.quest/tasks/LCLI-381.json) | Freeze the LadybugDB projection schema and lifecycle | Done |
+| [LCLI-382](../../.quest/tasks/LCLI-382.json) | Implement the deterministic LadybugDB projection lifecycle | Done |
+| [LCLI-383](../../.quest/tasks/LCLI-383.json) | Route graph query and context through indexed retrieval | Done |
+| [LCLI-384](../../.quest/tasks/LCLI-384.json) | Establish LadybugDB performance packaging and scale gates | Done |
+| [LCLI-385](../../.quest/tasks/LCLI-385.json) | Audit and qualify the supported LadybugDB dependency version | Done |
+| [LCLI-386](../../.quest/tasks/LCLI-386.json) | Ship the local graph explorer | Done |
+| [LCLI-387](../../.quest/tasks/LCLI-387.json) | Freeze the graph explorer data and interaction contract | Done |
+| [LCLI-388](../../.quest/tasks/LCLI-388.json) | Build the static graph explorer and CLI entrypoint | Done |
+| [LCLI-389](../../.quest/tasks/LCLI-389.json) | Harden explorer accessibility performance and offline packaging | Done |
+| [LCLI-286](../../.quest/tasks/LCLI-286.json) | Delegate SSRF address parsing and CIDR matching to ipaddr.js | Done |
+| [LCLI-390](../../.quest/tasks/LCLI-390.json) | Add LadybugDB-enabled local graph capabilities | Done |
+| [LCLI-391](../../.quest/tasks/LCLI-391.json) | Define explicit local workspaces and cross-repository identity | Done |
+| [LCLI-392](../../.quest/tasks/LCLI-392.json) | Index and retrieve across workspace repositories | Done |
+| [LCLI-393](../../.quest/tasks/LCLI-393.json) | Add bounded path and impact operations | Done |
+| [LCLI-394](../../.quest/tasks/LCLI-394.json) | Add snapshot change and provenance workflows | Done |
+| [LCLI-284](../../.quest/tasks/LCLI-284.json) | Migrate CLI argument parsing and routing to Commander | Done |
+| [LCLI-285](../../.quest/tasks/LCLI-285.json) | Delegate terminal display-width calculation to string-width | Done |
+| [LCLI-287](../../.quest/tasks/LCLI-287.json) | Delegate GitHub heading-anchor slugging to github-slugger | Done |
+| [LCLI-288](../../.quest/tasks/LCLI-288.json) | Consolidate Lore config shape validation on Zod | Done |
+| [LCLI-301](../../.quest/tasks/LCLI-301.json) | Remove Ladybug install-script approval from global Lore installation | Done |
+| [LCLI-302](../../.quest/tasks/LCLI-302.json) | Native LadybugDB backend never activates in the compiled/published lore binary -- every graph-family command silently falls back to the reference index | Done |
+| [LCLI-303](../../.quest/tasks/LCLI-303.json) | Unknown --workspace --repository member id crashes uncaught (exit 1) instead of a clean validation error (exit 6) | Done |
+| [LCLI-317](../../.quest/tasks/LCLI-317.json) | LCLI-302's native LadybugDB fix is not reliable across fixture/filesystem shapes -- 0/3 fresh-fixture activations vs 4/4 real-bundle activations on the identical installed binary | Done |
+| [LCLI-318](../../.quest/tasks/LCLI-318.json) | LCLI-303's `unknown workspace member <id>` validation message does not fire in single-member workspaces -- masked by an earlier, unrelated validation failure | Done |
 <!-- lore:tasks:end -->
 
 ## Notes

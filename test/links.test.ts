@@ -4,6 +4,7 @@ import {
   decodeTarget,
   isExternalTarget,
   type LinkFinding,
+  normalizeFileLink,
   normalizeLink,
   stripFragment,
   stripQuery,
@@ -58,6 +59,37 @@ describe("normalizeLink — .md suffix", () => {
 
   test("coerces a wrong-case .MD suffix to canonical lowercase .md", () => {
     expect(normalizeLink("stories/x.md", "reference/orders.MD")).toBe("../reference/orders.md");
+  });
+});
+
+// ── normalizeFileLink: for a concrete on-disk path, never a bare concept id (LCLI-428) ──────
+
+describe("normalizeFileLink — does not coerce a .md suffix onto a non-markdown target", () => {
+  test("links to a Quest task's real .json path verbatim (the regression: no .json.md)", () => {
+    expect(normalizeFileLink("docs/stories/x.md", ".quest/tasks/LCLI-1.json")).toBe("../../.quest/tasks/LCLI-1.json");
+  });
+
+  test("links to a completed Quest task under .quest/completed/ verbatim", () => {
+    expect(normalizeFileLink("docs/stories/x.md", ".quest/completed/LCLI-429.json")).toBe(
+      "../../.quest/completed/LCLI-429.json",
+    );
+  });
+
+  test("still links to a Backlog .md task file exactly like normalizeLink does", () => {
+    expect(normalizeFileLink("docs/stories/x.md", "backlog/tasks/task-42.md")).toBe(
+      normalizeLink("docs/stories/x.md", "backlog/tasks/task-42.md"),
+    );
+  });
+
+  test("still URL-encodes spaces in the target path", () => {
+    expect(normalizeFileLink("docs/stories/x.md", "backlog/tasks/task-42 - Bulk archive.md")).toBe(
+      "../../backlog/tasks/task-42%20-%20Bulk%20archive.md",
+    );
+  });
+
+  test("rejects an absolute operand, matching normalizeLink's guard", () => {
+    expect(() => normalizeFileLink("/abs/x.md", "reference/orders.json")).toThrow(/relative paths/);
+    expect(() => normalizeFileLink("stories/x.md", "/abs/orders.json")).toThrow(/relative paths/);
   });
 });
 

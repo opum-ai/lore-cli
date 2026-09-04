@@ -115,53 +115,53 @@ for future automated OIDC publication.
 <!-- lore:tasks:begin -->
 | Task | Title | Status |
 |---|---|---|
-| LCLI-253 | Migrate backlog adapter to the released --json Backlog.md once upstream tags it (drop build-from-commit hint, bump version floor) | Done |
-| LCLI-269 | docker/e2e/run-e2e.sh runs its destructive phases against the caller's cwd when invoked outside the container (no set -e, unguarded cd /workspace) | Done |
-| LCLI-276 | Release runbook cannot configure npm Trusted Publishing before first package publication | Done |
-| LCLI-278 | GitHub billing plan blocks required-reviewer protection on the release Environment | To Do |
-| LCLI-279 | Add deterministic OKF projection export | Done |
-| LCLI-280 | Upgrade js-yaml to remediate release-blocking advisories | Done |
-| LCLI-282 | Provide a SHA-pinned strict Lore CI action | Done |
-| LCLI-251 | Reduce CI Actions minute cost: event-scoped OS matrix, concurrency cancellation, drop redundant push:dev | Done |
-| LCLI-252 | Bun on Windows: writeFileAtomic/writeFileNoFollow openSync(O_CREAT\|O_EXCL) throws ENOENT, breaking agents/sync/replace/schema/scaffold --force | Done |
-| LCLI-254 | Watch for the upstream Backlog.md --json release tag (>v1.48.0 containing commit 22a091b) | Done |
-| LCLI-255 | First-release rehearsal: dry-run the dual-artifact npm publish end-to-end and write a first-release checklist | Done |
-| LCLI-260 | lore onboarding: one command to set up every configurable consumer (agents/CLAUDE bridge, Obsidian, scaffolds) instead of init -> agents -> lore-setup.sh -> manual obsidian | Done |
-| LCLI-268 | Harden the release publish job against the workflow_dispatch-any-ref vector (Trusted Publishing pins filename, not ref) | Done |
-| LCLI-270 | backlog-cli-contract.md §2.4 says the label flags are single-value last-wins, but v1.48.0 made all four repeatable accumulators | Done |
-| LCLI-271 | lore agents --check: 'out of date' is printed for both protected and updated, so which file needs --force is carried by ANSI colour alone — violates cli-contract.md §6 | Done |
-| LCLI-272 | docker/e2e: nothing pins run-e2e.sh's container-only guard — deleting it passes bun test, lint, and the docker-e2e CI check | Done |
-| LCLI-273 | docker/e2e/run-e2e.sh: a failed cd inside the nested-checkout phase is reported as a vacuous PASS at one site and not reported at all at another | Done |
-| LCLI-274 | README.md and tech-stack.md still present the Backlog.md fork as a current git dependency, which architecture.md now labels superseded | Done |
-| LCLI-277 | CONTRIBUTING documents bun run build but package.json has no build script | Done |
-| LCLI-281 | Teach `lore init` to detect and configure Claude Code and Codex | Done |
-| LCLI-256 | Windows fswrite: bounded renameSync EPERM/transient-lock retry in writeFileAtomic/writeFileNoFollow | Done |
-| LCLI-257 | Governance: make lint-typecheck-test (windows-latest) a required status check on dev (and decide main) | Done |
-| LCLI-258 | lore: harmonize non-concept-file handling — spurious 'no frontmatter mapping' warning on link/sync/unlink/tasks but not check; inconsistent skipped-count | Done |
-| LCLI-259 | lore: harmonize error/usage/success message phrasing across commands (missing-arg templates, misdirecting bad-id hint, unexplained '(doc)' label) | Done |
-| LCLI-261 | lore orphans: subtasks of a linked parent task are reported as orphans — no Backlog parent/subtask hierarchy awareness | Done |
-| LCLI-262 | lore supersede/rename --rewrite-links silently retargets a link whose display TEXT names the old id, leaving text/target mismatched | Done |
-| LCLI-263 | lore scaffold: a bare re-run hard-errors (conflict) on an already-scaffolded config instead of being idempotent-when-unchanged | Done |
-| LCLI-264 | CHANGELOG: backfill missing [Unreleased] entries for the round-4 wave-1 contract changes (LCLI-258/262/263/254) | Done |
-| LCLI-265 | ADR-0009 §2 misdescribes how lore orphans finds unowned tasks (stale search --json claim + missing parent-chain clause) | Done |
-| LCLI-266 | lore agents: the pre-write symlink sweep (LCLI-93 AC#5) has zero test coverage — deleting assertNoSymlinkInAnyPath fails no test | Done |
-| LCLI-267 | lore agents renderPretty: a 'protected' bridge file prints green while lore init prints the same action yellow | Done |
-| LCLI-275 | docs/runbooks: docker-e2e section still says the harness is 'not yet a required check', but LCLI-196 shipped that ruleset | Done |
-| LCLI-295 | Rename unpublished npm package family to @opum-ai | Done |
-| LCLI-296 | Publish Lore CLI 0.1.0 and bootstrap npm Trusted Publishing | Done |
-| LCLI-297 | Ship a Windows ARM64 Lore binary | Done |
-| LCLI-298 | docker/e2e: lore init's Codex/Claude independent agent detection (LCLI-281) has zero E2E coverage | Done |
-| LCLI-299 | docker/e2e: validate --type and schema export --type/--out scoping flags have no E2E coverage | Done |
-| LCLI-300 | docker/e2e: two Meridian-stress-test regressions (LCLI-261 orphans hierarchy, LCLI-262 rewrite-links text mismatch) never backported into the persisted harness | Done |
-| LCLI-312 | Prepare and deliver npm 0.1.1 release metadata | Done |
-| LCLI-313 | Publish Lore CLI 0.1.1 from qualified release artifacts | Done |
-| LCLI-320 | Prepare and deliver Lore CLI 0.2.0 release metadata | Done |
-| LCLI-321 | Publish Lore CLI 0.2.0 from qualified release artifacts | Done |
-| LCLI-327 | docker/e2e/run-e2e.sh writes a repo-local git identity, leaking "lore e2e <e2e@lore.test>" into real commits on dev | Done |
-| LCLI-332 | Release the Lore Backlog knowledge-adoption contract | Done |
-| LCLI-336 | Prepare Lore CLI 0.3.1 patch release metadata | Done |
-| LCLI-337 | Fix packaged Lore Backlog isolation in release qualification | Done |
-| LCLI-338 | Prepare Lore CLI 0.3.2 patch release metadata | Done |
+| [LCLI-253](../../.quest/tasks/LCLI-253.json) | Migrate backlog adapter to the released --json Backlog.md once upstream tags it (drop build-from-commit hint, bump version floor) | Done |
+| [LCLI-269](../../.quest/tasks/LCLI-269.json) | docker/e2e/run-e2e.sh runs its destructive phases against the caller's cwd when invoked outside the container (no set -e, unguarded cd /workspace) | Done |
+| [LCLI-276](../../.quest/tasks/LCLI-276.json) | Release runbook cannot configure npm Trusted Publishing before first package publication | Done |
+| [LCLI-278](../../.quest/tasks/LCLI-278.json) | GitHub billing plan blocks required-reviewer protection on the release Environment | To Do |
+| [LCLI-279](../../.quest/tasks/LCLI-279.json) | Add deterministic OKF projection export | Done |
+| [LCLI-280](../../.quest/tasks/LCLI-280.json) | Upgrade js-yaml to remediate release-blocking advisories | Done |
+| [LCLI-282](../../.quest/tasks/LCLI-282.json) | Provide a SHA-pinned strict Lore CI action | Done |
+| [LCLI-251](../../.quest/tasks/LCLI-251.json) | Reduce CI Actions minute cost: event-scoped OS matrix, concurrency cancellation, drop redundant push:dev | Done |
+| [LCLI-252](../../.quest/tasks/LCLI-252.json) | Bun on Windows: writeFileAtomic/writeFileNoFollow openSync(O_CREAT\|O_EXCL) throws ENOENT, breaking agents/sync/replace/schema/scaffold --force | Done |
+| [LCLI-254](../../.quest/tasks/LCLI-254.json) | Watch for the upstream Backlog.md --json release tag (>v1.48.0 containing commit 22a091b) | Done |
+| [LCLI-255](../../.quest/tasks/LCLI-255.json) | First-release rehearsal: dry-run the dual-artifact npm publish end-to-end and write a first-release checklist | Done |
+| [LCLI-260](../../.quest/tasks/LCLI-260.json) | lore onboarding: one command to set up every configurable consumer (agents/CLAUDE bridge, Obsidian, scaffolds) instead of init -> agents -> lore-setup.sh -> manual obsidian | Done |
+| [LCLI-268](../../.quest/tasks/LCLI-268.json) | Harden the release publish job against the workflow_dispatch-any-ref vector (Trusted Publishing pins filename, not ref) | Done |
+| [LCLI-270](../../.quest/tasks/LCLI-270.json) | backlog-cli-contract.md §2.4 says the label flags are single-value last-wins, but v1.48.0 made all four repeatable accumulators | Done |
+| [LCLI-271](../../.quest/tasks/LCLI-271.json) | lore agents --check: 'out of date' is printed for both protected and updated, so which file needs --force is carried by ANSI colour alone — violates cli-contract.md §6 | Done |
+| [LCLI-272](../../.quest/tasks/LCLI-272.json) | docker/e2e: nothing pins run-e2e.sh's container-only guard — deleting it passes bun test, lint, and the docker-e2e CI check | Done |
+| [LCLI-273](../../.quest/tasks/LCLI-273.json) | docker/e2e/run-e2e.sh: a failed cd inside the nested-checkout phase is reported as a vacuous PASS at one site and not reported at all at another | Done |
+| [LCLI-274](../../.quest/tasks/LCLI-274.json) | README.md and tech-stack.md still present the Backlog.md fork as a current git dependency, which architecture.md now labels superseded | Done |
+| [LCLI-277](../../.quest/tasks/LCLI-277.json) | CONTRIBUTING documents bun run build but package.json has no build script | Done |
+| [LCLI-281](../../.quest/tasks/LCLI-281.json) | Teach `lore init` to detect and configure Claude Code and Codex | Done |
+| [LCLI-256](../../.quest/tasks/LCLI-256.json) | Windows fswrite: bounded renameSync EPERM/transient-lock retry in writeFileAtomic/writeFileNoFollow | Done |
+| [LCLI-257](../../.quest/tasks/LCLI-257.json) | Governance: make lint-typecheck-test (windows-latest) a required status check on dev (and decide main) | Done |
+| [LCLI-258](../../.quest/tasks/LCLI-258.json) | lore: harmonize non-concept-file handling — spurious 'no frontmatter mapping' warning on link/sync/unlink/tasks but not check; inconsistent skipped-count | Done |
+| [LCLI-259](../../.quest/tasks/LCLI-259.json) | lore: harmonize error/usage/success message phrasing across commands (missing-arg templates, misdirecting bad-id hint, unexplained '(doc)' label) | Done |
+| [LCLI-261](../../.quest/tasks/LCLI-261.json) | lore orphans: subtasks of a linked parent task are reported as orphans — no Backlog parent/subtask hierarchy awareness | Done |
+| [LCLI-262](../../.quest/tasks/LCLI-262.json) | lore supersede/rename --rewrite-links silently retargets a link whose display TEXT names the old id, leaving text/target mismatched | Done |
+| [LCLI-263](../../.quest/tasks/LCLI-263.json) | lore scaffold: a bare re-run hard-errors (conflict) on an already-scaffolded config instead of being idempotent-when-unchanged | Done |
+| [LCLI-264](../../.quest/tasks/LCLI-264.json) | CHANGELOG: backfill missing [Unreleased] entries for the round-4 wave-1 contract changes (LCLI-258/262/263/254) | Done |
+| [LCLI-265](../../.quest/tasks/LCLI-265.json) | ADR-0009 §2 misdescribes how lore orphans finds unowned tasks (stale search --json claim + missing parent-chain clause) | Done |
+| [LCLI-266](../../.quest/tasks/LCLI-266.json) | lore agents: the pre-write symlink sweep (LCLI-93 AC#5) has zero test coverage — deleting assertNoSymlinkInAnyPath fails no test | Done |
+| [LCLI-267](../../.quest/tasks/LCLI-267.json) | lore agents renderPretty: a 'protected' bridge file prints green while lore init prints the same action yellow | Done |
+| [LCLI-275](../../.quest/tasks/LCLI-275.json) | docs/runbooks: docker-e2e section still says the harness is 'not yet a required check', but LCLI-196 shipped that ruleset | Done |
+| [LCLI-295](../../.quest/tasks/LCLI-295.json) | Rename unpublished npm package family to @opum-ai | Done |
+| [LCLI-296](../../.quest/tasks/LCLI-296.json) | Publish Lore CLI 0.1.0 and bootstrap npm Trusted Publishing | Done |
+| [LCLI-297](../../.quest/tasks/LCLI-297.json) | Ship a Windows ARM64 Lore binary | Done |
+| [LCLI-298](../../.quest/tasks/LCLI-298.json) | docker/e2e: lore init's Codex/Claude independent agent detection (LCLI-281) has zero E2E coverage | Done |
+| [LCLI-299](../../.quest/tasks/LCLI-299.json) | docker/e2e: validate --type and schema export --type/--out scoping flags have no E2E coverage | Done |
+| [LCLI-300](../../.quest/tasks/LCLI-300.json) | docker/e2e: two Meridian-stress-test regressions (LCLI-261 orphans hierarchy, LCLI-262 rewrite-links text mismatch) never backported into the persisted harness | Done |
+| [LCLI-312](../../.quest/tasks/LCLI-312.json) | Prepare and deliver npm 0.1.1 release metadata | Done |
+| [LCLI-313](../../.quest/tasks/LCLI-313.json) | Publish Lore CLI 0.1.1 from qualified release artifacts | Done |
+| [LCLI-320](../../.quest/tasks/LCLI-320.json) | Prepare and deliver Lore CLI 0.2.0 release metadata | Done |
+| [LCLI-321](../../.quest/tasks/LCLI-321.json) | Publish Lore CLI 0.2.0 from qualified release artifacts | Done |
+| [LCLI-327](../../.quest/tasks/LCLI-327.json) | docker/e2e/run-e2e.sh writes a repo-local git identity, leaking "lore e2e <e2e@lore.test>" into real commits on dev | Done |
+| [LCLI-332](../../.quest/tasks/LCLI-332.json) | Release the Lore Backlog knowledge-adoption contract | Done |
+| [LCLI-336](../../.quest/tasks/LCLI-336.json) | Prepare Lore CLI 0.3.1 patch release metadata | Done |
+| [LCLI-337](../../.quest/tasks/LCLI-337.json) | Fix packaged Lore Backlog isolation in release qualification | Done |
+| [LCLI-338](../../.quest/tasks/LCLI-338.json) | Prepare Lore CLI 0.3.2 patch release metadata | Done |
 <!-- lore:tasks:end -->
 
 ## Notes

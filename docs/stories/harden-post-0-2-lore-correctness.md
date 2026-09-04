@@ -41,11 +41,11 @@ hardening Story remains delivery evidence rather than an active bug queue.
 <!-- lore:tasks:begin -->
 | Task | Title | Status |
 |---|---|---|
-| LCLI-323 | lore check --strict is wall-clock dependent: an elapsed stale_after flips a green bundle to exit 6 with no commit | Done |
-| LCLI-324 | lore check silently skips relative links that leave docs/, so a green check overstates what it verified | Done |
-| LCLI-335 | Prevent Bun environment-file access from breaking Lore Backlog probes | Done |
-| LCLI-339 | Declare the reserved principal field on the success, error, and uncaught envelopes | Done |
-| LCLI-340 | Manifest kind registry: init and new declare bare kinds, and agent's other emitted kinds are undiscoverable | Done |
+| [LCLI-323](../../.quest/tasks/LCLI-323.json) | lore check --strict is wall-clock dependent: an elapsed stale_after flips a green bundle to exit 6 with no commit | Done |
+| [LCLI-324](../../.quest/tasks/LCLI-324.json) | lore check silently skips relative links that leave docs/, so a green check overstates what it verified | Done |
+| [LCLI-335](../../.quest/tasks/LCLI-335.json) | Prevent Bun environment-file access from breaking Lore Backlog probes | Done |
+| [LCLI-339](../../.quest/tasks/LCLI-339.json) | Declare the reserved principal field on the success, error, and uncaught envelopes | Done |
+| [LCLI-340](../../.quest/tasks/LCLI-340.json) | Manifest kind registry: init and new declare bare kinds, and agent's other emitted kinds are undiscoverable | Done |
 <!-- lore:tasks:end -->
 
 ## Notes

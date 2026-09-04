@@ -141,6 +141,29 @@ export function normalizeLink(fromPath: string, toPath: string, anchor?: string)
 }
 
 /**
+ * Like {@link normalizeLink}, but for a target that is already a concrete on-disk file
+ * path rather than an OKF concept — a managed `<!-- lore:tasks -->` row's linked task
+ * file (LCLI-428). `toPath` here is never a bare concept id needing a suffix filled in:
+ * it is `ManagedTaskRow.file`, a real path a tracker adapter read straight off disk
+ * (`backlog/tasks/lore-42 - x.md`, or `.quest/tasks/LCLI-1.json`). Running it through
+ * {@link normalizeLink}'s `.md`-coercion was harmless for Backlog (already `.md`) but
+ * corrupts a Quest task link into a dead `…LCLI-1.json.md` — appending an extension onto
+ * a path that already has a different, correct one, rather than filling in a missing one.
+ * Same relative-path-plus-URL-encoding mechanics as {@link normalizeLink}, minus the
+ * suffix step; see its docstring for the coordinate-space precondition, which still
+ * applies verbatim.
+ */
+export function normalizeFileLink(fromPath: string, toPath: string): string {
+  if (posix.isAbsolute(fromPath) || posix.isAbsolute(toPath)) {
+    throw new Error(`normalizeFileLink expects relative paths (got from="${fromPath}", to="${toPath}")`);
+  }
+  const fromDir = posix.join("/", posix.dirname(fromPath));
+  const toFile = posix.join("/", toPath);
+  const relative = posix.relative(fromDir, toFile);
+  return encodePathSegments(relative);
+}
+
+/**
  * POSIX-normalize a target and coerce it to a single **canonical lowercase `.md`**
  * suffix. A bundle never holds a `.MD`/`.Md` file (the walk matches lowercase `.md`
  * only) and {@link idFromPath} strips `.md` case-insensitively, so the writer must
