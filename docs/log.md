@@ -217,6 +217,7 @@
 - 2026-09-03T02:03:00Z 8d59e477a314acd9d7fe04fb6a72f9ca9c1c88ed chore(backlog): correct LCLI-372/373/374/376 status after AC re-check (#525)
 - 2026-09-03T07:24:09-05:00 d02869894540672867e4b7ccfee96e4ad4f8d2da feat(quest): cut LCLI over from Backlog to Quest as tracker of record
 - 2026-09-03T07:26:25-05:00 99d3e4f3256f0f1087c9416a08322bbdc86044c8 chore(quest): log the cutover commit and file the sync link-drop bug (LCLI-428)
+- 2026-09-03T21:32:30-05:00 eadb5d3a0470058f08cadab34b13ffab22b4008c chore(quest): sharpen LCLI-428's blocker to name the release (#553)
 
 ## docs/adr
 

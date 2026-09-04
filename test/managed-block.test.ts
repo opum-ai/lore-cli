@@ -119,6 +119,25 @@ describe("regenerateTaskBlock — table rendering (AC#2)", () => {
     expect(out).toContain(block("_No linked tasks._"));
     expect(out).not.toContain("| Task |");
   });
+
+  test("LCLI-428: a non-markdown task file (Quest's .json) links to its real path, not a corrupted .json.md", () => {
+    const out = regenerateTaskBlock(
+      doc(),
+      [row("LCLI-1", "Fork Backlog.md", "Done", ".quest/tasks/LCLI-1.json")],
+      OPTS,
+    );
+    expect(out).toContain("[LCLI-1](../../.quest/tasks/LCLI-1.json)");
+    expect(out).not.toContain(".json.md");
+  });
+
+  test("LCLI-428: a completed Quest task links into .quest/completed/, not the tasks/ it started in", () => {
+    const out = regenerateTaskBlock(
+      doc(),
+      [row("LCLI-429", "Flaky webkit test", "Done", ".quest/completed/LCLI-429.json")],
+      OPTS,
+    );
+    expect(out).toContain("[LCLI-429](../../.quest/completed/LCLI-429.json)");
+  });
 });
 
 describe("regenerateTaskBlock — tolerance and cell hardening", () => {

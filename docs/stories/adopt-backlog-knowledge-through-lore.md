@@ -32,8 +32,8 @@ Keep the completed Backlog knowledge-adoption contract and implementation attach
 <!-- lore:tasks:begin -->
 | Task | Title | Status |
 |---|---|---|
-| LCLI-330 | Specify the Lore contract for adopting Backlog knowledge records | Done |
-| LCLI-331 | Implement Backlog knowledge adoption through Lore public commands | Done |
+| [LCLI-330](../../.quest/tasks/LCLI-330.json) | Specify the Lore contract for adopting Backlog knowledge records | Done |
+| [LCLI-331](../../.quest/tasks/LCLI-331.json) | Implement Backlog knowledge adoption through Lore public commands | Done |
 <!-- lore:tasks:end -->
 
 ## Notes

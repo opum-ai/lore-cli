@@ -39,7 +39,7 @@
  *   frozen string — so regenerating an already-current block reproduces the exact same bytes, and a
  *   no-op `lore sync` touches zero bytes (the drift gate stays trustworthy). Splicing is a fixpoint.
  * - **Correct, portable links (AC#2).** Each row link is computed from the task's `filePathRelative`
- *   (the JSON's canonical repo-relative path) via {@link normalizeLink} — never reconstructed from
+ *   (the JSON's canonical repo-relative path) via {@link normalizeFileLink} — never reconstructed from
  *   the display id, which is upper-cased while the filename is lower-cased and carries the title with
  *   spaces (ADR-0008 §5). A linked id whose file is absent on the current branch is tolerated: its
  *   row renders the id as plain text rather than a broken link, and never errors.
@@ -65,7 +65,7 @@
 import type { Nodes, Root } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { LoreError, singleLine } from "../errors";
-import { normalizeLink } from "./links";
+import { normalizeFileLink } from "./links";
 
 /**
  * The HTML-comment sentinels bounding the managed task region (lore-design §6.2). HTML comments are
@@ -336,14 +336,17 @@ function buildTable(rows: readonly ManagedTaskRow[], docPath: string): string {
 
 /**
  * Render one task as a table row. The id becomes the link text; its target is the canonical relative
- * link to the task file ({@link normalizeLink} over the repo-relative `docPath` and `file`). When the
- * file is absent — `null`, or the empty string a not-yet-written task can carry — the id is rendered
- * as plain text: the task still appears, marked, rather than linking to a broken `..md` target or
+ * link to the task file ({@link normalizeFileLink} over the repo-relative `docPath` and `file`) —
+ * NOT {@link normalizeLink}, whose "missing .md is added" concept-cross-link coercion would corrupt
+ * a non-markdown task file (e.g. Quest's `.quest/tasks/LCLI-1.json`) into a dead `…json.md` target
+ * (LCLI-428); `file` is always already a concrete path here, never a bare id needing one filled in.
+ * When the file is absent — `null`, or the empty string a not-yet-written task can carry — the id is
+ * rendered as plain text: the task still appears, marked, rather than linking to a broken target or
  * erroring (ADR-0008 §5 tolerance).
  */
 function renderRow(row: ManagedTaskRow, docPath: string): string {
   const label = escapeLinkText(row.id);
-  const taskCell = row.file === null || row.file === "" ? label : `[${label}](${normalizeLink(docPath, row.file)})`;
+  const taskCell = row.file === null || row.file === "" ? label : `[${label}](${normalizeFileLink(docPath, row.file)})`;
   return `| ${taskCell} | ${cell(row.title)} | ${cell(row.status)} |`;
 }
 
