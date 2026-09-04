@@ -5,6 +5,18 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-09-04
+
+### Fixed
+
+- **Managed `<!-- lore:tasks -->` block links to a non-markdown task file no
+  longer corrupt into a dead `…json.md` target.** `lore sync`/`lore check`
+  linked every task row through the same "missing `.md` is added" coercion
+  used for OKF concept cross-links — a no-op for Backlog's already-`.md` task
+  files, but destructive against a Quest task's real `.quest/tasks/<id>.json`
+  path, turning a resolvable link into one that never resolves. A tracker
+  adapter's task-file path is now always linked verbatim (LCLI-428).
+
 ## [0.4.0] - 2026-09-02
 
 ### Changed
