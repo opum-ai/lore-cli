@@ -21,6 +21,62 @@ availability claim.
 
 ### Current state
 
+`0.4.1` is **RELEASED**. Published 2026-09-04 from tag `v0.4.1` at
+`9918ff9a6579`, by Release run `33841292219` via npm **OIDC trusted
+publishing** — no credential was involved at any point, preceded by a
+`publish: false` dry-run (Release run `33840645956`) whose `assert release
+package versions + metadata are consistent` job passed, confirming the
+hand-edited seven-file version bump before any registry write. Promoted
+`dev` to `main` by PR #558, landed with a local fast-forward push (`git
+push origin dev:main`, not the merge button) so `main` picked up no merge
+commit; the full `main` CI matrix (including the push-only macOS job)
+passed on `9918ff9` before tagging.
+
+Registry evidence, all seven package names at `0.4.1` with `latest` moved,
+verified directly against `registry.npmjs.org` (not the local npm CLI
+cache): `@opum-ai/lore`, and
+`@opum-ai/lore-{darwin-arm64,darwin-x64,linux-arm64,linux-x64,win32-arm64,win32-x64}`.
+Clean-install smoke from a fresh temporary directory against the real
+registry: `npx --yes @opum-ai/lore@0.4.1 --version` returns `0.4.1`.
+
+**`@opum-ai/lore-linux-arm64` was again briefly unreadable after a
+successful publish — the identical benign pattern `0.4.0` recorded, not a
+recurrence worth escalating.** Its publish step printed npm's own success
+confirmation (`+ @opum-ai/lore-linux-arm64@0.4.1`); the registry API
+reported no `0.4.1` version for that package alone for about two and a
+half minutes (five 30-second polls) while the other six resolved
+immediately, then it resolved. Verified via the registry API directly
+rather than assumed.
+
+Why the release exists, and why as a same-night patch rather than routine
+cadence: published `quest@0.3.2` started emitting a `path` field on task
+records that `0.4.0`'s managed-`<!-- lore:tasks -->`-block renderer had
+been waiting on, and surfaced a bug the field's prior absence had been
+masking. `renderRow` linked every task row through `links.ts`'s
+`normalizeLink`, whose contract unconditionally coerces any target to a
+canonical `.md` suffix — correct for OKF concept cross-links, a no-op for
+Backlog's already-`.md` task files, but destructive against a Quest task's
+real `.quest/tasks/<id>.json` path, corrupting it into a dead
+`…LCLI-1.json.md` link. Reproduced directly against both real published
+binaries (installed `@opum-ai/lore@0.4.0` against a real Quest workspace)
+before deciding this was release-worthy tonight rather than on normal
+cadence: the published `0.4.0`+`0.3.2` pairing is the DEFAULT outcome for
+anyone installing today, not an edge case, and the corruption is silent —
+a link that looks real until followed — which is worse than the missing-
+link state it replaced. Fixed by adding `normalizeFileLink`
+(`src/core/links.ts`): identical relative-path/URL-encoding computation,
+without the suffix coercion, since a `ManagedTaskRow.file` is always
+already a concrete on-disk path, never a bare concept id (LCLI-428). See
+CHANGELOG.md's `[0.4.1]` entry.
+
+Pre-publish gate: `lore check` on this repository's own bundle, built from
+the release commit, was clean — 76 files, 0 errors, 0 warnings. Not
+independently re-verified across the other four fleet repositories for
+this release the way `0.4.0`'s record was; `0.4.1` is a targeted
+Quest-adapter link fix with no cross-repo qualification-matrix dependency,
+and each fleet repository upgrades and syncs on its own schedule
+(tracked outside this record).
+
 `0.4.0` is **RELEASED**. Published 2026-09-03 from tag `v0.4.0` at
 `b18b7e5c0b42`, by Release run `33712959361` via npm **OIDC trusted
 publishing** — no credential was involved at any point. Promoted `dev` to
