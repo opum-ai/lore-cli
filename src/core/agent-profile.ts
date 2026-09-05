@@ -102,6 +102,16 @@ export function validateAgentProfileReferences(snapshot: AgentProfileSnapshot, g
   const slugs = new Map<string, ReadonlySet<string>>();
   for (const profile of snapshot.profiles.values()) {
     for (const reference of [...profile.pinned, ...profile.sources]) {
+      // An explicitly qualified reference (`member::path`) is meaningful only under `--workspace`
+      // (LCLI-432) and is validated there, per compile, against the actual workspace graph. This
+      // (bare) validation runs unconditionally for EVERY profile on EVERY `lore agent` invocation —
+      // list/show included, not just the profile actually being compiled — so without this skip, a
+      // repository could never add an orchestration profile carrying a cross-repo pin without
+      // breaking every other profile's `lore agent list`/`show`/bare `context` in the same
+      // repository. A bare bundle never produces a `::`-qualified concept id on its own
+      // (namespacing happens only inside `buildWorkspaceProjection`), so this is an unambiguous
+      // signal, never a bare-mode typo silently let through.
+      if (reference.conceptId.includes("::")) continue;
       const concept = graph.concepts.get(reference.conceptId);
       if (concept === undefined) {
         throw validation(
@@ -429,7 +439,8 @@ function validateDelegateGraph(profiles: ReadonlyMap<string, AgentProfile>): voi
   for (const name of profiles.keys()) visit(name);
 }
 
-function headingSlugs(body: string): ReadonlySet<string> {
+/** Every GitHub-compatible heading slug in a concept body; shared by workspace reference expansion. */
+export function headingSlugs(body: string): ReadonlySet<string> {
   const slugger = new GithubSlugger();
   const slugs = new Set<string>();
   walkMdast(fromMarkdown(body), (node) => {

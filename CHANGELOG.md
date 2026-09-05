@@ -5,6 +5,24 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`lore agent context <profile> --workspace <manifest> --repository <member-id>` compiles a
+  profile-bounded evidence pack across an explicit workspace manifest** (PLAN.md §4.6; LCLI-432).
+  A profile's `sources`/`pinned` entries stay unqualified and bundle-relative, so the same profile
+  works bare and cross-repo: in workspace mode an unqualified reference fans out to every selected
+  `--repository` member, qualified as `<member-id>::<source-id>`, while an explicitly qualified
+  reference (`opum-doc::reference/opum-fleet-operating-model`) pins exactly that one member without
+  fanning out. `pinned` stays strict (a missing pinned reference is still a hard failure); `sources`
+  relaxes — a reference missing from one loaded member is reported `missing-in-member` in the
+  catalog rather than failing the whole pack. A manifest member that cannot be loaded at all (a
+  dormant fleet member) is skipped rather than rejecting the compile: it is named once at the top
+  of the pack under `## Skipped workspace members`, and every source that would have targeted it is
+  reported `member-skipped`. Every resolved item and catalog entry carries the originating member's
+  provenance.
+
 ## [0.4.3] - 2026-09-05
 
 ### Added
