@@ -841,6 +841,49 @@ describe("lore agents — skill_source = plugin opts SKILL.md out of repo genera
     expect(agents(["--check"]).code).toBe(0);
   });
 
+  test("an absent, correctly plugin-sourced SKILL.md never renders as 'up to date' (LCLI-446)", () => {
+    // Reachable only when the file is absent under skillSource: "plugin" (planSkill never returns
+    // "unchanged" for a PRESENT file there — see agent-bridge.ts), so the generic "up to date"
+    // fallback used to claim a maintained, matching file where none is meant to exist at all. Found
+    // independently twice: once dogfooding LCLI-444 on this repo, once by a peer session dogfooding
+    // the same cycle on its own.
+    withSkillSourcePlugin();
+    agents(); // materializes CLAUDE.md so --check's exit code reflects only SKILL.md's own state
+    expect(existsSync(skillAbs())).toBe(false);
+
+    const plainOut = capture();
+    const plainCode = runAgents({ root, output: PLAIN_CTX, args: ["--check"], stdout: plainOut });
+    expect(plainCode).toBe(0);
+    expect(plainOut.lines()).toContain(`absent-plugin-sourced ${SKILL_REL_PATH}`);
+    expect(plainOut.text()).not.toContain(`up-to-date ${SKILL_REL_PATH}`);
+
+    const prettyOut = capture();
+    const prettyCode = runAgents({
+      root,
+      output: { mode: "pretty", color: false },
+      args: ["--check"],
+      stdout: prettyOut,
+    });
+    expect(prettyCode).toBe(0);
+    expect(prettyOut.lines()).toContain(`  correctly absent (skill source: plugin) ${SKILL_REL_PATH}`);
+    expect(prettyOut.text()).not.toContain(`up to date ${SKILL_REL_PATH}`);
+
+    const plainWrite = capture();
+    runAgents({ root, output: PLAIN_CTX, args: [], stdout: plainWrite });
+    expect(plainWrite.lines()).toContain(`absent-plugin-sourced ${SKILL_REL_PATH}`);
+  });
+
+  test("skill_source unset (default 'repo') keeps the pre-existing 'up to date' label for a matching SKILL.md", () => {
+    // Regression guard for the fix above: the new skillSource-aware branch in actionLabel/
+    // plainActionLabel must never fire outside skillSource: "plugin".
+    const { code } = agents();
+    expect(code).toBe(0);
+    const plainOut = capture();
+    runAgents({ root, output: PLAIN_CTX, args: ["--check"], stdout: plainOut });
+    expect(plainOut.lines()).toContain(`up-to-date ${SKILL_REL_PATH}`);
+    expect(plainOut.text()).not.toContain("plugin-sourced");
+  });
+
   test("a leftover SKILL.md is reported `orphaned`, exits 6 under --check, and is left in place", () => {
     withSkillSourcePlugin();
     mkdirSync(dirname(skillAbs()), { recursive: true });

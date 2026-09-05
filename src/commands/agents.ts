@@ -17,7 +17,7 @@
 
 import { unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { loadConfig } from "../config";
+import { loadConfig, type SkillSource } from "../config";
 import {
   AGENT_BLOCK_LABEL,
   type BridgeAction,
@@ -58,6 +58,8 @@ export interface AgentsResult {
   force: boolean;
   /** Each bridge file and what happened (or would happen, under `--check`) to it. */
   files: ReadonlyArray<{ path: string; action: BridgeAction }>;
+  /** Where this run resolved `.claude/skills/lore/SKILL.md` to come from (LCLI-446). */
+  skillSource: SkillSource;
 }
 
 /** The parsed, validated arguments {@link applyAgentsBridge} needs — `root` plus `--force`/`--check`. */
@@ -182,6 +184,7 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
     check,
     force,
     files: files.map((file) => ({ path: file.path, action: file.action })),
+    skillSource,
   };
 }
 
@@ -324,8 +327,18 @@ function agentsRenderable(data: AgentsResult): Renderable<AgentsResult> {
   return { kind: "agents.result", data, pretty: renderPretty, plain: renderPlain };
 }
 
-/** The per-action verb shown for a file: the drift status (`--check`) or the applied action (write path). */
-function actionLabel(action: BridgeAction, check: boolean): string {
+/**
+ * The per-action verb shown for a file: the drift status (`--check`) or the applied action (write
+ * path). `path`/`skillSource` exist only to catch one specific case (LCLI-446): under
+ * `skillSource: "plugin"`, SKILL.md's `"unchanged"` action is reachable ONLY when the file is
+ * absent (see `planSkill` in `agent-bridge.ts` — a present file is always `"orphaned"`/`"removed"`
+ * there, never `"unchanged"`), so the generic "up to date" label would otherwise claim a
+ * maintained, matching file where none is meant to exist at all.
+ */
+function actionLabel(path: string, action: BridgeAction, check: boolean, skillSource: SkillSource): string {
+  if (action === "unchanged" && path === SKILL_REL_PATH && skillSource === "plugin") {
+    return check ? "correctly absent (skill source: plugin)" : "absent (skill source: plugin)";
+  }
   if (check) {
     if (action === "protected") {
       return "out of date (protected; needs --force)";
@@ -339,14 +352,17 @@ function actionLabel(action: BridgeAction, check: boolean): string {
 }
 
 /** Stable, token-shaped equivalent of {@link actionLabel} for `--plain`. */
-function plainActionLabel(action: BridgeAction, check: boolean): string {
+function plainActionLabel(path: string, action: BridgeAction, check: boolean, skillSource: SkillSource): string {
+  if (action === "unchanged" && path === SKILL_REL_PATH && skillSource === "plugin") {
+    return "absent-plugin-sourced";
+  }
   if (check && action === "protected") {
     return "out-of-date-protected";
   }
   if (check && action === "orphaned") {
     return "orphaned";
   }
-  return actionLabel(action, check).replace(/ /g, "-");
+  return actionLabel(path, action, check, skillSource).replace(/ /g, "-");
 }
 
 /**
@@ -385,7 +401,7 @@ function renderPretty(data: AgentsResult, opts: { color: boolean }): string {
   const head = data.check ? `Checking the lore agent bridge at ${data.root}` : `lore agent bridge at ${data.root}`;
   const lines = [head];
   for (const file of data.files) {
-    const label = actionLabel(file.action, data.check);
+    const label = actionLabel(file.path, file.action, data.check, data.skillSource);
     const color = bridgeActionColor(file.action);
     lines.push(`  ${paint(label, color, opts.color)} ${file.path}`);
   }
@@ -398,7 +414,9 @@ function renderPretty(data: AgentsResult, opts: { color: boolean }): string {
 
 /** ANSI-free, diff-stable view: one `<action> <path>` line each, plus any trailer as a plain line. */
 function renderPlain(data: AgentsResult): string {
-  const lines = data.files.map((file) => `${plainActionLabel(file.action, data.check)} ${file.path}`);
+  const lines = data.files.map(
+    (file) => `${plainActionLabel(file.path, file.action, data.check, data.skillSource)} ${file.path}`,
+  );
   const trailer = renderTrailer(data);
   if (trailer !== undefined) {
     lines.push(trailer);

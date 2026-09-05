@@ -5,6 +5,17 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`lore agents --check` no longer labels an absent, correctly plugin-sourced SKILL.md as "up to
+  date".** Under `skill_source = "plugin"`, once the per-repo file has been removed, `--check`
+  previously fell through to the generic `unchanged` → "up to date" label — accurate about the exit
+  code (0) but misleading about the file, naming a path that must not exist as if it were a
+  maintained target that happened to match. It now renders "absent (skill source: plugin)" instead
+  (LCLI-446).
+
 ## [0.4.4] - 2026-09-05
 
 ### Added
