@@ -42,6 +42,8 @@ One live session per repository. `opum-agent` is the orchestrator.
 | `lore-cli` | lore documentation CLI |
 | `quest-cli` | quest tracker CLI |
 | `opum-cli-e2e` | lore + quest end-to-end qualification harness |
+| `lore-web` | loregraph.dev — Lore's public site and private-beta onboarding web app |
+| `quest-web` | questgraph.dev — Quest's public project site, one static page |
 
 Sessions message each other directly over Claude cross-session messaging and
 escalate to the orchestrator only to resolve a conflict. herdr is the terminal
@@ -169,7 +171,7 @@ were both deleted 2026-09-04, so an earlier revision of this paragraph retired o
 dead instruction by pointing at another. Check that a replacement still exists
 before naming it. Codex and OpenCode are retired as agent runtimes this fleet
 builds on or dispatches to, including tooling that drives them.
-FMC is retired as the mechanism these five sessions use to coordinate; that is not
+FMC is retired as the mechanism the fleet's sessions use to coordinate; that is not
 a ruling about any repository's own delivery machinery.
 
 Where a repo carries code that detects or sweeps leftover Treehouse or Codex
