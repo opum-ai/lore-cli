@@ -362,15 +362,14 @@ run, and four more — moved to
 [Lore CLI repository notes](docs/reference/lore-cli-repository-notes.md#what-actually-worked-and-is-worth-repeating).
 Read them before a release-pairing coordination task, not before ordinary task work.
 
-The current project-level skill inventory (why exactly two, what generates each, why the Codex-side
-`lore` copy is currently absent) moved to
+The current project-level skill inventory (why zero, and what retired each one) moved to
 [Lore CLI repository notes](docs/reference/lore-cli-repository-notes.md#project-level-skills-what-is-here-on-purpose) —
-it goes stale as soon as the skill-distribution model changes (tracked on LCLI-442's remaining
-upstream slice), so it is reference material rather than something to relearn every session. Read
-it before adding, removing, or wondering about a skill under `.claude/skills/` or `.codex/skills/`.
+it goes stale the moment a new tool earns a project-level skill, so it is reference material rather
+than something to relearn every session. Read it before adding, removing, or wondering about a
+skill under `.claude/skills/` or `.codex/skills/`.
 
 <!-- quest:agent-instructions:begin -->
 # Quest agent instructions
 
-This project uses Quest CLI 0.3.3 for tracker operations. Run `quest manifest --json` to discover the supported command contract. Use `quest instructions --json` for the current versioned protocol. For Backlog tracker cutover, run `quest migration backlog preview --source <project> --json`, review its digest and mappings, then apply it with `quest migration backlog apply --source <project> --digest <digest> --actor <id> --actor-kind human --json`. Quest writes require an explicit actor declaration; do not edit Quest-authored records directly. CI should run `quest agents --check --require-installed --target claude`: current instructions exit 0, while missing, drifted, or malformed managed instructions exit 6. Quest does not retry write conflicts automatically; callers should read the latest task state and perform their own bounded retry when a command returns conflict/exit 5.
+This project uses Quest CLI 0.3.4 for tracker operations. Run `quest manifest --json` to discover the supported command contract. Use `quest instructions --json` for the current versioned protocol. For Backlog tracker cutover, run `quest migration backlog preview --source <project> --json`, review its digest and mappings, then apply it with `quest migration backlog apply --source <project> --digest <digest> --actor <id> --actor-kind human --json`. Quest writes require an explicit actor declaration; do not edit Quest-authored records directly. CI should run `quest agents --check --require-installed --target claude`: current instructions exit 0, while missing, drifted, or malformed managed instructions exit 6. Quest does not retry write conflicts automatically; callers should read the latest task state and perform their own bounded retry when a command returns conflict/exit 5.
 <!-- quest:agent-instructions:end -->
