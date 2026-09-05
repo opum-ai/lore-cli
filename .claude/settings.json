@@ -1,1 +1,6 @@
-{}
+{
+  "env": {
+    "OPUM_HOOK_ACTOR": "lore-cli-session",
+    "OPUM_HOOK_ACCOUNTABLE_HUMAN": "jdnewhouse"
+  }
+}
