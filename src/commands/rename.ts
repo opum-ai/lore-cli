@@ -155,6 +155,10 @@ export async function runRename(options: RenameOptions): Promise<number> {
   assertNotReservedStem(oldId, "rename from");
   assertNotReservedStem(newId, "rename to");
 
+  // Resolved ONCE, up front — reused below both to decide which backend-reported files are
+  // git-committable (LCLI-433) and, unchanged, at the `persistTrackerWrites` call.
+  const backend = resolveSelectedBackend(options.root, options.backend);
+
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
   // Loaded once and threaded through every downstream serialize/re-parse (rewriteInbound below,
@@ -248,6 +252,7 @@ export async function runRename(options: RenameOptions): Promise<number> {
       newId,
       `${DOCS_DIR}/${plan.rename.from}`,
       `${DOCS_DIR}/${plan.rename.to}`,
+      backend,
     );
     backRefs = moved.outcomes;
     refs = moved.refs;
@@ -255,10 +260,11 @@ export async function runRename(options: RenameOptions): Promise<number> {
 
   // Persist exactly the tracker writes the back-reference move made through the selected backend —
   // under `backlog` lore remains the sole committer of `backlog/` (ADR-0012 §1, unrelated dirty
-  // files never swept in); under any other backend zero git runs and a non-null reported file is
-  // refused loud (LCLI-333.1). Scoped to `refs`, so an unlinked/`--dry-run` rename or an
+  // files never swept in); under any other backend zero git runs, and `moveBackRefs`'s own
+  // `commitFileFor` already collapsed every ref's file to `null` (LCLI-433), so nothing here can
+  // trip the drift refusal (LCLI-333.1). Scoped to `refs`, so an unlinked/`--dry-run` rename or an
   // all-`already-current` move (empty) persists nothing.
-  const backlogCommit = await persistTrackerWrites(resolveSelectedBackend(options.root, options.backend), refs, {
+  const backlogCommit = await persistTrackerWrites(backend, refs, {
     root: options.root,
     message: RENAME_COMMIT_MESSAGE,
     gitSpawn: options.gitSpawn,
