@@ -21,6 +21,74 @@ availability claim.
 
 ### Current state
 
+`0.4.4` is **RELEASED**. Published 2026-09-05 from tag `v0.4.4` at
+`f7bc26769e795bed74e88547856ea09523d8c2d5`, by Release run `33988678882` via npm
+**OIDC trusted publishing** — no credential was involved at any point, dispatched
+directly with `publish: true` (no separate `publish: false` dry-run; its own job
+list — `assert release package versions + metadata are consistent`, every
+Ladybug qualification, all six matching-host package qualifications, and
+`publish (npm, OIDC trusted publishing)` — ran and passed in the one dispatch).
+Promoted `dev` to `main` with a local fast-forward push (`git push origin
+dev:main`, not the merge button), confirmed by `git rev-parse` equality on both
+refs before tagging; a promotion PR (#593, `dev` into `main`) ran the full
+`main`-triggered CI matrix against `f7bc267` and all 9 checks passed before the
+fast-forward and tag.
+
+Registry evidence, all seven package names at `0.4.4` with `latest` moved,
+verified directly against `registry.npmjs.org` (not the local npm CLI cache):
+`@opum-ai/lore`, and
+`@opum-ai/lore-{darwin-arm64,darwin-x64,linux-arm64,linux-x64,win32-arm64,win32-x64}`.
+Clean-install smoke from a fresh temporary directory against the real registry:
+`npm install @opum-ai/lore@0.4.4` followed by `lore --version` returns `0.4.4`.
+
+**`@opum-ai/lore-linux-arm64` was again briefly unreadable after a successful
+publish — the identical benign pattern `0.4.0` through `0.4.3` all recorded,
+not a recurrence worth escalating a fifth time.** Its publish step printed
+npm's own success confirmation (`+ @opum-ai/lore-linux-arm64@0.4.4`, verified
+directly in the job log); the registry API reported `0.4.3` as `latest` for
+that package alone on the first poll, then resolved to `0.4.4` on the second
+(~15 seconds later). Verified via the registry API directly rather than
+assumed.
+
+**`.claude-plugin/plugin.json`'s `version` matches at the tag: `0.4.4`**,
+verified with `git show v0.4.4:.claude-plugin/plugin.json` — the first release
+to carry this (LCLI-447 AC#3). `0.4.3` shipped without it: the marketplace pin
+moving to `v0.4.3` still resolved as `0.4.2` in every installed copy, because
+Claude Code's plugin-update resolution reads `plugin.json`'s own version, not
+the git tag. `test/plugin-manifest.test.ts` now fails on every PR the moment
+the two disagree, and the release-publishing runbook's version-bump checklist
+bumps `plugin.json` alongside the other seven manifests going forward.
+
+Why the release exists: to unblock opum-agent's own profile fix (a qualified
+reference pinning its own repository's docs, which crashed uncaught when
+compiled bare on `0.4.3` — LCLI-449) without waiting for a larger release, and
+to prove LCLI-447's plugin.json fix at a real tag rather than leaving it
+theoretical until the next unrelated release. `lore agent context <profile>
+--workspace <manifest> --repository <member-id>` compiles a profile-bounded,
+provenance-stamped evidence pack across an explicit workspace manifest
+(PLAN.md §4.6; LCLI-432) — reference expansion, strict-pinned/relaxed-sources
+semantics, and the OPAG-33 tolerant-load path (a member that cannot load is
+skipped and reported, not fatal) are all covered by real compiles against
+opum-agent's actual `orchestration` profile and opum-doc's actual
+`opum-family.json` manifest during development, which is how LCLI-448 (the
+skipped-members banner reporting on unrequested members) and LCLI-449 (the
+bare-mode crash) were found — dogfooding against real data, not only the test
+suite. See CHANGELOG.md's `[0.4.4]` entry for the full list.
+
+Pre-publish gate: `lore check` on this repository's own bundle, built from the
+release commit, was clean — 77 files, 0 errors, 0 warnings. Full test suite
+2855 pass, 1 skip (pre-existing), 0 fail; typecheck and lint both clean.
+
+**Publish authorization note.** LCLI-278 (no required-reviewer protection on
+the `release` GitHub Environment) remains `To Do`. This release proceeded on
+the repository owner's direct, explicit authorization (asked via
+`AskUserQuestion`: "Cut 0.4.4 now" vs. "wait for a larger release"; the owner
+chose "Cut 0.4.4 now") — consistent with the standing practice recorded in
+README.md ("the owner lifted the `publish: true` prohibition on 2026-08-29")
+and with how `0.3.5`/`0.4.0`/`0.4.1`/`0.4.2`/`0.4.3` actually shipped. LCLI-278
+itself has not been resolved or closed; the note there flags that the task
+record and the actual practice have diverged.
+
 `0.4.3` is **RELEASED**. Published 2026-09-05 from tag `v0.4.3` at
 `2378da56658e8b696f9da4488b56954cb8b1d5a1`, by Release run `33982343746` via npm
 **OIDC trusted publishing** — no credential was involved at any point, dispatched
