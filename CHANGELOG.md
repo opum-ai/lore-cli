@@ -5,7 +5,7 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.4] - 2026-09-05
 
 ### Added
 
@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than crashing. This lets a profile pin its own repository's docs with an explicit
   qualifier and compile identically whether run bare or cross-repo, with no profile fork required
   (LCLI-449).
+- **The `opum-lore` Claude Code plugin's `.claude-plugin/plugin.json` now stays in lockstep with
+  the npm package version.** `0.4.3` shipped without this: the release bump touched all seven npm
+  manifests but not the plugin manifest, so a marketplace pin moving to `v0.4.3` still resolved as
+  `0.4.2` in every installed copy — Claude Code's plugin-update resolution reads `plugin.json`'s
+  own version, not the git tag. `plugin.json` is now bumped in the same commit as the release, and
+  a test fails on every PR the moment the two disagree (LCLI-447).
 
 ## [0.4.3] - 2026-09-05
 
