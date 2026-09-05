@@ -65,6 +65,7 @@ const ACCEPTED_CONFIG_CONFORMANCE_V1: ReadonlyArray<{
       validate: { externalLinks: true, promotePortability: false },
       confluence: { format: "storage" },
       tracker: { backend: "backlog" },
+      agents: { skillSource: "repo" },
     },
   },
   {
@@ -86,6 +87,7 @@ const ACCEPTED_CONFIG_CONFORMANCE_V1: ReadonlyArray<{
         format: "adf",
       },
       tracker: { backend: "backlog" },
+      agents: { skillSource: "repo" },
     },
   },
   {
@@ -103,6 +105,7 @@ const ACCEPTED_CONFIG_CONFORMANCE_V1: ReadonlyArray<{
       validate: { externalLinks: false, promotePortability: false },
       confluence: { format: "storage", parentPageId: "98765" },
       tracker: { backend: "backlog" },
+      agents: { skillSource: "repo" },
     },
   },
   {
@@ -114,6 +117,7 @@ const ACCEPTED_CONFIG_CONFORMANCE_V1: ReadonlyArray<{
       validate: { externalLinks: false, promotePortability: false },
       confluence: { format: "storage", parentPageId: "9007199254740993" },
       tracker: { backend: "backlog" },
+      agents: { skillSource: "repo" },
     },
   },
   {
@@ -125,6 +129,7 @@ const ACCEPTED_CONFIG_CONFORMANCE_V1: ReadonlyArray<{
       validate: { externalLinks: false, promotePortability: false },
       confluence: { format: "storage", space: "ENG", token: "env-secret" },
       tracker: { backend: "backlog" },
+      agents: { skillSource: "repo" },
     },
   },
 ];
@@ -410,6 +415,7 @@ format = "adf"
         format: "adf",
       },
       tracker: { backend: "backlog" },
+      agents: { skillSource: "repo" },
     });
   });
 });
@@ -486,6 +492,29 @@ status_flow = ["To Do", "In Progress", "Done"]
       loadConfig({ root: repoRoot('[tracker.jira]\nstatus_flow = ["To Do", 7]\n'), env: {} }),
     );
     expect(err.message).toContain("tracker.jira.status_flow must be an array of strings");
+  });
+});
+
+describe("loadConfig — agents.skill_source (LCLI-442)", () => {
+  test("defaults an omitted skill_source to repo", () => {
+    expect(loadConfig({ root: repoRoot(""), env: {} }).agents).toEqual({ skillSource: "repo" });
+  });
+
+  test("parses an explicit skill_source = plugin while tolerating future agents keys", () => {
+    const config = loadConfig({
+      root: repoRoot('[agents]\nskill_source = "plugin"\nfuture_key = true\n'),
+      env: {},
+    });
+    expect(config.agents).toEqual({ skillSource: "plugin" });
+  });
+
+  test("rejects an unsupported skill_source and lists the accepted values", () => {
+    const err = expectValidationError(() =>
+      loadConfig({ root: repoRoot('[agents]\nskill_source = "marketplace"\n'), env: {} }),
+    );
+    expect(err.message).toContain('agents.skill_source must be one of "repo", "plugin"');
+    expect(err.hint).toContain("repo, plugin");
+    expect(err.input).toEqual({ key: "agents.skill_source", value: "marketplace" });
   });
 });
 

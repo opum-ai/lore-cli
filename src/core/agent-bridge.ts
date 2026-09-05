@@ -22,6 +22,7 @@
  * `agents.test.ts` lockstep guard re-checks {@link LORE_COMMANDS} against the real dispatcher.
  */
 
+import type { SkillSource } from "../config";
 import { upsertManagedBlock } from "./managed-block";
 
 /** The repo-relative path of the generated skill bridge (pinned by ADR-0004 §3 and cli-surface §agents). */
@@ -211,7 +212,21 @@ export type BridgeAction =
    * and `--force` was not given, or this is a `--check` run — which never writes, so `--force`
    * cannot actually take effect and must not be reported as if it had (LORE-129).
    */
-  | "protected";
+  | "protected"
+  /**
+   * `agents.skillSource` is `"plugin"` (LCLI-442) and SKILL.md exists anyway — drift to remove, not
+   * silence: the file competes with the plugin's own skill for triggering. Reported whether or not
+   * its bytes match the generated doc; only an exact, unmodified match is ever actually removable
+   * (see `"removed"`) — a hand-edited leftover stays `"orphaned"` even under `--force`, exactly like
+   * `"protected"` refuses to overwrite a hand-edited file it would otherwise update.
+   */
+  | "orphaned"
+  /**
+   * `agents.skillSource` is `"plugin"`, SKILL.md exists, its bytes exactly match the generated doc
+   * (so deleting it destroys no hand-edit), and `--force` was given on a non-`--check` run: it was
+   * actually deleted. Mirrors `"updated"`'s force-gated, check-never-writes discipline in reverse.
+   */
+  | "removed";
 
 /** One file's entry in a {@link BridgePlan}. */
 export interface BridgeFilePlan {
@@ -219,7 +234,7 @@ export interface BridgeFilePlan {
   readonly path: string;
   /** The decided next state. */
   readonly action: BridgeAction;
-  /** The full bytes to write, or `null` when nothing should be written (`unchanged`/`protected`). */
+  /** The full bytes to write, or `null` when nothing should be written (`unchanged`/`protected`/`orphaned`/`removed` — `removed` means delete, not write). */
   readonly contents: string | null;
 }
 
@@ -234,8 +249,18 @@ export interface PlanBridgeInput {
   readonly skillOnDisk: string | null;
   /** Current `CLAUDE.md` bytes, or `null` if it does not exist. */
   readonly claudeOnDisk: string | null;
-  /** Whether `--force` was given (permits overwriting a differing, possibly hand-edited SKILL.md). */
+  /** Whether `--force` was given (permits overwriting a differing, possibly hand-edited SKILL.md, or removing an orphaned one). */
   readonly force: boolean;
+  /**
+   * `agents.skillSource` from `.lore/config.toml` (LCLI-442). `"plugin"` means SKILL.md is not
+   * this repository's to generate — {@link planSkill} then never creates it, and reports a present
+   * one as `"orphaned"`/`"removed"` instead of `"created"`/`"updated"`/`"unchanged"`/`"protected"`.
+   * Defaults to `"repo"` (today's behavior, unconditionally) when the caller does not scope this to
+   * config at all — the bare `lore agents` call always passes the resolved config value; a SCOPED
+   * explicit request (`lore init --claude`/`--agents`) passes `"repo"` regardless of config, because
+   * an explicit ask always wins (mirrors how `includeCodex` gates `hasCodexBridge` in `commands/agents.ts`).
+   */
+  readonly skillSource: SkillSource;
   /**
    * Whether this is a `--check` (report-only) run. `--check` never writes, so `force` must not be
    * honored while planning: a `--check --force` run against a differing SKILL.md still reports
@@ -273,9 +298,26 @@ export function planBridge(input: PlanBridgeInput): BridgePlan {
  * read-only by contract, and `--check --force` against a differing file must still report
  * `protected` — the check-safe, non-mutating label — never `updated`, which would falsely claim a
  * write that this run never performs (LORE-129).
+ *
+ * Under `skillSource: "plugin"` (LCLI-442) the whole discipline inverts: SKILL.md is not this
+ * repository's to generate, so absence is the correct state (`unchanged`, not `created`), and a
+ * present file is drift to remove — `orphaned` (reported, not deleted) unless its bytes exactly
+ * match the generated doc AND `--force` was given on a non-`--check` run, in which case it is
+ * safe to delete and the action is `removed`. A present file whose bytes DIFFER from the generated
+ * doc stays `orphaned` even under `--force`: it might be a hand-edit, and deleting unrecognized
+ * content is never automatic, mirroring `protected`'s refusal to overwrite one.
  */
 function planSkill(input: PlanBridgeInput): BridgeFilePlan {
   const desired = buildSkillDoc();
+  if (input.skillSource === "plugin") {
+    if (input.skillOnDisk === null) {
+      return { path: SKILL_REL_PATH, action: "unchanged", contents: null };
+    }
+    if (input.skillOnDisk === desired && input.force && !input.check) {
+      return { path: SKILL_REL_PATH, action: "removed", contents: null };
+    }
+    return { path: SKILL_REL_PATH, action: "orphaned", contents: null };
+  }
   if (input.skillOnDisk === null) {
     return { path: SKILL_REL_PATH, action: "created", contents: desired };
   }

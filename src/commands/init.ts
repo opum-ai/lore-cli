@@ -98,7 +98,15 @@ import {
   type TrackerEnvironmentEntry,
   trackerEntry,
 } from "../adapters/tracker-environment";
-import { CONFIG_REL_PATH, type JiraTrackerConfig, loadConfig, TRACKER_BACKENDS, type TrackerBackend } from "../config";
+import {
+  CONFIG_REL_PATH,
+  type JiraTrackerConfig,
+  loadConfig,
+  SKILL_SOURCES,
+  type SkillSource,
+  TRACKER_BACKENDS,
+  type TrackerBackend,
+} from "../config";
 import { loadProfile } from "../core/profile";
 import { buildScaffold } from "../core/scaffold";
 import { ANSI, EXIT_OK, LoreError, paint, WarningCollector, type Writer } from "../errors";
@@ -335,6 +343,14 @@ interface InitArgs {
   jiraProfile?: string;
   /** `--jira-project <KEY>`: the Jira project key to validate and record, without prompting (LCLI-358.4). */
   jiraProject?: string;
+  /**
+   * `--skill-source <repo|plugin>`: persist `[agents].skill_source` (LCLI-442). `"plugin"` opts in
+   * to the `opum-lore` marketplace plugin owning `.claude/skills/lore/SKILL.md` — an EXPLICIT,
+   * scoped `--agents`/`--claude` request in this same invocation still materializes the file
+   * (`applyAgentsBridge`'s `includeCodex: false` path never reads this config), so this flag only
+   * changes what a later BARE `lore agents` does with a repo that has no such scoped request.
+   */
+  skillSource?: SkillSource;
 }
 
 /**
@@ -406,6 +422,13 @@ export function runInit(options: InitOptions): number | Promise<number> {
   }
   const base = applyBaseScaffold(options, plan);
   const created = base.created;
+
+  if (parsed.skillSource !== undefined) {
+    // Independent of the tracker branches below (LCLI-442): `--skill-source` answers a different
+    // question than `--tracker` does, so it persists unconditionally rather than being folded into
+    // any one tracker path.
+    persistAgentsSkillSource(options.root, parsed.skillSource);
+  }
 
   if (parsed.migrateBacklog) {
     // Coordinated cutover (LCLI-333.1): with an adoption manifest, both legs run through the
@@ -1315,7 +1338,8 @@ function anyFlagGiven(parsed: InitArgs): boolean {
     parsed.noInstallTracker ||
     parsed.migrateBacklog ||
     parsed.keepBacklogTasks ||
-    parsed.tracker !== undefined
+    parsed.tracker !== undefined ||
+    parsed.skillSource !== undefined
   );
 }
 
@@ -1370,6 +1394,19 @@ function parseInitArgs(args: readonly string[]): InitArgs {
     );
   }
   const tracker = trackerValue as TrackerBackend | undefined;
+  const skillSourceValue = singleOptionValue(parsed, "skill-source");
+  if (skillSourceValue === "") {
+    throw usage("--skill-source needs a value", `pass --skill-source ${SKILL_SOURCES.join(" or --skill-source ")}`);
+  }
+  if (skillSourceValue !== undefined && !SKILL_SOURCES.includes(skillSourceValue as SkillSource)) {
+    throw new LoreError(
+      "validation",
+      `unsupported skill source ${JSON.stringify(skillSourceValue)}`,
+      `use one of: ${SKILL_SOURCES.join(", ")}`,
+      { skillSource: skillSourceValue },
+    );
+  }
+  const skillSource = skillSourceValue as SkillSource | undefined;
   const scaffolds: string[] = [];
   for (const value of optionValues(parsed, "scaffold")) {
     if (value === "") {
@@ -1440,6 +1477,7 @@ function parseInitArgs(args: readonly string[]): InitArgs {
     noInstallTracker,
     jiraProfile,
     jiraProject,
+    skillSource,
   };
 }
 
@@ -1640,6 +1678,42 @@ function withTrackerBackend(current: string, backend: TrackerBackend): string {
 
   const separator = current.length === 0 ? "" : current.endsWith("\n") ? eol : `${eol}${eol}`;
   return `${current}${separator}[tracker]${eol}${assignment}${eol}`;
+}
+
+/** Persist `[agents].skill_source` (LCLI-442), preserving every unrelated config byte. */
+export function persistAgentsSkillSource(root: string, skillSource: SkillSource): void {
+  assertNoSymlinkInPath(root, CONFIG_REL_PATH);
+  loadConfig({ root });
+  const absPath = join(root, CONFIG_REL_PATH);
+  const current = readFileSync(absPath, "utf8");
+  const next = withAgentsSkillSource(current, skillSource);
+  if (next !== current) {
+    writeFileAtomic(absPath, next, CONFIG_REL_PATH);
+  }
+}
+
+/** Upsert `[agents].skill_source` without reserializing or dropping future keys/comments. */
+function withAgentsSkillSource(current: string, skillSource: SkillSource): string {
+  const eol = current.includes("\r\n") ? "\r\n" : "\n";
+  const assignment = `skill_source = ${JSON.stringify(skillSource)}`;
+  const agentsHeader = /^[ \t]*\[[ \t]*agents[ \t]*\][ \t]*(?:#.*)?(?:\r?\n|$)/mu;
+  const header = agentsHeader.exec(current);
+  if (header !== null) {
+    const bodyStart = header.index + header[0].length;
+    const nextHeader = /^[ \t]*(?:\[[^\]\r\n]+\]|\[\[[^\]\r\n]+\]\])[ \t]*(?:#.*)?$/mu.exec(current.slice(bodyStart));
+    const bodyEnd = nextHeader === null ? current.length : bodyStart + nextHeader.index;
+    const body = current.slice(bodyStart, bodyEnd);
+    const skillSourceLine = /^([ \t]*)skill_source[ \t]*=.*$/mu;
+    if (skillSourceLine.test(body)) {
+      return current.slice(0, bodyStart) + body.replace(skillSourceLine, `$1${assignment}`) + current.slice(bodyEnd);
+    }
+    const headerEndsWithEol = /\r?\n$/u.test(header[0]);
+    const insertion = `${headerEndsWithEol ? "" : eol}${assignment}${eol}`;
+    return current.slice(0, bodyStart) + insertion + current.slice(bodyStart);
+  }
+
+  const separator = current.length === 0 ? "" : current.endsWith("\n") ? eol : `${eol}${eol}`;
+  return `${current}${separator}[agents]${eol}${assignment}${eol}`;
 }
 
 /** Detect installed agents without making absence or a broken PATH fatal to onboarding. */

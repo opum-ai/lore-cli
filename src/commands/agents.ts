@@ -15,7 +15,9 @@
  * `validation` error {@link upsertManagedBlock} throws (exit 6), never a silent guess.
  */
 
+import { unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { loadConfig } from "../config";
 import {
   AGENT_BLOCK_LABEL,
   type BridgeAction,
@@ -118,7 +120,12 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
   // selected current"), so a repository that opted into Codex alone is not handed an uninvited Claude
   // bridge it can never clear from its own `--check` gate (LCLI-437).
   const claudeArmed = !includeCodex || hasClaudeBridge(skillOnDisk, claudeRaw, codexSkillRaw, agentsRaw);
-  const plan = claudeArmed ? planBridge({ skillOnDisk, claudeOnDisk, force, check }) : { files: [] };
+  // Explicit beats config, same rule as claudeArmed above: a SCOPED request (`lore init
+  // --claude`/`--agents`) always materializes SKILL.md regardless of `agents.skillSource` — only
+  // the bare `lore agents` call ("keep whatever's selected current") is scoped to the persisted
+  // config, so `lore agents --check` run bare in CI sees the repo's own opt-in without a flag.
+  const skillSource = includeCodex ? loadConfig({ root }).agents.skillSource : "repo";
+  const plan = claudeArmed ? planBridge({ skillOnDisk, claudeOnDisk, force, check, skillSource }) : { files: [] };
 
   const codexPlan =
     includeCodex && hasCodexBridge(codexSkillRaw, agentsRaw)
@@ -132,14 +139,23 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
   const files = [...plan.files, ...codexPlan.files];
 
   if (!check) {
-    const targets = files.filter((file) => file.contents !== null).map((file) => file.path);
+    // "removed" targets are swept alongside write targets: deleting through a symlinked ancestor
+    // is exactly as unsafe as writing through one, and this is the one place a bridge file plan
+    // yields anything other than a write (LCLI-442).
+    const targets = files
+      .filter((file) => file.contents !== null || file.action === "removed")
+      .map((file) => file.path);
     // Swept as a whole before either file is written (LORE-93 AC#5) — `lore agents` writes two
     // files per run, and a bad target reached second in the loop must not leave the first already
     // written; ensureDir's own per-call guard alone is reactive to loop order.
     assertNoSymlinkInAnyPath(root, targets);
     for (const file of files) {
+      if (file.action === "removed") {
+        unlinkSync(join(root, file.path));
+        continue;
+      }
       if (file.contents === null) {
-        continue; // unchanged, or protected without --force — leave the file untouched
+        continue; // unchanged, protected, or orphaned-without-force — leave the file untouched
       }
       const absPath = join(root, file.path);
       ensureDir(root, dirname(file.path));
@@ -314,6 +330,9 @@ function actionLabel(action: BridgeAction, check: boolean): string {
     if (action === "protected") {
       return "out of date (protected; needs --force)";
     }
+    if (action === "orphaned") {
+      return "orphaned (config says the skill comes from the plugin; delete this file, or run lore agents --force to remove it)";
+    }
     return action === "unchanged" ? "up to date" : "out of date";
   }
   return action;
@@ -323,6 +342,9 @@ function actionLabel(action: BridgeAction, check: boolean): string {
 function plainActionLabel(action: BridgeAction, check: boolean): string {
   if (check && action === "protected") {
     return "out-of-date-protected";
+  }
+  if (check && action === "orphaned") {
+    return "orphaned";
   }
   return actionLabel(action, check).replace(/ /g, "-");
 }
@@ -340,8 +362,10 @@ function plainActionLabel(action: BridgeAction, check: boolean): string {
 const BRIDGE_ACTION_COLOR: Record<BridgeAction, string> = {
   unchanged: ANSI.dim,
   protected: ANSI.yellow,
+  orphaned: ANSI.yellow,
   created: ANSI.green,
   updated: ANSI.green,
+  removed: ANSI.green,
 };
 
 /**
@@ -396,14 +420,22 @@ function renderPlain(data: AgentsResult): string {
  */
 export function renderTrailer(data: AgentsResult): string | undefined {
   const hasProtected = data.files.some((file) => file.action === "protected");
+  const hasOrphaned = data.files.some((file) => file.action === "orphaned");
   if (data.check) {
     const stale = data.files.some((file) => file.action !== "unchanged");
     if (!stale) {
       return undefined;
     }
+    if (hasOrphaned) {
+      return "bridge carries a file config says should not exist — delete it, or run `lore agents --force` to remove it (exit 6)";
+    }
     return hasProtected
       ? "bridge is out of date — a hand-edited file needs `lore agents --force` to regenerate (exit 6)"
       : "bridge is out of date — run `lore agents` to regenerate (exit 6)";
+  }
+  if (hasOrphaned) {
+    const count = data.files.filter((file) => file.action === "orphaned").length;
+    return `${count} file(s) should not exist per agents.skill_source = "plugin" and were left in place — delete by hand, or run \`lore agents --force\` to remove a lore-generated one`;
   }
   if (!hasProtected) {
     return undefined;

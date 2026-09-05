@@ -296,6 +296,12 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
         takesValue: true,
         summary: "Jira project key to validate and record for --tracker jira",
       },
+      {
+        name: "skill-source",
+        takesValue: true,
+        summary:
+          "Where .claude/skills/lore/SKILL.md comes from (repo|plugin); 'plugin' opts into the opum-lore marketplace plugin owning it",
+      },
     ],
     json: true,
     kind: "init.result",

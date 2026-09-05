@@ -5,6 +5,27 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`[agents].skill_source` config key and `lore init --skill-source <repo|plugin>` flag.** Opting
+  into `skill_source = "plugin"` tells `lore agents`/`lore agents --check` that
+  `.claude/skills/lore/SKILL.md` is owned by the `opum-lore` marketplace plugin, not this
+  repository, so a bare `lore agents` run stops proposing or regenerating it. The default
+  (`"repo"`, unset) is unchanged: every existing repository keeps generating its own SKILL.md
+  exactly as before. An explicit, scoped `lore init --claude`/`--agents` request always still
+  materializes the file regardless of this setting — "explicit beats config" (LCLI-442).
+
+### Changed
+
+- **A leftover `SKILL.md` under `skill_source = "plugin"` is now flagged as drift, not silently
+  ignored.** `lore agents --check` reports it `orphaned` and exits 6 naming the file and the
+  remedy; a plain `lore agents` reports the same without deleting it. `lore agents --force` removes
+  it only when its bytes exactly match lore's own generated content — a hand-edited or otherwise
+  differing file is left in place even under `--force`, the same refusal `protected` already applies
+  to an unexpected in-place edit (LCLI-442).
+
 ## [0.4.2] - 2026-09-05
 
 ### Added
