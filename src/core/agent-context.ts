@@ -371,6 +371,29 @@ function assemble(
   };
 }
 
+/**
+ * Resolve a reference's concept, falling back to a bare-bundle lookup for a `member::id` reference
+ * (LCLI-448): a bare (non-`--workspace`) compile has exactly one bundle, so a qualifier can only
+ * ever mean "this one" — there is nothing else it could disambiguate against. `validateAgentProfileReferences`
+ * deliberately does not check a qualified reference (it is meaningful only under `--workspace`,
+ * validated there instead), so this is also the first and only place a bare compile discovers
+ * whether one actually resolves; throwing here, not crashing on the caller's `undefined.body`, is
+ * why this exists rather than a bare `graph.concepts.get(...) as Concept`.
+ */
+function requireConcept(graph: BundleGraph, reference: AgentProfileReference): Concept {
+  const direct = graph.concepts.get(reference.conceptId);
+  if (direct !== undefined) return direct;
+  const separator = reference.conceptId.indexOf("::");
+  const bare = separator > 0 ? graph.concepts.get(reference.conceptId.slice(separator + 2)) : undefined;
+  if (bare !== undefined) return bare;
+  throw new LoreError(
+    "validation",
+    `agent profile references missing concept "${reference.conceptId}"`,
+    "fix the profile reference, add the concept to the active bundle, or compile with --workspace if it names another member",
+    { reference: reference.normalized },
+  );
+}
+
 function buildSourceCandidates(
   reference: AgentProfileReference,
   graph: BundleGraph,
@@ -378,7 +401,7 @@ function buildSourceCandidates(
   maxTokens: number,
   provenanceById: ReadonlyMap<string, WorkspaceRecordProvenance> | undefined,
 ): SourceCandidates {
-  const concept = graph.concepts.get(reference.conceptId) as Concept;
+  const concept = requireConcept(graph, reference);
   const provenance = provenanceById?.get(concept.id);
   const region = regionForReference(concept.body, reference.anchor);
   const threshold = Math.min(2_000, Math.floor(maxTokens / 4));
@@ -435,7 +458,7 @@ function itemForReference(
   score: number | undefined,
   provenanceById: ReadonlyMap<string, WorkspaceRecordProvenance> | undefined,
 ): AgentContextItem {
-  const concept = graph.concepts.get(reference.conceptId) as Concept;
+  const concept = requireConcept(graph, reference);
   const region = regionForReference(concept.body, reference.anchor);
   return {
     ...item(reference, concept, region.body, region.breadcrumb, provenanceById?.get(concept.id)),

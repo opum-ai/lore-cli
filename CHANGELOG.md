@@ -23,6 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reported `member-skipped`. Every resolved item and catalog entry carries the originating member's
   provenance.
 
+### Fixed
+
+- **`lore agent context` no longer crashes uncaught on a qualified (`member::path`) reference
+  compiled bare, without `--workspace`.** A bare compile has exactly one bundle, so the qualifier
+  can only ever mean that one — it now resolves against the bare bundle directly, falling back only
+  if the unqualified path also fails to resolve, and reports a clean, classified error in that case
+  rather than crashing. This lets a profile pin its own repository's docs with an explicit
+  qualifier and compile identically whether run bare or cross-repo, with no profile fork required
+  (LCLI-449).
+
 ## [0.4.3] - 2026-09-05
 
 ### Added

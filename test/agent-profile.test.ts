@@ -262,6 +262,45 @@ describe("agent context compiler", () => {
   });
 });
 
+describe("agent context compiler — a qualified reference bare, with no --workspace (LCLI-448)", () => {
+  // A bare compile has exactly one bundle, so a `member::id` reference can only ever mean "this
+  // one" — this is what lets a profile pin its own repository's docs safely whether it is compiled
+  // bare or via --workspace, without forking the profile. Found as a real crash while compiling a
+  // real cross-repo profile bare: `validateAgentProfileReferences` deliberately skips a `::`
+  // reference (it is workspace-only, LCLI-432), so nothing re-checked one before this bare path
+  // dereferenced `graph.concepts.get(...)` as if it could never be undefined.
+  test("resolves against the bare bundle, ignoring the qualifier", () => {
+    fixture();
+    profile(
+      "qualified",
+      'schema_version = 1\nname = "qualified"\ndescription = "Pins its own repo explicitly."\nkind = "specialist"\nmax_tokens = 1200\npinned = ["myrepo::reference/rules#must-follow"]\n',
+    );
+    const data = compileAgentContext(
+      loadAgentProfiles(root),
+      loadBundle(join(root, "docs")),
+      "qualified",
+      "any task",
+      900,
+    );
+    expect(data.pinned[0]?.conceptId).toBe("reference/rules");
+    expect(data.pinned[0]?.body).toContain("Never expose credentials");
+    expect(data.catalog[0]).toMatchObject({ reference: "myrepo::reference/rules#must-follow", reason: "pinned" });
+  });
+
+  test("a qualified reference that still does not resolve fails cleanly, not with an uncaught crash", () => {
+    fixture();
+    profile(
+      "qualified",
+      'schema_version = 1\nname = "qualified"\ndescription = "Pins a doc that does not exist."\nkind = "specialist"\nmax_tokens = 1200\npinned = ["myrepo::reference/does-not-exist"]\n',
+    );
+    expectSyncError(
+      () => compileAgentContext(loadAgentProfiles(root), loadBundle(join(root, "docs")), "qualified", "any task", 900),
+      "validation",
+      'references missing concept "myrepo::reference/does-not-exist"',
+    );
+  });
+});
+
 describe("lore agent command", () => {
   test("lore check rejects invalid agent profile references before reporting", () => {
     fixture();
