@@ -21,6 +21,66 @@ availability claim.
 
 ### Current state
 
+`0.4.3` is **RELEASED**. Published 2026-09-05 from tag `v0.4.3` at
+`2378da56658e8b696f9da4488b56954cb8b1d5a1`, by Release run `33982343746` via npm
+**OIDC trusted publishing** — no credential was involved at any point, dispatched
+directly with `publish: true` (no separate `publish: false` dry-run; its own job
+list — `assert release package versions + metadata are consistent`, every
+Ladybug qualification, all six matching-host package qualifications, and
+`publish (npm, OIDC trusted publishing)` — ran and passed in the one dispatch).
+Promoted `dev` to `main` with a local fast-forward push (`git push origin
+dev:main`, not the merge button), confirmed by `git rev-parse` equality on both
+refs before tagging; a promotion PR (#583, `dev` into `main`) ran the full
+`main`-triggered CI matrix against `2378da5` and all 9 checks passed before the
+fast-forward and tag.
+
+Registry evidence, all seven package names at `0.4.3` with `latest` moved,
+verified directly against `registry.npmjs.org` (not the local npm CLI cache):
+`@opum-ai/lore`, and
+`@opum-ai/lore-{darwin-arm64,darwin-x64,linux-arm64,linux-x64,win32-arm64,win32-x64}`.
+Clean-install smoke from a fresh temporary directory against the real registry:
+`npm install @opum-ai/lore@0.4.3` followed by `lore --version` returns `0.4.3`.
+
+**`@opum-ai/lore-linux-arm64` was again briefly unreadable after a successful
+publish — the identical benign pattern `0.4.0`, `0.4.1`, and `0.4.2` all
+recorded, not a recurrence worth escalating a fourth time.** Its publish step
+printed npm's own success confirmation (`+ @opum-ai/lore-linux-arm64@0.4.3`,
+verified directly in the job log); the registry API reported `0.4.2` as
+`latest` for that package alone across the first five 15-second polls, then
+resolved to `0.4.3` on the sixth. Verified via the registry API directly
+rather than assumed.
+
+Why the release exists: to unblock four other fleet repositories
+(quest-cli, opum-cli-e2e, opum-agent, opum-doc) from flipping their own
+per-repo `.claude/skills/lore/SKILL.md` copy to the `opum-lore` marketplace
+plugin and deleting it, per opum-agent's OPAG-41 sequencing — user-approved
+2026-09-05. `[agents].skill_source` (`"repo"`|`"plugin"`, default unchanged) in
+`.lore/config.toml`, plus `lore init --skill-source <repo|plugin>` to persist
+it, lets a repository opt the `opum-lore` plugin into owning that file instead
+(LCLI-443). Under `"plugin"`, `lore agents`/`lore agents --check` stop
+writing/proposing the file and flag a leftover as `orphaned` drift (exit 6
+under `--check`); `--force` removes it only on an exact byte match. This
+repository dogfooded the opt-in on itself and found (and fixed) a real gap:
+`CLAUDE.md`'s generated nudge pointed at the per-repo SKILL.md path
+unconditionally, so after this repo's own file was removed the nudge named a
+path that must not exist — it now names the plugin instead when
+`skill_source` is `"plugin"` (LCLI-444). See CHANGELOG.md's `[0.4.3]` entry
+for the full list.
+
+Pre-publish gate: `lore check` on this repository's own bundle, built from the
+release commit, was clean — 77 files, 0 errors, 0 warnings. Full test suite
+2839 pass, 1 skip (pre-existing), 0 fail; typecheck and lint both clean.
+
+**Publish authorization note.** LCLI-278 (no required-reviewer protection on
+the `release` GitHub Environment) remains `To Do`. This release proceeded on
+the repository owner's direct, explicit authorization (asked via
+`AskUserQuestion`: "Cut 0.4.3 now" vs. "wait for a larger release"; the owner
+chose "Cut 0.4.3 now") — consistent with the standing practice recorded in
+README.md ("the owner lifted the `publish: true` prohibition on 2026-08-29")
+and with how `0.3.5`/`0.4.0`/`0.4.1`/`0.4.2` actually shipped. LCLI-278 itself
+has not been resolved or closed; the note there flags that the task record and
+the actual practice have diverged.
+
 `0.4.2` is **RELEASED**. Published 2026-09-05 from tag `v0.4.2` at
 `c2f3a93f51a5bf6394bdfa8d0b59b5b7a7c4ca2c`, by Release run `33956309104` via npm
 **OIDC trusted publishing** — no credential was involved at any point, dispatched
