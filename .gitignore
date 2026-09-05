@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# claude plugin eval run artifacts (opum-lore plugin suite).
+**/evals/results/
+
 # Build output
 dist/
 build/
