@@ -16,6 +16,7 @@
 - [LadybugDB benchmark and scale acceptance strategy](ladybugdb-benchmark-and-scale-acceptance-strategy.md)
 - [Lore CLI documentation ownership](lore-cli-documentation-ownership.md)
 - [Lore CLI release truth](lore-cli-release-truth.md)
+- [Lore CLI repository notes](lore-cli-repository-notes.md)
 - [Lore competitive feature matrix](lore-competitive-feature-matrix.md)
 - [MCP tools and resources (ON HOLD design)](mcp-tools.md)
 - [OKF conformance](okf-conformance.md)
