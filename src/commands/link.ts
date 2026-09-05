@@ -158,6 +158,22 @@ export interface UnlinkReport {
 }
 
 /**
+ * The repo file to record for a candidate tracker write, scoped to what {@link persistTrackerWrites}
+ * actually decides: whether LORE ITSELF needs to `git commit` something. Only `backlog`'s task files
+ * live in this repository under lore's own git ownership; every other backend's `detail.file` is
+ * informational metadata about where THAT backend stores its own record (LCLI-428 — Quest 0.3.2
+ * began reporting a real `.quest/tasks/<id>.json` path there, wanted for `lore sync`'s task
+ * hyperlinks), never a path lore should try to commit. Before this (LCLI-433), a non-backlog
+ * `detail.file` was passed straight through and `persistTrackerWrites` refused it as drift — AFTER
+ * the doc-side write and the tracker edit had both already landed, on every quest-backed
+ * `link`/`unlink`/`rename`. Collapsing it to `null` here, at the point each write is recorded,
+ * removes the false rejection instead of just moving where it's reported.
+ */
+function commitFileFor(backend: TrackerBackend, file: string | null): string | null {
+  return backend === "backlog" ? file : null;
+}
+
+/**
  * Run `lore link`: add every `taskId` to the concept's `tasks:` frontmatter (case-insensitive
  * dedup, stored lowercase per ADR-0009 §1) and, unless `--no-back-ref`, record the back-reference
  * on each task — a `doc:<conceptId>` label plus the concept's repo-relative path via `--doc`
@@ -179,6 +195,9 @@ export async function runLink(options: LinkOptions): Promise<number> {
   }
   assertTaskCouplingSupported(concept, profile);
   const adapter = options.adapter ?? defaultAdapter(options.root);
+  // Resolved ONCE, up front — reused below both to decide which backend-reported files are
+  // git-committable (LCLI-433) and, unchanged, at the `persistTrackerWrites` call.
+  const backend = resolveSelectedBackend(options.root, options.backend);
   const docPath = repoRelativePath(concept.path);
   const label = backRefLabel(concept.id);
 
@@ -264,15 +283,16 @@ export async function runLink(options: LinkOptions): Promise<number> {
         // nothing dirty and stays a true no-op (AC#3), while a dirty one gets picked up and
         // committed by this retry (AC#1/#2) instead of silently no-opping forever.
         if (detail.file) {
-          refs.push({ taskId, file: detail.file });
+          refs.push({ taskId, file: commitFileFor(backend, detail.file) });
         }
         return "already-present" as const;
       }
       const desiredDocs = addDoc(detail.documentation, docPath);
       await adapter.editTask(taskId, { addLabels: [label], doc: desiredDocs });
-      // Only after a successful editTask. A null file is normal for an out-of-repo backend
-      // (quest); the persistence seam decides per backend whether a path means a commit or drift.
-      refs.push({ taskId, file: detail.file });
+      // Only after a successful editTask. `commitFileFor` collapses `detail.file` to `null` for
+      // every backend but backlog (LCLI-433) — a non-null Quest `file` is real, wanted metadata
+      // about where QUEST stores the record (LCLI-428), not a path lore itself needs to commit.
+      refs.push({ taskId, file: commitFileFor(backend, detail.file) });
       return "added" as const;
     });
     outcomes.forEach((outcome, i) => {
@@ -289,9 +309,10 @@ export async function runLink(options: LinkOptions): Promise<number> {
   // Persist this run's candidate tracker writes through the selected backend — under `backlog`,
   // whatever of `refs` is actually dirty gets committed (lore remains the sole committer of
   // `backlog/`, ADR-0012 §1, unrelated dirty files never swept); under any other backend zero git
-  // runs and a non-null reported file is refused loud (LCLI-333.1). Scoped to `refs`, so a
-  // `--no-back-ref` run (empty) persists nothing and a genuinely clean run stays a true no-op.
-  const backlogCommit = await persistTrackerWrites(resolveSelectedBackend(options.root, options.backend), refs, {
+  // runs, and `commitFileFor` above already collapsed every ref's file to `null`, so nothing here
+  // can trip the drift refusal (LCLI-333.1 / LCLI-433). Scoped to `refs`, so a `--no-back-ref` run
+  // (empty) persists nothing and a genuinely clean run stays a true no-op.
+  const backlogCommit = await persistTrackerWrites(backend, refs, {
     root: options.root,
     message: LINK_COMMIT_MESSAGE,
     gitSpawn: options.gitSpawn,
@@ -326,6 +347,7 @@ export async function runLink(options: LinkOptions): Promise<number> {
 export async function runUnlink(options: LinkOptions): Promise<number> {
   const { concept, id, taskIds, noBackRef, docsRoot, profile } = await prepare(options, "unlink");
   const adapter = options.adapter ?? defaultAdapter(options.root);
+  const backend = resolveSelectedBackend(options.root, options.backend);
   const docPath = concept !== undefined ? repoRelativePath(concept.path) : `${DOCS_DIR}/${id}.md`;
   const label = backRefLabel(concept?.id ?? id);
 
@@ -352,7 +374,7 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
   let anyBackRefFailed = false;
   let refs: readonly TrackerWriteRef[] = [];
   if (!noBackRef) {
-    const removal = await removeBackRefs(adapter, taskIds, label, docPath);
+    const removal = await removeBackRefs(adapter, taskIds, label, docPath, backend);
     refs = removal.refs;
     removal.outcomes.forEach((outcome, i) => {
       const entry = tasks[i] as UnlinkedTask;
@@ -365,7 +387,7 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
     });
   }
 
-  const backlogCommit = await persistTrackerWrites(resolveSelectedBackend(options.root, options.backend), refs, {
+  const backlogCommit = await persistTrackerWrites(backend, refs, {
     root: options.root,
     message: UNLINK_COMMIT_MESSAGE,
     gitSpawn: options.gitSpawn,
@@ -390,6 +412,7 @@ async function removeBackRefs(
   taskIds: readonly string[],
   label: string,
   docPath: string,
+  backend: TrackerBackend,
 ): Promise<{
   readonly outcomes: readonly PromiseSettledResult<"removed" | "already-absent" | "skipped">[];
   readonly refs: readonly TrackerWriteRef[];
@@ -425,7 +448,7 @@ async function removeBackRefs(
       // reports nothing dirty and stays a true no-op (AC#3), while a dirty one gets picked up and
       // committed by this retry (AC#1) instead of silently no-opping forever.
       if (detail.file) {
-        refs.push({ taskId, file: detail.file });
+        refs.push({ taskId, file: commitFileFor(backend, detail.file) });
       }
       return "already-absent" as const; // nothing to remove — skip the edit entirely
     }
@@ -434,7 +457,7 @@ async function removeBackRefs(
     // Backlog is left with whatever it already had (it cannot clear `--doc` via an empty value,
     // contract §2.4), so a stale annotation cosmetically lingers either way.
     await adapter.editTask(taskId, { removeLabels: [label], doc: removeDoc(detail.documentation, docPath) });
-    refs.push({ taskId, file: detail.file });
+    refs.push({ taskId, file: commitFileFor(backend, detail.file) });
     return "removed" as const;
   });
   return { outcomes, refs };
@@ -475,6 +498,7 @@ export async function moveBackRefs(
   newConceptId: string,
   oldDocPath: string,
   newDocPath: string,
+  backend: TrackerBackend,
 ): Promise<{ readonly outcomes: readonly MovedBackRef[]; readonly refs: readonly TrackerWriteRef[] }> {
   const oldLabel = backRefLabel(oldConceptId);
   const newLabel = backRefLabel(newConceptId);
@@ -522,7 +546,7 @@ export async function moveBackRefs(
       // dirty and stays a true no-op (AC#3), while a dirty one gets picked up and committed by this
       // retry (AC#2) instead of silently no-opping forever.
       if (detail.file) {
-        refs.push({ taskId, file: detail.file });
+        refs.push({ taskId, file: commitFileFor(backend, detail.file) });
       }
       return "already-current" as const; // already fully migrated — nothing to move
     }
@@ -535,7 +559,7 @@ export async function moveBackRefs(
       removeLabels: staleLabel !== undefined ? [staleLabel] : undefined,
       doc: docs,
     });
-    refs.push({ taskId, file: detail.file });
+    refs.push({ taskId, file: commitFileFor(backend, detail.file) });
     return "moved" as const;
   });
   const outcomes = taskIds.map((task, i): MovedBackRef => {

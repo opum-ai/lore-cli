@@ -1840,4 +1840,40 @@ describe("lore rename — backlog/ commit (LORE-49)", () => {
     expect(data.backlogCommit.committed).toBe(false);
     expect(data.backlogCommit.error).toContain("could not commit backlog/");
   });
+
+  test("lore rename succeeds against a quest-backed task instead of failing after the move already landed (LCLI-433)", async () => {
+    writeDoc("reference/orders.md", "---\ntype: Reference\ntasks:\n  - q-1\n---\nOrders.\n");
+    // Quest-shaped: `file` is a real `.quest/tasks/Q-1.json` path (LCLI-428), never a `backlog/` one.
+    const adapter = fakeAdapter([
+      makeTask("Q-1", {
+        file: ".quest/tasks/Q-1.json",
+        labels: ["doc:reference/orders"],
+        documentation: ["docs/reference/orders.md"],
+      }),
+    ]);
+    const beforeTask = JSON.stringify(await adapter.viewTask("Q-1"));
+    const stdout = capture();
+
+    const code = await runRename({
+      root,
+      output: JSON_CTX,
+      args: ["reference/orders", "reference/sales-orders"],
+      stdout,
+      stderr: capture(),
+      adapter,
+      gitSpawn: cleanGitSpawn(),
+      backend: "quest",
+    });
+    const envelope = JSON.parse(stdout.text()) as { kind: string; data: RenameReport };
+
+    expect(code).toBe(EXIT_OK);
+    expect(existsSync(join(root, "docs/reference/sales-orders.md"))).toBe(true);
+    expect(envelope.data.backRefs).toEqual([{ task: "q-1", backRef: "moved" }]);
+    const afterTask = await adapter.viewTask("Q-1");
+    expect(JSON.stringify(afterTask)).not.toBe(beforeTask);
+    expect(afterTask?.labels).toContain("doc:reference/sales-orders");
+    expect(afterTask?.labels).not.toContain("doc:reference/orders");
+    // lore never tried to commit quest's own file path (LCLI-433's exact failure mode).
+    expect(envelope.data.backlogCommit).toEqual({ committed: false, files: [] });
+  });
 });

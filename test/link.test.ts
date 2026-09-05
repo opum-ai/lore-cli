@@ -20,6 +20,7 @@ import type { BacklogAdapter, BacklogTaskDetail, EditTaskPatch } from "../src/ad
 import { TASK_DETAILS_CONCURRENCY } from "../src/commands/concurrency";
 import {
   assertNoLabelCaseCollision,
+  type LinkedTask,
   type LinkOptions,
   type LinkReport,
   moveBackRefs,
@@ -63,7 +64,12 @@ function readDoc(rel: string): string {
 // A clean fake git seam by default so the back-reference commit (`commitBacklogIfDirty`) is a no-op
 // rather than shelling a real `git` in the temp bundle; a test asserting the commit passes its own
 // `dirtyGitSpawn` and inspects its `.calls`.
-function opts(args: string[], adapter: BacklogAdapter, gitSpawn: GitSpawn = cleanGitSpawn()): LinkOptions {
+function opts(
+  args: string[],
+  adapter: BacklogAdapter,
+  gitSpawn: GitSpawn = cleanGitSpawn(),
+  backend: LinkOptions["backend"] = "backlog",
+): LinkOptions {
   return {
     root,
     output: JSON_CTX,
@@ -72,7 +78,7 @@ function opts(args: string[], adapter: BacklogAdapter, gitSpawn: GitSpawn = clea
     stderr: capture(),
     adapter,
     gitSpawn,
-    backend: "backlog" as const,
+    backend,
   };
 }
 
@@ -80,9 +86,10 @@ async function linkCmd(
   args: string[],
   adapter: BacklogAdapter,
   gitSpawn: GitSpawn = cleanGitSpawn(),
+  backend: LinkOptions["backend"] = "backlog",
 ): Promise<{ code: number; report: LinkReport }> {
   const stdout = capture();
-  const code = await runLink({ ...opts(args, adapter, gitSpawn), stdout });
+  const code = await runLink({ ...opts(args, adapter, gitSpawn, backend), stdout });
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: LinkReport };
   expect(envelope.kind).toBe("link.result");
   return { code, report: envelope.data };
@@ -92,18 +99,24 @@ async function unlinkCmd(
   args: string[],
   adapter: BacklogAdapter,
   gitSpawn: GitSpawn = cleanGitSpawn(),
+  backend: LinkOptions["backend"] = "backlog",
 ): Promise<{ code: number; report: UnlinkReport }> {
   const stdout = capture();
-  const code = await runUnlink({ ...opts(args, adapter, gitSpawn), stdout });
+  const code = await runUnlink({ ...opts(args, adapter, gitSpawn, backend), stdout });
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: UnlinkReport };
   expect(envelope.kind).toBe("unlink.result");
   return { code, report: envelope.data };
 }
 
-async function expectLinkError(args: string[], adapter: BacklogAdapter, gitSpawn?: GitSpawn): Promise<LoreError> {
+async function expectLinkError(
+  args: string[],
+  adapter: BacklogAdapter,
+  gitSpawn?: GitSpawn,
+  backend: LinkOptions["backend"] = "backlog",
+): Promise<LoreError> {
   const stdout = capture();
   try {
-    await runLink({ ...opts(args, adapter, gitSpawn), stdout });
+    await runLink({ ...opts(args, adapter, gitSpawn, backend), stdout });
   } catch (err) {
     expect(err).toBeInstanceOf(LoreError);
     // AC#2 (LORE-58): stdout parses or stays silent — empty on every link/unlink failure, partial or otherwise.
@@ -1276,6 +1289,7 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
       "stories/y",
       "docs/stories/x.md",
       "docs/stories/y.md",
+      "backlog",
     );
 
     expect(outcomes).toEqual([{ task: "lore-1", backRef: "already-current" }]);
@@ -1297,6 +1311,7 @@ describe("lore link/unlink — backlog/ commit (LORE-49)", () => {
       "stories/y",
       "docs/stories/x.md",
       "docs/stories/y.md",
+      "backlog",
     );
 
     expect(outcomes).toEqual([{ task: "lore-1", backRef: "already-current" }]);
@@ -1422,5 +1437,94 @@ describe("lore link/unlink — reserved-stem non-concept files stay silent (LORE
     const code = await runUnlink({ ...opts(["stories/x", "lore-1"], adapter), stderr });
     expect(code).toBe(EXIT_OK);
     expect(stderr.text()).not.toContain("no frontmatter mapping");
+  });
+});
+
+// ── A non-backlog tracker's reported file is metadata, never a commit target (LCLI-433) ──
+
+describe("lore link/unlink under a non-backlog tracker: a reported file never trips the drift refusal", () => {
+  /** A quest-shaped task: `file` is a real `.quest/tasks/<id>.json` path (LCLI-428), not backlog's. */
+  function questTask(id: string, overrides: Partial<BacklogTaskDetail> = {}): BacklogTaskDetail {
+    return makeTask(id, { file: `.quest/tasks/${id}.json`, ...overrides });
+  }
+
+  test("lore link succeeds against a quest-backed task instead of failing after both sides already mutated", async () => {
+    writeDoc("stories/quest-link.md", "---\ntype: Story\ntitle: Quest link\n---\nBody.\n");
+    const adapter = fakeAdapter([questTask("Q-1")]);
+    const beforeTask = JSON.stringify(await adapter.viewTask("Q-1"));
+
+    const { code, report } = await linkCmd(["stories/quest-link", "q-1"], adapter, undefined, "quest");
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks).toEqual([{ task: "q-1", status: "added", backRef: "added" }]);
+    // The Story side actually changed...
+    const concept = parseConcept("stories/quest-link.md", readDoc("stories/quest-link.md"));
+    expect(concept.frontmatter.tasks).toEqual(["q-1"]);
+    // ...and so did the task record, on both a doc reference and the back-ref label...
+    const afterTask = await adapter.viewTask("Q-1");
+    expect(JSON.stringify(afterTask)).not.toBe(beforeTask);
+    expect(afterTask?.documentation).toEqual(["docs/stories/quest-link.md"]);
+    expect(afterTask?.labels).toContain("doc:stories/quest-link");
+    // ...but lore never tried to commit quest's own file path (LCLI-433's exact failure mode).
+    expect(report.backlogCommit).toEqual({ committed: false, files: [] });
+  });
+
+  test("a retry (already linked) is a true no-op and still does not trip the drift refusal", async () => {
+    writeDoc("stories/quest-link.md", "---\ntype: Story\ntitle: Quest link\n---\nBody.\n");
+    const adapter = fakeAdapter([
+      questTask("Q-1", { labels: ["doc:stories/quest-link"], documentation: ["docs/stories/quest-link.md"] }),
+    ]);
+    writeDoc("stories/quest-link.md", "---\ntype: Story\ntitle: Quest link\ntasks:\n  - q-1\n---\nBody.\n");
+    const before = JSON.stringify(await adapter.viewTask("Q-1"));
+
+    const { code, report } = await linkCmd(["stories/quest-link", "q-1"], adapter, undefined, "quest");
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks).toEqual([{ task: "q-1", status: "already-linked", backRef: "already-present" }]);
+    expect(adapter.calls).toHaveLength(0); // no editTask call at all — genuinely nothing to do
+    expect(JSON.stringify(await adapter.viewTask("Q-1"))).toBe(before); // byte-identical retry
+    expect(report.backlogCommit).toEqual({ committed: false, files: [] });
+  });
+
+  test("lore unlink succeeds against a quest-backed task instead of failing after both sides already mutated", async () => {
+    writeDoc("stories/quest-unlink.md", "---\ntype: Story\ntitle: Quest unlink\ntasks:\n  - q-1\n---\nBody.\n");
+    const adapter = fakeAdapter([
+      questTask("Q-1", { labels: ["doc:stories/quest-unlink"], documentation: ["docs/stories/quest-unlink.md"] }),
+    ]);
+    const beforeTask = JSON.stringify(await adapter.viewTask("Q-1"));
+
+    const { code, report } = await unlinkCmd(["stories/quest-unlink", "q-1"], adapter, undefined, "quest");
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks).toEqual([{ task: "q-1", status: "removed", backRef: "removed" }]);
+    const concept = parseConcept("stories/quest-unlink.md", readDoc("stories/quest-unlink.md"));
+    expect(concept.frontmatter.tasks).toEqual([]);
+    const afterTask = await adapter.viewTask("Q-1");
+    expect(JSON.stringify(afterTask)).not.toBe(beforeTask);
+    // The fake adapter mirrors the real one: an emptied `--doc` accumulator sends zero flags, a
+    // no-op identical to `undefined` (documented on `fakeAdapter.editTask`), so `documentation`
+    // itself is unaffected here — the observable removal is the back-ref label.
+    expect(afterTask?.labels).not.toContain("doc:stories/quest-unlink");
+    expect(report.backlogCommit).toEqual({ committed: false, files: [] });
+  });
+
+  test("a failed back-ref edit under a quest backend is reported via the same drift error as backlog, not a false drift refusal", async () => {
+    writeDoc("stories/quest-partial.md", "---\ntype: Story\ntitle: Quest partial\n---\nBody.\n");
+    const adapter = fakeAdapter([questTask("Q-1"), questTask("Q-2")], { poisonEdits: ["Q-1"] });
+
+    // A partial back-ref failure is drift (exit 6, LoreError), exactly as under backlog — LCLI-433
+    // only removes the FALSE rejection every quest-backed run used to hit; it does not change how a
+    // genuine per-task failure is reported (AC#2). The error's echoed `input.tasks` is this run's
+    // full report, not the string "task_lifecycle_already_at_destination"-style opacity LCLI-433's
+    // sibling finding warned about elsewhere.
+    const err = await expectLinkError(["stories/quest-partial", "q-1", "q-2"], adapter, undefined, "quest");
+    expect(err.type).toBe("drift");
+    const tasks = (err.input as { tasks: LinkedTask[] }).tasks;
+    expect(tasks[0]).toMatchObject({ task: "q-1", backRef: "failed" });
+    expect(tasks[0]?.error).toContain("simulated Backlog failure editing q-1");
+    expect(tasks[1]).toEqual({ task: "q-2", status: "added", backRef: "added" });
+    expect((await adapter.viewTask("Q-2"))?.documentation).toEqual(["docs/stories/quest-partial.md"]);
+    const backlogCommit = (err.input as { backlogCommit: unknown }).backlogCommit;
+    expect(backlogCommit).toEqual({ committed: false, files: [] });
   });
 });
