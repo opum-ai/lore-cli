@@ -1,4 +1,0 @@
-# Autonomous documentation campaigns intentionally define no blanket command-prefix allows.
-# Prefix rules cannot bind a mutation to this repository's selected campaign scope or `dev` branch.
-# Keep Git, Backlog, Lore, delivery, and cleanup mutations under auto-review so exact argv, working
-# directory, dirty state, destination, and artifact ownership remain visible.

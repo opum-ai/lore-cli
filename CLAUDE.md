@@ -1,6 +1,4 @@
 
-<!-- Canonical ordering: read AGENTS.md first. It supplies campaign authority and the Lore commit-side-effect preflight before this generated Lore bridge. -->
-
 <!-- QUEST WORKFLOW GUIDELINES START -->
 <CRITICAL_INSTRUCTION>
 
@@ -225,13 +223,13 @@ None known. Checked 2026-08-30: this repository carries no Treehouse or Codex de
 
 ### What other repositories read from here
 
-`AGENTS.md` is one of seven consumer migration receipts read by `opum-agent`'s `assertNoMigrationLaunchFence`, and must contain the `opum-agent shared skill source: ...` marker line. Reformatting is safe; dropping that line is not.
+None known. `AGENTS.md` was deleted 2026-09-05 once it stopped being read by anything live: `assertNoMigrationLaunchFence` has no surviving implementation anywhere in opum-agent's current source (checked directly), and the `backlog-handover` skill it was written for is archived. Verify again rather than assuming this stays true.
 
 ### Constraints and couplings to respect
 
 `lore init --codex` is KEPT. It is a public flag in a published package and external users who run Codex CLI depend on it. Codex being retired as this fleet's internal runtime does not reach shipped surface.
 
-`AGENTS.md` and `.codex/` are NOT yet deleted, unlike the fleet's other four repositories, and that is deliberate rather than an oversight: `AGENTS.md` is currently the only home for Quest's own managed instructions block (`quest agents --check --require-installed` reads it there) and the only signal `lore agents --check` uses to know the Codex bridge is selected. opum-agent OPAG-41 (`AGENTS.md is deleted from all five repos only after the upstream change lands`) gates this; LCLI-442 is this repository's half of that upstream fix. Verify `quest agents --check --require-installed` still needs `AGENTS.md` before deleting either.
+`AGENTS.md` and `.codex/` (repo-local Codex config) were deleted 2026-09-05, on the user's explicit approval, once both upstream blockers cleared: quest 0.3.3 added `--target claude`, so `quest agents --check --require-installed --target claude` no longer needs `AGENTS.md` (its managed block now lives in this file's own `quest:agent-instructions` block below); and LCLI-442 gave `lore agents --check` a `hasClaudeBridge` gate symmetric to its existing `hasCodexBridge`, so it no longer needs `AGENTS.md`'s presence to know a Codex bridge was ever selected. Verified after deleting both: `lore agents --check` proposes only the Claude bridge files, `quest agents --check --require-installed --target claude` exits 0, `lore check` exits 0. `lore init --codex` itself is unaffected — see above.
 
 `.lore/cache/graph` generations are written mode-locked read-only, so `rm -rf` on a lore worktree fails with permission errors that look like a sandbox denial. `chmod -R u+w` first.
 
@@ -414,28 +412,24 @@ sake.
 
 ## Project-level skills: what is here on purpose
 
-This repository carries exactly three project-level skills, and each is here for a reason a reader
-should not have to re-derive (LCLI-362; dropped to three again on 2026-09-05 when the ECK-derived
-`handover` skill was retired — `opum-workflow:opum-handoff` from the fleet plugin replaces it, and
-it depended on the deleted Backlog CLI). **Nothing else belongs under `.claude/skills/` or
-`.codex/skills/`.**
+This repository carries exactly two project-level skills right now (down from three: LCLI-362's
+count, then the `handover` skill's 2026-09-05 retirement, then `.codex/`'s deletion the same day
+removed the Codex-side `lore` copy this section used to also describe — none deleted by hand, each
+by its own generator or CLI). **Nothing else belongs under `.claude/skills/` or `.codex/skills/`.**
 
 - **`.claude/skills/quest/SKILL.md`, added by the Backlog-to-Quest cutover.** `quest` is this
   repo's tracker CLI, the same reason `lore` earns a skill: it is the tool every session is
   expected to drive rather than hand-edit around. Installed and kept current via
-  `quest agents --update-instructions` (`quest agents --check --require-installed` must exit 0),
-  never by hand. Asymmetric with the `lore` pair below by the installer's own design, not drift:
-  it writes only `.claude/skills/quest/`, no `.codex/skills/quest/` counterpart. Its actual
-  managed block lives in `AGENTS.md`, not here — see the repo profile above on why `AGENTS.md`
-  cannot be deleted yet.
-- **`.claude/skills/lore/SKILL.md` and `.codex/skills/lore/SKILL.md` are two deliberate copies, and
-  collapsing them would be a regression.** This repository *generates* both:
-  `src/core/agent-bridge.ts` owns `SKILL_REL_PATH = ".claude/skills/lore/SKILL.md"` and
-  `src/core/codex-bridge.ts` owns `CODEX_SKILL_REL_PATH = ".codex/skills/lore/SKILL.md"`. The prose
-  differs because it addresses different agents, and each entry document is written by its own
-  bridge — so CLAUDE.md citing `.claude/...` while AGENTS.md cites `.codex/...` is correct, not
-  drift. Change either through `lore agents` / `lore init --codex`, never by hand. LCLI-442 tracks
-  collapsing this to one selected harness; do not pre-empt it by hand.
+  `quest agents --update-instructions --target claude` (`quest agents --check --require-installed
+  --target claude` must exit 0), never by hand. Its managed block lives in THIS file (the
+  `quest:agent-instructions` block below), not a separate AGENTS.md — quest 0.3.3 added
+  `--target claude` for exactly this, once AGENTS.md was gone.
+- **`.claude/skills/lore/SKILL.md`.** Generated by `src/core/agent-bridge.ts`
+  (`SKILL_REL_PATH = ".claude/skills/lore/SKILL.md"`), never by hand — change it through
+  `lore agents`. The Codex-side twin (`.codex/skills/lore/SKILL.md`, generated by
+  `src/core/codex-bridge.ts`) is absent because this repository has no `.codex/` bridge selected;
+  running `lore init --codex` here would regenerate it, and `lore agents --check` would then cover
+  both again (LCLI-442's `hasClaudeBridge`/`hasCodexBridge` gates, both presence-armed).
 - **No project-level copy of a shared skill.** `opum-sdlc` and `opum-handoff` resolve to the
   `opum-workflow` plugin at user scope. A project-level copy is a silent fork: nothing announces
   the substitution, and a partial copy — one carrying `SKILL.md` without the `scripts/` and

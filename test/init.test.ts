@@ -37,7 +37,6 @@ import {
 } from "../src/commands/init";
 import { loadConfig } from "../src/config";
 import { loadBundle } from "../src/core/bundle";
-import { buildCodexSkillDoc, CODEX_SKILL_REL_PATH } from "../src/core/codex-bridge";
 import { parseConcept } from "../src/core/concept";
 import { buildHermesContextDoc, HERMES_CONTEXT_REL_PATH } from "../src/core/hermes-bridge";
 import { EXIT_CODES, exitCodeFor, LoreError, reportError, WarningCollector } from "../src/errors";
@@ -617,10 +616,6 @@ describe("lore init — refuses to write through a pre-existing symlinked scaffo
 });
 
 describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4)", () => {
-  test("the repository's checked-in Codex skill stays byte-identical to the generator", () => {
-    expect(readFileSync(join(import.meta.dir, "..", CODEX_SKILL_REL_PATH), "utf8")).toBe(buildCodexSkillDoc());
-  });
-
   test("no flags at all: a new bundle pins Quest without probing it", async () => {
     const { result, stderr } = await init();
     expect(result.agents).toBeUndefined();
