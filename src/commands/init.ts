@@ -906,7 +906,13 @@ async function runInteractiveWizard(
       wantAgents = await prompter.confirm("Set up the Claude Code agent bridge (SKILL.md + CLAUDE.md nudge)?", true);
     }
     if (available.codex) {
-      wantCodex = await prompter.confirm("Set up the Codex agent bridge (SKILL.md + AGENTS.md nudge)?", true);
+      // Defaults to declining once Claude was already accepted (LCLI-442, one harness per project):
+      // both tools installed and a bare Enter through each question used to select both bridges,
+      // which is exactly the unconditional-pair outcome OPAG-41 wants ended by default. The default
+      // flips back to accepting when Claude was declined or never asked, so a Codex-only machine (or
+      // an operator who said no to Claude) still gets today's one-Enter path to the Codex bridge —
+      // an explicit "y" here still selects both, this only changes what a bare Enter means.
+      wantCodex = await prompter.confirm("Set up the Codex agent bridge (SKILL.md + AGENTS.md nudge)?", !wantAgents);
     }
     if (available.hermes) {
       wantHermes = await prompter.confirm("Set up the Hermes project context bridge (.hermes.md)?", true);
