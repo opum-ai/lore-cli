@@ -1,6 +1,6 @@
 {
   "name": "opum-lore",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Drive the lore CLI: author, retrieve, and maintain OKF documentation bundles, including explicit multi-repository workspaces. Cut from the same lore-cli repository and tag as the CLI itself, so this skill can never describe a version you don't have.",
   "author": {
     "name": "Opum",
