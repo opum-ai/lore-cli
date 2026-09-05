@@ -231,6 +231,8 @@ None known. Checked 2026-08-30: this repository carries no Treehouse or Codex de
 
 `lore init --codex` is KEPT. It is a public flag in a published package and external users who run Codex CLI depend on it. Codex being retired as this fleet's internal runtime does not reach shipped surface.
 
+`AGENTS.md` and `.codex/` are NOT yet deleted, unlike the fleet's other four repositories, and that is deliberate rather than an oversight: `AGENTS.md` is currently the only home for Quest's own managed instructions block (`quest agents --check --require-installed` reads it there) and the only signal `lore agents --check` uses to know the Codex bridge is selected. opum-agent OPAG-41 (`AGENTS.md is deleted from all five repos only after the upstream change lands`) gates this; LCLI-442 is this repository's half of that upstream fix. Verify `quest agents --check --require-installed` still needs `AGENTS.md` before deleting either.
+
 `.lore/cache/graph` generations are written mode-locked read-only, so `rm -rf` on a lore worktree fails with permission errors that look like a sandbox denial. `chmod -R u+w` first.
 
 `dev`'s branch ruleset requires 3 status checks on every push (docker e2e harness, lint/typecheck/test windows-latest, operating block digest), but `.github/workflows/ci.yml`'s `push` trigger is `branches: [main]` only — a direct push to `dev` runs no workflow at all, so those checks can never be satisfied and GitHub refuses the push (confirmed 2026-08-31: `GH013`, attempting exactly this). This is not a gap: it is what makes landing on `dev` structurally impossible except through a PR, in a fleet where PR-into-dev is otherwise only a convention. Do not "fix" `ci.yml`'s push trigger to include `dev` without checking this coupling first — restoring it reintroduces the 444-redundant-run problem LCLI-251 removed, and does nothing to loosen the actual gate, which is the ruleset, not the workflow trigger.
@@ -310,31 +312,14 @@ Five traps that local context will not warn you about:
   than the one you tested is accepted rather than rejected as unsupported
   (`src/adapters/quest.ts`'s allowlist did exactly that and rejected 0.2.9;
   `src/adapters/backlog.ts`'s `MIN_BACKLOG_VERSION` floor is the shape to copy).
-- **Peers are ephemeral live sessions, not per-repository services.** There is no
-  `mcp__<repo>__*` server. MCP peer servers are per *machine*
-  (`claude-peer-jetson`, `-mbpm2`, `-rpi5`, `-spark`) and reach only *other*
-  machines, so they never list this host's siblings; a remote peer is addressed
-  `machine.repo.name`, found via `who()` and reached with
-  `send_prompt(recipient_session=...)` then `wait_for_completion(message_id)`.
-  An unreachable peer means no live session, not a missing repository.
-- **Same-host siblings go through `herdr`, and a success response is not
-  delivery.** `herdr agent list` returns every live agent on this host with its
-  `pane_id`, `cwd`, `agent` kind, and `agent_status`;
-  `herdr agent prompt <pane_id> "<text>"` sends to one. **`prompt` reliably
-  pastes but does not always submit** — the text can sit unsent at the target's
-  input prompt while it stays `idle`, and the call returns success either way.
-  Confirm with `herdr agent read <pane_id>`; a buffered message shows as
-  `[Pasted text #1 +N lines]`, and `herdr agent send-keys <pane_id> enter`
-  submits it. Only a target that flips to `working` has accepted the message.
-  Two separate pane rules apply, because one repository can host several panes:
-  address **one pane per repository**, or concurrent agents edit the same files;
-  and choose that pane **by its `agent` kind**, because a `codex` pane will not
-  act on a Claude-shaped notice the way a `claude` session does. On 2026-08-04
-  this worktree was exactly that case — a live `codex` pane alongside its
-  `claude` session — but pane composition changes by the hour, so read
-  `herdr agent list` rather than trusting that sentence. Derived from the owner
-  record's "Reaching a peer" on 2026-08-04; re-read it there before relying on
-  these steps.
+- **Reach peers with `ListAgents` + `SendMessage`, not `herdr`.** One
+  `ListAgents` call lists every peer session — same-host, cross-machine, and
+  cloud — by the name to address it with; `SendMessage` delivers to that name
+  directly, no pane lookup or delivery-confirmation step required. herdr
+  remains the terminal workspace manager sessions run inside, but per the
+  fleet operating block above it is not the message channel. Verified
+  2026-09-05 in this repository: `ListAgents` returned 34 peers, same-host and
+  remote, in one call.
 
 When this repository and the applicable consolidated Lore or Opum owner record
 disagree, that is drift and drift is a defect. This repository is authoritative
@@ -348,91 +333,38 @@ for the concern-to-owner map this repository consumes.
 
 ### Writing a rule down here
 
-Every failure mode below has already bitten this file. All are cheap to avoid.
+Write pointers, not transcriptions — cite the owner by repository, branch, and
+path rather than copying its steps, since a pointer cannot go stale the way
+copied prose does; when a cache is unavoidable, date it and name the owner
+authoritative. Say "then-current", never "current" — an owner record's head
+moves, a dated observation does not.
 
-**Write pointers, not transcriptions.** Steps copied out of an owner record keep
-reading as correct long after the owner corrects them, because nothing here
-changes when the source does. Cite the owner by repository, branch, and path and
-let the reader resolve it — a pointer cannot go stale the way copied prose does.
-When a cache is unavoidable, date it, name the owner authoritative, and say the
-cache is the defect on disagreement. The `herdr` confirmation step above exists
-because the first version of this section faithfully derived an incomplete
-procedure and would have had a session report a delivery that never happened.
+Before writing a rule, ask: *can a reader satisfy this sentence literally and
+still violate the rule it came from?* If yes, write the imperative — name the
+forbidden action, not the belief that is wrong. Shapes that pass this test
+while looking fact-shaped: an adverb carrying the prohibition ("report it
+rather than *silently* promoting" bans the concealment, not the act, and is
+satisfied by promoting loudly); an owner named without the negative ("`saws`
+owns DNS" is satisfied by provisioning locally anyway); a description
+forbidden while the artifact stays buildable ("never describe Quest as
+installable" permits shipping the manifest entry that makes it so); a gate
+that enumerates a curated list instead of scanning everything matching the
+pattern; a gate whose exit code passed through a pipe (`tool | tail -2; echo
+$?` reports `tail`'s status, not the tool's); a gate that validates one
+document against another instead of re-deriving from content — three
+instances surfaced 2026-08-29 across `opum-cli-e2e` and `quest-cli`, all
+removed by the same rule: bind on content, re-derive at check time, never read
+the value out of the document being validated; and treating a fix as exempt
+from this same test, since the shape tends to reappear inside its own
+remediation, and a full-set replacement re-authors every element including the
+ones the edit was not about.
 
-**Say "then-current", never "current".** An owner record's head can move several
-times within one session, so any sentence phrased around a current head, org
-layout, or live session list is wrong before it is read. A dated observation
-stays true permanently; write what was observed and when.
-
-**A fact-shaped sentence is not a rule.** Before writing a rule, ask: *can a
-reader satisfy this sentence literally and still violate the rule it came from?*
-"Makes no installability claim" is a fact, is satisfiable, and still permits a
-greyed-out install button. If the answer is yes, write the imperative instead —
-name the actions that are forbidden, not just the belief that is wrong.
-
-**That test is the rule. The list below is not.** These are shapes already found
-in this file — a record, not a checklist. It was written naming four shapes and
-two more arrived the same day, which is the point: *finding none of them is not a
-clear*. Run the test against the sentence in front of you; use the list only to
-recognize a shape faster.
-
-- **An adverb carrying the prohibition.** "Report it rather than *silently*
-  promoting either" forbids the concealment, not the promotion, and is satisfied
-  by promoting one loudly. Forbid the act.
-- **Ownership stated without the act forbidden.** "`saws` owns DNS; route
-  provisioning there" is satisfied by creating a preview record locally — every
-  sentence honoured, the rule broken. Pair the owner with the hard negative.
-- **A description forbidden while the artifact stays permitted.** "Never describe
-  Quest as installable" permits adding the manifest entry, dependency, or
-  lockfile pin that resolves it. Describe nothing, ship the scaffolding. Forbid
-  building the thing.
-- **A gate that enumerates by hand.** A curated file list is satisfiable while
-  the rule it enforces is violated, and a green gate reads as proof — the most
-  confident possible false clear. A directory-scoped scan is the same shape in
-  disguise: `docs/`-only is a hand-scoped list wearing an enumeration costume.
-- **A gate reporting the wrong exit code.** `tool | tail -2; echo $?` reports
-  `tail`'s status, so a failing tool reads as a pass and looks identical to a
-  real one. Take the code without a pipe — `tool >/dev/null 2>&1; echo $?` — and
-  do not cite an exit code obtained any other way.
-- **A gate validating the claim instead of the artifact.** The check reads a
-  digest, path, or version out of a *document* and compares it to another
-  document, never deriving it from the bytes it is supposed to be about. Two
-  records agreeing with each other prove nothing — they can be wrong together —
-  and it fails **green**, which is worse than failing. Three instances surfaced
-  on 2026-08-29 across three repositories: `opum-cli-e2e` bound scale evidence to
-  a launcher **path**, so a different binary at the same path would have bound
-  and PASSED; that same harness's packaging receipts compared an *asserted*
-  digest against the digest *asserted* in a platform manifest, never touching the
-  shipped binary; and `quest-cli`'s release gate keyed on `import.meta.main`,
-  which is absent on older Node, so `main()` never ran and the process exited 0 —
-  a publication gate that passed by doing nothing. The rule that removes all
-  three: **bind on content, re-derive it at check time, and never read the value
-  out of the document being validated.** Applies to this repository's own
-  evidence records, which is why a refreshed digest baseline needs a negative
-  control proving what actually moved it.
-- **Treating the fix as exempt.** Closing a loophole is an authoring event, so
-  the sentence written to close one is subject to this same test — the shape
-  tends to reappear inside its own remediation. Two further consequences: a
-  full-set replacement **re-authors every element**, including the ones the edit
-  was not about, so re-read what you carried across verbatim; and fixing one
-  instance of a shape is not fixing the shape — find its siblings.
-
-**Apply the test to gates before prose.** A defective sentence misleads a reader;
-a defective gate issues a certificate. A gate here must **enumerate** rather than
-list — scan everything matching the pattern, never a curated set, and say so when
-its scope is narrower than the repository so nobody reads it as the whole
-guarantee; **assert non-vacuity**, so an empty or mis-globbed run fails instead of
-passing; **justify each exemption individually and pin the exemption set**, so
-widening it is a visible failure rather than a silent one; **report a real exit
-code**, taken without a pipe; and **be proven by a negative control** — a
-deliberate violation that makes the gate fail *and* name the offending path. A
-gate never observed failing is not known to work. That last step costs about a
-minute: `lore check` was proven here by adding a Reference with a dangling link,
-confirming exit 6 naming both files, and removing it.
-
-**Do not sweep with grep alone.** These shapes are semantic, so a verbatim search
-misses them by construction — and it also misses literal matches that wrap across
-two lines. Read the record.
+A gate must additionally assert non-vacuity (an empty or mis-globbed run
+fails, not passes), justify and pin its exemption set, and be proven by a
+negative control — a deliberate violation that makes it fail and names the
+offending path. `lore check` was proven this way: a dangling-link Reference
+forced exit 6 naming both files, then was removed. These shapes are semantic;
+grep alone misses them.
 
 ## The three sessions that ship this pair
 
@@ -445,9 +377,7 @@ third repository. Three live agent sessions carry that, and none of them can fin
 | **quest-cli** | `opum-ai/quest-cli` | Quest's CLI, its release, the tracker contract |
 | **opum-cli-e2e** | `opum-ai/opum-cli-e2e` | the 400-row matrix that qualifies the pair |
 
-Reach them with `herdr` (see the same-host bullet above) — `herdr agent list` for the pane id,
-`herdr agent prompt <pane> "..."`, then `herdr agent read <pane>` to confirm delivery. Address
-one pane per repository.
+Reach them with `ListAgents` + `SendMessage` (see the peer-reaching bullet above).
 
 **The pairing is a hard constraint, not a courtesy.** Lore's Quest adapter pins
 `schemaVersion`, envelope `kind`, `mutates` and a required-command set; Quest's releases move
@@ -484,29 +414,31 @@ sake.
 
 ## Project-level skills: what is here on purpose
 
-This repository carries exactly four project-level skills, and each is here for a reason a reader
-should not have to re-derive (LCLI-362, raised from three on 2026-09-03 for `quest`). **Nothing
-else belongs under `.claude/skills/` or `.codex/skills/`.**
+This repository carries exactly three project-level skills, and each is here for a reason a reader
+should not have to re-derive (LCLI-362; dropped to three again on 2026-09-05 when the ECK-derived
+`handover` skill was retired — `opum-workflow:opum-handoff` from the fleet plugin replaces it, and
+it depended on the deleted Backlog CLI). **Nothing else belongs under `.claude/skills/` or
+`.codex/skills/`.**
 
-- **`.claude/skills/quest/SKILL.md` is the fourth, added by the Backlog-to-Quest cutover.** The
-  three-skill cap existed to stop skill sprawl, not to freeze the count — `quest` is now this
+- **`.claude/skills/quest/SKILL.md`, added by the Backlog-to-Quest cutover.** `quest` is this
   repo's tracker CLI, the same reason `lore` earns a skill: it is the tool every session is
   expected to drive rather than hand-edit around. Installed and kept current via
   `quest agents --update-instructions` (`quest agents --check --require-installed` must exit 0),
   never by hand. Asymmetric with the `lore` pair below by the installer's own design, not drift:
-  it writes only `.claude/skills/quest/`, no `.codex/skills/quest/` counterpart.
+  it writes only `.claude/skills/quest/`, no `.codex/skills/quest/` counterpart. Its actual
+  managed block lives in `AGENTS.md`, not here — see the repo profile above on why `AGENTS.md`
+  cannot be deleted yet.
 - **`.claude/skills/lore/SKILL.md` and `.codex/skills/lore/SKILL.md` are two deliberate copies, and
   collapsing them would be a regression.** This repository *generates* both:
   `src/core/agent-bridge.ts` owns `SKILL_REL_PATH = ".claude/skills/lore/SKILL.md"` and
   `src/core/codex-bridge.ts` owns `CODEX_SKILL_REL_PATH = ".codex/skills/lore/SKILL.md"`. The prose
   differs because it addresses different agents, and each entry document is written by its own
   bridge — so CLAUDE.md citing `.claude/...` while AGENTS.md cites `.codex/...` is correct, not
-  drift. Change either through `lore agents` / `lore init --codex`, never by hand.
-- **`.claude/skills/handover/SKILL.md` shadows nothing.** There is no user-level `handover` package,
-  so this is the only copy. It is distinct from the user-level `backlog-handover` skill.
-- **No project-level copy of a shared skill.** `backlog-handover`, `codex-worker`, `codex-control`,
-  and `opum-worktrees` resolve to their user-level packages. A project-level copy is a silent fork:
-  nothing announces the substitution, and a partial copy — one carrying `SKILL.md` without the
-  `scripts/` and `references/` the procedure invokes — fails only once a session is already relying
-  on it. Empty leftover directories count: git does not track them, so they survive every
-  diff-based review and are visible only in a filesystem listing.
+  drift. Change either through `lore agents` / `lore init --codex`, never by hand. LCLI-442 tracks
+  collapsing this to one selected harness; do not pre-empt it by hand.
+- **No project-level copy of a shared skill.** `opum-sdlc` and `opum-handoff` resolve to the
+  `opum-workflow` plugin at user scope. A project-level copy is a silent fork: nothing announces
+  the substitution, and a partial copy — one carrying `SKILL.md` without the `scripts/` and
+  `references/` the procedure invokes — fails only once a session is already relying on it. Empty
+  leftover directories count: git does not track them, so they survive every diff-based review and
+  are visible only in a filesystem listing.
