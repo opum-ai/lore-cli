@@ -188,13 +188,24 @@ permissions, or execution settings.
  * between the `lore:agents` markers. Deliberately tiny (ADR-0004: "the SKILL.md bridge costs ~30–50
  * idle tokens"; the nudge carries no substantive guidance itself): its only job is discoverability —
  * "lore exists, here is the skill, here is where to pull just-in-time detail." No trailing newline.
+ *
+ * The skill line depends on `skillSource` (LCLI-443/444): the value passed here is always the one
+ * that actually governs SKILL.md's existence for THIS run — `"repo"` for a scoped `lore init
+ * --claude`/`--agents` request (which force-materializes the file regardless of config, so pointing
+ * at it is still accurate) or the real persisted config value for a bare `lore agents` call. A
+ * `"plugin"` repository has no per-repo file to point at, so the line says where the skill actually
+ * comes from instead of naming a path that must not exist.
  */
-export function buildNudgeBody(): string {
+export function buildNudgeBody(skillSource: SkillSource): string {
+  const skillLine =
+    skillSource === "plugin"
+      ? "- **Skill:** installed from the `opum-lore` Claude Code plugin, not this repository — how to drive lore."
+      : `- **Skill:** \`${SKILL_REL_PATH}\` — how to drive lore.`;
   return `This repo uses **lore** — an OKF-native documentation CLI — for the docs bundle under \`docs/\`.
 When working on documentation, drive it through \`lore\` (not a plain editor) so Story <-> Task
 coupling, managed blocks, and cross-links stay coherent.
 
-- **Skill:** \`${SKILL_REL_PATH}\` — how to drive lore.
+${skillLine}
 - **Just-in-time detail:** run \`lore instructions\` for the canonical agent loop, then
   \`lore instructions <topic>\` (\`linking\`, \`sync\`, \`check\`, \`validation\`, \`workspace\`).`;
 }
@@ -333,7 +344,7 @@ function planSkill(input: PlanBridgeInput): BridgeFilePlan {
 /** Plan the CLAUDE.md nudge (managed-block, always-refresh discipline). */
 function planNudge(input: PlanBridgeInput): BridgeFilePlan {
   const base = input.claudeOnDisk ?? "";
-  const desired = upsertManagedBlock(base, { label: AGENT_BLOCK_LABEL, body: buildNudgeBody() });
+  const desired = upsertManagedBlock(base, { label: AGENT_BLOCK_LABEL, body: buildNudgeBody(input.skillSource) });
   if (input.claudeOnDisk === null) {
     return { path: CLAUDE_MD_REL_PATH, action: "created", contents: desired };
   }
