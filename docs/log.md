@@ -218,6 +218,7 @@
 - 2026-09-03T07:24:09-05:00 d02869894540672867e4b7ccfee96e4ad4f8d2da feat(quest): cut LCLI over from Backlog to Quest as tracker of record
 - 2026-09-03T07:26:25-05:00 99d3e4f3256f0f1087c9416a08322bbdc86044c8 chore(quest): log the cutover commit and file the sync link-drop bug (LCLI-428)
 - 2026-09-03T21:32:30-05:00 eadb5d3a0470058f08cadab34b13ffab22b4008c chore(quest): sharpen LCLI-428's blocker to name the release (#553)
+- 2026-09-03T23:32:41-05:00 6681f8bc253bbcc211e3a92297f438b8dec913eb fix(links): stop task-row links corrupting a non-markdown target with a .md suffix (LCLI-428) (#555)
 
 ## docs/adr
 
@@ -275,6 +276,8 @@
 - 2026-08-31T12:03:05-05:00 2531e1d39c4e45df31a386108e24f36788b86d05 fix: verify tracker backend before persisting in the wizard, default new bundles to backlog
 - 2026-08-31T12:12:58-05:00 3c4c239899563461e78d68c024ea3a6b9205f1be revert: keep lore init's default tracker backend as quest
 - 2026-09-03T04:07:07Z 24efbabb81619131bec90cfe0e060fa8845e4e70 docs(reference): record 0.4.0 as released in lore-cli release truth (#532)
+- 2026-09-04T00:58:08-05:00 44c70234519de5f875c25ac6f7a8a131bb7b7c46 docs(reference): record 0.4.1 release truth (#559)
+- 2026-09-05T09:02:37Z 4f7d3de28b02f7477090e04729c57911de6b3ec2 docs(release): record 0.4.2 release truth (#572)
 
 ## docs/runbooks
 
