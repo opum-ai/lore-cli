@@ -5,7 +5,7 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.3] - 2026-09-05
 
 ### Added
 
@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repository, so a bare `lore agents` run stops proposing or regenerating it. The default
   (`"repo"`, unset) is unchanged: every existing repository keeps generating its own SKILL.md
   exactly as before. An explicit, scoped `lore init --claude`/`--agents` request always still
-  materializes the file regardless of this setting — "explicit beats config" (LCLI-442).
+  materializes the file regardless of this setting — "explicit beats config" (LCLI-443).
 
 ### Changed
 
@@ -24,7 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remedy; a plain `lore agents` reports the same without deleting it. `lore agents --force` removes
   it only when its bytes exactly match lore's own generated content — a hand-edited or otherwise
   differing file is left in place even under `--force`, the same refusal `protected` already applies
-  to an unexpected in-place edit (LCLI-442).
+  to an unexpected in-place edit (LCLI-443).
+
+### Fixed
+
+- **The `CLAUDE.md` agent-bridge nudge no longer names a SKILL.md path under `skill_source =
+  "plugin"`.** It previously pointed at `.claude/skills/lore/SKILL.md` unconditionally, so a
+  repository that opted into the plugin and removed its per-repo copy was left with a nudge
+  pointing at a file that must not exist. The nudge now names the `opum-lore` plugin instead
+  whenever `skill_source` is `"plugin"` (LCLI-444).
 
 ## [0.4.2] - 2026-09-05
 

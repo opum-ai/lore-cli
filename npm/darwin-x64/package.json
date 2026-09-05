@@ -1,6 +1,6 @@
 {
   "name": "@opum-ai/lore-darwin-x64",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "lore compiled binary for macOS (Intel, x64, baseline). Do not depend on this directly — install @opum-ai/lore.",
   "publishConfig": {
     "access": "public"
