@@ -163,9 +163,14 @@ mean removed as a product surface, and it does not mean erased from history.
   not product surface and does not qualify.
 
 Treehouse, Codex and OpenCode are all retired. Treehouse outright — binary and both
-pools deleted 2026-08-30, so any instruction to run `treehouse ...` will now fail;
-use the `opum-worktrees` skill. Codex and OpenCode are retired as agent runtimes
-this fleet builds on or dispatches to, including tooling that drives them.
+pools deleted 2026-08-30, so any instruction to run `treehouse ...` will now fail.
+Its replacement is not another tool: use a plain branch in your primary checkout,
+and let a background session isolate itself under `.claude/worktrees/` when it
+needs to. `tooling/opum-worktrees` and the `opum-worktrees` skill that drove it
+were both deleted 2026-09-04, so an earlier revision of this paragraph retired one
+dead instruction by pointing at another. Check that a replacement still exists
+before naming it. Codex and OpenCode are retired as agent runtimes this fleet
+builds on or dispatches to, including tooling that drives them.
 FMC is retired as the mechanism these five sessions use to coordinate; that is not
 a ruling about any repository's own delivery machinery.
 
