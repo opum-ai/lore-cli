@@ -83,10 +83,15 @@ export async function compileWorkspaceAgentContext(
   const extras: WorkspaceCompileExtras = {
     provenanceById: loaded.projection.provenanceById,
     extraCatalogEntries: expanded.extraCatalogEntries,
-    skippedWorkspaceMembers: loaded.skippedMembers.map((skipped) => ({
-      memberId: skipped.memberId,
-      reason: skipped.error.message,
-    })),
+    // `loadWorkspaceProjection` always attempts every manifest member, regardless of
+    // `--repository` (LCLI-432 tolerates a failure there; it does not skip loading unselected
+    // members). Filtered to `consideredMemberIds` here so the pack's own banner names only members
+    // this compile was actually about — a `--repository opum-agent` compile must not report on an
+    // unrelated fleet member nobody asked for, discovered running this exact compile for real
+    // against opum-doc's opum-family manifest (7 of 16 members failed, none requested).
+    skippedWorkspaceMembers: loaded.skippedMembers
+      .filter((skipped) => consideredMemberIds.has(skipped.memberId))
+      .map((skipped) => ({ memberId: skipped.memberId, reason: skipped.error.message })),
   };
   return compileAgentContextForProfile(expandedProfile, graph, task, maxTokens, snapshot, extras);
 }

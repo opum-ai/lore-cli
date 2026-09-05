@@ -216,6 +216,24 @@ describe("agent context --workspace — tolerant loading (OPAG-33)", () => {
     expect(catalogFor(data, "alpha::design")?.reason).not.toBe("member-skipped");
     expect(catalogFor(data, "beta::design")?.reason).toBe("member-skipped");
   });
+
+  test("a failing member outside --repository is never named in the banner, even though loadWorkspaceProjection still attempted it", async () => {
+    // loadWorkspaceProjection always attempts every manifest member regardless of selection
+    // (tolerateMemberFailures only stops that from being fatal) — found compiling a real pack
+    // against opum-doc's opum-family manifest with --repository opum-agent alone: seven OTHER,
+    // never-requested members that happened to be broken showed up in the banner. A --repository
+    // that excludes a member must exclude it from the pack's own report of what went wrong too.
+    profile(
+      "specialist",
+      'schema_version = 1\nname = "specialist"\ndescription = "Specialist."\nkind = "specialist"\nmax_tokens = 4000\nsources = ["design"]\n',
+    );
+    const data = await compile("specialist", ["alpha"], (memberRoot) =>
+      memberRoot.endsWith("beta") ? "refs/heads/wrong" : "refs/heads/main",
+    );
+    expect(data.skippedWorkspaceMembers).toBeUndefined();
+    expect(catalogFor(data, "alpha::design")).toBeDefined();
+    expect(data.catalog.some((entry) => entry.memberId === "beta")).toBe(false);
+  });
 });
 
 describe("agent context --workspace — CLI wiring", () => {
