@@ -33,3 +33,10 @@ promote_portability = false # the portability lint stays a warning, not an error
 # enabled, set profile / project / board / issue_type /
 # default_labels / status_flow here. jira-cli owns credentials; run
 # `jira init --yes` instead of storing any Jira credential in this file.
+
+[agents]
+# This repository opted into the opum-lore marketplace plugin (LCLI-441) owning
+# .claude/skills/lore/SKILL.md on 2026-09-05, dogfooding LCLI-443's opt-in (LCLI-444):
+# `lore agents --check` treats a leftover per-repo SKILL.md as drift, and `--force`
+# removes one only when its bytes exactly match this CLI's own generated content.
+skill_source = "plugin"

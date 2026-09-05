@@ -102,8 +102,15 @@ describe("generated content (AC#2) — small, grounded, points at `lore instruct
   });
 
   test("the CLAUDE.md nudge points at both the skill and `lore instructions`", () => {
-    const nudge = buildNudgeBody();
+    const nudge = buildNudgeBody("repo");
     expect(nudge).toContain(SKILL_REL_PATH);
+    expect(nudge).toContain("lore instructions");
+  });
+
+  test("under skill_source=plugin, the nudge points at the plugin instead of a per-repo path (LCLI-443)", () => {
+    const nudge = buildNudgeBody("plugin");
+    expect(nudge).not.toContain(SKILL_REL_PATH);
+    expect(nudge).toContain("opum-lore");
     expect(nudge).toContain("lore instructions");
   });
 
@@ -111,7 +118,7 @@ describe("generated content (AC#2) — small, grounded, points at `lore instruct
     const skill = buildSkillDoc();
     expect(skill).toContain("multi-repository workspaces");
     expect(skill).toContain("`workspace`");
-    expect(buildNudgeBody()).toContain("`workspace`");
+    expect(buildNudgeBody("repo")).toContain("`workspace`");
   });
 
   test("generated content names every real command and NOTHING unshipped (the LORE-37 trap)", () => {
@@ -816,13 +823,16 @@ describe("lore agents — skill_source = plugin opts SKILL.md out of repo genera
     writeFileSync(join(root, ".lore/config.toml"), '[agents]\nskill_source = "plugin"\n');
   }
 
-  test("a fresh repo opted into the plugin never creates SKILL.md; CLAUDE.md's nudge still lands", () => {
+  test("a fresh repo opted into the plugin never creates SKILL.md; CLAUDE.md's nudge points at the plugin, not the deleted path (LCLI-444)", () => {
     withSkillSourcePlugin();
     const { code, result } = agents();
     expect(code).toBe(0);
     expect(actionFor(result, SKILL_REL_PATH)).toBe("unchanged");
     expect(existsSync(skillAbs())).toBe(false);
     expect(actionFor(result, CLAUDE_MD_REL_PATH)).toBe("created");
+    const claudeMd = readFileSync(claudeAbs(), "utf8");
+    expect(claudeMd).not.toContain(SKILL_REL_PATH);
+    expect(claudeMd).toContain("opum-lore");
   });
 
   test("--check with no leftover SKILL.md stays at exit 0", () => {

@@ -197,9 +197,9 @@ whatever already succeeded rather than erroring or duplicating anything.
 | | |
 |---|---|
 | **Args** | none |
-| **Key flags** | `--yes` / `--non-interactive` (skip the wizard even on a TTY) · `--tracker <quest\|backlog\|jira>` (persist the tracker choice without prompting) · `--migrate-backlog` (valid only with `--tracker quest` over a real Backlog.md project) · `--keep-backlog-tasks` (select Quest and deliberately leave an existing Backlog project in place) · `--claude` (Claude Code bridge; `--agents` alias) · `--codex` (Codex bridge: `AGENTS.md` + `.codex/skills/lore/`) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-tracker` / `--no-tracker` (force/skip the selected tracker's capability check; `--check-backlog` / `--no-backlog` are aliases) · `--allow-no-git` (scaffold a docs-only bundle outside a git worktree) · `--install-tracker` / `--no-install-tracker` (install, or never install, a missing tracker binary) · `--jira-profile <name>` / `--jira-project <KEY>` (answer the jira configuration questions without prompting; both require `--tracker jira`) |
+| **Key flags** | `--yes` / `--non-interactive` (skip the wizard even on a TTY) · `--tracker <quest\|backlog\|jira>` (persist the tracker choice without prompting) · `--migrate-backlog` (valid only with `--tracker quest` over a real Backlog.md project) · `--keep-backlog-tasks` (select Quest and deliberately leave an existing Backlog project in place) · `--claude` (Claude Code bridge; `--agents` alias) · `--codex` (Codex bridge: `AGENTS.md` + `.codex/skills/lore/`) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-tracker` / `--no-tracker` (force/skip the selected tracker's capability check; `--check-backlog` / `--no-backlog` are aliases) · `--allow-no-git` (scaffold a docs-only bundle outside a git worktree) · `--install-tracker` / `--no-install-tracker` (install, or never install, a missing tracker binary) · `--jira-profile <name>` / `--jira-project <KEY>` (answer the jira configuration questions without prompting; both require `--tracker jira`) · `--skill-source <repo\|plugin>` (persist `[agents].skill_source`; `plugin` opts into the `opum-lore` marketplace plugin owning `.claude/skills/lore/SKILL.md` instead of this repository — see `agents` below) |
 | **Output** | `kind: init` — created/skipped scaffold paths, plus `interactive`/`scaffolds` always present (`false`/`[]` on the default path); `tracker` is present after a wizard or explicit `--tracker` choice; `migration` reports the applied digest, source fingerprint, mappings, survivors, and task fingerprints after a successful Backlog-to-Quest migration; `agents` (Claude), `codex`, and `trackerCheck` are present only when those steps ran; `trackerCheck` names the backend it probed, and the older `backlog` field is deprecated and now populated only for a Backlog bundle; `trackerEnvironment` reports what each backend's CLI and this repository looked like, and `installed` names a package this run installed |
-| **Exit** | `0` ok (the tracker check is advisory-only and never changes this) · `2` usage (bad flag/unknown `--scaffold` target, an invalid migration-flag combination, a missing `--tracker` value, a jira flag without `--tracker jira`, a non-interactive `--tracker jira` missing `--jira-profile`/`--jira-project`, or the wizard's stdin closed before finishing) · `3` not found (jira-cli has no credential profiles, the `jira` binary is missing, or the Jira project key does not resolve) · `4` permission denied · `5` a non-regular entry (directory/symlink) blocks a scaffold path, or a scaffold target collides with a differing hand-edited file · `6` malformed configuration, unknown tracker backend, a `--jira-profile` jira-cli does not know, a `--tracker quest` selection over a real Backlog project with neither `--migrate-backlog` nor `--keep-backlog-tasks`, lossless-migration preflight failure, or the directory is not a git worktree and `--allow-no-git` was not passed |
+| **Exit** | `0` ok (the tracker check is advisory-only and never changes this) · `2` usage (bad flag/unknown `--scaffold` target, an invalid migration-flag combination, a missing `--tracker`/`--skill-source` value, a jira flag without `--tracker jira`, a non-interactive `--tracker jira` missing `--jira-profile`/`--jira-project`, or the wizard's stdin closed before finishing) · `3` not found (jira-cli has no credential profiles, the `jira` binary is missing, or the Jira project key does not resolve) · `4` permission denied · `5` a non-regular entry (directory/symlink) blocks a scaffold path, or a scaffold target collides with a differing hand-edited file · `6` malformed configuration, unknown tracker backend or skill source, a `--jira-profile` jira-cli does not know, a `--tracker quest` selection over a real Backlog project with neither `--migrate-backlog` nor `--keep-backlog-tasks`, lossless-migration preflight failure, or the directory is not a git worktree and `--allow-no-git` was not passed |
 
 ### `new`
 
@@ -827,6 +827,22 @@ Generate/refresh the agent bridges: write `.claude/skills/lore/SKILL.md` (how
 an agent should drive lore) and a small `CLAUDE.md` nudge. Idempotent —
 regenerating with no change is byte-identical.
 
+**`.lore/config.toml`'s `[agents].skill_source` (LCLI-443) can opt SKILL.md out of
+per-repo generation entirely.** The default, `"repo"`, is this section's behavior
+above, unchanged. `"plugin"` means the `opum-lore` marketplace plugin owns the
+skill instead: a bare `lore agents` then never creates or updates SKILL.md, and
+a leftover copy is reported `orphaned` (drift, not silence) — `--check` exits `6`
+naming the file and the remedy. `--force` removes an orphaned file only when its
+bytes exactly match this command's own generated content, reported as `removed`;
+a hand-edited or otherwise differing leftover stays `orphaned` even under
+`--force`, the same refusal that already protects a hand-edited file from being
+overwritten. `--skill-source` on `init` (above) is how a repository opts in. A
+scoped, explicit `lore init --claude`/`--agents` request always still
+materializes SKILL.md regardless of this setting — the setting governs only what
+the bare `lore agents` call does. `CLAUDE.md`'s nudge reflects the active source
+too: under `"plugin"` its "Skill:" line names the plugin rather than a per-repo
+path that must not exist.
+
 **The Codex bridge is covered too, but only where one already exists**
 (LCLI-364). When `.codex/skills/lore/SKILL.md` is present, or `AGENTS.md`
 carries the `lore:agents` managed block, both are planned and checked exactly
@@ -849,9 +865,9 @@ reverse.
 | | |
 |---|---|
 | **Args** | none |
-| **Key flags** | `--force` (overwrite hand-edited generated files) · `--check` (report drift without writing — CI gate for a stale bridge) |
-| **Output** | `kind: agents.result` — each bridge file and what happened to it, so a failing `--check` names the artifact that drifted |
-| **Exit** | `0` ok · `6` `--check` found a bridge out of date |
+| **Key flags** | `--force` (overwrite hand-edited generated files, or remove an orphaned SKILL.md that exactly matches the generated content) · `--check` (report drift without writing — CI gate for a stale bridge) |
+| **Output** | `kind: agents.result` — each bridge file and what happened to it (`created`/`updated`/`unchanged`/`protected`/`orphaned`/`removed`), so a failing `--check` names the artifact that drifted |
+| **Exit** | `0` ok · `6` `--check` found a bridge out of date (including an orphaned leftover under `skill_source = "plugin"`) |
 
 ### `instructions`
 
