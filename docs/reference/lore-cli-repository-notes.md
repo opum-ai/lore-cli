@@ -80,20 +80,24 @@ ship this pair" for the live roster). It is not process for its own sake.
 
 ### Project-level skills: what is here on purpose
 
-This repository carries exactly one project-level skill right now (down from two: LCLI-362's count
-of three, then the `handover` skill's and `.codex/`'s 2026-09-05 retirement, then LCLI-444's
-2026-09-05 dogfood of LCLI-443's own `skill_source = "plugin"` opt-in removed
-`.claude/skills/lore/SKILL.md` itself — none deleted by hand, each by its own generator, CLI, or the
-`lore agents --force` path LCLI-443 built). **Nothing else belongs under `.claude/skills/` or
-`.codex/skills/`.**
+This repository carries **zero** project-level skills right now (down from three at LCLI-362's
+count, through the `handover` skill's and `.codex/`'s 2026-09-05 retirement, LCLI-444's dogfood of
+its own `skill_source = "plugin"` opt-in removing `.claude/skills/lore/SKILL.md`, and finally
+LCLI-452's 2026-09-05 retirement of `.claude/skills/quest/SKILL.md` for the `opum-quest` plugin,
+mirroring the same opt-in on the Quest CLI's own side — none deleted by hand except the last, whose
+bytes were a stale pre-0.3.4 copy `--force` correctly refused to remove itself). **Nothing belongs
+under `.claude/skills/` or `.codex/skills/` unless a future tool earns one the same way `lore` and
+`quest` did.**
 
-- **`.claude/skills/quest/SKILL.md`, added by the Backlog-to-Quest cutover.** `quest` is this
-  repo's tracker CLI, the same reason `lore` earns a skill: it is the tool every session is
-  expected to drive rather than hand-edit around. Installed and kept current via
-  `quest agents --update-instructions --target claude` (`quest agents --check --require-installed
-  --target claude` must exit 0), never by hand. Its managed block lives in CLAUDE.md itself (the
-  `quest:agent-instructions` block), not a separate AGENTS.md — quest 0.3.3 added
-  `--target claude` for exactly this, once AGENTS.md was gone.
+- **No project-level `.claude/skills/quest/SKILL.md`, on purpose.** `.quest/workspace.toml`'s
+  `[agents].skill_source = "plugin"` (set via `quest init --reconfigure --skill-source plugin`)
+  opts this repository into treating the `opum-quest` Claude Code plugin as the source of the
+  `quest` skill instead of a per-repo generated copy — the same mechanism `opum-lore` already uses
+  for `lore`. `quest agents --check --require-installed --target claude` enforces this; a leftover
+  `SKILL.md` is reported as drift, and `--force` removes it only when its bytes exactly match what
+  the installed quest CLI generates. Its managed instructions block still lives in CLAUDE.md itself
+  (the `quest:agent-instructions` block, kept current via `quest agents --update-instructions
+  --target claude`), not a separate AGENTS.md.
 - **No project-level `.claude/skills/lore/SKILL.md`, on purpose.** `.lore/config.toml`'s
   `[agents].skill_source = "plugin"` (LCLI-443) opts this repository into treating the `opum-lore`
   marketplace plugin (LCLI-441 — the same repository and tag, so its skill content can never drift
