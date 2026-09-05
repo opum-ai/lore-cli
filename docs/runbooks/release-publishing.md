@@ -417,6 +417,17 @@ publish is explicitly marked public. Root `package.json` and all six
    compiling anything, so a missed file fails loud here rather than silently
    skipping an optional dependency later.
 
+   **In that same commit, also bump `.claude-plugin/plugin.json`'s `version`
+   to the same value.** `0.4.3` shipped without this: the bump touched the
+   seven npm manifests and not the plugin manifest, so the marketplace pin
+   moving to `v0.4.3` still resolved as `0.4.2` everywhere — Claude Code's
+   plugin-update resolution reads `plugin.json`'s own version, not the git
+   tag, so a pinned tag whose plugin.json did not move is invisible to every
+   installed copy. `test/plugin-manifest.test.ts` (LCLI-447) fails the moment
+   the two disagree, so this is caught by `bun test` before the release
+   commit is even pushed — but do it here, in the same commit as the other
+   seven, rather than relying on the test to catch a forgotten one.
+
    **In that same commit, regenerate `bun.lock` — with the PINNED Bun.** The
    root's `optionalDependencies` pins move with the bump, and a lockfile still
    resolving the previous version fails `bun install --frozen-lockfile` in
