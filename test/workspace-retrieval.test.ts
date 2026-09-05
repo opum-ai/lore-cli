@@ -224,6 +224,64 @@ describe("workspace source and reference retrieval", () => {
     ).rejects.toThrow("expected refs/heads/main");
   });
 
+  test("tolerateMemberFailures skips a member that fails to validate instead of rejecting the whole load (LCLI-432)", async () => {
+    const warnings = new WarningCollector();
+    const loaded = await loadWorkspaceProjection({
+      root,
+      manifestPath,
+      resolveGitRef: (memberRoot) => (memberRoot.endsWith("alpha") ? "refs/heads/wrong" : "refs/heads/main"),
+      loadMemberSource: sourceOptions().loadMemberSource,
+      tolerateMemberFailures: true,
+      warnings,
+    });
+    expect(loaded.skippedMembers.map((skipped) => skipped.memberId)).toEqual(["alpha"]);
+    expect(loaded.skippedMembers[0]?.error.message).toContain("expected refs/heads/main");
+    expect(loaded.members.map((member) => member.memberId)).toEqual(["beta"]);
+    expect([...loaded.projection.graph.concepts.keys()]).toEqual(["beta::beta-only", "beta::shared"]);
+    // Every authored link in the fixture touches alpha (as a concept or task endpoint) — all three
+    // must be dropped, not just filtered members, or buildWorkspaceProjection would reject the
+    // reduced projection for "an endpoint absent from the selected exports".
+    expect(loaded.projection.links).toEqual([]);
+    expect(warnings.list().some((line) => line.includes("[alpha]") && line.includes("skipped"))).toBe(true);
+  });
+
+  test("tolerateMemberFailures changes nothing when every member loads (byte-identical to the default path)", async () => {
+    const tolerant = await loadWorkspaceProjection({
+      root,
+      manifestPath,
+      ...sourceOptions(),
+      tolerateMemberFailures: true,
+    });
+    const strict = await candidate();
+    expect(tolerant.skippedMembers).toEqual([]);
+    expect(tolerant.manifest).toEqual(strict.manifest);
+    expect([...tolerant.projection.graph.concepts.keys()]).toEqual([...strict.projection.graph.concepts.keys()]);
+    expect(tolerant.projection.links).toEqual(strict.projection.links);
+  });
+
+  test("tolerateMemberFailures still rejects outright when every member fails", async () => {
+    await expect(
+      loadWorkspaceProjection({
+        root,
+        manifestPath,
+        resolveGitRef: () => "refs/heads/wrong",
+        loadMemberSource: sourceOptions().loadMemberSource,
+        tolerateMemberFailures: true,
+      }),
+    ).rejects.toThrow("no workspace member could be loaded");
+  });
+
+  test("without tolerateMemberFailures, a validation failure still rejects the whole load (unchanged default)", async () => {
+    await expect(
+      loadWorkspaceProjection({
+        root,
+        manifestPath,
+        resolveGitRef: (memberRoot) => (memberRoot.endsWith("alpha") ? "refs/heads/wrong" : "refs/heads/main"),
+        loadMemberSource: sourceOptions().loadMemberSource,
+      }),
+    ).rejects.toThrow("expected refs/heads/main");
+  });
+
   test("failed indexed attempts do not duplicate warnings and diagnostics redact member locators", async () => {
     const warnings = new WarningCollector();
     let attempts = 0;
