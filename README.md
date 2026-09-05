@@ -19,15 +19,15 @@ semantic exit codes, machine-readable `--json`).
 
 - Built on **Bun + TypeScript** with an exact-pinned **Commander** parser fed by
   Lore's capability manifest; Lore still owns output, errors, and process lifecycle.
-- Published on npm as **`@opum-ai/lore@0.4.1`** (bin `lore`) with six
+- Published on npm as **`@opum-ai/lore@0.4.2`** (bin `lore`) with six
   exact-pinned platform packages, including Windows ARM64.
 - The agent bridge is a generated **`.claude/skills/lore/SKILL.md`** plus a tiny
   CLAUDE.md nudge and `lore instructions`. An **MCP server is secondary and
   deferred to v2**.
 
-> **Status: 0.4.1 released.** Tag `v0.4.1`, the qualified workflow artifacts,
+> **Status: 0.4.2 released.** Tag `v0.4.2`, the qualified workflow artifacts,
 > all seven public `@opum-ai/lore*` npm packages, and a clean registry install
-> agree on `0.4.1`. Trusted Publishing is configured for every package; the
+> agree on `0.4.2`. Trusted Publishing is configured for every package; the
 > owner lifted the `publish: true` prohibition on 2026-08-29 (LCLI-278), so a
 > release is a single `gh workflow run release.yml --ref v<version> -f
 > publish=true` dispatch. See

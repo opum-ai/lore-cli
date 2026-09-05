@@ -5,7 +5,13 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.2] - 2026-09-05
+
+### Added
+
+- **The `opum-lore` Claude Code plugin**, shipping the `lore` skill from this same repository and
+  tag so a skill can never describe a CLI version you don't have. Install it from the `opum`
+  marketplace to drive `lore` from Claude Code without a project-local `SKILL.md` copy.
 
 ### Changed
 
@@ -14,6 +20,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   select both bridges; Enter-Enter now selects the Claude bridge only. Answering "yes" explicitly
   to the Codex question still sets up both, exactly as before — only what a bare Enter selects has
   changed (LCLI-442).
+
+### Fixed
+
+- **`lore link`, `lore unlink`, and `lore rename` no longer fail after mutating both sides under a
+  Quest-backed tracker.** A Quest task's own storage-location metadata (wanted since 0.4.1's
+  hyperlink fix) was being misread as a path lore itself needed to `git commit`, so every
+  quest-backed coupling edit landed both writes and then still exited 6. The metadata is preserved
+  everywhere it's actually used; only the git-commit-candidate list stops seeing it (LCLI-433).
+- **`lore agents --check` no longer proposes an uninvited Claude bridge on a Codex-only
+  repository.** A repository initialized with `lore init --codex` alone could never pass its own
+  drift check, because the Claude bridge was planned unconditionally regardless of which harness
+  was actually selected (LCLI-442).
 
 ## [0.4.1] - 2026-09-04
 
