@@ -21,11 +21,16 @@ import {
   WorkflowBindingError,
   type WorkflowBindingFailureCode,
 } from "../core/agent-workflow";
+import {
+  type CompileWorkspaceAgentContextOptions,
+  compileWorkspaceAgentContext,
+} from "../core/agent-workspace-context";
 import { compareCodeUnits } from "../core/order";
 import { loadReferenceRetrievalGraph, type RetrievalGraphLoader } from "../core/retrieval";
+import type { WorkspaceRetrievalSelection } from "../core/workspace-retrieval";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { assertFlagAtMostOnce, parseCommandArgs, singleOptionValue, usage } from "./args";
+import { assertFlagAtMostOnce, parseCommandArgs, singleOptionValue, usage, workspaceSelection } from "./args";
 import { readSource } from "./discover";
 import { assertNoSymlinkInPath, classifyExistingFile, ensureDir, writeFileAtomic } from "./fswrite";
 
@@ -38,6 +43,8 @@ export interface AgentCommandOptions {
   readonly adapter?: BacklogAdapter;
   readonly retrieval?: RetrievalGraphLoader;
   readonly readTaskFile?: (path: string) => string;
+  /** Test seam for `--workspace` compiles, mirroring `retrieval` above (LCLI-432). */
+  readonly loadWorkspaceProjection?: CompileWorkspaceAgentContextOptions["loadProjection"];
 }
 
 export interface AgentProfilesResult {
@@ -74,6 +81,8 @@ type AgentAction =
       readonly out?: string;
       readonly force: boolean;
       readonly contract?: string;
+      /** `--workspace`/`--repository` (LCLI-432): compile across an explicit workspace manifest. */
+      readonly workspace?: WorkspaceRetrievalSelection;
     }
   | {
       readonly kind: "project";
@@ -129,7 +138,16 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
 
     const task = resolveTask(action, options);
     const profile = findAgentProfile(snapshot, action.name);
-    let data = compileAgentContext(snapshot, retrieval.graph, profile.name, task, action.maxTokens);
+    let data =
+      action.workspace === undefined
+        ? compileAgentContext(snapshot, retrieval.graph, profile.name, task, action.maxTokens)
+        : await compileWorkspaceAgentContext(options.root, snapshot, profile.name, task, action.maxTokens, {
+            manifestPath: action.workspace.manifestPath,
+            memberIds: action.workspace.memberIds,
+            ...(options.loadWorkspaceProjection === undefined
+              ? {}
+              : { loadProjection: options.loadWorkspaceProjection }),
+          });
     const markdown = renderAgentContextMarkdown(data);
     if (action.out !== undefined) {
       const target = confineOutFile(action.out, options.root);
@@ -357,7 +375,7 @@ function parseAgentArgs(args: readonly string[]): AgentAction {
         "run `lore agent project <name> --request <file>` (use --request - for stdin)",
       );
     }
-    for (const flag of ["task", "task-file", "max-tokens", "out", "force"]) {
+    for (const flag of ["task", "task-file", "max-tokens", "out", "force", "workspace", "repository"]) {
       if (parsed.flags.has(flag)) {
         throw usage(`--${flag} is not a \`lore agent project\` flag`, "`lore agent project` takes only --request");
       }
@@ -380,6 +398,13 @@ function parseAgentArgs(args: readonly string[]): AgentAction {
   const contract = nonEmptyOption(parsed, "contract");
   const request = nonEmptyOption(parsed, "request");
   const requestFile = nonEmptyOption(parsed, "request-file");
+  const workspace = workspaceSelection(parsed);
+  if (contract !== undefined && workspace !== undefined) {
+    throw usage(
+      "--workspace is not available with --contract",
+      "compile without --contract, or drop --workspace/--repository",
+    );
+  }
   // Contract mode consumes the binding from stdin or --request; --task is an
   // optional exact consistency flag. Non-contract mode still needs task text.
   if (contract === WORKFLOW_CONTRACT_SELECTOR) {
@@ -414,6 +439,7 @@ function parseAgentArgs(args: readonly string[]): AgentAction {
     ...(requestFile === undefined ? {} : { requestFile }),
     ...(maxTokens === undefined ? {} : { maxTokens }),
     ...(out === undefined ? {} : { out }),
+    ...(workspace === undefined ? {} : { workspace }),
     force,
     ...(contract === undefined ? {} : { contract }),
   };

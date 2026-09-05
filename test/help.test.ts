@@ -52,7 +52,19 @@ describe("core/manifest — shape and invariants", () => {
   });
 
   test("workspace retrieval flags are exposed only on retrieval commands", () => {
-    const workspaceCommands = ["graph", "path", "impact", "changed", "provenance", "explorer", "query", "context"];
+    const workspaceCommands = [
+      "graph",
+      "path",
+      "impact",
+      "changed",
+      "provenance",
+      "explorer",
+      "query",
+      "context",
+      // LCLI-432: `lore agent context --workspace` compiles a profile-bounded pack across an
+      // explicit workspace manifest — the one profile-scoped command in this set.
+      "agent",
+    ];
     for (const name of workspaceCommands) {
       const command = findManifestCommand(name);
       expect(command?.flags.find((flag) => flag.name === "workspace")).toMatchObject({ takesValue: true });

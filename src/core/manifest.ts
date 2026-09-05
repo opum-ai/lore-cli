@@ -755,6 +755,17 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
         takesValue: true,
         summary: "Serve context as the opum-agent-workflow/v1 projection (use opum-agent-workflow/v1)",
       },
+      {
+        name: "workspace",
+        takesValue: true,
+        summary: "Compile context across an explicit workspace manifest instead of this repository alone",
+      },
+      {
+        name: "repository",
+        takesValue: true,
+        repeatable: true,
+        summary: "Select a workspace member (repeatable; requires --workspace)",
+      },
     ],
     json: true,
     kind: "agent.profiles",

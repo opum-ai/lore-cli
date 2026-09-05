@@ -657,13 +657,14 @@ lore agent context frontend-dev --task "Add accessible dialog focus management"
 lore agent context frontend-dev --task-file task.txt --max-tokens 6000
 lore agent context frontend-dev --task LCLI-348 --contract opum-agent-workflow/v1 --json
 echo '{"contract":"opum-agent-workflow","supportedVersions":[1],"requestId":"<32hex>","taskId":"T-1","profileId":"frontend-dev"}' | lore agent context frontend-dev --contract opum-agent-workflow/v1 --json
+lore agent context orchestration --task "audit the release pipeline" --workspace .lore/workspaces/opum-family.json --repository opum-agent --repository lore-cli
 ```
 
 | Subcommand | Contract |
 |---|---|
 | `list` | Stable profile summaries; `kind: agent.profiles` |
 | `show <name>` | One normalized profile; `kind: agent.profile` |
-| `context <name>` | Exactly one of `--task <text>` or `--task-file <repo-relative-path|->`; optional `--max-tokens <n>`, `--out <repo-relative-path>`, and `--force`; with `--contract opum-agent-workflow/v1` (and exactly one `--task <taskId>`, without `--task-file/--out/--force`) serves the read-only projection; `kind: agent.context.export` (default) or `agent.workflow.projection` (`--contract`) |
+| `context <name>` | Exactly one of `--task <text>` or `--task-file <repo-relative-path|->`; optional `--max-tokens <n>`, `--out <repo-relative-path>`, `--force`, and `--workspace`/`--repository` (below); with `--contract opum-agent-workflow/v1` (and exactly one `--task <taskId>`, without `--task-file/--out/--force/--workspace`) serves the read-only projection; `kind: agent.context.export` (default) or `agent.workflow.projection` (`--contract`) |
 | `context <name>` binding seam | With `--contract opum-agent-workflow/v1` and **no** `--task`/`--task-file`, the request binding is read from stdin exactly as the Opum facade sends it — `{contract:"opum-agent-workflow", supportedVersions:[1], requestId:<32hex>, taskId:<string>, profileId:<string>, profileRevision?:<string>}` — and stdout carries machine JSON only: a bare success record (`contract`, `selectedVersion:1`, `requestId`, `taskId`, `profileId`, `profileRevision`, `digestAlgorithm:"sha256"`, `digest:<64hex>`, `contextId`, `issuedAt`, `expiresAt` ≤5 minutes after `issuedAt`, `sourceIds`) or a bare `{"error":{"code":"OPUM_WORKFLOW_LORE_ABSENT|STALE|INCOMPATIBLE|MISMATCH"}}` envelope with the stable marker echoed on stderr and exit `1`. Every failure is fail-closed; no fallback data is invented |
 
 `context` reserves space for metadata and mandatory pins, then ranks complete
@@ -673,6 +674,29 @@ atomically and require
 `--force` to replace different bytes. Common exits are `0` success, `2` usage,
 `3` unknown profile/source, `4` denied I/O, `5` output conflict, and `6`
 profile/reference validation or mandatory-budget failure.
+
+**`context --workspace <manifest> --repository <member-id>` (repeatable; LCLI-432) compiles the
+same profile-bounded pack across an explicit workspace manifest instead of this repository alone**
+— PLAN.md §4.6's cross-repository grounding. A profile's `sources`/`pinned` entries stay
+bundle-relative and unqualified (e.g. `specs/lore-design`) so the SAME profile works bare and
+cross-repo without a fork: in workspace mode an unqualified reference means "this path, in every
+selected `--repository` member," fanned out and qualified as `<member-id>::<source-id>` before it
+reaches the compiler. An explicitly qualified reference (`opum-doc::reference/opum-fleet-operating-model`)
+opts out of the fan-out and pins exactly that one member — for a record that genuinely lives in a
+single repository, not duplicated across the fleet.
+
+`pinned` stays strict and `sources` relaxes: a `pinned` reference missing from any member it
+resolves to is a hard failure (exit `6`), exactly like the single-repo contract — a pack must never
+silently drop something it promised. A `sources` reference missing from a member that DID load is
+reported in the catalog as `missing-in-member` and the pack still compiles. A manifest member that
+could not be loaded at all (a dormant fleet member — OPAG-33) is skipped rather than rejecting the
+whole compile: it is named once at the top of the pack under a `## Skipped workspace members`
+section, and every `sources` reference that would have targeted it is reported `member-skipped` in
+the catalog — a pack that says what it could not reach is worth more than one that refuses to
+compile over a single unreachable repository. Every resolved item and catalog entry carries the
+originating member's provenance (`AgentContextItem.provenance`/`AgentContextCatalogEntry.provenance`
+and `.memberId`), and catalog references print as `<member-id>::<source-id>` so a cross-repo pack is
+auditable the same way a single-repo one is.
 
 ---
 
