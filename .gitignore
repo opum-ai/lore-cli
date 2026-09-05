@@ -73,7 +73,6 @@ docs/.obsidian/*
 # settings (.claude/settings.json) ARE tracked; these per-session files are
 # NOT. Consumed handovers in archive/handovers/ ARE tracked for history.
 .claude/handovers/
-.codex/handovers/
 .claude/settings.local.json
 .claude/sessions/
 .claude/.session-id

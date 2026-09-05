@@ -1,4 +1,0 @@
-interface:
-  display_name: "Lore Documentation"
-  short_description: "Query and maintain OKF knowledge graphs"
-  default_prompt: "Use $lore to retrieve or maintain owner-local and workspace documentation with bounded, provenance-preserving commands."
