@@ -64,15 +64,13 @@ docs/.obsidian/*
 .env.*
 !.env.example
 
-# Claude Code session-continuity runtime artifacts (handover/recovery loop).
-# The skill (.claude/skills/), hooks (.claude/hooks/), and committed settings
-# (.claude/settings.json) ARE tracked; these per-session files are NOT.
-# Consumed handovers in archive/handovers/ ARE tracked for history.
+# Claude Code session-continuity runtime artifacts. .claude/handovers/ holds
+# the opum-workflow plugin's restart cursor (opum_cursor_path in its hooks'
+# _lib.sh deliberately reuses this exact path across the fleet). Committed
+# settings (.claude/settings.json) ARE tracked; these per-session files are
+# NOT. Consumed handovers in archive/handovers/ ARE tracked for history.
 .claude/handovers/
 .codex/handovers/
-.checkpoint
-.claude/session-errors.jsonl
-.claude/error-history.jsonl
 .claude/settings.local.json
 .claude/sessions/
 .claude/.session-id
