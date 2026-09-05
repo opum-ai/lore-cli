@@ -1296,6 +1296,95 @@ describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the lock
     expect(result.codex).toBeUndefined();
   });
 
+  describe("one harness per project by default (LCLI-442): a bare Enter through both prompts no longer selects both", () => {
+    /** A prompter that answers every confirm with the DEFAULT it was offered, recording each one asked. */
+    function defaultAcceptingPrompter(): {
+      prompter: InitPrompter;
+      defaultFor: (substring: string) => boolean | undefined;
+    } {
+      const defaults = new Map<string, boolean>();
+      const base = scriptedPrompter({ site: "none", obsidian: false });
+      return {
+        prompter: {
+          ...base,
+          confirm: async (question, defaultValue) => {
+            if (question.includes("Claude Code") || question.includes("Codex")) {
+              defaults.set(question, defaultValue);
+              return defaultValue; // bare Enter: whatever the wizard offered as the default
+            }
+            return base.confirm(question, defaultValue);
+          },
+        },
+        defaultFor: (substring) => [...defaults].find(([q]) => q.includes(substring))?.[1],
+      };
+    }
+
+    test("Claude accepted on its default (true) flips the Codex prompt's default to false", async () => {
+      const { prompter, defaultFor } = defaultAcceptingPrompter();
+      const { result } = await init({
+        stdinIsTTY: true,
+        stderrIsTTY: true,
+        prompter,
+        agentAvailability: () => ({ claude: true, codex: true }),
+        adapter: fakeAdapter([], { probe: "ok" }),
+      });
+      expect(defaultFor("Claude Code")).toBe(true);
+      expect(defaultFor("Codex")).toBe(false);
+      expect(result.agents).toBeDefined();
+      expect(result.codex).toBeUndefined();
+    });
+
+    test("declining Claude leaves the Codex prompt's default at true — unchanged from before LCLI-442", async () => {
+      const base = scriptedPrompter({ agents: false, site: "none", obsidian: false });
+      const defaults = new Map<string, boolean>();
+      const prompter: InitPrompter = {
+        ...base,
+        confirm: async (question, defaultValue) => {
+          if (question.includes("Codex")) {
+            defaults.set(question, defaultValue);
+            return defaultValue;
+          }
+          return base.confirm(question, defaultValue);
+        },
+      };
+      const { result } = await init({
+        stdinIsTTY: true,
+        stderrIsTTY: true,
+        prompter,
+        agentAvailability: () => ({ claude: true, codex: true }),
+        adapter: fakeAdapter([], { probe: "ok" }),
+      });
+      expect([...defaults.values()]).toEqual([true]);
+      expect(result.agents).toBeUndefined();
+      expect(result.codex).toBeDefined();
+    });
+
+    test("an explicit 'yes' to Codex still selects both, even after Claude was accepted", async () => {
+      const { result } = await init({
+        stdinIsTTY: true,
+        stderrIsTTY: true,
+        prompter: scriptedPrompter({ agents: true, codex: true, site: "none", obsidian: false }),
+        agentAvailability: () => ({ claude: true, codex: true }),
+        adapter: fakeAdapter([], { probe: "ok" }),
+      });
+      expect(result.agents).toBeDefined();
+      expect(result.codex).toBeDefined();
+    });
+
+    test("Codex-only availability is unaffected: its prompt still defaults to true", async () => {
+      const { prompter, defaultFor } = defaultAcceptingPrompter();
+      const { result } = await init({
+        stdinIsTTY: true,
+        stderrIsTTY: true,
+        prompter,
+        agentAvailability: () => ({ claude: false, codex: true }),
+        adapter: fakeAdapter([], { probe: "ok" }),
+      });
+      expect(defaultFor("Codex")).toBe(true);
+      expect(result.codex).toBeDefined();
+    });
+  });
+
   test("a bare invocation on a TTY runs the wizard and applies every 'yes' answer, in order", async () => {
     const prompter = scriptedPrompter({ agents: true, site: "mkdocs", obsidian: true });
     const { code, result } = await init({

@@ -16,7 +16,13 @@
  */
 
 import { dirname, join } from "node:path";
-import { type BridgeAction, CLAUDE_MD_REL_PATH, planBridge, SKILL_REL_PATH } from "../core/agent-bridge";
+import {
+  AGENT_BLOCK_LABEL,
+  type BridgeAction,
+  CLAUDE_MD_REL_PATH,
+  planBridge,
+  SKILL_REL_PATH,
+} from "../core/agent-bridge";
 import {
   AGENTS_MD_REL_PATH,
   CODEX_AGENT_BLOCK_LABEL,
@@ -94,18 +100,26 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
   // (LORE-128) — see reapplyDiskStyle below.
   const claudeStyle = detectDiskStyle(claudeRaw);
 
-  // Pass both flags through: a differing SKILL.md is `protected` unless `--force` was given, AND
-  // `--check` is not in effect. `--check` never writes, so `--force` cannot actually take effect
-  // during one — `planBridge` must not report `updated` (a claimed write) for a run that performs
-  // none, or the printed trailer falls through to the inert plain-`lore agents` remedy, which
-  // leaves the file `protected` again and CI stays red (LORE-129).
-  const plan = planBridge({ skillOnDisk, claudeOnDisk, force, check });
-
   // The codex bridge is planned alongside, but ONLY where one already exists (LCLI-364). See
   // {@link hasCodexBridge} for why presence, not absence, is what arms it.
   const codexSkillRaw = readFileIfPresent(join(root, CODEX_SKILL_REL_PATH), CODEX_SKILL_REL_PATH);
   const agentsRaw = readFileIfPresent(join(root, AGENTS_MD_REL_PATH), AGENTS_MD_REL_PATH);
   const agentsStyle = detectDiskStyle(agentsRaw);
+
+  // Pass both flags through: a differing SKILL.md is `protected` unless `--force` was given, AND
+  // `--check` is not in effect. `--check` never writes, so `--force` cannot actually take effect
+  // during one — `planBridge` must not report `updated` (a claimed write) for a run that performs
+  // none, or the printed trailer falls through to the inert plain-`lore agents` remedy, which
+  // leaves the file `protected` again and CI stays red (LORE-129).
+  //
+  // Armed unconditionally for a SCOPED request (`includeCodex` false: `lore init --claude`/`--agents`
+  // sharing this function) — an explicit ask always means it, regardless of what else exists. Gated
+  // by {@link hasClaudeBridge} for the bare `lore agents` call (`includeCodex` true, "keep whatever's
+  // selected current"), so a repository that opted into Codex alone is not handed an uninvited Claude
+  // bridge it can never clear from its own `--check` gate (LCLI-437).
+  const claudeArmed = !includeCodex || hasClaudeBridge(skillOnDisk, claudeRaw, codexSkillRaw, agentsRaw);
+  const plan = claudeArmed ? planBridge({ skillOnDisk, claudeOnDisk, force, check }) : { files: [] };
+
   const codexPlan =
     includeCodex && hasCodexBridge(codexSkillRaw, agentsRaw)
       ? planCodexBridge({
@@ -181,6 +195,31 @@ function hasCodexBridge(codexSkillRaw: string | undefined, agentsRaw: string | u
   // creating the very `.codex/` tree whose absence was supposed to disarm it.
   if (codexSkillRaw !== undefined) return true;
   return agentsRaw !== undefined && agentsRaw.includes(CODEX_AGENT_BLOCK_LABEL);
+}
+
+/**
+ * Whether the bare `lore agents` call ("keep whatever's selected current") should treat the Claude
+ * bridge as selected — LCLI-437's fix, symmetric to {@link hasCodexBridge} with one asymmetry
+ * preserved on purpose: `lore agents` has always bootstrapped the Claude bridge on a totally fresh
+ * repository (neither bridge's artifacts present), and that default must not flip for the many
+ * repositories that never opted into anything yet. So Claude arms itself whenever ITS OWN artifacts
+ * are present, OR when NEITHER bridge's artifacts are present. It disarms only for the one case that
+ * was actually broken: a repository that opted into Codex alone. Before this, `lore agents --check`
+ * on a Codex-only repository (`lore init --codex`, no `--agents`/`--claude`) proposed creating a
+ * Claude bridge nobody asked for and could never pass its own gate — the exact repro in LCLI-437.
+ *
+ * Not consulted for a SCOPED request (`lore init --claude`/`--agents`, `includeCodex` false in the
+ * caller): an explicit ask for the Claude bridge always means it, regardless of what else exists.
+ */
+function hasClaudeBridge(
+  skillOnDisk: string | null,
+  claudeRaw: string | undefined,
+  codexSkillRaw: string | undefined,
+  agentsRaw: string | undefined,
+): boolean {
+  if (skillOnDisk !== null) return true;
+  if (claudeRaw?.includes(AGENT_BLOCK_LABEL)) return true;
+  return !hasCodexBridge(codexSkillRaw, agentsRaw);
 }
 
 /**

@@ -702,3 +702,72 @@ describe("lore agents — the codex bridge is covered too, but only where one al
     expect(existsSync(join(root, ".lore/profile.toml"))).toBe(false);
   });
 });
+
+describe("lore agents — the reverse of LCLI-364: a Codex-only repository must not be handed an uninvited Claude bridge (LCLI-437)", () => {
+  /**
+   * The gap this closes: `hasCodexBridge` (above) already gates the codex half on presence, but
+   * nothing gated the Claude half the same way — it was planned unconditionally. `lore init --codex`
+   * with no `--agents`/`--claude` produces a repository with a codex bridge and nothing Claude-shaped
+   * at all, and `lore agents --check` on it reported `created` for SKILL.md and CLAUDE.md: drift a
+   * Codex-only repository can never clear, because clearing it would mean creating a bridge nobody
+   * asked for. `hasClaudeBridge` fixes this symmetrically, with the fresh-repo default preserved:
+   * neither artifact present still arms Claude (see the "fresh generation" describe block above,
+   * unaffected by this change), and only Codex-present/Claude-absent disarms it.
+   */
+  function withCodexOnlyBridge(): void {
+    const codexSkillAbs = join(root, CODEX_SKILL_REL_PATH);
+    mkdirSync(dirname(codexSkillAbs), { recursive: true });
+    writeFileSync(codexSkillAbs, buildCodexSkillDoc());
+    writeFileSync(
+      join(root, AGENTS_MD_REL_PATH),
+      upsertManagedBlock("", { label: CODEX_AGENT_BLOCK_LABEL, body: buildCodexNudgeBody() }),
+    );
+  }
+
+  test("lore agents --check on a Codex-only repository stays at exit 0 — no Claude file is reported or created", () => {
+    withCodexOnlyBridge();
+    const { code, result } = agents(["--check"]);
+    expect(code).toBe(0);
+    expect(result.files.some((f) => f.path === SKILL_REL_PATH)).toBe(false);
+    expect(result.files.some((f) => f.path === CLAUDE_MD_REL_PATH)).toBe(false);
+    expect(existsSync(skillAbs())).toBe(false);
+    expect(existsSync(claudeAbs())).toBe(false);
+  });
+
+  test("a plain (write) lore agents run on a Codex-only repository does not materialize a Claude bridge either", () => {
+    withCodexOnlyBridge();
+    const { code, result } = agents();
+    expect(code).toBe(0);
+    expect(result.files.some((f) => f.path === SKILL_REL_PATH)).toBe(false);
+    expect(existsSync(skillAbs())).toBe(false);
+    expect(existsSync(claudeAbs())).toBe(false);
+    // and the codex bridge it already had is left alone
+    expect(existsSync(join(root, CODEX_SKILL_REL_PATH))).toBe(true);
+  });
+
+  test("a totally fresh repository (neither bridge) still defaults to creating the Claude bridge — the pre-existing default is unchanged", () => {
+    const { code, result } = agents();
+    expect(code).toBe(0);
+    expect(result.files.map((f) => f.path).sort()).toEqual([CLAUDE_MD_REL_PATH, SKILL_REL_PATH].sort());
+    expect(existsSync(skillAbs())).toBe(true);
+  });
+
+  test("an explicit scoped Claude request (applyAgentsBridge with includeCodex false) always creates the Claude bridge, even on a Codex-only repository", () => {
+    // This is `lore init --claude`/`--agents`'s own call shape. An explicit ask must never be
+    // silently disarmed by another bridge's presence — only the bare `lore agents` call ("keep
+    // whatever's selected current") consults hasClaudeBridge.
+    withCodexOnlyBridge();
+    const scoped = applyAgentsBridge({ root, force: false, check: false });
+    expect(scoped.files.map((f) => f.path).sort()).toEqual([CLAUDE_MD_REL_PATH, SKILL_REL_PATH].sort());
+    expect(existsSync(skillAbs())).toBe(true);
+  });
+
+  test("once both bridges are explicitly selected, lore agents --check covers both and stays at exit 0", () => {
+    withCodexOnlyBridge();
+    // Simulates `lore init --agents` adding Claude alongside an already-selected Codex bridge.
+    applyAgentsBridge({ root, force: false, check: false });
+    const { code, result } = agents(["--check"]);
+    expect(code).toBe(0);
+    expect(result.files.length).toBe(4);
+  });
+});
