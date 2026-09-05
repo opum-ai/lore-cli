@@ -135,7 +135,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      EXPECTED_DIGEST: 47c8d11f09e5bcce
+      EXPECTED_DIGEST: 9eddf7883da91a63
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - name: CLAUDE.md operating block matches the fleet digest
