@@ -21,6 +21,67 @@ availability claim.
 
 ### Current state
 
+`0.4.2` is **RELEASED**. Published 2026-09-05 from tag `v0.4.2` at
+`c2f3a93f51a5bf6394bdfa8d0b59b5b7a7c4ca2c`, by Release run `33956309104` via npm
+**OIDC trusted publishing** — no credential was involved at any point, dispatched
+directly with `publish: true` (no separate `publish: false` dry-run this time;
+its own job list — `assert release package versions + metadata are consistent`,
+every Ladybug qualification, all six matching-host package qualifications, and
+`publish (npm, OIDC trusted publishing)` — ran and passed in the one dispatch).
+Promoted `dev` to `main` with a local fast-forward push (`git push origin
+dev:main`, not the merge button), confirmed by `git rev-parse` equality on both
+refs before tagging; the full `main` CI matrix passed on `c2f3a93` before the
+tag was pushed.
+
+Registry evidence, all seven package names at `0.4.2` with `latest` moved,
+verified directly against `registry.npmjs.org` (not the local npm CLI cache):
+`@opum-ai/lore`, and
+`@opum-ai/lore-{darwin-arm64,darwin-x64,linux-arm64,linux-x64,win32-arm64,win32-x64}`.
+Clean-install smoke from a fresh temporary directory against the real registry:
+`npx --yes @opum-ai/lore@0.4.2 --version` returns `0.4.2`.
+
+**`@opum-ai/lore-linux-arm64` was again briefly unreadable after a successful
+publish — the identical benign pattern `0.4.0` and `0.4.1` both recorded, not a
+recurrence worth escalating a third time.** Its publish step printed npm's own
+success confirmation (`+ @opum-ai/lore-linux-arm64@0.4.2`, verified directly in
+the job log); the registry API reported `0.4.1` as `latest` for that package
+alone on the first poll, then resolved to `0.4.2` on the very next poll 30
+seconds later. Verified via the registry API directly rather than assumed.
+
+Why the release exists: three changes landed together rather than waiting for
+routine cadence, because the wizard-default change is user-visible in a
+published CLI and the tracker-path fix affects every Quest-backed
+`link`/`unlink`/`rename` call. `lore init`'s interactive wizard now defaults to
+setting up one agent harness instead of both when both Claude Code and Codex
+are detected (LCLI-442) — Enter-Enter used to select both bridges, and an
+explicit "yes" to the second question still does. `lore link`/`unlink`/`rename`
+no longer fail (exit 6) after already mutating both the Story doc and the Quest
+task record: Quest's own storage-location metadata (`BacklogTaskDetail.file`,
+wanted since `0.4.1`'s hyperlink fix) was being misread as a path lore itself
+needed to `git commit`, which is only ever true for the `backlog` tracker
+(LCLI-433). `lore agents --check` no longer proposes an uninvited Claude bridge
+on a Codex-only repository (LCLI-442, `hasClaudeBridge` symmetric to the
+existing `hasCodexBridge`). The `opum-lore` Claude Code plugin — the `lore`
+skill distributed from this same repository and tag, so a skill can never
+describe a CLI version you don't have — ships for the first time (LCLI-441).
+See CHANGELOG.md's `[0.4.2]` entry for the full list.
+
+Pre-publish gate: `lore check` on this repository's own bundle, built from the
+release commit, was clean — 76 files, 0 errors, 0 warnings. Full test suite
+2823 pass, 1 skip (pre-existing), 0 fail; typecheck and lint both clean.
+
+**Publish authorization note.** LCLI-278 (no required-reviewer protection on
+the `release` GitHub Environment) remains `To Do`, and a live API check at
+release time confirmed the Environment still has `protection_rules: []`. This
+release proceeded on the repository owner's direct, explicit authorization —
+consistent with the standing practice recorded in README.md ("the owner lifted
+the `publish: true` prohibition on 2026-08-29") and with how `0.3.5`/`0.4.0`/
+`0.4.1` actually shipped, confirmed by inspecting `0.4.1`'s own run job list
+rather than assuming the runbook's `publish: false`-plus-manual-script
+description (written for the pre-lift state) still applies. LCLI-278 itself
+has not been resolved or closed; the note there flags that the task record and
+the actual practice have diverged.
+
 `0.4.1` is **RELEASED**. Published 2026-09-04 from tag `v0.4.1` at
 `9918ff9a6579`, by Release run `33841292219` via npm **OIDC trusted
 publishing** — no credential was involved at any point, preceded by a
