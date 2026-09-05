@@ -49,6 +49,16 @@ const CONFLUENCE_FORMATS = ["storage", "adf"] as const;
 /** `none` deliberately disables issue-tracker coupling for documentation-only bundles. */
 export const TRACKER_BACKENDS = ["quest", "backlog", "jira", "none"] as const;
 
+/**
+ * Where the Claude agent bridge's SKILL.md content comes from. `"repo"` (the default, unchanged
+ * for every existing bundle and every external user without the `opum-lore` marketplace plugin)
+ * keeps generating `.claude/skills/lore/SKILL.md` per repository, exactly as today. `"plugin"` is
+ * an explicit opt-in meaning the skill is installed from the `opum-lore` Claude Code plugin
+ * instead — `lore agents` then stops writing/proposing the per-repo file and treats one left over
+ * from before the opt-in as drift to remove, never silently.
+ */
+export const SKILL_SOURCES = ["repo", "plugin"] as const;
+
 /** Generic parsed-TOML shape for `[reconcile]`; unknown future keys remain tolerated. */
 const ReconcileTableSchema = z.looseObject({
   mode: z.enum(RECONCILE_MODES).optional(),
@@ -85,6 +95,11 @@ const TrackerTableSchema = z.looseObject({
   jira: JiraTableSchema.optional(),
 });
 
+/** Generic parsed-TOML shape for `[agents]`; unknown future keys remain tolerated. */
+const AgentsTableSchema = z.looseObject({
+  skill_source: z.enum(SKILL_SOURCES).optional(),
+});
+
 /**
  * The single declarative shape boundary for Bun's parsed TOML value. Loose
  * objects preserve Lore's additive unknown-key tolerance at every known table.
@@ -94,6 +109,7 @@ const ParsedConfigSchema = z.looseObject({
   validate: ValidateTableSchema.optional(),
   confluence: ConfluenceTableSchema.optional(),
   tracker: TrackerTableSchema.optional(),
+  agents: AgentsTableSchema.optional(),
 });
 
 type ParsedConfig = z.infer<typeof ParsedConfigSchema>;
@@ -108,6 +124,9 @@ export type ConfluenceFormat = (typeof CONFLUENCE_FORMATS)[number];
 
 /** A tracker backend constructible by this Lore build. */
 export type TrackerBackend = (typeof TRACKER_BACKENDS)[number];
+
+/** Where the Claude agent bridge's SKILL.md content comes from. See {@link SKILL_SOURCES}. */
+export type SkillSource = (typeof SKILL_SOURCES)[number];
 
 /** Status-reconciliation configuration (the `[reconcile]` table). */
 export interface ReconcileConfig {
@@ -170,6 +189,12 @@ export interface TrackerConfig {
   jira?: JiraTrackerConfig;
 }
 
+/** Agent-bridge configuration (the `[agents]` table). */
+export interface AgentsConfig {
+  /** Where the Claude bridge's SKILL.md comes from; `"repo"` (per-repo generated file) unless a bundle explicitly opts into `"plugin"`. */
+  skillSource: SkillSource;
+}
+
 /** The fully-resolved lore configuration: file values merged over defaults, with the env token overlaid. */
 export interface LoreConfig {
   reconcile: ReconcileConfig;
@@ -177,6 +202,7 @@ export interface LoreConfig {
   confluence: ConfluenceConfig;
   /** Tracker selection; always resolved so consumers never re-derive the zero-config default. */
   tracker: TrackerConfig;
+  agents: AgentsConfig;
 }
 
 /** Options for {@link loadConfig}; both fields are injectable seams for determinism in tests. */
@@ -211,6 +237,9 @@ export function defaultConfig(): LoreConfig {
     // Existing bundles without an explicit tracker retain their historical
     // Backlog interpretation; init persists Quest for every new bundle.
     tracker: { backend: "backlog" },
+    // Every existing bundle and every external user without the opum-lore
+    // marketplace plugin keeps today's per-repo generated SKILL.md.
+    agents: { skillSource: "repo" },
   };
 }
 
@@ -309,6 +338,9 @@ function validateConfig(root: Record<string, unknown>): LoreConfig {
     tracker: {
       backend: parsed.tracker?.backend ?? defaults.tracker.backend,
       ...(parsed.tracker?.jira === undefined ? {} : { jira: validateJira(parsed.tracker.jira) }),
+    },
+    agents: {
+      skillSource: parsed.agents?.skill_source ?? defaults.agents.skillSource,
     },
   };
 }
@@ -591,6 +623,14 @@ function failConfigShape(root: Record<string, unknown>, issue: z.core.$ZodIssue)
     fail(
       `${CONFIG_REL_PATH}: ${key} must be one of ${TRACKER_BACKENDS.map((allowed) => `"${allowed}"`).join(", ")}`,
       `set ${key} to one of: ${TRACKER_BACKENDS.join(", ")}`,
+      { key, value },
+    );
+  }
+
+  if (key === "agents.skill_source") {
+    fail(
+      `${CONFIG_REL_PATH}: ${key} must be one of ${SKILL_SOURCES.map((allowed) => `"${allowed}"`).join(", ")}`,
+      `set ${key} to one of: ${SKILL_SOURCES.join(", ")}`,
       { key, value },
     );
   }

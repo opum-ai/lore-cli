@@ -651,6 +651,31 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
     );
   });
 
+  test("--skill-source plugin persists the opt-in without prompting (LCLI-442)", async () => {
+    const { code, result } = await init({ args: ["--skill-source", "plugin"] });
+    expect(code).toBe(0);
+    expect(result.interactive).toBe(false);
+    expect(loadConfig({ root, env: {} }).agents.skillSource).toBe("plugin");
+    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).toContain('[agents]\nskill_source = "plugin"');
+  });
+
+  test("with no --skill-source, a fresh bundle defaults to the repo-owned skill (LCLI-442)", async () => {
+    await init();
+    expect(loadConfig({ root, env: {} }).agents.skillSource).toBe("repo");
+    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).not.toContain("skill_source");
+  });
+
+  test("--skill-source rejects unavailable and missing values", () => {
+    const unavailable = expectError("validation", () =>
+      runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), args: ["--skill-source", "bogus"] }),
+    );
+    expect(exitCodeFor(unavailable)).toBe(EXIT_CODES.validation);
+    expect(unavailable.hint).toContain("repo, plugin");
+    expectError("usage", () =>
+      runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), args: ["--skill-source"] }),
+    );
+  });
+
   test("--tracker preserves future tables, nested dotted keys, and unrelated backend fields", async () => {
     await init();
     const configPath = join(root, ".lore/config.toml");
@@ -902,6 +927,14 @@ describe("lore init — idempotent re-run with flags (AC#3)", () => {
     const { result } = await init({ args: ["--agents"], adapter: okAdapter() });
     expect(result.agents?.files.length).toBeGreaterThan(0);
     expect(result.agents?.files.every((f) => f.action === "unchanged")).toBe(true);
+  });
+
+  test("--claude still materializes SKILL.md under skill_source=plugin — explicit beats config (LCLI-442)", async () => {
+    await init({ args: ["--skill-source", "plugin"] });
+    const { result } = await init({ args: ["--claude"], adapter: okAdapter() });
+    const skill = result.agents?.files.find((f) => f.path.endsWith("skills/lore/SKILL.md"));
+    expect(skill?.action).toBe("created");
+    expect(existsSync(join(root, ".claude/skills/lore/SKILL.md"))).toBe(true);
   });
 
   test("a second --codex run is unchanged and protects a hand-edited Codex skill", async () => {
