@@ -1,0 +1,10 @@
+# Bun configuration. The Bun version itself is pinned in .bun-version (see DEVELOPMENT.md).
+
+[test]
+# Coverage is opt-in via `bun test --coverage` (package.json -> test:coverage); a
+# plain `bun test` stays fast and coverage-free. These keys shape the coverage run.
+coverageReporter = ["text", "lcov"]
+coverageDir = "coverage"
+# Floor starts at 0 (no source under test yet) and is raised as the core/ library
+# lands so coverage can only ratchet upward.
+coverageThreshold = 0.0

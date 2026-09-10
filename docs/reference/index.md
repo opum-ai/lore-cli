@@ -1,0 +1,27 @@
+# reference
+
+<!-- lore:index:begin -->
+- [System architecture](architecture.md)
+- [Backlog.md CLI operational and safety contract](backlog-cli-contract.md)
+- [Backlog.md --json schema (the envelope lore consumes)](backlog-json-schema.md)
+- [claude-obsidian teardown](claude-obsidian-teardown.md)
+- [lore CLI contract (the agent/CI API)](cli-contract.md)
+- [CLI surface: the complete lore command catalog](cli-surface.md)
+- [Competitive landscape: agent-native knowledge tooling](competitive-landscape-agent-native-knowledge-tooling.md)
+- [Consumer compatibility](consumer-compatibility.md)
+- [Dependency boundary audit](dependency-boundary-audit.md)
+- [Historical dependency boundary campaign](historical-dependency-boundary-campaign.md)
+- [Historical Lore CLI development kickoff](historical-lore-cli-development-kickoff.md)
+- [Historical upstream Backlog.md JSON tag watch](historical-upstream-backlog-json-tag-watch.md)
+- [LadybugDB benchmark and scale acceptance strategy](ladybugdb-benchmark-and-scale-acceptance-strategy.md)
+- [Lore CLI documentation ownership](lore-cli-documentation-ownership.md)
+- [Lore CLI release truth](lore-cli-release-truth.md)
+- [Lore CLI repository notes](lore-cli-repository-notes.md)
+- [Lore competitive feature matrix](lore-competitive-feature-matrix.md)
+- [MCP tools and resources (ON HOLD design)](mcp-tools.md)
+- [OKF conformance](okf-conformance.md)
+- [OKF projection contract](okf-projection-contract.md)
+- [Operate autonomous Lore CLI documentation campaigns](operate-autonomous-lore-cli-documentation-campaigns.md)
+- [Portable Markdown — the subset lore guarantees](portable-markdown.md)
+- [Tech Stack](tech-stack.md)
+<!-- lore:index:end -->

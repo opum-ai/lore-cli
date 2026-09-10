@@ -1,0 +1,517 @@
+import { describe, expect, test } from "bun:test";
+import { parseConcept, serializeConcept } from "../src/core/concept";
+import { compileProfile, defaultProfile, type Profile, parseProfile } from "../src/core/profile";
+import { canonicalType, isKnownType, schemaModeline, typeDirectory } from "../src/core/schema";
+import { buildNewConcept, builtinTemplateFor, renderTemplate, resourceFor, slugify } from "../src/core/template";
+import { LoreError, WarningCollector } from "../src/errors";
+import { VERSION } from "../src/meta";
+
+/**
+ * Compile a minimal one-type (`Reference`) profile carrying `resourceBase`, for the
+ * `resource`-stamping tests. `extraBaseFields` are extra `[base.fields]` lines (e.g. a profile-owned
+ * `resource = { … }`) spliced in, so a test that needs the profile to own `resource` does not have
+ * to re-inline the whole document.
+ */
+function profileWithResourceBase(resourceBase: string, extraBaseFields: string[] = []): Profile {
+  const doc = Bun.TOML.parse(
+    [
+      "[profile]",
+      'name = "t"',
+      'okf_version = "0.1"',
+      `resource_base = "${resourceBase}"`,
+      "[base.fields]",
+      "type = { required = true }",
+      ...extraBaseFields,
+      "[[types]]",
+      'name = "Reference"',
+    ].join("\n"),
+  ) as Record<string, unknown>;
+  return compileProfile(parseProfile(doc, "test-profile"));
+}
+
+/** The built-in OKF 0.2 type names, sourced from the profile. */
+const KNOWN_TYPES = [...defaultProfile().types.keys()];
+
+const TIMESTAMP = "2026-06-25T12:00:00Z";
+
+/** Build a concept of `type` from its built-in body at the type's conventional path, with the known-type modeline. */
+function buildBuiltin(type: string, over: { title?: string; summary?: string; tags?: string[] } = {}) {
+  const canonical = canonicalType(type);
+  const docPath = `docs/${typeDirectory(canonical)}/sample.md`;
+  return buildNewConcept({
+    docPath,
+    type: canonical,
+    title: over.title ?? "Sample Title",
+    summary: over.summary ?? "A one-line summary.",
+    timestamp: TIMESTAMP,
+    tags: over.tags,
+    bodyTemplate: builtinTemplateFor(canonical),
+    vars: Object.create(null),
+    modeline: isKnownType(canonical) ? schemaModeline(docPath, canonical) : undefined,
+  });
+}
+
+describe("slugify", () => {
+  test("lower-cases, collapses non-alphanumerics, and trims dashes", () => {
+    expect(slugify("Bulk Archive Orders!")).toBe("bulk-archive-orders");
+    expect(slugify("  Leading / trailing --- ")).toBe("leading-trailing");
+    expect(slugify("Multiple   spaces")).toBe("multiple-spaces");
+    expect(slugify("ADR-0006: Schema & types")).toBe("adr-0006-schema-types");
+  });
+
+  test("strips diacritics via NFKD normalization", () => {
+    expect(slugify("Café déjà vu")).toBe("cafe-deja-vu");
+  });
+
+  test("a title with no alphanumeric content yields an empty slug", () => {
+    expect(slugify("!!! --- ???")).toBe("");
+    expect(slugify("")).toBe("");
+  });
+});
+
+describe("renderTemplate", () => {
+  test("substitutes known keys, with or without inner padding", () => {
+    expect(renderTemplate("a {{x}} {{ y }} b", { x: "1", y: "2" })).toEqual({ text: "a 1 2 b", unresolved: [] });
+  });
+
+  test("a present empty-string value resolves to an empty string (not unresolved)", () => {
+    expect(renderTemplate("[{{x}}]", { x: "" })).toEqual({ text: "[]", unresolved: [] });
+  });
+
+  test("reports each unfilled placeholder once, in order, leaving the literal token in place", () => {
+    const result = renderTemplate("{{a}} {{a}} {{b}}", {});
+    expect(result.unresolved).toEqual(["a", "b"]);
+    expect(result.text).toBe("{{a}} {{a}} {{b}}");
+  });
+
+  test("an inherited key (e.g. __proto__) is treated as unresolved, not silently resolved", () => {
+    expect(renderTemplate("{{__proto__}}", {}).unresolved).toEqual(["__proto__"]);
+  });
+
+  test("a malformed brace-shaped token is reported unresolved and left verbatim, never silently passed through (LORE-157)", () => {
+    // Internal whitespace: not a legal `[A-Za-z0-9_.-]+` name even though the strict grammar's
+    // own `\s*` padding is optional whitespace only at the boundaries.
+    const owner = renderTemplate("Owner: {{owner name}}", { "owner name": "ignored" });
+    expect(owner.unresolved).toEqual(["owner name"]);
+    expect(owner.text).toBe("Owner: {{owner name}}");
+
+    // Empty: no name at all.
+    const empty = renderTemplate("[{{}}]", {});
+    expect(empty.unresolved).toEqual([""]);
+    expect(empty.text).toBe("[{{}}]");
+
+    // A disallowed character (`/`) even after trimming the padding.
+    const slash = renderTemplate("{{ owner/name }}", {});
+    expect(slash.unresolved).toEqual(["owner/name"]);
+    expect(slash.text).toBe("{{ owner/name }}");
+  });
+
+  test("a malformed token is reported even when vars happens to hold a matching raw key", () => {
+    // Providing vars["owner name"] must not resolve it — the grammar rejects the shape outright,
+    // independent of what `vars` holds.
+    expect(renderTemplate("{{owner name}}", { "owner name": "Payments" }).unresolved).toEqual(["owner name"]);
+  });
+
+  test("a malformed token is deduped like a legitimate unresolved key, in first-seen order", () => {
+    const result = renderTemplate("{{owner name}} {{owner name}} {{b}}", {});
+    expect(result.unresolved).toEqual(["owner name", "b"]);
+  });
+});
+
+describe("buildNewConcept — known types validate clean by construction (AC#1)", () => {
+  for (const type of KNOWN_TYPES) {
+    test(`${type}: built-in renders a zero-warning, re-parseable concept`, () => {
+      const result = buildBuiltin(type);
+      expect(result.type).toBe(type);
+      expect(result.warnings).toEqual([]);
+
+      // The bytes parse back as the same type with no warnings — the AC#1 guarantee.
+      const warnings = new WarningCollector();
+      const docPath = `docs/${typeDirectory(type)}/sample.md`;
+      const concept = parseConcept(docPath, result.contents, { warnings });
+      expect(concept.type).toBe(type);
+      expect(concept.frontmatter.title).toBe("Sample Title");
+      expect(concept.frontmatter.summary).toBe("A one-line summary.");
+      expect(concept.frontmatter.generated).toEqual({ by: `lore/${VERSION}`, at: TIMESTAMP });
+      expect(concept.frontmatter.timestamp).toBeUndefined();
+      expect(warnings.list()).toEqual([]);
+    });
+  }
+
+  test("a known type carries the editor modeline inside the fence", () => {
+    const contents = buildBuiltin("ADR").contents;
+    expect(contents.startsWith("---\n# yaml-language-server: $schema=../../.lore/schemas/adr.schema.json\n")).toBe(
+      true,
+    );
+  });
+
+  test("Attested Computation scaffolds an inert computation contract", () => {
+    const result = buildBuiltin("Attested Computation");
+    expect(result.contents).toContain("type: Attested Computation\n");
+    expect(result.contents).toContain("runtime: TODO\n");
+    expect(result.contents).toContain("# Computation\n");
+    expect(result.contents).toContain("```text\nReplace this placeholder with the sanctioned computation");
+  });
+
+  test("OKF 0.2 emission is byte-exact, ordered, and keeps generated.at a string", () => {
+    const result = buildBuiltin("Reference");
+    expect(result.contents).toBe(`---
+# yaml-language-server: $schema=../../.lore/schemas/reference.schema.json
+type: Reference
+title: Sample Title
+summary: A one-line summary.
+generated:
+  by: lore/${VERSION}
+  at: ${TIMESTAMP}
+---
+
+# Sample Title
+
+Describe the subject of this reference here.
+
+## Details
+`);
+    const generated = parseConcept("docs/reference/sample.md", result.contents).frontmatter.generated as {
+      by: string;
+      at: unknown;
+    };
+    expect(generated.by).toBe(`lore/${VERSION}`);
+    expect(generated.at).toBe(TIMESTAMP);
+    expect(typeof generated.at).toBe("string");
+  });
+
+  test("OKF 0.1 emission retains the legacy timestamp bytes", () => {
+    const result = buildNewConcept({
+      docPath: "docs/reference/sample.md",
+      type: "Reference",
+      title: "Sample Title",
+      summary: "A one-line summary.",
+      timestamp: TIMESTAMP,
+      bodyTemplate: builtinTemplateFor("Reference"),
+      vars: Object.create(null),
+      bundleState: { okfVersion: "0.1", source: "declared" },
+    });
+    expect(result.contents).toContain(`summary: A one-line summary.\ntimestamp: ${TIMESTAMP}\n`);
+    expect(result.contents).not.toContain("generated:");
+    expect(
+      parseConcept("docs/reference/sample.md", result.contents, {
+        bundleState: { okfVersion: "0.1", source: "declared" },
+      }).frontmatter.timestamp,
+    ).toBe(TIMESTAMP);
+  });
+});
+
+describe("buildNewConcept — frontmatter is structural, never substituted", () => {
+  test("a title with YAML-special characters round-trips intact (no YAML corruption)", () => {
+    const tricky = "Drop the table: orders # really";
+    const result = buildBuiltin("Reference", { title: tricky });
+    const concept = parseConcept("docs/reference/sample.md", result.contents);
+    expect(concept.frontmatter.title).toBe(tricky);
+  });
+
+  test("--tags becomes a YAML sequence on the frontmatter", () => {
+    const result = buildBuiltin("Story", { tags: ["retention", "orders"] });
+    const concept = parseConcept("docs/stories/sample.md", result.contents);
+    expect(concept.frontmatter.tags).toEqual(["retention", "orders"]);
+  });
+
+  test("the Story template ships the lore:tasks managed-block markers (LORE-59)", () => {
+    const body = builtinTemplateFor("Story");
+    expect(body).toContain("<!-- lore:tasks:begin -->");
+    expect(body).toContain("<!-- lore:tasks:end -->");
+  });
+});
+
+describe("buildNewConcept — unknown types are tolerated (no modeline)", () => {
+  test("an unknown type validates on type-only, warns, and gets no schema modeline", () => {
+    const result = buildNewConcept({
+      docPath: "docs/decision/sample.md",
+      type: "Decision",
+      title: "Pick a queue",
+      summary: "Which queue to use.",
+      timestamp: TIMESTAMP,
+      bodyTemplate: builtinTemplateFor("Decision"),
+      vars: Object.create(null),
+    });
+    expect(result.type).toBe("Decision");
+    expect(result.warnings.some((w) => w.includes('unknown type "Decision"'))).toBe(true);
+    expect(result.contents).not.toContain("yaml-language-server");
+    expect(result.contents.startsWith("---\ntype: Decision\n")).toBe(true);
+  });
+});
+
+describe("buildNewConcept — unfilled body placeholders fail loud (exit 6)", () => {
+  test("an unresolved {{var}} throws a validation LoreError naming it", () => {
+    try {
+      buildNewConcept({
+        docPath: "docs/reference/sample.md",
+        type: "Reference",
+        title: "Orders table",
+        summary: "The orders table.",
+        timestamp: TIMESTAMP,
+        bodyTemplate: "\n# {{title}}\n\nOwner: {{owner}}\n",
+        vars: Object.create(null),
+      });
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("validation");
+      expect((err as LoreError).message).toContain("{{owner}}");
+      return;
+    }
+    throw new Error("expected an unfilled-placeholder LoreError, but build returned");
+  });
+
+  test.each([
+    ["internal whitespace", "\n# {{title}}\n\nOwner: {{owner name}}\n", "{{owner name}}"],
+    ["empty", "\n# {{title}}\n\n{{}}\n", "{{}}"],
+    ["a disallowed character", "\n# {{title}}\n\nOwner: {{ owner/name }}\n", "{{owner/name}}"],
+  ])("a malformed brace-shaped token (%s) fails loud exactly like an unresolved placeholder, not written verbatim (LORE-157 AC#1)", (_label, bodyTemplate, expectedToken) => {
+    try {
+      buildNewConcept({
+        docPath: "docs/reference/sample.md",
+        type: "Reference",
+        title: "Orders table",
+        summary: "The orders table.",
+        timestamp: TIMESTAMP,
+        bodyTemplate,
+        vars: Object.create(null),
+      });
+    } catch (err) {
+      expect(err).toBeInstanceOf(LoreError);
+      expect((err as LoreError).type).toBe("validation");
+      expect((err as LoreError).message).toContain(expectedToken);
+      return;
+    }
+    throw new Error(`expected a malformed-placeholder LoreError for ${expectedToken}, but build returned`);
+  });
+
+  test("the auto tokens (title/type/timestamp/summary) override a same-named --var", () => {
+    const result = buildNewConcept({
+      docPath: "docs/reference/sample.md",
+      type: "Reference",
+      title: "Real Title",
+      summary: "Real summary.",
+      timestamp: TIMESTAMP,
+      bodyTemplate: "\n# {{title}} ({{type}})\n",
+      vars: Object.assign(Object.create(null), { title: "Ignored", type: "Ignored" }),
+    });
+    expect(result.contents).toContain("# Real Title (Reference)");
+  });
+
+  test("a --var shadowing an auto token surfaces a warning instead of being silently dropped", () => {
+    const result = buildNewConcept({
+      docPath: "docs/reference/sample.md",
+      type: "Reference",
+      title: "Real Title",
+      summary: "Real summary.",
+      timestamp: TIMESTAMP,
+      bodyTemplate: "\n# {{title}}\n",
+      vars: Object.assign(Object.create(null), { title: "Ignored" }),
+    });
+    expect(result.warnings.some((w) => w.includes("ignoring --var title"))).toBe(true);
+  });
+});
+
+describe("resourceFor — base + repo-rel path, one slash, URL-encoded segments (AC#4)", () => {
+  test("joins with exactly one slash, trimming the base's trailing slash(es)", () => {
+    expect(resourceFor("https://docs.example.com", "docs/stories/foo.md")).toBe(
+      "https://docs.example.com/docs/stories/foo.md",
+    );
+    expect(resourceFor("https://docs.example.com/", "docs/stories/foo.md")).toBe(
+      "https://docs.example.com/docs/stories/foo.md",
+    );
+    expect(resourceFor("https://docs.example.com///", "docs/stories/foo.md")).toBe(
+      "https://docs.example.com/docs/stories/foo.md",
+    );
+  });
+
+  test("keeps the .md suffix and a slug's safe characters unchanged", () => {
+    expect(resourceFor("https://x.dev", "docs/adr/0006-schema-types.md")).toBe(
+      "https://x.dev/docs/adr/0006-schema-types.md",
+    );
+  });
+
+  test("URL-encodes each path segment but never the separators", () => {
+    expect(resourceFor("https://x.dev", "docs/qa plan/déjà vu.md")).toBe(
+      "https://x.dev/docs/qa%20plan/d%C3%A9j%C3%A0%20vu.md",
+    );
+  });
+
+  test("preserves a base that carries its own path", () => {
+    expect(resourceFor("https://x.atlassian.net/wiki/spaces/ENG", "docs/index-of-things.md")).toBe(
+      "https://x.atlassian.net/wiki/spaces/ENG/docs/index-of-things.md",
+    );
+  });
+
+  test("trims surrounding whitespace on the base so no space is embedded at the seam", () => {
+    expect(resourceFor("  https://x.dev/  ", "docs/a.md")).toBe("https://x.dev/docs/a.md");
+  });
+
+  test("a base carrying a query string is joined verbatim, not re-parsed as a query (opaque-prefix contract)", () => {
+    // No trailing slash to trim and no URL parsing: `?lang=en` is just trailing characters of the
+    // string, so the doc path is appended straight after it — the caller's problem if that yields
+    // an unintended URL, per the deferred validation question at src/core/template.ts:66.
+    expect(resourceFor("https://x/base?lang=en", "docs/a.md")).toBe("https://x/base?lang=en/docs/a.md");
+  });
+
+  test("a base carrying a fragment is joined verbatim, not re-parsed as a fragment", () => {
+    expect(resourceFor("https://x/base#section", "docs/a.md")).toBe("https://x/base#section/docs/a.md");
+  });
+
+  test("a non-https / non-hierarchical scheme base is joined verbatim with exactly one seam slash, no scheme validation", () => {
+    // `mailto:`/`urn:` have no authority or hierarchical path (no `//`), so there is no trailing
+    // slash for the trim step to find; the join still contributes exactly one `/` at the seam,
+    // producing a string that is not a well-formed URL of any kind — resourceFor does not care.
+    expect(resourceFor("mailto:docs@example.com", "docs/a.md")).toBe("mailto:docs@example.com/docs/a.md");
+    expect(resourceFor("urn:isbn:0451450523", "docs/a.md")).toBe("urn:isbn:0451450523/docs/a.md");
+  });
+});
+
+describe("buildNewConcept — resource stamping is profile-gated (AC#4)", () => {
+  const build = (docPath: string, profile: Profile) =>
+    buildNewConcept({
+      docPath,
+      type: "Reference",
+      title: "Orders",
+      summary: "The orders.",
+      timestamp: TIMESTAMP,
+      bodyTemplate: builtinTemplateFor("Reference"),
+      vars: Object.create(null),
+      profile,
+    });
+
+  test("stamps `resource` when the profile sets resource_base", () => {
+    const result = build("docs/reference/orders.md", profileWithResourceBase("https://docs.example.com/"));
+    const concept = parseConcept("docs/reference/orders.md", result.contents);
+    expect(concept.frontmatter.resource).toBe("https://docs.example.com/docs/reference/orders.md");
+    // It is a recognized OKF key — stamping it raises no extra-key warning.
+    expect(result.warnings.some((w) => w.includes("resource"))).toBe(false);
+  });
+
+  test("omits `resource` under the default profile (empty resource_base) — byte-identical to before", () => {
+    const result = build("docs/reference/orders.md", defaultProfile());
+    expect(result.contents).not.toContain("resource:");
+    expect(parseConcept("docs/reference/orders.md", result.contents).frontmatter.resource).toBeUndefined();
+  });
+
+  test("never stamps `resource` on an index/sub-index file, even with a resource_base", () => {
+    const profile = profileWithResourceBase("https://docs.example.com/");
+    for (const indexPath of ["docs/index.md", "docs/reference/index.md"]) {
+      const result = build(indexPath, profile);
+      expect(result.contents).not.toContain("resource:");
+    }
+  });
+
+  test("`resource` trails the profile's declared keys and round-trips byte-stably", () => {
+    const profile = profileWithResourceBase("https://docs.example.com/");
+    const first = build("docs/reference/orders.md", profile).contents;
+    const concept = parseConcept("docs/reference/orders.md", first, { profile });
+    // The genuine fixpoint: re-serializing the parsed-back concept reproduces the exact bytes, so a
+    // regression that reordered/dropped the trailing `resource` key on re-emit would fail here.
+    expect(serializeConcept(concept, { profile })).toBe(first);
+    expect(Object.keys(concept.frontmatter).at(-1)).toBe("resource");
+  });
+
+  test("defers to a type that owns an INCOMPATIBLE `resource` field (no auto-stamp, no crash)", () => {
+    // A type owning `resource` as a datetime would reject a stamped URL string; lore must not
+    // auto-stamp — the field is the profile's to fill, not lore's. Would throw exit-6 if it did.
+    const profile = profileWithResourceBase("https://docs.example.com/", ['resource = { kind = "datetime" }']);
+    const result = build("docs/reference/orders.md", profile);
+    expect(result.contents).not.toContain("https://docs.example.com");
+  });
+
+  test("STAMPS into a `resource = { required = true }` string field the type owns (satisfies it, no exit-6)", () => {
+    // A required *string* `resource` is satisfied by the stamp, not failed: the old global guard
+    // deferred here and `lore new` then died exit-6 on the missing required field.
+    const profile = profileWithResourceBase("https://docs.example.com/", ["resource = { required = true }"]);
+    const result = build("docs/reference/orders.md", profile);
+    const concept = parseConcept("docs/reference/orders.md", result.contents, { profile });
+    expect(concept.frontmatter.resource).toBe("https://docs.example.com/docs/reference/orders.md");
+  });
+
+  test("a `resource` field on ONE type no longer suppresses stamping on ANOTHER (per-type guard)", () => {
+    const doc = Bun.TOML.parse(
+      [
+        "[profile]",
+        'name = "multi"',
+        'okf_version = "0.1"',
+        'resource_base = "https://x.dev/"',
+        "[base.fields]",
+        "type = { required = true }",
+        "[[types]]",
+        'name = "Reference"',
+        "[[types]]",
+        'name = "Pinned"',
+        'fields.resource = { kind = "datetime" }',
+      ].join("\n"),
+    ) as Record<string, unknown>;
+    const profile = compileProfile(parseProfile(doc, "multi"));
+    // Reference does NOT own `resource`, so it is still stamped even though Pinned declares its own
+    // (the old `canonicalKeyOrder.includes("resource")` union suppressed every type here).
+    const result = buildNewConcept({
+      docPath: "docs/reference/orders.md",
+      type: "Reference",
+      title: "Orders",
+      summary: "The orders.",
+      timestamp: TIMESTAMP,
+      bodyTemplate: builtinTemplateFor("Reference"),
+      vars: Object.create(null),
+      profile,
+    });
+    expect(parseConcept("docs/reference/orders.md", result.contents, { profile }).frontmatter.resource).toBe(
+      "https://x.dev/docs/reference/orders.md",
+    );
+  });
+
+  test("a whitespace-only `resource_base` is treated as unset (no stamp)", () => {
+    const result = build("docs/reference/orders.md", profileWithResourceBase("   "));
+    expect(result.contents).not.toContain("resource:");
+  });
+
+  test("trims surrounding whitespace on the base instead of embedding a space in the URL", () => {
+    const result = build("docs/reference/orders.md", profileWithResourceBase("  https://docs.example.com/  "));
+    const concept = parseConcept("docs/reference/orders.md", result.contents);
+    expect(concept.frontmatter.resource).toBe("https://docs.example.com/docs/reference/orders.md");
+  });
+});
+
+describe("buildNewConcept — the new-path section boundary", () => {
+  test("a custom bodyTemplate that omits a type's required section renders without throwing (section enforcement is `lore check`'s job, not `new`'s — validate.ts:requiredSectionFindings)", () => {
+    // ADR's required sections (src/core/profile.ts) are Status/Context/Decision/Consequences; this
+    // template supplies only Status and Context, entirely omitting Decision and Consequences. Do
+    // NOT re-assert that the *built-in* ADR template carries all four — that invariant is already
+    // pinned by test/validate.test.ts:452-460. This test is about the `new` path tolerating a
+    // caller-supplied template that does not, since `buildNewConcept` has no notion of "required
+    // section" at all — that check lives only in `lore validate`/`lore check`.
+    const result = buildNewConcept({
+      docPath: "docs/adr/sample.md",
+      type: "ADR",
+      title: "Pick a queue",
+      summary: "Which queue to use.",
+      timestamp: TIMESTAMP,
+      bodyTemplate: "\n# {{title}}\n\n## Status\n\nProposed\n\n## Context\n",
+      vars: Object.create(null),
+    });
+    expect(result.type).toBe("ADR");
+    expect(result.contents).toContain("## Status");
+    expect(result.contents).toContain("## Context");
+    expect(result.contents).not.toContain("## Decision");
+    expect(result.contents).not.toContain("## Consequences");
+  });
+});
+
+describe("buildNewConcept — the modeline is caller-supplied", () => {
+  test("no modeline is spliced when none is provided (e.g. an un-initialized bundle)", () => {
+    const result = buildNewConcept({
+      docPath: "docs/reference/sample.md",
+      type: "Reference",
+      title: "Orders",
+      summary: "The orders.",
+      timestamp: TIMESTAMP,
+      bodyTemplate: "\n# {{title}}\n",
+      vars: Object.create(null),
+    });
+    expect(result.contents).not.toContain("yaml-language-server");
+    expect(result.contents.startsWith("---\ntype: Reference\n")).toBe(true);
+  });
+});

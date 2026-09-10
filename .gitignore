@@ -1,0 +1,114 @@
+# Dependencies
+node_modules/
+
+# claude plugin eval run artifacts (opum-lore plugin suite).
+**/evals/results/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Native and compiled binary artifacts. Source launchers and package templates
+# remain tracked; these patterns cover locally produced executables/libraries.
+*.exe
+*.dll
+*.dylib
+*.so
+*.node
+*.wasm
+
+# Per-platform compiled binaries (release build artifacts — LCLI-9). Only the
+# npm/<platform>/package.json templates are committed; the release workflow
+# builds and places the actual binary at npm/<platform>/bin/lore[.exe].
+npm/*/bin/
+# npm pack output from release.yml's package job (or a local reproduction of it).
+dist-npm/
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Local investigation/onboarding scratch retained outside the shipped CLI.
+.repro-scratch/
+lore-e2e-test.sh
+lore-setup.sh
+
+# Docker E2E harness output (LCLI-56) — the Dockerfile/compose/script are
+# committed; each run's report is generated, not durable.
+docker/e2e/results/*
+!docker/e2e/results/.gitkeep
+
+# Docker E2E harness's offline npm cache for the docusaurus scaffold's pinned deps (LCLI-430) —
+# populated at runtime and restored/saved by ci.yml via actions/cache; the directory itself is
+# committed (mirroring docker/e2e/results/ above) so docker-compose.yml's bind mount has
+# somewhere to land locally, but its contents are npm's own cache, not durable source.
+docker/e2e/.npm-cache/*
+!docker/e2e/.npm-cache/.gitkeep
+
+# lore CLI state (config.toml and sync-state.json ARE committed; generated state is not)
+.lore/cache/
+.lore/explorer/
+
+# Rendered-docs build output (configs are committed; build artifacts are not)
+site/
+website/build/
+.docusaurus/
+
+# Obsidian per-user vault state (commit docs/.obsidian/app.json only). Exclude-all-except,
+# not an enumerated list of known files (workspace.json, appearance.json, core-plugins.json,
+# hotkeys.json, graph.json, plugins/, snippets/, cache/, ...) -- Obsidian creates more of these
+# than any fixed list can keep up with, confirmed by a real vault open against this repo's docs/.
+docs/.obsidian/*
+!docs/.obsidian/app.json
+
+# Secrets / env
+.env
+.env.*
+!.env.example
+
+# Claude Code session-continuity runtime artifacts. .claude/handovers/ holds
+# the opum-workflow plugin's restart cursor (opum_cursor_path in its hooks'
+# _lib.sh deliberately reuses this exact path across the fleet). Consumed
+# handovers in archive/handovers/ ARE tracked for history.
+.claude/handovers/
+.claude/sessions/
+.claude/.session-id
+
+# .claude/settings.json used to be committed, carrying OPUM_HOOK_ACTOR/
+# OPUM_HOOK_ACCOUNTABLE_HUMAN — per-operator identity that shouldn't be public.
+# Moved to .claude/settings.local.json (already below); both are now local-only.
+.claude/settings.json
+.claude/settings.local.json
+CLAUDE.local.md
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.log
+
+# Per-session OpenCode fleet configuration (machine-specific paths, plugin refs).
+# The fleet envelope and spike policy are in the opum-doc repository.
+opencode.jsonc
+
+# .lore/agents/ is NOT ignored. It holds hand-authored context profiles that bound
+# what a subagent is allowed to retrieve, and it is committed like .lore/config.toml.
+# It was ignored here until 2026-09-04 and in no other fleet repository, on a comment
+# that said `lore agents` generates it. That command regenerates the skill bridges
+# (SKILL.md and the CLAUDE.md nudge); `lore agent` — singular — is the profile
+# command, and it generates nothing. The result was that this repository's profile
+# directory read as empty while three others carried three profiles each, and any
+# profile authored here would have been machine-local, invisible in review, and lost
+# with the working copy.
+
+# Repository-local tracker-cutover evidence (never published, never committed).
+.lore/archive/
+.lore/cutover/
+
+# npm pack output landing in the REPOSITORY ROOT. `dist-npm/` above covers the release
+# workflow's own destination; this covers the case that bit us. `npm pack` writes into the
+# CURRENT directory, so a pack run from the root leaves a tarball where `git add -A` would
+# commit it — which nearly happened on 2026-08-29, when a stray `npm pack .` left
+# opum-ai-lore-0.3.5.tgz in the root mid-commit. Release tarballs are large build output and
+# a committed one is a second, unverified copy of a release artifact.
+*.tgz

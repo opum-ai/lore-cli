@@ -1,0 +1,21 @@
+schema_version = 1
+name = "implementation"
+description = "Grounds lore-cli feature work in the CLI contract that binds every command's flags, output envelope and exit codes, the OKF substrate underneath it, and the architectural constraints a change is not allowed to relax."
+kind = "specialist"
+max_tokens = 20000
+pinned = ["reference/cli-contract"]
+sources = [
+  "specs/lore-design",
+  "reference/architecture",
+  "reference/cli-surface",
+  "reference/tech-stack",
+  "reference/okf-projection-contract",
+  "specs/agent-profile-context-retrieval",
+  "specs/workspace-indexing-and-retrieval",
+  "adr/0005-cli-contract",
+  "adr/0007-validation-and-coherence",
+  "adr/0011-frontmatter-serialization-stability",
+  "adr/0013-lore-state-directory",
+  "adr/0014-core-has-no-llm-dependency",
+  "adr/0018-persistent-local-graph-projection-with-ladybugdb",
+]

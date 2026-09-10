@@ -1,0 +1,13 @@
+# Normalize all text files to LF in the index and on checkout — matches
+# .editorconfig (end_of_line = lf) and Biome's formatter, and prevents Windows
+# CI runners (core.autocrlf=true) from checking out CRLF and breaking `bun run lint`.
+* text=auto eol=lf
+
+# Binary assets: never normalize.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.woff binary
+*.woff2 binary

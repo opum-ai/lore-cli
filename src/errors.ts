@@ -1,0 +1,703 @@
+/**
+ * errors.ts — lore's shared diagnostic model.
+ *
+ * This module is the single source of truth for how lore classifies failures
+ * and surfaces diagnostics: the {@link LoreError} taxonomy, the centralized
+ * exit-code mapping, the `--json` error envelope, and the warnings-not-errors
+ * collector. Centralizing it here is what guarantees the contract — the same
+ * logical failure maps to the same exit code and the same envelope from every
+ * command and from the deferred MCP transport, instead of each command
+ * inventing its own `process.exit(1)`.
+ *
+ * It deliberately does NOT resolve the output mode or read a TTY / `NO_COLOR`
+ * (that is `output.ts`, LORE-12): callers pass an already-resolved `{ json,
+ * color }` pair. It also never writes to stdout — diagnostics belong on stderr —
+ * so the "stdout parses or stays silent" invariant holds.
+ *
+ * Normative contract: docs/reference/cli-contract.md §4–§5.
+ * Rationale: docs/adr/0005-cli-contract.md.
+ */
+
+import { readFileSync } from "node:fs";
+
+/**
+ * The classifiable failure categories. Each maps to exactly one semantic exit
+ * code via {@link EXIT_CODES}. `validation` and `drift` are distinct
+ * `error_type` strings that intentionally share exit `6`, so an agent can tell
+ * "my frontmatter is malformed" from "my managed block is stale"
+ * (cli-contract §5.3) while shell/CI branching on the code stays simple.
+ */
+export type ErrorType = "usage" | "not_found" | "denied" | "conflict" | "validation" | "drift";
+
+/** Success. */
+export const EXIT_OK = 0;
+
+/**
+ * Unexpected / uncaught failure — a crash or bug, never a classifiable
+ * condition. Reserved per cli-contract §5.1: an agent treats exit `1` as
+ * "report this", not "handle this". {@link LoreError}s never map here.
+ */
+export const EXIT_UNCAUGHT = 1;
+
+/**
+ * The contract: {@link ErrorType} → semantic exit code (cli-contract §5.1).
+ * Centralized so no command invents its own mapping. Changing any entry is a
+ * breaking contract change.
+ */
+export const EXIT_CODES: Readonly<Record<ErrorType, number>> = Object.freeze({
+  usage: 2,
+  not_found: 3,
+  denied: 4,
+  conflict: 5,
+  validation: 6,
+  drift: 6,
+});
+
+/**
+ * A typed, classifiable failure. Core functions `throw` these instead of
+ * printing or calling `process.exit`; the command layer catches one and renders
+ * it via {@link reportError}. Errors are values, not ad-hoc strings.
+ */
+export class LoreError extends Error {
+  constructor(
+    /** The failure category, which fixes the exit code (see {@link EXIT_CODES}). */
+    readonly type: ErrorType,
+    message: string,
+    /** An actionable next step, written so an agent can often self-correct in one turn. */
+    readonly hint?: string,
+    /** The offending input echoed back, so a caller can diagnose without re-deriving it. */
+    readonly input?: unknown,
+  ) {
+    super(message);
+    // Set on the instance (not via an `override` field) so stack traces and
+    // `err.name` read "LoreError" without fighting Error's prototype property.
+    this.name = "LoreError";
+  }
+}
+
+/**
+ * The `--json` error envelope (cli-contract §5.2). Emitted on **stderr**, never
+ * wrapped in the success `{ schemaVersion, kind, data }` envelope, so a caller
+ * never mistakes an error for data.
+ */
+export interface ErrorEnvelope {
+  error_type: ErrorType;
+  message: string;
+  hint?: string;
+  input?: unknown;
+  /** Reserved for a future ratified principal reference; null until then. */
+  principal: null;
+}
+
+/**
+ * The exit-`1` envelope for an uncaught failure (cli-contract §5.1) — the
+ * catch-all emitted when a non-{@link LoreError} value reaches
+ * {@link reportError}. `uncaught` is the only `error_type` outside the §5.3
+ * table and carries no `hint`/`input`. Typed separately from
+ * {@link ErrorEnvelope} (whose `error_type` is a classifiable {@link ErrorType})
+ * so the catch-all shape is pinned to the contract at compile time.
+ */
+interface UncaughtEnvelope {
+  error_type: "uncaught";
+  message: string;
+  /** Reserved for a future ratified principal reference; null until then. */
+  principal: null;
+}
+
+/**
+ * Coerce a value the contract types as a `string` (a `message` or `hint`) into an
+ * actual string. The taxonomy types both as `string`, but a JS caller — or an
+ * `Error.message`/`hint` reassigned at runtime — can still hand us a non-string,
+ * while cli-contract §5.2 promises the envelope's `message`/`hint` ARE strings.
+ * Guarded through {@link safeStringify} so coercion on the error path can never
+ * itself throw (a hostile value cannot crash the very code reporting a failure).
+ *
+ * Exported alongside {@link singleLine} so the output layer applies the same
+ * coercion before single-lining the truncation `hint` — a non-string hint from a
+ * JS caller must degrade, not crash `String.prototype.replace`.
+ */
+export function asText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value === undefined || value === null) {
+    return "";
+  }
+  return safeStringify(value);
+}
+
+/**
+ * Collapse a diagnostic field to a single line: any run of line breaks (with
+ * adjacent horizontal whitespace) becomes one space, and the ends are trimmed.
+ * cli-contract §5.2 types `message` as single-line and §5.4 promises the text
+ * diagnostic is one stderr line, so a multi-line `message`/`hint` can neither
+ * spill across lines nor smuggle a second, unprefixed line into stderr. `input`
+ * is deliberately exempt — it is echoed structured data, not a human-readable
+ * line, and its newlines are preserved (escaped) in JSON.
+ *
+ * The run matches every ECMAScript line terminator — CR, LF, and the Unicode
+ * LINE/PARAGRAPH SEPARATORs U+2028/U+2029 — so a separator that `trim()` already
+ * treats as whitespace cannot survive here as a smuggled break.
+ *
+ * Exported so the output layer (output.ts) collapses its single-line fields — the
+ * truncation `hint` (cli-contract §3.2) — through the *same* discipline rather
+ * than letting an embedded newline smuggle a second line onto stdout.
+ */
+export function singleLine(text: string): string {
+  return text.replace(/\s*[\r\n\u2028\u2029]+\s*/g, " ").trim();
+}
+
+/**
+ * Strip ANSI escape sequences and residual C0/C1 control characters from `text`. Meant to run
+ * *after* {@link singleLine}, which only collapses line terminators (CR/LF/U+2028/U+2029) — it
+ * leaves ESC (`\x1b`)-led sequences and other control bytes (BEL, backspace, …) untouched. A CSI
+ * sequence (`ESC [ … final byte`) can move the cursor or erase lines, so passing one through into
+ * rendered output would let a crafted/corrupted source field forge terminal rows even though the
+ * text is already single-line (LORE-115).
+ *
+ * Two passes: first drop full ANSI escape sequences — CSI (`ESC [ … @-~`), OSC (`ESC ] …`
+ * terminated by BEL or `ESC \`), and the general two-byte form (`ESC` + one printable byte, for
+ * everything else) — then drop any remaining C0 (`\x00`-`\x1f`) or C1/DEL (`\x7f`-`\x9f`) control
+ * byte that wasn't part of a recognized escape sequence (e.g. a bare BEL).
+ *
+ * The single shared home for this strip (LORE-181): it used to be reimplemented byte-identically
+ * in `output.ts` (`renderTaskSummaryRows`, LORE-115), `commands/query.ts` (`sanitizeField`,
+ * LORE-118), `core/validate.ts` (`sanitizeForMessage`, LORE-161), and `core/links.ts`
+ * (`sanitizeForMessage`, LORE-153) — four independently-drifting copies of the same two regexes.
+ * It lives here, layer-neutral beside {@link singleLine}, rather than in `output.ts`, so
+ * `core/`-layer callers (which must stay filesystem/output-layer-free) can import it too. Callers
+ * that need `singleLine` composed with the strip do so at the call site — this function is the raw
+ * primitive only, so a caller that must NOT single-line first (none currently do) still can.
+ */
+export function stripAnsiAndControls(text: string): string {
+  const withoutAnsi = text.replace(
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
+    /\x1b(?:\[[0-9;:<=>?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[ -~])/g,
+    "",
+  );
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
+  return withoutAnsi.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
+}
+
+/**
+ * The maximum length {@link stderrHint} returns (truncation indicator included). A crashing or
+ * hostile subprocess can write an unbounded amount to stderr; without a cap that entire blob
+ * becomes a single unbounded `LoreError.hint` line (LORE-249).
+ */
+const STDERR_HINT_MAX_LENGTH = 500;
+
+/** Appended to a {@link stderrHint} result cut short by {@link STDERR_HINT_MAX_LENGTH}. */
+const STDERR_HINT_TRUNCATION_INDICATOR = "…";
+
+/**
+ * Collapse a failed subprocess invocation's stderr to a one-line hint, or `undefined` when it
+ * carried no content — the shared policy behind every `LoreError` hint built from a subprocess
+ * failure (`adapters/backlog.ts`'s Backlog spawn, `state.ts`'s git-write seam, `adapters/git.ts`'s
+ * real `GitAdapter`), so a future change to how stderr is condensed (stripping ANSI, capping
+ * length, …) has one home instead of three independently-drifting copies.
+ *
+ * Whitespace (including line breaks) is collapsed to single spaces *before* the ANSI/control-byte
+ * strip, not after: {@link stripAnsiAndControls} deletes C0 bytes outright — including `\n`/`\t`,
+ * which are also C0 bytes — so stripping first would glue words that were separated only by a
+ * line break (`"foo\nbar"` → `"foobar"`) instead of the space the previous behavior preserved. A
+ * second collapse+trim pass afterward mops up any doubled space left where an excised escape
+ * sequence had sat between two words (LORE-181's {@link stripAnsiAndControls} was never applied
+ * here — LORE-249). The result is then capped to {@link STDERR_HINT_MAX_LENGTH}, so an unbounded
+ * subprocess stderr cannot produce an unbounded hint.
+ */
+export function stderrHint(stderr: string): string | undefined {
+  const collapsed = stderr.trim().replace(/\s+/g, " ");
+  const cleaned = stripAnsiAndControls(collapsed).trim().replace(/\s+/g, " ");
+  if (cleaned === "") {
+    return undefined;
+  }
+  return cleaned.length > STDERR_HINT_MAX_LENGTH
+    ? `${cleaned.slice(0, STDERR_HINT_MAX_LENGTH)}${STDERR_HINT_TRUNCATION_INDICATOR}`
+    : cleaned;
+}
+
+/**
+ * Project a {@link LoreError} onto its `--json` error envelope. `message`/`hint`
+ * are coerced to single-line strings (§5.2); `hint` is omitted when absent or
+ * empty; `input` is included only when it is a non-null, non-array object
+ * (cli-contract §5.2 types it as an object), so a `null`/primitive/array `input`
+ * is dropped rather than emitted as noise. Field order matches the contract example.
+ */
+export function toErrorEnvelope(err: LoreError): ErrorEnvelope {
+  // §5.2 types `message`/`hint` as single-line strings. Coerce (a reassigned or
+  // mis-typed value need not be a string) and collapse newlines, so the envelope
+  // honors the contract regardless of what a caller stored on the error.
+  const envelope: Omit<ErrorEnvelope, "principal"> = { error_type: err.type, message: singleLine(asText(err.message)) };
+  // A hint counts as present only when it is non-empty; an empty hint would emit
+  // a meaningless `"hint": ""` (and a dangling `hint:` line in text).
+  if (err.hint) {
+    envelope.hint = singleLine(asText(err.hint));
+  }
+  // §5.2 types `input` as an object. Echo a non-null, non-array object only: a
+  // `null`/primitive (`input: null` / `input: "..."`) or an array (`input: [...]`)
+  // would break a consumer that decodes `input` as an object and reads
+  // `envelope.input.<field>`.
+  if (typeof err.input === "object" && err.input !== null && !Array.isArray(err.input)) {
+    envelope.input = err.input;
+  }
+  // Keep the reserved slot last so consumers can depend on the envelope field
+  // order as well as its required presence.
+  return { ...envelope, principal: null };
+}
+
+/**
+ * Map any thrown value to its semantic exit code. A {@link LoreError} maps via
+ * {@link EXIT_CODES}; anything else is {@link EXIT_UNCAUGHT} (an uncaught bug).
+ */
+export function exitCodeFor(err: unknown): number {
+  return err instanceof LoreError ? EXIT_CODES[err.type] : EXIT_UNCAUGHT;
+}
+
+/**
+ * The ANSI SGR sequences lore paints diagnostics and output with. Shared (exported)
+ * so every painted surface — the error/warning heads here, the `lore init` summary in
+ * commands/ — emits byte-identical sequences under one color policy, instead of each
+ * module re-spelling `\x1b[…m`. Color is purely cosmetic and applied only when a caller
+ * passes `color: true`; this module never decides that itself (output.ts owns the
+ * TTY/`NO_COLOR` decision and threads the resolved boolean here).
+ */
+export const ANSI = Object.freeze({
+  red: "\x1b[31m",
+  yellow: "\x1b[33m",
+  green: "\x1b[32m",
+  dim: "\x1b[2m",
+  reset: "\x1b[0m",
+});
+
+/** Wrap `label` in an ANSI `sequence` (reset-terminated) when `color`, else return it bare. */
+export function paint(label: string, sequence: string, color: boolean): string {
+  return color ? `${sequence}${label}${ANSI.reset}` : label;
+}
+
+/**
+ * The single authoritative `error: <message>` head for text-mode diagnostics
+ * (cli-contract §5.4). Both {@link formatErrorText} (classifiable errors) and
+ * {@link reportError}'s uncaught branch render through this, so the two never
+ * drift in prefix/color/spacing.
+ */
+function errorHead(message: string, color: boolean): string {
+  return `${paint("error:", ANSI.red, color)} ${message}`;
+}
+
+/**
+ * Render a {@link LoreError} as a human diagnostic for stderr: a single
+ * `error: <message>` line plus, when present, a `hint: <hint>` line
+ * (cli-contract §5.4). Color is applied only when `opts.color` is true; the
+ * caller (output.ts) owns the TTY/`NO_COLOR` decision.
+ */
+export function formatErrorText(err: LoreError, opts: { color?: boolean } = {}): string {
+  const color = opts.color ?? false;
+  // Same single-line coercion as the envelope (§5.2/§5.4): a multi-line or
+  // non-string message/hint must not split the stderr diagnostic across lines.
+  const head = errorHead(singleLine(asText(err.message)), color);
+  if (!err.hint) {
+    return head;
+  }
+  return `${head}\n${paint("hint:", ANSI.dim, color)} ${singleLine(asText(err.hint))}`;
+}
+
+/** A minimal write sink — `process.stderr` satisfies it, and tests inject a fake. */
+export interface Writer {
+  write(s: string): void;
+}
+
+/**
+ * The `errno` string code (`"ENOENT"`, `"EACCES"`, …) carried by a thrown Node
+ * filesystem error, or `undefined` for a value that is not such an error. The one
+ * place lore reads `cause.code`, so every module that classifies a filesystem
+ * failure (config load, bundle walk) shares one guarded extractor instead of
+ * re-spelling the `typeof`/`in` dance.
+ */
+export function errnoCode(cause: unknown): string | undefined {
+  if (typeof cause === "object" && cause !== null && "code" in cause) {
+    const code = (cause as { code: unknown }).code;
+    return typeof code === "string" ? code : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Read a file if it exists, or `undefined` if it does not — the shared "optional read" primitive
+ * used directly by `commands/sync.ts` (a bundle's `log.md` may not exist yet before the first
+ * `lore sync`) and `adapters/backlog.ts`'s `readStatusFlow` (a project may not have touched
+ * `backlog/config.yml` yet). It lives here rather than in `commands/discover.ts` (which
+ * `adapters/` must never import — adapters sit below commands in lore's layering), so both layers
+ * share one implementation instead of two independently-drifting copies of the same
+ * `ENOENT → undefined` / `EACCES,EPERM → denied` / else-rethrow branching. A permission failure is
+ * `denied` (exit 4); anything else (a directory sitting at the path, …) propagates unclassified
+ * rather than being force-fit into a misleading "not found".
+ */
+export function readFileIfPresent(absPath: string, display: string): string | undefined {
+  try {
+    return readFileSync(absPath, "utf8");
+  } catch (cause) {
+    const code = errnoCode(cause);
+    if (code === "ENOENT") {
+      return undefined;
+    }
+    if (code === "EACCES" || code === "EPERM") {
+      throw new LoreError("denied", `cannot read ${display}`, `check filesystem permissions on ${display}`, {
+        path: display,
+        code,
+      });
+    }
+    throw cause;
+  }
+}
+
+/** The per-category message + hint an {@link ioError} attaches to its {@link LoreError}. */
+interface IoErrorText {
+  /** The single-line failure message. */
+  readonly message: string;
+  /** The actionable recovery hint. */
+  readonly hint: string;
+}
+
+/** How a caught filesystem error maps onto the `denied`/`not_found` categories. */
+export interface IoErrorSpec {
+  /** Text for a permission failure (`EACCES`/`EPERM` → `denied`, exit 4). */
+  readonly denied: IoErrorText;
+  /** Text for a missing path (`ENOENT` → `not_found`, exit 3) — and any other errno unless {@link rethrowUnknown}. */
+  readonly notFound: IoErrorText;
+  /** Structured context attached to the raised {@link LoreError} (for the `--json` envelope). */
+  readonly input?: Record<string, unknown>;
+  /**
+   * When set, an errno that is neither `EACCES`/`EPERM` nor `ENOENT` re-throws the original
+   * `cause` unchanged (the stat-on-a-user-named-path policy) instead of mapping to `not_found`.
+   * Left unset, every non-permission failure is `not_found` (the read-failure policy).
+   */
+  readonly rethrowUnknown?: boolean;
+}
+
+/**
+ * The **one** filesystem-errno → {@link LoreError} policy, shared by every command and core
+ * module that classifies an I/O failure (`bundle.ts` reads, `commands/check.ts` /
+ * `commands/validate.ts` path expansion, `commands/discover.ts` reads). A permission failure
+ * (`EACCES`/`EPERM`) is `denied` (exit 4); a missing path (`ENOENT`) is `not_found` (exit 3);
+ * any other errno is `not_found` too, unless {@link IoErrorSpec.rethrowUnknown} asks for the
+ * original cause to propagate (so a `stat` on a path the *user* named surfaces an unexpected
+ * fault rather than masking it as "missing"). Centralizing the mapping keeps two call sites
+ * from ever classifying the same failure into different exit codes; each caller supplies only
+ * its own message/hint wording. Always throws — its `never` return lets a `catch` fall through
+ * with the surrounding binding still treated as definitely-assigned.
+ */
+export function ioError(cause: unknown, spec: IoErrorSpec): never {
+  const code = errnoCode(cause);
+  // Attach the errno `code` to the structured input so the `--json` error envelope carries it
+  // (preserving the field `discover.ts`'s denied read used to set by hand, now uniform across sites).
+  const input = code !== undefined ? { ...spec.input, code } : spec.input;
+  if (code === "EACCES" || code === "EPERM") {
+    throw new LoreError("denied", spec.denied.message, spec.denied.hint, input);
+  }
+  if (code === "ENOENT" || !spec.rethrowUnknown) {
+    throw new LoreError("not_found", spec.notFound.message, spec.notFound.hint, input);
+  }
+  throw cause;
+}
+
+/**
+ * Project an arbitrary value onto a JSON-safe shape — primitives, arrays, and
+ * plain objects only — that {@link JSON.stringify} can encode without throwing.
+ * This is the degraded path {@link safeStringify} takes when a raw stringify
+ * fails. It mirrors `JSON.stringify`'s own semantics, then tolerates exactly the
+ * things it chokes on:
+ *
+ * - A custom `toJSON` is honored (a `Date` → its ISO string, a class → its
+ *   `toJSON` shape), so this fallback agrees with the fast path and respects a
+ *   `toJSON` written to hide fields.
+ * - `BigInt` → its decimal string.
+ * - Reference cycles → `"[Circular]"`, detected against the **ancestor chain**
+ *   (not "seen anywhere"), so a shared but acyclic node — a diamond — still
+ *   serializes in full instead of being mislabeled circular.
+ * - A throwing `toJSON`/getter on a single field → `"[Unserializable]"` for that
+ *   field alone; the surrounding object is unaffected.
+ *
+ * `function`/`undefined`/`symbol` are dropped just as `JSON.stringify` drops
+ * them. Plain-string fields are returned verbatim, which is why an envelope's
+ * `error_type`/`message`/`hint` always survive this path. `ancestors` is the
+ * set of objects on the current path (O(1) membership; cleared on unwind).
+ */
+function toJsonSafe(value: unknown, ancestors: Set<object>, key = ""): unknown {
+  if (value === null) {
+    return null;
+  }
+  const kind = typeof value;
+  if (kind === "bigint") {
+    return (value as bigint).toString();
+  }
+  if (kind !== "object") {
+    // string | number | boolean survive; function | undefined | symbol are
+    // dropped by JSON.stringify, so returning undefined mirrors its semantics.
+    return kind === "string" || kind === "number" || kind === "boolean" ? value : undefined;
+  }
+  if (ancestors.has(value as object)) {
+    return "[Circular]";
+  }
+  ancestors.add(value as object);
+  try {
+    // Honor a custom `toJSON` exactly as JSON.stringify would (before the array
+    // check, as it does). Reading or invoking it may throw — isolate that.
+    let replacement: unknown;
+    let replaced = false;
+    try {
+      const toJson = (value as { toJSON?: unknown }).toJSON;
+      if (typeof toJson === "function") {
+        // JSON.stringify passes the property key to toJSON (the index for an
+        // array element, "" at the root); pass it too so a key-sensitive toJSON
+        // serializes identically on this fallback as on the fast path.
+        replacement = (toJson as (key: string) => unknown).call(value, key);
+        replaced = true;
+      }
+    } catch {
+      return "[Unserializable]";
+    }
+    if (replaced) {
+      return toJsonSafe(replacement, ancestors, key);
+    }
+    if (Array.isArray(value)) {
+      return (value as unknown[]).map((item, index) => {
+        try {
+          return toJsonSafe(item, ancestors, String(index));
+        } catch {
+          return "[Unserializable]";
+        }
+      });
+    }
+    // `Object.create(null)`, not `{}`: a data field literally named `__proto__`
+    // assigned to a normal object hits the inherited prototype setter and is
+    // silently dropped (diverging from the fast JSON.stringify path); a
+    // null-prototype object has no such setter, so the key lands as an own
+    // enumerable property and JSON.stringify emits it.
+    const out: Record<string, unknown> = Object.create(null);
+    for (const childKey of Object.keys(value as Record<string, unknown>)) {
+      try {
+        // Reading the property may itself throw (a getter); keep it isolated.
+        const projected = toJsonSafe((value as Record<string, unknown>)[childKey], ancestors, childKey);
+        if (projected !== undefined) {
+          out[childKey] = projected;
+        }
+      } catch {
+        out[childKey] = "[Unserializable]";
+      }
+    }
+    return out;
+  } finally {
+    ancestors.delete(value as object);
+  }
+}
+
+/**
+ * `JSON.stringify` that never throws and always yields one parseable JSON value.
+ * A {@link LoreError.input} is `unknown`, so a caller can hand us a value that is
+ * **circular**, carries a `BigInt`, or has a throwing `toJSON`/getter — and the
+ * error path is the last place we can afford a *second* throw (it would mask the
+ * original failure with a crash). The fast path is a plain encode; only when it
+ * throws do we re-encode through {@link toJsonSafe}, which degrades the offending
+ * fields while leaving the envelope's classifiable string fields
+ * (`error_type`/`message`/`hint`) intact. Callers pass an object envelope, whose
+ * own keys are enumerable, so the walk cannot throw and the result is a string;
+ * the inner guard is an absolute last resort for a hostile top-level value.
+ *
+ * `JSON.stringify` doesn't only fail by throwing — for a bare `Symbol`, a bare
+ * function, or a value whose `toJSON` returns one of those, it silently returns
+ * runtime `undefined` instead of a string (its documented behavior for values it
+ * cannot encode). A caller here always expects a real string back — `asText`
+ * exists specifically to guarantee that — so an `undefined` result for a
+ * non-nullish `value` is treated as a failure too, routed through the same
+ * degrade-to-`toJsonSafe` fallback as a thrown error. That fallback can itself
+ * still bottom out at `undefined` (a *top-level* Symbol/function degrades to
+ * `undefined` by design, mirroring `JSON.stringify`'s own semantics — see
+ * {@link toJsonSafe}), so the final `"[unserializable]"` string is the backstop
+ * for that case too.
+ */
+function safeStringify(value: unknown): string {
+  try {
+    const result = JSON.stringify(value);
+    if (result === undefined) {
+      throw new Error("JSON.stringify produced no output for a non-nullish value");
+    }
+    return result;
+  } catch {
+    try {
+      const degraded = JSON.stringify(toJsonSafe(value, new Set()));
+      return degraded === undefined ? JSON.stringify("[unserializable]") : degraded;
+    } catch {
+      return JSON.stringify("[unserializable]");
+    }
+  }
+}
+
+/**
+ * Best-effort single-string message for a non-{@link LoreError} thrown value
+ * (the uncaught path). A real `Error` yields its `message` (or its `toString`
+ * when the message is empty); a thrown POJO that carries its own diagnostics —
+ * e.g. an `{ code, path, message }` rejection — yields its `message` field or,
+ * failing that, a JSON projection, rather than the useless `"[object Object]"`
+ * that `String()` would produce. All coercion is guarded: deriving the message
+ * must never become a second throw on the crash-reporting path (a thrown value
+ * may carry a hostile `toString`/`Symbol.toPrimitive`).
+ *
+ * Exported so any code that needs a safe human message from a caught value — e.g.
+ * concept.ts turning a thrown `YAMLException` into a diagnostic — shares this one
+ * guarded routine instead of hand-rolling a thinner, unguarded `instanceof Error`
+ * check that a future fix here would silently bypass. The result may be multi-line;
+ * single-line it through {@link singleLine} when the contract requires one line.
+ */
+export function deriveMessage(err: unknown): string {
+  try {
+    if (err instanceof Error) {
+      return typeof err.message === "string" && err.message !== "" ? err.message : String(err);
+    }
+    if (typeof err === "string") {
+      return err;
+    }
+    if (typeof err === "object" && err !== null) {
+      const own = (err as { message?: unknown }).message;
+      // Honor an own string `message` even when empty: an empty string is a valid
+      // (if unhelpful) message, whereas falling through to safeStringify(err) would
+      // dump every other field of the thrown object — leaking internals the thrower
+      // deliberately kept out of `message` (e.g. a token) into stderr.
+      return typeof own === "string" ? own : safeStringify(err);
+    }
+    return String(err);
+  } catch {
+    return "[unstringifiable error]";
+  }
+}
+
+/**
+ * Report a failure on stderr and return its exit code — the one seam every
+ * command's catch block uses.
+ *
+ * - In `--json` mode a {@link LoreError} is written as a one-line
+ *   {@link ErrorEnvelope}; otherwise the human diagnostic from
+ *   {@link formatErrorText}.
+ * - A non-{@link LoreError} value is unexpected: it is reported with
+ *   `error_type: "uncaught"` (json) or a plain `error:` line and mapped to
+ *   {@link EXIT_UNCAUGHT}, so even a crash exits with a documented code and
+ *   clean stderr.
+ *
+ * stdout is never touched, preserving the "stdout parses or stays silent"
+ * invariant. Mode/color are inputs, not resolved here. JSON serialization goes
+ * through {@link safeStringify}, so a circular or otherwise non-serializable
+ * `input` still yields one parseable envelope instead of throwing on the very
+ * path meant to report a failure.
+ */
+export function reportError(err: unknown, opts: { json: boolean; color?: boolean; stderr?: Writer }): number {
+  const stderr = opts.stderr ?? process.stderr;
+  if (err instanceof LoreError) {
+    if (opts.json) {
+      stderr.write(`${safeStringify(toErrorEnvelope(err))}\n`);
+    } else {
+      stderr.write(`${formatErrorText(err, { color: opts.color })}\n`);
+    }
+  } else {
+    // Single-line per §5.2/§5.4: deriveMessage can yield a multi-line string (an
+    // Error.message with embedded newlines), which would otherwise split the
+    // uncaught diagnostic across stderr lines.
+    const message = singleLine(deriveMessage(err));
+    if (opts.json) {
+      const envelope: UncaughtEnvelope = { error_type: "uncaught", message, principal: null };
+      stderr.write(`${safeStringify(envelope)}\n`);
+    } else {
+      stderr.write(`${errorHead(message, opts.color ?? false)}\n`);
+    }
+  }
+  // Single source of truth for the exit code: exitCodeFor maps a LoreError via
+  // EXIT_CODES and anything else to EXIT_UNCAUGHT — don't re-derive it inline.
+  return exitCodeFor(err);
+}
+
+/**
+ * Accumulates advisory warnings (unknown OKF `type`, missing `summary`,
+ * non-portable link syntax, …). Per cli-contract §4.1 warnings go to stderr and
+ * **do not, by themselves, change the exit code** — `count`/`list` are for
+ * display only. A caller whose mutation depends on a specific advisory (e.g. a
+ * complete bundle graph) tests for it with the machine-readable {@link has}
+ * tag instead (LORE-82); as of writing, `rename`/`supersede` are the only such
+ * callers — `validate`/`check` do not currently gate on any warning.
+ */
+export class WarningCollector {
+  private readonly messages: string[] = [];
+  /** Machine-readable tags attached to warnings via {@link add}'s optional `kind`, for {@link has}. */
+  private readonly kinds = new Set<string>();
+
+  /**
+   * Record an advisory warning. `kind` is an optional machine-readable tag (distinct from the
+   * human-readable `message`) a caller can later test for with {@link has} — e.g. a bundle-load
+   * caller that must refuse to proceed on an incomplete graph, not just display it. Most callers
+   * only ever need the free-text `message`; `kind` is opt-in and does not change `list()`/`flush()`.
+   */
+  add(message: string, kind?: string): void {
+    this.messages.push(message);
+    if (kind !== undefined) {
+      this.kinds.add(kind);
+    }
+  }
+
+  /** Whether any warning was recorded with the given machine-readable `kind` tag. */
+  has(kind: string): boolean {
+    return this.kinds.has(kind);
+  }
+
+  /** How many warnings have been collected. */
+  get count(): number {
+    return this.messages.length;
+  }
+
+  /** Whether no warnings have been collected. */
+  get isEmpty(): boolean {
+    return this.messages.length === 0;
+  }
+
+  /** A snapshot copy of the collected warnings, in insertion order. */
+  list(): readonly string[] {
+    return [...this.messages];
+  }
+
+  /** Append another collector's messages and machine-readable kinds in order. */
+  merge(other: WarningCollector): void {
+    this.messages.push(...other.messages);
+    for (const kind of other.kinds) this.kinds.add(kind);
+  }
+
+  /**
+   * Write each collected warning to stderr as `warning: <message>` and return
+   * the number flushed. Color is applied only when `opts.color` is true.
+   *
+   * Each message is coerced and single-lined via {@link asText}/{@link singleLine} —
+   * the same normalization `formatErrorText`/`toErrorEnvelope` apply to a
+   * `LoreError`'s message/hint — and then run through the shared
+   * {@link stripAnsiAndControls}, the same ANSI/OSC/control-byte strip `output.ts`'s
+   * `renderTaskSummaryRows` applies to table fields (LORE-115/LORE-181). So a warning
+   * containing embedded newlines, ESC-led CSI/OSC sequences, or bare control bytes
+   * (e.g. `\x1b[2J`, BEL) still emits as exactly one plain stderr line, preserving
+   * the one-warning-per-line contract and closing — centrally, for every caller of
+   * this collector (dangling task ids, Backlog titles/statuses, …) — the escape
+   * forgery a crafted/corrupted source field could otherwise smuggle onto stderr.
+   * Sanitization runs on the message body only: the painted `warning:` prefix is
+   * built once below, from a fixed literal, and never passed through the strip, so
+   * its color/escape sequence is unaffected.
+   *
+   * This is **non-draining**: it does not clear the collected warnings, so a
+   * second `flush` re-emits them and {@link list}/{@link count} stay valid
+   * afterward. Gate commands flush exactly once; report a count from
+   * {@link count} rather than relying on `flush` to reset.
+   */
+  flush(opts: { color?: boolean; stderr?: Writer } = {}): number {
+    const stderr = opts.stderr ?? process.stderr;
+    const color = opts.color ?? false;
+    // The painted prefix is loop-invariant — build it once, not once per warning.
+    const prefix = paint("warning:", ANSI.yellow, color);
+    for (const message of this.messages) {
+      const body = stripAnsiAndControls(singleLine(asText(message)));
+      stderr.write(`${prefix} ${body}\n`);
+    }
+    return this.messages.length;
+  }
+}

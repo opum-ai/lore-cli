@@ -1,0 +1,16 @@
+{
+  "name": "@opum-ai/lore-linux-x64",
+  "version": "0.6.0",
+  "description": "lore compiled binary for Linux (x64, baseline). Do not depend on this directly — install @opum-ai/lore.",
+  "publishConfig": {
+    "access": "public"
+  },
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "license": "MIT",
+  "author": "Opum AI",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/opum-ai/lore-cli.git"
+  }
+}

@@ -1,0 +1,21 @@
+schema_version = 1
+name = "review"
+description = "Reviews a lore-cli change against the accepted architecture decisions that constrain it — determinism with no LLM dependency, retrieval without vectors, frontmatter serialization stability, and the git-ownership boundary with the tracker — and against the contracts downstream consumers depend on."
+kind = "specialist"
+max_tokens = 18000
+pinned = ["reference/cli-contract"]
+sources = [
+  "adr/0003-okf-substrate",
+  "adr/0005-cli-contract",
+  "adr/0007-validation-and-coherence",
+  "adr/0011-frontmatter-serialization-stability",
+  "adr/0012-backlog-coexistence-git-ownership",
+  "adr/0014-core-has-no-llm-dependency",
+  "adr/0015-lightweight-retrieval-no-vectors",
+  "adr/0019-separate-okf-lifecycle-from-lore-task-progress",
+  "adr/0020-tracker-version-gates-are-minimum-floors",
+  "reference/okf-conformance",
+  "reference/consumer-compatibility",
+  "reference/dependency-boundary-audit",
+  "reference/portable-markdown",
+]

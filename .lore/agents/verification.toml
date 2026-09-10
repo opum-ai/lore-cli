@@ -1,0 +1,15 @@
+schema_version = 1
+name = "verification"
+description = "Retrieves the acceptance, conformance and release evidence needed to verify a lore-cli change — what OKF conformance actually requires, what the end-to-end environment covers, and which release facts are authoritative rather than assumed."
+kind = "specialist"
+max_tokens = 16000
+pinned = ["reference/okf-conformance"]
+sources = [
+  "reference/consumer-compatibility",
+  "reference/lore-cli-release-truth",
+  "reference/cli-contract",
+  "reference/ladybugdb-benchmark-and-scale-acceptance-strategy",
+  "runbooks/docker-e2e-testing-environment",
+  "runbooks/release-publishing",
+  "adr/0020-tracker-version-gates-are-minimum-floors",
+]

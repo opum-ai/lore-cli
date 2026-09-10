@@ -1,0 +1,51 @@
+name: Upstream Backlog.md --json tag watch
+
+# LCLI-254: lore's adapter (src/adapters/backlog.ts) and lore's own first npm release both
+# depend on MrLesk/Backlog.md shipping commit 22a091b (PR #790 / BACK-545 — stable `--json`
+# output) inside a TAGGED release; the interim dev/test-time wiring only builds it from a pinned
+# commit (docs/runbooks/backlog-json-patch.md §8.1). Nothing upstream notifies lore when that
+# release exists, so this job polls MrLesk/Backlog.md's Releases API on a schedule and — the
+# first time it finds a release whose commit history actually CONTAINS 22a091b, not merely one
+# numbered newer than the last-known tag — opens a tracking issue in this repo so the maintainer
+# can pick up LCLI-253. All of the actual logic lives in
+# src/scripts/upstream-backlog-watch.ts (unit-tested in test/upstream-backlog-watch.test.ts);
+# this workflow only schedules it and wires the token. See
+# docs/runbooks/upstream-backlog-md-json-tag-watch.md for where the signal lands and who acts on it.
+
+on:
+  schedule:
+    # Daily, off the well-known GH Actions cron backlog spike at :00. A --json-capable upstream
+    # release is a one-time event lore is waiting on indefinitely (LCLI-253) — daily is frequent
+    # enough to notice within a day of it shipping without spamming the GitHub API.
+    - cron: "17 6 * * *"
+  workflow_dispatch: {}
+
+# Runs are cheap and idempotent (the script itself no-ops once a tracking issue exists) — no
+# need to cancel an in-flight run for a newer one, so no `cancel-in-progress` concurrency group
+# is declared here (unlike ci.yml's PR-driven runs).
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    name: check MrLesk/Backlog.md releases for commit 22a091b
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # Job-level `permissions:` REPLACES the workflow-level block, not extends it — every
+      # scope not listed here is set to `none` for this job's token. `contents: read` must be
+      # restated so `actions/checkout` (this job's first step, on a private repo) can still
+      # clone; `issues: write` is for opening/labeling the tracking issue this job's whole
+      # purpose is to surface.
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: ./.github/actions/setup-bun
+      - name: Run the upstream watch script
+        run: bun run src/scripts/upstream-backlog-watch.ts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          # GITHUB_REPOSITORY ("owner/repo") is a default Actions environment variable; no
+          # explicit wiring needed.

@@ -1,0 +1,12 @@
+node_modules
+coverage
+.git
+dist
+dist-npm
+npm/*/bin
+site
+website/build
+website/node_modules
+.docusaurus
+docs/.obsidian
+docker/e2e/results

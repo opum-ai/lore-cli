@@ -1,0 +1,42 @@
+# .lore/config.toml — lore's own configuration.
+#
+# Most keys are optional. This repository cut over LCLI's live tasks from
+# Backlog to Quest on 2026-09-03 (see .quest/workspace.toml and
+# docs/reference/backlog-to-quest-cutover-runbook.md, opum-agent/dev). The
+# 297 excluded LORE-family records were all proven non-unique (twins in the
+# migrated LCLI family, or an archived draft against an already-retired
+# subsystem) and removed at commit f84f586; they remain in git history, not
+# on disk. See docs/adr/0013-lore-state-directory.md for the full
+# tracker-backend contract.
+#
+# The Confluence API token is NEVER stored here — it is read only from
+# $LORE_CONFLUENCE_TOKEN, and a token committed under [confluence] is rejected
+# with a fail-loud validation error.
+
+[tracker]
+backend = "quest"
+
+[reconcile]
+# Status roll-up policy for `lore sync` / `lore check`:
+# all tasks Done -> done; any In Progress -> in-progress; else todo.
+mode = "task-rollup"
+
+[validate]
+external_links = false      # external-link liveness is opt-in (`lore check --external`)
+promote_portability = false # the portability lint stays a warning, not an error
+
+# [confluence] — omitted: lore does not publish to Confluence (the one-way
+# publish adapter is deferred, LCLI-43). When enabled, set base_url / space /
+# parent_page_id / format here and provide the token via $LORE_CONFLUENCE_TOKEN.
+
+# [tracker.jira] — omitted: this repository explicitly uses Quest. When
+# enabled, set profile / project / board / issue_type /
+# default_labels / status_flow here. jira-cli owns credentials; run
+# `jira init --yes` instead of storing any Jira credential in this file.
+
+[agents]
+# This repository opted into the opum-lore marketplace plugin (LCLI-441) owning
+# .claude/skills/lore/SKILL.md on 2026-09-05, dogfooding LCLI-443's opt-in (LCLI-444):
+# `lore agents --check` treats a leftover per-repo SKILL.md as drift, and `--force`
+# removes one only when its bytes exactly match this CLI's own generated content.
+skill_source = "plugin"

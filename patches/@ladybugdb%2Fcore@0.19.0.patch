@@ -1,0 +1,26 @@
+diff --git a/lbug_native.js b/lbug_native.js
+index 818a363f9229fad5138f7bd683170e6ad3a1a16a..b33d74a88dde89db45655d72e2251183001dbcc8 100644
+--- a/lbug_native.js
++++ b/lbug_native.js
+@@ -9,17 +9,4 @@
+-const process = require("process");
+-const constants = require("constants");
+-const join = require("path").join;
+-
+-const lbugNativeModule = { exports: {} };
+-const modulePath = join(__dirname, "lbugjs.node");
+-if (process.platform === "linux") {
+-  process.dlopen(
+-    lbugNativeModule,
+-    modulePath,
+-    constants.RTLD_LAZY | constants.RTLD_GLOBAL
+-  );
+-} else {
+-  process.dlopen(lbugNativeModule, modulePath);
+-}
+-
+-module.exports = lbugNativeModule.exports;
++// Lore compiles this package into a standalone Bun executable. A direct,
++// statically analyzable require makes Bun embed the N-API addon instead of
++// retaining the build machine's absolute node_modules path.
++module.exports = require("./lbugjs.node");

@@ -1,0 +1,29 @@
+---
+type: Story
+title: Support Lore agent interoperability
+tags:
+  - agents
+  - interoperability
+  - hermes
+summary: Record future agent-integration work while preserving existing Claude and Codex behavior and credential-safety boundaries.
+timestamp: 2026-08-19T00:25:11.629Z
+status: done
+tasks:
+  - lcli-344
+---
+
+# Support Lore agent interoperability
+
+## Goal
+
+## Acceptance criteria
+
+## Tasks
+
+<!-- lore:tasks:begin -->
+| Task | Title | Status |
+|---|---|---|
+| [LCLI-344](../../.quest/tasks/LCLI-344.json) | Add Hermes Agent integration support | Done |
+<!-- lore:tasks:end -->
+
+## Notes
