@@ -125,6 +125,58 @@ jobs:
             bun test --isolate --timeout=10000
           fi
 
+  tracker:
+    # OPAG-79. Two assertions about the tracker, deliberately kept as separate
+    # steps so a red build names which one failed rather than just "tracker broke".
+    # Reference implementation authored and negative-tested by opum-web.
+    name: Tracker integrity
+    # Carries the shared narrow-mode skip guard like every other non-promotion job:
+    # a manual exact-host Ladybug qualification run has no reason to reinstall the
+    # Quest CLI. test/ci-workflow.test.ts asserts this guard on every such job.
+    if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      # This repo has no .nvmrc (it is a bun project — see .bun-version), so the
+      # node used to install the Quest CLI is stated explicitly rather than read
+      # from a file that does not exist. 22 matches the scaffold jobs below.
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+      # The Quest version is DERIVED from the managed block in CLAUDE.md, not
+      # pinned again here and not floated at @latest. A second pin drifts silently
+      # from the block that already declares the version; a float turns an
+      # unrelated upstream publish into a red build on somebody's unrelated PR.
+      # Deriving it makes a version bump one deliberate edit, in the one place
+      # that already declares it.
+      - name: Resolve the Quest version CLAUDE.md declares
+        id: quest
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/.*Quest CLI \([0-9][0-9.]*\).*/\1/p' CLAUDE.md | head -1)"
+          if [ -z "$version" ]; then
+            echo "::error file=CLAUDE.md::No 'Quest CLI <version>' line found in the managed block. Tracker integrity cannot be checked against an undeclared version."
+            exit 1
+          fi
+          echo "Declared Quest version: $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - run: npm install -g "@opum-ai/quest@${{ steps.quest.outputs.version }}"
+
+      # Catches a duplicated task identity — the same id present in both
+      # .quest/tasks/ and .quest/completed/ — which exits conflict/5 and makes
+      # every tracker read in the repository fail.
+      - name: Tracker reads cleanly
+        run: quest task list --json
+
+      # Catches managed skill/instruction drift, which exits 6. This drifts on its
+      # own whenever the CLI moves underneath the committed copy, with no commit
+      # here to blame. Checked against the version CLAUDE.md declares, so a
+      # version-only difference against a newer locally-installed CLI — tolerated,
+      # exit 0 — cannot turn into a red here.
+      - name: Managed instructions are current
+        run: quest agents --check --require-installed --target claude
+
   promotion-is-manual:
     # Fails on purpose on any PR targeting main, so the merge button shows an
     # unmissable red X exactly where a wrong promotion would otherwise land
