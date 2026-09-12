@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-11
+
 ### Fixed
 
 - **`lore sync` no longer destroys `docs/log.md` entries it cannot re-derive.** Log regeneration
