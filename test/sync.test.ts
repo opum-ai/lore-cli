@@ -283,6 +283,35 @@ describe("lore sync — log.md is a full-history projection", () => {
     expect(readDoc("log.md")).toBe(firstBytes);
     expect(second.report.files.map((file) => file.path)).not.toContain("docs/log.md");
   });
+
+  // LCLI-474: the projection is a projection of history PLUS the committed file, because the two are
+  // not always in that order. quest-cli lost 279 dated entries to five successive syncs after its
+  // history was rewritten, and this repository staged the same 324-entry deletion on the day the
+  // defect was filed. These pin the integration, not just `generateLog`'s merge.
+  test("LCLI-474: preserves committed entries the visible history can no longer reach", async () => {
+    writeDoc("stories/x.md", storyDoc("X", [], "todo"));
+    const unreachable = "- 2026-06-01T09:00:00Z 9999999999999999999999999999999999999999 pre-rewrite commit";
+    writeDoc("log.md", `${generateLog(history, { root: "docs" })}\n## docs/adr\n\n${unreachable}\n`);
+
+    await syncCmd([], fakeAdapter([]), { gitAdapter: historyAdapter() });
+
+    // The rewritten history cannot see this commit, so the committed file is its only record.
+    expect(readDoc("log.md")).toContain(unreachable);
+    expect(readDoc("log.md")).toContain(history[0]?.hash ?? "");
+  });
+
+  test("LCLI-474: an unresolvable HEAD preserves the committed log instead of emptying it", async () => {
+    writeDoc("stories/x.md", storyDoc("X", [], "todo"));
+    const committed = generateLog(history, { root: "docs" });
+    writeDoc("log.md", committed);
+
+    // `resolveHead` returning null is the emptiest possible history — the path where a replace wiped
+    // the entire file rather than merely truncating it to what a shallow clone could still see.
+    const { report } = await syncCmd([], fakeAdapter([]), { gitAdapter: historyAdapter(), resolveHead: () => null });
+
+    expect(readDoc("log.md")).toBe(committed);
+    expect(report.files.map((file) => file.path)).not.toContain("docs/log.md");
+  });
 });
 
 // ── AC#2: sole committer of backlog/ ──────────────────────────────────────────────

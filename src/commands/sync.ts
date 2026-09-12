@@ -304,13 +304,19 @@ function regenerateIndexAndLog(
   }
   const orphaned = orphanedIndexPaths(graph, diskIndexBytes);
 
+  // The committed log is an INPUT to regeneration, not just the thing it is compared against: any
+  // entry the visible history can no longer account for is carried forward rather than destroyed
+  // (LCLI-474, `core/log.ts`). The no-HEAD branch needs it just as much as the normal one — a
+  // repository whose HEAD does not resolve has the emptiest possible history, so replacing there
+  // would erase the whole file.
+  const existingLog = readFileIfPresent(join(docsRoot, LOG_FILE), `${DOCS_DIR}/${LOG_FILE}`);
+  const logOptions = { root: DOCS_DIR, existing: existingLog };
   const resolveHead = options.resolveHead ?? resolveHeadSha;
   const headSha = resolveHead(options.root);
   const logBytes =
     headSha === null
-      ? generateLog([], { root: DOCS_DIR })
-      : buildLog(options.gitAdapter ?? realGitAdapter(options.root), { to: headSha }, { root: DOCS_DIR });
-  const existingLog = readFileIfPresent(join(docsRoot, LOG_FILE), `${DOCS_DIR}/${LOG_FILE}`);
+      ? generateLog([], logOptions)
+      : buildLog(options.gitAdapter ?? realGitAdapter(options.root), { to: headSha }, logOptions);
   if (logBytes !== existingLog) {
     writes.set(LOG_FILE, { before: existingLog, after: logBytes });
   }
