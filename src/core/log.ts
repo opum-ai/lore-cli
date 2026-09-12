@@ -257,6 +257,14 @@ const LOG_ENTRY = /^- (\S+) (\S+)(?: (.*))?$/;
  *
  * Subjects are taken **verbatim**, not re-parsed out of their {@link renderSubject} escaping, so a
  * carried-forward entry re-renders to the identical bytes it was read from (module header).
+ *
+ * **A trailing `\r` is stripped before matching**, so a CRLF working copy — the default for a git
+ * checkout on Windows with `core.autocrlf=true` — parses identically to an LF one. This is not a
+ * cosmetic detail: JavaScript's `$` (without the `m` flag) matches only at end of input or before a
+ * final `\n`, never before a `\r`, so on CRLF bytes *neither* pattern below would match a single
+ * line. The parse would silently yield nothing, the merge would carry nothing forward, and
+ * regeneration would degrade back to exactly the replace semantics this module exists to prevent —
+ * on one platform, with every test still green, because fixtures are written with `\n`.
  */
 function parseEntries(existing: string | undefined): readonly (readonly [string, LogEntry])[] {
   if (existing === undefined || existing === "") {
@@ -265,7 +273,8 @@ function parseEntries(existing: string | undefined): readonly (readonly [string,
 
   const entries: (readonly [string, LogEntry])[] = [];
   let folder: string | undefined;
-  for (const line of existing.split("\n")) {
+  for (const rawLine of existing.split("\n")) {
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
     const heading = FOLDER_HEADING.exec(line);
     if (heading !== null) {
       folder = (heading[1] ?? "").trim();
