@@ -530,7 +530,12 @@ injectable seam the tests can fake:
   `generateLog` sorts folders and commits so output is order-independent and
   byte-stable. Tests inject a fake adapter with a fixed fake history. Because the
   result changes on every commit, `log.md` is materialized on `lore sync` and is
-  excluded from `lore check`'s drift gate (ADR-0007).
+  excluded from `lore check`'s drift gate (ADR-0007). The seam reports the history
+  it can *see*, which is not always the whole of it — a rewritten, shallow, grafted,
+  or depth-limited checkout returns a strict subset — so regeneration **merges** the
+  derived entries with the committed file and carries forward anything the history
+  can no longer account for (LCLI-474). Determinism is unaffected: where history only
+  grows, every committed entry is re-derived and the output is byte-identical.
 
 No other source of nondeterminism is permitted in the core path: no `Math.random`,
 no `Date.now()` outside the clock seam, no filesystem-order dependence (directory

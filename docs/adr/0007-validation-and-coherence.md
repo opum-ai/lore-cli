@@ -31,6 +31,19 @@ and stay gated — `log.md` is derived from git commit history (via the `GitAdap
 the gate's own. Gating it would report permanent drift and break on shallow/read-only CI checkouts
 that lack full history. `lore sync` writes `log.md`; `lore check` neither regenerates nor compares it.
 
+Amended — 2026-09-11 (LCLI-474): the exemption above stands, but it is **not** a licence for `sync`
+to treat the committed `log.md` as disposable. Regeneration **merges** with the committed file rather
+than replacing it: derived entries render from git history, and any committed entry the visible
+history can no longer account for is carried forward. The clause above — "break on shallow/read-only
+CI checkouts that lack full history" — names the exact condition under which a replace is *lossy*
+rather than merely noisy. A rewritten, shallow, grafted, or depth-limited history is a strict subset
+of what the committed log records, and the committed file is then the only surviving record of the
+difference. Because `check` does not gate this file, that loss was silent by design: quest-cli lost
+279 dated entries across five successive syncs, and lore-cli staged a 324-entry deletion of its own,
+both on repositories whose history had been rebuilt the day before. Merge semantics make a shrinking
+`log.md` impossible by construction, which is why the exemption can stay: there is no longer anything
+for a gate to catch after the fact.
+
 Amended — 2026-07-19 (LCLI-52): every mention below of `remark-validate-links`, `remark-lint`,
 or "the remark/mdast pipeline" describes this ADR's original 2026-06-21 plan, not what shipped.
 lore has never depended on the `remark`, `unified`, `remark-validate-links`, or `remark-lint`

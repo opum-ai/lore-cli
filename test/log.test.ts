@@ -287,3 +287,158 @@ describe("buildLog — the GitAdapter seam is exercised (AC#1)", () => {
     expect(adapter.seenRoots).toEqual(["docs"]);
   });
 });
+
+describe("LCLI-474 — regeneration merges with the committed log instead of replacing it", () => {
+  /**
+   * The committed `log.md` of a repository whose history was later rewritten: `old1`/`old2` are
+   * entries for commits no ref can reach any more, so the file itself is their only record. Built by
+   * `generateLog` rather than hand-typed, so the parse is always exercised against bytes this module
+   * genuinely emits, not against a fixture that could drift from the renderer.
+   */
+  const UNREACHABLE: readonly GitCommit[] = [
+    { hash: "old1", timestamp: "2026-06-01T10:00:00Z", subject: "Pre-rewrite ADR edit", files: ["docs/adr/0001.md"] },
+    { hash: "old2", timestamp: "2026-06-02T10:00:00Z", subject: "Pre-rewrite story", files: ["docs/stories/a.md"] },
+  ];
+  const COMMITTED = generateLog(UNREACHABLE);
+
+  test("carries forward every entry the visible history can no longer account for", () => {
+    const merged = generateLog(FAKE_HISTORY, { existing: COMMITTED });
+    // The whole point: a rewritten history sees none of these commits, and a replace deleted them.
+    expect(merged).toContain("- 2026-06-01T10:00:00Z old1 Pre-rewrite ADR edit");
+    expect(merged).toContain("- 2026-06-02T10:00:00Z old2 Pre-rewrite story");
+    // ...and the derived ones are still there, so the result is a superset of both inputs.
+    expect(merged).toContain("ddd4 Revise ADR-0014");
+    expect(merged.split("\n").length).toBeGreaterThan(generateLog(FAKE_HISTORY).split("\n").length);
+  });
+
+  test("a carried-forward entry keeps the folder section it was recorded under", () => {
+    const merged = generateLog(FAKE_HISTORY, { existing: COMMITTED });
+    const adr = merged.slice(merged.indexOf("## docs/adr"), merged.indexOf("## docs/stories"));
+    expect(adr).toContain("old1 Pre-rewrite ADR edit");
+    expect(adr).not.toContain("old2");
+  });
+
+  test("is byte-identical to a replace when the history is a superset of the committed log (the normal case)", () => {
+    // History only ever grows, so every committed entry is re-derived and nothing is carried
+    // forward. Byte-stability and the drift story are therefore unchanged for every healthy repo.
+    const committed = generateLog(FAKE_HISTORY.slice(0, 2));
+    expect(generateLog(FAKE_HISTORY, { existing: committed })).toBe(generateLog(FAKE_HISTORY));
+  });
+
+  test("a depth-limited checkout preserves the entries the shallow history cannot reach", () => {
+    // The case that needs no rewrite at all: `git clone --depth`, a grafted history, or a CI
+    // checkout with a limited fetch depth all hand lore a strict subset of the committed log.
+    const full = generateLog(FAKE_HISTORY);
+    const shallow = generateLog(FAKE_HISTORY.slice(0, 1), { existing: full });
+    expect(shallow).toBe(full);
+  });
+
+  test("is idempotent: re-running over its own output changes nothing", () => {
+    const once = generateLog(FAKE_HISTORY, { existing: COMMITTED });
+    expect(generateLog(FAKE_HISTORY, { existing: once })).toBe(once);
+  });
+
+  test("a carried-forward subject needing MDX escaping is not re-escaped on every sync", () => {
+    // Feeding an already-rendered code span back through `renderSubject` would grow its delimiter by
+    // one backtick per sync — a superset that is no longer byte-stable.
+    const escaped: readonly GitCommit[] = [
+      {
+        hash: "esc1",
+        timestamp: "2026-06-03T10:00:00Z",
+        subject: "Handle <Foo> and {bar}",
+        files: ["docs/adr/0002.md"],
+      },
+    ];
+    const committed = generateLog(escaped);
+    expect(committed).toContain("` Handle <Foo> and {bar} `");
+    const merged = generateLog([], { existing: committed });
+    expect(merged).toBe(committed);
+    expect(generateLog([], { existing: merged })).toBe(committed);
+  });
+
+  test("a rewritten commit renders under both hashes, deliberately, rather than being silently dropped", () => {
+    const before = generateLog([
+      { hash: "was9", timestamp: "2026-06-04T10:00:00Z", subject: "Same change", files: ["docs/adr/0003.md"] },
+    ]);
+    const after = generateLog(
+      [{ hash: "now8", timestamp: "2026-06-04T10:00:00Z", subject: "Same change", files: ["docs/adr/0003.md"] }],
+      { existing: before },
+    );
+    // Indistinguishable from two genuine commits, so both are kept: over-reporting history is
+    // recoverable by reading it, under-reporting is not.
+    expect(after).toContain("was9 Same change");
+    expect(after).toContain("now8 Same change");
+  });
+
+  test("an entry already derived is never duplicated, even when its subject rendered differently before", () => {
+    // Keying the merge on (timestamp, hash) rather than on the whole line: an entry written by an
+    // older lore whose subject rendered differently is still the same commit.
+    const stale = [
+      "# Change log",
+      "",
+      "## docs/adr",
+      "",
+      "- 2026-06-22T09:00:00Z ddd4 Revise ADR-14 (old wording)",
+      "",
+    ].join("\n");
+    const merged = generateLog(FAKE_HISTORY, { existing: stale });
+    expect(merged).toContain("ddd4 Revise ADR-0014");
+    expect(merged).not.toContain("old wording");
+  });
+
+  test("the parse is total: a hand-edited or malformed log preserves what is legible and throws on nothing", () => {
+    const mangled = [
+      "# Change log",
+      "",
+      "Someone pasted a note here.",
+      "- 2026-06-05T10:00:00Z orph1 an entry before any folder heading",
+      "",
+      "## docs/adr",
+      "",
+      "- 2026-06-06T10:00:00Z keep1 a legible entry",
+      "not an entry line at all",
+      "- malformed",
+      "",
+    ].join("\n");
+    const merged = generateLog(FAKE_HISTORY, { existing: mangled });
+    expect(merged).toContain("keep1 a legible entry");
+    // An entry with no folder heading above it has no section to belong to, and free prose is not an
+    // entry. Both are dropped rather than failing the sync — the direction that still loses no entries.
+    expect(merged).not.toContain("orph1");
+    expect(merged).not.toContain("Someone pasted a note");
+  });
+
+  test("a CRLF committed log parses identically to an LF one (Windows checkouts)", () => {
+    // JavaScript's `$` without the `m` flag matches at end of input or before a final `\n`, never
+    // before a `\r`. Without stripping the CR, NEITHER the heading nor the entry pattern matches a
+    // single line of a CRLF file: the parse yields nothing, the merge carries nothing forward, and
+    // regeneration silently degrades to the replace semantics this whole change exists to prevent --
+    // on Windows only, with every other test still green, because fixtures are written with `\n`.
+    const crlf = COMMITTED.replace(/\n/g, "\r\n");
+    expect(generateLog(FAKE_HISTORY, { existing: crlf })).toBe(generateLog(FAKE_HISTORY, { existing: COMMITTED }));
+    expect(generateLog(FAKE_HISTORY, { existing: crlf })).toContain("- 2026-06-01T10:00:00Z old1 Pre-rewrite ADR edit");
+  });
+
+  test("a CRLF entry carries no stray carriage return into the regenerated bytes", () => {
+    // Stripping the CR at parse time rather than at render time: a carried-forward entry must be
+    // byte-identical to a derived one, not merely present.
+    expect(generateLog([], { existing: COMMITTED.replace(/\n/g, "\r\n") })).toBe(COMMITTED);
+  });
+
+  test("an absent or empty committed log regenerates exactly as before the merge existed", () => {
+    expect(generateLog(FAKE_HISTORY, { existing: undefined })).toBe(generateLog(FAKE_HISTORY));
+    expect(generateLog(FAKE_HISTORY, { existing: "" })).toBe(generateLog(FAKE_HISTORY));
+  });
+
+  test("buildLog forwards the committed bytes through the adapter seam", () => {
+    expect(buildLog(fakeAdapter(), { to: "HEADSHA" }, { existing: COMMITTED })).toBe(
+      generateLog(FAKE_HISTORY, { existing: COMMITTED }),
+    );
+  });
+
+  test("an empty history preserves the whole committed log rather than emptying it", () => {
+    // `lore sync` takes this path when HEAD does not resolve — the emptiest possible history, and
+    // the one where a replace erased the entire file.
+    expect(generateLog([], { existing: COMMITTED })).toBe(COMMITTED);
+  });
+});

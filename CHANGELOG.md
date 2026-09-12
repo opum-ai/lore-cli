@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`lore sync` no longer destroys `docs/log.md` entries it cannot re-derive.** Log regeneration
+  replaced the committed file wholesale, so every entry behind a commit the visible git history can
+  no longer reach was deleted — and because `log.md` is deliberately exempt from `lore check`'s
+  drift gate (ADR-0007), `check` still exited 0 on the truncated file and nothing downstream
+  noticed. A history rewrite is only one way to reach that state: a shallow clone, a grafted
+  history, or a CI checkout with a limited fetch depth all hand lore a strict subset of what the
+  committed log records, and all produced the same silent truncation. Regeneration now **merges**:
+  derived entries render from history, any committed entry the history cannot account for is
+  carried forward under the folder it was recorded in, and the result is a superset. Where history
+  only grows — every healthy repository — output is byte-identical to before, so idempotency and
+  byte-stability are unchanged. Two consequences are deliberate and documented in `core/log.ts`: a
+  rewritten commit appears under both its old and new hash (indistinguishable from two genuine
+  commits, and over-reporting history is recoverable where under-reporting is not), and a
+  carried-forward subject is emitted verbatim rather than re-escaped. Reported against quest-cli,
+  which lost 279 dated entries across five syncs (LCLI-474).
+
 ## [0.6.0] - 2026-09-09
 
 Quest ships 0.6.0 at the same time, continuing the lockstep pairing 0.5.0 started.

@@ -19,11 +19,34 @@
  *   (idempotent) regardless of the order the adapter returned commits in (lore-design §8: directory
  *   walks are sorted; no nondeterminism in core).
  *
+ * **Regeneration merges; it never replaces (LCLI-474).** The visible history is not always a superset
+ * of what the committed `log.md` records. A rewritten history, a shallow clone, a grafted history, or
+ * a depth-limited CI checkout all present a history that is a strict *subset*, and a replace would
+ * silently destroy every entry behind a commit that is no longer reachable — for which the committed
+ * file is then the only surviving record. So {@link generateLog} takes the committed bytes as
+ * {@link GenerateLogOptions.existing}, and its output is a **superset**: derived entries render from
+ * the history, and any committed entry the history can no longer account for is carried forward under
+ * the folder it was recorded in. When history only grows — the normal case — every committed entry is
+ * re-derived, nothing is carried forward, and the output is byte-identical to what a replace produced.
+ *
+ * Two consequences, both deliberate rather than incidental:
+ *
+ * - **A rewritten commit appears twice** (once under its old hash, once under its new), because the
+ *   two are indistinguishable from two genuine commits. A log of history that over-reports is
+ *   recoverable by reading it; one that under-reports is not, so the superset is the honest side to
+ *   err on.
+ * - **Carried-forward entries are emitted verbatim**, never re-rendered. Re-rendering would feed an
+ *   already-{@link renderSubject}ed subject back through the same escape and grow its code-span
+ *   delimiter on every sync — output that is a superset but no longer byte-stable.
+ *
  * **Drift-gate exemption (ADR-0007).** Because a git-derived `log.md` changes on *every* commit, it
  * is materialized at **`lore sync`** time and **excluded** from `lore check`'s regenerate-and-compare
  * drift gate. Gating it would report permanent drift (the gate's own commit would invalidate it) and
  * break on shallow/read-only CI checkouts where full history is absent. `index.md` and the
- * `<!-- lore:tasks -->` managed blocks stay gated as before.
+ * `<!-- lore:tasks -->` managed blocks stay gated as before. The exemption is what made the loss above
+ * invisible, and it still stands — but it no longer hides anything, because merge semantics make a
+ * shrinking `log.md` impossible by construction, which is a stronger guarantee than a gate reporting
+ * one after the fact.
  *
  * Per the core contract (lore-design §2.1) this module is pure: no filesystem, no spawn, no clock.
  */
@@ -89,6 +112,16 @@ export interface GenerateLogOptions {
   readonly root?: string;
   /** The document's top-level heading (default `"Change log"`). */
   readonly title?: string;
+  /**
+   * The **committed** `log.md` bytes, when the bundle already has one. Entries in it that `commits`
+   * cannot account for are carried forward rather than dropped, so regeneration is a merge and never
+   * loses history lore can no longer see (see the module header). Absent or empty — a bundle with no
+   * committed log — regeneration is simply the derived set. Parsing is **total**: only well-formed
+   * `## <folder>` headings and `- <timestamp> <hash> <subject>` entry lines are recognized, and every
+   * other line is ignored rather than throwing, so a hand-edited or truncated file degrades to
+   * "preserve the entries I can still read" instead of failing the sync.
+   */
+  readonly existing?: string;
 }
 
 /** One commit as it renders in `log.md` — the commit's identity plus its subject collapsed once. */
@@ -96,6 +129,12 @@ interface LogEntry {
   readonly hash: string;
   readonly timestamp: string;
   readonly subject: string;
+  /**
+   * The subject exactly as it appears on the rendered entry line — {@link renderSubject} applied for
+   * a derived commit, and the committed bytes verbatim for a carried-forward one. Kept separate from
+   * {@link subject} so a carried-forward entry is never re-escaped (module header).
+   */
+  readonly rendered: string;
   /**
    * The absolute instant the {@link timestamp} denotes (epoch ms), or `NaN` when it carries no
    * explicit offset (so a host-local — machine-dependent — parse is never trusted) or is
@@ -137,33 +176,120 @@ export function generateLog(commits: readonly GitCommit[], options: GenerateLogO
   // no rendered entry is duplicated. Two genuinely distinct commits sharing an abbreviated hash
   // remain distinct. The subject is collapsed once per commit.
   const byFolder = new Map<string, LogEntry[]>();
-  for (const commit of commits) {
-    const folder = commonFolder(foldersTouched(commit.files, root));
-    if (folder === undefined) {
-      continue;
-    }
-    const entry: LogEntry = {
-      hash: commit.hash,
-      timestamp: commit.timestamp,
-      subject: singleLine(commit.subject),
-      instant: toInstant(commit.timestamp),
-    };
+  const place = (folder: string, entry: LogEntry): void => {
     const bucket = byFolder.get(folder);
     if (bucket === undefined) {
       byFolder.set(folder, [entry]);
     } else {
       bucket.push(entry);
     }
+  };
+
+  // Derived entries are placed first and are never de-duplicated against each other, so the
+  // abbreviated-hash contract above still holds exactly as it did before the merge existed.
+  const derived = new Set<string>();
+  for (const commit of commits) {
+    const folder = commonFolder(foldersTouched(commit.files, root));
+    if (folder === undefined) {
+      continue;
+    }
+    const subject = singleLine(commit.subject);
+    derived.add(identity(commit.timestamp, commit.hash));
+    place(folder, {
+      hash: commit.hash,
+      timestamp: commit.timestamp,
+      subject,
+      rendered: renderSubject(subject),
+      instant: toInstant(commit.timestamp),
+    });
+  }
+
+  // What survives this filter is exactly the set the visible history can no longer account for —
+  // the set a replace would have destroyed (see the module header).
+  const carried = new Set<string>();
+  for (const [folder, entry] of parseEntries(options.existing)) {
+    const key = identity(entry.timestamp, entry.hash);
+    if (derived.has(key) || carried.has(key)) {
+      continue;
+    }
+    carried.add(key);
+    place(folder, entry);
   }
 
   const sections = [...byFolder.entries()]
     .sort(([a], [b]) => compareCodeUnits(a, b))
     .map(([folder, entries]) => {
-      const lines = entries.sort(compareEntries).map((e) => `- ${e.timestamp} ${e.hash} ${renderSubject(e.subject)}`);
+      const lines = entries.sort(compareEntries).map((e) => `- ${e.timestamp} ${e.hash} ${e.rendered}`);
       return `## ${folder}\n\n${lines.join("\n")}\n`;
     });
 
   return [`# ${title}\n`, ...sections].join("\n");
+}
+
+/**
+ * A commit's identity for merge purposes: `(timestamp, hash)`. The hash alone is not enough — it may
+ * be an abbreviation, and {@link generateLog} contractually keeps two distinct commits that share one
+ * distinct. Pairing it with the committer timestamp makes a false match require two commits sharing
+ * both an abbreviated hash and an exact instant. The *subject* is deliberately not part of the key:
+ * an entry written by an older lore whose subject rendered differently is still the same commit, and
+ * keying on it would carry that entry forward as a duplicate of one already derived.
+ */
+function identity(timestamp: string, hash: string): string {
+  return `${timestamp}\u0000${hash}`;
+}
+
+/** Matches a `log.md` folder section heading — `## docs/adr`. */
+const FOLDER_HEADING = /^## (\S.*)$/;
+
+/** Matches a rendered `log.md` entry line — `- <timestamp> <hash> <subject>`, subject possibly empty. */
+const LOG_ENTRY = /^- (\S+) (\S+)(?: (.*))?$/;
+
+/**
+ * Parse a committed `log.md` back into `(folder, entry)` pairs — the inverse of the rendering in
+ * {@link generateLog}, and the input to its merge.
+ *
+ * **Total by construction**: it never throws and never rejects a document. A line that is neither a
+ * folder heading nor an entry — prose, a stray hand edit, the `# Change log` title, a blank — is
+ * skipped, as is any entry line appearing before the first heading (it has no folder to belong to).
+ * A malformed file therefore degrades to "carry forward the entries still legible in it", which is
+ * the failure direction that loses nothing; the alternative, failing the sync, would leave a
+ * repository unable to run `lore sync` at all because of a file lore itself generated.
+ *
+ * Subjects are taken **verbatim**, not re-parsed out of their {@link renderSubject} escaping, so a
+ * carried-forward entry re-renders to the identical bytes it was read from (module header).
+ *
+ * **A trailing `\r` is stripped before matching**, so a CRLF working copy — the default for a git
+ * checkout on Windows with `core.autocrlf=true` — parses identically to an LF one. This is not a
+ * cosmetic detail: JavaScript's `$` (without the `m` flag) matches only at end of input or before a
+ * final `\n`, never before a `\r`, so on CRLF bytes *neither* pattern below would match a single
+ * line. The parse would silently yield nothing, the merge would carry nothing forward, and
+ * regeneration would degrade back to exactly the replace semantics this module exists to prevent —
+ * on one platform, with every test still green, because fixtures are written with `\n`.
+ */
+function parseEntries(existing: string | undefined): readonly (readonly [string, LogEntry])[] {
+  if (existing === undefined || existing === "") {
+    return [];
+  }
+
+  const entries: (readonly [string, LogEntry])[] = [];
+  let folder: string | undefined;
+  for (const rawLine of existing.split("\n")) {
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+    const heading = FOLDER_HEADING.exec(line);
+    if (heading !== null) {
+      folder = (heading[1] ?? "").trim();
+      continue;
+    }
+    const entry = LOG_ENTRY.exec(line);
+    const timestamp = entry?.[1];
+    const hash = entry?.[2];
+    if (folder === undefined || folder === "" || timestamp === undefined || hash === undefined) {
+      continue;
+    }
+    const rendered = entry?.[3] ?? "";
+    entries.push([folder, { hash, timestamp, subject: rendered, rendered, instant: toInstant(timestamp) }]);
+  }
+  return entries;
 }
 
 /**
