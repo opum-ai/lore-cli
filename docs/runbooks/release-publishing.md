@@ -584,13 +584,33 @@ publish is explicitly marked public. Root `package.json` and all six
 
    **The `publish: true` prohibition was lifted by owner decision on 2026-08-29**
    (recorded on LCLI-278). Trusted publishing fixes *authentication*, not
-   *approval*: the `release` environment still has no protection rules and
-   administrator bypass, so a dispatch has no second-party approval. That
-   exposure was weighed and accepted, because the alternative was not a safer
-   publish but a publish that keeps failing — a credential that expires inside a
-   quarter and strands the release when it does. **LCLI-278 stays open**: the
-   control it asks for still does not exist, and if the billing plan later
-   supports required reviewers, configure one and the waiver stops being needed.
+   *approval*, and for 2026-08-29 through 2026-09-13 that left a real gap: the
+   `release` environment had no protection rules, so a dispatch had no
+   second-party approval. That exposure was weighed and accepted, because the
+   alternative was not a safer publish but a publish that keeps failing — a
+   credential that expires inside a quarter and strands the release when it does.
+
+   **That gap is now closed.** Verified 2026-09-13 against
+   `gh api repos/opum-ai/lore-cli/environments/release`: `protection_rules`
+   carries a `required_reviewers` rule (id `65483841`, reviewer
+   `jeremy-newhouse`, `prevent_self_review: false`), so a `publish: true`
+   dispatch pauses for a human approval before the `publish` job deploys. The
+   earlier HTTP 422 that blocked this — GitHub refusing required reviewers on
+   the then-current billing plan — no longer applies: the repository is public
+   as of the 2026-09-10 recreation, and Environment protection rules are
+   available to public repositories. Note the environment's `updated_at` still
+   reads `2026-09-10T22:39:12Z`; **GitHub does not bump it when a protection
+   rule is added**, so that field is not evidence of when the rule appeared and
+   must not be used to date it. quest-cli's `release` environment gained the
+   adjacent rule id `65483904` in the same window.
+
+   Two caveats keep this short of airtight. `can_admins_bypass` is still `true`,
+   so a repository admin can approve their own deployment. And the rule only
+   binds if every package's npm Trusted Publisher config sets the **Environment**
+   field to `release` (see the field table above) — without that claim, a forged
+   `release.yml` with the `environment:` line deleted mints a token npm still
+   accepts. Re-verify the API output above before relying on this control rather
+   than trusting this paragraph, which is a dated observation and not a live one.
 
    Once trusted publishing is configured, a release is one dispatch:
 
