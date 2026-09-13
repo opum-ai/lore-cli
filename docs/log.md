@@ -224,6 +224,7 @@
 - 2026-09-10T14:29:00-05:00 e3d758679d46cd0e80cd59432b059bf0a4f83e88 chore: fresh history for the public repository
 - 2026-09-11T20:01:02-05:00 901646cfe59e50e4f2dc5d9075eeb28cfe7f811d fix(LCLI-474): merge log.md regeneration instead of replacing it (#6)
 - 2026-09-13T17:27:51-05:00 c44045bb8ffe86ee5b5532085386b74b4a37059d docs(LCLI-278): record the release Environment gate as verified, not absent (#13)
+- 2026-09-13T17:58:47-05:00 39a3cd48817a31308f3d32f645facf1e7766c001 docs(LCLI-475): 0.6.1 released — record the release, the OIDC root cause, and close LCLI-475/278 (#14)
 
 ## docs/adr
 
