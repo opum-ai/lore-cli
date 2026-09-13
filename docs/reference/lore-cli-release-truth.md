@@ -21,7 +21,49 @@ availability claim.
 
 ### Current state
 
-`0.6.0` is **RELEASED**. Published 2026-09-09 from tag `v0.6.0` at
+`0.6.1` is **RELEASED**. Published 2026-09-13 from tag `v0.6.1` at
+`20a1d24beb11f50df9f3b4ad8cb0a6ecefb92878`, **manually via
+`scripts/publish-release.sh 0.6.1 34783940117`** against Release run
+`34783940117`'s own `npm-packages` artifact, every tarball sha256-verified
+against `SHA256SUMS.txt` before any registry write. All seven packages are
+present at `0.6.1` with `latest` moved on each, and the script's clean-room
+`npx` install (a fresh temp dir, nothing from local caches) returned `0.6.1`.
+
+**`0.6.1` carries NO provenance attestation, where `0.6.0` did.** This is a
+real regression in supply-chain posture and is not an oversight: provenance is
+produced by the CI OIDC path, and that path is broken (below). State this
+plainly rather than letting a reader infer provenance from `0.6.0`'s presence.
+
+**The OIDC publish path failed and releases are manual until LCLI-482 closes.**
+`publish: true` dispatch `34786808767` ran every build and qualification job
+green, paused correctly at the `release` environment's required-reviewer gate,
+was approved, and then failed at the first package with `E404` on PUT. Root
+cause, proven by decoding a real OIDC token minted with audience
+`npm:registry.npmjs.org` in probe run `34787200768`: GitHub issues
+**immutable-format subject claims** for this repository —
+`repo:opum-ai@311910387/lore-cli@1365013937:...` — and npm Trusted Publishing
+matches the classic `repo:opum-ai/lore-cli:...`, so npm treats the token as
+unauthenticated. Per GitHub's 2026-04-23 changelog, every repository created
+after 2026-07-15 uses this format; lore-cli was deleted and recreated
+2026-09-10 (OPAG-70), **one day after `0.6.0` published successfully over the
+same OIDC path**. That one-day gap is the cleanest evidence of the cause.
+Re-registering Trusted Publishers does not fix it (all seven were
+re-registered first), and there is no repo-level opt-out — a `PUT` to
+`actions/oidc/customization/sub` with `use_immutable_subject: false` is
+accepted and silently has no effect.
+
+Two false leads are recorded on LCLI-475 because both nearly became wrong root
+causes: other org repos also report `use_immutable_subject: true` (they are not
+a control group — every repo here postdates the cutoff), and the publish job's
+`GITHUB_TOKEN Permissions` log group omits `IdToken` **even when `id-token` is
+granted**.
+
+The environment gate itself is now proven working, which closes LCLI-278: the
+run genuinely paused, held, and resumed only on approval.
+
+### Previous state
+
+`0.6.0` was **RELEASED**. Published 2026-09-09 from tag `v0.6.0` at
 `59ba30e497f8e98aa6c6be022d9363fd718fb4ee`, by Release run `34393976910` via
 npm **OIDC trusted publishing** — no credential was involved at any point,
 dispatched directly with `publish: true` (its own job list — `assert release
