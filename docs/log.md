@@ -222,6 +222,7 @@
 - 2026-09-05T12:29:05Z 4e6a9f675f4a904821bce6b14a39f0604401829a docs(CLAUDE.md): move three reference sections to docs/reference, close LCLI-439 (#577)
 - 2026-09-09T09:46:24Z 003039c15cb286c3b6d9b15709b0c1109b8ce58a docs(LCLI-333): fix stale Quest version-pin and actor language in the tracker contract (#624)
 - 2026-09-10T14:29:00-05:00 e3d758679d46cd0e80cd59432b059bf0a4f83e88 chore: fresh history for the public repository
+- 2026-09-11T20:01:02-05:00 901646cfe59e50e4f2dc5d9075eeb28cfe7f811d fix(LCLI-474): merge log.md regeneration instead of replacing it (#6)
 
 ## docs/adr
 
