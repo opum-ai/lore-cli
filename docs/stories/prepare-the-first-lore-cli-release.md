@@ -7,7 +7,7 @@ tags:
   - governance
 summary: Record the first immutable public package release while retaining the unresolved control gate for future automated publication.
 timestamp: 2026-08-04T02:50:00Z
-status: todo
+status: done
 tasks:
   - lcli-253
   - lcli-269
@@ -118,7 +118,7 @@ for future automated OIDC publication.
 | [LCLI-253](../../.quest/tasks/LCLI-253.json) | Migrate backlog adapter to the released --json Backlog.md once upstream tags it (drop build-from-commit hint, bump version floor) | Done |
 | [LCLI-269](../../.quest/tasks/LCLI-269.json) | docker/e2e/run-e2e.sh runs its destructive phases against the caller's cwd when invoked outside the container (no set -e, unguarded cd /workspace) | Done |
 | [LCLI-276](../../.quest/tasks/LCLI-276.json) | Release runbook cannot configure npm Trusted Publishing before first package publication | Done |
-| [LCLI-278](../../.quest/tasks/LCLI-278.json) | GitHub billing plan blocks required-reviewer protection on the release Environment | To Do |
+| [LCLI-278](../../.quest/completed/LCLI-278.json) | GitHub billing plan blocks required-reviewer protection on the release Environment | Done |
 | [LCLI-279](../../.quest/tasks/LCLI-279.json) | Add deterministic OKF projection export | Done |
 | [LCLI-280](../../.quest/tasks/LCLI-280.json) | Upgrade js-yaml to remediate release-blocking advisories | Done |
 | [LCLI-282](../../.quest/tasks/LCLI-282.json) | Provide a SHA-pinned strict Lore CI action | Done |
