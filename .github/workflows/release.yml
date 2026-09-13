@@ -626,15 +626,40 @@ jobs:
       - name: Assert no token is shadowing OIDC (quest-cli QCLI finding, 2026-08-30)
         # THE FAILURE THIS PREVENTS IS SILENT AND COSTS HOURS. `actions/setup-node` with
         # `registry-url` writes `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` into the
-        # job's .npmrc. If NODE_AUTH_TOKEN holds a REAL token, npm authenticates with it and
-        # NEVER ATTEMPTS OIDC -- so a "harmless fallback" token stands in front of the mechanism
-        # it was meant to back up, and a dead or wrongly-scoped one produces E404 on PUT that
-        # looks exactly like a missing trust relationship. quest-cli spent six dispatches on
-        # this before finding it; lore has only ever published because the secret is unset and
-        # setup-node substitutes its placeholder.
+        # job's .npmrc.
         #
-        # That is an invariant nobody wrote down, so adding an NPM_TOKEN secret later would
-        # silently switch this job's auth mode with no diagnostic. Assert it instead.
+        # WHAT A CONFIGURED TOKEN ACTUALLY DOES, read out of npm's own source (lib/utils/oidc.js
+        # and lib/commands/publish.js, verified identical in npm 11.19.1 and 12.0.2 -- 11.x is
+        # what the step above installs). An earlier revision of this comment said a real token
+        # makes npm "NEVER ATTEMPT OIDC". That is FALSE and it sent a sibling repo down a
+        # six-dispatch blind alley, so the mechanism is spelled out here rather than summarised:
+        #
+        #   - publish.js calls `await oidc({...})` UNCONDITIONALLY, and does it BEFORE reading
+        #     credentials at all (`getCredentialsByURI` runs on the NEXT line).
+        #   - oidc.js has NO early return on an existing `_authToken`. It bails only on: not a
+        #     recognised CI vendor, ACTIONS_ID_TOKEN_REQUEST_URL/TOKEN absent, no id_token, the
+        #     exchange request threw, or the exchange response carried no `.token`.
+        #   - On success it OVERWRITES whatever .npmrc held:
+        #         opts[authTokenKey] = response.token
+        #         config.set(authTokenKey, response.token, 'user')
+        #
+        # So a configured token does not BLOCK OIDC -- it becomes the silent FALLBACK for when
+        # the exchange fails, because oidc.js swallows that failure (log.verbose, return
+        # undefined) and npm carries on with .npmrc. That is why the check below still earns its
+        # place, and it is a WORSE hazard than the one the old comment described: a dead or
+        # wrongly-scoped token turns a failed exchange into an E404 on PUT that looks exactly
+        # like a missing trust relationship, and a LIVE one lets the publish SUCCEED under the
+        # wrong identity with no provenance and no diagnostic at all.
+        #
+        # setup-node's own placeholder (`XXXXX-XXXXX-XXXXX-XXXXX`, exported unconditionally when
+        # `registry-url` is set and no token is configured) is accepted below for the same
+        # reason: it cannot prevent the exchange either. v0.6.0 published successfully from CI,
+        # with provenance, with that placeholder present -- `git show v0.6.0:.github/workflows/
+        # release.yml` has a byte-identical setup-node step. Do not "fix" the placeholder and
+        # expect a broken publish to start working; see LCLI-482.
+        #
+        # Adding an NPM_TOKEN secret later would silently switch this job's auth mode with no
+        # diagnostic. Assert it instead.
         #
         # npm gives E404 on PUT for at least four distinct causes -- token cannot write, token
         # invalid, npm too old so OIDC was skipped, and no trust relationship -- and no way to
@@ -646,7 +671,7 @@ jobs:
             ""|undefined|null|XXXXX-XXXXX-XXXXX-XXXXX)
               echo "no real registry token configured — OIDC will be used" ;;
             *)
-              echo "::error::a registry auth token is configured for this job, which makes npm authenticate with it and SKIP OIDC entirely. Remove the NPM_TOKEN secret / node-auth-token input from the publish job; trusted publishing needs no stored credential."
+              echo "::error::a registry auth token is configured for this job. npm still ATTEMPTS OIDC first, but this token becomes the silent fallback if the exchange fails -- publishing under the wrong identity without provenance, or returning an E404 that looks like a missing trust relationship. Remove the NPM_TOKEN secret / node-auth-token input from the publish job; trusted publishing needs no stored credential."
               exit 1 ;;
           esac
       - name: Assert npm CLI meets the OIDC trusted-publishing floor (docs/runbooks/release-publishing.md Prerequisites)
@@ -698,6 +723,23 @@ jobs:
         # last (or not at all).
         env:
           PLATFORM_NAMES_SPACE: ${{ needs.setup.outputs.namesSpace }}
+          # npm logs the ONE line that says why trusted publishing was refused at verbose only:
+          #   log.verbose('oidc', `Failed token exchange request with body message: ${...}`)
+          # At the default loglevel that failure is swallowed (oidc.js returns undefined) and the
+          # run surfaces it four layers downstream as a generic E404 on PUT, which has at least
+          # four indistinguishable causes. Every OIDC diagnosis on LCLI-482 so far -- ours and a
+          # sibling repo's, one of which was wrong -- is an INFERENCE from that E404, because
+          # nobody had the registry's own words. This costs one env var and turns the next failed
+          # dispatch into an answer instead of another theory.
+          #
+          # Checked before enabling, because this repo is public and so are these logs: npm's
+          # `redactLog` is applied to argv, error messages and audit URIs -- NOT to every
+          # verbose line -- so verbose is not blanket-safe by construction. It is safe HERE
+          # because oidc.js never logs the exchanged token (only "Successfully retrieved and
+          # set token"), registry auth travels as a header rather than in the logged URL, and
+          # the redact matchers catch an `npm_`-prefixed token anywhere they do apply. If a
+          # future npm starts logging credentials at verbose, this env var is the thing to pull.
+          NPM_CONFIG_LOGLEVEL: verbose
         run: |
           publish_or_skip() {
             local tgz="$1"
