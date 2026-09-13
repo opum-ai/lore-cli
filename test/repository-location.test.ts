@@ -109,7 +109,18 @@ function everyTrackedFile(): string[] {
       (path) =>
         path !== "" &&
         !path.startsWith("backlog/") &&
+        // Every Quest RECORD directory, not just the active one. A task record is a
+        // historical account and routinely quotes the repository identity that was
+        // current when it was written; that is the point of the record. Excluding
+        // `.quest/tasks/` alone made the gate fire the moment a task was COMPLETED and
+        // its file moved to `.quest/completed/` — the same bytes, newly in scope, so
+        // closing a task could fail CI on prose nobody had touched (LCLI-278, which
+        // cites `repos/jeremy-newhouse/lore/environments` in its own 2026-07 problem
+        // statement). Rewriting a closed record to satisfy a routing gate would falsify
+        // it, so the exclusion covers the records instead.
         !path.startsWith(".quest/tasks/") &&
+        !path.startsWith(".quest/completed/") &&
+        !path.startsWith(".quest/archive/") &&
         !path.startsWith(".quest/migrations/"),
     );
 }
