@@ -221,17 +221,35 @@ rm -rf "$SMOKE"
 [ "$rc" -eq 0 ] || die "npx smoke failed — the packages are published but the install path is broken. Investigate before announcing."
 
 hr
-cat <<'DONE'
-PUBLISHED. Remaining, per LCLI-363:
+# Deliberately an UNQUOTED heredoc so $VERSION interpolates. The previous version of
+# this block was quoted ('DONE') and therefore hardcoded — it told every release, for
+# months, to cut a GitHub Release for v0.3.5 and to message tmux panes that no longer
+# exist. A closing message that names a fixed version is guaranteed to go stale the
+# moment that version ships (LCLI-483). Keep perishable references OUT of here:
+# no task ids, no session addresses, no version literals.
+cat <<DONE
+PUBLISHED $VERSION. Remaining, in order:
 
-  AC#5  Replace (do not merely supplement) the "Not yet published" sentence in
-        docs/reference/lore-cli-release-truth.md, and cut a non-draft,
-        non-prerelease GitHub Release for v0.3.5 using CHANGELOG.md's [0.3.5]
-        section as its body:
-            gh release create v0.3.5 --title "Lore CLI 0.3.5" --notes-file <notes>
+  1. Update the release-truth docs so they state $VERSION is released. REPLACE the
+     current-state claim, do not merely add alongside it:
+         docs/reference/lore-cli-release-truth.md    (Current state section)
+         README.md                                   (status block + the npm line)
 
-  AC#6  Tell the opum-cli-e2e session (pane wK:pR) to re-run the 407-row matrix
-        at rank-1 against the published release, and tell quest-cli (pane wS:pK)
-        that lore 0.3.5 is live — they are deliberately not describing it as
-        published until told.
+  2. Cut a non-draft, non-prerelease GitHub Release for v$VERSION, using
+     CHANGELOG.md's [$VERSION] section as its body:
+         gh release create v$VERSION --title "Lore CLI $VERSION" --notes-file <notes>
+
+  3. Tell the downstream sessions. They deliberately do not describe a version as
+     published until told. Resolve each one with ListAgents and match on repository —
+     session names change on every restart, so never reuse a previously seen address:
+         opum-cli-e2e       re-run the qualification matrix against the published release
+         quest-cli          lore $VERSION is live
+         opum-marketplace   the resolved skills/ tree SHA for this tag, or its
+                            federated-content check goes red:
+                                git ls-tree v$VERSION skills
+
+  4. Record HOW this shipped. If it was published by this script rather than by the
+     release workflow's OIDC job, say so in release-truth and state that the version
+     carries NO provenance attestation — a manual publish cannot produce one. Do not
+     let a reader infer provenance from an earlier version having it.
 DONE
