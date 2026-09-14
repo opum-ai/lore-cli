@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-09-13
+
+Quest ships 0.6.2 alongside this release, continuing the lockstep pairing.
+
+### Provenance — read this before checking the packument
+
+- **0.6.2 ships with NO provenance attestation, and so did 0.6.1.** This is expected and is not
+  tampering. OIDC trusted publishing cannot authenticate for this repository: GitHub issues
+  immutable-format subject claims (`repo:opum-ai@<id>/lore-cli@<id>:...`) and npm's Trusted
+  Publishing matches the classic `repo:opum-ai/lore-cli:...` form, so the token exchange is
+  refused and npm returns E404 on PUT. There is no repository-level opt-out — setting
+  `use_immutable_subject: false` is accepted and has no effect. Releases therefore go out through
+  the manual `scripts/publish-release.sh` path, and a manual publish cannot mint an attestation.
+  **LCLI-482 is open and unresolved**; do not read this release as having fixed it.
+- **Every version published before 2026-09-10 carries a provenance link that can never resolve.**
+  The repository was deleted and recreated that day, destroying the commits those attestations
+  pin — 0.6.0's names `59ba30e4…`, for which the live GitHub API answers 422 "No commit found for
+  SHA". The tarballs, checksums and signatures are all intact and correctly signed; only the commit
+  the provenance *names* stopped existing, and npm forbids republishing a version, so this cannot
+  be repaired. Note that a destroyed SHA **still resolves in a local clone's loose objects**, so
+  `git cat-file` wrongly reports it healthy — the live API is the only valid check
+  (LCLI-481, `docs/runbooks/release-publishing.md`).
+
+### Added
+
+- **`lore sync` now tells you when it is about to drop content from `docs/log.md`.** The file is
+  regenerated from git history plus the entries still parseable in it, and anything else — prose,
+  stray hand edits — has always been discarded silently. Sync now warns, naming the count and
+  sampling the text, and reports `N added, N carried forward, N dropped` on every run (also in
+  `--json`). Blank lines and the `# Change log` title are structure and are never reported, so the
+  warning stays signal rather than firing on every healthy sync. The contract itself is now written
+  down in `docs/reference/cli-contract.md` rather than living only in a source comment — a consumer
+  previously asserted that authored prose would survive a sync, and the failing test was
+  investigated across three repositories before the expectation was found to be outside the
+  contract (LCLI-485, LCLI-484).
+- **A release-time provenance gate.** `scripts/release-provenance.mjs`, wired into `release.yml`
+  as `--pre`/`--post`, fails a release whose published attestation pins a commit the **live**
+  GitHub API cannot resolve — catching a future history rewrite at release time instead of leaving
+  it to be discovered on npmjs.com. An absent attestation passes with a recorded note rather than
+  failing, because that is the current, documented state of every release while LCLI-482 is open; a
+  gate that blocked the only working publish path would simply be deleted. Waiving a genuine
+  finding requires a dispatch input naming a reference, never a boolean, and a waiver hardcoded
+  into the workflow is a test failure (LCLI-481).
+
+### Fixed
+
+- **A slow npm registry no longer looks like a broken release.** The registry's read API lags its
+  own publish confirmation, and on this package set the lag is worsening rather than random: 0.4.5
+  ~15s, 0.4.6 ~35s, 0.5.0 ~25 minutes. Both publish paths now poll with backoff against a single
+  shared 30-minute window — sized against that history — and distinguish "not visible yet", which
+  is propagation and never fails a release, from "visible but serving different bytes than were
+  published", which fails immediately and is proven by comparing the registry's `dist.shasum`
+  against the sha1 of the tarball actually published. Previously the manual path's install smoke
+  test called `die` with "the packages are published but the install path is broken" on any
+  failure, including a propagation lag — seconds after the one irreversible step of a release, and
+  phrased in a way that invites `npm unpublish` on packages that are fine (LCLI-460).
+- **`scripts/publish-release.sh`'s closing instructions no longer name a version three minors
+  stale.** The closing message was a quoted heredoc, so it could not interpolate and told every
+  release for months to cut a GitHub Release for v0.3.5 and to message tmux panes that no longer
+  exist. It now derives from `$VERSION`, and the usage examples are placeholders rather than a
+  newer hardcoded pair, so the same clock cannot restart (LCLI-483).
+
+
 ## [0.6.1] - 2026-09-11
 
 ### Fixed
