@@ -41,7 +41,7 @@ interface WorkflowStep {
 
 interface WorkflowJob {
   if?: string;
-  needs?: string[];
+  needs?: string[] | string;
   permissions?: Record<string, string>;
   environment?: string;
   steps?: WorkflowStep[];
@@ -227,5 +227,41 @@ describe("release.yml publish job stays safely gated", () => {
     const workflow = readFileSync(WORKFLOW_PATH, "utf8");
     expect(workflow).toContain("published launcher unexpectedly contains runtime dependencies");
     expect(workflow).toContain("published launcher unexpectedly installed @ladybugdb/core");
+  });
+});
+
+describe("release.yml keeps the provenance gate wired in (LCLI-481)", () => {
+  // The regression this guards: the gate is only worth anything if it RUNS. Deleting either
+  // job, or dropping `provenance-pre` from the publish job's `needs:`, leaves a release.yml
+  // that still passes typecheck/lint/actionlint and still publishes — just with nothing
+  // checking that a rewritten history has turned an already-published attestation into a link
+  // to a commit that no longer exists.
+  test("the pre-publish provenance check gates the publish job", () => {
+    const doc = loadWorkflow();
+    expect(doc.jobs["provenance-pre"]).toBeDefined();
+    expect(doc.jobs.publish?.needs).toContain("provenance-pre");
+    const step = doc.jobs["provenance-pre"]?.steps?.find((s) => s.run?.includes("release-provenance.mjs"));
+    expect(step?.run).toContain("--pre");
+  });
+
+  test("the post-publish provenance check runs after a real publish", () => {
+    const doc = loadWorkflow();
+    // A scalar `needs:`, not a list — GitHub skips a job whose single dependency was skipped
+    // or failed, which is exactly the gating wanted here and needs no `if:` of its own.
+    expect(doc.jobs["provenance-post"]?.needs).toBe("publish");
+    const step = doc.jobs["provenance-post"]?.steps?.find((s) => s.run?.includes("release-provenance.mjs"));
+    expect(step?.run).toContain("--post");
+  });
+
+  test("neither provenance job is handed a registry credential line", () => {
+    const doc = loadWorkflow();
+    // `actions/setup-node` writes `//registry.npmjs.org/:_authToken=...` into .npmrc whenever
+    // `registry-url` is set. These jobs only GET public JSON; a publish-shaped credential in a
+    // job that never publishes is surface for nothing.
+    for (const job of ["provenance-pre", "provenance-post"]) {
+      const setupNode = doc.jobs[job]?.steps?.find((s) => s.uses?.startsWith("actions/setup-node@"));
+      expect(setupNode).toBeDefined();
+      expect(setupNode?.with?.["registry-url"]).toBeUndefined();
+    }
   });
 });

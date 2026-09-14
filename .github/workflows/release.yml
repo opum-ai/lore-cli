@@ -554,6 +554,46 @@ jobs:
           path: dist-npm/
           if-no-files-found: error
 
+  provenance-pre:
+    name: re-verify published provenance still resolves (LCLI-481)
+    runs-on: ubuntu-latest
+    # NO `needs:` and NO `if:` — this runs on every dispatch, dry-run included. It reads the
+    # public registry and the public GitHub API and touches nothing, so there is no reason to
+    # reserve the signal for real publishes, and a dry-run dispatch is exactly when a
+    # maintainer wants to find out that a history rewrite broke the last release's provenance.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+          # DELIBERATELY no `registry-url:` — that input makes setup-node write
+          # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` into the job's .npmrc. This
+          # job only ever GETs public JSON; giving it a credential line would be handing a
+          # publishing-shaped credential to a job that has no business publishing.
+      - name: Re-verify the provenance already on the registry (--pre)
+        # WHAT THIS CATCHES: a history rewrite between two releases. Every @opum-ai/lore*
+        # version published from CI before 0.6.1 pins a commit destroyed when this repo was
+        # deleted and recreated on 2026-09-10 (LCLI-481) — 0.6.0 pins
+        # 59ba30e497f8e98aa6c6be022d9363fd718fb4ee, which api.github.com answers 422 for. Those
+        # links cannot be repaired: the attestation is signed and the version cannot be
+        # republished. So the script treats everything at or below its KNOWN_DANGLING_THROUGH
+        # baseline as accepted damage — reported on every run, never failed on — and fails only
+        # when a version published AFTER the baseline stops resolving, which is the signature of
+        # a NEW rewrite. Blocking here is the point: it stops this release from adding another
+        # permanently-dangling version to the pile before anyone has looked at the rewrite.
+        #
+        # It never calls git. The destroyed commits are still present as loose objects in a
+        # clone made before the rewrite, so a local `git cat-file -e` passes on exactly the
+        # artifacts this gate exists to catch.
+        env:
+          # 60 requests/hour unauthenticated is not enough headroom for a release run, and an
+          # exhausted rate limit degrades to "inconclusive" (a loud pass), which would quietly
+          # turn the gate off. contents: read is all the commits endpoint needs.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/release-provenance.mjs --pre
+
   publish:
     name: publish (npm, OIDC trusted publishing)
     # Only runs on an explicit `publish: true` dispatch (the input defaults to
@@ -562,7 +602,9 @@ jobs:
     # deliberately opt in on that one run, never as a side effect of any other
     # trigger.
     if: ${{ inputs.publish == true }}
-    needs: [setup, package]
+    # provenance-pre gates this job: a rewrite that dangled an already-published version's
+    # attestation must stop the release rather than be added to (LCLI-481).
+    needs: [setup, package, provenance-pre]
     runs-on: ubuntu-latest
     # LCLI-268: an OUT-OF-FILE gate, on top of (not instead of) the `if:` guard above.
     # npm Trusted Publishing (LCLI-255) matches OIDC tokens on repo + WORKFLOW FILENAME,
@@ -951,3 +993,54 @@ jobs:
             echo "::warning::still not visible on the registry read API after ${REGISTRY_WINDOW_SECONDS}s:${pending}. This is NOT proof the publish failed -- npm already confirmed it, and only the registry read API is behind (LCLI-460: 0.4.5 ~15s, 0.4.6 ~35s, 0.5.0 ~25min). Do NOT unpublish. Re-check before treating it as a failure."
           fi
           exit "$rc"
+
+  provenance-post:
+    name: verify this release's own provenance (LCLI-481)
+    # `needs: publish` is the whole gating story: GitHub skips a job whose dependency was
+    # skipped or failed, so this runs on exactly the dispatches that actually published, with
+    # no `if:` of its own to keep in sync with the publish job's.
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+          # No `registry-url:` here either — see the note in provenance-pre. This job reads
+          # public JSON and must not be handed a registry credential line.
+      - name: Check the attestation this release produced, if it produced one (--post)
+        # WHAT THIS ANSWERS, and it is two different questions that must not be collapsed:
+        #
+        #   NO ATTESTATION      -> PASS, with a `::warning::` and a job-summary row naming the
+        #                          cause. This is the EXPECTED result right now: OIDC trusted
+        #                          publishing is broken for this repo (LCLI-482, still open),
+        #                          so releases go out through scripts/publish-release.sh, which
+        #                          cannot mint provenance. Failing here would red every release
+        #                          for something the release cannot fix, and the gate would be
+        #                          switched off within one dispatch. Passing SILENTLY would be
+        #                          the opposite mistake — unattested releases would accumulate
+        #                          unnoticed — so the gap is recorded on every single run.
+        #   ATTESTATION PRESENT,
+        #   PINNED COMMIT GONE  -> FAIL. The LCLI-481 defect, caught on the release run rather
+        #                          than found later on npmjs.com, where a provenance link to a
+        #                          non-existent commit reads as tampering.
+        #
+        # This CANNOT un-publish anything — by the time it runs the bytes are on the registry.
+        # Its value is that the verdict lands on the release run within minutes, while the
+        # cause is still obvious, instead of in a bug report months later.
+        #
+        # The package set and version come from the checked-out package.json (root name +
+        # every optionalDependencies key). verify-versions has already asserted that those
+        # pins are exact and equal to the root version, so that IS this release's package set.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Attestations propagate on the registry's own schedule — the same read-API lag
+          # LCLI-460 documents for tarballs (0.5.0 took ~25 minutes to become visible). Without
+          # a bounded wait, a genuinely attested release would be reported as unattested purely
+          # because the check was fast, which is the one way the "absent is fine" rule could
+          # become misleading. Only the absent case waits; every other outcome is already a
+          # real answer.
+          PROVENANCE_WAIT_SECONDS: ${{ vars.PROVENANCE_WAIT_SECONDS || 300 }}
+        run: node scripts/release-provenance.mjs --post --wait-seconds "$PROVENANCE_WAIT_SECONDS"
