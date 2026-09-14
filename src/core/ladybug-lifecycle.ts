@@ -48,6 +48,7 @@ import {
   type LadybugProjectionSource,
   loadLadybugProjectionSource,
 } from "./ladybug-source";
+import { PROJECTION_SCHEMA_VERSION } from "./projection";
 
 const CURRENT_PROCESS_START_IDENTITY = `pid:${process.pid}:started:${Math.floor(
   Date.now() - process.uptime() * 1_000,
@@ -462,7 +463,13 @@ async function inspectFreshGeneration(
     const control = parsed;
     if (
       control.indexFormatVersion !== LADYBUG_INDEX_FORMAT ||
-      control.projectionSchemaVersion !== "1.0" ||
+      // The CONSTANT, never a literal (LCLI-476). This read `"1.0"` while the emitter read a
+      // constant, so the first schema bump made every cached generation permanently incompatible:
+      // the fast path missed on every reconcile, silently reloading the whole source and losing the
+      // cache with no error anywhere. Requiring the CURRENT version is right -- a generation is a
+      // cache, and serving an older-shaped one would hand back records missing fields the caller
+      // now expects. Rebuilding is correct and cheap; what was wrong was never noticing.
+      control.projectionSchemaVersion !== PROJECTION_SCHEMA_VERSION ||
       control.ladybugVersion !== EXPECTED_LADYBUG_VERSION ||
       control.ladybugStorageVersion !== EXPECTED_LADYBUG_STORAGE_VERSION
     ) {

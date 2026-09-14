@@ -7,7 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Projection export schema is now `1.1`** (LCLI-476). Task records carry a `dependencies` array and
+  the stream carries a new `dependency` edge kind, so the shape changed and the version says so —
+  a consumer reading `1.0` that silently gained a field would have no way to tell.
+  - **`lore export --schema-version 1.0` is now refused**, naming `1.1` in the hint. A bare
+    `lore export` is unaffected. Every projection digest changes, so any pinned golden must move.
+  - **Reading stays tolerant.** Projections retained under `1.0` are still read, because
+    `lore provenance` answers questions about history and history cannot be re-exported at a newer
+    schema. `dependencies` is simply absent on those records — the manifest's own version is how you
+    tell "absent because older" from "empty because none".
+
 ### Fixed
+
+- **`lore path`, `lore impact` and `lore export` now see tracker dependency edges** (LCLI-476).
+  `lore path PGF-3 PGF-2 --from-kind task --to-kind task --direction outbound` returned `paths=[]`
+  for two tasks connected by a real prerequisite, and `lore export` emitted `parentTaskId` with no
+  dependencies at all — lore saw containment and never ordering. The cause was one field dropped at
+  the adapter boundary: Quest's `task list --json` carries `dependencies`, and lore read it only in
+  the per-id detail path while building projections from summaries. Dependency edges run dependent →
+  prerequisite, render distinctly from Story-ownership (`task`) and concept (`link`) edges, are
+  selectable with `--edge dependency`, and honour the same bounded depth and cycle handling as every
+  other edge. An unresolvable prerequisite is reported as `dangling` rather than dropped — omitting
+  it would make a blocked task look ready.
+- **A cached Ladybug generation is no longer permanently invalidated by a schema bump** (LCLI-476).
+  The reuse fast path compared the stored generation against a hard-coded `"1.0"` while the exporter
+  wrote a constant, so the first bump made every cached generation incompatible and the fast path
+  missed on every reconcile — silently reloading the whole source, with no error anywhere.
+- **The synthesized workspace projection manifest no longer announces a version it does not emit**
+  (LCLI-476). It hard-coded `schemaVersion: "1.0"` while emitting records of the current shape.
 
 - **Required flags are now marked as required, in the help text and in the machine manifest**
   (LCLI-479). `lore impact <id>` looked like a complete command and always exited 2, because
