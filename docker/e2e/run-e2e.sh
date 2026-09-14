@@ -1010,14 +1010,29 @@ step_json "AC4: lore orphans --docs-only reports only danglingLinks (orphanTasks
 step_json "lore graph (whole bundle, --json)" '.kind == "graph.export"' -- lore graph --json
 step_json "lore graph <id>" '.kind == "graph.export"' -- lore graph "$STORY_ID" --json
 step "lore graph --dot" 0 -- lore graph --dot
-step_json "lore export --schema-version 1.0 emits a complete projection envelope" \
+# The pinned version is deliberate: a projection schema bump is a contract change and this row
+# SHOULD go red until someone updates it on purpose. It did exactly that on LCLI-476 (1.0 -> 1.1),
+# which is the row working, not the row being a nuisance.
+#
+# NOTE FOR WHOEVER BUMPS IT NEXT: this harness drives the BACKLOG backend, whose bulk task list
+# carries no `dependencies` field. So a Backlog-backed projection legitimately emits no `dependency`
+# edges and `dependencies: []` on every task, and asserting either here would fail for a reason that
+# has nothing to do with lore. That coverage belongs on a Quest-backed workspace (opum-cli-e2e).
+step_json "lore export --schema-version 1.1 emits a complete projection envelope" \
   '.kind == "projection.export"
-   and .data.projectionSchemaVersion == "1.0"
+   and .data.projectionSchemaVersion == "1.1"
    and .data.records[0].record == "manifest"
    and .data.records[-1].record == "trailer"
    and ([.data.records[].record] | index("concept") != null)
    and ([.data.records[].record] | index("task") != null)
-   and ([.data.records[].record] | index("edge") != null)' \
+   and ([.data.records[].record] | index("edge") != null)
+   and ([.data.records[] | select(.record == "task") | has("dependencies")] | all)' \
+  -- lore export --schema-version 1.1 --json
+
+# A SUPERSEDED version is refused rather than silently served at the current shape (LCLI-476). The
+# emitter supports exactly one version; the READER is separately tolerant, so retained snapshots
+# built at 1.0 still load — that half is covered by the unit suite, not here.
+step "lore export --schema-version 1.0 is refused as superseded" 2 \
   -- lore export --schema-version 1.0 --json
 
 # ── Phase 12: query ───────────────────────────────────────────────────────────
