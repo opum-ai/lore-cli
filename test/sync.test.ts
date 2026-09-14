@@ -18,6 +18,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -28,12 +29,14 @@ import { join } from "node:path";
 import type { BacklogAdapter } from "../src/adapters/backlog";
 import { realGitAdapter, resolveHeadSha } from "../src/adapters/git";
 import { run } from "../src/cli";
+import { runHelp } from "../src/commands/help";
 import { runUnlink } from "../src/commands/link";
 import { runSync, type SyncOptions, type SyncReport } from "../src/commands/sync";
 import { type GitAdapter, type GitCommit, type GitLogRange, generateLog } from "../src/core/log";
 import { regenerateTaskBlock } from "../src/core/managed-block";
+import { findManifestCommand } from "../src/core/manifest";
 import { builtinTemplateFor, renderTemplate } from "../src/core/template";
-import { EXIT_OK, LoreError } from "../src/errors";
+import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { bunGitSpawn } from "../src/state";
 import { capture, cleanGitSpawn, dirtyGitSpawn, fakeAdapter, gitRun, makeTask, storyDoc } from "./helpers";
@@ -316,6 +319,31 @@ describe("lore sync — log.md is a full-history projection", () => {
 
 // ── log.md drop reporting (LCLI-485) ───────────────────────────────────────────
 
+// Hoisted out of the LCLI-485 describe so the LCLI-492 block below shares the ONE fixture rather
+// than keeping a second copy of it: the two suites cover the warn half and the refuse half of the
+// same condition, and a drifted "what counts as dropped content" between them would be a silent
+// hole in exactly the comparison that matters (default warns and writes / --fail-on-drop refuses).
+const dropHistory: readonly GitCommit[] = [
+  {
+    hash: "2222222222222222222222222222222222222222",
+    timestamp: "2026-08-14T04:17:00Z",
+    subject: "add story",
+    files: ["docs/stories/x.md"],
+  },
+];
+
+function dropAdapter(): GitAdapter {
+  return { history: () => dropHistory };
+}
+
+/** A generated log with two lines of hand-authored prose pasted under its title. */
+function committedWithProse(): string {
+  return generateLog(dropHistory, { root: "docs" }).replace(
+    "# Change log\n",
+    "# Change log\n\nThese entries are curated by hand.\nDo not delete this note.\n",
+  );
+}
+
 /**
  * `log.md` is generated, so hand-authored prose in it cannot survive regeneration. It used to
  * disappear with no message at all — a consumer found out by diffing. These pin both halves of the
@@ -324,27 +352,6 @@ describe("lore sync — log.md is a full-history projection", () => {
  * fired on the title and blank lines of a healthy log would fire on every sync and be ignored.
  */
 describe("lore sync — LCLI-485: reports the content regeneration cannot keep", () => {
-  const dropHistory: readonly GitCommit[] = [
-    {
-      hash: "2222222222222222222222222222222222222222",
-      timestamp: "2026-08-14T04:17:00Z",
-      subject: "add story",
-      files: ["docs/stories/x.md"],
-    },
-  ];
-
-  function dropAdapter(): GitAdapter {
-    return { history: () => dropHistory };
-  }
-
-  /** A generated log with two lines of hand-authored prose pasted under its title. */
-  function committedWithProse(): string {
-    return generateLog(dropHistory, { root: "docs" }).replace(
-      "# Change log\n",
-      "# Change log\n\nThese entries are curated by hand.\nDo not delete this note.\n",
-    );
-  }
-
   async function syncWithStderr(
     args: string[],
     overrides: Partial<SyncOptions> = {},
@@ -432,6 +439,201 @@ describe("lore sync — LCLI-485: reports the content regeneration cannot keep",
     expect(report.log).toBeUndefined();
     expect(stderr).not.toContain("unrecognized");
     expect(readDoc("log.md")).toBe(committed);
+  });
+});
+
+// ── log.md drop refusal (LCLI-492) ─────────────────────────────────────────────
+
+/**
+ * `--fail-on-drop` is the fail-closed half of LCLI-485's warning: a warning needs a reader, and an
+ * unattended run has none. The load-bearing claim is not "exit 6" — it is that the refusal lands
+ * BEFORE any write, so the run an operator has to redo is one that changed nothing. An exit-code
+ * assertion cannot say that, so the two proof tests below compare the on-disk bytes of the whole
+ * tree (docs/ AND the tracker storage) across the refusal, and each pairs that with the SAME fixture
+ * run without the flag — a snapshot comparison over a fixture that would not have written anything
+ * anyway proves nothing at all.
+ */
+describe("lore sync — LCLI-492: --fail-on-drop refuses before any write", () => {
+  /**
+   * Every file under `root` (`.git` excluded — git's own index/object bookkeeping is not what
+   * "wrote nothing" means, and the real-git test asserts on `git status`/`rev-list` instead),
+   * path → bytes, in a stable order so an inequality reads as a diff rather than a reordering.
+   */
+  function snapshotTree(dir: string = root, prefix = ""): [string, string][] {
+    const entries: [string, string][] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.name === ".git") continue;
+      const rel = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+      if (entry.isDirectory()) {
+        entries.push(...snapshotTree(join(dir, entry.name), rel));
+      } else {
+        entries.push([rel, readFileSync(join(dir, entry.name), "utf8")]);
+      }
+    }
+    return entries;
+  }
+
+  /**
+   * A repository where an ordinary `lore sync` genuinely writes: a linked Story whose task is now
+   * `Done` (a status rewrite plus a managed-block regen), no `index.md` yet (a creation), a `log.md`
+   * carrying two lines of hand-authored prose (a rewrite AND the drop the guard fires on), and a
+   * dirty `backlog/` for the tracker sweep to commit.
+   */
+  function fixtureThatWouldWrite(): BacklogAdapter {
+    writeDoc("stories/x.md", storyDoc("X", ["lore-1"], "todo"));
+    writeDoc("log.md", committedWithProse());
+    mkdirSync(join(root, "backlog", "tasks"), { recursive: true });
+    writeFileSync(join(root, "backlog", "config.yml"), "statuses:\n  - To Do\n");
+    writeFileSync(join(root, "backlog", "tasks", "lore-1 - x.md"), "a real task file\n");
+    return fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+  }
+
+  test("refuses with drift (exit 6), naming the count and the same bounded samples the warning carries", async () => {
+    writeDoc("stories/x.md", storyDoc("X", [], "todo"));
+    const committed = committedWithProse();
+    writeDoc("log.md", committed);
+
+    const err = await expectSyncError(["--fail-on-drop"], fakeAdapter([]), { gitAdapter: dropAdapter() });
+
+    // An existing documented LoreError type already in sync's manifest exitCodes — not a bare number.
+    expect(err.type).toBe("drift");
+    expect(EXIT_CODES[err.type]).toBe(6);
+    expect(findManifestCommand("sync")?.exitCodes).toContain(EXIT_CODES[err.type]);
+    // A captured CI log has to be enough to act on without re-running interactively: the count, and
+    // the content itself.
+    expect(err.message).toContain("docs/log.md: refusing to sync — regeneration would drop 2 unrecognized lines");
+    expect(err.message).toContain("These entries are curated by hand.");
+    expect(err.input).toEqual({
+      path: "docs/log.md",
+      dropped: 2,
+      droppedSamples: ["These entries are curated by hand.", "Do not delete this note."],
+    });
+    expect(readDoc("log.md")).toBe(committed);
+  });
+
+  test("the default is unchanged: the identical run without the flag warns, writes, and exits 0", async () => {
+    writeDoc("stories/x.md", storyDoc("X", [], "todo"));
+    writeDoc("log.md", committedWithProse());
+    const stderr = capture();
+
+    const { code, report } = await syncCmd([], fakeAdapter([]), { gitAdapter: dropAdapter(), stderr });
+
+    expect(code).toBe(EXIT_OK);
+    expect(stderr.text()).toContain("docs/log.md: regeneration drops 2 unrecognized lines");
+    expect(report.log).toEqual({ added: 0, carriedForward: 0, dropped: 2 });
+    expect(readDoc("log.md")).not.toContain("curated by hand");
+  });
+
+  test("a log lore itself generated is not refused: the guard fires on lost content, not on syncing", async () => {
+    writeDoc("stories/x.md", storyDoc("X", [], "todo"));
+    writeDoc("log.md", generateLog(dropHistory, { root: "docs" }));
+
+    const { code, report } = await syncCmd(["--fail-on-drop"], fakeAdapter([]), { gitAdapter: dropAdapter() });
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.log).toEqual({ added: 0, carriedForward: 0, dropped: 0 });
+  });
+
+  test("--dry-run still refuses: a dry run writes nothing anyway, so the guard there IS the exit code", async () => {
+    writeDoc("stories/x.md", storyDoc("X", [], "todo"));
+    const committed = committedWithProse();
+    writeDoc("log.md", committed);
+
+    const err = await expectSyncError(["--dry-run", "--fail-on-drop"], fakeAdapter([]), {
+      gitAdapter: dropAdapter(),
+    });
+
+    expect(err.type).toBe("drift");
+    // "would drop" unconditionally: a refused run never writes, so the warning's indicative "drops"
+    // is never the truth here, dry-run or not.
+    expect(err.message).toContain("would drop 2 unrecognized lines");
+    expect(readDoc("log.md")).toBe(committed);
+  });
+
+  test("--no-index is a usage error (exit 2), not a silently unprotected run", async () => {
+    writeDoc("stories/x.md", storyDoc("X", [], "todo"));
+    writeDoc("log.md", committedWithProse());
+
+    const err = await expectSyncError(["--fail-on-drop", "--no-index"], fakeAdapter([]), {
+      gitAdapter: dropAdapter(),
+    });
+
+    // --no-index skips regeneration entirely, so the guard could never fire: accepting the pair
+    // would leave a CI file reading as protected while providing nothing.
+    expect(err.type).toBe("usage");
+    expect(EXIT_CODES[err.type]).toBe(2);
+    expect(err.message).toContain("--fail-on-drop cannot be combined with --no-index");
+    // Refused in argument parsing, so not even the index regeneration a bare --no-index run performs.
+    expect(docExists("index.md")).toBe(false);
+  });
+
+  test("writes NOTHING: every byte under the repo root survives the refusal, and the tracker sweep never runs", async () => {
+    const adapter = fixtureThatWouldWrite();
+    const before = snapshotTree();
+    const gitSpawn = dirtyGitSpawn(" M backlog/tasks/lore-1 - x.md");
+
+    await expectSyncError(["--fail-on-drop"], adapter, { gitAdapter: dropAdapter(), gitSpawn });
+
+    // docs/ AND backlog/ AND .lore/ — the assertion is byte-identity of the tree, not an exit code.
+    expect(snapshotTree()).toEqual(before);
+    // sweepTrackerStorage is reached only past the refusal; nothing ever touched the git seam.
+    expect(gitSpawn.calls).toEqual([]);
+
+    // The control: the SAME fixture without the flag really does write and really does sweep, so
+    // the byte-identity above is evidence rather than a fixture with nothing to change.
+    const sweeping = dirtyGitSpawn(" M backlog/tasks/lore-1 - x.md");
+    const { code } = await syncCmd([], adapter, { gitAdapter: dropAdapter(), gitSpawn: sweeping });
+    expect(code).toBe(EXIT_OK);
+    expect(snapshotTree()).not.toEqual(before);
+    expect(sweeping.calls.map((c) => c[0])).toContain("commit");
+  });
+
+  test("real git: no docs write, no lore-authored backlog/ commit, identical working tree", async () => {
+    gitRun(root, ["init", "-q"]);
+    gitRun(root, ["config", "user.name", "lore test"]);
+    gitRun(root, ["config", "user.email", "lore-test@example.com"]);
+    const adapter = fixtureThatWouldWrite();
+    gitRun(root, ["add", "."]);
+    gitRun(root, ["commit", "-q", "-m", "add story"]);
+    // Dirty again AFTER the commit, so the sweep has something real to commit if it ever runs.
+    writeFileSync(join(root, "backlog", "tasks", "lore-1 - x.md"), "edited by hand\n");
+
+    const realSeams = {
+      gitAdapter: realGitAdapter(root),
+      resolveHead: resolveHeadSha,
+      gitSpawn: bunGitSpawn(root),
+    };
+    const gitOut = (args: string[]): string =>
+      Bun.spawnSync(["git", ...args], { cwd: root, stdout: "pipe" }).stdout.toString("utf8");
+    const before = {
+      tree: snapshotTree(),
+      commits: gitOut(["rev-list", "--count", "HEAD"]),
+      status: gitOut(["status", "--porcelain"]),
+    };
+
+    await expectSyncError(["--fail-on-drop"], adapter, realSeams);
+
+    expect(snapshotTree()).toEqual(before.tree);
+    // A sweep that ran would have added a lore-authored commit and cleaned that path from `status`.
+    expect(gitOut(["rev-list", "--count", "HEAD"])).toBe(before.commits);
+    expect(gitOut(["status", "--porcelain"])).toBe(before.status);
+
+    // The control again, on the real seams: without the flag this fixture writes docs and commits
+    // backlog/, which is what makes the three equalities above worth asserting.
+    const { code } = await syncCmd([], adapter, realSeams);
+    expect(code).toBe(EXIT_OK);
+    expect(snapshotTree()).not.toEqual(before.tree);
+    expect(gitOut(["rev-list", "--count", "HEAD"])).not.toBe(before.commits);
+  });
+
+  test("the flag appears in `lore sync --help` and in the manifest", () => {
+    const stdout = capture();
+    runHelp({ output: { mode: "plain", color: false }, args: ["sync"], stdout });
+
+    expect(stdout.text()).toContain("--fail-on-drop");
+    const flag = findManifestCommand("sync")?.flags.find((f) => f.name === "fail-on-drop");
+    expect(flag?.takesValue).toBe(false);
+    expect(flag?.summary).toContain("before any write");
   });
 });
 

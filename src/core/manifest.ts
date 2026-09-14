@@ -484,11 +484,19 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     flags: [
       { name: "dry-run", takesValue: false, summary: "Report what would change, write nothing (docs/ or backlog/)" },
       { name: "no-index", takesValue: false, summary: "Skip index/log regeneration" },
+      {
+        name: "fail-on-drop",
+        takesValue: false,
+        // The opt-in fail-closed variant of the LCLI-485 drop warning (LCLI-492): a warning needs a
+        // reader, and an unattended run has none. Rejects `--no-index` (nothing is regenerated, so
+        // the guard could never fire) and exits `drift`/6 under `--dry-run` too.
+        summary: "Refuse the run, before any write, if log regeneration would drop unrecognized lines",
+      },
     ],
     json: true,
     kind: "sync.result",
     exitCodes: exitCodesFor(["bundle", "profile", "read", "write", "backlog", "git"]),
-    examples: ["lore sync", "lore sync --dry-run"],
+    examples: ["lore sync", "lore sync --dry-run", "lore sync --fail-on-drop", "lore sync --dry-run --fail-on-drop"],
   },
   {
     name: "tasks",

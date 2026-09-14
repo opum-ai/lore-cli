@@ -1,5 +1,6 @@
 /**
- * commands/sync.ts — `lore sync [paths…] [--dry-run] [--no-index]` (LORE-26, cli-surface §sync).
+ * commands/sync.ts — `lore sync [paths…] [--dry-run] [--no-index] [--fail-on-drop]` (LORE-26,
+ * cli-surface §sync).
  *
  * The **write** counterpart to `lore check`. For every concept linking Backlog tasks via its
  * `tasks:` frontmatter: resolves each linked task's live status (`BacklogAdapter.viewTask`),
@@ -45,6 +46,28 @@
  * report), and a run that would drop anything also writes a warning to stderr naming the count and a
  * sample of the content. The written bytes are untouched by either: both are diagnostics on the
  * side, so a repeated sync stays byte-identical.
+ *
+ * **`--fail-on-drop` is the fail-closed variant of that warning (LCLI-492).** A warning is a signal
+ * that requires a reader, and an unattended run — a CI job, a scheduled sync, an agent loop — has
+ * none: the run exits `0`, the loss is real, and it surfaces later in a diff someone thinks to take.
+ * With the flag, a regeneration that would drop anything throws `drift` (exit `6`) instead, from
+ * exactly where the warning is built — which is **before** the `!parsed.dryRun` write blocks below,
+ * so nothing in `docs/` is written and the tracker sweep never runs. Everything reached ahead of that
+ * point only reads: `loadProfile`/`loadBundle`/`readSource`, `readReconcileConfig` (a `.lore/config.toml`
+ * read plus the adapter's `task status-flow`), `gatherReconciliation` (`task view` per linked id), and
+ * regeneration itself, which stages into `writes` rather than writing. The Backlog adapter's spawn
+ * seam does create a throwaway isolation directory under the system tmpdir, and removes it — outside
+ * the repository either way. Default behaviour is unchanged: without the flag `sync` still warns,
+ * proceeds, and exits `0`.
+ *
+ * The surface is a **flag and not a `.lore/config.toml` setting**, deliberately. The guard changes a
+ * run's outcome, and `sync`'s documented default is "warn and proceed": a repository-wide setting
+ * would make an interactive `lore sync` exit `6` for a reason invisible at the call site, and would
+ * then need an inverse flag to escape for one run — two new surfaces where the unattended callers who
+ * asked for this already pass their flags explicitly, in a file where `--fail-on-drop` greps. The
+ * exit code is `drift`, already in this command's manifest `exitCodes`: per cli-contract §4.1 a
+ * warning changes the exit code when the command is a defined gate for that condition, and §5.3's
+ * `drift` is the category for on-disk bytes that lore's own generator can no longer account for.
  *
  * An on-disk `index.md` whose directory no longer holds any concept — directly or via any
  * descendant, e.g. after a manual `rm`/`mv` outside `lore rename` — is an **orphan**
@@ -112,6 +135,8 @@ interface SyncArgs {
   dryRun: boolean;
   /** `--no-index`: skip both index.md and log.md regeneration. */
   noIndex: boolean;
+  /** `--fail-on-drop`: refuse the whole run, before any write, if log regeneration would drop unrecognized lines (LCLI-492). */
+  failOnDrop: boolean;
 }
 
 /** One written (or, under `--dry-run`, would-be-written) file, for the report. */
@@ -169,8 +194,10 @@ export interface SyncReport {
  * exit code.
  *
  * @returns `0` on success (a fully clean tree is still `0` — idempotent). Throws (never returns) a
- *   `not_found` {@link LoreError} (exit `3`) when a linked task id no longer exists, or `validation`/
- *   `drift` (exit `6`) when reconciliation, the managed block, or the `backlog/` commit fails.
+ *   `usage` {@link LoreError} (exit `2`) for `--fail-on-drop --no-index`, `not_found` (exit `3`) when
+ *   a linked task id no longer exists, or `validation`/`drift` (exit `6`) when reconciliation, the
+ *   managed block, or the `backlog/` commit fails — or, under `--fail-on-drop`, when regenerating
+ *   `log.md` would drop unrecognized content (LCLI-492), thrown before any write.
  */
 export async function runSync(options: SyncOptions): Promise<number> {
   const parsed = parseSyncArgs(options.args);
@@ -239,6 +266,15 @@ export async function runSync(options: SyncOptions): Promise<number> {
   // the run that causes it, rather than in a diff someone thinks to take afterwards. A fresh
   // collector, because `advisories` above was already flushed and flushing is non-draining.
   if (regenerated !== undefined && regenerated.log.dropped > 0) {
+    // `--fail-on-drop` (LCLI-492) replaces the warning rather than adding to it: the refusal carries
+    // strictly more than the warning does (the same count and samples, plus a hint and the machine-
+    // readable `input`), and emitting both would make the unattended log this exists for report the
+    // same loss twice in two shapes. Thrown HERE, where the warning is built, because this is the
+    // last statement before the `!parsed.dryRun` write blocks — the refusal is structurally
+    // pre-write rather than merely early (see the module header).
+    if (parsed.failOnDrop) {
+      throw droppedContentRefusal(regenerated.log);
+    }
     const warnings = new WarningCollector();
     warnings.add(droppedContentWarning(regenerated.log, parsed.dryRun));
     warnings.flush({ color: options.output.color, stderr: options.stderr });
@@ -381,14 +417,50 @@ function regenerateIndexAndLog(
  * title of a perfectly healthy generated log from ever getting here.
  */
 function droppedContentWarning(stats: LogMergeStats, dryRun: boolean): string {
-  const noun = stats.dropped === 1 ? "line" : "lines";
-  const samples = stats.droppedSamples.map((line) => JSON.stringify(line)).join(", ");
-  const more = stats.dropped > stats.droppedSamples.length ? ", …" : "";
   return (
-    `${DOCS_DIR}/${LOG_FILE}: regeneration ${dryRun ? "would drop" : "drops"} ${stats.dropped} unrecognized ${noun} ` +
-    `(${samples}${more}) — this file is generated by lore sync from git history; ` +
+    `${DOCS_DIR}/${LOG_FILE}: regeneration ${dryRun ? "would drop" : "drops"} ${droppedCount(stats)} ` +
+    `(${droppedSampleList(stats)}) — this file is generated by lore sync from git history; ` +
     "only folder headings and entry lines survive it"
   );
+}
+
+/**
+ * The `--fail-on-drop` refusal (LCLI-492): the same count and the same bounded samples the warning
+ * above carries, so an unattended runner's captured log is enough to act on without re-running
+ * interactively, plus the `input` a `--json` caller can read the numbers off without parsing prose.
+ *
+ * Always "would drop", with no `--dry-run` variant: a refused run never writes, so the warning's
+ * indicative "drops" is never true here — the flag makes every run a dry one at this point.
+ *
+ * `drift` (exit `6`), never a bare number: it is already in `sync`'s manifest `exitCodes`, and it is
+ * the cli-contract §5.3 category for on-disk bytes a lore generator can no longer account for. §4.1
+ * is the rest of the grounding — a warning changes the exit code precisely when the command is a
+ * defined gate for that condition, which is what `--fail-on-drop` opts this run into being.
+ */
+function droppedContentRefusal(stats: LogMergeStats): LoreError {
+  return new LoreError(
+    "drift",
+    `${DOCS_DIR}/${LOG_FILE}: refusing to sync — regeneration would drop ${droppedCount(stats)} ` +
+      `(${droppedSampleList(stats)})`,
+    `move that content out of ${DOCS_DIR}/${LOG_FILE} (it is generated by lore sync from git history; ` +
+      "only folder headings and entry lines survive regeneration), or drop --fail-on-drop to accept the loss",
+    { path: `${DOCS_DIR}/${LOG_FILE}`, dropped: stats.dropped, droppedSamples: [...stats.droppedSamples] },
+  );
+}
+
+/** `"3 unrecognized lines"` — the part a reader acts on, shared by the warning and the refusal. */
+function droppedCount(stats: LogMergeStats): string {
+  return `${stats.dropped} unrecognized ${stats.dropped === 1 ? "line" : "lines"}`;
+}
+
+/**
+ * The bounded sample list, quoted, with a trailing `…` when the samples do not cover every dropped
+ * line — so a reader can tell "my paragraph of notes" from "a line of trailing whitespace" without
+ * opening the diff, and can still tell that they are not seeing all of it.
+ */
+function droppedSampleList(stats: LogMergeStats): string {
+  const samples = stats.droppedSamples.map((line) => JSON.stringify(line)).join(", ");
+  return stats.dropped > stats.droppedSamples.length ? `${samples}, …` : samples;
 }
 
 // ── Scoping ────────────────────────────────────────────────────────────────────
@@ -433,10 +505,35 @@ function matchesScope(id: string, prefix: string): boolean {
 
 // ── Argument parsing ───────────────────────────────────────────────────────────
 
-/** Parse `sync`'s tokens into `[paths…]`, `--dry-run`, and `--no-index` via the shared parser. */
+/**
+ * Parse `sync`'s tokens into `[paths…]`, `--dry-run`, `--no-index`, and `--fail-on-drop` via the
+ * shared parser.
+ *
+ * `--fail-on-drop --no-index` is a fail-loud `usage` error rather than a silent no-op (LCLI-492).
+ * `--no-index` skips log regeneration entirely, so the guard can never fire, and the combination
+ * would hand an unattended caller a flag that reads as protection in their CI file while providing
+ * none — the exact "reported and passed" failure this flag exists to remove. Refusing here, in
+ * argument parsing, also keeps it the cheapest possible failure: before the bundle is even loaded.
+ * `--dry-run` is deliberately NOT a conflict: a dry run already writes nothing, so the guard there is
+ * purely an exit code, and a nonzero exit from a pre-check is exactly what an unattended runner wants
+ * — it is how a job asks "would a real sync lose anything?" without changing the tree.
+ */
 function parseSyncArgs(args: readonly string[]): SyncArgs {
   const { positionals, flags } = parseCommandArgs(args, "sync");
-  return { paths: positionals, dryRun: flags.has("dry-run"), noIndex: flags.has("no-index") };
+  if (flags.has("fail-on-drop") && flags.has("no-index")) {
+    throw new LoreError(
+      "usage",
+      "--fail-on-drop cannot be combined with --no-index",
+      "--no-index skips log regeneration, so there is nothing for --fail-on-drop to refuse — drop one of them",
+      { flags: ["fail-on-drop", "no-index"] },
+    );
+  }
+  return {
+    paths: positionals,
+    dryRun: flags.has("dry-run"),
+    noIndex: flags.has("no-index"),
+    failOnDrop: flags.has("fail-on-drop"),
+  };
 }
 
 // ── Output ─────────────────────────────────────────────────────────────────────
