@@ -559,6 +559,11 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     flags: [
       { name: "dot", takesValue: false, summary: "Emit Graphviz DOT (mutually exclusive with --json)" },
       { name: "depth", takesValue: true, summary: "Bound the subgraph radius" },
+      {
+        name: "proof-only",
+        takesValue: false,
+        summary: "Show only proof-bearing relations (excludes plain links and alternatives)",
+      },
       { name: "workspace", takesValue: true, summary: "Select an explicit workspace manifest" },
       { name: "repository", takesValue: true, repeatable: true, summary: "Select a workspace member" },
     ],
@@ -595,6 +600,11 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
         takesValue: true,
         repeatable: true,
         summary: "Allow one authored edge kind",
+      },
+      {
+        name: "proof-only",
+        takesValue: false,
+        summary: "Restrict to proof-bearing relations (excludes plain links and alternatives)",
       },
       {
         name: "max-depth",
@@ -645,6 +655,11 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
         takesValue: true,
         repeatable: true,
         summary: "Allow one authored edge kind",
+      },
+      {
+        name: "proof-only",
+        takesValue: false,
+        summary: "Restrict to proof-bearing relations (excludes plain links and alternatives)",
       },
       {
         name: "max-depth",

@@ -126,6 +126,10 @@ export interface ProjectionEdgeRecord extends ProjectionRecord {
   readonly target: string;
   readonly ordinal: number;
   readonly dangling: boolean;
+  /** ADR-0021 relation qualifiers, carried verbatim so an indexed read is as precise as a direct one. */
+  readonly statement?: string;
+  readonly version?: string;
+  readonly relationOrdinal?: number;
   /** Workspace-only endpoint metadata; absent repository-local records retain M6 defaults. */
   readonly workspaceFromKind?: "concept" | "task";
   readonly workspaceToKind?: "concept" | "task";
@@ -629,6 +633,10 @@ function isEdge(record: ProjectionRecord): record is ProjectionEdgeRecord {
     typeof record.target === "string" &&
     Number.isSafeInteger(record.ordinal) &&
     typeof record.dangling === "boolean" &&
+    (record.statement === undefined || typeof record.statement === "string") &&
+    (record.version === undefined || typeof record.version === "string") &&
+    (record.relationOrdinal === undefined ||
+      (Number.isSafeInteger(record.relationOrdinal) && (record.relationOrdinal as number) >= 0)) &&
     (record.workspaceFromKind === undefined ||
       record.workspaceFromKind === "concept" ||
       record.workspaceFromKind === "task") &&

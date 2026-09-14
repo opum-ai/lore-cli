@@ -99,6 +99,7 @@ import { type Concept, idFromPath, serializeConcept } from "./concept";
 import { normalizeLink } from "./links";
 import { compareCodeUnits } from "./order";
 import type { Profile } from "./profile";
+import { RELATIONS_FIELD } from "./relations";
 import { DOCS_DIR } from "./scaffold";
 
 /** A half-open `[start, end)` byte range within a body, locating a link destination to splice. */
@@ -882,8 +883,16 @@ function positionOf(node: Nodes): ByteRange | null {
 /**
  * Return a new frontmatter object with concept-valued refs rewritten, or `null` when none changed.
  * The flat {@link REF_FIELDS} preserve their scalar/list shapes; OKF 0.2 `sources` preserves each
- * entry and changes only a string `resource` that resolves to a concept. Non-matching producer
- * values are copied verbatim and the original graph snapshot is never mutated.
+ * entry and changes only a string `resource` that resolves to a concept; ADR-0021 `relations`
+ * likewise preserves each entry -- including its `statement`/`version` qualifiers and any producer
+ * extension -- and changes only the `target`. Non-matching producer values are copied verbatim and
+ * the original graph snapshot is never mutated.
+ *
+ * `relations` is handled here EXPLICITLY rather than through {@link REF_FIELDS}, because that list
+ * can only describe a field whose whole value is the reference. A target-bearing field the rewrite
+ * engine does not know about is a field that silently dangles on the first `lore rename` -- which
+ * is the failure the REF_FIELDS pin exists to prevent for the flat fields, and which a structured
+ * field slips past.
  */
 function remapFrontmatterRefs(
   frontmatter: Record<string, unknown>,
@@ -928,6 +937,24 @@ function remapFrontmatterRefs(
     });
     if (sources.some((source, index) => source !== authoredSources[index])) {
       next.sources = sources;
+    }
+  }
+  const authoredRelations = frontmatter[RELATIONS_FIELD];
+  if (Array.isArray(authoredRelations)) {
+    const relations = authoredRelations.map((relation) => {
+      if (typeof relation !== "object" || relation === null || Array.isArray(relation)) {
+        return relation;
+      }
+      const target = (relation as Record<string, unknown>).target;
+      const mapped = remapRefItem(target, dir, graph, ctx);
+      if (mapped === target) {
+        return relation;
+      }
+      changed = true;
+      return { ...(relation as Record<string, unknown>), target: mapped };
+    });
+    if (relations.some((relation, index) => relation !== authoredRelations[index])) {
+      next[RELATIONS_FIELD] = relations;
     }
   }
   return changed ? next : null;

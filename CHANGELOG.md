@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Typed authored relationships, and claim state as its own axis** (LCLI-477,
+  [ADR-0021](docs/adr/0021-typed-authored-relationships-and-claim-state.md)). Until now a bundle had
+  exactly one way to record that one document depends on, contradicts, or competes with another —
+  an ordinary markdown link, which reaches the graph as `link` alongside every "see also" aside. An
+  argument recorded that way is legible to a reader and invisible to `lore graph`, `lore path` and
+  `lore impact`, which are the three commands anyone would use to ask what a change breaks.
+  - **`relations`** is a new reserved frontmatter list. Each entry carries a `kind` and a `target`,
+    plus optional `statement` and `version` qualifiers that make the reference precise: *which*
+    statement, at *which* version. `kind` is one of `requires`, `alternative`, `refutes`,
+    `supersedes`, `superseded_by` — the last two being the existing reserved coupling fields under a
+    second, more precise spelling, producing the same edge kind so a reader never has to know which
+    the author used.
+  - **`claim_outcome`, `claim_evidence_level`, `claim_version`** are a third axis beside the two
+    ADR-0019 separated. Lore never derives them from `status`, from `lore_task_status`, or from each
+    other, and never writes them itself. `supported` is deliberately not `proved` and `checked` is
+    deliberately not `verified`: lore validates the syntax of a record and never the truth of one.
+  - **`--proof-only`** on `lore graph`, `lore path` and `lore impact` selects the proof-bearing
+    kinds — `requires`, `refutes`, `supersedes`, `superseded_by` — and excludes plain links and
+    `alternative`. `alternative` is the member a hand-written `--edge` list gets wrong: it is a
+    relationship *between* claims, not support *for* one. Unlike `--edge`, the preset is not
+    rejected on a bundle that has no such kinds — an empty proof view is the correct answer, not a
+    typo. The two flags cannot be combined.
+  - **`lore check` reports version drift as a question.** `relation-version-drift` names a dependent
+    whose recorded `version` no longer matches its target's `claim_version`, worded as possible
+    impact and warn-tier on principle: lore can see that a cited version moved and cannot see
+    whether the citing argument still holds. `broken-relation` and `unknown-relation-kind` join it.
+  - **`lore graph --json` carries `versionState` on every relation edge**, including when nothing
+    drifted: `current`, `stale`, `unversioned` (the relation recorded no version) or `untracked`
+    (the target declares none). Reporting only the drifted case would leave silence ambiguous
+    between "compared and agreed" and "nothing was comparable".
+  - **Nothing changes for a bundle that adopts none of it.** Every field is optional, the new
+    reserved keys are appended to the canonical order so a document omitting them serializes
+    byte-identically, and a projection of a relation-free bundle produces the identical record
+    stream and export digest it did before. Relation edges ride projection schema `1.1` rather than
+    forcing `1.2`, because `1.1` has never shipped — no consumer has ever held a `1.1` without
+    relations, so there is nothing for a second bump to distinguish.
+  - `lore rename` and `lore supersede` repoint `relations[].target` alongside the flat ref fields.
+    A target-bearing field the rewrite engine does not know about is a field that silently dangles
+    on the first rename, and the `REF_FIELDS` compile-time pin only covers refs whose whole value is
+    the reference.
+
 ### Changed
 
 - **Projection export schema is now `1.1`** (LCLI-476). Task records carry a `dependencies` array and

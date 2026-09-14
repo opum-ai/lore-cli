@@ -41,6 +41,12 @@
  * - **OKF 0.2 provenance sources** — a `sources[].resource` that resolves to another
  *   concept produces a `sources` edge. External URLs and scope descriptors are not
  *   concept edges; an internal `.md` path that does not resolve remains dangling.
+ * - **Typed authored relationships** — each `relations[]` entry produces an edge of its
+ *   own `kind` (`requires`/`alternative`/`refutes`, or `supersedes`/`superseded_by` as a
+ *   second spelling of the flat field), carrying the entry's optional `statement`/`version`
+ *   qualifiers ([ADR-0021](../../docs/adr/0021-typed-authored-relationships-and-claim-state.md)).
+ *   An entry whose `kind` is outside the closed vocabulary produces no edge and is `lore
+ *   check`'s finding, not a parse failure — see `relations.ts`.
  *
  * The `tasks` frontmatter field is **deliberately not** an edge: it points at
  * Backlog.md task ids, not concepts (architecture §3, ADR-0009). It stays readable
@@ -68,6 +74,7 @@ import { decodeTarget, isExternalTarget, pathPart } from "./links";
 import { type BundleState, type BundleStateResolution, CURRENT_OKF_VERSION, resolveBundleState } from "./okf-version";
 import { compareCodeUnits } from "./order";
 import { defaultProfile, type Profile, profileForBundle } from "./profile";
+import { readRelations } from "./relations";
 import { RESERVED_STEMS } from "./scaffold";
 
 // Bun.gc(true) is synchronous. Large projection loads retain bounded cleanup
@@ -75,11 +82,40 @@ import { RESERVED_STEMS } from "./scaffold";
 const BOUNDED_MEMORY_GC_CONCEPT_INTERVAL = 1024;
 
 /**
- * The kind of a concept→concept reference. `"link"` is a body markdown
- * cross-link; the rest mirror the frontmatter fields that carry concept
- * references (the names match the frontmatter keys for an obvious round-trip).
+ * Every kind of concept→concept reference, as a runtime list, so the union and any predicate over
+ * it are one declaration rather than two that can drift. (They already had: `ladybug-driver.ts`
+ * carried a hand-written `isEdgeKind` listing five kinds, which LCLI-476 left behind when it added
+ * a sixth.)
+ *
+ * `"link"` is a body markdown cross-link; `"specs"`/`"supersedes"`/`"superseded_by"` mirror the
+ * frontmatter fields that carry concept references (the names match the keys for an obvious
+ * round-trip); `"sources"` is an OKF 0.2 provenance `sources[].resource`; and
+ * `"requires"`/`"alternative"`/`"refutes"` are the typed authored relationships of
+ * [ADR-0021](../../docs/adr/0021-typed-authored-relationships-and-claim-state.md), which a
+ * `relations[]` entry produces.
+ *
+ * Note that a `relations[]` entry may also name `supersedes`/`superseded_by`: those are the SAME
+ * fact as the flat reserved field and deliberately produce the same edge kind, so a reader walking
+ * edges never has to know which spelling the author used.
  */
-export type EdgeKind = "link" | "sources" | "specs" | "supersedes" | "superseded_by";
+export const EDGE_KINDS = [
+  "link",
+  "sources",
+  "specs",
+  "supersedes",
+  "superseded_by",
+  "requires",
+  "alternative",
+  "refutes",
+] as const;
+
+/** The kind of a concept→concept reference: one member of {@link EDGE_KINDS}. */
+export type EdgeKind = (typeof EDGE_KINDS)[number];
+
+/** Whether `value` names one of the {@link EDGE_KINDS}. The single runtime check over that list. */
+export function isEdgeKind(value: string): value is EdgeKind {
+  return (EDGE_KINDS as readonly string[]).includes(value);
+}
 
 /**
  * One directed reference from one concept to another. `from` is always a concept
@@ -100,6 +136,31 @@ export interface Edge {
   readonly target: string;
   /** Which kind of reference produced this edge. */
   readonly kind: EdgeKind;
+  /**
+   * The precise statement within the target this edge is about, when the authoring `relations[]`
+   * entry named one (ADR-0021). Absent on every other edge kind, and on a relation that points at
+   * a whole document — which is the common case, so absence means "not narrowed", never "narrowed
+   * to nothing".
+   */
+  readonly statement?: string;
+  /**
+   * The target's `claim_version` the authoring `relations[]` entry recorded relying on, when one
+   * was recorded. Absent means the relation is **unversioned** — no comparison against the target's
+   * current version is possible — which `lore check` reports as its own state rather than folding
+   * into "current".
+   */
+  readonly version?: string;
+  /**
+   * The zero-based position of the `relations[]` entry that produced this edge.
+   *
+   * Present **only** on an edge a relation authored, which makes it the discriminator the export
+   * layer needs. `supersedes`/`superseded_by` can arrive either from a `relations[]` entry or from
+   * the flat reserved field, and the two are not equivalent for version reporting: a relation with
+   * no `version` chose not to record one, while a flat ref field has nowhere to put one. Without
+   * this marker a proof view could not tell "the author omitted the version" from "this spelling
+   * cannot carry a version", and would report the second as the first.
+   */
+  readonly relationOrdinal?: number;
 }
 
 /**
@@ -118,7 +179,8 @@ export interface BundleGraph {
   /**
    * All concept→concept references, in deterministic order: by source concept
    * (ascending id), then that concept's frontmatter edges (`specs`, `supersedes`,
-   * `superseded_by`) followed by its body links in document order.
+   * `superseded_by`), its `relations[]` edges in authored order, its OKF 0.2 `sources`
+   * edges, and finally its body links in document order.
    */
   readonly edges: readonly Edge[];
   /**
@@ -310,6 +372,7 @@ export function buildGraph(
   for (const concept of byId.values()) {
     const dir = posix.dirname(concept.path);
     collectFrontmatterEdges(concept, dir, byId, edges);
+    collectRelationEdges(concept, dir, byId, edges);
     if (state.okfVersion === "0.2") {
       collectSourceEdges(concept, dir, byId, edges);
     }
@@ -503,7 +566,7 @@ function readError(cause: unknown, what: string, input: Record<string, unknown>)
  */
 export const REF_FIELDS = ["specs", "supersedes", "superseded_by"] as const satisfies readonly Exclude<
   EdgeKind,
-  "link" | "sources"
+  "link" | "sources" | "requires" | "alternative" | "refutes"
 >[];
 
 /**
@@ -517,6 +580,34 @@ function collectFrontmatterEdges(concept: Concept, dir: string, byId: ReadonlyMa
     for (const ref of toRefList(concept.frontmatter[kind])) {
       out.push({ from: concept.id, to: resolveRef(ref, dir, byId), target: ref, kind });
     }
+  }
+}
+
+/**
+ * Append the typed authored relationship edges for one concept, in authored order (ADR-0021).
+ *
+ * Each recognized `relations[]` entry becomes an edge of its own `kind`, carrying the entry's
+ * `statement`/`version` qualifiers when it declared them. `target` resolves through the SAME
+ * {@link resolveRef} rule the flat ref fields use, so a relation may name a bundle-relative id or a
+ * relative path and both mean what they mean everywhere else; an unresolvable target is a
+ * **dangling** edge, never a dropped one, because a relation that points at nothing is a fact about
+ * the bundle and `lore check` is where it gets reported.
+ *
+ * An entry whose `kind` is outside the closed vocabulary produces no edge at all — see
+ * {@link import("./relations").readRelations} for why that is tolerated rather than thrown on, and
+ * why it is still not silent.
+ */
+function collectRelationEdges(concept: Concept, dir: string, byId: ReadonlyMap<string, Concept>, out: Edge[]): void {
+  for (const relation of readRelations(concept.frontmatter).relations) {
+    out.push({
+      from: concept.id,
+      to: resolveRef(relation.target, dir, byId),
+      target: relation.target,
+      kind: relation.kind,
+      ...(relation.statement !== undefined ? { statement: relation.statement } : {}),
+      ...(relation.version !== undefined ? { version: relation.version } : {}),
+      relationOrdinal: relation.ordinal,
+    });
   }
 }
 
@@ -610,7 +701,7 @@ export function conceptNotInBundle(id: string): LoreError {
  * rewrite engine). Exported as the single frontmatter-ref→id rule so `lore rename`/
  * `supersede` repoint exactly the refs the graph counts as edges.
  */
-export function resolveRef(ref: string, dir: string, byId: ReadonlyMap<string, Concept>): string | null {
+export function resolveRef(ref: string, dir: string, byId: ReadonlyMap<string, unknown>): string | null {
   // A ref that is external (a `scheme:`/protocol-relative URL) or a bare `#anchor`
   // is not a concept reference — reject it the same way a body link is, so an
   // absolute URL is never run through path normalization (which would mangle its
@@ -682,7 +773,7 @@ function isPathShapedRef(ref: string): boolean {
  * therefore dangles — the correct signal, since that link is already broken on a
  * case-sensitive filesystem.
  */
-export function resolvePath(path: string, dir: string, byId: ReadonlyMap<string, Concept>): string | null {
+export function resolvePath(path: string, dir: string, byId: ReadonlyMap<string, unknown>): string | null {
   const joined = path.startsWith("/") ? path.slice(1) : posix.join(dir, path);
   const id = idFromPath(joined);
   return byId.has(id) ? id : null;

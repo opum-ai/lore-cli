@@ -44,6 +44,14 @@ import { isAbsolute, join, posix, win32 } from "node:path";
 import { z } from "zod";
 import { errnoCode, LoreError } from "../errors";
 import { type BundleState, CURRENT_OKF_VERSION, type OkfVersion, requireSupportedOkfVersion } from "./okf-version";
+import {
+  CLAIM_EVIDENCE_LEVEL_FIELD,
+  CLAIM_OUTCOME_FIELD,
+  CLAIM_VERSION_FIELD,
+  claimFieldValidator,
+  RELATIONS_FIELD,
+  relationsValidator,
+} from "./relations";
 
 /** The additive concept type introduced by OKF 0.2 section 10. */
 export const ATTESTED_COMPUTATION_TYPE = "Attested Computation";
@@ -702,15 +710,32 @@ export function compileProfile(parsed: ParsedProfile): Profile {
 }
 
 /**
- * lore's reserved coupling fields, present on every type: the supersession links `lore supersede`
- * writes. Their shape is **`string | list-of-strings`** (a concept may supersede one or several) —
- * a union the declarative `kind` grammar cannot express — so they carry a built-in validator here
- * (AC#5 expressiveness limit), exactly as the ADR-0006 §5 summary heuristic stays a lore built-in.
- * A profile may still override one by declaring a field of the same name in `[base.fields]`.
+ * lore's reserved fields, present on every type — the ones whose shape the declarative `kind`
+ * grammar cannot express, so they carry a built-in validator here (AC#5 expressiveness limit),
+ * exactly as the ADR-0006 §5 summary heuristic stays a lore built-in. A profile may still override
+ * any of them by declaring a field of the same name in `[base.fields]`.
+ *
+ * - `supersedes`/`superseded_by` — the supersession links `lore supersede` writes. Their shape is
+ *   **`string | list-of-strings`** (a concept may supersede one or several), which is a union.
+ * - `relations` — the typed authored relationships of
+ *   [ADR-0021](../../docs/adr/0021-typed-authored-relationships-and-claim-state.md): a list of
+ *   mappings, each with a `kind` and `target` and optional `statement`/`version` qualifiers. The
+ *   validator is deliberately **structural only** — membership of `kind` in the closed vocabulary is
+ *   `lore check`'s finding, not a parse failure, so an older lore stays able to read a bundle a
+ *   newer one wrote (see `relations.ts`).
+ * - `claim_outcome`/`claim_evidence_level`/`claim_version` — claim state, a third axis beside the
+ *   OKF lifecycle and the task rollup ADR-0019 separated. Same structural-only rule, same reason.
+ *
+ * Order matters: these names trail every authored key in the canonical emission order, so appending
+ * to this object is byte-stable for a document that does not use the new keys (ADR-0011).
  */
 const RESERVED_FIELDS: Readonly<Record<string, () => z.ZodType>> = Object.freeze({
   supersedes: () => conceptRefs(),
   superseded_by: () => conceptRefs(),
+  [RELATIONS_FIELD]: () => relationsValidator(),
+  [CLAIM_OUTCOME_FIELD]: () => claimFieldValidator(),
+  [CLAIM_EVIDENCE_LEVEL_FIELD]: () => claimFieldValidator(),
+  [CLAIM_VERSION_FIELD]: () => claimFieldValidator(),
 });
 
 /** The reserved field names, appended to the base set in this fixed order when not re-declared. */

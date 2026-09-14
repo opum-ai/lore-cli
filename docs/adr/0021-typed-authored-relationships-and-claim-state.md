@@ -53,7 +53,11 @@ A flat ref field per kind (`requires: [ids]`) was rejected. It cannot carry `sta
 
 `supersedes` and `superseded_by` are **not** new. They are the existing reserved coupling fields, and a relation entry is a second, more precise spelling of the same fact rather than a rival one: both produce the same edge kind, and `lore supersede` keeps writing the flat field. A concept may use either spelling; a reader that walks edges never has to know which was used.
 
-An unrecognised `kind` is a **warning**, and produces no edge. It is not an error, because an error at parse time fails `loadBundle` and so makes one typo brick every command against the bundle — a cost out of all proportion to a misspelt relation. It is not silent either: `lore check` reports it by file, and the relation is visibly absent from the graph rather than quietly reinterpreted.
+One rule covers every vocabulary introduced here, `kind` and the claim fields alike: **structural shape is an error; vocabulary membership is a warning.** A `relations` that is not a list, an entry that is not a mapping, or an entry missing `kind` or `target` is a malformed known field and fails validation like any other. An unrecognised *value* is reported by `lore check` and otherwise tolerated.
+
+The asymmetry is about who pays. A validation error fails `loadBundle`, so one unrecognised word would brick every command against the whole bundle. And because these vocabularies are lore-native and will grow, an older lore that *errored* on a value a newer lore writes would make them impossible to extend without a flag day — tolerating the value while naming it is the only reading under which a bundle stays portable across versions.
+
+Tolerated is not silent: an unrecognised `kind` produces **no edge**, so the relation is visibly absent from the graph rather than quietly reinterpreted as something else, and `lore check` attributes it to its file.
 
 ### Relations run from the citing concept to the cited one
 

@@ -38,6 +38,7 @@ import { idFromPath } from "../core/concept";
 import { buildGraphExport, type GraphExport, toDot } from "../core/graph";
 import { loadProfile } from "../core/profile";
 import { subgraph } from "../core/query";
+import { isProofRelationKind } from "../core/relations";
 import { loadRetrievalGraph, type RetrievalGraphLoader } from "../core/retrieval";
 import { DOCS_DIR } from "../core/scaffold";
 import { parseQualifiedWorkspaceId, qualifyWorkspaceId } from "../core/workspace-contract";
@@ -72,6 +73,8 @@ interface GraphArgs {
   dot: boolean;
   /** The hop radius (`--depth`); `undefined` means unbounded. Requires `id`. */
   depth?: number;
+  /** Show only proof-bearing relations (`--proof-only`). */
+  proofOnly: boolean;
   readonly workspace?: WorkspaceRetrievalSelection;
 }
 
@@ -132,9 +135,34 @@ function finishGraph(
       ...workspaceOptions(workspace, include),
     });
   }
+  if (parsed.proofOnly) {
+    data = proofOnlyView(data);
+  }
 
   emit(graphRenderable(data, parsed.dot), options.output, options.stdout);
   return EXIT_OK;
+}
+
+/**
+ * Narrow a {@link GraphExport} to the proof-bearing relations
+ * ([ADR-0021](../../docs/adr/0021-typed-authored-relationships-and-claim-state.md)).
+ *
+ * **Edges are filtered; nodes and the `--depth` radius are not.** Both halves of that are
+ * deliberate.
+ *
+ * Keeping every node is the more useful view, not the lazier one: a claim with NO proof
+ * relationships is precisely what a proof view should surface, because an unsupported claim is the
+ * interesting case. Dropping the unconnected nodes would hide exactly the concepts worth looking at,
+ * and would also make `tokenEstimate` mean something different from the "budget of what is shown"
+ * it means everywhere else.
+ *
+ * The radius is left alone because `subgraph` walks a neighbor index that persistent backends
+ * precompute over all edges; teaching it a per-kind filter would mean bypassing that index, and
+ * "two proof hops" is a different feature from "show me only the proof edges around here". The help
+ * text says which one this is rather than leaving the reader to infer it.
+ */
+function proofOnlyView(data: GraphExport): GraphExport {
+  return { ...data, edges: data.edges.filter((edge) => isProofRelationKind(edge.kind)) };
 }
 
 // ── Argument parsing ───────────────────────────────────────────────────────────
@@ -153,6 +181,7 @@ function parseGraphArgs(args: readonly string[]): GraphArgs {
   const workspace = workspaceSelection(parsed);
   const positionals = parsed.positionals;
   assertFlagAtMostOnce(parsed, "dot");
+  assertFlagAtMostOnce(parsed, "proof-only");
   const rawDepth = singleOptionValue(parsed, "depth");
   if (rawDepth === "") throw usage("--depth needs a value", "pass a value, e.g. `--depth 2`");
   const depth = rawDepth === undefined ? undefined : parseDepth(rawDepth);
@@ -170,6 +199,7 @@ function parseGraphArgs(args: readonly string[]): GraphArgs {
     id: raw !== undefined ? normalizeGraphId(raw, workspace !== undefined) : undefined,
     dot: parsed.flags.has("dot"),
     depth,
+    proofOnly: parsed.flags.has("proof-only"),
     workspace,
   };
 }

@@ -129,13 +129,33 @@ function writeFixture(): void {
       "",
     ].join("\n"),
   );
+  // The Spec declares a claim version and the Reference cites it at a STALE one, so the fixture
+  // carries every ADR-0021 shape the two backends must agree on: a relation edge, its
+  // `statement`/`version` qualifiers, its `relationOrdinal` discriminator, and a computed
+  // `versionState`. An indexed read rebuilds all of it from the stored record rather than from a
+  // promoted column, which is precisely the kind of fidelity gap only a conformance case catches.
   writeFileSync(
     join(root, "docs/specs/archive.md"),
-    "---\ntype: Spec\ntitle: Archive policy\nsummary: Retain orders safely\nstatus: Done\ntags:\n  - orders\n---\nArchive retention.\n",
+    '---\ntype: Spec\ntitle: Archive policy\nsummary: Retain orders safely\nstatus: Done\ntags:\n  - orders\nclaim_outcome: supported\nclaim_evidence_level: argument\nclaim_version: "4"\n---\nArchive retention.\n',
   );
   writeFileSync(
     join(root, "docs/reference/orders.md"),
-    "---\ntype: Reference\ntitle: Orders café\nsummary: Unicode order reference β\n---\nBack to [root](../stories/root.md).\n",
+    [
+      "---",
+      "type: Reference",
+      "title: Orders café",
+      "summary: Unicode order reference β",
+      "relations:",
+      "  - kind: requires",
+      "    target: ../specs/archive.md",
+      "    statement: Retention window",
+      '    version: "3"',
+      "  - kind: alternative",
+      "    target: specs/archive",
+      "---",
+      "Back to [root](../stories/root.md).",
+      "",
+    ].join("\n"),
   );
   writeFileSync(join(root, "docs/reference/empty.md"), "---\ntype: Reference\n---\n");
   writeFileSync(
@@ -199,6 +219,40 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
       expect(indexed).toEqual(reference);
     });
   }
+
+  test("relation qualifiers and version state survive an indexed read (LCLI-477)", async () => {
+    // Compared field-by-field rather than only through the generic conformance cases above, because
+    // the qualifiers are SPARSE: an indexed read that dropped them entirely would still produce
+    // edges with the right endpoints and kinds, and a whole-output comparison of two backends that
+    // both dropped them would agree with itself. This asserts the values.
+    const observed = await invoke(indexedLoader, ["graph", "--json"]);
+    const edges = (JSON.parse(observed.stdout).data as { edges: Record<string, unknown>[] }).edges;
+    expect(edges.find((edge) => edge.kind === "requires")).toMatchObject({
+      from: "reference/orders",
+      to: "specs/archive",
+      statement: "Retention window",
+      version: "3",
+      relationOrdinal: 0,
+      versionState: "stale",
+    });
+    // The second relation records no `version` against a target that DOES declare one, which is
+    // `unversioned` and not `untracked` — the two absences are on opposite sides of the comparison
+    // and collapsing them is exactly the ambiguity the four states exist to prevent.
+    expect(edges.find((edge) => edge.kind === "alternative")).toMatchObject({
+      relationOrdinal: 1,
+      versionState: "unversioned",
+    });
+    expect(observed).toEqual(await invoke(referenceLoader, ["graph", "--json"]));
+  });
+
+  test("a proof-only view selects the same edges from either backend", async () => {
+    const args = ["graph", "--proof-only", "--json"];
+    const indexed = await invoke(indexedLoader, args);
+    expect(indexed).toEqual(await invoke(referenceLoader, args));
+    const kinds = (JSON.parse(indexed.stdout).data as { edges: { kind: string }[] }).edges.map((edge) => edge.kind);
+    // `alternative` is authored in this fixture and must not appear; neither may `link` or `specs`.
+    expect(kinds).toEqual(["requires"]);
+  });
 
   test("verified indexed provenance is internal and public output contains no native identifiers, paths, or Cypher", async () => {
     const result = await loadRetrievalGraph({

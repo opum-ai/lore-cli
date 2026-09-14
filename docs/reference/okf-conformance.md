@@ -155,6 +155,41 @@ present. `validate` checks the field's calendar-date shape but does not evaluate
 whether it has elapsed. See
 [ADR-0019](../adr/0019-separate-okf-lifecycle-from-lore-task-progress.md).
 
+### Typed relationships and claim state
+
+Lore reserves a further family on every type, described in full by
+[ADR-0021](../adr/0021-typed-authored-relationships-and-claim-state.md). These are
+Lore producer extensions, not OKF fields: an OKF consumer that ignores them
+loses precision and never loses conformance.
+
+| Field | Shape | Meaning |
+|---|---|---|
+| `relations` | list of mappings, each `kind` + `target` with optional `statement`/`version` | A typed authored relationship to another concept |
+| `claim_outcome` | `open`, `supported`, `refuted`, `withdrawn` | What this document's claim currently amounts to |
+| `claim_evidence_level` | `none`, `assertion`, `argument`, `empirical`, `checked` (weakest to strongest) | How strongly the claim is evidenced |
+| `claim_version` | opaque scalar | An author-declared marker meaning "the statement itself changed" |
+
+`kind` is one of `requires`, `alternative`, `refutes`, `supersedes`,
+`superseded_by`. The last two are the existing reserved coupling fields under a
+second, more precise spelling; both spellings produce the same edge, so a reader
+walking the graph never has to know which was used.
+
+The claim family is a **third axis**, beside the two ADR-0019 already separated.
+Lore never derives any of these from `status`, from `lore_task_status`, or from
+each other, and never writes them itself — a `stable` document may hold an `open`
+claim, and a delivered task says nothing about whether the claim it delivered is
+`supported`. The vocabulary says `supported` rather than `proved` and `checked`
+rather than `verified` on purpose: Lore validates the syntax of a record and
+never the truth of one.
+
+One tolerance rule governs the whole family: **structural shape is an error;
+vocabulary membership is a warning.** A `relations` that is not a list, an entry
+that is not a mapping, or an entry missing `kind` or `target` fails validation
+like any other malformed known field. An unrecognised *value* loads, produces no
+edge, and is reported by `lore check`. That asymmetry keeps a bundle readable by
+an older Lore than the one that wrote it, which a closed enum enforced at parse
+time would not.
+
 ### Attested Computation
 
 OKF 0.2 §10 adds `Attested Computation` and the `# Computation` convention.
@@ -177,6 +212,23 @@ finding because this repository chooses to keep its own authored graph
 coherent. That is a **Lore-specific quality gate**, not an OKF conformance
 rejection. The same distinction applies to broken anchors, task drift, managed
 block drift, and the relative-link portability policy.
+
+Three warn-tier rules cover the ADR-0021 family. `broken-relation` reports a
+`relations[].target` that resolves to no concept, matching how `broken-source`
+treats a provenance resource. `unknown-relation-kind` is where the relation
+vocabulary is enforced at all, since membership is deliberately not a parse
+failure. `relation-version-drift` names a dependent whose recorded `version` no
+longer matches its target's `claim_version`.
+
+`relation-version-drift` stays a warning on principle rather than convenience.
+Lore can see that a cited version moved; it cannot see whether the citing
+argument still holds, so it reports possible impact and never a correctness
+verdict. Only the drifted state produces a finding — a relation that recorded no
+version, and one whose target declares none, are the common cases and would bury
+the actionable one. They stay distinguishable in the data: `lore graph --json`
+carries a `versionState` of `current`, `stale`, `unversioned` or `untracked` on
+every relation edge, present even when nothing drifted, so the absence of a
+warning can never be misread as "compared and agreed".
 
 Missing `index.md` files do not produce an OKF conformance finding. Lore may
 generate indexes for its own producer output during `lore sync`, but an OKF

@@ -11,7 +11,7 @@ import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import ladybug, { Connection, Database, type LbugValue, type QueryResult } from "@ladybugdb/core";
 import { LoreError } from "../errors";
-import { type BundleGraph, type Edge, type EdgeKind, frontmatterScalar } from "./bundle";
+import { type BundleGraph, type Edge, frontmatterScalar, isEdgeKind } from "./bundle";
 import type { Concept } from "./concept";
 import type { LadybugDatabaseVerification, LadybugIndexedReader } from "./ladybug-native";
 import {
@@ -555,7 +555,16 @@ export async function readLadybugBundleGraph(
         ) {
           corrupt("indexed authored-edge identities or promoted fields disagree");
         }
-        return { record, edge: { from, to: to ?? null, kind: record.kind, target: record.target } satisfies Edge };
+        return {
+          record,
+          edge: {
+            from,
+            to: to ?? null,
+            kind: record.kind,
+            target: record.target,
+            ...relationQualifiers(record),
+          } satisfies Edge,
+        };
       });
     indexedEdges.sort(
       (a, b) =>
@@ -709,9 +718,9 @@ async function readIndexedBundleGraph(
     }
     const { concepts, recordIds, tokenEstimates } = conceptsFromRows(conceptRows, source, bodies);
     observeRecordIds?.(recordIds);
-    // `sourceRecordJson` is selected because the promoted columns cannot answer the one question
-    // that decides membership: WHICH KIND OF RECORD each endpoint is. A bundle graph holds
-    // concept->concept edges only, and `kind` alone does not imply that (LCLI-497).
+    // `sourceRecordJson` is selected because the promoted columns cannot answer two questions the
+    // bundle graph needs: WHICH KIND OF RECORD each endpoint is (LCLI-497), and what ADR-0021
+    // relation qualifiers the edge carries.
     const edgeRows = await queryRows(
       connection,
       `MATCH (n:AuthoredEdgeRecord) WHERE n.kind <> 'task'
@@ -856,11 +865,9 @@ function conceptsFromRows(
  */
 function edgesFromRows(rows: readonly Record<string, LbugValue>[], recordIds: ReadonlyMap<string, string>): Edge[] {
   const indexed = rows
-    .filter((row) => {
-      const record = parseEdgeSourceRecord(row.sourceRecordJson);
-      return edgeSourceKind(record) === "concept" && edgeTargetKind(record) === "concept";
-    })
-    .map((row) => {
+    .map((row) => ({ row, record: parseEdgeSourceRecord(row.sourceRecordJson) }))
+    .filter(({ record }) => edgeSourceKind(record) === "concept" && edgeTargetKind(record) === "concept")
+    .map(({ row, record }) => {
       const fromKey = requiredString(row.fromRecordKey, "edge source key");
       const from = recordIds.get(fromKey);
       const toKey = row.toRecordKey;
@@ -874,7 +881,13 @@ function edgesFromRows(rows: readonly Record<string, LbugValue>[], recordIds: Re
       return {
         ordinal: requiredNumber(row.ordinal, "edge ordinal"),
         recordKey: requiredString(row.recordKey, "edge record key"),
-        edge: { from, to: to ?? null, kind, target: requiredString(row.target, "edge target") } satisfies Edge,
+        edge: {
+          from,
+          to: to ?? null,
+          kind,
+          target: requiredString(row.target, "edge target"),
+          ...relationQualifiers(record),
+        } satisfies Edge,
       };
     });
   indexed.sort(
@@ -1808,10 +1821,22 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isEdgeKind(value: string): value is EdgeKind {
-  return (
-    value === "link" || value === "sources" || value === "specs" || value === "supersedes" || value === "superseded_by"
-  );
+/**
+ * The ADR-0021 relation qualifiers of an authored edge (`statement`, `version`, `relationOrdinal`),
+ * as a spreadable fragment.
+ *
+ * Read from the stored source record rather than a promoted column, because they are sparse --
+ * present only on a `relations[]` edge that narrowed to a statement or recorded a version -- and the
+ * point of carrying them at all is that an indexed read is as precise as a direct one. An absent
+ * qualifier stays absent rather than becoming `undefined`, so a round-tripped edge is structurally
+ * identical to a freshly built one and the indexed/reference conformance oracle can compare them.
+ */
+function relationQualifiers(record: ProjectionEdgeRecord): Pick<Edge, "statement" | "version" | "relationOrdinal"> {
+  return {
+    ...(typeof record.statement === "string" ? { statement: record.statement } : {}),
+    ...(typeof record.version === "string" ? { version: record.version } : {}),
+    ...(typeof record.relationOrdinal === "number" ? { relationOrdinal: record.relationOrdinal } : {}),
+  };
 }
 
 function edgeSourceKind(record: ProjectionEdgeRecord): "concept" | "task" {
