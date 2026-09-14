@@ -709,12 +709,16 @@ async function readIndexedBundleGraph(
     }
     const { concepts, recordIds, tokenEstimates } = conceptsFromRows(conceptRows, source, bodies);
     observeRecordIds?.(recordIds);
+    // `sourceRecordJson` is selected because the promoted columns cannot answer the one question
+    // that decides membership: WHICH KIND OF RECORD each endpoint is. A bundle graph holds
+    // concept->concept edges only, and `kind` alone does not imply that (LCLI-497).
     const edgeRows = await queryRows(
       connection,
       `MATCH (n:AuthoredEdgeRecord) WHERE n.kind <> 'task'
        RETURN n.recordKey AS recordKey, n.fromRecordKey AS fromRecordKey,
               n.toRecordKey AS toRecordKey, n.kind AS kind, n.target AS target,
-              n.ordinal AS ordinal, n.dangling AS dangling
+              n.ordinal AS ordinal, n.dangling AS dangling,
+              n.sourceRecordJson AS sourceRecordJson
        ORDER BY n.fromRecordKey, n.ordinal, n.recordKey`,
     );
     const edges = edgesFromRows(edgeRows, recordIds);
@@ -833,24 +837,46 @@ function conceptsFromRows(
   return { concepts, recordIds, tokenEstimates };
 }
 
+/**
+ * Rebuild the bundle's concept->concept {@link Edge} list from indexed authored-edge rows.
+ *
+ * Rows are filtered by the SAME declared endpoint-kind predicate the traversal reader uses
+ * ({@link edgeSourceKind}/{@link edgeTargetKind} over the stored source record), not by a list of
+ * edge kinds. LCLI-497: the `kind <> 'task'` filter in the query is about the concept->TASK coupling
+ * edge and says nothing about a task->task one, so LCLI-476's `dependency` edges reached this
+ * function, resolved their task record keys against a CONCEPT-only map, and corrupted every indexed
+ * read on any tracker carrying a prerequisite -- which after LCLI-476 is the ordinary case.
+ * `loadRetrievalGraph`'s default `auto` policy then caught the failure and returned a correct
+ * reference graph, so the only visible symptom was one line of stderr and a slower command.
+ *
+ * A denylist of kinds would have fixed that instance and re-armed the trap for the next edge kind
+ * whose endpoints are not concepts; asking each record what its endpoints ARE cannot go stale the
+ * same way, and it is the predicate `readIndexedTraversalRecords` already used -- which is exactly
+ * why traversal survived this and the bundle graph did not.
+ */
 function edgesFromRows(rows: readonly Record<string, LbugValue>[], recordIds: ReadonlyMap<string, string>): Edge[] {
-  const indexed = rows.map((row) => {
-    const fromKey = requiredString(row.fromRecordKey, "edge source key");
-    const from = recordIds.get(fromKey);
-    const toKey = row.toRecordKey;
-    const to = typeof toKey === "string" ? recordIds.get(toKey) : undefined;
-    const kind = requiredString(row.kind, "edge kind");
-    const dangling = row.dangling;
-    if (from === undefined || !isEdgeKind(kind) || typeof dangling !== "boolean") corrupt("indexed edge is invalid");
-    if ((!dangling && (typeof toKey !== "string" || to === undefined)) || (dangling && toKey !== null)) {
-      corrupt("indexed edge endpoint differs");
-    }
-    return {
-      ordinal: requiredNumber(row.ordinal, "edge ordinal"),
-      recordKey: requiredString(row.recordKey, "edge record key"),
-      edge: { from, to: to ?? null, kind, target: requiredString(row.target, "edge target") } satisfies Edge,
-    };
-  });
+  const indexed = rows
+    .filter((row) => {
+      const record = parseEdgeSourceRecord(row.sourceRecordJson);
+      return edgeSourceKind(record) === "concept" && edgeTargetKind(record) === "concept";
+    })
+    .map((row) => {
+      const fromKey = requiredString(row.fromRecordKey, "edge source key");
+      const from = recordIds.get(fromKey);
+      const toKey = row.toRecordKey;
+      const to = typeof toKey === "string" ? recordIds.get(toKey) : undefined;
+      const kind = requiredString(row.kind, "edge kind");
+      const dangling = row.dangling;
+      if (from === undefined || !isEdgeKind(kind) || typeof dangling !== "boolean") corrupt("indexed edge is invalid");
+      if ((!dangling && (typeof toKey !== "string" || to === undefined)) || (dangling && toKey !== null)) {
+        corrupt("indexed edge endpoint differs");
+      }
+      return {
+        ordinal: requiredNumber(row.ordinal, "edge ordinal"),
+        recordKey: requiredString(row.recordKey, "edge record key"),
+        edge: { from, to: to ?? null, kind, target: requiredString(row.target, "edge target") } satisfies Edge,
+      };
+    });
   indexed.sort(
     (a, b) => compare(a.edge.from, b.edge.from) || a.ordinal - b.ordinal || compare(a.recordKey, b.recordKey),
   );

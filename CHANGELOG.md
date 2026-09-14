@@ -21,6 +21,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The indexed retrieval backend works again on a tracker that carries prerequisites** (LCLI-497).
+  LCLI-476's task→task `dependency` edges reached `readIndexedBundleGraph`, which selects authored
+  edges with `kind <> 'task'` — a filter about the concept→task coupling edge that says nothing
+  about a task→task one — and then resolved both endpoints against a concept-only key map. Every
+  indexed read of such a bundle failed verification, and the default `auto` policy fell back to the
+  reference backend on every command. Output stayed correct and the fallback warning was printed, so
+  the only cost was a shipped performance feature that never engaged — on what, after LCLI-476, is
+  the ordinary shape of a Quest-backed workspace (this repository: 94 tasks with a non-empty
+  `dependencies` array).
+  - The reader now filters on the **declared endpoint kinds of each record**, the same predicate the
+    traversal reader already used — which is why `lore path`/`impact` were unaffected while
+    `lore graph`/`query`/`context` quietly stopped using the index. A denylist of edge kinds would
+    have fixed this instance and re-armed the trap for the next kind whose endpoints are not
+    concepts.
+  - The conformance fixture now carries a task dependency, so all twenty-odd indexed/reference
+    cases exercise it. The suite could always see this defect; its fixture never produced the
+    trigger. Two new cases assert the **backend that was selected**, because a fallback returns
+    correct output and no output-only assertion can fail.
+
 - **`lore path`, `lore impact` and `lore export` now see tracker dependency edges** (LCLI-476).
   `lore path PGF-3 PGF-2 --from-kind task --to-kind task --direction outbound` returned `paths=[]`
   for two tasks connected by a real prerequisite, and `lore export` emitted `parentTaskId` with no
