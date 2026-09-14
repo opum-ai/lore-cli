@@ -365,6 +365,21 @@ jobs:
           retention-days: 90
           overwrite: true
 
+      # ############################################################################
+      # TEMPORARY FAULT — LCLI-487 AC#2 ONLY. MUST BE DELETED BEFORE THIS LANDS.
+      # Stands in for the genuine concurrency flake so that a partial re-run can be
+      # exercised against the REAL job graph rather than a probe workflow. Fails the
+      # first attempt only, AFTER the upload above, so attempt 1 leaves a real
+      # artifact behind exactly as the flake did on run 34801853367.
+      - name: TEMPORARY LCLI-487 fault (delete me)
+        run: |
+          if [ "${{ github.run_attempt }}" = "1" ]; then
+            echo "::error::TEMPORARY LCLI-487 fault: failing attempt 1 on purpose"
+            exit 1
+          fi
+          echo "attempt ${{ github.run_attempt }}: temporary fault passing through"
+      # ############################################################################
+
   package-qualification:
     name: "matching-host package qualification (${{ matrix.name }})"
     needs: [setup, verify-versions, ladybug-qualification, ladybug-concurrency-qualification]
