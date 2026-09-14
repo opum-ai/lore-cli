@@ -68,6 +68,19 @@ Every command supports `--json` (the `{schemaVersion, kind, data}` envelope) and
 (ANSI-free, auto-selected off a TTY). Branch on the semantic exit code, never on prose:
 `0` ok · `2` usage · `3` not_found · `4` denied · `5` conflict · `6` validation/drift.
 
+## Read the evidence, not the status label
+
+A document's `status: stable`, a `verified` attribution, or a Done task record what
+happened to the record — not whether what it asserts is still true. `status` names a
+lifecycle stage; an attribution names who touched it. Neither substitutes for checking
+the claim's own evidence before relying on it.
+
+Retrieve a bounded navigation view (`graph`, `path`, `context --depth`) and read exact
+sources before writing, rather than pulling whole targets into a prompt. `--max-tokens`
+is advisory, not a hard ceiling: `lore context` can still return a target larger than the
+budget, marked `truncated`, instead of refusing to exceed it. Treat a truncated result as
+partial evidence, not a confirmed absence of more.
+
 ## Optional task-scoped context
 
 When native agent instructions name a committed Lore profile, use this stable opt-in line:
