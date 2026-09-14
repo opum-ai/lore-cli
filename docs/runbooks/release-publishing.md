@@ -549,6 +549,11 @@ publish is explicitly marked public. Root `package.json` and all six
    ahead of the auth check, so a rehearsal proves the bytes are right even
    before credentials exist.
 
+   **A manual publish produces no provenance attestation.** That is a known
+   consequence of the broken OIDC path, not a mistake in the script — see
+   [Provenance and attestations](#provenance-and-attestations) for what to
+   record and what to tell a consumer who notices.
+
    **Prefer trusted publishing (OIDC) over any token — the token path is now a
    maintenance liability by construction.** npm disabled classic token creation
    in November 2025 and **permanently revoked every existing classic token on
@@ -685,6 +690,112 @@ and this procedure must never touch `latest`, `main`, or production channels.
 6. **Evidence.** Record packument integrity, dist-tag state, clean-consumer
    install, and CLI smoke results in the release-truth record and the relevant
    Backlog task notes through a normal PR to `dev`.
+
+## Provenance and attestations
+
+Two questions about published provenance will reach you as a consumer report
+long before they reach you as a release step. Both have settled answers, and
+neither is a compromise. Answer from this section rather than re-deriving it
+mid-incident.
+
+### Pre-`0.6.1` provenance links are permanently dangling — expected, not tampering
+
+Every `@opum-ai/lore*` version published before `0.6.1` carries an SLSA
+provenance attestation naming a git commit **that no longer exists**. The
+repository was deleted and recreated on 2026-09-10 (fleet task OPAG-70),
+destroying the old history. The attestations were already published and are
+immutable, so they still point into it. On npmjs.com this surfaces as a
+provenance link that cannot find its commit — which reads as *tampering* to
+anyone who does not know the history was rebuilt.
+
+Retrieving an attestation is non-obvious, so here is the whole path. The
+registry returns two attestations per version — npm's own publish attestation
+and the SLSA provenance — so select the provenance one by `predicateType`,
+base64-decode the sigstore bundle's DSSE payload, and read the commit it
+resolved and the ref it built:
+
+```sh
+curl -s "https://registry.npmjs.org/-/npm/v1/attestations/@opum-ai%2flore-darwin-arm64@0.6.0" \
+  | jq -r '.attestations[]
+           | select(.predicateType == "https://slsa.dev/provenance/v1")
+           | .bundle.dsseEnvelope.payload' \
+  | base64 -d \
+  | jq -r '.predicate.buildDefinition.resolvedDependencies[0].digest.gitCommit,
+           .predicate.buildDefinition.externalParameters.workflow.ref'
+```
+
+Verified 2026-09-13, that prints
+`59ba30e497f8e98aa6c6be022d9363fd718fb4ee` and `refs/tags/v0.6.0`. Both ends
+of it are gone from GitHub, and the build run the attestation names
+(`34393976910`) is gone for the same reason:
+
+```
+gh api repos/opum-ai/lore-cli/commits/59ba30e497f8e98aa6c6be022d9363fd718fb4ee
+  → HTTP 422  "No commit found for SHA: 59ba30e497f8e98aa6c6be022d9363fd718fb4ee"
+gh api repos/opum-ai/lore-cli/actions/runs/34393976910
+  → HTTP 404  "Not Found"
+```
+
+**This is not repaired, and will not be.** Three constraints, in the order
+they close off the options:
+
+1. **npm forbids republishing a version.** A version's metadata, including its
+   attestations, is immutable once published. There is no edit.
+2. **Re-pointing a tag does not help.** Pushing `v0.6.0` at a commit in the
+   new history makes the tag resolve again, but the attestation still names
+   `59ba30e4…`, and that SHA still does not exist. The published metadata and
+   the repository would disagree — which is a *worse* signal than a clean
+   404, because it looks like a tag was moved to cover something up.
+3. **Nothing is actually wrong with the artifacts.** The tarballs, their
+   SHA-256 checksums, and their signatures are all intact and correctly
+   signed; every digest in
+   [Lore CLI release truth](../reference/lore-cli-release-truth.md) still
+   verifies against what the registry serves. Only the commit the provenance
+   *names* stopped existing. The cure is worse than the condition.
+
+So the answer to a consumer is: the dangling link is expected, the artifacts
+are the thing to verify, and the release-truth record carries the digests to
+verify them against.
+
+### Never check a destroyed SHA in a local clone — `git cat-file` will wrongly pass it
+
+**A local clone still has the destroyed commits as loose objects, so
+`git cat-file` reports them perfectly healthy.** Run
+`git cat-file -p 59ba30e497f8e98aa6c6be022d9363fd718fb4ee` in any checkout
+that existed before 2026-09-10 — including this repository's own working
+checkout — and you get a full commit object back, tree, parent, signature and
+all. That is a false pass on exactly the artifacts the warning above is
+about: the objects survive locally because nothing ever deleted them from your
+object store, while the remote they claim to live in was destroyed and rebuilt.
+
+**The live GitHub API is the only valid check.** `gh api
+repos/opum-ai/lore-cli/commits/<sha>` answering 422 is the ground truth; a
+local `git cat-file`, `git show`, or `git log` result proves nothing about
+whether the commit a published attestation points at is reachable by anyone
+else in the world. Never close a provenance question on local evidence.
+
+### `0.6.1` and `0.6.2` ship with NO attestation at all
+
+This is a separate fact from the dangling links above, and consumers file it
+as a defect if it is not stated plainly: **`0.6.1` carries no provenance
+attestation, and `0.6.2` will not either.**
+
+The cause is not the repository recreation — it is that OIDC trusted
+publishing is broken for this repository (**LCLI-482, open and unresolved**).
+GitHub issues immutable-format OIDC subject claims
+(`repo:opum-ai@<repo-id>/lore-cli@<id>:…`) that npm's Trusted Publishing does
+not match, so npm treats the minted token as unauthenticated and the publish
+job fails. Releases therefore go out through the manual
+`scripts/publish-release.sh` path in [Step 3](#3-cut-a-release), and **a
+manual publish cannot produce an attestation** — provenance is generated by
+the CI OIDC path and by nothing else.
+
+Until LCLI-482 closes, every release published this way is attestation-free.
+Do not describe it as fixed, and do not let a reader infer provenance from
+`0.6.0`'s having had it. State it in the release notes and in the
+release-truth record at publish time; what a consumer verifies instead is the
+tarball SHA-256 set, which `scripts/publish-release.sh` checks against
+`SHA256SUMS.txt` before any registry write.
 
 ## Dry-run rehearsal (verified)
 
