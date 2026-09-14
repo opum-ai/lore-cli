@@ -235,6 +235,9 @@
 - 2026-09-14T16:46:59-05:00 a1df02ceac555b80d3d0e95e656e30f4e4c929ad feat(LCLI-476): dependency edges reach lore's projections, traversal and export (#63)
 - 2026-09-14T16:54:36-05:00 fcdf1e33dcb8275beb37a3440eed37c07ba2bdc1 feat(LCLI-492): --fail-on-drop refuses lore sync before any write (#64)
 - 2026-09-14T18:22:42-05:00 c67109182beaf3ef5cd2b8e73126a57a52bebbb3 fix(LCLI-497): the indexed backend stopped working the moment a tracker had a prerequisite
+- 2026-09-14T18:42:41-05:00 6f39deae57413ac5693979b93e7faf44c08341db fix(LCLI-497): the indexed backend stopped working the moment a tracker had a prerequisite (#75)
+- 2026-09-14T18:43:25-05:00 72fcf6c36258485105b8d77194673892b80b8f5f feat(LCLI-477): typed authored relationships, and claim state as its own axis
+- 2026-09-14T18:45:37-05:00 ab8241b0862384e0965b56049e7a419aedc5dbb7 chore(LCLI-477): regenerate docs/log.md after the rebase onto dev
 
 ## docs/adr
 
@@ -245,6 +248,7 @@
 - 2026-07-26T07:33:17-05:00 24010c650030d6d384ef4b0c6881ef3399a39a7c docs(adr-0009): correct §2's orphans data-source and ownership-rule claims
 - 2026-07-26T21:25:31-05:00 dccfabfe1eea13ceeee034c70cc21ab68d52c8b1 docs(wave2-integration): fix label-flag comment/test contradictions and ADR-0002 item 6
 - 2026-09-03T02:33:01Z 043939c049ed1fe53d4b21ead70d9d39db1bb349 docs(new,adr): document the NNNN- ADR auto-numbering scheme (LCLI-373) (#527)
+- 2026-09-14T18:43:14-05:00 063ab399cf44384d24fb4ad3f3f0833e0f0a7958 docs(LCLI-477): ADR-0021 fixes the typed-relationship vocabulary before the code
 
 ## docs/reference
 

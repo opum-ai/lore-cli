@@ -486,9 +486,24 @@ humans for orientation, by consumers for navigation, and by
 | | |
 |---|---|
 | **Args** | optional `<id>` (subgraph rooted at one concept; normalized like [`rename`](#rename), so path/`.md`/`./` forms resolve; workspace mode requires `<member-id>::<source-id>`) |
-| **Key flags** | `--dot` (emit Graphviz DOT; mutually exclusive with `--json`) · `--depth <n>` (bound subgraph radius) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
-| **Output** | `kind: graph.export` — nodes, edges, token estimates (or DOT text under `--dot`). Workspace JSON adds scope, per-node provenance, and exact explicit workspace links. Machine JSON is the global `--json` envelope, as for every command. |
+| **Key flags** | `--dot` (emit Graphviz DOT; mutually exclusive with `--json`) · `--depth <n>` (bound subgraph radius) · `--proof-only` (show only proof-bearing relations) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
+| **Output** | `kind: graph.export` — nodes, edges, token estimates (or DOT text under `--dot`). A relation edge additionally carries `statement`, `version`, `relationOrdinal` and `versionState`. Workspace JSON adds scope, per-node provenance, and exact explicit workspace links. Machine JSON is the global `--json` envelope, as for every command. |
 | **Exit** | `0` ok · `2` bad usage (`--dot` with `--json`, bad flag/`--depth`) · `3` root `<id>` not found |
+
+`--proof-only` filters the **edges**; the node set and the `--depth` radius are
+unchanged. Both halves are deliberate. A claim with no proof relationships stays
+in the view because an unsupported claim is precisely what a proof view should
+surface — dropping unconnected nodes would hide the concepts most worth looking
+at, and would make `tokenEstimate` stop meaning "the budget of what is shown".
+The radius is left alone because "two proof hops" is a different question from
+"only the proof edges around here"; this flag answers the second.
+
+`versionState` is present on every edge a `relations[]` entry authored, including
+when nothing drifted, and takes one of four values: `current`, `stale`,
+`unversioned` (the relation recorded no `version`), or `untracked` (the target
+declares no `claim_version`). A marker that appeared only on a stale edge could
+not distinguish "compared and agreed" from "nothing was comparable". See
+[ADR-0021](../adr/0021-typed-authored-relationships-and-claim-state.md).
 
 ### `path`
 
@@ -499,7 +514,7 @@ does not guess whether an id names a concept or task.
 | | |
 |---|---|
 | **Args** | `<from> <to>` |
-| **Key flags** | required `--from-kind <concept\|task>` · required `--to-kind <concept\|task>` · required `--direction <outbound\|inbound\|either>` · `--edge <kind>` (repeatable allowlist) · `--max-depth <n>` (default 4, max 16) · `--limit <n>` (default 20, max 100) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
+| **Key flags** | required `--from-kind <concept\|task>` · required `--to-kind <concept\|task>` · required `--direction <outbound\|inbound\|either>` · `--edge <kind>` (repeatable allowlist) · `--proof-only` · `--max-depth <n>` (default 4, max 16) · `--limit <n>` (default 20, max 100) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
 | **Output** | `kind: path.result`, schema `lore-path-result/1` — normalized typed scope, selected edge kinds, effective limits, shortest exact edge chains, endpoint and edge provenance, `shown`, `edgeVisits`, `depthBoundReached`, `truncated`, and `complete` |
 | **Exit** | `0` ok (no path is an empty successful result) · `2` bad/missing kind, direction, edge, depth, limit, or scope · `3` typed endpoint not found · `4` source unavailable · `6` malformed/drifting projection |
 
@@ -512,9 +527,24 @@ endpoint appears once with a canonical shortest evidence chain and is labeled
 | | |
 |---|---|
 | **Args** | `<id>` |
-| **Key flags** | required `--kind <concept\|task>` · required `--direction <outbound\|inbound\|either>` · `--edge <kind>` (repeatable allowlist) · `--max-depth <n>` (default 4, max 16) · `--limit <n>` (default 20, max 100) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
+| **Key flags** | required `--kind <concept\|task>` · required `--direction <outbound\|inbound\|either>` · `--edge <kind>` (repeatable allowlist) · `--proof-only` · `--max-depth <n>` (default 4, max 16) · `--limit <n>` (default 20, max 100) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
 | **Output** | `kind: impact.result`, schema `lore-impact-result/1` — normalized typed root, selected edge kinds, effective limits, direct/transitive impacts, exact evidence chains and provenance, `shown`, `edgeVisits`, `depthBoundReached`, `truncated`, and `complete` |
 | **Exit** | `0` ok (no impacts is successful) · `2` bad/missing kind, direction, edge, depth, limit, or scope · `3` typed root not found · `4` source unavailable · `6` malformed/drifting projection |
+
+`--proof-only` is a preset for `--edge`: it selects the proof-bearing relation
+kinds — `requires`, `refutes`, `supersedes`, `superseded_by` — and excludes
+everything else, including plain markdown `link` edges and `alternative`
+relations. The two flags cannot be combined; passing both is a usage error
+rather than an intersection, because each expresses a complete answer to "which
+edge kinds" and guessing between them is how a filter silently returns less than
+either flag alone would have.
+
+Unlike an explicit `--edge`, `--proof-only` is **not** rejected when the bundle
+contains none of those kinds. An `--edge` value the snapshot does not contain is
+almost always a typo and is reported as one; a preset naming kinds the bundle has
+not used yet is the correct, informative answer — a proof-only view of a bundle
+with no proof relations is legitimately empty. See
+[ADR-0021](../adr/0021-typed-authored-relationships-and-claim-state.md).
 
 Both commands enforce a hard 10,000-edge visit budget in addition to the
 requested depth and result limits. Hitting the result or visit budget sets

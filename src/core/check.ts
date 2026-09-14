@@ -56,7 +56,7 @@ import * as ipaddr from "ipaddr.js";
 import * as yaml from "js-yaml";
 import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
-import { extractLinkTargets, nodeText, walkMdast } from "./bundle";
+import { extractLinkTargets, nodeText, resolveRef, walkMdast } from "./bundle";
 import { hasStrayFrontmatterFence, idFromPath, normalizeInput, tryReadFrontmatter } from "./concept";
 import type { Finding, Severity } from "./finding";
 import { INDEX_BLOCK_BEGIN } from "./indexes";
@@ -65,6 +65,7 @@ import { type ManagedTaskRow, regenerateTaskBlock } from "./managed-block";
 import { type BundleState, CURRENT_OKF_VERSION, type TaskRollupField } from "./okf-version";
 import { ATTESTED_COMPUTATION_TYPE } from "./profile";
 import type { ReconciledStatus } from "./reconcile";
+import { claimVersion, RELATION_KINDS, readRelations, relationVersionState } from "./relations";
 
 /** `error` fails the gate (exit `6`); `warning` is advisory (fails only under `--strict`). The shared {@link Severity}. */
 export type CheckSeverity = Severity;
@@ -77,6 +78,15 @@ export type CheckSeverity = Severity;
  * (ADR-0007). `double-frontmatter` (LCLI-372) is error-tier defense-in-depth: a file whose body
  * itself opens with a second, parseable `---` frontmatter fence -- the shape `lore new` already
  * rejects at scaffold time, caught here for a file that reaches disk another way.
+ *
+ * The three `relation-*` rules (ADR-0021) are all **warn**-tier, each for its own reason.
+ * `broken-relation` matches `broken-source`: a frontmatter reference that resolves to nothing is a
+ * quality signal, and the graph already tolerates it as a dangling edge. `unknown-relation-kind` is
+ * where the vocabulary is enforced at all -- membership is deliberately not a parse failure, so if
+ * this rule did not exist an unrecognised kind would be silently absent from the graph.
+ * `relation-version-drift` is the one that must stay a warning on principle: lore can see that a
+ * cited `claim_version` moved, and cannot see whether the citing argument still holds. Reporting
+ * that as an error would be a correctness verdict lore is not entitled to.
  */
 export type CheckRule =
   | "broken-link"
@@ -92,7 +102,10 @@ export type CheckRule =
   | "unknown-type"
   | "portability"
   | "external-link"
-  | "double-frontmatter";
+  | "double-frontmatter"
+  | "broken-relation"
+  | "unknown-relation-kind"
+  | "relation-version-drift";
 
 /**
  * One problem found in the bundle, attributed to the file that carries it: the shared
@@ -365,11 +378,19 @@ export function checkBundle(
   // indexed before any link is checked, so a forward reference resolves.
   const prepared: { file: CheckInputFile; tree: Nodes; id: string }[] = [];
   const slugsById = new Map<string, ReadonlySet<string>>();
+  // Frontmatter is indexed by id in the same pass because the relation rules are the only ones that
+  // are CROSS-FILE in both directions: a relation's drift state is a comparison between the citing
+  // file's recorded `version` and the CITED file's declared `claim_version`, so neither file alone
+  // can answer it. An unreadable mapping is recorded as an empty one rather than skipped, so a
+  // target that exists but cannot be parsed still resolves (its version is simply untracked) —
+  // treating it as absent would report a broken reference that is not broken.
+  const frontmatterById = new Map<string, Record<string, unknown>>();
   for (const file of files) {
     const tree = fromMarkdown(bodyText(file.raw));
     const id = idFromPath(file.path);
     prepared.push({ file, tree, id });
     slugsById.set(id, extractHeadingSlugs(tree));
+    frontmatterById.set(id, readFrontmatterOrEmpty(file.path, file.raw));
   }
 
   // Pass 2 — judge: per file, the link/anchor gate then the portability lint, over the one
@@ -406,6 +427,7 @@ export function checkBundle(
         findings.push(...staleAfterFindings(file.path, file.raw, options.asOf));
       }
     }
+    findings.push(...relationFindings(file.path, dir, id, frontmatterById));
     findings.push(...portabilityScan(tree, file.path));
     if (hasStrayFrontmatterFence(bodyText(file.raw))) {
       findings.push({
@@ -418,6 +440,78 @@ export function checkBundle(
   }
 
   return summarize(findings, files.length, skippedOutOfBundleLinkCount);
+}
+
+/** A file's frontmatter mapping, or an empty one when it has none or cannot be parsed. */
+function readFrontmatterOrEmpty(path: string, raw: string): Record<string, unknown> {
+  try {
+    return tryReadFrontmatter(path, raw) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Report the ADR-0021 relation problems for one file: an unrecognised `kind`, a `target` that
+ * resolves to nothing, and a recorded `version` that no longer matches the target's declared
+ * `claim_version`.
+ *
+ * Targets resolve through {@link resolveRef} — the SAME rule the bundle graph uses — rather than a
+ * local re-implementation, so a relation that `lore graph` renders as resolved can never be
+ * reported as broken here, and vice versa. That is why `frontmatterById` is keyed by concept id:
+ * it doubles as the membership set the resolver needs and as the lookup the drift comparison needs.
+ *
+ * Only the `stale` state produces a finding. `unversioned` and `untracked` are the two "no
+ * comparison was possible" states and are the COMMON case, since precision is opt-in; warning on
+ * them would bury the one state that is actionable. They stay distinguishable in the data —
+ * `lore graph --json` carries `versionState` on every relation edge, including when nothing
+ * drifted — which is what keeps the absence of a drift warning from being read as "compared and
+ * agreed".
+ */
+function relationFindings(
+  path: string,
+  dir: string,
+  id: string,
+  frontmatterById: ReadonlyMap<string, Record<string, unknown>>,
+): CheckFinding[] {
+  const frontmatter = frontmatterById.get(id);
+  if (frontmatter === undefined) {
+    return [];
+  }
+  const { relations, unknownKinds } = readRelations(frontmatter);
+  const findings: CheckFinding[] = [];
+  for (const entry of unknownKinds) {
+    findings.push({
+      severity: "warning",
+      rule: "unknown-relation-kind",
+      file: path,
+      message: `relations[${entry.ordinal}] has kind ${JSON.stringify(entry.kind)}, which is not one of ${RELATION_KINDS.join(", ")} -- its relation to ${JSON.stringify(entry.target)} is not in the graph`,
+    });
+  }
+  for (const relation of relations) {
+    const targetId = resolveRef(relation.target, dir, frontmatterById);
+    if (targetId === null) {
+      findings.push({
+        severity: "warning",
+        rule: "broken-relation",
+        file: path,
+        message: `relations[${relation.ordinal}] ${relation.kind} target ${JSON.stringify(relation.target)} is not in the bundle`,
+      });
+      continue;
+    }
+    if (relationVersionState(relation.version, frontmatterById.get(targetId)) !== "stale") {
+      continue;
+    }
+    const current = claimVersion(frontmatterById.get(targetId) ?? {});
+    const statement = relation.statement === undefined ? "" : ` (${relation.statement})`;
+    findings.push({
+      severity: "warning",
+      rule: "relation-version-drift",
+      file: path,
+      message: `relations[${relation.ordinal}] ${relation.kind} ${targetId}${statement} was recorded against claim_version ${JSON.stringify(relation.version)}, which is now ${JSON.stringify(current)} -- this dependent may need review`,
+    });
+  }
+  return findings;
 }
 
 /**

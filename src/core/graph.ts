@@ -18,6 +18,7 @@
 
 import { type BundleGraph, type EdgeKind, frontmatterScalar } from "./bundle";
 import { compareCodeUnits } from "./order";
+import { type RelationVersionState, relationVersionState } from "./relations";
 import type { WorkspaceRecordProvenance, WorkspaceResultScope } from "./workspace-contract";
 import type { WorkspaceProjectedLink } from "./workspace-projection";
 
@@ -45,12 +46,43 @@ export interface GraphEdge {
   readonly from: string;
   /** The resolved target concept id, or `null` when the reference dangles. */
   readonly to: string | null;
-  /** Which kind of reference produced this edge (`link`/`sources`/`specs`/`supersedes`/`superseded_by`). */
+  /** Which kind of reference produced this edge — one of {@link import("./bundle").EDGE_KINDS}. */
   readonly kind: EdgeKind;
   /** The reference as parsed (link destination / frontmatter value), for diagnostics. */
   readonly target: string;
   /** `true` when the reference resolves to no concept in the bundle (`to === null`). */
   readonly dangling: boolean;
+  /**
+   * The precise statement within the target, when the authoring `relations[]` entry named one
+   * (ADR-0021). Omitted otherwise — including on a relation that points at a whole document, which
+   * is the common case, so absence means "not narrowed" and never "narrowed to nothing".
+   */
+  readonly statement?: string;
+  /**
+   * The target's `claim_version` the authoring `relations[]` entry recorded relying on. Omitted when
+   * the relation recorded none, which `lore check` reports as the distinct `unversioned` state
+   * rather than folding into "current".
+   */
+  readonly version?: string;
+  /**
+   * How this relation's recorded `version` stands against its target's current `claim_version`
+   * (ADR-0021). Present on **every** edge a `relations[]` entry authored and on no other, including
+   * when nothing drifted — which is the point. If it appeared only on a stale edge, its absence
+   * would be ambiguous between "compared and agreed", "nothing to compare", and "produced by a
+   * version of lore that does not report this", and a marker that cannot announce its own
+   * applicability is the defect this feature exists to remove.
+   *
+   * It is computed here rather than carried on the edge because it is the only fact in this model
+   * that needs BOTH endpoints: the citation on one side, the declared version on the other.
+   */
+  readonly versionState?: RelationVersionState;
+  /**
+   * The position of the `relations[]` entry that authored this edge, present only on an edge a
+   * relation authored. It both locates the entry a message is about and is the discriminator that
+   * separates a relation-authored `supersedes` from the flat reserved field's — see
+   * {@link import("./bundle").Edge.relationOrdinal}.
+   */
+  readonly relationOrdinal?: number;
 }
 
 /** The `graph.export` payload: the nodes, the edges among them, and the token budget. */
@@ -138,7 +170,26 @@ export function buildGraphExport(graph: BundleGraph, options: GraphExportOptions
     if (include !== undefined && (!include.has(edge.from) || (edge.to !== null && !include.has(edge.to)))) {
       continue; // leads outside the requested subgraph — an explicit radius cut
     }
-    edges.push({ from: edge.from, to: edge.to, kind: edge.kind, target: edge.target, dangling: edge.to === null });
+    edges.push({
+      from: edge.from,
+      to: edge.to,
+      kind: edge.kind,
+      target: edge.target,
+      dangling: edge.to === null,
+      // Omitted rather than emitted as null when absent, so an export of a bundle that uses no
+      // relations is byte-identical to one produced before the qualifiers existed.
+      ...(edge.statement !== undefined ? { statement: edge.statement } : {}),
+      ...(edge.version !== undefined ? { version: edge.version } : {}),
+      ...(edge.relationOrdinal !== undefined
+        ? {
+            relationOrdinal: edge.relationOrdinal,
+            versionState: relationVersionState(
+              edge.version,
+              edge.to === null ? undefined : graph.concepts.get(edge.to)?.frontmatter,
+            ),
+          }
+        : {}),
+    });
   }
 
   return {

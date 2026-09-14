@@ -8,7 +8,7 @@
 
 import { createHash } from "node:crypto";
 import type { BacklogTask } from "../adapters/backlog";
-import type { BundleGraph, EdgeKind } from "./bundle";
+import type { BundleGraph, Edge } from "./bundle";
 import { effectiveProfileFor, toRefList } from "./bundle";
 import { serializeConcept } from "./concept";
 import { defaultProfile, type Profile } from "./profile";
@@ -19,7 +19,11 @@ export const PROJECTION_SCHEMA_VERSION = "1.1";
  * Every export schema lore can READ, newest last. Writing is always {@link PROJECTION_SCHEMA_VERSION};
  * this list exists because the two are not the same question (LCLI-476).
  *
- * `1.1` added `dependencies` to task records and the `dependency` edge kind. Refusing `1.0` on read
+ * `1.1` added `dependencies` to task records and the `dependency` edge kind, and -- within the same
+ * unreleased window -- LCLI-477's `requires`/`alternative`/`refutes` edge kinds with their optional
+ * `statement`/`version` qualifiers. Both ride one version because neither has ever shipped: no
+ * consumer has held a `1.1` without relations, so there is nothing for a second bump to
+ * distinguish. Once `1.1` is tagged, the next shape change is `1.2`. Refusing `1.0` on read
  * would invalidate every RETAINED SNAPSHOT built before the bump -- `lore provenance` reads those to
  * answer questions about history, and history cannot be re-exported at a newer schema because the
  * source it described has moved on. So a tolerant reader is not a convenience here; it is the only
@@ -122,7 +126,7 @@ export function buildProjection(input: ProjectionInput): Projection {
     const ordinalKey = `${edge.from}\0concept`;
     const ordinal = ordinals.get(ordinalKey) ?? 0;
     ordinals.set(ordinalKey, ordinal + 1);
-    records.push(conceptEdge(bundleId, conceptKeys, edge.from, edge.to, edge.kind, edge.target, ordinal));
+    records.push(conceptEdge(bundleId, conceptKeys, edge, ordinal));
   }
 
   for (const task of tasks) {
@@ -227,15 +231,26 @@ export function projectionStreamHash(records: readonly ProjectionRecord[], bound
   return `sha256:${digest.digest("hex")}`;
 }
 
+/**
+ * One concept->concept authored edge as a projection record.
+ *
+ * ADR-0021's `statement`/`version` qualifiers are emitted ONLY when the authoring `relations[]`
+ * entry carried them, never as explicit nulls. That is what keeps this change additive: a bundle
+ * using no relations produces a byte-identical record stream, and therefore an identical export
+ * digest, to the one it produced before the qualifiers existed.
+ *
+ * The record KEY deliberately does not include them. A key identifies which reference this is
+ * (source, kind, target, ordinal); re-pinning a relation to a newer `version` is an edit to that
+ * reference, not a different reference, and folding the version into the key would make every
+ * re-pin look like a delete plus an insert to any consumer diffing two snapshots.
+ */
 function conceptEdge(
   bundleId: string,
   conceptKeys: ReadonlyMap<string, string>,
-  from: string,
-  to: string | null,
-  kind: EdgeKind,
-  target: string,
+  edge: Edge,
   ordinal: number,
 ): ProjectionRecord {
+  const { from, to, kind, target } = edge;
   return {
     record: "edge",
     key: keyFor(bundleId, "concept-edge", from, kind, target, String(ordinal)),
@@ -245,6 +260,14 @@ function conceptEdge(
     target,
     ordinal,
     dangling: to === null,
+    ...(edge.statement !== undefined ? { statement: edge.statement } : {}),
+    ...(edge.version !== undefined ? { version: edge.version } : {}),
+    // Two ordinals, deliberately: `ordinal` is this edge's position among ITS SOURCE CONCEPT's
+    // edges (every edge has one), while `relationOrdinal` is its position within the authored
+    // `relations` list and exists only on an edge a relation produced. The second is what tells a
+    // reader that a `supersedes` edge came from a relation rather than the flat reserved field --
+    // the two look identical otherwise and are not equivalent for version reporting.
+    ...(edge.relationOrdinal !== undefined ? { relationOrdinal: edge.relationOrdinal } : {}),
   };
 }
 

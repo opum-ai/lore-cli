@@ -12,6 +12,7 @@ import {
   parseEndpointKind,
   parseTraversalFlags,
   pathRenderable,
+  traversalOptions,
 } from "./traversal";
 
 export interface PathCommandOptions {
@@ -47,7 +48,7 @@ export async function runPath(options: PathCommandOptions): Promise<number> {
   try {
     advisories.flush({ color: options.output.color, stderr: options.stderr });
     if (loaded.traversal === undefined) throw new LoreError("validation", "traversal snapshot was not loaded");
-    assertKnownEdgeKinds(loaded.traversal, flags.edgeKinds);
+    assertKnownEdgeKinds(loaded.traversal, flags.proofOnly ? undefined : flags.edgeKinds);
     const data = findPaths(loaded.traversal, {
       from: {
         kind: fromKind,
@@ -57,7 +58,7 @@ export async function runPath(options: PathCommandOptions): Promise<number> {
         kind: toKind,
         id: normalizeEndpointId(parsed.positionals[1] as string, toKind, workspace !== undefined),
       },
-      ...flags,
+      ...traversalOptions(flags),
     });
     emit(pathRenderable(data), options.output, options.stdout);
     return EXIT_OK;

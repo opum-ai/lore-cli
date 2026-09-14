@@ -73,11 +73,18 @@ describe("defaultProfile — the built-in story convention (AC#3)", () => {
     expect(p.name).toBe("story-convention");
   });
 
-  test("canonical key order: base, then Story's own fields, then the reserved coupling fields LAST", () => {
-    // Reserved coupling fields trail per-type fields, matching the order lore emitted before the
-    // profile existed (ADR-0011 byte-stability), so a Story with tasks/specs AND supersedes keeps
-    // its on-disk key order. OKF 0.2 `generated` uses the existing append path rather than moving any
+  test("canonical key order: base, then Story's own fields, then the reserved fields LAST", () => {
+    // Reserved fields trail per-type fields, matching the order lore emitted before the profile
+    // existed (ADR-0011 byte-stability), so a Story with tasks/specs AND supersedes keeps its
+    // on-disk key order. OKF 0.2 `generated` uses the existing append path rather than moving any
     // of these declared fields.
+    //
+    // ADR-0021's four reserved fields are APPENDED after the supersession pair rather than
+    // interleaved, which is what makes them byte-stable: a document that uses none of them
+    // serializes to exactly the bytes it did before they existed, because a key that is absent
+    // contributes nothing wherever it sits in this list. Asserting the whole list rather than a
+    // suffix is deliberate — it fails if a future field is inserted anywhere but the end, which is
+    // the only change here that could rewrite every file in a bundle.
     expect(defaultProfile().canonicalKeyOrder).toEqual([
       "type",
       "title",
@@ -90,6 +97,10 @@ describe("defaultProfile — the built-in story convention (AC#3)", () => {
       "specs",
       "supersedes",
       "superseded_by",
+      "relations",
+      "claim_outcome",
+      "claim_evidence_level",
+      "claim_version",
     ]);
   });
 

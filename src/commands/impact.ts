@@ -12,6 +12,7 @@ import {
   normalizeEndpointId,
   parseEndpointKind,
   parseTraversalFlags,
+  traversalOptions,
 } from "./traversal";
 
 export interface ImpactCommandOptions {
@@ -43,13 +44,13 @@ export async function runImpact(options: ImpactCommandOptions): Promise<number> 
   try {
     advisories.flush({ color: options.output.color, stderr: options.stderr });
     if (loaded.traversal === undefined) throw new LoreError("validation", "traversal snapshot was not loaded");
-    assertKnownEdgeKinds(loaded.traversal, flags.edgeKinds);
+    assertKnownEdgeKinds(loaded.traversal, flags.proofOnly ? undefined : flags.edgeKinds);
     const data = findImpact(loaded.traversal, {
       root: {
         kind,
         id: normalizeEndpointId(parsed.positionals[0] as string, kind, workspace !== undefined),
       },
-      ...flags,
+      ...traversalOptions(flags),
     });
     emit(impactRenderable(data), options.output, options.stdout);
     return EXIT_OK;
