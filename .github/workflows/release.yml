@@ -244,16 +244,45 @@ jobs:
             }
             console.log(`Ladybug qualification passed ${report.gates.results.length} approved gates`);
           '
+      # ARTIFACT NAMES CARRY run_id BUT NOT run_attempt, AND THAT IS DELIBERATE -- read this
+      # before "fixing" a duplicate-name failure by putting the attempt back (LCLI-487).
+      #
+      # They DID carry `-${{ github.run_attempt }}` until 2026-09-14, for a real reason:
+      # artifacts are scoped to the RUN, not the attempt, so on a PARTIAL re-run
+      # (`gh run rerun --failed`) a re-running job's upload collides with the copy that
+      # survived from the earlier attempt, and upload-artifact v4 FAILS on a duplicate name.
+      # The suffix bought collision-freedom and paid for it with something worse: jobs that
+      # SUCCEEDED on attempt 1 keep their `-1` names while the consumer on attempt 2 looks
+      # only for `-2`, so the evidence job could never resolve them and `--failed` was
+      # structurally unusable on this workflow. Measured on run 34801853367.
+      #
+      # `overwrite: true` solves the collision without the suffix: a re-running job replaces
+      # its OWN artifact, while a job that did not re-run keeps its artifact under the same
+      # stable name the consumer looks for. Its documented behaviour includes "does not fail
+      # if the artifact does not exist", so it is safe on a first attempt too, and the input
+      # exists at the pinned sha ea165f8d (v4.6.2) -- checked at that exact ref, not on the
+      # action's default branch.
+      #
+      # PROVEN, not reasoned about: a probe workflow with one always-green producer, one
+      # producer failing on attempt 1, and a consumer needing both was run and then re-run
+      # with `--failed`. On attempt 2 the consumer read "produced on attempt 1" from the
+      # non-re-run job and "produced on attempt 2" from the re-run one, with no duplicate
+      # artifacts left behind.
+      #
+      # Mixing attempts within a run is safe because every artifact in a run comes from the
+      # same head_sha, and the `package` job below independently asserts
+      # `report.repository.commit == GITHUB_SHA` for each platform report.
       - name: Upload qualification evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ladybug-benchmark-qualification-linux-x64-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ladybug-benchmark-qualification-linux-x64-${{ github.run_id }}
           path: |
             artifacts/ladybug-benchmark-v1.json
             benchmark/ladybug/gates/v1.json
           if-no-files-found: warn
           retention-days: 90
+          overwrite: true
 
   ladybug-scale-observation:
     name: Ladybug optional 1 GiB observation (ubuntu-24.04 x64)
@@ -278,10 +307,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ladybug-benchmark-observation-1gib-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ladybug-benchmark-observation-1gib-${{ github.run_id }}
           path: artifacts/ladybug-benchmark-observation-1gib-v1.json
           if-no-files-found: warn
           retention-days: 30
+          overwrite: true
 
   ladybug-concurrency-qualification:
     name: Ladybug concurrency and crash qualification (ubuntu-24.04 x64)
@@ -329,10 +359,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ladybug-concurrency-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ladybug-concurrency-qualification-${{ github.run_id }}
           path: artifacts/ladybug-concurrency-evidence-v1.json
           if-no-files-found: warn
           retention-days: 90
+          overwrite: true
 
   package-qualification:
     name: "matching-host package qualification (${{ matrix.name }})"
@@ -403,10 +434,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ladybug-package-qualification-${{ matrix.name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ladybug-package-qualification-${{ matrix.name }}-${{ github.run_id }}
           path: artifacts/
           if-no-files-found: warn
           retention-days: 90
+          overwrite: true
 
   ladybug-qualification-evidence:
     name: Assemble Ladybug acceptance evidence
@@ -419,17 +451,17 @@ jobs:
       - name: Download bounded benchmark evidence
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: ladybug-benchmark-qualification-linux-x64-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ladybug-benchmark-qualification-linux-x64-${{ github.run_id }}
           path: qualification-inputs/benchmark
       - name: Download concurrency evidence
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: ladybug-concurrency-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ladybug-concurrency-qualification-${{ github.run_id }}
           path: qualification-inputs/concurrency
       - name: Download all matching-host package evidence
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: ladybug-package-qualification-*-${{ github.run_id }}-${{ github.run_attempt }}
+          pattern: ladybug-package-qualification-*-${{ github.run_id }}
           path: qualification-inputs/packages
           merge-multiple: true
       - name: Build the strict task-level evidence manifest
@@ -473,10 +505,11 @@ jobs:
       - name: Upload final Ladybug qualification manifest
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ladybug-qualification-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ladybug-qualification-evidence-${{ github.run_id }}
           path: artifacts/ladybug-qualification-evidence-v1.json
           if-no-files-found: error
           retention-days: 90
+          overwrite: true
 
   package:
     name: package + install-sanity (dry-run, never publishes)
@@ -488,14 +521,14 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: ladybug-package-qualification-*-${{ github.run_id }}-${{ github.run_attempt }}
+          pattern: ladybug-package-qualification-*-${{ github.run_id }}
           path: qualified-packages
       - name: Assemble the exact matching-host-qualified platform tarballs
         run: |
           mkdir -p dist-npm
           version="$(node -p "require('./package.json').version")"
           for name in $PLATFORM_NAMES_SPACE; do
-            artifact_dir="qualified-packages/ladybug-package-qualification-${name}-${{ github.run_id }}-${{ github.run_attempt }}"
+            artifact_dir="qualified-packages/ladybug-package-qualification-${name}-${{ github.run_id }}"
             report="${artifact_dir}/ladybug-package-qualification-${name}.json"
             tarball="${artifact_dir}/opum-ai-lore-${name}-${version}.tgz"
             # shellcheck disable=SC2016
@@ -567,6 +600,7 @@ jobs:
           name: npm-packages
           path: dist-npm/
           if-no-files-found: error
+          overwrite: true
 
   provenance-pre:
     name: re-verify published provenance still resolves (LCLI-481)

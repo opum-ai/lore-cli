@@ -33,7 +33,7 @@ const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex
  * executables. `corruptPlatform` lets a test flip one recorded digest to prove the
  * independent check actually bites.
  */
-function makeWorkspace(options: { corruptPlatform?: string } = {}) {
+function makeWorkspace(options: { corruptPlatform?: string; legacyAttemptNames?: boolean } = {}) {
   const root = mkdtempSync(resolve(tmpdir(), "lore-publish-test-"));
   const source = resolve(root, "npm-packages");
   const reports = resolve(root, "reports");
@@ -50,10 +50,14 @@ function makeWorkspace(options: { corruptPlatform?: string } = {}) {
   const rootTarball = `opum-ai-lore-${VERSION}.tgz`;
   writeFileSync(resolve(source, rootTarball), Buffer.from(`fake root launcher @ ${VERSION}\n`));
 
-  // One artifact directory per platform, named exactly as release.yml uploads it —
-  // run id AND run attempt embedded (LCLI-487).
+  // One artifact directory per platform, named exactly as release.yml uploads it. Since
+  // LCLI-487 that is run id ONLY — the attempt suffix is gone, because a name carrying the
+  // attempt cannot be found by a consumer running on a later attempt. `legacyAttemptNames`
+  // reproduces the pre-LCLI-487 shape, which still exists on runs qualified before the change
+  // and still inside their 90-day retention.
   for (const name of PLATFORMS) {
-    const dir = resolve(reports, `ladybug-package-qualification-${name}-${RUN_ID}-${ATTEMPT}`);
+    const suffix = options.legacyAttemptNames ? `${RUN_ID}-${ATTEMPT}` : `${RUN_ID}`;
+    const dir = resolve(reports, `ladybug-package-qualification-${name}-${suffix}`);
     mkdirSync(dir, { recursive: true });
     const recorded = options.corruptPlatform === name ? "0".repeat(64) : digests.get(name);
     writeFileSync(
@@ -93,6 +97,7 @@ if [ "\${1:-}" = "run" ] && [ "\${2:-}" = "download" ]; then
   mkdir -p "$dest"
   if [ -n "$name" ]; then cp "${source}"/*.tgz "$dest"/; exit 0; fi
   if [ -n "$pattern" ]; then
+    [ -n "\${GH_FAIL_PATTERN:-}" ] && exit 1
     # HONOUR the pattern rather than copying everything: a stub that ignores -p makes a wrong
     # or attempt-less pattern invisible to the suite, which is most of what these tests exist
     # to catch.
@@ -151,14 +156,15 @@ function runScript(ws: ReturnType<typeof makeWorkspace>, cwd: string, artifacts:
 }
 
 describeOnPosix("scripts/publish-release.sh", () => {
-  test("downloads the artifact itself when the directory is absent, resolving the run attempt", () => {
+  test("downloads the artifact itself when the directory is absent", () => {
     const ws = makeWorkspace();
     try {
       const r = runScript(ws, ws.root, ws.artifacts);
       expect(r.out).toContain("artifact directory is empty");
       expect(r.out).toContain("downloaded 7 tarballs");
-      // The attempt came from `gh api`, not from a hardcoded 1 (LCLI-487).
-      expect(r.out).toContain(`attempt ${ATTEMPT}`);
+      // Nothing resolves a run attempt any more: release.yml names artifacts by run id alone
+      // and sets overwrite:true, so one run is one consistent set (LCLI-487).
+      expect(r.out).not.toContain("attempt");
       expect(r.code).toBe(0);
     } finally {
       ws.cleanup();
@@ -365,9 +371,10 @@ describeOnPosix("scripts/publish-release.sh", () => {
     }
   });
 
-  test("a failure resolving the run attempt stops the script there, not one step later", () => {
-    // `die` inside $( ) exits only the subshell; with `set -uo pipefail` and no -e the parent
-    // used to carry on with an empty attempt and die again on a wrong, more confusing error.
+  test("a failure fetching the qualification reports refuses rather than falling back to a local seal", () => {
+    // These reports carry the ONLY independently recorded digests for the platform tarballs.
+    // Without them the digest check would be a local self-seal, which is not what the script
+    // claims, so it must refuse rather than quietly downgrade what it is asserting.
     const ws = makeWorkspace();
     try {
       const result = Bun.spawnSync({
@@ -378,39 +385,28 @@ describeOnPosix("scripts/publish-release.sh", () => {
           PATH: `${ws.bin}${delimiter}${process.env.PATH}`,
           ARTIFACTS: ws.artifacts,
           NPM_TOKEN: "",
-          GH_FAIL_API: "1",
+          GH_FAIL_PATTERN: "1",
         },
       });
       const out = result.stdout.toString() + result.stderr.toString();
-      expect(out).toContain("could not resolve the attempt number");
-      // The second, misleading error must NOT follow it.
-      expect(out).not.toContain("could not download the qualification reports");
-      expect(out).not.toContain("attempt .");
+      expect(out).toContain("could not download the qualification reports");
+      expect(out).not.toContain("independently verified");
+      expect(out).not.toContain("STUB PUBLISH");
       expect(result.exitCode).not.toBe(0);
     } finally {
       ws.cleanup();
     }
   });
 
-  test("RUN_ATTEMPT pins the attempt when the run has been re-run past the qualification", () => {
-    const ws = makeWorkspace();
+  test("reads reports from a run qualified BEFORE the names lost their attempt suffix", () => {
+    // A release can legitimately be published from an older run still inside its 90-day
+    // artifact retention, whose directories are `...-<run_id>-<attempt>`. The report is
+    // located by search rather than by constructing the directory name, so both shapes work.
+    const ws = makeWorkspace({ legacyAttemptNames: true });
     try {
-      const result = Bun.spawnSync({
-        cmd: ["bash", SCRIPT, VERSION, RUN_ID, "--dry-run"],
-        cwd: ws.root,
-        env: {
-          ...process.env,
-          PATH: `${ws.bin}${delimiter}${process.env.PATH}`,
-          ARTIFACTS: ws.artifacts,
-          NPM_TOKEN: "",
-          GH_FAIL_API: "1",
-          RUN_ATTEMPT: ATTEMPT,
-        },
-      });
-      const out = result.stdout.toString() + result.stderr.toString();
-      expect(out).toContain(`run attempt pinned to ${ATTEMPT}`);
-      expect(out).toContain("6/6 platform tarballs match");
-      expect(result.exitCode).toBe(0);
+      const r = runScript(ws, ws.root, ws.artifacts);
+      expect(r.out).toContain("6/6 platform tarballs match the digests CI recorded");
+      expect(r.code).toBe(0);
     } finally {
       ws.cleanup();
     }
@@ -425,7 +421,7 @@ describeOnPosix("scripts/publish-release.sh", () => {
         const file = resolve(
           ws.root,
           "reports",
-          `ladybug-package-qualification-${name}-${RUN_ID}-${ATTEMPT}`,
+          `ladybug-package-qualification-${name}-${RUN_ID}`,
           `ladybug-package-qualification-${name}.json`,
         );
         const report = JSON.parse(readFileSync(file, "utf8"));

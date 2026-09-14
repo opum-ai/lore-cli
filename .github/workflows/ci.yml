@@ -99,17 +99,20 @@ jobs:
       # rather than skips when shellcheck is absent, so this `if:` is the single visible
       # place that platform decision is made (LCLI-490).
       #
-      # THIS STEP IS ADVISORY TODAY, AND THAT IS STATED HERE RATHER THAN LEFT TO BE
-      # DISCOVERED. `dev`'s ruleset requires exactly three contexts -- "docker e2e harness
-      # (real lore + backlog binaries)", "lint · typecheck · test (windows-latest)" and
-      # "Tracker integrity". This step runs ONLY in the ubuntu-latest leg, which is not one
-      # of them, so a shellcheck failure reddens a non-required job and does not block a
-      # merge. It cannot simply be moved to the windows leg, because that image has no
-      # shellcheck. Making it enforcing needs a RULESET change -- either requiring
-      # "lint · typecheck · test (ubuntu-latest)" or giving the shell lint its own required
-      # context -- which is a repository-governance decision, not one this workflow can make
-      # for itself. Until that happens, do not describe this as a gate: it is a report.
-      - name: Shell lint (shellcheck over every tracked .sh) — ADVISORY, not a required context
+      # THIS STEP IS ENFORCING. `dev`'s ruleset requires four contexts, and
+      # "lint · typecheck · test (ubuntu-latest)" -- the leg this step runs in -- is one of
+      # them, so a shellcheck failure blocks the merge rather than reddening a job nobody has
+      # to act on. It was ADVISORY when first added (LCLI-490): the ubuntu leg was not
+      # required while the windows leg was, an asymmetry that meant lint, typecheck, test AND
+      # shell lint all gated nothing on Linux. The repository owner added the ubuntu context
+      # on 2026-09-14 rather than giving shell lint its own, deliberately: a new required
+      # context is a standing promise that the job reports on EVERY pull request forever, and
+      # a paths filter, an `if:` that evaluates false, or a rename turns that context absent
+      # -- which is not green, and blocks dev until someone with admin rights notices.
+      #
+      # So do not add an `if:` to the enclosing job, do not path-filter it, and do not rename
+      # it without updating the ruleset in the same change.
+      - name: Shell lint (shellcheck over every tracked .sh)
         if: runner.os == 'Linux'
         run: bun run lint:shell
       - run: bun run typecheck
