@@ -47,4 +47,5 @@ the same convention rather than a bare `slug.md`.
 - [ADR-0018: Persistent local graph projection with LadybugDB](0018-persistent-local-graph-projection-with-ladybugdb.md)
 - [Separate OKF lifecycle from Lore task progress](0019-separate-okf-lifecycle-from-lore-task-progress.md)
 - [Tracker version gates are minimum floors, not bounded allowlists](0020-tracker-version-gates-are-minimum-floors.md)
+- [Typed authored relationships and claim state](0021-typed-authored-relationships-and-claim-state.md)
 <!-- lore:index:end -->
