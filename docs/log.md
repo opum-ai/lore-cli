@@ -234,6 +234,7 @@
 - 2026-09-14T16:41:19-05:00 33bc124aabad6f65d8262ce0a6595fe89f39344d docs(LCLI-492): document --fail-on-drop in the CLI surface reference
 - 2026-09-14T16:46:59-05:00 a1df02ceac555b80d3d0e95e656e30f4e4c929ad feat(LCLI-476): dependency edges reach lore's projections, traversal and export (#63)
 - 2026-09-14T16:54:36-05:00 fcdf1e33dcb8275beb37a3440eed37c07ba2bdc1 feat(LCLI-492): --fail-on-drop refuses lore sync before any write (#64)
+- 2026-09-14T18:22:42-05:00 c67109182beaf3ef5cd2b8e73126a57a52bebbb3 fix(LCLI-497): the indexed backend stopped working the moment a tracker had a prerequisite
 
 ## docs/adr
 
