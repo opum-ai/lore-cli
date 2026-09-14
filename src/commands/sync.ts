@@ -37,6 +37,15 @@
  * block. A concept with no `tasks:` at all is never touched, and (mirroring `rename.ts`) no
  * {@link BacklogAdapter} is even constructed unless at least one scoped concept links a task.
  *
+ * **Log regeneration reports what it could not keep (LCLI-485).** `log.md` is generated, so anything
+ * in the committed file that is neither a folder heading nor an entry line — hand-authored prose, a
+ * note pasted under the title — cannot be re-emitted and disappears on the next sync. That used to
+ * be discoverable only by diffing the file afterwards. Now every run that regenerates the log
+ * reports `added` / `carriedForward` / `dropped` in {@link SyncReport.log} (and in the rendered
+ * report), and a run that would drop anything also writes a warning to stderr naming the count and a
+ * sample of the content. The written bytes are untouched by either: both are diagnostics on the
+ * side, so a repeated sync stays byte-identical.
+ *
  * An on-disk `index.md` whose directory no longer holds any concept — directly or via any
  * descendant, e.g. after a manual `rm`/`mv` outside `lore rename` — is an **orphan**
  * (`core/indexes.ts`'s {@link orphanedIndexPaths}, LORE-150): `generateIndexes` never emits an entry
@@ -53,7 +62,7 @@ import type { TrackerBackend } from "../config";
 import { type BundleGraph, loadBundle } from "../core/bundle";
 import { type Concept, idFromPath, parseConcept, serializeConcept } from "../core/concept";
 import { generateIndexes, orphanedIndexPaths } from "../core/indexes";
-import { buildLog, type GitAdapter, generateLog } from "../core/log";
+import { buildLogWithStats, type GitAdapter, generateLogWithStats, type LogMergeStats } from "../core/log";
 import { regenerateTaskBlock } from "../core/managed-block";
 import { taskRollupFieldFor } from "../core/okf-version";
 import { loadProfile, type Profile, profileForBundle } from "../core/profile";
@@ -111,6 +120,20 @@ interface ChangedFile {
   readonly path: string;
 }
 
+/**
+ * The `log.md` regeneration accounting carried on {@link SyncReport} (LCLI-485) — `core/log.ts`'s
+ * {@link LogMergeStats} minus its sample lines, which belong in the stderr warning rather than in
+ * the machine payload.
+ */
+export interface LogSummary {
+  /** Entries this sync added to the log from git history (0 when the history holds nothing new). */
+  readonly added: number;
+  /** Committed entries the visible history can no longer account for, preserved rather than replaced. */
+  readonly carriedForward: number;
+  /** Committed lines regeneration could not keep — the number to watch (see the module header). */
+  readonly dropped: number;
+}
+
 /** The `sync.result` payload. */
 export interface SyncReport {
   /** Every `docs/` file that changed (or would change), ascending. */
@@ -130,6 +153,13 @@ export interface SyncReport {
    * Ascending.
    */
   readonly orphanedIndexes: readonly string[];
+  /**
+   * What regenerating `log.md` added, carried forward, and dropped (LCLI-485). Absent — not a zeroed
+   * summary — when `--no-index` skipped log regeneration entirely: nothing was merged, so there are
+   * no counts, and reporting three zeroes would read as "nothing was dropped" rather than "nothing
+   * was looked at".
+   */
+  readonly log?: LogSummary;
 }
 
 /**
@@ -202,7 +232,17 @@ export async function runSync(options: SyncOptions): Promise<number> {
     }
   }
 
-  const orphanedIndexes = parsed.noIndex ? [] : regenerateIndexAndLog(options, docsRoot, graph, writes);
+  const regenerated = parsed.noIndex ? undefined : regenerateIndexAndLog(options, docsRoot, graph, writes);
+  const orphanedIndexes = regenerated?.orphanedIndexes ?? [];
+
+  // Emitted BEFORE the write, and on `--dry-run` too: the whole point is that the loss is visible in
+  // the run that causes it, rather than in a diff someone thinks to take afterwards. A fresh
+  // collector, because `advisories` above was already flushed and flushing is non-draining.
+  if (regenerated !== undefined && regenerated.log.dropped > 0) {
+    const warnings = new WarningCollector();
+    warnings.add(droppedContentWarning(regenerated.log, parsed.dryRun));
+    warnings.flush({ color: options.output.color, stderr: options.stderr });
+  }
 
   if (!parsed.dryRun) {
     // Swept as a whole BEFORE any write starts (LORE-93 AC#5): ensureDir's own per-call guard
@@ -250,6 +290,15 @@ export async function runSync(options: SyncOptions): Promise<number> {
     backlogCommit,
     dryRun: parsed.dryRun,
     orphanedIndexes: orphanedIndexes.map((path) => `${DOCS_DIR}/${path}`),
+    ...(regenerated === undefined
+      ? {}
+      : {
+          log: {
+            added: regenerated.log.added,
+            carriedForward: regenerated.log.carriedForward,
+            dropped: regenerated.log.dropped,
+          },
+        }),
   };
   emit(reportRenderable(report), options.output, options.stdout);
   return EXIT_OK;
@@ -286,14 +335,15 @@ function withUpdatedTaskStatus(
  * simply absent from its returned map, indistinguishable from "unchanged" without this comparison).
  * Always whole-bundle, regardless of `[paths…]` scoping — both index regeneration and orphan
  * detection are inherently global (a hub lists its whole directory; the log is derived from all of
- * git history).
+ * git history). Also returns the log merge's own accounting, so the caller can report and warn on
+ * what regeneration could not keep (LCLI-485) without re-deriving it from the bytes.
  */
 function regenerateIndexAndLog(
   options: SyncOptions,
   docsRoot: string,
   graph: BundleGraph,
   writes: Map<string, { before: string | undefined; after: string }>,
-): readonly string[] {
+): { orphanedIndexes: readonly string[]; log: LogMergeStats } {
   const diskIndexBytes = readIndexBytes(docsRoot);
   const regeneratedIndexes = generateIndexes(graph, { existing: diskIndexBytes });
   for (const [path, bytes] of regeneratedIndexes) {
@@ -313,14 +363,32 @@ function regenerateIndexAndLog(
   const logOptions = { root: DOCS_DIR, existing: existingLog };
   const resolveHead = options.resolveHead ?? resolveHeadSha;
   const headSha = resolveHead(options.root);
-  const logBytes =
+  const regenerated =
     headSha === null
-      ? generateLog([], logOptions)
-      : buildLog(options.gitAdapter ?? realGitAdapter(options.root), { to: headSha }, logOptions);
-  if (logBytes !== existingLog) {
-    writes.set(LOG_FILE, { before: existingLog, after: logBytes });
+      ? generateLogWithStats([], logOptions)
+      : buildLogWithStats(options.gitAdapter ?? realGitAdapter(options.root), { to: headSha }, logOptions);
+  if (regenerated.bytes !== existingLog) {
+    writes.set(LOG_FILE, { before: existingLog, after: regenerated.bytes });
   }
-  return orphaned;
+  return { orphanedIndexes: orphaned, log: regenerated.stats };
+}
+
+/**
+ * The stderr warning for a regeneration that cannot keep some of the committed `log.md`. Names the
+ * count first (the part a reader acts on) and then a bounded sample of the content, so the reader
+ * can tell "my paragraph of notes" from "a line of trailing whitespace" without opening the diff.
+ * Only reached when `dropped > 0`; `core/log.ts`'s `isStructural` is what keeps the blank lines and
+ * title of a perfectly healthy generated log from ever getting here.
+ */
+function droppedContentWarning(stats: LogMergeStats, dryRun: boolean): string {
+  const noun = stats.dropped === 1 ? "line" : "lines";
+  const samples = stats.droppedSamples.map((line) => JSON.stringify(line)).join(", ");
+  const more = stats.dropped > stats.droppedSamples.length ? ", …" : "";
+  return (
+    `${DOCS_DIR}/${LOG_FILE}: regeneration ${dryRun ? "would drop" : "drops"} ${stats.dropped} unrecognized ${noun} ` +
+    `(${samples}${more}) — this file is generated by lore sync from git history; ` +
+    "only folder headings and entry lines survive it"
+  );
 }
 
 // ── Scoping ────────────────────────────────────────────────────────────────────
@@ -380,14 +448,26 @@ function reportRenderable(data: SyncReport): Renderable<SyncReport> {
 
 /**
  * One line per changed file, one line per orphaned index (distinct from "updated": the file is
- * reported but not written, LORE-150), the backlog-commit outcome (if any), then a summary line.
- * (No color: no severities.)
+ * reported but not written, LORE-150), the log merge's accounting when the log was regenerated
+ * (LCLI-485), the backlog-commit outcome (if any), then a summary line. (No color: no severities.)
  */
 function render(data: SyncReport): string {
   const verb = data.dryRun ? "would update" : "updated";
   const lines = data.files.map((f) => `${verb} ${f.path}`);
   for (const path of data.orphanedIndexes) {
     lines.push(`orphaned index ${path} (no concepts remain under this directory; left untouched)`);
+  }
+  if (data.log !== undefined) {
+    // Printed on every regenerating run, not only when something was dropped: a count that appears
+    // only once it is nonzero is a count nobody is watching, and the point is that a reader notices
+    // the moment it moves. A healthy repository reads "0 entries added, 0 carried forward, 0 ...".
+    const { added, carriedForward, dropped } = data.log;
+    const entries = added === 1 ? "entry" : "entries";
+    const droppedNoun = dropped === 1 ? "line" : "lines";
+    lines.push(
+      `${DOCS_DIR}/${LOG_FILE}: ${added} ${entries} added, ${carriedForward} carried forward, ` +
+        `${dropped} unrecognized ${droppedNoun} dropped`,
+    );
   }
   const commitLine = renderBacklogCommitLine(data.backlogCommit);
   if (commitLine !== undefined) {
