@@ -71,6 +71,7 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.scripts.json --noEmit",
     "format": "biome format --write .",
     "lint": "biome check .",
+    "lint:shell": "bash scripts/lint-shell.sh",
     "lint:fix": "biome check --write .",
     "test": "bun test",
     "test:browser": "playwright test",

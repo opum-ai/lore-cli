@@ -227,6 +227,7 @@
 - 2026-09-13T17:58:47-05:00 39a3cd48817a31308f3d32f645facf1e7766c001 docs(LCLI-475): 0.6.1 released — record the release, the OIDC root cause, and close LCLI-475/278 (#14)
 - 2026-09-13T18:29:33-05:00 f11c10d257b393afab9b4da84b2b73707d26ed4f chore(LCLI-484): track the consumer report that 0.6.1 did not fix log.md clobbering (#17)
 - 2026-09-14T02:24:16-05:00 cc1db067fa85e8f7461915286a4bf3ba6318cf5c feat(LCLI-489): publish-release.sh performs its own prerequisites, and its digest claim matches what it checks (#50)
+- 2026-09-14T12:02:35-05:00 90f5b689e98b4405634ba0f3f1b6e105c2ec3aaa chore(LCLI-486): bring scripts/, bin/ and root .ts under lint and typecheck (#52)
 
 ## docs/adr
 

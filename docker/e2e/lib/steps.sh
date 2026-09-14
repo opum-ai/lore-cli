@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # docker/e2e/lib/steps.sh — the assertion helpers shared by the E2E harness and its selftest.
 #
 # SOURCE THIS; do not execute it. Extracted from run-e2e.sh (LCLI-360) so that

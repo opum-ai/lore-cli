@@ -14,31 +14,39 @@
 # regression baseline before their bugs were fixed (LORE-57, LORE-59); both
 # now assert the correct exit code.
 
+
+# shellcheck disable=SC2034
+# ^ file-wide, and it HAS to sit above the first command to be file-wide -- a directive
+#   placed after one applies only to that command. The reasoning is immediately below
+#   `set -uo pipefail`, where it can refer to that line without pointing the wrong way.
 set -uo pipefail
 
-# ── Container-only guard (LORE-269) ──────────────────────────────────────────
-# Everything below performs REAL, mutating filesystem operations rooted at cwd (git init,
-# backlog init, lore init, and dozens more phases) and shells out to a real `backlog` binary.
-# This script must only ever run inside its purpose-built e2e container (docker-compose.yml's
-# `e2e` service; docker/e2e/Dockerfile bakes in LORE_E2E_CONTAINER=1 and guarantees WORKDIR
-# /workspace) -- never directly on a host checkout of this repo.
+# WHY SC2034 ("appears unused") IS OFF FOR THIS FILE, and what it costs.
 #
-# `set -uo pipefail` above deliberately omits `-e` (see report_write_failed's own comment
-# further down) so the harness can keep running after an individual assertion fails. That same
-# omission is exactly what made the ORIGINAL bug silent: an unguarded `cd /workspace` below, on
-# a host where /workspace does not exist, would print "No such file or directory" to stderr and
-# fall through -- every later phase would then silently run against whatever directory the
-# caller happened to invoke this script from. Confirmed for real during round 5 wave 1
-# (LORE-267): it overwrote backlog/config.yml, created spurious real Backlog tasks, and wrote
-# stray .lore/*, AGENTS.md into a host worktree -- all uncommitted, but only noticed by luck.
+# Assertions here are written `check "<name>" '<expr>'`, and check() runs `eval "$expr"`
+# (docker/e2e/lib/steps.sh). The expression is SINGLE-quoted so it evaluates at assertion
+# time rather than at argument-build time, and shellcheck cannot see inside it -- so every
+# variable an assertion reads looks unused to static analysis. Measured 2026-09-14: 29
+# SC2034 reports in this file, 28 of them exactly this false positive, each read site
+# located individually rather than sampled.
 #
-# Two independent, purpose-built signals gate the fail-closed exit below, checked BEFORE even
-# $RESULTS_DIR/$REPORT are created (i.e. before this script writes anywhere at all):
-#   1. LORE_E2E_CONTAINER=1 -- an ENV baked into docker/e2e/Dockerfile, present only in images
-#      built from it. A host shell would have to deliberately export this to defeat the guard.
-#   2. /workspace exists and is the process's initial, empty, non-Git directory. This proves that
-#      Phase 1 owns the repository it is about to initialize rather than reinitializing a caller's
-#      checkout. It also prevents the E2E identity from ever applying to a pre-existing repository.
+# THE COST, stated so nobody assumes otherwise: a genuinely dead assignment in THIS file is
+# no longer detected. One existed -- SPEC_ID, assigned from DOC_ID[Spec] and never read
+# anywhere in the repository -- and was removed when this directive was added (LCLI-490).
+# Every other tracked .sh keeps SC2034 at full strength.
+#
+# WHAT `set -u` ABOVE DOES AND DOES NOT CATCH, stated precisely because this is now the only
+# remaining signal for this file and an overbroad claim here would be a trap. A misspelled
+# variable expanded IN THE ASSERTION'S OWN SHELL raises "unbound variable" and aborts the
+# run -- it does not compare "" to "" and pass. But `set -u` kills only the shell the bad
+# expansion happens in: inside a COMMAND SUBSTITUTION or an explicit SUBSHELL within the
+# expression, only that subshell dies, the substitution yields empty, and the assertion can
+# PASS vacuously. 45 of the 151 check calls here contain a command substitution, so the
+# shape is idiomatic. No current assertion has the vacuous form (checked exhaustively: the
+# six `[ -z "$(...)" ]` assertions contain no variables at all, and every negated assertion
+# reads its variables at the top level of the eval). If you add one, `[ -z "$(cmd "$TYPO")" ]`
+# is the shape that would pass green with nothing left to notice.
+
 E2E_WORKSPACE="/workspace"
 E2E_START_DIR="$(pwd -P)"
 if [ "${LORE_E2E_CONTAINER:-}" != "1" ] || [ ! -d "$E2E_WORKSPACE" ] \
@@ -702,7 +710,6 @@ check "raw binary: task edit of a nonexistent id reports not-found on stderr" \
 # AC2a: `lore link` validates every task id BEFORE any write — a bogus id fails loud
 # (not_found/exit 3) and the concept's frontmatter never gets touched.
 SPEC_PATH="${DOC_PATH[Spec]}"
-SPEC_ID="${DOC_ID[Spec]}"
 VANISH_STORY_OUT="$(lore new Story "E2E vanished task story" --json)"
 VANISH_STORY_ID="$(echo "$VANISH_STORY_OUT" | jq -r '.data.id')"
 VANISH_STORY_PATH="$(echo "$VANISH_STORY_OUT" | jq -r '.data.path')"
