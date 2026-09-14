@@ -585,6 +585,19 @@ export interface BacklogTask {
   readonly milestone: string | null;
   readonly parentTaskId: string | null;
   /**
+   * Task ids this task declares a prerequisite on — the edge that gates readiness, which parenthood
+   * alone does not (LCLI-476). Distinct from {@link parentTaskId}: a parent is containment, a
+   * dependency is ordering, and a task can have either without the other.
+   *
+   * **Empty is NOT evidence that a task has no prerequisites.** Whether a backend's BULK LIST shape
+   * carries this at all is backend-specific: Quest's `task list --json` does, so a Quest-backed
+   * projection sees real dependency edges; Backlog.md's list/search summary does NOT (only its
+   * per-id `task view` carries `dependencies`), so it is always `[]` there. Same hazard, and the
+   * same reason, as {@link documentation} below — read the two together before trusting an empty
+   * array from either.
+   */
+  readonly dependencies: readonly string[];
+  /**
    * Raw documentation paths the backend's own `--doc` flag recorded (LCLI-374). This is a
    * backend-native reference, distinct from — and not synchronized with — the `tasks:`
    * frontmatter / `doc:` label coupling `lore link` writes: a task can carry `documentation`
@@ -608,7 +621,6 @@ export interface BacklogTaskDetail extends BacklogTask {
   readonly reporter: string | null;
   readonly createdAt: string | null;
   readonly updatedAt: string | null;
-  readonly dependencies: readonly string[];
   readonly references: readonly string[];
   readonly modifiedFiles: readonly string[];
   readonly subtasks: readonly { readonly id: string; readonly title: string }[];
@@ -633,8 +645,10 @@ function mapSummary(item: z.infer<typeof TaskSummarySchema>): BacklogTask {
     labels: item.labels,
     milestone: item.milestone,
     parentTaskId: item.parentTaskId,
-    // Backlog.md's task-list/search summary shape does not carry documentation at all (only its
-    // per-id `task view` does) — always empty here, not evidence that no --doc was ever given.
+    // Backlog.md's task-list/search summary shape carries neither of the two arrays below (only its
+    // per-id `task view` does), so both are always empty here. Neither is evidence of absence: not
+    // that the task has no prerequisites (LCLI-476), nor that no --doc was ever given (LCLI-374).
+    dependencies: [],
     documentation: [],
   };
 }

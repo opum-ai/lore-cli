@@ -748,8 +748,12 @@ function summary(value: unknown): BacklogTask {
     labels: strings(task.labels ?? [], "labels"),
     milestone: nullableString(task.milestone, "milestone"),
     parentTaskId: nullableString(task.parentId ?? task.parentTaskId, "parent task id"),
-    // Unlike Backlog.md, Quest's own `task list --json` already carries the full documentation
-    // array per item (LCLI-374) -- no extra per-task fetch needed to read it here.
+    // Unlike Backlog.md, Quest's own `task list --json` already carries BOTH of these per item --
+    // documentation (LCLI-374) and dependencies (LCLI-476) -- so neither needs a per-task fetch.
+    // Reading `dependencies` here rather than only in `detail()` is the whole of LCLI-476: the
+    // projection is built from summaries, so a field absent from this object is absent from every
+    // edge, export and traversal downstream, which is why lore saw parenthood and never ordering.
+    dependencies: strings(task.dependencies ?? [], "dependencies"),
     documentation: strings(task.documentation ?? [], "documentation"),
   };
 }
@@ -778,7 +782,7 @@ function detail(value: unknown): BacklogTaskDetail {
     reporter: nullableString(value.reporter, "reporter"),
     createdAt: nullableString(value.createdAt, "createdAt"),
     updatedAt: nullableString(value.updatedAt, "updatedAt"),
-    dependencies: strings(value.dependencies ?? [], "dependencies"),
+    // `dependencies` comes from `summary()` above, which now reads it (LCLI-476).
     references: strings(value.references ?? [], "references"),
     documentation: strings(value.documentation ?? [], "documentation"),
     modifiedFiles: strings(value.modifiedFiles ?? [], "modifiedFiles"),

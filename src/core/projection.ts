@@ -13,7 +13,31 @@ import { effectiveProfileFor, toRefList } from "./bundle";
 import { serializeConcept } from "./concept";
 import { defaultProfile, type Profile } from "./profile";
 
-export const PROJECTION_SCHEMA_VERSION = "1.0";
+export const PROJECTION_SCHEMA_VERSION = "1.1";
+
+/**
+ * Every export schema lore can READ, newest last. Writing is always {@link PROJECTION_SCHEMA_VERSION};
+ * this list exists because the two are not the same question (LCLI-476).
+ *
+ * `1.1` added `dependencies` to task records and the `dependency` edge kind. Refusing `1.0` on read
+ * would invalidate every RETAINED SNAPSHOT built before the bump -- `lore provenance` reads those to
+ * answer questions about history, and history cannot be re-exported at a newer schema because the
+ * source it described has moved on. So a tolerant reader is not a convenience here; it is the only
+ * way retained provenance survives a schema change at all.
+ *
+ * Tolerant does not mean silent, which is the line that matters: the manifest still states its own
+ * version, so a consumer can always tell WHICH schema it is holding and therefore whether
+ * `dependencies` being absent means "none" or "not carried at this version".
+ */
+export const READABLE_PROJECTION_SCHEMA_VERSIONS: readonly string[] = ["1.0", PROJECTION_SCHEMA_VERSION];
+
+/**
+ * The authored-edge `kind` for a task->task prerequisite (LCLI-476). A distinct kind, not a reuse of
+ * the `"task"` coupling kind, so `lore graph` can render ordering apart from Story ownership and
+ * `--edge` can select one without the other -- AC#3's "rendered distinctly" is a property of the
+ * data, not of the renderer.
+ */
+export const TASK_DEPENDENCY_EDGE_KIND = "dependency";
 export const PROJECTION_NORMALIZATION_VERSION = "1";
 const BOUNDED_MEMORY_GC_RECORD_INTERVAL = 1024;
 
@@ -114,8 +138,47 @@ export function buildProjection(input: ProjectionInput): Projection {
       assignees: [...task.assignees],
       milestone: task.milestone,
       parentTaskId: task.parentTaskId,
+      dependencies: [...task.dependencies],
       sourceAdapterVersion: "backlog-json/1",
     });
+  }
+
+  // Task -> task dependency edges (LCLI-476). Emitted as ordinary authored edges so bounded depth,
+  // cycle handling and `--edge` filtering apply to them exactly as they already do to concept and
+  // coupling edges -- nothing in traversal is taught about this kind specifically.
+  //
+  // `from` is the DEPENDENT and `to` is the PREREQUISITE, so an outbound walk from a task reaches
+  // what it is waiting on. That direction is the one the tracker's own readiness filter implies:
+  // PGF-3 depends on PGF-2, so PGF-3 is blocked until PGF-2 completes.
+  //
+  // A dependency naming a task outside this projection is DANGLING rather than dropped -- an
+  // unresolvable prerequisite is a fact about the graph, and silently omitting it would make a
+  // blocked task look ready.
+  for (const task of tasks) {
+    const from = taskKeys.get(task.id.toLowerCase());
+    if (from === undefined) continue;
+    const seen = new Map<string, number>();
+    for (const dependencyId of task.dependencies) {
+      const normalized = dependencyId.toLowerCase();
+      const ordinal = seen.get(normalized) ?? 0;
+      seen.set(normalized, ordinal + 1);
+      const to = taskKeys.get(normalized) ?? null;
+      records.push({
+        record: "edge",
+        key: keyFor(bundleId, "task-dependency-edge", task.id.toLowerCase(), normalized, String(ordinal)),
+        from,
+        to,
+        kind: TASK_DEPENDENCY_EDGE_KIND,
+        target: dependencyId,
+        ordinal,
+        dangling: to === null,
+        // Both endpoints are tasks. Without these the validator resolves `from` against CONCEPT keys
+        // (ladybug-source.ts defaults an absent `workspaceFromKind` to "concept"), so a
+        // task-to-task edge would be rejected as having no concept source.
+        workspaceFromKind: "task",
+        workspaceToKind: "task",
+      });
+    }
   }
 
   for (const concept of input.graph.concepts.values()) {

@@ -105,6 +105,8 @@ describe("listTasks — task list --json → mapped summaries (AC#1)", () => {
       labels: ["backlog-fork"],
       milestone: "m-0",
       parentTaskId: null,
+      // Both empty because Backlog.md's list shape carries neither — not evidence of absence.
+      dependencies: [],
       documentation: [],
     });
     // Upstream's summary carries no path at all (contract §1.2) — never surfaced on a list/search read.

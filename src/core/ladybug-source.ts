@@ -23,6 +23,7 @@ import {
   type Projection,
   type ProjectionRecord,
   projectionStreamHash,
+  READABLE_PROJECTION_SCHEMA_VERSIONS,
 } from "./projection";
 import { DOCS_DIR } from "./scaffold";
 
@@ -99,6 +100,20 @@ export interface ProjectionTaskRecord extends ProjectionRecord {
   readonly assignees: readonly string[];
   readonly milestone: string | null;
   readonly parentTaskId: string | null;
+  /**
+   * Task ids this task declares a prerequisite on, as reported by the tracker backend (LCLI-476).
+   * Ordering, not containment — {@link parentTaskId} is containment, and a task can carry either
+   * without the other.
+   *
+   * Empty is "none observed", NOT "none": a backend whose bulk list shape omits the field (Backlog.md,
+   * Jira) always reports `[]` here. See `BacklogTask.dependencies` for which backends carry it.
+   *
+   * **Absent entirely on a schema `1.0` stream**, which predates the field -- distinct again from
+   * `[]`. Read the manifest's own `schemaVersion` to tell those two apart rather than guessing; that
+   * is exactly what it is for. Optional rather than normalized to `[]` on read because normalizing
+   * would rewrite records whose bytes the stream hash is computed over.
+   */
+  readonly dependencies?: readonly string[];
   readonly sourceAdapterVersion: string;
 }
 
@@ -498,7 +513,10 @@ function validateProjection(projection: Projection): {
   const last = projection.records.at(-1);
   if (!isManifest(first)) invalidProjection("first record must be a valid manifest");
   if (!isTrailer(last)) invalidProjection("last record must be a valid trailer");
-  if (first.schemaVersion !== PROJECTION_SCHEMA_VERSION) {
+  // Read tolerantly, write strictly (LCLI-476): a projection retained under an older schema stays
+  // readable, because `lore provenance` answers questions about history and history cannot be
+  // re-exported at a newer schema.
+  if (!READABLE_PROJECTION_SCHEMA_VERSIONS.includes(first.schemaVersion)) {
     invalidProjection(`unsupported export schema ${JSON.stringify(first.schemaVersion)}`);
   }
   if (first.normalizationVersion !== PROJECTION_NORMALIZATION_VERSION) {

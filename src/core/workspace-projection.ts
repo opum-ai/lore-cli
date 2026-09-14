@@ -15,7 +15,12 @@ import {
   prepareLadybugProjectionSource,
 } from "./ladybug-source";
 import { CURRENT_OKF_VERSION } from "./okf-version";
-import { type ProjectionRecord, projectionStreamHash } from "./projection";
+import {
+  PROJECTION_NORMALIZATION_VERSION,
+  PROJECTION_SCHEMA_VERSION,
+  type ProjectionRecord,
+  projectionStreamHash,
+} from "./projection";
 import {
   buildWorkspaceIdentity,
   namespaceWorkspaceRecord,
@@ -200,11 +205,16 @@ export function buildWorkspaceProjection(
   graphEdges.sort((a, b) => compare(a.from, b.from) || compare(a.to ?? "", b.to ?? "") || compare(a.kind, b.kind));
   const manifestRecord: ProjectionRecord = {
     record: "manifest",
-    schemaVersion: "1.0",
+    // The CONSTANTS, never literals (LCLI-476). These were hard-coded `"1.0"`/`"1"` while the task
+    // records below them come from the same shared shape the real exporter emits -- so the moment
+    // that shape gained a field, this manifest was announcing a version it no longer produced. A
+    // synthesized manifest that names a version it does not emit is the exact defect this release
+    // exists to remove, and it is invisible precisely because a tolerant reader accepts it.
+    schemaVersion: PROJECTION_SCHEMA_VERSION,
     bundle: { id: identity.workspaceKey, okfVersion: "workspace/1", docsRoot: "workspace", gitCommit: null },
     exporter: { name: "lore", version: VERSION },
     generatedAt: null,
-    normalizationVersion: "1",
+    normalizationVersion: PROJECTION_NORMALIZATION_VERSION,
   };
   const semanticRecords: ProjectionRecord[] = [manifestRecord, ...concepts, ...authoredEdges, ...tasks];
   const trailer: ProjectionRecord = {
