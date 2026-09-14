@@ -850,3 +850,104 @@ jobs:
             publish_or_skip "$tgz"
           done
           publish_or_skip "$root"
+      - name: Verify the registry serves what was published (LCLI-460)
+        # npm's publish confirmation is authoritative; the registry's READ API is not
+        # immediately consistent with it. Observed on @opum-ai/lore-linux-arm64 across three
+        # consecutive releases and WORSENING rather than jittering: 0.4.5 ~15s, 0.4.6 ~35s,
+        # 0.5.0 ~25 MINUTES (resolved 2026-09-08T14:49:18Z), confirmed origin-side via
+        # cf-cache-status/age headers rather than a stale CDN edge. On 0.5.0 the lag ran long
+        # enough that a sibling session flagged it as a possible install-breaking defect before
+        # it resolved on its own. docs/reference/lore-cli-release-truth.md's 0.5.0 entry has
+        # the timeline.
+        #
+        # TWO DISTINCT FAILURES, and collapsing them is what turns a slow release into a false
+        # alarm:
+        #   NOT VISIBLE YET  -> propagation. Not a defect. Waiting fixes it.
+        #   VISIBLE, WRONG BYTES -> a real failure. Waiting never fixes it.
+        # A version-string check cannot tell them apart, and would pass against a registry
+        # serving the right version with the wrong tarball. So the content assertion compares
+        # the registry's dist.shasum against the sha1 of the tarball THIS JOB published.
+        #
+        # ONE SHARED WINDOW, NOT ONE PER PACKAGE. The deadline is wall-clock and starts once;
+        # every package still missing is re-polled each round against that same deadline. Total
+        # wait is bounded at REGISTRY_WINDOW_SECONDS however many packages are outstanding, and
+        # each still gets the whole remaining window. Per-package would either be too short for
+        # the slowest or serialise seven waits. If a release is paused here: ONE 30-minute
+        # window, not seven. 30 minutes because the worst observed was 25 and the trend is up.
+        #
+        # This step NEVER fails the job for propagation alone -- it reports and exits 0 -- because
+        # the publish already succeeded and failing here would attach a red X to a release that is
+        # fine, inviting someone to "fix" it destructively. It DOES fail on a content mismatch.
+        env:
+          REGISTRY_WINDOW_SECONDS: ${{ vars.REGISTRY_WINDOW_SECONDS || 1800 }}
+        run: |
+          # No associative array on purpose: `declare -A` needs bash 4+, which the runner has
+          # but a maintainer's macOS /bin/bash (3.2) does not -- and code in a release path
+          # that cannot be run locally cannot be tested locally. The content loop below
+          # re-derives name/version from each tarball instead of carrying a map.
+          spec_of_tgz() {
+            tar -xzOf "$1" package/package.json | node -e '
+              let d=""; process.stdin.on("data",c=>d+=c);
+              process.stdin.on("end",()=>{const p=JSON.parse(d);console.log(p.name+"@"+p.version);});
+            '
+          }
+
+          pending=""
+          for tgz in ./dist-npm/*.tgz; do
+            spec="$(spec_of_tgz "$tgz")"
+            case "$spec" in
+              ""|"@"|*"@") echo "::error::could not read name/version from $tgz"; exit 1 ;;
+            esac
+            pending="$pending $spec"
+          done
+          pending="${pending# }"
+
+          started=$(date +%s)
+          deadline=$(( started + REGISTRY_WINDOW_SECONDS ))
+          delay=5
+          visible=""
+          while : ; do
+            next=""; missing=0
+            for spec in $pending; do
+              if npm view "$spec" version >/dev/null 2>&1; then
+                echo "visible  $spec after $(( $(date +%s) - started ))s"
+                visible="$visible $spec"
+              else
+                next="$next $spec"; missing=$(( missing + 1 ))
+              fi
+            done
+            pending="${next# }"
+            [ -z "$pending" ] && break
+            now=$(date +%s)
+            [ "$now" -ge "$deadline" ] && break
+            nap="$delay"
+            [ $(( now + nap )) -gt "$deadline" ] && nap=$(( deadline - now ))
+            echo "waiting  ${missing} package(s) not visible yet; $(( deadline - now ))s of the shared window left"
+            sleep "$nap"
+            if [ "$delay" -lt 60 ]; then
+              delay=$(( delay * 2 ))
+              if [ "$delay" -gt 60 ]; then delay=60; fi
+            fi
+          done
+
+          # CONTENT. Only meaningful for what is actually visible; a package still propagating
+          # has no bytes to compare yet.
+          rc=0
+          for tgz in ./dist-npm/*.tgz; do
+            spec="$(spec_of_tgz "$tgz")"
+            # Skip anything still propagating -- it has no bytes on the registry to compare yet.
+            case " ${visible# } " in *" $spec "*) ;; *) continue ;; esac
+            want="$(sha1sum "$tgz" | cut -d" " -f1)"
+            got="$(npm view "$spec" dist.shasum 2>/dev/null | tr -d "[:space:]")"
+            if [ "$want" = "$got" ]; then
+              echo "content  $spec matches the published tarball (sha1 $want)"
+            else
+              echo "::error::$spec is on the registry but serves DIFFERENT BYTES than this job published (published sha1 $want, registry dist.shasum ${got:-<none>}). This is not propagation and waiting will not fix it."
+              rc=1
+            fi
+          done
+
+          if [ -n "$pending" ]; then
+            echo "::warning::still not visible on the registry read API after ${REGISTRY_WINDOW_SECONDS}s:${pending}. This is NOT proof the publish failed -- npm already confirmed it, and only the registry read API is behind (LCLI-460: 0.4.5 ~15s, 0.4.6 ~35s, 0.5.0 ~25min). Do NOT unpublish. Re-check before treating it as a failure."
+          fi
+          exit "$rc"
