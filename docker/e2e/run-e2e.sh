@@ -14,7 +14,23 @@
 # regression baseline before their bugs were fixed (LORE-57, LORE-59); both
 # now assert the correct exit code.
 
-set -uo pipefail
+# shellcheck disable=SC2034
+# SC2034 ("appears unused") is disabled FOR THIS FILE ONLY, and the reason is mechanical
+# rather than a matter of taste. Assertions here are written as `check "<name>" '<expr>'`,
+# where check() runs `eval "$expr"` (docker/e2e/lib/steps.sh). The expression is SINGLE-quoted
+# so it evaluates at assertion time rather than at argument-build time, and shellcheck cannot
+# see inside it -- so every variable an assertion reads looks unused to static analysis.
+# Measured 2026-09-14: 29 SC2034 reports in this file, 28 of them exactly this false positive.
+#
+# WHAT THIS COSTS, stated so nobody assumes otherwise: a genuinely dead assignment in THIS file
+# is no longer detected. One existed -- SPEC_ID, assigned from DOC_ID[Spec] and never read
+# anywhere in the repository -- and was removed when this directive was added (LCLI-490).
+# Every other tracked .sh keeps SC2034 at full strength.
+#
+# WHAT IS NOT AT RISK, because it was checked rather than assumed: a TYPO inside an assertion
+# does not pass vacuously. `set -u` above is in force inside eval, so a misspelled variable
+# raises "unbound variable" and aborts the run. Verified directly with a reproduction of the
+# check()/eval idiom. The assertions in this file are neither inert nor silently passing.
 
 # ── Container-only guard (LORE-269) ──────────────────────────────────────────
 # Everything below performs REAL, mutating filesystem operations rooted at cwd (git init,
@@ -39,6 +55,9 @@ set -uo pipefail
 #   2. /workspace exists and is the process's initial, empty, non-Git directory. This proves that
 #      Phase 1 owns the repository it is about to initialize rather than reinitializing a caller's
 #      checkout. It also prevents the E2E identity from ever applying to a pre-existing repository.
+
+set -uo pipefail
+
 E2E_WORKSPACE="/workspace"
 E2E_START_DIR="$(pwd -P)"
 if [ "${LORE_E2E_CONTAINER:-}" != "1" ] || [ ! -d "$E2E_WORKSPACE" ] \
@@ -702,7 +721,6 @@ check "raw binary: task edit of a nonexistent id reports not-found on stderr" \
 # AC2a: `lore link` validates every task id BEFORE any write — a bogus id fails loud
 # (not_found/exit 3) and the concept's frontmatter never gets touched.
 SPEC_PATH="${DOC_PATH[Spec]}"
-SPEC_ID="${DOC_ID[Spec]}"
 VANISH_STORY_OUT="$(lore new Story "E2E vanished task story" --json)"
 VANISH_STORY_ID="$(echo "$VANISH_STORY_OUT" | jq -r '.data.id')"
 VANISH_STORY_PATH="$(echo "$VANISH_STORY_OUT" | jq -r '.data.path')"

@@ -93,6 +93,13 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/setup-bun
       - run: bun run lint
+      # Linux only, and NOT skipped elsewhere by accident: shellcheck ships preinstalled on
+      # GitHub's ubuntu runners and not on windows or macos ones. The script itself FAILS
+      # rather than skips when shellcheck is absent, so restricting the leg here is the one
+      # place that decision is made, visibly (LCLI-490).
+      - name: Shell lint (shellcheck over every tracked .sh)
+        if: runner.os == 'Linux'
+        run: bun run lint:shell
       - run: bun run typecheck
       - name: Test
         shell: bash
