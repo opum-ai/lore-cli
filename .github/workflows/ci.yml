@@ -93,11 +93,23 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/setup-bun
       - run: bun run lint
-      # Linux only, and NOT skipped elsewhere by accident: shellcheck ships preinstalled on
-      # GitHub's ubuntu runners and not on windows or macos ones. The script itself FAILS
-      # rather than skips when shellcheck is absent, so restricting the leg here is the one
-      # place that decision is made, visibly (LCLI-490).
-      - name: Shell lint (shellcheck over every tracked .sh)
+      # Linux only, and not skipped anywhere else by accident. Verified against the
+      # runner-images manifests rather than assumed: ubuntu-24.04 and ubuntu-24.04-arm both
+      # ship shellcheck (0.9.0-1); the windows image ships none. The script itself FAILS
+      # rather than skips when shellcheck is absent, so this `if:` is the single visible
+      # place that platform decision is made (LCLI-490).
+      #
+      # THIS STEP IS ADVISORY TODAY, AND THAT IS STATED HERE RATHER THAN LEFT TO BE
+      # DISCOVERED. `dev`'s ruleset requires exactly three contexts -- "docker e2e harness
+      # (real lore + backlog binaries)", "lint · typecheck · test (windows-latest)" and
+      # "Tracker integrity". This step runs ONLY in the ubuntu-latest leg, which is not one
+      # of them, so a shellcheck failure reddens a non-required job and does not block a
+      # merge. It cannot simply be moved to the windows leg, because that image has no
+      # shellcheck. Making it enforcing needs a RULESET change -- either requiring
+      # "lint · typecheck · test (ubuntu-latest)" or giving the shell lint its own required
+      # context -- which is a repository-governance decision, not one this workflow can make
+      # for itself. Until that happens, do not describe this as a gate: it is a report.
+      - name: Shell lint (shellcheck over every tracked .sh) — ADVISORY, not a required context
         if: runner.os == 'Linux'
         run: bun run lint:shell
       - run: bun run typecheck
