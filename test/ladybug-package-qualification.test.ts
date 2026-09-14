@@ -332,15 +332,60 @@ describe("matching-host Ladybug package qualification", () => {
     expect(needs(jobs.publish as WorkflowJob)).toContain("package");
 
     const download = jobs.package?.steps?.find((step) => step.uses?.startsWith("actions/download-artifact@"));
+    // The pattern carries run_id and NOT run_attempt (LCLI-487). An attempt-suffixed name
+    // cannot be resolved by a consumer running on a later attempt, which made
+    // `gh run rerun --failed` structurally unusable on this workflow.
     // biome-ignore lint/suspicious/noTemplateCurlyInString: literal GitHub Actions expression syntax.
-    const qualificationPattern = "ladybug-package-qualification-*-${{ github.run_id }}-${{ github.run_attempt }}";
+    const qualificationPattern = "ladybug-package-qualification-*-${{ github.run_id }}";
     expect(download?.with?.pattern).toBe(qualificationPattern);
+    expect(download?.with?.pattern).not.toContain("run_attempt");
     const assembly = jobs.package?.steps?.find((step) => step.name?.includes("matching-host-qualified"))?.run ?? "";
     expect(assembly).toContain('const digest = `sha256:${createHash("sha256")');
     expect(assembly).toContain("report.package?.platformTarballSha256 !== digest");
     expect(assembly).toContain("report.repository?.commit !== process.env.EXPECTED_COMMIT");
     expect(assembly).toContain('cp "$tarball" dist-npm/');
     expect(assembly).not.toContain("npm-artifacts/lore-");
+  });
+
+  test("no artifact name embeds run_attempt, and every upload sets overwrite (LCLI-487)", () => {
+    // BOTH workflows, not just release.yml. ci.yml carried two instances of exactly these
+    // bugs — an attempt-suffixed benchmark-smoke name, and a docker-e2e-report upload with no
+    // overwrite from an `if: always()` step in a job that is one of the four REQUIRED contexts
+    // on dev. A partial re-run of that job would have failed on
+    // upload-artifact's duplicate-name error at its last step, turning a required check red
+    // even when the harness passed. An invariant that only reads release.yml cannot see that.
+    // These two invariants are a pair and neither is safe alone. Dropping the attempt from
+    // the names is what lets a consumer on attempt 2 resolve a producer that succeeded on
+    // attempt 1; `overwrite: true` is what stops a RE-running producer colliding with the
+    // copy that survived, since artifacts are scoped to the run rather than the attempt and
+    // upload-artifact v4 fails on a duplicate name. Reintroduce the suffix to "fix" such a
+    // collision and the evidence job silently goes back to being unresolvable on any partial
+    // re-run — which is exactly how this was written in the first place.
+    for (const path of [RELEASE_PATH, CI_PATH]) {
+      const workflow = yaml.load(readFileSync(path, "utf8"), { schema: yaml.JSON_SCHEMA }) as WorkflowDoc;
+      const uploads: { name: unknown; overwrite: unknown }[] = [];
+      for (const [, job] of Object.entries(workflow.jobs ?? {})) {
+        for (const step of (job as WorkflowJob)?.steps ?? []) {
+          if (!step.uses?.startsWith("actions/upload-artifact@")) continue;
+          uploads.push({ name: step.with?.name, overwrite: step.with?.overwrite });
+        }
+      }
+      expect(uploads.length).toBeGreaterThan(0);
+      for (const upload of uploads) {
+        expect(`${upload.name}`).not.toContain("run_attempt");
+        // `overwrite` is the invariant, NOT a run id in the name: artifacts are scoped to the
+        // run, so a fixed name cannot collide across runs. `npm-packages` and
+        // `docker-e2e-report` are both deliberately fixed and are correct as they are.
+        expect(upload.overwrite).toBe(true);
+      }
+
+      for (const [, job] of Object.entries(workflow.jobs ?? {})) {
+        for (const step of (job as WorkflowJob)?.steps ?? []) {
+          if (!step.uses?.startsWith("actions/download-artifact@")) continue;
+          expect(`${step.with?.name ?? ""}${step.with?.pattern ?? ""}`).not.toContain("run_attempt");
+        }
+      }
+    }
   });
 
   test("the runner argument contract is strict and integrity-bearing", () => {

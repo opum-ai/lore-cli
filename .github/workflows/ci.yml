@@ -99,17 +99,20 @@ jobs:
       # rather than skips when shellcheck is absent, so this `if:` is the single visible
       # place that platform decision is made (LCLI-490).
       #
-      # THIS STEP IS ADVISORY TODAY, AND THAT IS STATED HERE RATHER THAN LEFT TO BE
-      # DISCOVERED. `dev`'s ruleset requires exactly three contexts -- "docker e2e harness
-      # (real lore + backlog binaries)", "lint · typecheck · test (windows-latest)" and
-      # "Tracker integrity". This step runs ONLY in the ubuntu-latest leg, which is not one
-      # of them, so a shellcheck failure reddens a non-required job and does not block a
-      # merge. It cannot simply be moved to the windows leg, because that image has no
-      # shellcheck. Making it enforcing needs a RULESET change -- either requiring
-      # "lint · typecheck · test (ubuntu-latest)" or giving the shell lint its own required
-      # context -- which is a repository-governance decision, not one this workflow can make
-      # for itself. Until that happens, do not describe this as a gate: it is a report.
-      - name: Shell lint (shellcheck over every tracked .sh) — ADVISORY, not a required context
+      # THIS STEP IS ENFORCING. `dev`'s ruleset requires four contexts, and
+      # "lint · typecheck · test (ubuntu-latest)" -- the leg this step runs in -- is one of
+      # them, so a shellcheck failure blocks the merge rather than reddening a job nobody has
+      # to act on. It was ADVISORY when first added (LCLI-490): the ubuntu leg was not
+      # required while the windows leg was, an asymmetry that meant lint, typecheck, test AND
+      # shell lint all gated nothing on Linux. The repository owner added the ubuntu context
+      # on 2026-09-14 rather than giving shell lint its own, deliberately: a new required
+      # context is a standing promise that the job reports on EVERY pull request forever, and
+      # a paths filter, an `if:` that evaluates false, or a rename turns that context absent
+      # -- which is not green, and blocks dev until someone with admin rights notices.
+      #
+      # So do not add an `if:` to the enclosing job, do not path-filter it, and do not rename
+      # it without updating the ruleset in the same change.
+      - name: Shell lint (shellcheck over every tracked .sh)
         if: runner.os == 'Linux'
         run: bun run lint:shell
       - run: bun run typecheck
@@ -307,10 +310,15 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ladybug-benchmark-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          # run_id only, plus overwrite -- the same pair as release.yml (LCLI-487). An
+          # attempt-suffixed name cannot be resolved by a consumer on a later attempt, and
+          # without overwrite a re-running job collides with the artifact that survived from
+          # the earlier attempt, because artifacts are scoped to the RUN not the attempt.
+          name: ladybug-benchmark-smoke-${{ github.run_id }}
           path: |
             artifacts/ladybug-benchmark-smoke-v1.json
             benchmark/ladybug/gates/v1.json
+          overwrite: true
           if-no-files-found: warn
           retention-days: 30
 
@@ -495,6 +503,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
+          # THE NAME IS DELIBERATELY FIXED and stays that way: artifacts are scoped to the RUN,
+          # so it cannot collide across runs, and docs/runbooks/docker-e2e-testing-environment.md
+          # tells people to look for this exact name. What it lacked was `overwrite`. This step
+          # is `if: always()` in the "docker e2e harness" job -- one of the four REQUIRED
+          # contexts on dev -- so a `gh run rerun --failed` that re-ran this job hit
+          # upload-artifact v4's duplicate-name failure on its LAST step, turning a required
+          # check red on the re-run even when the harness itself passed (LCLI-487).
           name: docker-e2e-report
           path: docker/e2e/results/report.jsonl
           if-no-files-found: warn
+          overwrite: true

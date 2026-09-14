@@ -37,8 +37,8 @@
 #
 # ONE COMMAND. This script PERFORMS its prerequisites rather than diagnosing them and
 # handing you a command to paste back (LCLI-489). It downloads the npm-packages artifact
-# when the directory is absent or incomplete, resolves the run ATTEMPT rather than assuming
-# 1, builds the digest manifest, and only then publishes. During the 0.6.2 release the
+# when the directory is absent or incomplete, builds the digest manifest, and only then
+# publishes. During the 0.6.2 release the
 # operator was stopped three separate times by steps this script had already worked out.
 #
 # Safety properties, in order of how much they matter:
@@ -92,9 +92,6 @@
 # Env: ARTIFACTS   where the seven .tgz live. Defaults to release-<version>/ beside this
 #                  script, resolved ABSOLUTELY so the caller's cwd cannot change what it
 #                  means. Populated automatically when missing or short of seven.
-#      RUN_ATTEMPT pin the run attempt instead of asking the API for the run's CURRENT one.
-#                  Needed when a job was re-run AFTER qualification, which bumps the attempt
-#                  while the reports still carry the older one.
 #      REPO_SLUG   owner/name, if the origin remote cannot be parsed.
 # USAGE-END
 
@@ -139,8 +136,8 @@ case "$ARTIFACTS" in
   *)  ARTIFACTS="$PWD/$ARTIFACTS" ;;
 esac
 
-# Used only to name the run in `gh api`; gh's own repo inference is deliberately not relied
-# on, because it reads the CURRENT DIRECTORY and that is the bug this section exists to kill.
+# Passed as `-R` to every gh call. gh's own repo inference is deliberately NOT relied on,
+# because it reads the CURRENT DIRECTORY and that is the bug this section exists to kill.
 REPO_SLUG="${REPO_SLUG:-$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null \
   | sed -e 's#^ssh://git@github.com/##' -e 's#^git@github.com:##' \
         -e 's#^https://github.com/##' -e 's#\.git$##' -e 's#/$##')}"
@@ -186,29 +183,11 @@ need_gh() {
 Install it, or populate $ARTIFACTS by hand with the seven .tgz files from run $RUN_ID."
 }
 
-# LCLI-487: qualification ARTIFACT NAMES embed run_attempt, so assuming attempt 1 makes a
-# download "correctly" fail to find artifacts that exist. 0.6.2 qualified on attempt 3 and
-# this is exactly how it bit. Resolve it; never hardcode it. (The npm-packages artifact name
-# is NOT attempt-suffixed -- release.yml:565-568 -- but it is re-uploaded per attempt, so the
-# run-level download already yields the newest. The attempt matters for the reports below.)
-# SETS THE GLOBAL $ATTEMPT; it does not print it. That is not a style choice: `die` runs
-# `exit 1`, and inside a command substitution that exits the SUBSHELL only. With `set -uo
-# pipefail` and no `-e` the parent sails on with an empty value, prints the real diagnosis,
-# and then dies a second time somewhere less useful. Measured on bash 3.2. Every other `die`
-# in this file is in a plain call and does terminate; this was the one exception.
-resolve_attempt() {
-  if [ -n "${RUN_ATTEMPT:-}" ]; then
-    ATTEMPT="$RUN_ATTEMPT"
-    say "run attempt pinned to $ATTEMPT by RUN_ATTEMPT"
-  else
-    ATTEMPT="$(gh api "repos/$REPO_SLUG/actions/runs/$RUN_ID" --jq '.run_attempt' 2>/dev/null)"
-  fi
-  case "${ATTEMPT:-}" in
-    ''|*[!0-9]*) die "could not resolve the attempt number for run $RUN_ID on $REPO_SLUG.
-Without it the qualification report artifact names cannot be constructed (LCLI-487).
-Check that gh is authenticated and REPO_SLUG is right, or pin it: RUN_ATTEMPT=<n>" ;;
-  esac
-}
+# NOTHING HERE RESOLVES A RUN ATTEMPT ANY MORE (LCLI-487). Artifact names used to embed
+# `run_attempt`, so this script had to ask the API which attempt to look for -- and guessing
+# wrong found nothing while the artifacts plainly existed. release.yml now names artifacts by
+# run_id alone and sets `overwrite: true`, so a run resolves to exactly one consistent set and
+# the attempt is not a variable in this at all.
 
 ensure_artifacts() {
   local have
@@ -233,7 +212,7 @@ $(list_tarballs)"
     say "downloading npm-packages over it rather than publishing a partial family"
   fi
   need_gh
-  gh run download "$RUN_ID" -n npm-packages -D "$ARTIFACTS" \
+  gh run download -R "$REPO_SLUG" "$RUN_ID" -n npm-packages -D "$ARTIFACTS" \
     || die "failed to download the npm-packages artifact from run $RUN_ID.
 Check that the run exists, succeeded, and still has artifacts (they expire)."
   have="$(tarball_count)"
@@ -249,24 +228,55 @@ $(list_tarballs)"
 # before describing the result as covering all seven.
 verify_platform_digests() {
   local dir entry pkg name tarball report recorded actual commit ref="" verified=0
-  local attempt="$1"
   need_gh
   dir="$(mktemp -d)"
-  say "fetching the per-platform qualification reports (run $RUN_ID, attempt $attempt)"
-  if ! gh run download "$RUN_ID" -D "$dir" \
-        -p "ladybug-package-qualification-*-${RUN_ID}-${attempt}" >/dev/null 2>&1; then
+  say "fetching the per-platform qualification reports for run $RUN_ID"
+  # The trailing `*` matches BOTH artifact-name shapes deliberately. Since LCLI-487 the names
+  # are `...-<run_id>`; runs qualified BEFORE that change carry `...-<run_id>-<attempt>`, and
+  # a release can legitimately be published from an older run whose artifacts are still inside
+  # their 90-day retention. Matching both costs one character and avoids a script that cannot
+  # read its own project's recent history.
+  if ! gh run download -R "$REPO_SLUG" "$RUN_ID" -D "$dir" \
+        -p "ladybug-package-qualification-*-${RUN_ID}*" >/dev/null 2>&1; then
     rm -rf "$dir"
-    die "could not download the qualification reports for run $RUN_ID attempt $attempt.
+    die "could not download the qualification reports for run $RUN_ID.
 These carry the only independently recorded digests for the platform tarballs; without them
 the digest check would be a local self-seal only, which is not what this script claims."
   fi
   for entry in "${PLATFORM_PKGS[@]}"; do
     pkg="${entry%%:*}"; tarball="${entry#*:}"
     name="${pkg#@opum-ai/lore-}"
-    report="$dir/ladybug-package-qualification-${name}-${RUN_ID}-${attempt}/ladybug-package-qualification-${name}.json"
-    [ -f "$report" ] || { rm -rf "$dir"; die "qualification report missing for $name at:
-  $report
-Run $RUN_ID attempt $attempt did not produce it, or the artifact has expired."; }
+    # Located by search rather than by constructing the directory name, so this works whether
+    # the artifact carries an attempt suffix or not. `find` rather than a bare glob because an
+    # unmatched glob under `set -u` expands to itself and would produce a confusing error
+    # naming a literal `*`.
+    # AMBIGUITY IS REFUSED, NOT RESOLVED. `head -1` here would return whichever match readdir
+    # yields first -- not sorted, not attempt-aware, and free to differ between machines. That
+    # is reachable on a run qualified BEFORE LCLI-487 that had more than one attempt: the
+    # widened `...-${RUN_ID}*` pattern matches every attempt's directory, so two files with
+    # this same basename land side by side. The tarballs always come from the NEWEST attempt
+    # (npm-packages is run-scoped), so silently picking the older report would compare recorded
+    # digests that do not describe these bytes -- a loud failure, but one whose remedy text
+    # would send the operator in a circle. Name both and stop instead.
+    matches="$(find "$dir" -type f -name "ladybug-package-qualification-${name}.json" 2>/dev/null | sort)"
+    match_count="$(printf '%s' "$matches" | grep -c . || true)"
+    [ "$match_count" -ge 1 ] || { rm -rf "$dir"; die "qualification report missing for $name.
+Looked for ladybug-package-qualification-${name}.json anywhere under the artifacts downloaded
+from run $RUN_ID. That run did not produce it, or the artifact is past its 90-day retention."; }
+    if [ "$match_count" -gt 1 ]; then
+      say "  AMBIGUOUS: $match_count qualification reports for $name:"
+      printf '%s\n' "$matches" | sed 's#^#      #'
+      rm -rf "$dir"
+      die "more than one qualification report for $name in run $RUN_ID.
+That happens on a run qualified before 2026-09-14 that had MORE THAN ONE ATTEMPT: artifact
+names still embedded the attempt then, so every attempt's report matches. Refusing to guess
+which one describes the tarballs being published -- picking wrong would compare digests from
+a different build. Publish from a run with a single attempt, or download that run's artifacts
+by their exact attempt-suffixed name into \$ARTIFACTS by hand and re-run."
+    fi
+    report="$matches"
+    [ -f "$report" ] || { rm -rf "$dir"; die "resolved report is not a file: $report"; }
+    say "  report for $name: $(basename "$(dirname "$report")")"
     recorded="$(node -e 'const r=require(process.argv[1]); process.stdout.write(String((r.package||{}).platformTarballSha256||""))' "$report")"
     commit="$(node -e 'const r=require(process.argv[1]); process.stdout.write(String((r.repository||{}).commit||""))' "$report")"
     [ -n "$recorded" ] || { rm -rf "$dir"; die "report for $name records no package.platformTarballSha256"; }
@@ -283,15 +293,18 @@ report without it did not come from a Release run."; }
       die "DIGEST MISMATCH for $pkg -- these are NOT the qualified bytes. Refusing to publish.
   recorded by CI : $recorded
   computed here  : $actual
-  reports from   : run $RUN_ID attempt $attempt
+  reports from   : run $RUN_ID
 
-DO NOT simply discard $ARTIFACTS and re-run: if the cause is an ATTEMPT MISMATCH, the re-run
-downloads the same wrong bytes and you loop. The npm-packages artifact name is not
-attempt-suffixed, so a run-level download cannot pin which attempt it came from, whereas the
-reports above are pinned by name. Check which attempt actually produced the tarballs, then
-re-run with RUN_ATTEMPT=<n> to read the matching reports, or clear $ARTIFACTS and re-download
-from the attempt you want. Only if the attempts already agree is this a genuine byte
-mismatch, and then the tarballs are the thing to discard."
+These bytes are not what the report above describes.
+
+For a run qualified on or after 2026-09-14, discard $ARTIFACTS entirely and re-download from
+run $RUN_ID: names no longer embed the attempt and a re-running job overwrites its own
+artifact, so one run is one consistent set and a genuine byte mismatch is the only cause.
+
+For an OLDER run, check the attempt first -- the report named above may come from a different
+attempt than the tarballs, which always come from the newest. Re-downloading will not fix that
+and you will loop. Fetch that run's artifacts for the attempt you want by their exact
+attempt-suffixed name into \$ARTIFACTS by hand, and re-run."
     fi
     # Every report must name the SAME commit, or the six tarballs did not come from one
     # source tree and "qualified" means nothing across the set.
@@ -368,11 +381,10 @@ if [ "$VERIFY_ONLY" -eq 1 ]; then
   say "--verify-only: skipping artifacts and digests; reporting registry state only"
 else
   ensure_artifacts
-  resolve_attempt
   count="$(tarball_count)"
   [ "$count" -eq "$EXPECTED_TARBALLS" ] || die "expected $EXPECTED_TARBALLS tarballs in $ARTIFACTS, found $count:
 $(list_tarballs)"
-  verify_platform_digests "$ATTEMPT"
+  verify_platform_digests
   seal_locally
   say "all $count artifacts accounted for: 6 independently verified, 1 locally sealed"
 fi
