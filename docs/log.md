@@ -225,6 +225,7 @@
 - 2026-09-11T20:01:02-05:00 901646cfe59e50e4f2dc5d9075eeb28cfe7f811d fix(LCLI-474): merge log.md regeneration instead of replacing it (#6)
 - 2026-09-13T17:27:51-05:00 c44045bb8ffe86ee5b5532085386b74b4a37059d docs(LCLI-278): record the release Environment gate as verified, not absent (#13)
 - 2026-09-13T17:58:47-05:00 39a3cd48817a31308f3d32f645facf1e7766c001 docs(LCLI-475): 0.6.1 released — record the release, the OIDC root cause, and close LCLI-475/278 (#14)
+- 2026-09-13T18:29:33-05:00 f11c10d257b393afab9b4da84b2b73707d26ed4f chore(LCLI-484): track the consumer report that 0.6.1 did not fix log.md clobbering (#17)
 
 ## docs/adr
 
@@ -295,6 +296,8 @@
 - 2026-09-08T00:20:11-05:00 1cc74d79f59149d68da6ebd39707ff0d8f41c7fd fix(LCLI-459): unify Quest actor-declaration errors as validation, document the requirement (#620)
 - 2026-09-08T09:57:19-05:00 e953ef318f20966114668f1e740b323dbd14bbbc docs(release): record lore 0.5.0's release truth, close LCLI-457 (#623)
 - 2026-09-09T05:11:07-05:00 f8b49f27de5ef4a32415b4bc39f4a4e8d1e45be0 docs(LCLI-461): correct 0.3.5's release-truth qualification citation, close LCLI-461
+- 2026-09-13T21:09:55-05:00 8c771dd71e886b5f115f5644029f9fc41ce45397 docs(LCLI-485): write down docs/log.md's content contract (#25)
+- 2026-09-14T01:47:06-05:00 e5b4152f58ba0334b63f149769a31c5710b237db docs(LCLI-488): 0.6.2 is released — replace the current-state claims (#48)
 
 ## docs/runbooks
 
@@ -322,6 +325,9 @@
 - 2026-08-29T22:48:39-05:00 d27ee3036ed76f4139e48e73bf92e593bb764d88 docs(release): make trusted publishing the documented path, and file the qualification gap it exposed (#471)
 - 2026-09-02T19:29:28-05:00 63e46d814ac3aab96e903969bda31f65596dedbd fix(agents): full-body retrieval for agent context packs (ODOC-63.1) (#518)
 - 2026-09-05T14:43:20-05:00 7807fce27d294cc48a1c589a635955cce1b64690 fix(LCLI-447): keep .claude-plugin/plugin.json in lockstep with package.json (#591)
+- 2026-09-13T21:11:36-05:00 d0829f66d147a743e85e52eba34dea9e31a9d8f3 docs(LCLI-481): document the dangling provenance, and that 0.6.1/0.6.2 ship unattested (#26)
+- 2026-09-14T02:03:23-05:00 51803177af3246ae2705adac5a56400113613d8f feat(LCLI-489): make publish-release.sh perform its own prerequisites
+- 2026-09-14T02:13:04-05:00 efd5482f53eb28030010b2a037b43b2e3bd920c0 fix(LCLI-489): close the reviewer's findings on the publish script
 
 ## docs/specs
 
