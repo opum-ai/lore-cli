@@ -292,6 +292,7 @@ async function readProvenance(name, version) {
   if (response.status === 404) return { state: "absent", detail: "registry has no attestations for this version" };
   if (!response.ok) return { state: "error", detail: `registry returned HTTP ${response.status}` };
 
+  /** @type {any} — the registry's response shape is not ours to declare; guarded below. */
   let body;
   try {
     body = await response.json();
@@ -495,7 +496,11 @@ async function checkOne(name, version, expectedRepo) {
   const record = { ...base, commit, repo, ref, repoMismatch: "" };
 
   if (!repo || !commit) {
-    return { ...record, outcome: OUTCOME.UNREADABLE, detail: "provenance names no source repository to resolve against" };
+    return {
+      ...record,
+      outcome: OUTCOME.UNREADABLE,
+      detail: "provenance names no source repository to resolve against",
+    };
   }
   if (expectedRepo && repo !== expectedRepo) {
     // Not a failure: a rename or a legitimate fork looks exactly like this, and the commit is
@@ -540,6 +545,7 @@ async function publishedVersions(name) {
   if (!response.ok) {
     throw new RemoteUnavailableError(`could not read the packument for ${name}: HTTP ${response.status}`);
   }
+  /** @type {any} — packument shape is the registry's, not ours; validated on the next line. */
   const body = await response.json().catch(() => null);
   const versions = body?.versions;
   if (!versions || typeof versions !== "object") {
@@ -611,7 +617,10 @@ async function runPost(options, manifest) {
   // whole window to re-learn what pass 1 already established. Each package that does wait
   // gets its OWN deadline; an earlier revision shared one across all seven, so the first
   // package could consume the entire window and leave the rest no grace at all.
-  const anyAttested = results.some((r) => Boolean(r.commit));
+  // `commit` is absent on the early-return arms (provenance absent/unreadable/error), which
+  // is precisely the case this asks about: no commit means not attested. Reading a property
+  // that only some union arms carry is intentional here, not an oversight.
+  const anyAttested = results.some((r) => Boolean(/** @type {any} */ (r).commit));
   if (options.waitSeconds > 0 && anyAttested) {
     for (let i = 0; i < results.length; i++) {
       if (results[i]?.outcome !== OUTCOME.ABSENT) continue;
@@ -735,6 +744,7 @@ function writeStepSummary(mode, rows, state) {
 // ---------------------------------------------------------------------------
 
 function parseArgs(argv) {
+  /** @type {{ mode: string, limit: number, waitSeconds: number, version: string, acknowledge: string, expectedRepo: string, packages: string[] }} */
   const options = { mode: "", limit: 10, waitSeconds: 0, version: "", acknowledge: "", expectedRepo: "", packages: [] };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];

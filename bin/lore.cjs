@@ -54,7 +54,7 @@ function resolveBinaryPath() {
   let pkgJsonPath;
   try {
     pkgJsonPath = require.resolve(`${pkgName}/package.json`);
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     if (err && err.code === "MODULE_NOT_FOUND") {
       return null;
     }
@@ -104,7 +104,7 @@ function main() {
   let binaryPath;
   try {
     binaryPath = resolveBinaryPath();
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     process.stderr.write(
       `lore: unexpected error resolving the compiled binary for ${platformPackageName()}: ${err.message}\n`,
     );
@@ -114,9 +114,9 @@ function main() {
     process.stderr.write(
       `lore: no compiled binary found for this platform (${process.platform}-${process.arch}).\n` +
         `Expected the optional dependency "${platformPackageName()}" to be installed alongside\n` +
-        `@opum-ai/lore, but it is missing. If your platform/architecture is one lore\n` +
-        `ships (macOS x64/arm64, Linux x64/arm64, Windows x64/arm64), try reinstalling with npm;\n` +
-        `otherwise this platform is not yet supported.\n`,
+        "@opum-ai/lore, but it is missing. If your platform/architecture is one lore\n" +
+        "ships (macOS x64/arm64, Linux x64/arm64, Windows x64/arm64), try reinstalling with npm;\n" +
+        "otherwise this platform is not yet supported.\n",
     );
     process.exit(1);
   }

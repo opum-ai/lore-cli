@@ -1,0 +1,43 @@
+// Static analysis for the JavaScript surface that tsconfig.json cannot cover (LCLI-486).
+//
+// WHY A SECOND FILE rather than adding these globs to tsconfig.json: type-checking untyped
+// .mjs/.cjs needs allowJs + checkJs, and under the main config's `strict` that produced 25
+// noImplicitAny errors — pure noise on plain JS with no JSDoc, which would have had to be
+// suppressed wholesale and would have buried the real findings. Relaxing noImplicitAny HERE
+// keeps the checks that actually bite on untyped code (noUnusedLocals, noUnusedParameters,
+// strictNullChecks) without weakening anything for src/, test/ or benchmark/.
+//
+// The regression this exists to catch: scripts/release-provenance.mjs shipped an unused
+// top-level constant and CI was green, because neither biome nor tsc had the directory in
+// scope. Verified by planting it again — biome now errors (noUnusedVariables) and tsc errors
+// (TS6133). Both, not one.
+//
+// COVERAGE OF EVERY TOP-LEVEL DIRECTORY, so the answer is recorded rather than rediscovered:
+//   src/, test/, benchmark/   .ts        — tsconfig.json + biome.json (unchanged)
+//   scripts/                  .mjs       — HERE + biome.json
+//   bin/                      .cjs       — HERE + biome.json  (this file SHIPS to users)
+//   playwright.config.ts      root .ts   — tsconfig.json already; biome.json now too
+//   docker/, evals/, npm/, patches/, research/, skills/, archive/  — no .ts/.js/.mjs/.cjs
+//     tracked at all, so there is nothing to include. Re-check if that changes.
+//
+// SHELL IS A NAMED, DELIBERATE GAP. Four tracked .sh files — scripts/publish-release.sh and
+// three under docker/e2e/ — have NO static analysis, and neither biome nor tsc can give them
+// any. shellcheck can: it finds 31 issues today, 29 of them SC2034 "appears unused" in
+// docker/e2e/run-e2e.sh, several of which look like captured baselines that are never
+// compared (an assertion that does not assert). That needs per-finding triage and a different
+// tool in CI, so it is LCLI-490 rather than a silent addition here. publish-release.sh itself
+// is shellcheck-clean as of LCLI-486.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "allowImportingTsExtensions": false,
+    "verbatimModuleSyntax": false,
+    "noImplicitAny": false
+  },
+  "include": ["scripts/**/*.mjs", "bin/**/*.cjs"],
+  "exclude": ["node_modules", "dist"]
+}
