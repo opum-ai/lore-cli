@@ -25,9 +25,9 @@
 # Usage:
 #   scripts/publish-release.sh <version> <release-run-id> [--dry-run|--verify-only]
 #
-#   scripts/publish-release.sh 0.3.5 33282804802 --dry-run   # rehearse; touches nothing
-#   scripts/publish-release.sh 0.3.5 33282804802             # publish + move latest dist-tags
-#   scripts/publish-release.sh 0.3.5 33282804802 --verify-only
+#   scripts/publish-release.sh <version> <run-id> --dry-run   # rehearse; touches nothing
+#   scripts/publish-release.sh <version> <run-id>             # publish + move latest dist-tags
+#   scripts/publish-release.sh <version> <run-id> --verify-only
 #
 # ARTIFACTS defaults to ./release-<version>/ beside this script; override with the env var.
 # The directory must contain the seven workflow .tgz files AND a SHA256SUMS.txt covering them.
