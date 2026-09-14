@@ -329,9 +329,9 @@ anything in `docs/`, and skipped entirely under `--dry-run`.
 | | |
 |---|---|
 | **Args** | optional `[paths…]` — scopes which concepts get status/managed-block reconciliation (default: every concept); `index.md`/`log.md` regeneration is always whole-bundle |
-| **Key flags** | `--dry-run` (report what would change, write nothing — to `docs/` or `backlog/`) · `--no-index` (skip index/log regeneration) |
+| **Key flags** | `--dry-run` (report what would change, write nothing — to `docs/` or `backlog/`) · `--no-index` (skip index/log regeneration) · `--fail-on-drop` (refuse **before any write** when `log.md` regeneration would drop unrecognized lines, instead of warning and proceeding — for unattended runs, which have no reader for a warning; rejected with `--no-index`, which regenerates nothing and so could never refuse) |
 | **Output** | `kind: sync.result` — per-file diff summary of what changed, plus the `backlog/` commit outcome |
-| **Exit** | `0` ok (changed or already clean) · `3` a linked task id no longer exists · `6` could not reconcile (e.g. Backlog probe failed) or could not commit `backlog/` |
+| **Exit** | `0` ok (changed or already clean) · `2` `--fail-on-drop` combined with `--no-index` · `3` a linked task id no longer exists · `6` could not reconcile (e.g. Backlog probe failed), could not commit `backlog/`, or `--fail-on-drop` refused a run that would drop unrecognized `log.md` content |
 
 ---
 
