@@ -348,6 +348,12 @@ describe("matching-host Ladybug package qualification", () => {
   });
 
   test("no artifact name embeds run_attempt, and every upload sets overwrite (LCLI-487)", () => {
+    // BOTH workflows, not just release.yml. ci.yml carried two instances of exactly these
+    // bugs — an attempt-suffixed benchmark-smoke name, and a docker-e2e-report upload with no
+    // overwrite from an `if: always()` step in a job that is one of the four REQUIRED contexts
+    // on dev. A partial re-run of that job would have failed on
+    // upload-artifact's duplicate-name error at its last step, turning a required check red
+    // even when the harness passed. An invariant that only reads release.yml cannot see that.
     // These two invariants are a pair and neither is safe alone. Dropping the attempt from
     // the names is what lets a consumer on attempt 2 resolve a producer that succeeded on
     // attempt 1; `overwrite: true` is what stops a RE-running producer colliding with the
@@ -355,24 +361,29 @@ describe("matching-host Ladybug package qualification", () => {
     // upload-artifact v4 fails on a duplicate name. Reintroduce the suffix to "fix" such a
     // collision and the evidence job silently goes back to being unresolvable on any partial
     // re-run — which is exactly how this was written in the first place.
-    const workflow = loadWorkflow();
-    const uploads: { job: string; name: unknown; overwrite: unknown }[] = [];
-    for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
-      for (const step of (job as WorkflowJob)?.steps ?? []) {
-        if (!step.uses?.startsWith("actions/upload-artifact@")) continue;
-        uploads.push({ job: jobName, name: step.with?.name, overwrite: step.with?.overwrite });
+    for (const path of [RELEASE_PATH, CI_PATH]) {
+      const workflow = yaml.load(readFileSync(path, "utf8"), { schema: yaml.JSON_SCHEMA }) as WorkflowDoc;
+      const uploads: { name: unknown; overwrite: unknown }[] = [];
+      for (const [, job] of Object.entries(workflow.jobs ?? {})) {
+        for (const step of (job as WorkflowJob)?.steps ?? []) {
+          if (!step.uses?.startsWith("actions/upload-artifact@")) continue;
+          uploads.push({ name: step.with?.name, overwrite: step.with?.overwrite });
+        }
       }
-    }
-    expect(uploads.length).toBeGreaterThan(0);
-    for (const upload of uploads) {
-      expect(`${upload.name}`).not.toContain("run_attempt");
-      expect(upload.overwrite).toBe(true);
-    }
+      expect(uploads.length).toBeGreaterThan(0);
+      for (const upload of uploads) {
+        expect(`${upload.name}`).not.toContain("run_attempt");
+        // `overwrite` is the invariant, NOT a run id in the name: artifacts are scoped to the
+        // run, so a fixed name cannot collide across runs. `npm-packages` and
+        // `docker-e2e-report` are both deliberately fixed and are correct as they are.
+        expect(upload.overwrite).toBe(true);
+      }
 
-    for (const [, job] of Object.entries(workflow.jobs ?? {})) {
-      for (const step of (job as WorkflowJob)?.steps ?? []) {
-        if (!step.uses?.startsWith("actions/download-artifact@")) continue;
-        expect(`${step.with?.name ?? ""}${step.with?.pattern ?? ""}`).not.toContain("run_attempt");
+      for (const [, job] of Object.entries(workflow.jobs ?? {})) {
+        for (const step of (job as WorkflowJob)?.steps ?? []) {
+          if (!step.uses?.startsWith("actions/download-artifact@")) continue;
+          expect(`${step.with?.name ?? ""}${step.with?.pattern ?? ""}`).not.toContain("run_attempt");
+        }
       }
     }
   });

@@ -163,8 +163,11 @@ describeOnPosix("scripts/publish-release.sh", () => {
       expect(r.out).toContain("artifact directory is empty");
       expect(r.out).toContain("downloaded 7 tarballs");
       // Nothing resolves a run attempt any more: release.yml names artifacts by run id alone
-      // and sets overwrite:true, so one run is one consistent set (LCLI-487).
-      expect(r.out).not.toContain("attempt");
+      // and sets overwrite:true, so one run is one consistent set (LCLI-487). Asserted on the
+      // removed MECHANISM rather than on the word "attempt", which is ordinary English the
+      // script's own messages legitimately use.
+      expect(r.out).not.toContain("run attempt pinned");
+      expect(r.out).not.toContain("could not resolve the attempt number");
       expect(r.code).toBe(0);
     } finally {
       ws.cleanup();
@@ -393,6 +396,40 @@ describeOnPosix("scripts/publish-release.sh", () => {
       expect(out).not.toContain("independently verified");
       expect(out).not.toContain("STUB PUBLISH");
       expect(result.exitCode).not.toBe(0);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("refuses a legacy run carrying reports from MORE THAN ONE attempt", () => {
+    // The only shape that makes the widened `...-<run_id>*` pattern ambiguous: a run qualified
+    // before the names lost their attempt suffix that also had several attempts. Both attempts'
+    // directories match, so two files share the report basename. Picking one by readdir order
+    // would compare digests from a different build against the newest attempt's tarballs — a
+    // loud failure whose remedy text would then send the operator in a circle. It must refuse.
+    const ws = makeWorkspace({ legacyAttemptNames: true });
+    try {
+      // A second attempt's directory for one platform, carrying a deliberately wrong digest so
+      // that silently choosing it would be visible as a digest mismatch rather than a refusal.
+      const other = resolve(ws.root, "reports", `ladybug-package-qualification-linux-x64-${RUN_ID}-1`);
+      mkdirSync(other, { recursive: true });
+      writeFileSync(
+        resolve(other, "ladybug-package-qualification-linux-x64.json"),
+        JSON.stringify({
+          schema: "lore.ladybug-package-qualification/3",
+          mode: "qualification",
+          platform: { distribution: "linux-x64" },
+          repository: { commit: COMMIT },
+          package: { platform: "@opum-ai/lore-linux-x64", platformTarballSha256: `sha256:${"1".repeat(64)}` },
+        }),
+      );
+
+      const r = runScript(ws, ws.root, ws.artifacts);
+      expect(r.out).toContain("AMBIGUOUS");
+      expect(r.out).toContain("more than one qualification report");
+      expect(r.out).not.toContain("DIGEST MISMATCH");
+      expect(r.out).not.toContain("STUB PUBLISH");
+      expect(r.code).not.toBe(0);
     } finally {
       ws.cleanup();
     }

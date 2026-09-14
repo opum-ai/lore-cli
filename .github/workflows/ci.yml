@@ -310,10 +310,15 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ladybug-benchmark-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          # run_id only, plus overwrite -- the same pair as release.yml (LCLI-487). An
+          # attempt-suffixed name cannot be resolved by a consumer on a later attempt, and
+          # without overwrite a re-running job collides with the artifact that survived from
+          # the earlier attempt, because artifacts are scoped to the RUN not the attempt.
+          name: ladybug-benchmark-smoke-${{ github.run_id }}
           path: |
             artifacts/ladybug-benchmark-smoke-v1.json
             benchmark/ladybug/gates/v1.json
+          overwrite: true
           if-no-files-found: warn
           retention-days: 30
 
@@ -498,6 +503,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
+          # THE NAME IS DELIBERATELY FIXED and stays that way: artifacts are scoped to the RUN,
+          # so it cannot collide across runs, and docs/runbooks/docker-e2e-testing-environment.md
+          # tells people to look for this exact name. What it lacked was `overwrite`. This step
+          # is `if: always()` in the "docker e2e harness" job -- one of the four REQUIRED
+          # contexts on dev -- so a `gh run rerun --failed` that re-ran this job hit
+          # upload-artifact v4's duplicate-name failure on its LAST step, turning a required
+          # check red on the re-run even when the harness itself passed (LCLI-487).
           name: docker-e2e-report
           path: docker/e2e/results/report.jsonl
           if-no-files-found: warn
+          overwrite: true
