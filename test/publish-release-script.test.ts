@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { delimiter, resolve } from "node:path";
 
 // Exercises scripts/publish-release.sh end to end with `gh` and `npm` stubbed, so the
 // prerequisite automation, the digest provenance split and the cwd-independence claim
@@ -11,6 +11,14 @@ import { resolve } from "node:path";
 // answer every read the script makes.
 
 const SCRIPT = resolve(import.meta.dir, "..", "scripts", "publish-release.sh");
+
+// `lint · typecheck · test (windows-latest)` is a REQUIRED check on this repo, and this suite
+// drives a macOS release script: it shells out to `security` (Keychain) and `shasum`, neither
+// of which Git Bash provides. The script is only ever run from the operator's Mac, so the
+// honest thing is to skip rather than stub the platform away and claim Windows coverage.
+// The PATH join below still uses the platform delimiter — joining with ":" on Windows
+// silently destroys the inherited PATH, which is how this first went red.
+const describeOnPosix = process.platform === "win32" ? describe.skip : describe;
 const VERSION = "9.9.9";
 const RUN_ID = "4242424242";
 const ATTEMPT = "3";
@@ -66,7 +74,11 @@ function makeWorkspace(options: { corruptPlatform?: string } = {}) {
     resolve(bin, "gh"),
     `#!/usr/bin/env bash
 set -uo pipefail
-if [ "\${1:-}" = "api" ]; then echo "${ATTEMPT}"; exit 0; fi
+if [ "\${1:-}" = "api" ]; then
+  [ -n "\${GH_FAIL_API:-}" ] && exit 1
+  echo "${ATTEMPT}"; exit 0
+fi
+[ -n "\${GH_FAIL_ALL:-}" ] && exit 1
 if [ "\${1:-}" = "run" ] && [ "\${2:-}" = "download" ]; then
   dest=""; name=""; pattern=""
   shift 2
@@ -80,7 +92,17 @@ if [ "\${1:-}" = "run" ] && [ "\${2:-}" = "download" ]; then
   done
   mkdir -p "$dest"
   if [ -n "$name" ]; then cp "${source}"/*.tgz "$dest"/; exit 0; fi
-  if [ -n "$pattern" ]; then cp -R "${reports}"/. "$dest"/; exit 0; fi
+  if [ -n "$pattern" ]; then
+    # HONOUR the pattern rather than copying everything: a stub that ignores -p makes a wrong
+    # or attempt-less pattern invisible to the suite, which is most of what these tests exist
+    # to catch.
+    matched=0
+    for d in "${reports}"/*; do
+      case "$(basename "$d")" in $pattern) cp -R "$d" "$dest"/; matched=1 ;; esac
+    done
+    [ "$matched" = 1 ] || exit 1
+    exit 0
+  fi
   exit 1
 fi
 exit 1
@@ -120,7 +142,7 @@ function runScript(ws: ReturnType<typeof makeWorkspace>, cwd: string, artifacts:
   const result = Bun.spawnSync({
     cmd: ["bash", SCRIPT, VERSION, RUN_ID, "--dry-run"],
     cwd,
-    env: { ...process.env, PATH: `${ws.bin}:${process.env.PATH}`, ARTIFACTS: artifacts, NPM_TOKEN: "" },
+    env: { ...process.env, PATH: `${ws.bin}${delimiter}${process.env.PATH}`, ARTIFACTS: artifacts, NPM_TOKEN: "" },
   });
   return {
     code: result.exitCode,
@@ -128,7 +150,7 @@ function runScript(ws: ReturnType<typeof makeWorkspace>, cwd: string, artifacts:
   };
 }
 
-describe("scripts/publish-release.sh", () => {
+describeOnPosix("scripts/publish-release.sh", () => {
   test("downloads the artifact itself when the directory is absent, resolving the run attempt", () => {
     const ws = makeWorkspace();
     try {
@@ -152,7 +174,11 @@ describe("scripts/publish-release.sh", () => {
       // The claim must stay six-of-seven: the root launcher has no CI-recorded digest.
       expect(r.out).toContain("SELF-SEAL ONLY");
       expect(r.out).toContain("6 independently verified, 1 locally sealed");
-      expect(r.out).not.toContain("all 7 artifacts verified");
+      // Assert the shape of the claim, not the absence of one historical wording: the old
+      // `not.toContain("all 7 artifacts verified")` passed for any other over-claim.
+      expect(r.out).not.toMatch(/7 (independently )?verified/);
+      expect(r.out).not.toMatch(/all seven .* verified/i);
+      expect(r.out).toMatch(/6 independently verified, 1 locally sealed/);
       expect(r.code).toBe(0);
     } finally {
       ws.cleanup();
@@ -240,7 +266,7 @@ describe("scripts/publish-release.sh", () => {
         Bun.spawnSync({
           cmd: ["bash", relativeInvocation, VERSION, RUN_ID, "--dry-run"],
           cwd,
-          env: { ...process.env, PATH: `${ws.bin}:${process.env.PATH}`, ARTIFACTS: "", NPM_TOKEN: "" },
+          env: { ...process.env, PATH: `${ws.bin}${delimiter}${process.env.PATH}`, ARTIFACTS: "", NPM_TOKEN: "" },
         });
 
       // First from outside, populating the default directory.
@@ -285,7 +311,7 @@ describe("scripts/publish-release.sh", () => {
         cwd: ws.root,
         env: {
           ...process.env,
-          PATH: `${ws.bin}:${process.env.PATH}`,
+          PATH: `${ws.bin}${delimiter}${process.env.PATH}`,
           ARTIFACTS: ws.artifacts,
           NPM_TOKEN: "not-an-npm-token-24ch",
         },
@@ -302,6 +328,186 @@ describe("scripts/publish-release.sh", () => {
     }
   });
 
+  test("a stale manifest covering only some tarballs is detected, not silently trusted", () => {
+    // `shasum -c` checks ONLY the lines a manifest contains, so a leftover manifest listing
+    // 1 of 7 exits 0 while verifying almost nothing — and the tarball most likely to go
+    // unchecked that way is the root launcher, the one the local seal exists for.
+    const ws = makeWorkspace();
+    try {
+      expect(runScript(ws, ws.root, ws.artifacts).code).toBe(0);
+      const manifest = resolve(ws.artifacts, "SHA256SUMS.txt");
+      const firstLine = readFileSync(manifest, "utf8").split("\n")[0];
+      writeFileSync(manifest, `${firstLine}\n`);
+
+      const r = runScript(ws, ws.root, ws.artifacts);
+      expect(r.out).toContain("does not cover every tarball");
+      expect(r.out).toContain("NO cross-run check");
+      expect(r.code).toBe(0);
+      // And it really did reseal: the manifest covers all seven again.
+      expect(readFileSync(manifest, "utf8").trim().split("\n")).toHaveLength(7);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("a complete manifest still catches a root launcher altered after sealing", () => {
+    const ws = makeWorkspace();
+    try {
+      expect(runScript(ws, ws.root, ws.artifacts).code).toBe(0);
+      writeFileSync(resolve(ws.artifacts, ws.rootTarball), "TAMPERED ROOT LAUNCHER");
+
+      const r = runScript(ws, ws.root, ws.artifacts);
+      expect(r.out).toContain("LOCAL DIGEST MISMATCH");
+      expect(r.out).not.toContain("STUB PUBLISH");
+      expect(r.code).not.toBe(0);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("a failure resolving the run attempt stops the script there, not one step later", () => {
+    // `die` inside $( ) exits only the subshell; with `set -uo pipefail` and no -e the parent
+    // used to carry on with an empty attempt and die again on a wrong, more confusing error.
+    const ws = makeWorkspace();
+    try {
+      const result = Bun.spawnSync({
+        cmd: ["bash", SCRIPT, VERSION, RUN_ID, "--dry-run"],
+        cwd: ws.root,
+        env: {
+          ...process.env,
+          PATH: `${ws.bin}${delimiter}${process.env.PATH}`,
+          ARTIFACTS: ws.artifacts,
+          NPM_TOKEN: "",
+          GH_FAIL_API: "1",
+        },
+      });
+      const out = result.stdout.toString() + result.stderr.toString();
+      expect(out).toContain("could not resolve the attempt number");
+      // The second, misleading error must NOT follow it.
+      expect(out).not.toContain("could not download the qualification reports");
+      expect(out).not.toContain("attempt .");
+      expect(result.exitCode).not.toBe(0);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("RUN_ATTEMPT pins the attempt when the run has been re-run past the qualification", () => {
+    const ws = makeWorkspace();
+    try {
+      const result = Bun.spawnSync({
+        cmd: ["bash", SCRIPT, VERSION, RUN_ID, "--dry-run"],
+        cwd: ws.root,
+        env: {
+          ...process.env,
+          PATH: `${ws.bin}${delimiter}${process.env.PATH}`,
+          ARTIFACTS: ws.artifacts,
+          NPM_TOKEN: "",
+          GH_FAIL_API: "1",
+          RUN_ATTEMPT: ATTEMPT,
+        },
+      });
+      const out = result.stdout.toString() + result.stderr.toString();
+      expect(out).toContain(`run attempt pinned to ${ATTEMPT}`);
+      expect(out).toContain("6/6 platform tarballs match");
+      expect(result.exitCode).toBe(0);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("a qualification report with no repository.commit fails instead of agreeing vacuously", () => {
+    const ws = makeWorkspace();
+    try {
+      // Strip the commit from every report: "" was doing double duty as both "not seeded
+      // yet" and "field missing", so six reports all missing it used to agree with silence.
+      for (const name of PLATFORMS) {
+        const file = resolve(
+          ws.root,
+          "reports",
+          `ladybug-package-qualification-${name}-${RUN_ID}-${ATTEMPT}`,
+          `ladybug-package-qualification-${name}.json`,
+        );
+        const report = JSON.parse(readFileSync(file, "utf8"));
+        report.repository = {};
+        writeFileSync(file, JSON.stringify(report));
+      }
+      const r = runScript(ws, ws.root, ws.artifacts);
+      expect(r.out).toContain("records no repository.commit");
+      expect(r.out).not.toContain("all on commit unknown");
+      expect(r.out).not.toContain("STUB PUBLISH");
+      expect(r.code).not.toBe(0);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("--verify-only reports registry state with no artifacts and no working gh", () => {
+    // The propagation-timeout message tells an operator who has just completed the
+    // irreversible step to re-check with --verify-only, so it must not need gh, the network,
+    // or an artifact that may already have aged out of its 90-day retention.
+    const ws = makeWorkspace();
+    try {
+      const result = Bun.spawnSync({
+        cmd: ["bash", SCRIPT, VERSION, RUN_ID, "--verify-only"],
+        cwd: ws.root,
+        env: {
+          ...process.env,
+          PATH: `${ws.bin}${delimiter}${process.env.PATH}`,
+          ARTIFACTS: resolve(ws.root, "does-not-exist"),
+          NPM_TOKEN: "",
+          GH_FAIL_ALL: "1",
+          GH_FAIL_API: "1",
+        },
+      });
+      const out = result.stdout.toString() + result.stderr.toString();
+      expect(out).toContain("skipping artifacts and digests");
+      expect(out).toContain("registry state for");
+      expect(out).not.toContain("failed to download");
+      expect(result.exitCode).toBe(0);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("refuses a directory holding more tarballs than the release has", () => {
+    const ws = makeWorkspace();
+    try {
+      expect(runScript(ws, ws.root, ws.artifacts).code).toBe(0);
+      writeFileSync(resolve(ws.artifacts, "opum-ai-lore-1.2.3.tgz"), "a tarball from another release");
+      const r = runScript(ws, ws.root, ws.artifacts);
+      expect(r.out).toContain("MORE than the 7");
+      expect(r.out).not.toContain("STUB PUBLISH");
+      expect(r.code).not.toBe(0);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("rejects a tag-shaped version before doing any work", () => {
+    // `v0.6.2` is an easy paste from `git tag`. It used to sail through the download and
+    // every digest step and die much later on a missing file built from the wrong name.
+    const ws = makeWorkspace();
+    try {
+      const result = Bun.spawnSync({
+        cmd: ["bash", SCRIPT, `v${VERSION}`, RUN_ID, "--dry-run"],
+        cwd: ws.root,
+        env: {
+          ...process.env,
+          PATH: `${ws.bin}${delimiter}${process.env.PATH}`,
+          ARTIFACTS: ws.artifacts,
+          NPM_TOKEN: "",
+        },
+      });
+      const out = result.stdout.toString() + result.stderr.toString();
+      expect(out).toContain(`pass the VERSION, not the tag: '${VERSION}'`);
+      expect(out).not.toContain("downloading npm-packages");
+      expect(result.exitCode).toBe(2);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
   test("accepts a correctly shaped token and reports length and prefix only", () => {
     const ws = makeWorkspace();
     try {
@@ -309,7 +515,12 @@ describe("scripts/publish-release.sh", () => {
       const result = Bun.spawnSync({
         cmd: ["bash", SCRIPT, VERSION, RUN_ID, "--dry-run"],
         cwd: ws.root,
-        env: { ...process.env, PATH: `${ws.bin}:${process.env.PATH}`, ARTIFACTS: ws.artifacts, NPM_TOKEN: token },
+        env: {
+          ...process.env,
+          PATH: `${ws.bin}${delimiter}${process.env.PATH}`,
+          ARTIFACTS: ws.artifacts,
+          NPM_TOKEN: token,
+        },
       });
       const out = result.stdout.toString() + result.stderr.toString();
       expect(out).toContain("length=40 prefix=npm_ internal_whitespace=no");

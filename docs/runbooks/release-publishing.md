@@ -563,8 +563,14 @@ publish is explicitly marked public. Root `package.json` and all six
    launcher if any of them fails, so the launcher is never resolvable before the
    binary it execs. It is resumable, skipping versions already published, and
    ends with a clean-temp-dir `npx` install smoke. Digest verification runs
-   ahead of the auth check, so a rehearsal proves the bytes are right even
-   before credentials exist.
+   ahead of the auth check, so a rehearsal proves the bytes are right before
+   any **npm** credential exists — but note the prerequisite that replaced the
+   `gh run download` line: **`gh` must be installed and authenticated** for
+   `--dry-run` too, because that is how the artifact and the qualification
+   reports are fetched. `--verify-only` is the exception and deliberately so:
+   it reads the registry only, with no `gh`, no artifacts and no network beyond
+   npm, because the propagation-timeout message tells an operator who has just
+   completed the irreversible step to re-check with it.
 
    **It reports the shape of the credential it is about to use** — length,
    prefix and a whitespace flag, never a value — and refuses one that is not

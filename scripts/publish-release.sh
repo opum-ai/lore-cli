@@ -10,7 +10,8 @@
 # still subject to "require 2FA for writes", which is exactly the EOTP wall this replaces.
 #
 # There is no longer an "or classic Automation token" option, though this header offered one
-# until 2026-09-14. docs/runbooks/release-publishing.md:557-565 records that npm disabled
+# until 2026-09-14. docs/runbooks/release-publishing.md ("Token types and what still works")
+# records that npm disabled
 # classic token creation in November 2025 and revoked every existing one on 9 December 2025.
 # Granular tokens are 90-day capped and website-created, so this path needs renewing every
 # quarter — a known liability rather than a surprise (LCLI-489).
@@ -55,14 +56,15 @@
 # === DIGEST PROVENANCE -- what the check below actually proves ===
 #
 # The SIX PLATFORM tarballs are verified against `package.platformTarballSha256` in their
-# ladybug-package-qualification reports, which release.yml:492-517 asserts in CI against the
-# bytes it built. Those reports are fetched from the Release run, SEPARATELY from the
-# npm-packages artifact being verified. That is a genuinely independent check: two artifacts
-# from the same run would have to agree for a substitution to pass.
+# ladybug-package-qualification reports, which release.yml's `package` job ("Assemble the
+# exact matching-host-qualified platform tarballs") asserts in CI against the bytes it built.
+# Those reports are fetched from the Release run SEPARATELY from the npm-packages artifact
+# being verified. That is a genuinely independent check: two artifacts from the same run
+# would have to agree for a substitution to pass.
 #
-# The ROOT LAUNCHER has NO such digest. It is `npm pack`'d inside that same job
-# (release.yml:520-527) and its sha256 is recorded nowhere, so a locally computed digest for
-# it is irreducibly a LOCAL SELF-SEAL: tamper-evidence on one download, not provenance.
+# The ROOT LAUNCHER has NO such digest. It is `npm pack`'d inside that same job ("npm pack
+# every package") and its sha256 is recorded nowhere, so a locally computed digest for it is
+# irreducibly a LOCAL SELF-SEAL: tamper-evidence on one download, not provenance.
 #
 # SHA256SUMS.txt is likewise a local seal. CI does not emit it -- this script generates it
 # from the same tarballs it then verifies, so on its own it proves only that the download has
@@ -73,16 +75,28 @@
 # Encodes runbook section 3 step 5's sequence so it cannot be misremembered under pressure.
 # See docs/runbooks/release-publishing.md.
 #
-# Usage:
+# `usage()` prints ONLY between the markers below. Everything else in this header is
+# reference material for whoever is CHANGING this script, and printing all of it as --help
+# buries the two lines someone actually needs.
+# USAGE-START
 #   scripts/publish-release.sh <version> <release-run-id> [--dry-run|--verify-only]
 #
 #   scripts/publish-release.sh <version> <run-id> --dry-run   # rehearse; touches nothing
 #   scripts/publish-release.sh <version> <run-id>             # publish + move latest dist-tags
-#   scripts/publish-release.sh <version> <run-id> --verify-only
+#   scripts/publish-release.sh <version> <run-id> --verify-only   # registry state only
 #
-# ARTIFACTS defaults to release-<version>/ beside this script, resolved ABSOLUTELY so the
-# caller's cwd cannot change what it means; override with the env var. The directory is
-# populated automatically when it is missing or short of the seven workflow .tgz files.
+# --verify-only reads the REGISTRY and nothing else: no artifacts, no gh, no network beyond
+# npm. It is what the propagation-timeout message tells you to run, so it must stay reachable
+# when the artifacts are gone or expired.
+#
+# Env: ARTIFACTS   where the seven .tgz live. Defaults to release-<version>/ beside this
+#                  script, resolved ABSOLUTELY so the caller's cwd cannot change what it
+#                  means. Populated automatically when missing or short of seven.
+#      RUN_ATTEMPT pin the run attempt instead of asking the API for the run's CURRENT one.
+#                  Needed when a job was re-run AFTER qualification, which bumps the attempt
+#                  while the reports still carry the older one.
+#      REPO_SLUG   owner/name, if the origin remote cannot be parsed.
+# USAGE-END
 
 set -uo pipefail
 
@@ -96,7 +110,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 
-usage() { awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "${BASH_SOURCE[0]}"; }
+usage() { awk '/^# USAGE-START/ { on=1; next } /^# USAGE-END/ { exit } on { sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"; }
 
 VERSION="${1:-}"
 RUN_ID="${2:-}"
@@ -105,6 +119,15 @@ case "$VERSION" in
   ""|-*) usage; exit 2 ;;
 esac
 [ -n "$RUN_ID" ] || { echo "ERROR: a Release run id is required (it is how a lost artifact directory is recovered)" >&2; exit 2; }
+# Tarball names are built from $VERSION, so a tag-shaped argument ("v0.6.2", an easy paste from
+# `git tag`) sails through the download and every digest step and only dies much later on a
+# missing file. Reject the shape here instead.
+case "$VERSION" in
+  v[0-9]*) echo "ERROR: pass the VERSION, not the tag: '${VERSION#v}', not '$VERSION'" >&2; exit 2 ;;
+  [0-9]*)  ;;
+  *)       echo "ERROR: '$VERSION' is not a version number" >&2; exit 2 ;;
+esac
+case "$RUN_ID" in *[!0-9]*) echo "ERROR: run id must be numeric, got '$RUN_ID'" >&2; exit 2 ;; esac
 shift 2
 
 # Resolved absolutely even when the caller passes a relative ARTIFACTS, so that the value
@@ -118,7 +141,9 @@ esac
 
 # Used only to name the run in `gh api`; gh's own repo inference is deliberately not relied
 # on, because it reads the CURRENT DIRECTORY and that is the bug this section exists to kill.
-REPO_SLUG="${REPO_SLUG:-$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null | sed -e 's#^git@github.com:##' -e 's#^https://github.com/##' -e 's#\.git$##')}"
+REPO_SLUG="${REPO_SLUG:-$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null \
+  | sed -e 's#^ssh://git@github.com/##' -e 's#^git@github.com:##' \
+        -e 's#^https://github.com/##' -e 's#\.git$##' -e 's#/$##')}"
 [ -n "$REPO_SLUG" ] || REPO_SLUG="opum-ai/lore-cli"
 
 # Platform packages FIRST, root LAST. Order is load-bearing, not cosmetic.
@@ -166,14 +191,23 @@ Install it, or populate $ARTIFACTS by hand with the seven .tgz files from run $R
 # this is exactly how it bit. Resolve it; never hardcode it. (The npm-packages artifact name
 # is NOT attempt-suffixed -- release.yml:565-568 -- but it is re-uploaded per attempt, so the
 # run-level download already yields the newest. The attempt matters for the reports below.)
+# SETS THE GLOBAL $ATTEMPT; it does not print it. That is not a style choice: `die` runs
+# `exit 1`, and inside a command substitution that exits the SUBSHELL only. With `set -uo
+# pipefail` and no `-e` the parent sails on with an empty value, prints the real diagnosis,
+# and then dies a second time somewhere less useful. Measured on bash 3.2. Every other `die`
+# in this file is in a plain call and does terminate; this was the one exception.
 resolve_attempt() {
-  local a
-  a="$(gh api "repos/$REPO_SLUG/actions/runs/$RUN_ID" --jq '.run_attempt' 2>/dev/null)"
-  case "$a" in
+  if [ -n "${RUN_ATTEMPT:-}" ]; then
+    ATTEMPT="$RUN_ATTEMPT"
+    say "run attempt pinned to $ATTEMPT by RUN_ATTEMPT"
+  else
+    ATTEMPT="$(gh api "repos/$REPO_SLUG/actions/runs/$RUN_ID" --jq '.run_attempt' 2>/dev/null)"
+  fi
+  case "${ATTEMPT:-}" in
     ''|*[!0-9]*) die "could not resolve the attempt number for run $RUN_ID on $REPO_SLUG.
-Without it the qualification report artifact names cannot be constructed (LCLI-487)." ;;
+Without it the qualification report artifact names cannot be constructed (LCLI-487).
+Check that gh is authenticated and REPO_SLUG is right, or pin it: RUN_ATTEMPT=<n>" ;;
   esac
-  printf '%s' "$a"
 }
 
 ensure_artifacts() {
@@ -183,6 +217,13 @@ ensure_artifacts() {
   if [ "$have" -eq "$EXPECTED_TARBALLS" ]; then
     say "artifacts already present: $have tarballs in $ARTIFACTS"
     return 0
+  fi
+  if [ "$have" -gt "$EXPECTED_TARBALLS" ]; then
+    # Re-downloading cannot remove anything, so this one is not self-healing: it needs a
+    # human to say which tarballs are the release. Most likely two versions in one directory.
+    die "$ARTIFACTS holds $have tarballs, MORE than the $EXPECTED_TARBALLS this release has.
+Re-downloading would not remove the extras. Inspect and clear it by hand:
+$(list_tarballs)"
   fi
   if [ "$have" -eq 0 ]; then
     say "artifact directory is empty -- downloading npm-packages from run $RUN_ID"
@@ -229,6 +270,12 @@ Run $RUN_ID attempt $attempt did not produce it, or the artifact has expired."; 
     recorded="$(node -e 'const r=require(process.argv[1]); process.stdout.write(String((r.package||{}).platformTarballSha256||""))' "$report")"
     commit="$(node -e 'const r=require(process.argv[1]); process.stdout.write(String((r.repository||{}).commit||""))' "$report")"
     [ -n "$recorded" ] || { rm -rf "$dir"; die "report for $name records no package.platformTarballSha256"; }
+    # An ABSENT commit must fail, not seed the comparison with "". Empty was doing double duty
+    # as both "not seeded yet" and "field missing", so six reports all missing it agreed
+    # vacuously and the run printed "all on commit unknown" and carried on.
+    [ -n "$commit" ] || { rm -rf "$dir"; die "report for $name records no repository.commit --
+refusing to treat an absent field as agreement. release.yml asserts this field in CI, so a
+report without it did not come from a Release run."; }
     [ -f "$ARTIFACTS/$tarball" ] || { rm -rf "$dir"; die "tarball missing: $ARTIFACTS/$tarball"; }
     actual="sha256:$(shasum -a 256 "$ARTIFACTS/$tarball" | awk '{print $1}')"
     if [ "$actual" != "$recorded" ]; then
@@ -236,7 +283,15 @@ Run $RUN_ID attempt $attempt did not produce it, or the artifact has expired."; 
       die "DIGEST MISMATCH for $pkg -- these are NOT the qualified bytes. Refusing to publish.
   recorded by CI : $recorded
   computed here  : $actual
-Discard $ARTIFACTS entirely and re-run; do not attempt to reconcile it by hand."
+  reports from   : run $RUN_ID attempt $attempt
+
+DO NOT simply discard $ARTIFACTS and re-run: if the cause is an ATTEMPT MISMATCH, the re-run
+downloads the same wrong bytes and you loop. The npm-packages artifact name is not
+attempt-suffixed, so a run-level download cannot pin which attempt it came from, whereas the
+reports above are pinned by name. Check which attempt actually produced the tarballs, then
+re-run with RUN_ATTEMPT=<n> to read the matching reports, or clear $ARTIFACTS and re-download
+from the attempt you want. Only if the attempts already agree is this a genuine byte
+mismatch, and then the tarballs are the thing to discard."
     fi
     # Every report must name the SAME commit, or the six tarballs did not come from one
     # source tree and "qualified" means nothing across the set.
@@ -250,45 +305,84 @@ These tarballs were not all built from one tree."
   done
   rm -rf "$dir"
   [ "$verified" -eq 6 ] || die "expected 6 platform tarballs verified, got $verified"
-  say "6/6 platform tarballs match the digests CI recorded, all on commit ${ref:-unknown}"
+  [ -n "$ref" ] || die "no qualification report carried a repository.commit"
+  say "6/6 platform tarballs match the digests CI recorded, all on commit $ref"
 }
 
 # The root launcher and the manifest. Both are LOCAL SEALS and the wording here says so --
 # the header explains why, and the whole point of LCLI-489 AC#4 is that automating this must
 # not quietly upgrade the claim.
+# A manifest is only worth checking if it covers every tarball present. `shasum -c` checks
+# ONLY the lines it is given and says nothing about a file that is absent from the list, so a
+# leftover manifest covering 1 of 7 EXITS 0 while verifying almost nothing -- and the one
+# tarball most likely to go unchecked that way is the root launcher, which is the only tarball
+# the local seal exists for in the first place. The directory is per-version and reused across
+# attempts, and ensure_artifacts re-downloads OVER a partial directory without removing a
+# manifest sealed against that partial state, so this is reachable with no attacker at all.
+manifest_covers_everything() {
+  local f listed
+  [ -f "$ARTIFACTS/SHA256SUMS.txt" ] || return 1
+  listed="$(awk '{ n = $NF; sub(/^\.\//, "", n); print n }' "$ARTIFACTS/SHA256SUMS.txt")"
+  for f in "$ARTIFACTS"/*.tgz; do
+    printf '%s\n' "$listed" | grep -qxF "$(basename "$f")" || return 1
+  done
+  return 0
+}
+
 seal_locally() {
   local root_tarball="${ROOT_PKG#*:}"
   [ -f "$ARTIFACTS/$root_tarball" ] || die "root launcher tarball missing: $ARTIFACTS/$root_tarball"
-  if [ ! -f "$ARTIFACTS/SHA256SUMS.txt" ]; then
-    say "generating SHA256SUMS.txt (a LOCAL seal over this download -- CI does not emit one)"
+  if manifest_covers_everything; then
+    say "checking the local manifest (tamper-evidence on this download, NOT provenance)"
+  else
+    if [ -f "$ARTIFACTS/SHA256SUMS.txt" ]; then
+      say "EXISTING SHA256SUMS.txt does not cover every tarball here -- it is stale, and a"
+      say "stale manifest verifies only the files it happens to list. Regenerating it."
+      say "NOTE: the root launcher therefore has NO cross-run check this run. Its digest is"
+      say "printed below; compare it by eye against the last run if that matters to you."
+    else
+      say "generating SHA256SUMS.txt (a LOCAL seal over this download -- CI does not emit one)"
+    fi
     # Subshell: shasum records the names it is given, and bare names are what makes the
     # manifest portable. The parent shell's cwd is deliberately never changed.
     ( cd "$ARTIFACTS" && shasum -a 256 ./*.tgz > SHA256SUMS.txt ) \
       || die "could not write $ARTIFACTS/SHA256SUMS.txt"
   fi
-  say "checking the local manifest (tamper-evidence on this download, NOT provenance)"
   ( cd "$ARTIFACTS" && shasum -a 256 -c SHA256SUMS.txt ) >/dev/null \
     || die "LOCAL DIGEST MISMATCH against $ARTIFACTS/SHA256SUMS.txt.
 The download changed after it was sealed. Discard $ARTIFACTS and re-run."
+  manifest_covers_everything || die "SHA256SUMS.txt still does not cover every tarball after
+regenerating it -- refusing to report a seal that did not happen."
   say "root launcher digest: $(shasum -a 256 "$ARTIFACTS/$root_tarball" | awk '{print $1}')"
-  say "  ^ SELF-SEAL ONLY. CI npm-pack's the launcher and records no digest for it"
-  say "    (release.yml:520-527), so this one tarball is not independently verified."
+  say "  ^ SELF-SEAL ONLY. CI npm-pack's the launcher and records no digest for it, so this"
+  say "    one tarball is not independently verified."
 }
 
-ensure_artifacts
-ATTEMPT="$(resolve_attempt)"
-count="$(tarball_count)"
-[ "$count" -eq "$EXPECTED_TARBALLS" ] || die "expected $EXPECTED_TARBALLS tarballs in $ARTIFACTS, found $count:
+# SKIPPED ENTIRELY FOR --verify-only, which reads the registry and nothing else. The
+# propagation-timeout message tells an operator who has JUST completed the irreversible step
+# to "re-check with --verify-only", so that path has to work when the artifact directory has
+# been cleaned or the 90-day retention has expired. Requiring gh, the network and a live
+# artifact to print registry state would make the recovery command need more working
+# infrastructure than the thing it is recovering from.
+if [ "$VERIFY_ONLY" -eq 1 ]; then
+  say "--verify-only: skipping artifacts and digests; reporting registry state only"
+else
+  ensure_artifacts
+  resolve_attempt
+  count="$(tarball_count)"
+  [ "$count" -eq "$EXPECTED_TARBALLS" ] || die "expected $EXPECTED_TARBALLS tarballs in $ARTIFACTS, found $count:
 $(list_tarballs)"
-verify_platform_digests "$ATTEMPT"
-seal_locally
-say "all $count artifacts accounted for: 6 independently verified, 1 locally sealed"
+  verify_platform_digests "$ATTEMPT"
+  seal_locally
+  say "all $count artifacts accounted for: 6 independently verified, 1 locally sealed"
+fi
 
 
 hr
 # ── Token ───────────────────────────────────────────────────────────────────
-# Never printed. Exported as npm_config__auth_token so it applies to this process only
-# and does not rewrite ~/.npmrc.
+# Never printed. Written to a private temp userconfig that npm is pointed at for this process
+# only, so ~/.npmrc is never rewritten. (It used to say "exported as npm_config__auth_token";
+# that export was one of the two npm did not recognise, and it is gone -- see below.)
 # REPORTS THE SHAPE OF A CREDENTIAL, NEVER ITS VALUE. Length, prefix and a whitespace flag
 # only -- nothing secret is derivable from those, and they are decisive. On 0.6.2 this exact
 # triple (length=24 prefix=OTHER) identified a Keychain entry holding something that was not
@@ -345,12 +439,27 @@ if [ -n "$TOKEN" ]; then
   # nobody reading this believes there is redundancy here that does not exist (LCLI-489,
   # finding 1). The userconfig file is the mechanism: npm reads the registry-scoped
   # _authToken from it, and pointing npm at our own file leaves ~/.npmrc alone.
+  # `set +x` around the only two lines that touch the token's value, so `bash -x` on this
+  # script cannot trace it into a terminal or a CI log.
+  _xtrace="$-"; set +x
   printf -v NPMRC_LINE '//registry.npmjs.org/:_authToken=%s' "$TOKEN"
-  TMP_NPMRC="$(mktemp)"; chmod 600 "$TMP_NPMRC"
-  printf '%s\n' "$NPMRC_LINE" > "$TMP_NPMRC"
+  TMP_NPMRC="$(mktemp)" || die "mktemp failed; refusing to continue without a private npmrc"
+  [ -n "$TMP_NPMRC" ] || die "mktemp returned an empty path"
+  chmod 600 "$TMP_NPMRC" || die "could not restrict $TMP_NPMRC to mode 600"
+  # INT and TERM are named EXPLICITLY alongside EXIT. A review reported that an EXIT trap
+  # does not fire on SIGINT on bash 3.2; a direct test here could not reproduce that -- EXIT
+  # alone cleaned up under both SIGINT and SIGTERM -- so the claim is NOT recorded as fact.
+  # What is true regardless: this file holds the token in plaintext, whether EXIT alone
+  # suffices depends on bash version and how the signal is delivered, and the two moments an
+  # operator is most likely to press Ctrl-C (the 30-minute propagation wait, the npx smoke)
+  # are both after it exists. Naming all three costs nothing and removes the question.
+  trap 'rm -f "$TMP_NPMRC"' EXIT INT TERM
+  printf '%s\n' "$NPMRC_LINE" > "$TMP_NPMRC" \
+    || die "could not write the private npmrc; refusing to fall back to ~/.npmrc silently"
   export npm_config_userconfig="$TMP_NPMRC"
-  trap 'rm -f "$TMP_NPMRC"' EXIT
   unset TOKEN NPMRC_LINE
+  case "$_xtrace" in *x*) set -x ;; esac
+  unset _xtrace
 else
   say "auth: no keychain/env token found — falling back to ~/.npmrc"
   say "  A ~/.npmrc web-login session is subject to require-2FA-on-write, which is the OTP"
