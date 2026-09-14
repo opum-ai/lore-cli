@@ -418,6 +418,7 @@ have established that npm has introduced a new token format."
 # in fact authenticating from ~/.npmrc with a web-login-shaped token, and the resulting OTP
 # wall was blamed on the token TYPE for two attempts (LCLI-488).
 TOKEN=""
+# shellcheck disable=SC2088  # a display label, never used as a path; no expansion wanted
 AUTH_SOURCE="~/.npmrc"
 if _t="$(security find-generic-password -s "$KEYCHAIN_SERVICE" -w 2>/dev/null)" && [ -n "$_t" ]; then
   TOKEN="$_t"; AUTH_SOURCE="keychain:$KEYCHAIN_SERVICE"

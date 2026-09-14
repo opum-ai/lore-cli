@@ -7,7 +7,15 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "includes": ["src/**/*.ts", "test/**/*.ts", "benchmark/**/*.ts", "*.json"]
+    "includes": [
+      "src/**/*.ts",
+      "test/**/*.ts",
+      "benchmark/**/*.ts",
+      "scripts/**/*.mjs",
+      "bin/**/*.cjs",
+      "*.ts",
+      "*.json"
+    ]
   },
   "formatter": {
     "enabled": true,
@@ -25,6 +33,9 @@
     "enabled": true,
     "rules": {
       "recommended": true,
+      "correctness": {
+        "noUnusedVariables": "error"
+      },
       "style": {
         "noParameterAssign": "error",
         "useAsConstAssertion": "error",

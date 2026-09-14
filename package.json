@@ -68,7 +68,7 @@
   "scripts": {
     "lore": "bun run src/cli.ts",
     "build": "bun build --compile src/compiled.ts --outfile dist/lore",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.scripts.json --noEmit",
     "format": "biome format --write .",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
