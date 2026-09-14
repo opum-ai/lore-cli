@@ -1,10 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { commandHandlerNames, run } from "../src/cli";
 import { type HelpOptions, renderTopLevelHelp, runHelp } from "../src/commands/help";
 import { LORE_COMMANDS } from "../src/core/agent-bridge";
-import { buildManifest, findManifestCommand, type Manifest, manifestCommandNames } from "../src/core/manifest";
+import {
+  buildManifest,
+  findManifestCommand,
+  type Manifest,
+  type ManifestCommand,
+  type ManifestFlag,
+  manifestCommandNames,
+} from "../src/core/manifest";
 import { EXIT_CODES, EXIT_OK, EXIT_UNCAUGHT } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture, expectError } from "./helpers";
@@ -548,5 +556,103 @@ describe("the kinds the docker E2E observes from the real binary are manifest-de
     // adding a carve-out to a gate, which should be a visible, reviewed change rather than a
     // constant quietly gaining an entry.
     expect(declaredKinds().has("version")).toBe(true);
+  });
+});
+
+describe("manifest ⇔ parser — required-flag lockstep guard (LCLI-479)", () => {
+  /**
+   * A valid value for every flag the manifest marks `required`. Declared rather than derived: the
+   * manifest carries each flag's summary but not its enum, and scraping a choice out of prose
+   * ("outbound, inbound, or either") would make this guard fail for reasons that have nothing to do
+   * with the invariant it exists to hold. The coverage assertion below is what stops the table from
+   * silently rotting — mark a new flag required without adding a value here and the suite fails.
+   */
+  const REQUIRED_FLAG_VALUES: Readonly<Record<string, string>> = {
+    kind: "task",
+    "from-kind": "task",
+    "to-kind": "task",
+    direction: "outbound",
+    snapshot: "lcli-479-absent-snapshot",
+  };
+
+  /** Every manifest command carrying at least one required flag, with those flags. */
+  function commandsWithRequiredFlags(): { command: ManifestCommand; required: readonly ManifestFlag[] }[] {
+    return buildManifest()
+      .commands.map((command) => ({
+        command,
+        required: command.flags.filter((flag) => flag.required === true),
+      }))
+      .filter((entry) => entry.required.length > 0);
+  }
+
+  /**
+   * Placeholder positionals synthesized from the command's `args` spec (`"<from> <to>"` → two).
+   * They only have to get the parser past its arity check: every assertion here is about flag
+   * parsing, which runs before the command touches a bundle.
+   */
+  function positionals(command: ManifestCommand): string[] {
+    return (command.args ?? "")
+      .split(/\s+/u)
+      .filter((token) => token.startsWith("<"))
+      .map((_, index) => `lcli-479-absent-${index}`);
+  }
+
+  /** Run `lore <argv>` against an empty cwd and return what it wrote to stderr. */
+  async function stderrOf(args: string[]): Promise<string> {
+    const stderr = capture();
+    const cwd = mkdtempSync(join(tmpdir(), "lcli-479-"));
+    try {
+      await run(["bun", "lore", ...args], { stdout: capture(), stderr, cwd, isTTY: false, env: {} });
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+    return stderr.text();
+  }
+
+  test("the value table covers exactly the flags the manifest marks required", () => {
+    const marked = new Set(commandsWithRequiredFlags().flatMap(({ required }) => required.map((f) => f.name)));
+    expect([...marked].sort()).toEqual(Object.keys(REQUIRED_FLAG_VALUES).sort());
+  });
+
+  test("at least one command declares a required flag (the guard is not vacuous)", () => {
+    expect(commandsWithRequiredFlags().length).toBeGreaterThan(0);
+  });
+
+  test("forward: every flag marked required is actually refused when absent", async () => {
+    for (const { command, required } of commandsWithRequiredFlags()) {
+      for (const omitted of required) {
+        const args = [command.name, ...positionals(command)];
+        for (const flag of required) {
+          if (flag.name !== omitted.name) args.push(`--${flag.name}`, REQUIRED_FLAG_VALUES[flag.name] as string);
+        }
+        expect(await stderrOf(args)).toContain(`--${omitted.name} is required`);
+      }
+    }
+  });
+
+  test("reverse: EVERY command's marked set is COMPLETE — nothing else is secretly required", async () => {
+    // The direction that catches the LCLI-479 defect itself, and it sweeps the whole command
+    // surface rather than only commands that already declare one. Scoping it to the latter is the
+    // mistake this guard was first written with: `lore provenance` required BOTH its flags while
+    // marking neither, so a guard that iterated "commands with required flags" could not see it —
+    // the blind spot was exactly the unfixed shape. `requiredOptionValue` in `commands/args.ts` is
+    // the single producer of this message, so a new absolute requirement lands here by default.
+    for (const command of buildManifest().commands) {
+      const args = [command.name, ...positionals(command)];
+      for (const flag of command.flags) {
+        if (flag.required === true) args.push(`--${flag.name}`, REQUIRED_FLAG_VALUES[flag.name] as string);
+      }
+      // The message line only: a hint legitimately names flags the caller did not pass.
+      expect(await stderrOf(args).then((text) => text.split("\n")[0])).not.toContain("is required");
+    }
+  });
+
+  test("help renders the requirement in the usage line, not only in the flag list", () => {
+    for (const { command, required } of commandsWithRequiredFlags()) {
+      const stdout = capture();
+      runHelp({ output: PLAIN_CTX, args: [command.name], stdout });
+      const usageLine = stdout.text().split("\n")[3] as string;
+      for (const flag of required) expect(usageLine).toContain(`--${flag.name}`);
+    }
   });
 });

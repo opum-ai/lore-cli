@@ -120,13 +120,15 @@ function renderCommandHelp(command: ManifestCommand): string {
     `lore ${command.name} — ${command.summary}`,
     "",
     "Usage:",
-    `  lore ${command.name}${command.args ? ` ${command.args}` : ""}`,
+    `  lore ${command.name}${command.args ? ` ${command.args}` : ""}${requiredFlagUsage(command)}`,
   ];
   if (command.flags.length > 0) {
     const width = Math.max(...command.flags.map((f) => commandFlagLabel(f).length));
     lines.push("", "Flags:");
     for (const flag of command.flags) {
-      const note = flag.repeatable ? " (repeatable)" : "";
+      // Required before repeatable: a reader scanning for what they MUST pass should not have to
+      // read past an orthogonal note to find it.
+      const note = `${flag.required ? " (required)" : ""}${flag.repeatable ? " (repeatable)" : ""}`;
       lines.push(`  ${commandFlagLabel(flag).padEnd(width)}  ${flag.summary}${note}`);
     }
   }
@@ -142,6 +144,22 @@ function renderCommandHelp(command: ManifestCommand): string {
     }
   }
   return lines.join("\n");
+}
+
+/**
+ * The required flags appended to a command's usage line, in manifest order (` --kind <value>
+ * --direction <value>`), or `""` when it has none.
+ *
+ * The usage line is what a reader copies, so a requirement that appears ONLY in the flag list below
+ * it is a requirement they meet by trial and error. `lore impact <id>` was a complete-looking
+ * command that always exits 2 (LCLI-479). Rendered without brackets, because the convention those
+ * would signal — `[...]` optional — is the opposite of what these are.
+ */
+function requiredFlagUsage(command: ManifestCommand): string {
+  return command.flags
+    .filter((flag) => flag.required === true)
+    .map((flag) => ` ${commandFlagLabel(flag)}`)
+    .join("");
 }
 
 /** `-v, --version` when a flag has a short alias, else `--json`. */

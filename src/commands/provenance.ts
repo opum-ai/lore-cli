@@ -7,7 +7,13 @@ import type { SnapshotScopeSelection } from "../core/snapshot-store";
 import { loadSnapshot } from "../core/snapshot-store";
 import { WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { parseCommandArgs, singleOptionValue, usage, workspaceSelection } from "./args";
+import { parseCommandArgs, requiredChoice, requiredOptionValue, usage, workspaceSelection } from "./args";
+
+/**
+ * The retained fact kinds `--kind` accepts, as a value so the flag's refusal, its hint and
+ * {@link RetainedFactKind} cannot drift apart (LCLI-479).
+ */
+const RETAINED_FACT_KINDS = ["concept", "task", "edge"] as const satisfies readonly RetainedFactKind[];
 
 export interface ProvenanceCommandOptions {
   readonly root: string;
@@ -24,10 +30,8 @@ export async function runProvenance(options: ProvenanceCommandOptions): Promise<
   const workspace = workspaceSelection(parsed);
   if (parsed.positionals.length !== 1)
     throw usage("provenance needs exactly one <id>", "run `lore provenance <id> --kind <kind> --snapshot <selector>`");
-  const kind = parseKind(singleOptionValue(parsed, "kind"));
-  const selector = singleOptionValue(parsed, "snapshot");
-  if (selector === undefined || selector.trim() === "")
-    throw usage("--snapshot needs a value", "pass an exact retained snapshot key or unambiguous commit");
+  const kind = requiredChoice(parsed, "kind", RETAINED_FACT_KINDS);
+  const selector = requiredOptionValue(parsed, "snapshot", "pass an exact retained snapshot key or unambiguous commit");
   const advisories = new WarningCollector();
   const selection = workspace === undefined ? {} : { workspace: workspace.manifestPath };
   const scope =
@@ -43,12 +47,6 @@ export async function runProvenance(options: ProvenanceCommandOptions): Promise<
   advisories.flush({ color: options.output.color, stderr: options.stderr });
   emit(provenanceRenderable(data), options.output, options.stdout);
   return 0;
-}
-
-function parseKind(value: string | undefined): RetainedFactKind {
-  if (value !== "concept" && value !== "task" && value !== "edge")
-    throw usage("--kind must be concept, task, or edge", "pass the retained fact kind explicitly");
-  return value;
 }
 
 function provenanceRenderable(data: ProvenanceResult): Renderable<ProvenanceResult> {

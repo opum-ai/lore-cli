@@ -58,6 +58,29 @@ export interface ManifestFlag {
   readonly takesValue: boolean;
   /** Whether the flag may be repeated to accumulate values (`--tag a --tag b`). */
   readonly repeatable?: boolean;
+  /**
+   * `true` when the command REFUSES to run without this flag — `lore impact` exits 2 with
+   * `--direction is required` rather than defaulting (LCLI-479). Absent (not `false`) on an
+   * ordinary optional flag, which is what keeps this additive: a consumer that does not know the
+   * field reads exactly what it read before.
+   *
+   * It exists because the manifest is a MACHINE contract — it is what an agent enumerates to
+   * construct a valid invocation without reading this source. With no way to express requiredness,
+   * every flag rendered as optional, so an agent built `lore impact <id> --kind task` from a
+   * faithful reading of the manifest and got exit 2. The contract was not wrong; it was SILENT,
+   * and silence parses as "optional". Same defect shape as the undeclared `--version` envelope
+   * {@link ManifestFlag.kind} was added for (LCLI-366), and fixed the same additive way.
+   *
+   * Only ABSOLUTE requirements belong here. A CONDITIONAL one — `--force requires --out`
+   * (`src/commands/agent.ts`), `--repository requires --workspace` (`src/commands/args.ts`),
+   * `--from`/`--to` supplied together and `--workspace` requiring a snapshot selector
+   * (`src/commands/explorer.ts`) — is not expressible as a boolean and is deliberately NOT marked;
+   * see the LCLI-479 record for why widening the field to carry them was refused rather than
+   * overlooked. `test/help.test.ts`'s required-flag lockstep guard holds this honest in both
+   * directions: a marked flag must actually be refused when absent, and a command's marked set must
+   * be COMPLETE, so a flag that silently becomes required fails the suite.
+   */
+  readonly required?: boolean;
   /** One-line description of what the flag does. */
   readonly summary: string;
   /**
@@ -544,16 +567,19 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
       {
         name: "from-kind",
         takesValue: true,
+        required: true,
         summary: "Typed origin: concept or task",
       },
       {
         name: "to-kind",
         takesValue: true,
+        required: true,
         summary: "Typed destination: concept or task",
       },
       {
         name: "direction",
         takesValue: true,
+        required: true,
         summary: "Traversal direction: outbound, inbound, or either",
       },
       {
@@ -597,11 +623,13 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
       {
         name: "kind",
         takesValue: true,
+        required: true,
         summary: "Typed root: concept or task",
       },
       {
         name: "direction",
         takesValue: true,
+        required: true,
         summary: "Traversal direction: outbound, inbound, or either",
       },
       {
@@ -671,8 +699,13 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     summary: "Trace one retained concept, task, or edge to exact source evidence",
     args: "<id>",
     flags: [
-      { name: "kind", takesValue: true, summary: "Retained fact kind: concept, task, or edge" },
-      { name: "snapshot", takesValue: true, summary: "Exact retained snapshot key or unambiguous commit" },
+      { name: "kind", takesValue: true, required: true, summary: "Retained fact kind: concept, task, or edge" },
+      {
+        name: "snapshot",
+        takesValue: true,
+        required: true,
+        summary: "Exact retained snapshot key or unambiguous commit",
+      },
       { name: "workspace", takesValue: true, summary: "Select an explicit workspace manifest" },
       { name: "repository", takesValue: true, repeatable: true, summary: "Select a workspace member" },
     ],
