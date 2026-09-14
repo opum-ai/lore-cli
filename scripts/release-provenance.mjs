@@ -7,8 +7,8 @@
  * Every `@opum-ai/lore*` version published from CI before 0.6.1 carries an npm SLSA
  * provenance attestation pinning a git commit in `resolvedDependencies[0].digest.gitCommit`.
  * This repository's history was destroyed and recreated on 2026-09-10, so those commits no
- * longer exist on GitHub: npmjs.com's provenance panel links a 404, and `npm audit signatures`
- * style verification against the source repo cannot reach the tree it names. 0.6.0 pins
+ * longer exist on GitHub: npmjs.com's provenance panel links a 404, and verification against
+ * the source repo cannot reach the tree it names. 0.6.0 pins
  * 59ba30e497f8e98aa6c6be022d9363fd718fb4ee, which the live GitHub API answers 422 for.
  *
  * NOTHING REPAIRS THOSE LINKS — an attestation is signed and immutable, and republishing a
@@ -20,7 +20,7 @@
  * THE DESIGN CONSTRAINT THAT SHAPED EVERYTHING BELOW
  *
  * A gate that fails the only publish path that currently works gets disabled on first
- * contact, and then nobody trusts the next one either. Two consequences, both deliberate:
+ * contact, and then nobody trusts the next one either. Three consequences, all deliberate:
  *
  *   1. A MISSING attestation is a PASS, not a failure — but a loud one. 0.6.1 shipped with
  *      no attestation at all and 0.6.2 will too: OIDC trusted publishing is broken for this
@@ -36,66 +36,111 @@
  *      is not evidence of a dangling commit, and turning GitHub's flakiness into a red
  *      release is how gates get deleted. Only a definitive negative answer fails the run.
  *
+ *   3. A TRUE POSITIVE HAS A SANCTIONED WAY OUT — see THE ESCAPE HATCH below. Without one,
+ *      the first real detection makes `publish` permanently unreachable and the only move
+ *      left to an operator is to delete the gate.
+ *
  * The only FAILURE is: an attestation is PRESENT and pins a commit the live GitHub API
- * definitively does not have. That is the LCLI-481 defect, and nothing else is.
+ * definitively does not have. That is the LCLI-481 defect, and nothing else is. (A defect in
+ * THIS SCRIPT is the one other way the run goes red — exit 3 — because a gate that crashed
+ * checked nothing, and silently passing on our own bug is how a gate becomes decoration.)
  *
  * WHY THE LIVE GITHUB API AND NEVER `git cat-file`
  *
  * This is the whole point, not an implementation detail. A local clone that predates (or was
- * fetched across) the rewrite still holds the destroyed commits as loose objects, so
- * `git cat-file -e <sha>` SUCCEEDS on exactly the artifacts this gate exists to catch — and
- * succeeds silently. The authority for "does this commit exist" is the remote, so every
- * lookup here goes to api.github.com. There is no git invocation anywhere in this file, and
- * adding one would quietly convert the gate into a no-op.
+ * fetched across) the rewrite still holds the destroyed commits as loose objects — verified
+ * in this repository on 2026-09-13: `git cat-file -t 59ba30e497f8e98aa6c6be022d9363fd718fb4ee`
+ * prints `commit` and exits 0, while api.github.com answers 422 for the same SHA. A local
+ * check therefore PASSES on exactly the artifacts this gate exists to catch, and passes
+ * silently. The authority for "does this commit exist" is the remote, so every lookup here
+ * goes to api.github.com. There is no git invocation anywhere in this file, and adding one
+ * would quietly convert the gate into a no-op.
+ *
+ * HOW A MISSING COMMIT IS ESTABLISHED (not by reading English)
+ *
+ * GitHub answers a destroyed SHA with 422 and the message "No commit found for SHA: <sha>".
+ * Classifying on that sentence alone would mean one reworded GitHub error turns the gate
+ * into a silent pass — the failure this whole file is built to prevent, reintroduced at its
+ * own core. So a 422 is CORROBORATED: the repository itself is fetched, and only
+ * `repo resolves 200` + `commit endpoint 422` is called missing. That inference does not
+ * depend on wording at all. The message is still matched, but only to label the log line
+ * `recognised`/`unrecognised`, never to decide the verdict.
  *
  * THE TWO MODES
  *
  *   --pre   Runs BEFORE the publish job, and gates it. Looks at what is ALREADY on the
- *           registry: for each published version of the launcher package newer than the
- *           KNOWN_DANGLING_THROUGH baseline, re-resolves the commit its attestation pins.
- *           This is the mode that detects a history rewrite that happened between two
- *           releases — the damage is done to the earlier release, and the signal is that its
- *           previously-good provenance stopped resolving. Catching it here stops the release
- *           in progress from adding another version to the pile before anyone has decided
- *           what to do about the rewrite.
+ *           registry: for each published version of the launcher newer than the
+ *           KNOWN_DANGLING_THROUGH baseline, re-resolves the commit pinned by EVERY package
+ *           of that release. This is the mode that detects a history rewrite that happened
+ *           between two releases — the damage is done to the earlier release, and the signal
+ *           is that its previously-good provenance stopped resolving. Catching it here stops
+ *           the release in progress from adding another version to the pile before anyone
+ *           has decided what to do about the rewrite.
  *
- *           It samples ONE package per historical version (the launcher) rather than all
- *           seven. Within a release every package is published from a single commit by a
- *           single workflow run — verify-versions asserts one version across every manifest,
- *           and the publish loop runs once — so the launcher is a sound probe for that
- *           release's provenance, at a seventh of the HTTP cost.
+ *           WHY ALL SEVEN PACKAGES AND NOT JUST THE LAUNCHER. An earlier revision sampled the
+ *           launcher alone, justified as "verify-versions asserts one version across every
+ *           manifest, so they share a commit". That warrant was FALSE and is recorded here so
+ *           it does not get reintroduced: verify-versions asserts version/license/author/
+ *           os/cpu/pin equality and says nothing whatsoever about commits. Worse, release.yml's
+ *           `publish_or_skip` exists precisely so a release CAN complete across two dispatches
+ *           from two different commits — dispatch 1 publishes six platform packages from
+ *           commit X and dies before the launcher, dispatch 2 publishes only the launcher from
+ *           commit Y. One version then carries two distinct pinned commits, and a
+ *           launcher-only probe sees only Y. Commit lookups are cached per repo+sha, so the
+ *           normal case (all seven pinning one commit) still costs a single GitHub call.
+ *
+ *           The package set comes from the CURRENT package.json, so a platform package added
+ *           after a scanned version existed reads as `absent` for it. That is honest (that
+ *           package really has no attestation at that version) and loud rather than red — the
+ *           alternative, reconstructing each historical release's package set, would infer it
+ *           from the same registry data whose trustworthiness is the thing in question.
  *
  *   --post  Runs AFTER the publish job. Looks at what THIS release just produced: every
- *           package (launcher + each platform package) at the version being released. Full
- *           coverage rather than a sample, because this is the one release whose bytes are
- *           still hot and whose provenance nobody has ever checked. It cannot un-publish
- *           anything; what it does is put the verdict on the release run, so an attested
- *           release that pins an unreachable commit is known within minutes rather than
- *           after a user reports it.
+ *           package at the version being released. It cannot un-publish anything; what it
+ *           does is put the verdict on the release run, so an attested release that pins an
+ *           unreachable commit is known within minutes rather than after a user reports it.
  *
  * THE BASELINE, AND WHY --pre WOULD OTHERWISE BE USELESS
  *
  * Every attested version at or below KNOWN_DANGLING_THROUGH already dangles, permanently. A
  * --pre that failed on those would fail EVERY future release, forever, for damage no release
- * can repair — the exact "disabled on first contact" failure above. So versions at or below
- * the baseline are reported (with the commit they pin, so the historical damage stays on the
- * record each run) and not failed on. Versions ABOVE it are the ones a new rewrite would
- * break, and those fail.
+ * can repair — the exact "disabled on first contact" failure above. So --pre LISTS those
+ * versions by version number on every run (it does not fetch their attestations, so it does
+ * not print the commits they pin; --post on such a version does, as outcome `baseline`) and
+ * never fails on them. Versions ABOVE the baseline are the ones a new rewrite would break,
+ * and those fail.
  *
- * Raise KNOWN_DANGLING_THROUGH only when a rewrite has ALREADY destroyed the commits of the
- * versions being folded under it and that loss has been accepted and recorded on a task.
- * Raising it to silence a failure is how this gate becomes ceremony.
+ * THE ESCAPE HATCH (read this before deleting anything)
+ *
+ * --pre re-checks PUBLISHED history, so a true positive does not clear by itself: once a
+ * post-baseline version dangles it dangles on every subsequent run, `provenance-pre` exits 1
+ * every time, and because `publish` lists it in `needs:` the release path is blocked until
+ * someone acts. That is intended — an unexamined rewrite should stop a release — but it must
+ * not leave "delete the job" as the only available action. Two sanctioned exits, both louder
+ * than deletion:
+ *
+ *   TEMPORARY: dispatch the release with the `acknowledge_dangling_provenance` input set to
+ *   the task id tracking the loss. Every dangling finding is then reported as `acknowledged`,
+ *   with the reference echoed into the log and the job summary, and the run proceeds. It is
+ *   per-dispatch: it never persists, never hides a NEW dangling version from the next run,
+ *   and leaves the acknowledgement in that run's record.
+ *
+ *   DURABLE: once the loss is accepted and recorded on a task, raise KNOWN_DANGLING_THROUGH
+ *   to cover those versions, in a commit whose message cites that task. Do this only when the
+ *   commits are genuinely gone for good — raising it to silence a failure nobody investigated
+ *   is how this gate becomes ceremony.
  *
  * EXIT CODES
- *   0  pass — including "no attestation" and "could not determine", both annotated loudly
+ *   0  pass — including "no attestation", "could not determine", and "acknowledged", all
+ *      annotated loudly
  *   1  gate failure — an attestation pins a commit GitHub definitively does not have
  *   2  usage error
+ *   3  this script itself failed (a bug here, not a finding about any artifact)
  *
  * TESTING WITHOUT A RELEASE
- *   LORE_PROVENANCE_REGISTRY   / LORE_PROVENANCE_GITHUB_API override the two endpoints, so
- *   the whole gate runs against a local stub server. Anything in a release path that cannot
- *   be exercised locally will not be exercised at all; see test/release-provenance.test.ts,
- *   which drives all three outcomes that way.
+ *   LORE_PROVENANCE_REGISTRY / LORE_PROVENANCE_GITHUB_API override the two endpoints, so the
+ *   whole gate runs against a local stub server. Anything in a release path that cannot be
+ *   exercised locally will not be exercised at all; see test/release-provenance.test.ts.
  */
 
 import { appendFileSync, readFileSync } from "node:fs";
@@ -105,7 +150,11 @@ import { fileURLToPath } from "node:url";
 /**
  * Versions at or below this carry provenance destroyed by the 2026-09-10 history rewrite
  * (LCLI-481). 0.3.5 through 0.6.0 are the attested set; 0.6.1 and later were published
- * manually and carry no attestation at all. See the header before changing this.
+ * manually and carry no attestation at all.
+ *
+ * THIS LITERAL IS THE MOST DANGEROUS EDIT IN THIS FILE: raising it retires the gate's memory
+ * of everything below the new value, permanently and silently. test/release-provenance.test.ts
+ * pins it so the change cannot pass review unnoticed. Read THE ESCAPE HATCH above first.
  */
 const KNOWN_DANGLING_THROUGH = "0.6.0";
 
@@ -114,37 +163,78 @@ const REGISTRY = process.env.LORE_PROVENANCE_REGISTRY || "https://registry.npmjs
 const GITHUB_API = process.env.LORE_PROVENANCE_GITHUB_API || "https://api.github.com";
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "";
 
+/**
+ * Per-request ceiling. A hung connection would otherwise hold a CI runner for the full job
+ * timeout while `publish` waits on this job — an outage must degrade to a loud pass in
+ * seconds, not occupy a runner for hours.
+ */
+const REQUEST_TIMEOUT_MS = Number.parseInt(process.env.LORE_PROVENANCE_TIMEOUT_MS || "20000", 10);
+
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_JSON = join(SCRIPT_DIR, "..", "package.json");
 
 /** Per-package verdicts. Only `dangling` fails the run; the rest are pass-with-a-note. */
 const OUTCOME = {
-  OK: "ok", //           attestation present, pinned commit resolves on GitHub
-  DANGLING: "dangling", //   attestation present, GitHub says the commit does not exist
-  BASELINE: "baseline", //   dangling, but at or below KNOWN_DANGLING_THROUGH — already known
-  ABSENT: "absent", //       no attestation published for this package@version
-  UNREADABLE: "unreadable", // attestation present but not in a shape we can read a commit from
-  INCONCLUSIVE: "inconclusive", // the network, not the artifact, is what we could not resolve
+  /** attestation present, pinned commit resolves on GitHub */
+  OK: "ok",
+  /** attestation present, GitHub definitively does not have the commit */
+  DANGLING: "dangling",
+  /** dangling, but waived for this one dispatch against a named reference */
+  ACKNOWLEDGED: "acknowledged",
+  /** at or below KNOWN_DANGLING_THROUGH — the accepted, unrepairable 2026-09-10 loss */
+  BASELINE: "baseline",
+  /** no attestation published for this package@version */
+  ABSENT: "absent",
+  /** attestation present but not in a shape we can read a commit from */
+  UNREADABLE: "unreadable",
+  /** the network, not the artifact, is what could not be resolved */
+  INCONCLUSIVE: "inconclusive",
 };
+
+/** Thrown for a remote that would not answer — distinct from a bug in this script (exit 3). */
+class RemoteUnavailableError extends Error {}
 
 // ---------------------------------------------------------------------------
 // version ordering
 // ---------------------------------------------------------------------------
 
 /**
- * Numeric-triple comparison. Prerelease/build suffixes are stripped rather than ordered:
- * this project has never shipped one, and the only question asked of this function is which
- * side of a baseline a version falls on — where treating `0.6.0-rc.1` as `0.6.0` is the
- * conservative answer (it lands under the baseline, i.e. does not fail the run).
+ * Parse a semver-shaped version into a numeric triple, or return null when it is not
+ * semver-shaped at all.
+ *
+ * Returning null rather than coercing is load-bearing. An earlier revision ran every string
+ * through `parseInt(...) || 0`, which quietly turned `"abc"`, `""` and `"0.6"` into values at
+ * or below the baseline — i.e. SILENTLY SKIPPED them. In a file whose doctrine is "when
+ * unsure, pass loudly", a version we cannot parse must be checked and reported, never
+ * assumed harmless.
+ *
+ * A prerelease/build suffix is stripped rather than ordered: this project has never shipped
+ * one, and treating `0.6.0-rc.1` as `0.6.0` is the conservative answer for a baseline test.
+ *
+ * @param {string} version
+ * @returns {number[] | null}
+ */
+function parseVersion(version) {
+  const core = String(version).split(/[-+]/)[0] ?? "";
+  if (!/^\d+\.\d+\.\d+$/.test(core)) return null;
+  return core.split(".").map((n) => Number.parseInt(n, 10));
+}
+
+/**
+ * Order two versions. Unparseable versions sort after every parseable one, deterministically
+ * by string, so a packument carrying junk keys still sorts stably.
+ *
+ * @param {string} a
+ * @param {string} b
  */
 function compareVersions(a, b) {
-  const parse = (v) =>
-    String(v)
-      .split(/[-+]/)[0]
-      .split(".")
-      .map((n) => Number.parseInt(n, 10) || 0);
-  const left = parse(a);
-  const right = parse(b);
+  const left = parseVersion(a);
+  const right = parseVersion(b);
+  if (!left || !right) {
+    if (left) return -1;
+    if (right) return 1;
+    return a < b ? -1 : a > b ? 1 : 0;
+  }
   for (let i = 0; i < 3; i++) {
     const diff = (left[i] ?? 0) - (right[i] ?? 0);
     if (diff !== 0) return diff < 0 ? -1 : 1;
@@ -152,7 +242,24 @@ function compareVersions(a, b) {
   return 0;
 }
 
-const isAtOrBelowBaseline = (version) => compareVersions(version, KNOWN_DANGLING_THROUGH) <= 0;
+/** True only for a version we could parse AND that sits at or below the baseline. */
+function isAtOrBelowBaseline(version) {
+  if (!parseVersion(version)) return false;
+  return compareVersions(version, KNOWN_DANGLING_THROUGH) <= 0;
+}
+
+// ---------------------------------------------------------------------------
+// HTTP
+// ---------------------------------------------------------------------------
+
+/**
+ * @param {string} url
+ * @param {Record<string, string>} headers
+ * @returns {Promise<Response>}
+ */
+async function request(url, headers) {
+  return await fetch(url, { headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+}
 
 // ---------------------------------------------------------------------------
 // registry: read the attestation
@@ -168,15 +275,17 @@ const attestationUrl = (name, version) => `${REGISTRY}/-/npm/v1/attestations/${e
  * `dsseEnvelope.payload`, and the endpoint returns BOTH npm's own publish attestation and the
  * SLSA one, so the predicateType has to be matched rather than the array indexed.
  *
- * @returns {{state: "found"|"absent"|"unreadable"|"error", commit?: string, repo?: string,
- *            ref?: string, detail?: string}}
+ * @param {string} name
+ * @param {string} version
+ * @returns {Promise<{state: "found"|"absent"|"unreadable"|"error", commit?: string,
+ *                    repo?: string, ref?: string, detail?: string}>}
  */
 async function readProvenance(name, version) {
   let response;
   try {
-    response = await fetch(attestationUrl(name, version), { headers: { accept: "application/json" } });
+    response = await request(attestationUrl(name, version), { accept: "application/json" });
   } catch (error) {
-    return { state: "error", detail: `registry request failed: ${error.message}` };
+    return { state: "error", detail: `registry request failed: ${describeError(error)}` };
   }
   // 404 is npm's answer for "this version has no attestations", which is the normal,
   // expected answer for every manually published version.
@@ -187,7 +296,7 @@ async function readProvenance(name, version) {
   try {
     body = await response.json();
   } catch (error) {
-    return { state: "error", detail: `registry response was not JSON: ${error.message}` };
+    return { state: "error", detail: `registry response was not JSON: ${describeError(error)}` };
   }
   // The endpoint has also been observed answering 200 with `{"error":"Not found"}`.
   if (body?.error) return { state: "absent", detail: `registry: ${body.error}` };
@@ -206,7 +315,7 @@ async function readProvenance(name, version) {
   try {
     statement = JSON.parse(Buffer.from(slsa.bundle.dsseEnvelope.payload, "base64").toString("utf8"));
   } catch (error) {
-    return { state: "unreadable", detail: `could not decode the DSSE payload: ${error.message}` };
+    return { state: "unreadable", detail: `could not decode the DSSE payload: ${describeError(error)}` };
   }
 
   const build = statement?.predicate?.buildDefinition;
@@ -231,44 +340,65 @@ async function readProvenance(name, version) {
 // GitHub: does the commit still exist?
 // ---------------------------------------------------------------------------
 
+function githubHeaders() {
+  /** @type {Record<string, string>} */
+  const headers = { accept: "application/vnd.github+json", "user-agent": "lore-cli-release-provenance" };
+  if (GITHUB_TOKEN) headers.authorization = `Bearer ${GITHUB_TOKEN}`;
+  return headers;
+}
+
+/**
+ * Is the repository itself readable right now? This is the corroboration that lets a 422 be
+ * classified without trusting GitHub's prose (see the header).
+ *
+ * @param {string} repo
+ * @returns {Promise<boolean>}
+ */
+async function repositoryIsReadable(repo) {
+  try {
+    const response = await request(`${GITHUB_API}/repos/${repo}`, githubHeaders());
+    return response.status === 200;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Ask the live GitHub API whether a commit exists.
  *
  * The classification here is the part that must not be sloppy, because every wrong answer is
  * expensive in one direction or the other:
  *
- *   200                                     -> exists. Pass.
- *   422 "No commit found for SHA: <sha>"    -> DEFINITIVELY gone. This is the only answer
- *                                              that fails the gate, and it is what the
- *                                              destroyed 0.6.0 commit returns today.
- *   422 anything else                       -> inconclusive. An unrecognised 422 is not
- *                                              proof of a destroyed commit; a future API
- *                                              change must not start failing releases.
- *   404                                     -> inconclusive, NOT missing. On this endpoint
- *                                              404 means the REPOSITORY is not found or not
- *                                              accessible (renamed, private, bad token) —
- *                                              a missing commit in a visible repo is 422.
- *                                              Conflating the two would report every
- *                                              token/visibility problem as tampering.
- *   401/403/429                             -> inconclusive (auth or rate limit).
- *   5xx / thrown fetch                      -> retried, then inconclusive.
+ *   200                        -> exists. Pass.
+ *   422, repo readable         -> DEFINITIVELY gone. The only answer that fails the gate. The
+ *                                 "No commit found for SHA" wording is logged but not relied
+ *                                 on: 422 on a well-formed 7-40 hex sha in a repo we can
+ *                                 otherwise read has no other meaning, and pinning the verdict
+ *                                 to an English sentence would make one GitHub copy edit turn
+ *                                 this gate into a silent pass.
+ *   422, repo NOT readable     -> inconclusive. Without knowing the repo is visible to us, a
+ *                                 422 proves nothing about the commit.
+ *   404                        -> inconclusive, NOT missing. On this endpoint 404 means the
+ *                                 REPOSITORY is not found or not accessible (renamed, private,
+ *                                 bad token) — a missing commit in a visible repo is 422.
+ *                                 Conflating the two reports every token problem as tampering.
+ *   401/403/429                -> inconclusive (auth or rate limit).
+ *   5xx / thrown fetch         -> retried, then inconclusive.
  *
- * Retries cover only the transient classes; a 200 or a recognised 422 is a final answer and
- * is never retried.
+ * Retries cover only the transient classes; a 200 or a corroborated 422 is a final answer.
  *
- * @returns {{state: "resolved"|"missing"|"inconclusive", detail: string}}
+ * @param {string} repo
+ * @param {string} sha
+ * @returns {Promise<{state: "resolved"|"missing"|"inconclusive", detail: string}>}
  */
-async function resolveCommit(repo, sha, { attempts = 3, backoffMs = 1000, sleep = defaultSleep } = {}) {
-  const headers = { accept: "application/vnd.github+json", "user-agent": "lore-cli-release-provenance" };
-  if (GITHUB_TOKEN) headers.authorization = `Bearer ${GITHUB_TOKEN}`;
-
+async function resolveCommitUncached(repo, sha, { attempts = 3, backoffMs = 1000, sleep = defaultSleep } = {}) {
   let last = "no attempt made";
   for (let attempt = 1; attempt <= attempts; attempt++) {
     let response;
     try {
-      response = await fetch(`${GITHUB_API}/repos/${repo}/commits/${sha}`, { headers });
+      response = await request(`${GITHUB_API}/repos/${repo}/commits/${sha}`, githubHeaders());
     } catch (error) {
-      last = `request failed: ${error.message}`;
+      last = `request failed: ${describeError(error)}`;
       if (attempt < attempts) await sleep(backoffMs * attempt);
       continue;
     }
@@ -277,10 +407,17 @@ async function resolveCommit(repo, sha, { attempts = 3, backoffMs = 1000, sleep 
 
     const text = await response.text().catch(() => "");
     if (response.status === 422) {
-      if (/No commit found for SHA/i.test(text)) {
-        return { state: "missing", detail: `GitHub: 422 No commit found for SHA ${sha} in ${repo}` };
+      const worded = /No commit found for SHA/i.test(text) ? "recognised" : "UNRECOGNISED";
+      if (await repositoryIsReadable(repo)) {
+        return {
+          state: "missing",
+          detail: `GitHub: 422 (${worded} wording) for SHA ${sha} while ${repo} itself resolves — the commit is gone`,
+        };
       }
-      return { state: "inconclusive", detail: `GitHub returned an unrecognised 422: ${firstLine(text)}` };
+      return {
+        state: "inconclusive",
+        detail: `GitHub returned 422 for SHA ${sha} but ${repo} itself is not readable, so this says nothing about the commit: ${firstLine(text)}`,
+      };
     }
     if (response.status === 404) {
       return {
@@ -310,8 +447,27 @@ async function resolveCommit(repo, sha, { attempts = 3, backoffMs = 1000, sleep 
   return { state: "inconclusive", detail: last };
 }
 
+/**
+ * Memoised commit resolution. Every package of a release normally pins the SAME commit, so
+ * checking all seven costs one GitHub call rather than seven — which is what makes the
+ * all-packages sweep in --pre affordable.
+ *
+ * @type {Map<string, Promise<{state: "resolved"|"missing"|"inconclusive", detail: string}>>}
+ */
+const commitCache = new Map();
+
+function resolveCommit(repo, sha) {
+  const key = `${repo}@${sha}`;
+  const hit = commitCache.get(key);
+  if (hit) return hit;
+  const pending = resolveCommitUncached(repo, sha);
+  commitCache.set(key, pending);
+  return pending;
+}
+
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const firstLine = (text) => String(text).replace(/\s+/g, " ").slice(0, 200);
+const describeError = (error) => (error instanceof Error ? `${error.name}: ${error.message}` : String(error));
 
 function resetAt(response) {
   const reset = Number.parseInt(response.headers.get("x-ratelimit-reset") || "", 10);
@@ -322,6 +478,11 @@ function resetAt(response) {
 // one package@version, end to end
 // ---------------------------------------------------------------------------
 
+/**
+ * @param {string} name
+ * @param {string} version
+ * @param {string} expectedRepo
+ */
 async function checkOne(name, version, expectedRepo) {
   const provenance = await readProvenance(name, version);
   const base = { name, version, spec: `${name}@${version}` };
@@ -331,9 +492,9 @@ async function checkOne(name, version, expectedRepo) {
   if (provenance.state === "error") return { ...base, outcome: OUTCOME.INCONCLUSIVE, detail: provenance.detail };
 
   const { commit, repo, ref } = provenance;
-  const record = { ...base, commit, repo, ref };
+  const record = { ...base, commit, repo, ref, repoMismatch: "" };
 
-  if (!repo) {
+  if (!repo || !commit) {
     return { ...record, outcome: OUTCOME.UNREADABLE, detail: "provenance names no source repository to resolve against" };
   }
   if (expectedRepo && repo !== expectedRepo) {
@@ -342,9 +503,9 @@ async function checkOne(name, version, expectedRepo) {
     record.repoMismatch = `provenance names ${repo}, package.json names ${expectedRepo}`;
   }
 
-  // Baseline versions are not looked up at all. Their outcome is already known and fixed, the
-  // lookup cannot change it, and skipping it keeps --pre's cost proportional to the versions
-  // that could actually have regressed rather than to the whole publish history.
+  // The accepted, unrepairable loss. Reported with the commit it pins, never failed on. Note
+  // this branch is only reachable from --post: --pre filters baseline versions out before it
+  // gets here (it lists them by version instead of fetching seven attestations apiece).
   if (isAtOrBelowBaseline(version)) {
     return {
       ...record,
@@ -363,99 +524,166 @@ async function checkOne(name, version, expectedRepo) {
 // modes
 // ---------------------------------------------------------------------------
 
-/** Published versions of a package, newest last, from its packument. */
+/**
+ * Published versions of a package, oldest first, from its packument.
+ * @param {string} name
+ */
 async function publishedVersions(name) {
-  const response = await fetch(`${REGISTRY}/${encodeURIComponent(name)}`, {
-    headers: { accept: "application/vnd.npm.install-v1+json" },
-  });
-  if (!response.ok) throw new Error(`could not read the packument for ${name}: HTTP ${response.status}`);
-  const body = await response.json();
-  return Object.keys(body?.versions ?? {}).sort(compareVersions);
+  let response;
+  try {
+    response = await request(`${REGISTRY}/${encodeURIComponent(name)}`, {
+      accept: "application/vnd.npm.install-v1+json",
+    });
+  } catch (error) {
+    throw new RemoteUnavailableError(`could not reach the registry for ${name}: ${describeError(error)}`);
+  }
+  if (!response.ok) {
+    throw new RemoteUnavailableError(`could not read the packument for ${name}: HTTP ${response.status}`);
+  }
+  const body = await response.json().catch(() => null);
+  const versions = body?.versions;
+  if (!versions || typeof versions !== "object") {
+    throw new RemoteUnavailableError(`the packument for ${name} carried no versions map`);
+  }
+  return Object.keys(versions).sort(compareVersions);
+}
+
+/** The launcher plus every platform package it pins — this release's full package set. */
+function releasePackages(options, manifest) {
+  if (options.packages.length > 0) return options.packages;
+  return [manifest.name, ...Object.keys(manifest.optionalDependencies ?? {})];
 }
 
 async function runPre(options, manifest) {
   const launcher = manifest.name;
+  const packages = releasePackages(options, manifest);
   const all = await publishedVersions(launcher);
-  const newer = all.filter((v) => !isAtOrBelowBaseline(v));
-  const scanned = newer.slice(-options.limit);
-  const skipped = all.filter((v) => isAtOrBelowBaseline(v));
+
+  const baseline = all.filter((v) => isAtOrBelowBaseline(v));
+  const unparseable = all.filter((v) => parseVersion(v) === null);
+  const candidates = all.filter((v) => !isAtOrBelowBaseline(v));
+  const scanned = candidates.slice(-options.limit);
 
   console.log(`--pre  re-verifying provenance already on the registry for ${launcher}`);
   console.log(
-    `       ${all.length} published version(s); ${skipped.length} at or below the ${KNOWN_DANGLING_THROUGH} baseline; ${newer.length} newer, checking the most recent ${scanned.length}`,
+    `       ${all.length} published version(s); ${baseline.length} at or below the ${KNOWN_DANGLING_THROUGH} baseline; ${candidates.length} to re-verify, taking the most recent ${scanned.length} × ${packages.length} package(s)`,
   );
-  if (skipped.length > 0) {
+  if (baseline.length > 0) {
     console.log(
-      `       baseline set (provenance destroyed by the 2026-09-10 rewrite, unrepairable, not failed on): ${skipped.join(", ")}`,
+      `       baseline set (provenance destroyed by the 2026-09-10 rewrite, unrepairable, listed not re-checked): ${baseline.join(", ")}`,
+    );
+  }
+  if (unparseable.length > 0) {
+    // Loudly, because the alternative is the silent skip an earlier revision had.
+    console.log(
+      `::warning::the registry lists ${unparseable.length} version(s) that are not semver-shaped: ${unparseable.join(", ")}. They are NOT assumed to be below the baseline — they are checked like any other version.`,
     );
   }
 
   const results = [];
   for (const version of scanned) {
-    results.push(await checkOne(launcher, version, options.expectedRepo));
+    for (const name of packages) {
+      results.push(await checkOne(name, version, options.expectedRepo));
+    }
   }
-  return results;
+  return { results, scannedVersions: scanned.length };
 }
 
 async function runPost(options, manifest) {
   const version = options.version || manifest.version;
-  // The launcher plus every platform package it pins. verify-versions has already asserted
-  // that those pins are exact and equal to the root version, so this is the complete set of
-  // packages this release published.
-  const packages = options.packages.length > 0 ? options.packages : [manifest.name, ...Object.keys(manifest.optionalDependencies ?? {})];
+  // verify-versions has already asserted every manifest shares this version and that root's
+  // optionalDependencies pin it exactly, so this IS the set this release published.
+  const packages = releasePackages(options, manifest);
 
   console.log(`--post checking the provenance this release just produced: ${packages.length} package(s) at ${version}`);
 
-  const deadline = Date.now() + options.waitSeconds * 1000;
+  // PASS 1 — no waiting. Ask every package once.
   const results = [];
   for (const name of packages) {
-    let result = await checkOne(name, version, options.expectedRepo);
-    // Attestations propagate on the registry's own schedule, the same read-API lag LCLI-460
-    // documents for tarballs. Without a bounded wait, a genuinely attested release publishes
-    // and is then reported as unattested purely because the check was fast. Only `absent` is
-    // retried — every other outcome is already a real answer about real bytes.
-    while (result.outcome === OUTCOME.ABSENT && Date.now() < deadline) {
-      const remaining = Math.ceil((deadline - Date.now()) / 1000);
-      console.log(`       ${name}@${version}: no attestation yet; ${remaining}s of the propagation window left`);
-      await defaultSleep(Math.min(15000, Math.max(1000, deadline - Date.now())));
-      result = await checkOne(name, version, options.expectedRepo);
-    }
-    results.push(result);
+    results.push(await checkOne(name, version, options.expectedRepo));
   }
-  return results;
+
+  // PASS 2 — propagation grace, but ONLY when it can possibly pay out. Attestations lag the
+  // registry read API the same way tarballs do (LCLI-460: 0.5.0 took ~25 minutes), so a
+  // genuinely attested release could be reported unattested purely because the check was
+  // fast. But if NOT ONE package of this release has an attestation, the release was not
+  // attested at all — the structural case with LCLI-482 open — and polling would burn the
+  // whole window to re-learn what pass 1 already established. Each package that does wait
+  // gets its OWN deadline; an earlier revision shared one across all seven, so the first
+  // package could consume the entire window and leave the rest no grace at all.
+  const anyAttested = results.some((r) => Boolean(r.commit));
+  if (options.waitSeconds > 0 && anyAttested) {
+    for (let i = 0; i < results.length; i++) {
+      if (results[i]?.outcome !== OUTCOME.ABSENT) continue;
+      const name = results[i]?.name ?? "";
+      const deadline = Date.now() + options.waitSeconds * 1000;
+      while (Date.now() < deadline) {
+        const remaining = Math.ceil((deadline - Date.now()) / 1000);
+        console.log(
+          `       ${name}@${version}: no attestation yet, but other packages in this release have one; ${remaining}s of its propagation window left`,
+        );
+        await defaultSleep(Math.min(15000, Math.max(1000, deadline - Date.now())));
+        const retry = await checkOne(name, version, options.expectedRepo);
+        results[i] = retry;
+        if (retry.outcome !== OUTCOME.ABSENT) break;
+      }
+    }
+  } else if (options.waitSeconds > 0) {
+    console.log(
+      `       not one package of this release carries an attestation, so there is nothing propagating to wait for — skipping the ${options.waitSeconds}s window rather than spending it to re-learn that.`,
+    );
+  }
+
+  return { results, scannedVersions: 1 };
 }
 
 // ---------------------------------------------------------------------------
 // reporting
 // ---------------------------------------------------------------------------
 
-const ANNOTATION = {
-  [OUTCOME.DANGLING]: "error",
-  [OUTCOME.ABSENT]: "warning",
-  [OUTCOME.BASELINE]: "warning",
-  [OUTCOME.UNREADABLE]: "warning",
-  [OUTCOME.INCONCLUSIVE]: "warning",
-};
+/**
+ * @param {{results: any[], scannedVersions: number}} checked
+ * @param {string} mode
+ * @param {{acknowledge: string}} options
+ */
+function report(checked, mode, options) {
+  const { results, scannedVersions } = checked;
+  const acknowledged = options.acknowledge.length > 0;
 
-function report(results, mode) {
+  /** @type {string[]} */
   const summary = [];
   for (const r of results) {
+    if (acknowledged && r.outcome === OUTCOME.DANGLING) r.outcome = OUTCOME.ACKNOWLEDGED;
     // One stable line per package: outcome first so a log is greppable and a test can assert
     // on it without parsing prose.
-    console.log(`${r.outcome.padEnd(12)} ${r.spec}  ${r.detail}`);
+    console.log(`${String(r.outcome).padEnd(12)} ${r.spec}  ${r.detail}`);
     if (r.repoMismatch) console.log(`::warning::${r.spec}: ${r.repoMismatch}`);
     summary.push(`| \`${r.outcome}\` | \`${r.spec}\` | ${r.commit ? `\`${r.commit}\`` : "—"} | ${r.detail} |`);
   }
 
   const dangling = results.filter((r) => r.outcome === OUTCOME.DANGLING);
+  const waived = results.filter((r) => r.outcome === OUTCOME.ACKNOWLEDGED);
   const absent = results.filter((r) => r.outcome === OUTCOME.ABSENT);
-  const inconclusive = results.filter(
-    (r) => r.outcome === OUTCOME.INCONCLUSIVE || r.outcome === OUTCOME.UNREADABLE,
-  );
+  const inconclusive = results.filter((r) => r.outcome === OUTCOME.INCONCLUSIVE || r.outcome === OUTCOME.UNREADABLE);
+
+  // NOTHING CHECKED IS NOT A PASS. Reachable if the packument shape changes, the package is
+  // renamed, or the baseline is raised to the current version — after which a silent "passed"
+  // would be a gate reporting success for work it never did.
+  const verifiedNothing = results.length === 0;
+  if (verifiedNothing) {
+    console.log(
+      `::warning::the ${mode} provenance check verified ZERO package versions${scannedVersions === 0 ? " (no version was in scope)" : ""}. This is NOT a pass: no attestation was inspected and no commit was resolved. Check that the package name still resolves on the registry and that KNOWN_DANGLING_THROUGH has not been raised past every published version.`,
+    );
+  }
 
   for (const r of dangling) {
     console.log(
-      `::error::${r.spec} carries SLSA provenance pinning commit ${r.commit}, which the live GitHub API says does not exist in ${r.repo}. That is the LCLI-481 failure mode: on npmjs.com this reads as tampering, and it cannot be repaired after the fact because the attestation is signed and the version cannot be republished. Something rewrote this repository's history after that release. Do not raise KNOWN_DANGLING_THROUGH in scripts/release-provenance.mjs to make this green.`,
+      `::error::${r.spec} carries SLSA provenance pinning commit ${r.commit}, which the live GitHub API says does not exist in ${r.repo}. That is the LCLI-481 failure mode: on npmjs.com this reads as tampering, and it cannot be repaired after the fact because the attestation is signed and the version cannot be republished. Something rewrote this repository's history after that release. THIS WILL NOT CLEAR ON ITS OWN and it blocks publish. The two sanctioned ways forward, both of which leave a record (deleting or neutering this job does not): (1) to release now, re-dispatch with the 'acknowledge_dangling_provenance' input set to the task id tracking this loss — a per-dispatch waiver, not a suppression; (2) once the loss is accepted and recorded on a task, raise KNOWN_DANGLING_THROUGH in scripts/release-provenance.mjs to cover these versions in a commit citing that task. Do not raise it merely to make this green.`,
+    );
+  }
+  if (waived.length > 0) {
+    console.log(
+      `::warning::${waived.length} DANGLING provenance finding(s) were waived for this dispatch against reference "${options.acknowledge}": ${waived.map((r) => r.spec).join(", ")}. The commits they pin are still gone and this waiver does not persist — the next run fails again unless KNOWN_DANGLING_THROUGH is raised in a commit citing that reference.`,
     );
   }
   if (absent.length > 0) {
@@ -469,29 +697,37 @@ function report(results, mode) {
     );
   }
 
-  if (process.env.GITHUB_STEP_SUMMARY) {
-    const lines = [
-      `### Release provenance (${mode})`,
-      "",
-      "| outcome | package | pinned commit | detail |",
-      "| --- | --- | --- | --- |",
-      ...summary,
-      "",
-      dangling.length > 0
-        ? `**FAILED** — ${dangling.length} attestation(s) pin a commit GitHub cannot resolve (LCLI-481).`
-        : absent.length > 0
-          ? `Passed, with ${absent.length} package(s) shipping no provenance at all (LCLI-482, open).`
-          : "Passed.",
-      "",
-    ];
-    try {
-      appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join("\n")}\n`);
-    } catch {
-      // A summary that cannot be written must never change the verdict.
-    }
-  }
+  writeStepSummary(mode, summary, { dangling, waived, absent, verifiedNothing, acknowledge: options.acknowledge });
 
   return dangling.length > 0 ? 1 : 0;
+}
+
+function writeStepSummary(mode, rows, state) {
+  if (!process.env.GITHUB_STEP_SUMMARY) return;
+  const verdict = state.verifiedNothing
+    ? "**VERIFIED NOTHING** — zero package versions were in scope. Not a pass; see the job log."
+    : state.dangling.length > 0
+      ? `**FAILED** — ${state.dangling.length} attestation(s) pin a commit GitHub cannot resolve (LCLI-481).`
+      : state.waived.length > 0
+        ? `**WAIVED for this dispatch** against "${state.acknowledge}" — ${state.waived.length} dangling finding(s) are still dangling.`
+        : state.absent.length > 0
+          ? `Passed, with ${state.absent.length} package(s) shipping no provenance at all (LCLI-482, open).`
+          : "Passed.";
+  const lines = [
+    `### Release provenance (${mode})`,
+    "",
+    "| outcome | package | pinned commit | detail |",
+    "| --- | --- | --- | --- |",
+    ...rows,
+    "",
+    verdict,
+    "",
+  ];
+  try {
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join("\n")}\n`);
+  } catch {
+    // A summary that cannot be written must never change the verdict.
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -499,7 +735,7 @@ function report(results, mode) {
 // ---------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const options = { mode: "", limit: 10, waitSeconds: 0, version: "", packages: [] };
+  const options = { mode: "", limit: 10, waitSeconds: 0, version: "", acknowledge: "", expectedRepo: "", packages: [] };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--pre" || arg === "--post") {
@@ -520,6 +756,12 @@ function parseArgs(argv) {
       const name = argv[++i] ?? "";
       if (!name) throw new Error("--package needs a value");
       options.packages.push(name);
+    } else if (arg === "--acknowledge") {
+      // Deliberately NOT a boolean. A bare "--yes I know" flag would be indistinguishable in
+      // the log from a gate nobody read; requiring a reference means the waiver names the
+      // record it is accountable to.
+      options.acknowledge = (argv[++i] ?? "").trim();
+      if (!options.acknowledge) throw new Error("--acknowledge needs a reference (the task id tracking the loss)");
     } else {
       throw new Error(`unknown argument: ${arg}`);
     }
@@ -533,28 +775,61 @@ async function main() {
   try {
     options = parseArgs(process.argv.slice(2));
   } catch (error) {
-    console.error(`::error::${error.message}`);
-    console.error("usage: node scripts/release-provenance.mjs (--pre | --post) [--limit N] [--wait-seconds N] [--version V] [--package NAME]...");
+    console.error(`::error::${describeError(error)}`);
+    console.error(
+      "usage: node scripts/release-provenance.mjs (--pre | --post) [--limit N] [--wait-seconds N] [--version V] [--package NAME]... [--acknowledge REF]",
+    );
     process.exit(2);
   }
 
-  const manifest = JSON.parse(readFileSync(PACKAGE_JSON, "utf8"));
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync(PACKAGE_JSON, "utf8"));
+  } catch (error) {
+    console.error(`::error::could not read ${PACKAGE_JSON}: ${describeError(error)}`);
+    process.exit(3);
+  }
   options.expectedRepo = String(manifest?.repository?.url ?? "")
     .replace(/^git\+/, "")
     .replace(/^https?:\/\/github\.com\//, "")
     .replace(/\.git$/, "");
 
-  let results;
-  try {
-    results = options.mode === "pre" ? await runPre(options, manifest) : await runPost(options, manifest);
-  } catch (error) {
-    // A failure to even enumerate what to check is a failure to check, and by this file's
-    // rules that is loud but not red — the alternative is a registry outage reding a release.
-    console.log(`::warning::the ${options.mode} provenance check could not run: ${error.message}. No conclusion is being drawn about any attestation.`);
-    process.exit(0);
+  if (options.acknowledge) {
+    console.log(
+      `::warning::running with a dangling-provenance waiver for this dispatch: "${options.acknowledge}". Any dangling finding below is reported and then waived rather than failing the run.`,
+    );
   }
 
-  process.exit(report(results, options.mode));
+  let checked;
+  try {
+    // THE ONLY TEST HOOK IN THIS FILE. Nothing statically analyses scripts/ (LCLI-486), so the
+    // test suite is the whole of the safety net — and the exit-3 path below is unreachable from
+    // any test without a way to make this script fail the way a defect in it would. An error
+    // path in a gate's own error handling that has never once executed is precisely the thing
+    // that turns out to be broken the day it fires.
+    if (process.env.LORE_PROVENANCE_SELFTEST_THROW) {
+      throw new TypeError("selftest: simulated defect inside the gate itself");
+    }
+    checked = options.mode === "pre" ? await runPre(options, manifest) : await runPost(options, manifest);
+  } catch (error) {
+    // A REMOTE that would not answer is a failure to check: loud, not red, for the same
+    // reason a rate limit is not. A failure of any OTHER kind is a bug in THIS script, and
+    // passing on it would mean a broken gate reports success — so that one goes red (exit 3),
+    // named as our defect rather than dressed up as a finding about an artifact.
+    if (error instanceof RemoteUnavailableError) {
+      console.log(
+        `::warning::the ${options.mode} provenance check could not run: ${error.message}. No conclusion is being drawn about any attestation, and nothing was verified.`,
+      );
+      process.exit(0);
+    }
+    console.error(
+      `::error::the ${options.mode} provenance check CRASHED — this is a defect in scripts/release-provenance.mjs, not a finding about any published artifact. Nothing was verified. ${describeError(error)}`,
+    );
+    if (error instanceof Error && error.stack) console.error(error.stack);
+    process.exit(3);
+  }
+
+  process.exit(report(checked, options.mode, options));
 }
 
 await main();
