@@ -37,14 +37,17 @@ interface WorkflowStep {
   uses?: string;
   with?: Record<string, string>;
   run?: string;
+  "continue-on-error"?: boolean;
 }
 
 interface WorkflowJob {
   if?: string;
-  needs?: string[];
+  needs?: string[] | string;
   permissions?: Record<string, string>;
   environment?: string;
   steps?: WorkflowStep[];
+  "continue-on-error"?: boolean;
+  "timeout-minutes"?: number;
 }
 
 interface WorkflowDoc {
@@ -52,6 +55,7 @@ interface WorkflowDoc {
     workflow_dispatch?: {
       inputs?: {
         publish?: { default?: boolean };
+        acknowledge_dangling_provenance?: { type?: string; default?: string };
       };
     };
   };
@@ -227,5 +231,96 @@ describe("release.yml publish job stays safely gated", () => {
     const workflow = readFileSync(WORKFLOW_PATH, "utf8");
     expect(workflow).toContain("published launcher unexpectedly contains runtime dependencies");
     expect(workflow).toContain("published launcher unexpectedly installed @ladybugdb/core");
+  });
+});
+
+describe("release.yml keeps the provenance gate ENFORCING, not merely present (LCLI-481)", () => {
+  /**
+   * These assertions are about enforcement, not shape. The first revision of this block
+   * checked that the jobs existed and ran the right flags — and every standard way of
+   * disabling a gate passed it: adding `continue-on-error: true` to the job (GitHub runs the
+   * dependents of a job that failed under it, so `publish` proceeds past a red gate), adding
+   * `|| true` to the step, or adding an `if:` that never matches. A test that a gate is
+   * PRESENT is not a test that it can still STOP anything.
+   */
+  const NEUTERING_RUN_PATTERNS = [/\|\|\s*true/, /\|\|\s*:/, /;\s*true\s*$/m, /set\s+\+e/, /continue-on-error/];
+
+  function provenanceStep(job: WorkflowJob | undefined): WorkflowStep | undefined {
+    return job?.steps?.find((s) => s.run?.includes("release-provenance.mjs"));
+  }
+
+  test("the pre-publish provenance check gates the publish job", () => {
+    const doc = loadWorkflow();
+    expect(doc.jobs["provenance-pre"]).toBeDefined();
+    expect(doc.jobs.publish?.needs).toContain("provenance-pre");
+    expect(provenanceStep(doc.jobs["provenance-pre"])?.run).toContain("--pre");
+  });
+
+  test("a failure of the pre check actually stops the publish job", () => {
+    const doc = loadWorkflow();
+    const job = doc.jobs["provenance-pre"];
+    // continue-on-error at either level converts the gate into a log message: the job reports
+    // failure, GitHub treats it as success for `needs:` purposes, and publish runs anyway.
+    expect(job?.["continue-on-error"]).toBeUndefined();
+    for (const step of job?.steps ?? []) expect(step["continue-on-error"]).toBeUndefined();
+    // No `if:` — the job must be unconditional. Anything conditional here is one edit away
+    // from a gate that is silently never evaluated.
+    expect(job?.if).toBeUndefined();
+    // And the command itself must not swallow its own exit code.
+    const run = provenanceStep(job)?.run ?? "";
+    expect(run).not.toBe("");
+    for (const pattern of NEUTERING_RUN_PATTERNS) expect(run).not.toMatch(pattern);
+  });
+
+  test("the waiver can only ever come from the dispatch input, never from the file", () => {
+    const doc = loadWorkflow();
+    const run = provenanceStep(doc.jobs["provenance-pre"])?.run ?? "";
+    // A hardcoded `--acknowledge LCLI-481` in the workflow would waive every dangling finding
+    // on every run, permanently and invisibly — a deleted gate that still looks wired up. The
+    // only permitted form is the dispatch input, which is per-run and shows in the run record.
+    expect(run).toContain('--acknowledge "$ACKNOWLEDGE"');
+    expect(run.replace('--acknowledge "$ACKNOWLEDGE"', "")).not.toContain("--acknowledge");
+    const input = doc.on.workflow_dispatch?.inputs?.acknowledge_dangling_provenance;
+    expect(input?.type).toBe("string");
+    expect(input?.default).toBe("");
+  });
+
+  test("the post-publish provenance check runs even when publish FAILED", () => {
+    const doc = loadWorkflow();
+    const job = doc.jobs["provenance-post"];
+    expect(job?.needs).toBe("publish");
+    // A bare `needs:` would skip this job whenever publish failed — and a partial publish is
+    // exactly the case that produces one version carrying two different pinned commits
+    // (release.yml's publish_or_skip is resumable across dispatches, by design). The literal is
+    // asserted rather than merely "an if exists" so any edit to it has to be deliberate.
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal GitHub Actions expression syntax from release.yml, not a JS template placeholder.
+    expect(job?.if).toBe("${{ !cancelled() && needs.publish.result != 'skipped' }}");
+    expect(job?.["continue-on-error"]).toBeUndefined();
+    const run = provenanceStep(job)?.run ?? "";
+    expect(run).toContain("--post");
+    for (const pattern of NEUTERING_RUN_PATTERNS) expect(run).not.toMatch(pattern);
+  });
+
+  test("both provenance jobs are time-bounded", () => {
+    const doc = loadWorkflow();
+    // provenance-pre gates publish, so a hung connection would otherwise hold a runner for the
+    // 6-hour default with the release waiting behind it.
+    for (const name of ["provenance-pre", "provenance-post"]) {
+      const timeout = doc.jobs[name]?.["timeout-minutes"];
+      expect(typeof timeout).toBe("number");
+      expect(timeout).toBeGreaterThan(0);
+    }
+  });
+
+  test("neither provenance job is handed a registry credential line", () => {
+    const doc = loadWorkflow();
+    // `actions/setup-node` writes `//registry.npmjs.org/:_authToken=...` into .npmrc whenever
+    // `registry-url` is set. These jobs only GET public JSON; a publish-shaped credential in a
+    // job that never publishes is surface for nothing.
+    for (const job of ["provenance-pre", "provenance-post"]) {
+      const setupNode = doc.jobs[job]?.steps?.find((s) => s.uses?.startsWith("actions/setup-node@"));
+      expect(setupNode).toBeDefined();
+      expect(setupNode?.with?.["registry-url"]).toBeUndefined();
+    }
   });
 });

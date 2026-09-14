@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { checkBundle } from "../src/core/check";
-import { buildLog, type GitAdapter, type GitCommit, type GitLogRange, generateLog } from "../src/core/log";
+import {
+  buildLog,
+  buildLogWithStats,
+  type GitAdapter,
+  type GitCommit,
+  type GitLogRange,
+  generateLog,
+  generateLogWithStats,
+} from "../src/core/log";
 
 /**
  * A fixed, hand-authored fake history — never real `git` (LORE-47 / AC#3). Deliberately given out
@@ -440,5 +448,113 @@ describe("LCLI-474 — regeneration merges with the committed log instead of rep
     // `lore sync` takes this path when HEAD does not resolve — the emptiest possible history, and
     // the one where a replace erased the entire file.
     expect(generateLog([], { existing: COMMITTED })).toBe(COMMITTED);
+  });
+});
+
+describe("LCLI-485 — regeneration reports what it added, carried forward, and could not keep", () => {
+  /** Two entries for commits no visible history can reach, so the committed file is their only record. */
+  const UNREACHABLE: readonly GitCommit[] = [
+    { hash: "old1", timestamp: "2026-06-01T10:00:00Z", subject: "Pre-rewrite ADR edit", files: ["docs/adr/0001.md"] },
+    { hash: "old2", timestamp: "2026-06-02T10:00:00Z", subject: "Pre-rewrite story", files: ["docs/stories/a.md"] },
+  ];
+
+  /**
+   * A committed log someone hand-edited. Four lines cannot survive regeneration: the pasted note, the
+   * entry that lost its folder heading, the free prose, and the malformed entry. Everything else —
+   * the title, the blanks, the folder heading, the legible entry — is structure lore itself writes.
+   */
+  const MANGLED = [
+    "# Change log",
+    "",
+    "Someone pasted a note here.",
+    "- 2026-06-05T10:00:00Z orph1 an entry before any folder heading",
+    "",
+    "## docs/adr",
+    "",
+    "- 2026-06-06T10:00:00Z keep1 a legible entry",
+    "not an entry line at all",
+    "- malformed",
+    "",
+  ].join("\n");
+
+  // The noise failure mode, pinned first because it is the one that makes the whole feature
+  // worthless: `parseEntries` skips the title and every blank line through the same `continue` as
+  // genuine prose, so a report that counted "lines skipped" would fire on every sync of every
+  // healthy bundle and teach its reader to ignore the one case worth reading.
+  test("a log lore itself generated drops nothing — the title and its blank lines are structure", () => {
+    const committed = generateLog(FAKE_HISTORY);
+    expect(committed).toContain("# Change log");
+    expect(committed).toContain("\n\n");
+    const { stats } = generateLogWithStats(FAKE_HISTORY, { existing: committed });
+    expect(stats.dropped).toBe(0);
+    expect(stats.droppedSamples).toEqual([]);
+  });
+
+  test("an empty-history log — nothing but the title line — drops nothing either", () => {
+    expect(generateLogWithStats([], { existing: generateLog([]) }).stats.dropped).toBe(0);
+  });
+
+  test("a CRLF checkout of a generated log drops nothing (the CR is stripped before the predicate)", () => {
+    const crlf = generateLog(FAKE_HISTORY).replace(/\n/g, "\r\n");
+    expect(generateLogWithStats(FAKE_HISTORY, { existing: crlf }).stats.dropped).toBe(0);
+  });
+
+  test("a whitespace-only line is blank, not lost prose", () => {
+    const padded = generateLog(FAKE_HISTORY).replace("# Change log\n", "# Change log\n   \n");
+    expect(generateLogWithStats(FAKE_HISTORY, { existing: padded }).stats.dropped).toBe(0);
+  });
+
+  test("counts every unrecognized line and samples the first few of them", () => {
+    const { stats } = generateLogWithStats(FAKE_HISTORY, { existing: MANGLED });
+    expect(stats.dropped).toBe(4);
+    expect(stats.droppedSamples).toEqual([
+      "Someone pasted a note here.",
+      // A well-formed entry with no folder heading above it has no section to belong to: it is as
+      // lost as the prose beside it, so it is counted rather than quietly skipped.
+      "- 2026-06-05T10:00:00Z orph1 an entry before any folder heading",
+      "not an entry line at all",
+    ]);
+    // Bounded: the fourth dropped line ("- malformed") is counted but not sampled.
+    expect(stats.droppedSamples.length).toBe(3);
+  });
+
+  test("a hand-authored section holding no entries is itself reported", () => {
+    // A generated log never emits an empty section, so a heading with nothing under it is
+    // hand-authored structure regeneration will not reproduce.
+    const withNotes = `${generateLog(FAKE_HISTORY)}\n## Notes\n\nkeep an eye on the adr folder\n`;
+    const { stats } = generateLogWithStats(FAKE_HISTORY, { existing: withNotes });
+    expect(stats.dropped).toBe(2);
+    expect(stats.droppedSamples).toEqual(["keep an eye on the adr folder", "## Notes"]);
+  });
+
+  test("added counts only what the committed log did not already record", () => {
+    expect(generateLogWithStats(FAKE_HISTORY).stats.added).toBe(FAKE_HISTORY.length);
+    // The steady state: re-syncing over unchanged history announces nothing.
+    const committed = generateLog(FAKE_HISTORY);
+    expect(generateLogWithStats(FAKE_HISTORY, { existing: committed }).stats).toEqual({
+      added: 0,
+      carriedForward: 0,
+      dropped: 0,
+      droppedSamples: [],
+    });
+  });
+
+  test("carriedForward counts exactly the entries the visible history can no longer account for", () => {
+    const { stats } = generateLogWithStats(FAKE_HISTORY, { existing: generateLog(UNREACHABLE) });
+    expect(stats.carriedForward).toBe(UNREACHABLE.length);
+    expect(stats.added).toBe(FAKE_HISTORY.length);
+    expect(stats.dropped).toBe(0);
+  });
+
+  test("the accounting is a side channel: the bytes are exactly what generateLog returns", () => {
+    for (const existing of [undefined, "", generateLog(UNREACHABLE), MANGLED]) {
+      expect(generateLogWithStats(FAKE_HISTORY, { existing }).bytes).toBe(generateLog(FAKE_HISTORY, { existing }));
+    }
+  });
+
+  test("buildLogWithStats reports the same accounting through the adapter seam", () => {
+    const built = buildLogWithStats(fakeAdapter(), { to: "HEADSHA" }, { existing: MANGLED });
+    expect(built.bytes).toBe(generateLog(FAKE_HISTORY, { existing: MANGLED }));
+    expect(built.stats.dropped).toBe(4);
   });
 });

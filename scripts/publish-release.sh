@@ -25,9 +25,9 @@
 # Usage:
 #   scripts/publish-release.sh <version> <release-run-id> [--dry-run|--verify-only]
 #
-#   scripts/publish-release.sh 0.3.5 33282804802 --dry-run   # rehearse; touches nothing
-#   scripts/publish-release.sh 0.3.5 33282804802             # publish + move latest dist-tags
-#   scripts/publish-release.sh 0.3.5 33282804802 --verify-only
+#   scripts/publish-release.sh <version> <run-id> --dry-run   # rehearse; touches nothing
+#   scripts/publish-release.sh <version> <run-id>             # publish + move latest dist-tags
+#   scripts/publish-release.sh <version> <run-id> --verify-only
 #
 # ARTIFACTS defaults to ./release-<version>/ beside this script; override with the env var.
 # The directory must contain the seven workflow .tgz files AND a SHA256SUMS.txt covering them.
@@ -164,6 +164,81 @@ report_state() {
   done
 }
 
+# ── Registry propagation (LCLI-460) ─────────────────────────────────────────
+# npm's publish confirmation is authoritative; the registry's READ API is not immediately
+# consistent with it. Observed on @opum-ai/lore-linux-arm64 across three consecutive
+# releases, and WORSENING rather than jittering: 0.4.5 ~15s, 0.4.6 ~35s, 0.5.0 ~25 MINUTES
+# (resolved 2026-09-08T14:49:18Z). Confirmed origin-side via cf-cache-status/age response
+# headers, not a stale CDN edge. On 0.5.0 the lag ran long enough that a sibling session
+# flagged it as a possible install-breaking defect before it resolved on its own.
+#
+# ONE SHARED WINDOW, NOT SEVEN. The deadline is wall-clock and starts once; every package
+# still missing is re-polled each round against that same deadline. So the total wait is
+# bounded at REGISTRY_WINDOW_SECONDS no matter how many packages are outstanding, and each
+# package still gets the whole remaining window. Waiting per-package instead would either
+# be too short for the slowest or serialise seven waits into hours. If you are reading this
+# because a release paused: that is ONE 30-minute window, not seven.
+#
+# WINDOW is 30 minutes because the worst OBSERVED case was 25 and the trend is upward --
+# sized against evidence, not taste. Backoff doubles 5s -> 60s cap, so polls land at
+# 5, 15, 35, 75, 135s ... : the first three bracket the 0.4.5 and 0.4.6 lags almost exactly,
+# then it settles into minute intervals for the long tail. Do not shorten it without new
+# evidence, and record what you saw if you change it.
+REGISTRY_WINDOW_SECONDS="${REGISTRY_WINDOW_SECONDS:-1800}"
+
+# Space-separated string rather than an array on purpose: this script runs on macOS, whose
+# /bin/bash is 3.2, where "${arr[@]}" on an EMPTY array under `set -u` aborts the script.
+# Package names contain no spaces, so word splitting is safe here.
+wait_for_all_visible() {
+  local pending="$1" deadline now delay=5 nap next pkg started missing
+  started="$(date +%s)"
+  deadline=$(( started + REGISTRY_WINDOW_SECONDS ))
+  while : ; do
+    next=""
+    missing=0
+    for pkg in $pending; do
+      if published "$pkg"; then
+        say "  visible  $pkg@$VERSION after $(( $(date +%s) - started ))s"
+      else
+        next="$next $pkg"
+        missing=$(( missing + 1 ))
+      fi
+    done
+    pending="${next# }"
+    [ -z "$pending" ] && return 0
+    now="$(date +%s)"
+    [ "$now" -ge "$deadline" ] && break
+    nap="$delay"
+    [ $(( now + nap )) -gt "$deadline" ] && nap=$(( deadline - now ))
+    say "  waiting  ${missing} package(s) not visible yet; $(( deadline - now ))s of the shared window left"
+    sleep "$nap"
+    if [ "$delay" -lt 60 ]; then
+      delay=$(( delay * 2 ))
+      if [ "$delay" -gt 60 ]; then delay=60; fi
+    fi
+  done
+
+  # EXHAUSTION IS NOT PROOF OF FAILURE, and this wording is load-bearing. The operator has
+  # just completed the one irreversible step of the release. Telling them at this moment
+  # that something is "broken" invites `npm unpublish` -- destructive, available for 72
+  # hours, and reached for precisely by someone who has been told their fresh release is
+  # broken when it is in fact fine. Say plainly that npm already confirmed the publish.
+  hr
+  say "TIMEOUT: still not visible on the registry READ API after ${REGISTRY_WINDOW_SECONDS}s:"
+  for pkg in $pending; do say "    $pkg@$VERSION"; done
+  say ""
+  say "  THIS IS NOT PROOF THE PUBLISH FAILED, AND YOU SHOULD NOT UNPUBLISH ANYTHING."
+  say "  npm already confirmed these publishes. Only the registry's read API is behind --"
+  say "  a known, recurring, worsening lag on this package set (LCLI-460): 0.4.5 ~15s,"
+  say "  0.4.6 ~35s, 0.5.0 ~25min. Longer than 30 minutes is new, not necessarily wrong."
+  say ""
+  say "  Do this, in order: wait and re-check with --verify-only; then confirm the version"
+  say "  really is absent from the registry rather than merely slow. Reach for npm unpublish"
+  say "  only if you have established the publish itself did not happen -- it is destructive"
+  say "  and it is the wrong tool for a propagation delay."
+  return 1
+}
+
 if [ "$VERIFY_ONLY" -eq 1 ]; then report_state; exit 0; fi
 report_state
 
@@ -213,25 +288,63 @@ report_state
 hr
 if [ "$DRY_RUN" -eq 1 ]; then say "DRY RUN complete — nothing was written."; exit 0; fi
 
-say "clean-registry install smoke (a fresh temp dir, nothing from this machine's caches)"
-SMOKE="$(mktemp -d)"
-( cd "$SMOKE" && npm init -y >/dev/null 2>&1 && npx --yes "@opum-ai/lore@$VERSION" --version )
-rc=$?
-rm -rf "$SMOKE"
-[ "$rc" -eq 0 ] || die "npx smoke failed — the packages are published but the install path is broken. Investigate before announcing."
+# WAIT FOR THE REGISTRY BEFORE SMOKING (LCLI-460). npx resolves the root launcher AND the
+# platform package for this machine, so running it while either is still propagating fails
+# for a reason that has nothing to do with the release being broken. Before this guard the
+# failure below fired on a propagation lag and told the operator, seconds after the one
+# irreversible step, that the install path was broken. One shared window, not one per package.
+all_pkgs=""
+for entry in "${PLATFORM_PKGS[@]}" "$ROOT_PKG"; do all_pkgs="$all_pkgs ${entry%%:*}"; done
+say "confirming the registry read API serves $VERSION before smoking the install path"
+if wait_for_all_visible "${all_pkgs# }"; then
+  say "clean-registry install smoke (a fresh temp dir, nothing from this machine's caches)"
+  SMOKE="$(mktemp -d)"
+  ( cd "$SMOKE" && npm init -y >/dev/null 2>&1 && npx --yes "@opum-ai/lore@$VERSION" --version )
+  rc=$?
+  rm -rf "$SMOKE"
+  # Reaching HERE means every package was visible, so a failure now is NOT propagation --
+  # the registry is serving the version and the install path genuinely does not work.
+  [ "$rc" -eq 0 ] || die "npx smoke failed AFTER every package was confirmed visible on the registry.
+This is not a propagation lag: the registry is serving $VERSION and the install path is broken.
+Investigate before announcing. Do NOT unpublish -- that fixes nothing here and is destructive."
+else
+  # Propagation, not breakage. wait_for_all_visible has already said so at length. Do not
+  # die: dying here would attach a scary exit status to a release that is probably fine.
+  say "SKIPPING the install smoke: the registry is not serving every package yet."
+  say "Re-run with --verify-only once it settles, then smoke manually:"
+  say "    npx --yes @opum-ai/lore@$VERSION --version"
+fi
 
 hr
-cat <<'DONE'
-PUBLISHED. Remaining, per LCLI-363:
+# Deliberately an UNQUOTED heredoc so $VERSION interpolates. The previous version of
+# this block was quoted ('DONE') and therefore hardcoded — it told every release, for
+# months, to cut a GitHub Release for v0.3.5 and to message tmux panes that no longer
+# exist. A closing message that names a fixed version is guaranteed to go stale the
+# moment that version ships (LCLI-483). Keep perishable references OUT of here:
+# no task ids, no session addresses, no version literals.
+cat <<DONE
+PUBLISHED $VERSION. Remaining, in order:
 
-  AC#5  Replace (do not merely supplement) the "Not yet published" sentence in
-        docs/reference/lore-cli-release-truth.md, and cut a non-draft,
-        non-prerelease GitHub Release for v0.3.5 using CHANGELOG.md's [0.3.5]
-        section as its body:
-            gh release create v0.3.5 --title "Lore CLI 0.3.5" --notes-file <notes>
+  1. Update the release-truth docs so they state $VERSION is released. REPLACE the
+     current-state claim, do not merely add alongside it:
+         docs/reference/lore-cli-release-truth.md    (Current state section)
+         README.md                                   (status block + the npm line)
 
-  AC#6  Tell the opum-cli-e2e session (pane wK:pR) to re-run the 407-row matrix
-        at rank-1 against the published release, and tell quest-cli (pane wS:pK)
-        that lore 0.3.5 is live — they are deliberately not describing it as
-        published until told.
+  2. Cut a non-draft, non-prerelease GitHub Release for v$VERSION, using
+     CHANGELOG.md's [$VERSION] section as its body:
+         gh release create v$VERSION --title "Lore CLI $VERSION" --notes-file <notes>
+
+  3. Tell the downstream sessions. They deliberately do not describe a version as
+     published until told. Resolve each one with ListAgents and match on repository —
+     session names change on every restart, so never reuse a previously seen address:
+         opum-cli-e2e       re-run the qualification matrix against the published release
+         quest-cli          lore $VERSION is live
+         opum-marketplace   the resolved skills/ tree SHA for this tag, or its
+                            federated-content check goes red:
+                                git ls-tree v$VERSION skills
+
+  4. Record HOW this shipped. If it was published by this script rather than by the
+     release workflow's OIDC job, say so in release-truth and state that the version
+     carries NO provenance attestation — a manual publish cannot produce one. Do not
+     let a reader infer provenance from an earlier version having it.
 DONE

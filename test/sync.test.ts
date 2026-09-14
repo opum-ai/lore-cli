@@ -314,6 +314,127 @@ describe("lore sync — log.md is a full-history projection", () => {
   });
 });
 
+// ── log.md drop reporting (LCLI-485) ───────────────────────────────────────────
+
+/**
+ * `log.md` is generated, so hand-authored prose in it cannot survive regeneration. It used to
+ * disappear with no message at all — a consumer found out by diffing. These pin both halves of the
+ * fix: the stderr warning when something will be lost, and the added/carried/dropped summary that
+ * makes the loss self-diagnosing. The second test is the one that matters most: a warning that also
+ * fired on the title and blank lines of a healthy log would fire on every sync and be ignored.
+ */
+describe("lore sync — LCLI-485: reports the content regeneration cannot keep", () => {
+  const dropHistory: readonly GitCommit[] = [
+    {
+      hash: "2222222222222222222222222222222222222222",
+      timestamp: "2026-08-14T04:17:00Z",
+      subject: "add story",
+      files: ["docs/stories/x.md"],
+    },
+  ];
+
+  function dropAdapter(): GitAdapter {
+    return { history: () => dropHistory };
+  }
+
+  /** A generated log with two lines of hand-authored prose pasted under its title. */
+  function committedWithProse(): string {
+    return generateLog(dropHistory, { root: "docs" }).replace(
+      "# Change log\n",
+      "# Change log\n\nThese entries are curated by hand.\nDo not delete this note.\n",
+    );
+  }
+
+  async function syncWithStderr(
+    args: string[],
+    overrides: Partial<SyncOptions> = {},
+  ): Promise<{ report: SyncReport; stderr: string }> {
+    const stderr = capture();
+    const { report } = await syncCmd(args, fakeAdapter([]), { gitAdapter: dropAdapter(), stderr, ...overrides });
+    return { report, stderr: stderr.text() };
+  }
+
+  test("warns on stderr, naming the count and a sample, when committed prose will be dropped", async () => {
+    writeDoc("stories/x.md", storyDoc("X", [], "todo"));
+    writeDoc("log.md", committedWithProse());
+
+    const { report, stderr } = await syncWithStderr([]);
+
+    expect(stderr).toContain("docs/log.md: regeneration drops 2 unrecognized lines");
+    expect(stderr).toContain("These entries are curated by hand.");
+    expect(report.log).toEqual({ added: 0, carriedForward: 0, dropped: 2 });
+    // The prose is gone from the file — the warning is the only notice the author gets, which is
+    // exactly why it has to exist.
+    expect(readDoc("log.md")).not.toContain("curated by hand");
+  });
+
+  test("does NOT warn on a log lore itself generated: its title and blank lines are not content", async () => {
+    writeDoc("stories/x.md", storyDoc("X", [], "todo"));
+    const committed = generateLog(dropHistory, { root: "docs" });
+    writeDoc("log.md", committed);
+
+    const { report, stderr } = await syncWithStderr([]);
+
+    // A warning that fires on every healthy sync is worse than no warning at all.
+    expect(stderr).not.toContain("unrecognized");
+    expect(report.log).toEqual({ added: 0, carriedForward: 0, dropped: 0 });
+    expect(readDoc("log.md")).toBe(committed);
+  });
+
+  test("--dry-run warns in the conditional, and writes nothing", async () => {
+    writeDoc("stories/x.md", storyDoc("X", [], "todo"));
+    const committed = committedWithProse();
+    writeDoc("log.md", committed);
+
+    const { stderr } = await syncWithStderr(["--dry-run"]);
+
+    expect(stderr).toContain("docs/log.md: regeneration would drop 2 unrecognized lines");
+    expect(readDoc("log.md")).toBe(committed);
+  });
+
+  test("reports what it added and what it carried forward, not only what it dropped", async () => {
+    writeDoc("stories/x.md", storyDoc("X", [], "todo"));
+    const unreachable = "- 2026-06-01T09:00:00Z 9999999999999999999999999999999999999999 pre-rewrite commit";
+    writeDoc("log.md", `# Change log\n\n## docs/adr\n\n${unreachable}\n`);
+
+    const { report } = await syncWithStderr([]);
+
+    expect(report.log).toEqual({ added: 1, carriedForward: 1, dropped: 0 });
+  });
+
+  test("the plain-text report renders the summary line", async () => {
+    writeDoc("stories/x.md", storyDoc("X", [], "todo"));
+    writeDoc("log.md", committedWithProse());
+    const stdout = capture();
+
+    const code = await runSync({
+      root,
+      output: { mode: "plain", color: false },
+      args: [],
+      adapter: fakeAdapter([]),
+      ...baseOptions({ gitAdapter: dropAdapter() }),
+      stdout,
+    });
+
+    expect(code).toBe(EXIT_OK);
+    expect(stdout.text()).toContain("docs/log.md: 0 entries added, 0 carried forward, 2 unrecognized lines dropped");
+  });
+
+  test("--no-index omits the summary entirely rather than reporting three zeroes", async () => {
+    writeDoc("stories/x.md", storyDoc("X", [], "todo"));
+    const committed = committedWithProse();
+    writeDoc("log.md", committed);
+
+    const { report, stderr } = await syncWithStderr(["--no-index"]);
+
+    // Nothing was merged, so there are no counts to report and nothing was dropped: three zeroes
+    // would read as "your log is fine" when the log was never looked at.
+    expect(report.log).toBeUndefined();
+    expect(stderr).not.toContain("unrecognized");
+    expect(readDoc("log.md")).toBe(committed);
+  });
+});
+
 // ── AC#2: sole committer of backlog/ ──────────────────────────────────────────────
 
 describe("lore sync — AC#2: sole committer of backlog/", () => {

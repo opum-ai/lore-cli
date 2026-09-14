@@ -36,6 +36,28 @@ session acting on someone's behalf — a missing or wrong `--actor-kind` is reje
 
 <!-- opum:fleet-operating:end -->
 
+## Delegation
+
+**Specialist subagent delegation is authorised in this repository.** Use the `opum-workflow`
+agents — `implementer`, `reviewer`, `verifier`, `documenter` — for scoped implementation,
+adversarial review, qualification, and documentation work, without asking first. This line exists
+because the harness rule naming "the user, a CLAUDE.md file, or a skill" as the authorities means
+a peer's relay is never sufficient on its own; recorded here so the question is settled rather
+than re-asked every session. User ruling, 2026-09-13.
+
+Two things that are not optional, both learned the hard way on 2026-09-13:
+
+- **Give each agent exclusive file scope, and check it against your own in-flight branches too,
+  not just against the other agents.** Concurrent worktrees do not protect you from handing an
+  agent a file that an open PR of yours is about to change underneath it.
+- **Read the agent's tool list before dispatching.** `documenter` ships with no Bash, so it cannot
+  run `lore`, `lore check`, or git — every documentation deliverable in this repo needs all three.
+  Route doc work to `implementer` until that is fixed upstream.
+
+**A gate that is wrong fails only during a release**, so anything touching `release.yml` or
+`scripts/` gets a `reviewer` pass before it lands. Match ceremony to risk otherwise: a
+documentation section does not need three agents.
+
 <!-- lore:agents:begin -->
 This repo uses **lore** — an OKF-native documentation CLI — for the docs bundle under `docs/`.
 When working on documentation, drive it through `lore` (not a plain editor) so Story <-> Task

@@ -22,6 +22,20 @@ on:
         description: "Run the non-blocking 1 GiB Ladybug scale observation (30-minute time box)."
         type: boolean
         default: false
+      acknowledge_dangling_provenance:
+        # THE SANCTIONED WAY PAST A TRUE POSITIVE, and the reason nobody should ever need to
+        # delete the provenance-pre job. That job re-checks ALREADY-PUBLISHED history, so once
+        # a version's attestation starts pointing at a commit GitHub no longer has, it fails on
+        # every subsequent dispatch and `publish` (which lists it in `needs:`) is unreachable.
+        # Setting this to the task id tracking the loss waives the finding FOR THIS DISPATCH
+        # ONLY: every dangling package is still listed, the reference is echoed into the log and
+        # the job summary, and the next run fails again. The durable fix is to raise
+        # KNOWN_DANGLING_THROUGH in scripts/release-provenance.mjs in a commit citing that task.
+        # Deliberately a task id and not a checkbox — a waiver should name what it is
+        # accountable to.
+        description: "Only if provenance-pre failed: the task id tracking an accepted dangling-provenance loss (e.g. LCLI-481). Waives the finding for THIS dispatch, loudly, and does not persist. Leave empty."
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -554,6 +568,71 @@ jobs:
           path: dist-npm/
           if-no-files-found: error
 
+  provenance-pre:
+    name: re-verify published provenance still resolves (LCLI-481)
+    runs-on: ubuntu-latest
+    # NO `needs:` and NO `if:` — this runs on every dispatch, dry-run included. It reads the
+    # public registry and the public GitHub API and touches nothing, so there is no reason to
+    # reserve the signal for real publishes, and a dry-run dispatch is exactly when a
+    # maintainer wants to find out that a history rewrite broke the last release's provenance.
+    #
+    # THIS JOB MUST NOT CARRY `continue-on-error:` EITHER. GitHub runs the dependents of a job
+    # that failed under continue-on-error, so adding it here would leave every wiring assertion
+    # green while `publish` proceeds past a red gate — the single cheapest way to neuter this
+    # without anyone noticing. test/release-workflow.test.ts asserts its absence, along with
+    # the absence of an `if:` and of any `|| true` in the step below.
+    permissions:
+      contents: read
+    # Bounded because this job gates `publish`: a hung connection must not hold a runner for
+    # the 6-hour default while the release waits on it. Every request inside the script has its
+    # own 20s ceiling too (LORE_PROVENANCE_TIMEOUT_MS), so reaching this limit means something
+    # is wrong with the job, not with one endpoint.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+          # DELIBERATELY no `registry-url:` — that input makes setup-node write
+          # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` into the job's .npmrc. This
+          # job only ever GETs public JSON; giving it a credential line would be handing a
+          # publishing-shaped credential to a job that has no business publishing.
+      - name: Re-verify the provenance already on the registry (--pre)
+        # WHAT THIS CATCHES: a history rewrite between two releases. Every @opum-ai/lore*
+        # version published from CI before 0.6.1 pins a commit destroyed when this repo was
+        # deleted and recreated on 2026-09-10 (LCLI-481) — 0.6.0 pins
+        # 59ba30e497f8e98aa6c6be022d9363fd718fb4ee, which api.github.com answers 422 for. Those
+        # links cannot be repaired: the attestation is signed and the version cannot be
+        # republished. So the script treats everything at or below its KNOWN_DANGLING_THROUGH
+        # baseline as accepted damage — listed on every run, never failed on — and fails only
+        # when a version published AFTER the baseline stops resolving, which is the signature of
+        # a NEW rewrite. Blocking here is the point: it stops this release from adding another
+        # permanently-dangling version to the pile before anyone has looked at the rewrite.
+        #
+        # It never calls git. The destroyed commits are still present as loose objects in a
+        # clone made before the rewrite, so a local `git cat-file -t` prints `commit` and exits
+        # 0 on exactly the artifacts this gate exists to catch (verified 2026-09-13).
+        #
+        # IF THIS FAILS, READ THE ERROR BEFORE CHANGING ANYTHING. A true positive does not clear
+        # by itself — it re-fails every run and blocks `publish` — so the script prints the two
+        # sanctioned ways forward, and the `acknowledge_dangling_provenance` input below is the
+        # one that unblocks a release TODAY without pretending the finding went away.
+        env:
+          # 60 requests/hour unauthenticated is not enough headroom for a release run, and an
+          # exhausted rate limit degrades to "inconclusive" (a loud pass), which would quietly
+          # turn the gate off. contents: read is all the commits endpoint needs.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACKNOWLEDGE: ${{ inputs.acknowledge_dangling_provenance }}
+        # Two literal invocations rather than an interpolated argument string: an unquoted
+        # "$args" expansion would word-split, and a quoted one would pass an empty argument.
+        # Neither branch may grow a `|| true` — that is an assertion in the wiring test.
+        run: |
+          if [ -n "$ACKNOWLEDGE" ]; then
+            node scripts/release-provenance.mjs --pre --acknowledge "$ACKNOWLEDGE"
+          else
+            node scripts/release-provenance.mjs --pre
+          fi
+
   publish:
     name: publish (npm, OIDC trusted publishing)
     # Only runs on an explicit `publish: true` dispatch (the input defaults to
@@ -562,7 +641,9 @@ jobs:
     # deliberately opt in on that one run, never as a side effect of any other
     # trigger.
     if: ${{ inputs.publish == true }}
-    needs: [setup, package]
+    # provenance-pre gates this job: a rewrite that dangled an already-published version's
+    # attestation must stop the release rather than be added to (LCLI-481).
+    needs: [setup, package, provenance-pre]
     runs-on: ubuntu-latest
     # LCLI-268: an OUT-OF-FILE gate, on top of (not instead of) the `if:` guard above.
     # npm Trusted Publishing (LCLI-255) matches OIDC tokens on repo + WORKFLOW FILENAME,
@@ -626,15 +707,40 @@ jobs:
       - name: Assert no token is shadowing OIDC (quest-cli QCLI finding, 2026-08-30)
         # THE FAILURE THIS PREVENTS IS SILENT AND COSTS HOURS. `actions/setup-node` with
         # `registry-url` writes `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` into the
-        # job's .npmrc. If NODE_AUTH_TOKEN holds a REAL token, npm authenticates with it and
-        # NEVER ATTEMPTS OIDC -- so a "harmless fallback" token stands in front of the mechanism
-        # it was meant to back up, and a dead or wrongly-scoped one produces E404 on PUT that
-        # looks exactly like a missing trust relationship. quest-cli spent six dispatches on
-        # this before finding it; lore has only ever published because the secret is unset and
-        # setup-node substitutes its placeholder.
+        # job's .npmrc.
         #
-        # That is an invariant nobody wrote down, so adding an NPM_TOKEN secret later would
-        # silently switch this job's auth mode with no diagnostic. Assert it instead.
+        # WHAT A CONFIGURED TOKEN ACTUALLY DOES, read out of npm's own source (lib/utils/oidc.js
+        # and lib/commands/publish.js, verified identical in npm 11.19.1 and 12.0.2 -- 11.x is
+        # what the step above installs). An earlier revision of this comment said a real token
+        # makes npm "NEVER ATTEMPT OIDC". That is FALSE and it sent a sibling repo down a
+        # six-dispatch blind alley, so the mechanism is spelled out here rather than summarised:
+        #
+        #   - publish.js calls `await oidc({...})` UNCONDITIONALLY, and does it BEFORE reading
+        #     credentials at all (`getCredentialsByURI` runs on the NEXT line).
+        #   - oidc.js has NO early return on an existing `_authToken`. It bails only on: not a
+        #     recognised CI vendor, ACTIONS_ID_TOKEN_REQUEST_URL/TOKEN absent, no id_token, the
+        #     exchange request threw, or the exchange response carried no `.token`.
+        #   - On success it OVERWRITES whatever .npmrc held:
+        #         opts[authTokenKey] = response.token
+        #         config.set(authTokenKey, response.token, 'user')
+        #
+        # So a configured token does not BLOCK OIDC -- it becomes the silent FALLBACK for when
+        # the exchange fails, because oidc.js swallows that failure (log.verbose, return
+        # undefined) and npm carries on with .npmrc. That is why the check below still earns its
+        # place, and it is a WORSE hazard than the one the old comment described: a dead or
+        # wrongly-scoped token turns a failed exchange into an E404 on PUT that looks exactly
+        # like a missing trust relationship, and a LIVE one lets the publish SUCCEED under the
+        # wrong identity with no provenance and no diagnostic at all.
+        #
+        # setup-node's own placeholder (`XXXXX-XXXXX-XXXXX-XXXXX`, exported unconditionally when
+        # `registry-url` is set and no token is configured) is accepted below for the same
+        # reason: it cannot prevent the exchange either. v0.6.0 published successfully from CI,
+        # with provenance, with that placeholder present -- `git show v0.6.0:.github/workflows/
+        # release.yml` has a byte-identical setup-node step. Do not "fix" the placeholder and
+        # expect a broken publish to start working; see LCLI-482.
+        #
+        # Adding an NPM_TOKEN secret later would silently switch this job's auth mode with no
+        # diagnostic. Assert it instead.
         #
         # npm gives E404 on PUT for at least four distinct causes -- token cannot write, token
         # invalid, npm too old so OIDC was skipped, and no trust relationship -- and no way to
@@ -646,7 +752,7 @@ jobs:
             ""|undefined|null|XXXXX-XXXXX-XXXXX-XXXXX)
               echo "no real registry token configured — OIDC will be used" ;;
             *)
-              echo "::error::a registry auth token is configured for this job, which makes npm authenticate with it and SKIP OIDC entirely. Remove the NPM_TOKEN secret / node-auth-token input from the publish job; trusted publishing needs no stored credential."
+              echo "::error::a registry auth token is configured for this job. npm still ATTEMPTS OIDC first, but this token becomes the silent fallback if the exchange fails -- publishing under the wrong identity without provenance, or returning an E404 that looks like a missing trust relationship. Remove the NPM_TOKEN secret / node-auth-token input from the publish job; trusted publishing needs no stored credential."
               exit 1 ;;
           esac
       - name: Assert npm CLI meets the OIDC trusted-publishing floor (docs/runbooks/release-publishing.md Prerequisites)
@@ -698,6 +804,23 @@ jobs:
         # last (or not at all).
         env:
           PLATFORM_NAMES_SPACE: ${{ needs.setup.outputs.namesSpace }}
+          # npm logs the ONE line that says why trusted publishing was refused at verbose only:
+          #   log.verbose('oidc', `Failed token exchange request with body message: ${...}`)
+          # At the default loglevel that failure is swallowed (oidc.js returns undefined) and the
+          # run surfaces it four layers downstream as a generic E404 on PUT, which has at least
+          # four indistinguishable causes. Every OIDC diagnosis on LCLI-482 so far -- ours and a
+          # sibling repo's, one of which was wrong -- is an INFERENCE from that E404, because
+          # nobody had the registry's own words. This costs one env var and turns the next failed
+          # dispatch into an answer instead of another theory.
+          #
+          # Checked before enabling, because this repo is public and so are these logs: npm's
+          # `redactLog` is applied to argv, error messages and audit URIs -- NOT to every
+          # verbose line -- so verbose is not blanket-safe by construction. It is safe HERE
+          # because oidc.js never logs the exchanged token (only "Successfully retrieved and
+          # set token"), registry auth travels as a header rather than in the logged URL, and
+          # the redact matchers catch an `npm_`-prefixed token anywhere they do apply. If a
+          # future npm starts logging credentials at verbose, this env var is the thing to pull.
+          NPM_CONFIG_LOGLEVEL: verbose
         run: |
           publish_or_skip() {
             local tgz="$1"
@@ -808,3 +931,170 @@ jobs:
             publish_or_skip "$tgz"
           done
           publish_or_skip "$root"
+      - name: Verify the registry serves what was published (LCLI-460)
+        # npm's publish confirmation is authoritative; the registry's READ API is not
+        # immediately consistent with it. Observed on @opum-ai/lore-linux-arm64 across three
+        # consecutive releases and WORSENING rather than jittering: 0.4.5 ~15s, 0.4.6 ~35s,
+        # 0.5.0 ~25 MINUTES (resolved 2026-09-08T14:49:18Z), confirmed origin-side via
+        # cf-cache-status/age headers rather than a stale CDN edge. On 0.5.0 the lag ran long
+        # enough that a sibling session flagged it as a possible install-breaking defect before
+        # it resolved on its own. docs/reference/lore-cli-release-truth.md's 0.5.0 entry has
+        # the timeline.
+        #
+        # TWO DISTINCT FAILURES, and collapsing them is what turns a slow release into a false
+        # alarm:
+        #   NOT VISIBLE YET  -> propagation. Not a defect. Waiting fixes it.
+        #   VISIBLE, WRONG BYTES -> a real failure. Waiting never fixes it.
+        # A version-string check cannot tell them apart, and would pass against a registry
+        # serving the right version with the wrong tarball. So the content assertion compares
+        # the registry's dist.shasum against the sha1 of the tarball THIS JOB published.
+        #
+        # ONE SHARED WINDOW, NOT ONE PER PACKAGE. The deadline is wall-clock and starts once;
+        # every package still missing is re-polled each round against that same deadline. Total
+        # wait is bounded at REGISTRY_WINDOW_SECONDS however many packages are outstanding, and
+        # each still gets the whole remaining window. Per-package would either be too short for
+        # the slowest or serialise seven waits. If a release is paused here: ONE 30-minute
+        # window, not seven. 30 minutes because the worst observed was 25 and the trend is up.
+        #
+        # This step NEVER fails the job for propagation alone -- it reports and exits 0 -- because
+        # the publish already succeeded and failing here would attach a red X to a release that is
+        # fine, inviting someone to "fix" it destructively. It DOES fail on a content mismatch.
+        env:
+          REGISTRY_WINDOW_SECONDS: ${{ vars.REGISTRY_WINDOW_SECONDS || 1800 }}
+        run: |
+          # No associative array on purpose: `declare -A` needs bash 4+, which the runner has
+          # but a maintainer's macOS /bin/bash (3.2) does not -- and code in a release path
+          # that cannot be run locally cannot be tested locally. The content loop below
+          # re-derives name/version from each tarball instead of carrying a map.
+          spec_of_tgz() {
+            tar -xzOf "$1" package/package.json | node -e '
+              let d=""; process.stdin.on("data",c=>d+=c);
+              process.stdin.on("end",()=>{const p=JSON.parse(d);console.log(p.name+"@"+p.version);});
+            '
+          }
+
+          pending=""
+          for tgz in ./dist-npm/*.tgz; do
+            spec="$(spec_of_tgz "$tgz")"
+            case "$spec" in
+              ""|"@"|*"@") echo "::error::could not read name/version from $tgz"; exit 1 ;;
+            esac
+            pending="$pending $spec"
+          done
+          pending="${pending# }"
+
+          started=$(date +%s)
+          deadline=$(( started + REGISTRY_WINDOW_SECONDS ))
+          delay=5
+          visible=""
+          while : ; do
+            next=""; missing=0
+            for spec in $pending; do
+              if npm view "$spec" version >/dev/null 2>&1; then
+                echo "visible  $spec after $(( $(date +%s) - started ))s"
+                visible="$visible $spec"
+              else
+                next="$next $spec"; missing=$(( missing + 1 ))
+              fi
+            done
+            pending="${next# }"
+            [ -z "$pending" ] && break
+            now=$(date +%s)
+            [ "$now" -ge "$deadline" ] && break
+            nap="$delay"
+            [ $(( now + nap )) -gt "$deadline" ] && nap=$(( deadline - now ))
+            echo "waiting  ${missing} package(s) not visible yet; $(( deadline - now ))s of the shared window left"
+            sleep "$nap"
+            if [ "$delay" -lt 60 ]; then
+              delay=$(( delay * 2 ))
+              if [ "$delay" -gt 60 ]; then delay=60; fi
+            fi
+          done
+
+          # CONTENT. Only meaningful for what is actually visible; a package still propagating
+          # has no bytes to compare yet.
+          rc=0
+          for tgz in ./dist-npm/*.tgz; do
+            spec="$(spec_of_tgz "$tgz")"
+            # Skip anything still propagating -- it has no bytes on the registry to compare yet.
+            case " ${visible# } " in *" $spec "*) ;; *) continue ;; esac
+            want="$(sha1sum "$tgz" | cut -d" " -f1)"
+            got="$(npm view "$spec" dist.shasum 2>/dev/null | tr -d "[:space:]")"
+            if [ "$want" = "$got" ]; then
+              echo "content  $spec matches the published tarball (sha1 $want)"
+            else
+              echo "::error::$spec is on the registry but serves DIFFERENT BYTES than this job published (published sha1 $want, registry dist.shasum ${got:-<none>}). This is not propagation and waiting will not fix it."
+              rc=1
+            fi
+          done
+
+          if [ -n "$pending" ]; then
+            echo "::warning::still not visible on the registry read API after ${REGISTRY_WINDOW_SECONDS}s:${pending}. This is NOT proof the publish failed -- npm already confirmed it, and only the registry read API is behind (LCLI-460: 0.4.5 ~15s, 0.4.6 ~35s, 0.5.0 ~25min). Do NOT unpublish. Re-check before treating it as a failure."
+          fi
+          exit "$rc"
+
+  provenance-post:
+    name: verify this release's own provenance (LCLI-481)
+    needs: publish
+    # Runs whenever `publish` actually RAN — success or failure — and only skips when publish
+    # itself was skipped (the dry-run dispatches, where nothing was published).
+    #
+    # THE FAILED CASE IS THE ONE THAT MATTERS MOST, which is why this is not a bare `needs:`.
+    # release.yml's `publish_or_skip` is resumable precisely so a release can complete across
+    # two dispatches: dispatch 1 publishes six platform packages from commit X and dies before
+    # the launcher, dispatch 2 publishes the launcher from commit Y. That partial failure is
+    # exactly when one version ends up carrying two different pinned commits — and the default
+    # `needs:`-only behaviour would skip this check on it.
+    if: ${{ !cancelled() && needs.publish.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Bounded: worst case is PROVENANCE_WAIT_SECONDS (180) spent on each of the six packages
+    # that could still be propagating, ~18 minutes, and the script only ever waits when at
+    # least one package of this release already carries an attestation.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+          # No `registry-url:` here either — see the note in provenance-pre. This job reads
+          # public JSON and must not be handed a registry credential line.
+      - name: Check the attestation this release produced, if it produced one (--post)
+        # WHAT THIS ANSWERS, and it is two different questions that must not be collapsed:
+        #
+        #   NO ATTESTATION      -> PASS, with a `::warning::` and a job-summary row naming the
+        #                          cause. This is the EXPECTED result right now: OIDC trusted
+        #                          publishing is broken for this repo (LCLI-482, still open),
+        #                          so releases go out through scripts/publish-release.sh, which
+        #                          cannot mint provenance. Failing here would red every release
+        #                          for something the release cannot fix, and the gate would be
+        #                          switched off within one dispatch. Passing SILENTLY would be
+        #                          the opposite mistake — unattested releases would accumulate
+        #                          unnoticed — so the gap is recorded on every single run.
+        #   ATTESTATION PRESENT,
+        #   PINNED COMMIT GONE  -> FAIL. The LCLI-481 defect, caught on the release run rather
+        #                          than found later on npmjs.com, where a provenance link to a
+        #                          non-existent commit reads as tampering.
+        #
+        # This CANNOT un-publish anything — by the time it runs the bytes are on the registry.
+        # Its value is that the verdict lands on the release run within minutes, while the
+        # cause is still obvious, instead of in a bug report months later. It is also the last
+        # job in the workflow, so unlike provenance-pre a failure here blocks nothing; there is
+        # deliberately no acknowledgement input for it.
+        #
+        # The package set and version come from the checked-out package.json (root name +
+        # every optionalDependencies key). verify-versions has already asserted that those
+        # pins are exact and equal to the root version, so that IS this release's package set.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Attestations propagate on the registry's own schedule — the same read-API lag
+          # LCLI-460 documents for tarballs (0.5.0 took ~25 minutes to become visible). Without
+          # a bounded wait, a genuinely attested release would be reported as unattested purely
+          # because the check was fast, which is the one way the "absent is fine" rule could
+          # become misleading. The window is PER PACKAGE, and the script skips it entirely when
+          # not one package of the release carries an attestation — with LCLI-482 open that is
+          # the structural case, and spending 180s per package to re-learn it would make every
+          # release slower for nothing.
+          PROVENANCE_WAIT_SECONDS: ${{ vars.PROVENANCE_WAIT_SECONDS || 180 }}
+        run: node scripts/release-provenance.mjs --post --wait-seconds "$PROVENANCE_WAIT_SECONDS"

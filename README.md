@@ -30,18 +30,23 @@ semantic exit codes, machine-readable `--json`).
 
 - Built on **Bun + TypeScript** with an exact-pinned **Commander** parser fed by
   Lore's capability manifest; Lore still owns output, errors, and process lifecycle.
-- Published on npm as **`@opum-ai/lore@0.6.0`** (bin `lore`) with six
+- Published on npm as **`@opum-ai/lore@0.6.1`** (bin `lore`) with six
   exact-pinned platform packages, including Windows ARM64.
 - The agent bridge is a generated **`.claude/skills/lore/SKILL.md`** plus a tiny
   CLAUDE.md nudge and `lore instructions`. An **MCP server is secondary and
   deferred to v2**.
 
-> **Status: 0.6.0 released.** Tag `v0.6.0`, the qualified workflow artifacts,
+> **Status: 0.6.1 released.** Tag `v0.6.1`, the qualified workflow artifacts,
 > all seven public `@opum-ai/lore*` npm packages, and a clean registry install
-> agree on `0.6.0`. Trusted Publishing is configured for every package; the
-> owner lifted the `publish: true` prohibition on 2026-08-29 (LCLI-278), so a
-> release is a single `gh workflow run release.yml --ref v<version> -f
-> publish=true` dispatch. See
+> agree on `0.6.1`.
+>
+> **Releases are currently manual, not a single dispatch.** OIDC trusted
+> publishing is configured on every package but cannot authenticate: GitHub
+> issues immutable-format OIDC subject claims for this repository and npm
+> matches the classic form, so `publish: true` fails with `E404` (LCLI-482).
+> `0.6.1` was therefore published with `scripts/publish-release.sh` and, unlike
+> `0.6.0`, **carries no provenance attestation** — provenance requires the CI
+> OIDC path. See
 > [Lore CLI release truth](docs/reference/lore-cli-release-truth.md).
 
 ---
