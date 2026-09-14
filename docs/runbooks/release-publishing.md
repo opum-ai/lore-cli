@@ -534,20 +534,46 @@ publish is explicitly marked public. Root `package.json` and all six
    hand — it encodes this step's ordering and refusals:
 
    ```
-   gh run download <run-id> -n npm-packages -D scripts/release-<version>
    scripts/publish-release.sh <version> <run-id> --dry-run
    scripts/publish-release.sh <version> <run-id>
    ```
 
-   It verifies every tarball's `sha256` against a `SHA256SUMS.txt` **before**
-   any registry write and refuses on a mismatch, a missing file, or a missing
-   sums file — so a locally rebuilt tarball cannot reach the registry by
-   accident. It publishes platform packages first and stops **before** the root
+   **There is no longer a `gh run download` step to run first.** The script
+   downloads the `npm-packages` artifact itself when the directory is absent or
+   short of the seven tarballs, and resolves the run **attempt** rather than
+   assuming `1` — artifact names embed it, so assuming `1` makes a download
+   "correctly" fail to find artifacts that exist (LCLI-487). During the `0.6.2`
+   release the operator was stopped three separate times by prerequisites the
+   script had already diagnosed precisely and then declined to perform; it now
+   performs them (LCLI-489).
+
+   **What the digest check proves, stated precisely, because it is easy to
+   overstate.** The six **platform** tarballs are verified against
+   `package.platformTarballSha256` in their `ladybug-package-qualification`
+   reports, which `release.yml` asserts in CI against the bytes it built and
+   which the script fetches **separately** from the `npm-packages` artifact it
+   is checking. That is independent. The **root launcher** has no such record —
+   it is `npm pack`'d inside that same job and its digest is stored nowhere — so
+   for that one tarball a locally computed digest is irreducibly a **self-seal**.
+   `SHA256SUMS.txt` is a local seal too: CI does not emit it, the script
+   generates it, and it therefore proves only that the download has not changed
+   since sealing. Six of seven are independently verified; do not round that up.
+
+   It publishes platform packages first and stops **before** the root
    launcher if any of them fails, so the launcher is never resolvable before the
    binary it execs. It is resumable, skipping versions already published, and
    ends with a clean-temp-dir `npx` install smoke. Digest verification runs
    ahead of the auth check, so a rehearsal proves the bytes are right even
    before credentials exist.
+
+   **It reports the shape of the credential it is about to use** — length,
+   prefix and a whitespace flag, never a value — and refuses one that is not
+   shaped like an npm token. On `0.6.2`, attempts 4 and 5 failed with `PUT 404`,
+   which reads exactly like a permissions problem; the shape check
+   (`length=24 prefix=OTHER`) showed in one second that the stored secret was not
+   an npm token at all. It also names which of the three auth paths it is on
+   (Keychain, `NPM_TOKEN`, or `~/.npmrc`), because a `~/.npmrc` web-login session
+   reinstates the very 2FA-on-write prompt the Keychain path exists to avoid.
 
    **A manual publish produces no provenance attestation.** That is a known
    consequence of the broken OIDC path, not a mistake in the script — see
@@ -794,8 +820,12 @@ Until LCLI-482 closes, every release published this way is attestation-free.
 Do not describe it as fixed, and do not let a reader infer provenance from
 `0.6.0`'s having had it. State it in the release notes and in the
 release-truth record at publish time; what a consumer verifies instead is the
-tarball SHA-256 set, which `scripts/publish-release.sh` checks against
-`SHA256SUMS.txt` before any registry write.
+tarball SHA-256 set. Be precise about that substitute rather than generous with
+it: `scripts/publish-release.sh` checks the six platform tarballs against the
+digests CI recorded in their qualification reports, which is an independent
+check, and the root launcher only against a locally generated `SHA256SUMS.txt`,
+which is tamper-evidence on one download and not provenance. A consumer told
+"the checksums are verified" will assume more than is true for the seventh.
 
 ## Dry-run rehearsal (verified)
 

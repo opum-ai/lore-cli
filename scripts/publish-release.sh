@@ -2,9 +2,12 @@
 #
 # scripts/publish-release.sh — publish a qualified Lore CLI release to npm.
 #
-# Auth model: a GRANULAR ACCESS TOKEN. It bypasses npm's 2FA-on-write, so there is no OTP
-# prompt — that is the whole point. `npm login` does NOT achieve this: a web login is still
-# subject to "require 2FA for writes", which is exactly the EOTP wall this replaces.
+# Auth model: a GRANULAR ACCESS TOKEN, WHEN ONE IS ACTUALLY INSTALLED — it bypasses npm's
+# 2FA-on-write, so there is no OTP prompt, and that is the whole point. The qualifier is in
+# this sentence deliberately, because this is the line that gets quoted and on 0.6.2 it was
+# quoted while the publish was in fact falling through to ~/.npmrc and hitting the very OTP
+# wall the sentence promises to avoid. `npm login` does NOT achieve this: a web login is
+# still subject to "require 2FA for writes", which is exactly the EOTP wall this replaces.
 #
 # There is no longer an "or classic Automation token" option, though this header offered one
 # until 2026-09-14. docs/runbooks/release-publishing.md:557-565 records that npm disabled
@@ -16,18 +19,56 @@
 # history. Falls back to NPM_TOKEN, then to whatever is already in ~/.npmrc.
 #
 # CHECK WHICH OF THOSE THREE YOU ARE ACTUALLY ON before trusting the "no OTP prompt" claim
-# above. On 2026-09-14 the Keychain entry did not exist and NPM_TOKEN was unset, so a publish
-# here authenticates from ~/.npmrc — and a web-login session there reinstates the very EOTP
-# wall this header says is bypassed. See LCLI-488.
+# above. It is not decoration: as measured on 2026-09-14 the Keychain entry did NOT exist and
+# NPM_TOKEN was UNSET, so the publish authenticated from ~/.npmrc — and the token there was
+# valid (`npm whoami` returned a real identity, so not expired and not revoked) but
+# WEB-LOGIN SHAPED, which is subject to require-2FA-on-write. That, and not a dead credential
+# and not npm's post-2025 token regime as such, is where the human-at-a-TTY constraint came
+# from. The script now reports which of the three paths it is on, so this is observable at
+# publish time instead of being reconstructed afterwards (LCLI-488, LCLI-489 AC#5).
+#
+# The token's SHAPE is checked before any publish is attempted and this is worth more than it
+# looks. On 0.6.2, attempts 4 and 5 failed with `PUT 404`, which reads exactly like a
+# permissions problem and sent the operator to npmjs.com to change settings that were fine.
+# A shape check returned `length=24 prefix=OTHER` and settled it in one second: the Keychain
+# held something that was not an npm token at all (granular = npm_ + 36 = 40 chars). Length,
+# prefix and a whitespace flag reveal nothing secret.
+#
+# ONE COMMAND. This script PERFORMS its prerequisites rather than diagnosing them and
+# handing you a command to paste back (LCLI-489). It downloads the npm-packages artifact
+# when the directory is absent or incomplete, resolves the run ATTEMPT rather than assuming
+# 1, builds the digest manifest, and only then publishes. During the 0.6.2 release the
+# operator was stopped three separate times by steps this script had already worked out.
 #
 # Safety properties, in order of how much they matter:
-#   - Verifies every tarball's sha256 against SHA256SUMS.txt BEFORE publishing anything.
+#   - Verifies every tarball's sha256 BEFORE publishing anything, six of them against a
+#     digest CI recorded independently. Read "DIGEST PROVENANCE" below for what that does
+#     and does not prove -- the distinction is the whole point and it is easy to overstate.
 #     Publishing is effectively irreversible; npm unpublish is heavily restricted.
 #   - Publishes the six PLATFORM packages first and the root launcher LAST, so the launcher
 #     is never resolvable before the binary it execs exists.
-#   - Resumable: a version already on the registry is skipped, not re-attempted.
+#   - Resumable: a version already on the registry is skipped, not re-attempted. This is
+#     what made five failed 0.6.2 attempts cost nothing.
 #   - --dry-run does everything except the two mutating calls.
-#   - Never echoes the token.
+#   - Never echoes the token. The one thing it reports about a credential is its SHAPE.
+#
+# === DIGEST PROVENANCE -- what the check below actually proves ===
+#
+# The SIX PLATFORM tarballs are verified against `package.platformTarballSha256` in their
+# ladybug-package-qualification reports, which release.yml:492-517 asserts in CI against the
+# bytes it built. Those reports are fetched from the Release run, SEPARATELY from the
+# npm-packages artifact being verified. That is a genuinely independent check: two artifacts
+# from the same run would have to agree for a substitution to pass.
+#
+# The ROOT LAUNCHER has NO such digest. It is `npm pack`'d inside that same job
+# (release.yml:520-527) and its sha256 is recorded nowhere, so a locally computed digest for
+# it is irreducibly a LOCAL SELF-SEAL: tamper-evidence on one download, not provenance.
+#
+# SHA256SUMS.txt is likewise a local seal. CI does not emit it -- this script generates it
+# from the same tarballs it then verifies, so on its own it proves only that the download has
+# not changed since sealing. It is kept for that narrow purpose and is NOT the independent
+# check. Until CI records the root tarball's digest too, do not round any of this up to
+# "all seven independently verified" (LCLI-489 AC#4, option (a)).
 #
 # Encodes runbook section 3 step 5's sequence so it cannot be misremembered under pressure.
 # See docs/runbooks/release-publishing.md.
@@ -39,20 +80,46 @@
 #   scripts/publish-release.sh <version> <run-id>             # publish + move latest dist-tags
 #   scripts/publish-release.sh <version> <run-id> --verify-only
 #
-# ARTIFACTS defaults to ./release-<version>/ beside this script; override with the env var.
-# The directory must contain the seven workflow .tgz files AND a SHA256SUMS.txt covering them.
+# ARTIFACTS defaults to release-<version>/ beside this script, resolved ABSOLUTELY so the
+# caller's cwd cannot change what it means; override with the env var. The directory is
+# populated automatically when it is missing or short of the seven workflow .tgz files.
 
 set -uo pipefail
+
+# EVERY PATH IS ABSOLUTE FROM HERE ON, and this is a mechanism rather than a convention
+# (LCLI-489 AC#2). The script never cd's; where a tool insists on a working directory it gets
+# one in a SUBSHELL so the parent's cwd is untouched. The defect this prevents: on 0.6.2 a
+# handed-over `cd scripts/release-0.6.2 && ...` left the operator's shell inside the artifacts
+# directory, so a follow-up `ls scripts/release-0.6.2/*.tgz` resolved the path INSIDE ITSELF,
+# reported 0 tarballs, and looked exactly like a failed download. It cost a full round trip.
+# `pwd -P` resolves symlinks so the same directory has one spelling. Covered by a test.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+
+usage() { awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "${BASH_SOURCE[0]}"; }
 
 VERSION="${1:-}"
 RUN_ID="${2:-}"
 KEYCHAIN_SERVICE="${KEYCHAIN_SERVICE:-npm-opum-ai-publish}"
 case "$VERSION" in
-  ""|-*) sed -n '2,44p' "${BASH_SOURCE[0]}"; exit 2 ;;
+  ""|-*) usage; exit 2 ;;
 esac
 [ -n "$RUN_ID" ] || { echo "ERROR: a Release run id is required (it is how a lost artifact directory is recovered)" >&2; exit 2; }
 shift 2
-ARTIFACTS="${ARTIFACTS:-$(dirname "${BASH_SOURCE[0]}")/release-${VERSION}}"
+
+# Resolved absolutely even when the caller passes a relative ARTIFACTS, so that the value
+# means the same thing no matter where the script was invoked from. The directory may not
+# exist yet -- it is created and populated below -- so this cannot use `cd`.
+ARTIFACTS="${ARTIFACTS:-$SCRIPT_DIR/release-${VERSION}}"
+case "$ARTIFACTS" in
+  /*) ;;
+  *)  ARTIFACTS="$PWD/$ARTIFACTS" ;;
+esac
+
+# Used only to name the run in `gh api`; gh's own repo inference is deliberately not relied
+# on, because it reads the CURRENT DIRECTORY and that is the bug this section exists to kill.
+REPO_SLUG="${REPO_SLUG:-$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null | sed -e 's#^git@github.com:##' -e 's#^https://github.com/##' -e 's#\.git$##')}"
+[ -n "$REPO_SLUG" ] || REPO_SLUG="opum-ai/lore-cli"
 
 # Platform packages FIRST, root LAST. Order is load-bearing, not cosmetic.
 PLATFORM_PKGS=(
@@ -71,7 +138,7 @@ for arg in "$@"; do
   case "$arg" in
     --dry-run)     DRY_RUN=1 ;;
     --verify-only) VERIFY_ONLY=1 ;;
-    -h|--help)     sed -n '2,40p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help)     usage; exit 0 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
@@ -81,45 +148,214 @@ say() { printf '%s\n' "$*"; }
 hr()  { printf '%s\n' "────────────────────────────────────────────────────────────"; }
 
 # ── Artifacts ───────────────────────────────────────────────────────────────
-[ -d "$ARTIFACTS" ] || die "artifact directory not found: $ARTIFACTS
-Re-download it:  gh run download $RUN_ID -n npm-packages -D '$ARTIFACTS'"
-cd "$ARTIFACTS" || die "cannot enter $ARTIFACTS"
-[ -f SHA256SUMS.txt ] || die "SHA256SUMS.txt missing in $ARTIFACTS — refusing to publish unverified bytes"
+# This whole section used to be four `die`s that printed the command the operator should run
+# next. Each one was deterministic and needed no decision, so each one is now performed.
 
-say "verifying artifact digests in $ARTIFACTS"
-shasum -a 256 -c SHA256SUMS.txt || die "DIGEST MISMATCH — these are not the qualified artifacts. Refusing to publish.
-If you rebuilt them locally, discard and re-download: gh run download $RUN_ID -n npm-packages -D '$ARTIFACTS'"
+EXPECTED_TARBALLS=7
 
-count=$(ls -1 ./*.tgz 2>/dev/null | wc -l | tr -d ' ')
-[ "$count" -eq 7 ] || die "expected 7 tarballs, found $count — refusing to publish a partial family"
-say "all 7 artifacts verified"
+tarball_count() { ls -1 "$ARTIFACTS"/*.tgz 2>/dev/null | wc -l | tr -d ' '; }
+list_tarballs() { ls -1 "$ARTIFACTS"/*.tgz 2>/dev/null | sed "s#^#    #"; }
+
+need_gh() {
+  command -v gh >/dev/null 2>&1 || die "gh is required to fetch release artifacts and is not on PATH.
+Install it, or populate $ARTIFACTS by hand with the seven .tgz files from run $RUN_ID."
+}
+
+# LCLI-487: qualification ARTIFACT NAMES embed run_attempt, so assuming attempt 1 makes a
+# download "correctly" fail to find artifacts that exist. 0.6.2 qualified on attempt 3 and
+# this is exactly how it bit. Resolve it; never hardcode it. (The npm-packages artifact name
+# is NOT attempt-suffixed -- release.yml:565-568 -- but it is re-uploaded per attempt, so the
+# run-level download already yields the newest. The attempt matters for the reports below.)
+resolve_attempt() {
+  local a
+  a="$(gh api "repos/$REPO_SLUG/actions/runs/$RUN_ID" --jq '.run_attempt' 2>/dev/null)"
+  case "$a" in
+    ''|*[!0-9]*) die "could not resolve the attempt number for run $RUN_ID on $REPO_SLUG.
+Without it the qualification report artifact names cannot be constructed (LCLI-487)." ;;
+  esac
+  printf '%s' "$a"
+}
+
+ensure_artifacts() {
+  local have
+  mkdir -p "$ARTIFACTS" || die "cannot create the artifact directory: $ARTIFACTS"
+  have="$(tarball_count)"
+  if [ "$have" -eq "$EXPECTED_TARBALLS" ]; then
+    say "artifacts already present: $have tarballs in $ARTIFACTS"
+    return 0
+  fi
+  if [ "$have" -eq 0 ]; then
+    say "artifact directory is empty -- downloading npm-packages from run $RUN_ID"
+  else
+    say "artifact directory is INCOMPLETE: $have of $EXPECTED_TARBALLS tarballs. Present:"
+    list_tarballs
+    say "downloading npm-packages over it rather than publishing a partial family"
+  fi
+  need_gh
+  gh run download "$RUN_ID" -n npm-packages -D "$ARTIFACTS" \
+    || die "failed to download the npm-packages artifact from run $RUN_ID.
+Check that the run exists, succeeded, and still has artifacts (they expire)."
+  have="$(tarball_count)"
+  [ "$have" -eq "$EXPECTED_TARBALLS" ] || die "after downloading npm-packages from run $RUN_ID,
+$ARTIFACTS holds $have tarball(s), not $EXPECTED_TARBALLS. Refusing to publish a partial family.
+What is actually there:
+$(list_tarballs)"
+  say "downloaded $have tarballs into $ARTIFACTS"
+}
+
+# Six of seven, verified against a digest CI recorded independently of these bytes. See the
+# DIGEST PROVENANCE block in the header before changing anything here, and in particular
+# before describing the result as covering all seven.
+verify_platform_digests() {
+  local dir entry pkg name tarball report recorded actual commit ref="" verified=0
+  local attempt="$1"
+  need_gh
+  dir="$(mktemp -d)"
+  say "fetching the per-platform qualification reports (run $RUN_ID, attempt $attempt)"
+  if ! gh run download "$RUN_ID" -D "$dir" \
+        -p "ladybug-package-qualification-*-${RUN_ID}-${attempt}" >/dev/null 2>&1; then
+    rm -rf "$dir"
+    die "could not download the qualification reports for run $RUN_ID attempt $attempt.
+These carry the only independently recorded digests for the platform tarballs; without them
+the digest check would be a local self-seal only, which is not what this script claims."
+  fi
+  for entry in "${PLATFORM_PKGS[@]}"; do
+    pkg="${entry%%:*}"; tarball="${entry#*:}"
+    name="${pkg#@opum-ai/lore-}"
+    report="$dir/ladybug-package-qualification-${name}-${RUN_ID}-${attempt}/ladybug-package-qualification-${name}.json"
+    [ -f "$report" ] || { rm -rf "$dir"; die "qualification report missing for $name at:
+  $report
+Run $RUN_ID attempt $attempt did not produce it, or the artifact has expired."; }
+    recorded="$(node -e 'const r=require(process.argv[1]); process.stdout.write(String((r.package||{}).platformTarballSha256||""))' "$report")"
+    commit="$(node -e 'const r=require(process.argv[1]); process.stdout.write(String((r.repository||{}).commit||""))' "$report")"
+    [ -n "$recorded" ] || { rm -rf "$dir"; die "report for $name records no package.platformTarballSha256"; }
+    [ -f "$ARTIFACTS/$tarball" ] || { rm -rf "$dir"; die "tarball missing: $ARTIFACTS/$tarball"; }
+    actual="sha256:$(shasum -a 256 "$ARTIFACTS/$tarball" | awk '{print $1}')"
+    if [ "$actual" != "$recorded" ]; then
+      rm -rf "$dir"
+      die "DIGEST MISMATCH for $pkg -- these are NOT the qualified bytes. Refusing to publish.
+  recorded by CI : $recorded
+  computed here  : $actual
+Discard $ARTIFACTS entirely and re-run; do not attempt to reconcile it by hand."
+    fi
+    # Every report must name the SAME commit, or the six tarballs did not come from one
+    # source tree and "qualified" means nothing across the set.
+    if [ -z "$ref" ]; then ref="$commit"; elif [ "$commit" != "$ref" ]; then
+      rm -rf "$dir"
+      die "qualification reports disagree about the source commit: $ref vs $commit ($name).
+These tarballs were not all built from one tree."
+    fi
+    say "  verified $pkg against the CI-recorded digest"
+    verified=$(( verified + 1 ))
+  done
+  rm -rf "$dir"
+  [ "$verified" -eq 6 ] || die "expected 6 platform tarballs verified, got $verified"
+  say "6/6 platform tarballs match the digests CI recorded, all on commit ${ref:-unknown}"
+}
+
+# The root launcher and the manifest. Both are LOCAL SEALS and the wording here says so --
+# the header explains why, and the whole point of LCLI-489 AC#4 is that automating this must
+# not quietly upgrade the claim.
+seal_locally() {
+  local root_tarball="${ROOT_PKG#*:}"
+  [ -f "$ARTIFACTS/$root_tarball" ] || die "root launcher tarball missing: $ARTIFACTS/$root_tarball"
+  if [ ! -f "$ARTIFACTS/SHA256SUMS.txt" ]; then
+    say "generating SHA256SUMS.txt (a LOCAL seal over this download -- CI does not emit one)"
+    # Subshell: shasum records the names it is given, and bare names are what makes the
+    # manifest portable. The parent shell's cwd is deliberately never changed.
+    ( cd "$ARTIFACTS" && shasum -a 256 ./*.tgz > SHA256SUMS.txt ) \
+      || die "could not write $ARTIFACTS/SHA256SUMS.txt"
+  fi
+  say "checking the local manifest (tamper-evidence on this download, NOT provenance)"
+  ( cd "$ARTIFACTS" && shasum -a 256 -c SHA256SUMS.txt ) >/dev/null \
+    || die "LOCAL DIGEST MISMATCH against $ARTIFACTS/SHA256SUMS.txt.
+The download changed after it was sealed. Discard $ARTIFACTS and re-run."
+  say "root launcher digest: $(shasum -a 256 "$ARTIFACTS/$root_tarball" | awk '{print $1}')"
+  say "  ^ SELF-SEAL ONLY. CI npm-pack's the launcher and records no digest for it"
+  say "    (release.yml:520-527), so this one tarball is not independently verified."
+}
+
+ensure_artifacts
+ATTEMPT="$(resolve_attempt)"
+count="$(tarball_count)"
+[ "$count" -eq "$EXPECTED_TARBALLS" ] || die "expected $EXPECTED_TARBALLS tarballs in $ARTIFACTS, found $count:
+$(list_tarballs)"
+verify_platform_digests "$ATTEMPT"
+seal_locally
+say "all $count artifacts accounted for: 6 independently verified, 1 locally sealed"
 
 
 hr
 # ── Token ───────────────────────────────────────────────────────────────────
 # Never printed. Exported as npm_config__auth_token so it applies to this process only
 # and does not rewrite ~/.npmrc.
-load_token() {
-  local t
-  t="$(security find-generic-password -s "$KEYCHAIN_SERVICE" -w 2>/dev/null)" && [ -n "$t" ] && { printf '%s' "$t"; return 0; }
-  [ -n "${NPM_TOKEN:-}" ] && { printf '%s' "$NPM_TOKEN"; return 0; }
-  return 1
+# REPORTS THE SHAPE OF A CREDENTIAL, NEVER ITS VALUE. Length, prefix and a whitespace flag
+# only -- nothing secret is derivable from those, and they are decisive. On 0.6.2 this exact
+# triple (length=24 prefix=OTHER) identified a Keychain entry holding something that was not
+# an npm token at all, after TWO publish attempts had been spent on a permissions theory that
+# was simply wrong: an unrecognised credential authenticates as nobody, and npm answers an
+# unauthorised PUT with 404 rather than 403 so as not to disclose package existence. That 404
+# reads exactly like "your token lacks publish rights" and sends the operator to npmjs.com to
+# change settings that were fine (LCLI-489, finding 3).
+check_token_shape() {
+  local t="$1" src="$2" len prefix ws
+  len="${#t}"
+  case "$t" in npm_*) prefix="npm_" ;; *) prefix="OTHER" ;; esac
+  case "$t" in *[[:space:]]*) ws="yes" ;; *) ws="no" ;; esac
+  say "  token shape: length=$len prefix=$prefix internal_whitespace=$ws   (source: $src)"
+  [ -n "${SKIP_TOKEN_SHAPE_CHECK:-}" ] && { say "  shape check SKIPPED by SKIP_TOKEN_SHAPE_CHECK"; return 0; }
+  [ "$ws" = "no" ] || die "the credential from $src contains whitespace -- almost always a
+truncated or line-wrapped paste. Re-add it and re-run; nothing has been published."
+  [ "$prefix" = "npm_" ] || die "the credential from $src is NOT shaped like an npm token
+(length=$len prefix=$prefix). Every current npm token begins 'npm_'; classic tokens were
+revoked on 9 December 2025. Publishing with this would fail as PUT 404, which looks like a
+permissions problem and is not. Re-add the correct value and re-run -- the script is
+resumable and nothing has been written. Override with SKIP_TOKEN_SHAPE_CHECK=1 only if you
+have established that npm has introduced a new token format."
+  if [ "$len" -ne 40 ]; then
+    say "  NOTE: a granular access token is npm_ + 36 = 40 characters; this one is $len."
+    say "  Not fatal -- npm may have other valid lengths -- but it is the first thing to"
+    say "  re-check if the publish below returns 404."
+  fi
 }
 
-if TOKEN="$(load_token)"; then
+# WHICH of the three paths is in use is now reported rather than left to be reconstructed
+# afterwards. On 0.6.2 the header claimed a Keychain token bypassing 2FA while the publish was
+# in fact authenticating from ~/.npmrc with a web-login-shaped token, and the resulting OTP
+# wall was blamed on the token TYPE for two attempts (LCLI-488).
+TOKEN=""
+AUTH_SOURCE="~/.npmrc"
+if _t="$(security find-generic-password -s "$KEYCHAIN_SERVICE" -w 2>/dev/null)" && [ -n "$_t" ]; then
+  TOKEN="$_t"; AUTH_SOURCE="keychain:$KEYCHAIN_SERVICE"
+elif [ -n "${NPM_TOKEN:-}" ]; then
+  TOKEN="$NPM_TOKEN"; AUTH_SOURCE="NPM_TOKEN"
+fi
+unset _t
+
+if [ -n "$TOKEN" ]; then
+  say "auth: $AUTH_SOURCE; ~/.npmrc left untouched"
+  check_token_shape "$TOKEN" "$AUTH_SOURCE"
   export npm_config_registry="https://registry.npmjs.org/"
-  export NPM_CONFIG__AUTH_TOKEN="$TOKEN"
-  # npm reads the registry-scoped form; set it via env so ~/.npmrc is left alone.
-  export npm_config__authToken="$TOKEN"
+  # ONE MECHANISM, NOT THREE. Two sibling exports used to sit here -- NPM_CONFIG__AUTH_TOKEN
+  # and npm_config__authToken -- and npm recognised NEITHER. The real 0.6.2 run printed:
+  #     npm warn Unknown env config "_auth-token". This will error in a future major version
+  #     npm warn Unknown env config "_authtoken".  This will error in a future major version
+  # So authentication rode entirely on the temp userconfig below while appearing to have two
+  # fallbacks behind it. They are removed rather than left to become hard errors, and so that
+  # nobody reading this believes there is redundancy here that does not exist (LCLI-489,
+  # finding 1). The userconfig file is the mechanism: npm reads the registry-scoped
+  # _authToken from it, and pointing npm at our own file leaves ~/.npmrc alone.
   printf -v NPMRC_LINE '//registry.npmjs.org/:_authToken=%s' "$TOKEN"
   TMP_NPMRC="$(mktemp)"; chmod 600 "$TMP_NPMRC"
   printf '%s\n' "$NPMRC_LINE" > "$TMP_NPMRC"
   export npm_config_userconfig="$TMP_NPMRC"
   trap 'rm -f "$TMP_NPMRC"' EXIT
   unset TOKEN NPMRC_LINE
-  say "auth: using a token (keychain or NPM_TOKEN); ~/.npmrc left untouched"
 else
   say "auth: no keychain/env token found — falling back to ~/.npmrc"
+  say "  A ~/.npmrc web-login session is subject to require-2FA-on-write, which is the OTP"
+  say "  wall this script's Keychain path exists to avoid. If npm prompts for an OTP below,"
+  say "  that is what happened -- it is not a broken token (LCLI-488)."
 fi
 
 hr
@@ -258,7 +494,7 @@ hr
 say "publishing platform packages first, root launcher last"
 
 publish_one() {
-  local pkg="$1" tarball="$2"
+  local pkg="$1" tarball="$ARTIFACTS/$2"
   if published "$pkg"; then
     say "  skip     $pkg@$VERSION (already on the registry)"
     return 0
