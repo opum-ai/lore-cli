@@ -238,6 +238,7 @@
 - 2026-09-14T18:42:41-05:00 6f39deae57413ac5693979b93e7faf44c08341db fix(LCLI-497): the indexed backend stopped working the moment a tracker had a prerequisite (#75)
 - 2026-09-14T18:43:25-05:00 72fcf6c36258485105b8d77194673892b80b8f5f feat(LCLI-477): typed authored relationships, and claim state as its own axis
 - 2026-09-14T18:45:37-05:00 ab8241b0862384e0965b56049e7a419aedc5dbb7 chore(LCLI-477): regenerate docs/log.md after the rebase onto dev
+- 2026-09-14T18:57:06-05:00 01f4ef749e38c8a97b540d08e8958b995c7a3f60 feat(LCLI-477): typed authored relationships, and claim state as its own axis (#76)
 
 ## docs/adr
 
