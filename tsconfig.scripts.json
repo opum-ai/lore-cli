@@ -36,8 +36,7 @@
     "moduleResolution": "nodenext",
     "allowImportingTsExtensions": false,
     "verbatimModuleSyntax": false,
-    "noImplicitAny": false,
-    "types": ["node", "bun"]
+    "noImplicitAny": false
   },
   "include": ["scripts/**/*.mjs", "bin/**/*.cjs"],
   "exclude": ["node_modules", "dist"]
