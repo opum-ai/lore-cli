@@ -231,6 +231,7 @@
 - 2026-09-14T12:34:56-05:00 34f6d8ce48b117011d9ad90cd7f91c07806e49e8 chore(LCLI-490): shellcheck in CI, and the 29 SC2034 findings triaged (#54)
 - 2026-09-14T15:07:02-05:00 661529cf49cbea86075c64df4b689ba5f455eb58 fix(LCLI-487): artifact names drop run_attempt so a partial re-run resolves (#56)
 - 2026-09-14T16:10:14-05:00 4913196690b1739ea7e687cd6201a5fbbe0a4cc5 fix(LCLI-479): mark required flags in the usage line and the machine manifest (#62)
+- 2026-09-14T16:41:19-05:00 33bc124aabad6f65d8262ce0a6595fe89f39344d docs(LCLI-492): document --fail-on-drop in the CLI surface reference
 
 ## docs/adr
 

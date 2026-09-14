@@ -52,6 +52,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`lore sync --fail-on-drop` refuses the run, before any write, when regenerating `docs/log.md`
+  would drop unrecognized content** (LCLI-492). 0.6.2 added a warning for that loss, which is the
+  right answer for an operator watching a terminal and no answer at all for an unattended one: a
+  CI job, a scheduled sync or an agent loop has no reader, so the run exits 0 and the loss surfaces
+  later in a diff someone thinks to take. The flag turns the same condition into a `drift` failure
+  (exit 6) carrying the same count and the same bounded samples, so a captured log is enough to act
+  on. It is **opt-in** — without it `sync` still warns, proceeds, and exits 0, unchanged. The
+  refusal is raised before the docs write set is committed and before the tracker sweep, so a
+  refused run leaves the working tree byte-identical. `--dry-run` still refuses (it writes nothing
+  either way, and a nonzero exit is exactly what a pre-check wants); `--fail-on-drop --no-index` is
+  a usage error (exit 2) rather than a silent no-op, because `--no-index` skips log regeneration
+  entirely and the pair would read as protection while providing none.
 - **`lore help --json` flag entries may now carry `required: true`.** Additive per
   the envelope's §7 contract, so `schemaVersion` is unchanged and a consumer that does not know the
   field reads exactly what it read before. This matters for agents: the manifest exists so a tool
