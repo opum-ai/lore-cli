@@ -37,9 +37,19 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+// TASK-1 depends on TASK-2 so every conformance case below carries a task->task `dependency` edge
+// (LCLI-476's edge kind). Without one this whole suite passed while the indexed BundleGraph reader
+// rejected those edges and `auto` fell back to the reference backend on every command (LCLI-497).
+// The suite could always SEE that defect; its fixture simply never produced the trigger, which is
+// the more useful half of the lesson: a detector needs capability and coverage both.
 const adapter = fakeAdapter(
   [
-    makeTask("TASK-1", { title: "Indexed task α", status: "In Progress", labels: ["graph", "unicode"] }),
+    makeTask("TASK-1", {
+      title: "Indexed task α",
+      status: "In Progress",
+      labels: ["graph", "unicode"],
+      dependencies: ["TASK-2"],
+    }),
     makeTask("TASK-2", { title: "Second task", status: "To Do" }),
   ],
   { listTasks: "ok" },
@@ -208,6 +218,37 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
     const observed = await invoke(indexedLoader, ["graph", "--json"]);
     expect(observed.stdout).not.toMatch(/MATCH \(|recordKey|projection\.lbdb|ladybug|databasePath|sourceFingerprint/i);
     expect(observed.stderr).not.toMatch(/MATCH \(|recordKey|projection\.lbdb|ladybug|databasePath|sourceFingerprint/i);
+  });
+
+  test("a task-dependency edge does not corrupt the indexed bundle graph (LCLI-497)", async () => {
+    // Asserted directly rather than only through the conformance cases above, because those compare
+    // the two backends and a regression that broke BOTH identically would slip past them. This one
+    // names the backend it got: the failure mode being guarded is a downgrade to `reference`, which
+    // still produces correct output.
+    const indexed = await loadRetrievalGraph({ root, adapter, policy: "indexed", resolveGitCommit: () => null });
+    const reference = await loadReferenceRetrievalGraph({ root, adapter, resolveGitCommit: () => null });
+    try {
+      expect(indexed.backend).toBe("indexed");
+      const shape = (graph: typeof indexed.graph) =>
+        graph.edges.map((edge) => `${edge.from}|${edge.to}|${edge.kind}|${edge.target}`);
+      expect(shape(indexed.graph)).toEqual(shape(reference.graph));
+      expect(shape(indexed.graph).some((edge) => edge.includes("|dependency|"))).toBe(false);
+    } finally {
+      await indexed.dispose?.();
+      await reference.dispose?.();
+    }
+  });
+
+  test("the automatic policy keeps the indexed backend when the tracker carries dependencies (LCLI-497)", async () => {
+    // The `auto` path is the one every real invocation takes, and it is where the defect hid: it
+    // catches an indexed failure and returns a correct reference graph, so no assertion about OUTPUT
+    // can fail. Asserting the BACKEND is the only assertion that can.
+    const automatic = await loadRetrievalGraph({ root, adapter, resolveGitCommit: () => null });
+    try {
+      expect(automatic.backend).toBe("indexed");
+    } finally {
+      await automatic.dispose?.();
+    }
   });
 
   test("lexical score ties break by ascending id in both implementations", async () => {
