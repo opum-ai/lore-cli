@@ -377,6 +377,12 @@ function mapSummary(issue: Record<string, unknown>, vocab: JiraVocabulary): Back
     labels: stringArray(fields.labels, "Jira labels"),
     milestone: versions[0] === undefined ? null : stringAt(versions[0], "name", "Jira fixVersion"),
     parentTaskId: parent === null ? null : stringAt(parent, "key", "Jira parent"),
+    // Jira models prerequisites as ISSUE LINKS (`fields.issuelinks`, typed by link name), not as a
+    // `dependencies` array, and the bulk search payload here does not request them. Empty is
+    // therefore "not observed", never "none" (LCLI-476). Mapping Jira's link types onto lore's
+    // dependency edge is real work with its own judgement calls -- which link types count as
+    // ordering -- and is deliberately NOT guessed at here.
+    dependencies: [],
     // Lore's own documentation metadata is parsed out of the managed description block
     // (mapDetail/parseManagedDescription), which the bulk search payload here does not carry —
     // always empty at summary tier, same bulk-list gap as Backlog.md's (LCLI-374).

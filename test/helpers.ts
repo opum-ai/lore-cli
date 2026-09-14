@@ -185,6 +185,10 @@ function toSummary(task: BacklogTaskDetail): BacklogTask {
     labels: task.labels,
     milestone: task.milestone,
     parentTaskId: task.parentTaskId,
+    // Carried on the summary since LCLI-476 — a backend whose list exposes it (Quest) projects real
+    // dependency edges. This helper projects whatever the fixture declares, so a test can exercise
+    // the Quest-shaped case; Backlog.md's own adapter still hard-codes [] because its list has none.
+    dependencies: task.dependencies,
     documentation: task.documentation,
   };
 }

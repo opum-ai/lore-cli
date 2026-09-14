@@ -342,6 +342,7 @@ function sourceFromFixture(snapshot: ExplorerSnapshot): LadybugProjectionSource 
       assignees: record.assignees,
       milestone: record.milestone,
       parentTaskId: record.parentTaskId,
+      dependencies: [],
       sourceAdapterVersion: "backlog-json/1",
     })),
     authoredEdges: snapshot.facts.authoredEdges.map((record) => ({
