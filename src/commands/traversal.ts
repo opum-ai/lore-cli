@@ -16,7 +16,7 @@ import {
 import { parseQualifiedWorkspaceId, qualifyWorkspaceId } from "../core/workspace-contract";
 import { singleLine } from "../errors";
 import type { Renderable } from "../output";
-import { optionValues, type ParsedArgs, singleOptionValue, usage } from "./args";
+import { optionValues, type ParsedArgs, requiredChoice, singleOptionValue, usage } from "./args";
 
 export interface TraversalFlags {
   readonly direction: TraversalDirection;
@@ -117,18 +117,6 @@ function requiredValue(name: string, raw: string): string {
   const value = raw.trim();
   if (value === "") throw usage(`--${name} needs a value`, `pass --${name}=<value>`);
   return value;
-}
-
-function requiredChoice<const T extends readonly string[]>(parsed: ParsedArgs, name: string, values: T): T[number] {
-  const raw = singleOptionValue(parsed, name);
-  if (raw === undefined || raw.trim() === "") {
-    throw usage(`--${name} is required`, `pass --${name} <${values.join("|")}>`);
-  }
-  const value = raw.trim();
-  if (!values.includes(value)) {
-    throw usage(`invalid --${name} "${value}"`, `choose one of ${values.join(", ")}`);
-  }
-  return value as T[number];
 }
 
 function boundedInteger(

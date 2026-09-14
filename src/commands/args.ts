@@ -160,6 +160,43 @@ export function singleOptionValue(parsed: ParsedArgs, name: string): string | un
 }
 
 /** Reject duplicate boolean occurrences for commands whose prior contract did so. */
+/**
+ * The trimmed value of an ABSOLUTELY required value-taking flag, or a usage error naming it.
+ *
+ * The single definition of that refusal (LCLI-479). It used to live privately in
+ * `commands/traversal.ts` while `commands/provenance.ts` hand-rolled its own, which is how
+ * `lore provenance <id>` came to answer an OMITTED `--kind` with `--kind must be concept, task, or
+ * edge` — a message about a value the caller never supplied. One definition means a flag cannot
+ * become required in a shape the manifest and `test/help.test.ts`'s lockstep guard do not recognize.
+ *
+ * Mark every flag routed through here `required: true` in the manifest; that guard fails the suite
+ * in both directions if you do not.
+ */
+export function requiredOptionValue(parsed: ParsedArgs, name: string, hint: string): string {
+  const raw = singleOptionValue(parsed, name);
+  if (raw === undefined || raw.trim() === "") {
+    throw usage(`--${name} is required`, hint);
+  }
+  return raw.trim();
+}
+
+/**
+ * {@link requiredOptionValue} constrained to a closed set — absent and invalid are reported
+ * DISTINCTLY, because "you left this out" and "what you passed is not one of these" are different
+ * mistakes with different fixes.
+ */
+export function requiredChoice<const T extends readonly string[]>(
+  parsed: ParsedArgs,
+  name: string,
+  values: T,
+): T[number] {
+  const value = requiredOptionValue(parsed, name, `pass --${name} <${values.join("|")}>`);
+  if (!values.includes(value)) {
+    throw usage(`invalid --${name} "${value}"`, `choose one of ${values.join(", ")}`);
+  }
+  return value as T[number];
+}
+
 export function assertFlagAtMostOnce(parsed: ParsedArgs, name: string): void {
   if ((parsed.counts.get(name) ?? 0) > 1) {
     throw usage(`--${name} given more than once`, `pass --${name} at most once`);

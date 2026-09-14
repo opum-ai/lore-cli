@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Required flags are now marked as required, in the help text and in the machine manifest**
+  (LCLI-479). `lore impact <id>` looked like a complete command and always exited 2, because
+  `--kind` and `--direction` are mandatory and nothing said so. Five flags were affected across
+  `lore impact` and `lore path`, and an audit of the whole command surface found two more on
+  `lore provenance` — which required both `--kind` and `--snapshot` while marking neither.
+  Usage lines now carry them (`lore impact <id> --kind <value> --direction <value>`) and the flag
+  list annotates them `(required)`.
+- **`lore provenance` no longer reports an omitted flag as an invalid value.** Leaving out `--kind`
+  answered `--kind must be concept, task, or edge` — a complaint about a value that was never
+  passed. Absent and invalid are now reported distinctly, from a single shared definition, so the
+  two cannot drift apart again.
+
+### Added
+
+- **`lore manifest` / `lore help --json` flag entries may now carry `required: true`.** Additive per
+  the envelope's §7 contract, so `schemaVersion` is unchanged and a consumer that does not know the
+  field reads exactly what it read before. This matters for agents: the manifest exists so a tool
+  can construct a valid invocation without reading lore's source, and with no way to express
+  requiredness it described every flag as optional. The contract was not wrong, it was silent — and
+  silence parses as "optional".
+
 ## [0.6.2] - 2026-09-13
 
 Quest ships 0.6.2 alongside this release, continuing the lockstep pairing.

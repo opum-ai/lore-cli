@@ -229,6 +229,7 @@
 - 2026-09-14T02:24:16-05:00 cc1db067fa85e8f7461915286a4bf3ba6318cf5c feat(LCLI-489): publish-release.sh performs its own prerequisites, and its digest claim matches what it checks (#50)
 - 2026-09-14T12:02:35-05:00 90f5b689e98b4405634ba0f3f1b6e105c2ec3aaa chore(LCLI-486): bring scripts/, bin/ and root .ts under lint and typecheck (#52)
 - 2026-09-14T12:34:56-05:00 34f6d8ce48b117011d9ad90cd7f91c07806e49e8 chore(LCLI-490): shellcheck in CI, and the 29 SC2034 findings triaged (#54)
+- 2026-09-14T15:07:02-05:00 661529cf49cbea86075c64df4b689ba5f455eb58 fix(LCLI-487): artifact names drop run_attempt so a partial re-run resolves (#56)
 
 ## docs/adr
 
