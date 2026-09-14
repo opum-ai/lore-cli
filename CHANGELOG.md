@@ -52,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`lore manifest` / `lore help --json` flag entries may now carry `required: true`.** Additive per
+- **`lore help --json` flag entries may now carry `required: true`.** Additive per
   the envelope's §7 contract, so `schemaVersion` is unchanged and a consumer that does not know the
   field reads exactly what it read before. This matters for agents: the manifest exists so a tool
   can construct a valid invocation without reading lore's source, and with no way to express
