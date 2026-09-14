@@ -2,13 +2,23 @@
 #
 # scripts/publish-release.sh — publish a qualified Lore CLI release to npm.
 #
-# Auth model: a GRANULAR ACCESS TOKEN (or classic Automation token). Both bypass npm's
-# 2FA-on-write, so there is no OTP prompt — that is the whole point. `npm login` does NOT
-# achieve this: a web login is still subject to "require 2FA for writes", which is exactly
-# the EOTP wall this replaces. Set the token up once; this script then runs unattended.
+# Auth model: a GRANULAR ACCESS TOKEN. It bypasses npm's 2FA-on-write, so there is no OTP
+# prompt — that is the whole point. `npm login` does NOT achieve this: a web login is still
+# subject to "require 2FA for writes", which is exactly the EOTP wall this replaces.
 #
-# Reads the token from the macOS Keychain by default, so it is never in a file or in
-# shell history. Falls back to NPM_TOKEN, then to whatever is already in ~/.npmrc.
+# There is no longer an "or classic Automation token" option, though this header offered one
+# until 2026-09-14. docs/runbooks/release-publishing.md:557-565 records that npm disabled
+# classic token creation in November 2025 and revoked every existing one on 9 December 2025.
+# Granular tokens are 90-day capped and website-created, so this path needs renewing every
+# quarter — a known liability rather than a surprise (LCLI-489).
+#
+# Reads the token from the macOS Keychain by default, so it is never in a file or in shell
+# history. Falls back to NPM_TOKEN, then to whatever is already in ~/.npmrc.
+#
+# CHECK WHICH OF THOSE THREE YOU ARE ACTUALLY ON before trusting the "no OTP prompt" claim
+# above. On 2026-09-14 the Keychain entry did not exist and NPM_TOKEN was unset, so a publish
+# here authenticates from ~/.npmrc — and a web-login session there reinstates the very EOTP
+# wall this header says is bypassed. See LCLI-488.
 #
 # Safety properties, in order of how much they matter:
 #   - Verifies every tarball's sha256 against SHA256SUMS.txt BEFORE publishing anything.
@@ -38,7 +48,7 @@ VERSION="${1:-}"
 RUN_ID="${2:-}"
 KEYCHAIN_SERVICE="${KEYCHAIN_SERVICE:-npm-opum-ai-publish}"
 case "$VERSION" in
-  ""|-*) sed -n '2,34p' "${BASH_SOURCE[0]}"; exit 2 ;;
+  ""|-*) sed -n '2,44p' "${BASH_SOURCE[0]}"; exit 2 ;;
 esac
 [ -n "$RUN_ID" ] || { echo "ERROR: a Release run id is required (it is how a lost artifact directory is recovered)" >&2; exit 2; }
 shift 2
@@ -61,7 +71,7 @@ for arg in "$@"; do
   case "$arg" in
     --dry-run)     DRY_RUN=1 ;;
     --verify-only) VERIFY_ONLY=1 ;;
-    -h|--help)     sed -n '2,30p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help)     sed -n '2,40p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
