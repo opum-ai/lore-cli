@@ -30,16 +30,17 @@ semantic exit codes, machine-readable `--json`).
 
 - Built on **Bun + TypeScript** with an exact-pinned **Commander** parser fed by
   Lore's capability manifest; Lore still owns output, errors, and process lifecycle.
-- Published on npm as **`@opum-ai/lore@0.7.0`** (bin `lore`) with six
-  exact-pinned platform packages, including Windows ARM64.
+- <!--lore-version:published-bullet:begin-->Published on npm as **`@opum-ai/lore@0.7.0`** (bin `lore`) with six
+  exact-pinned platform packages, including Windows ARM64.<!--lore-version:published-bullet:end-->
 - The agent bridge is a generated **`.claude/skills/lore/SKILL.md`** plus a tiny
   CLAUDE.md nudge and `lore instructions`. An **MCP server is secondary and
   deferred to v2**.
 
-> **Status: 0.7.0 released.** Tag `v0.7.0`, the qualified workflow artifacts,
+> <!--lore-version:status:begin-->**Status: 0.7.0 released.** Tag `v0.7.0`, the qualified workflow artifacts,
 > all seven public `@opum-ai/lore*` npm packages with `latest` moved on each,
-> and a clean-registry install agree on `0.7.0`. Released as a **pair with
-> `quest` 0.7.0** — the two version numbers move in lockstep.
+> and a clean-registry install agree on `0.7.0`.<!--lore-version:status:end-->
+> Released as a **pair with `quest` 0.7.0** — the two version numbers move in
+> lockstep.
 >
 > **Releases are currently manual, not a single dispatch.** OIDC trusted
 > publishing is configured on every package but cannot authenticate: GitHub

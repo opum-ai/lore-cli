@@ -255,6 +255,7 @@
 - 2026-09-15T04:01:24-05:00 1f14c799e1dd711d0869f81e81c386544eb965f9 docs(LCLI-496): adjudicate target.body's optionality against cli-contract 7.1 (#90)
 - 2026-09-15T04:20:56-05:00 408668d0df40ee57a51c20f67a5ed400d6949cc2 chore(LCLI-496): void a conclusion I recorded today, and write the post-tag list down (#92)
 - 2026-09-15T05:15:19-05:00 5c437eb5137c19f4fd87c445ba88068671b993cc chore(LCLI-496): my own handoff note went stale; record the invariant, and a flake escalation (#96)
+- 2026-09-15T11:43:19-05:00 e4b384b92db59087eff27ea1eabfc5adc1c63225 fix(LCLI-333): unstrand the "Blocked" record and delete the override standing in for it (#108)
 
 ## docs/adr
 

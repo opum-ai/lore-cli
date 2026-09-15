@@ -610,6 +610,39 @@ wait_for_all_visible() {
 if [ "$VERIFY_ONLY" -eq 1 ]; then report_state; exit 0; fi
 report_state
 
+# ── Shipped-README version assertions (LCLI-510) ─────────────────────────────
+# The gate this script needs even though release.yml's `package` job already ran one.
+#
+# WHY IT IS NOT REDUNDANT. The `package` job gates the tarball IT packed. This script publishes
+# whatever is in $ARTIFACTS, and ensure_artifacts accepts a directory an operator populated BY
+# HAND -- the usage text says so explicitly. The platform tarballs get verify_platform_digests
+# against independently recorded qualification digests; THE ROOT LAUNCHER DOES NOT, and the root
+# launcher is the only one of the seven that ships README.md. So the file npm serves as this
+# package's landing page is, on this path, the artifact with the weakest identity check of all
+# seven, and it is the one the defect lands in.
+#
+# WHAT IT REFUSES: a root tarball whose packed README disagrees with its own packed package.json.
+# Run against the tarball, never the worktree -- a worktree check can pass while the packed file
+# is stale, and the packed one is what the registry serves (contract A1, opum-doc main@b596ca5).
+hr
+say "checking the packed README's version assertions before any registry write"
+readme_gate_tarball="$ARTIFACTS/${ROOT_PKG#*:}"
+if [ ! -f "$readme_gate_tarball" ]; then
+  die "the root launcher tarball is missing: $readme_gate_tarball"
+fi
+if ! node "$(dirname "${BASH_SOURCE[0]}")/shipped-readme-version.mjs" --tarball "$readme_gate_tarball"; then
+  die "the packed README disagrees with the package.json being published.
+
+This is LCLI-510: the README bump is authored as post-tag bookkeeping, so the tag carries the
+PREVIOUS version's README and npm serves it as this release's landing page. Published version
+pages are IMMUTABLE -- publishing now cannot be corrected, only superseded.
+
+Fix it at the source and re-cut the artifacts:
+    node scripts/shipped-readme-version.mjs --write
+    # commit, re-tag, re-run the release workflow, re-download the artifacts
+Do NOT hand-edit the tarball."
+fi
+
 # ── Publish ─────────────────────────────────────────────────────────────────
 hr
 [ "$DRY_RUN" -eq 1 ] && say "DRY RUN — no registry writes will be made"
@@ -693,10 +726,25 @@ hr
 cat <<DONE
 PUBLISHED $VERSION. Remaining, in order:
 
-  1. Update the release-truth docs so they state $VERSION is released. REPLACE the
+  1. Update the release-truth doc so it states $VERSION is released. REPLACE the
      current-state claim, do not merely add alongside it:
          docs/reference/lore-cli-release-truth.md    (Current state section)
-         README.md                                   (status block + the npm line)
+
+     README.md IS NO LONGER ON THIS LIST, and that is the fix for LCLI-510 rather than
+     an omission. Its status block and npm line are GENERATED from package.json before
+     the tag, by scripts/shipped-readme-version.mjs, and the release refuses to publish
+     a tarball whose README disagrees. Bumping it here is what made every published
+     tarball's npm page advertise the PREVIOUS version: a sentence saying "$VERSION is
+     released" cannot honestly be written before it is, so the edit always landed after
+     the tag, and the tag always carried the older file. Do not restore the step.
+
+  1a. Read the shipped README back off the registry and record WHAT YOU READ:
+         npm view @opum-ai/lore@$VERSION readme | grep -n 'Status: .* released'
+      It must name $VERSION. This is a confirmation, not a gate -- the page is already
+      immutable -- so a disagreement here is a defect to fix in the NEXT release, never
+      a reason to unpublish. Record the package and the version you read, not just the
+      verdict: "read-back agrees" without naming its object is the claim shape that
+      produced this whole class of defect.
 
   2. Cut a non-draft, non-prerelease GitHub Release for v$VERSION, using
      CHANGELOG.md's [$VERSION] section as its body:

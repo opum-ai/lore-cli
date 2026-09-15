@@ -474,13 +474,42 @@ publish is explicitly marked public. Root `package.json` and all six
      passing against the OLD baselines. If it does not, something other than
      the version moved the digest. Restore the new version afterward.
 
-3. Keep the README's copyable install commands versionless (`npx
+3. Regenerate the README's version-bearing lines **in the same commit as the
+   version bump, before the tag**:
+
+   ```sh
+   node scripts/shipped-readme-version.mjs --write
+   node scripts/shipped-readme-version.mjs --check   # exit 0
+   ```
+
+   **This replaced "reconcile the README's stated current version", and the
+   replacement is the fix for LCLI-510 rather than a rewording.** That
+   instruction was already in this step, and the defect happened anyway:
+   `npm view @opum-ai/lore@0.7.0 readme` served a README asserting `0.6.2` on
+   three lines. The instruction lost to a structural tension it could not
+   resolve — a sentence saying "0.7.0 is released" cannot honestly be written
+   before 0.7.0 is released — and `scripts/publish-release.sh`'s own closing
+   message told the operator to do it *after* publishing, so the two
+   instructions disagreed and the post-publish one won every time. Generating
+   the number removes the tension: the generator states a fact about the
+   artifact, not a claim about the world, so it can be written at any moment.
+
+   The release refuses to publish when the packed README disagrees with the
+   packed `package.json` — `scripts/publish-release.sh` checks it before any
+   registry write, and `release.yml`'s `package` job checks the tarball it
+   packs. **Both read the file out of the tarball, never the worktree**, because
+   a worktree check can pass while the packed file is stale and the packed one
+   is what the registry serves. Contract: `opum-ai/opum-doc`
+   `docs/reference/shipped-readme-version-assertions.md` at main@b596ca5; this
+   repository's per-clause record is
+   [Shipped-README version assertions in lore-cli](../reference/shipped-readme-version-record.md).
+
+   Keep the README's copyable install commands versionless (`npx
    @opum-ai/lore`, `bunx @opum-ai/lore`, and package-manager installs without
    an `@<version>` suffix), so they continue to resolve the current release
-   instead of retaining the previous release's exact pin. Reconcile the
-   README's stated current version and install behavior with this version bump;
-   immutable historical evidence keeps its exact versions in the release-truth
-   record rather than in the install examples.
+   instead of retaining the previous release's exact pin. Immutable historical
+   evidence keeps its exact versions in the release-truth record rather than in
+   the install examples.
 
    **`docs/index.md` names no version, deliberately — do not add one back**
    (LCLI-361). It is the first paragraph a reader or agent meets, so a stale

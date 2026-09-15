@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -33,7 +34,9 @@ const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex
  * executables. `corruptPlatform` lets a test flip one recorded digest to prove the
  * independent check actually bites.
  */
-function makeWorkspace(options: { corruptPlatform?: string; legacyAttemptNames?: boolean } = {}) {
+function makeWorkspace(
+  options: { corruptPlatform?: string; legacyAttemptNames?: boolean; staleRootReadme?: boolean } = {},
+) {
   const root = mkdtempSync(resolve(tmpdir(), "lore-publish-test-"));
   const source = resolve(root, "npm-packages");
   const reports = resolve(root, "reports");
@@ -47,8 +50,51 @@ function makeWorkspace(options: { corruptPlatform?: string; legacyAttemptNames?:
     writeFileSync(resolve(source, file), bytes);
     digests.set(name, sha256(bytes));
   }
+  // THE ROOT LAUNCHER IS A REAL TARBALL, not a text file standing in for one, because since
+  // LCLI-510 the script reads package/README.md back out of it and refuses to publish when the
+  // packed README disagrees with the packed package.json. A stub whose bytes are not a gzip
+  // stream makes that gate fail as "could not read" on every test, which is indistinguishable
+  // from the gate working and is how a fixture quietly becomes the thing under test.
+  //
+  // Its README is produced by the REAL generator (`--write`), never restated here: a fixture
+  // carrying its own copy of the generated text passes happily while the two drift apart, which
+  // is the same defect shape LCLI-510 itself is about.
   const rootTarball = `opum-ai-lore-${VERSION}.tgz`;
-  writeFileSync(resolve(source, rootTarball), Buffer.from(`fake root launcher @ ${VERSION}\n`));
+  const rootStage = resolve(root, "root-stage");
+  const rootPkg = resolve(rootStage, "package");
+  mkdirSync(rootPkg, { recursive: true });
+  // `staleRootReadme` reproduces LCLI-510 exactly: the README is generated against the PREVIOUS
+  // version and package.json is then bumped, which is what post-tag bookkeeping produces.
+  const manifestFor = (version: string) =>
+    JSON.stringify(
+      {
+        name: "@opum-ai/lore",
+        version,
+        optionalDependencies: Object.fromEntries(PLATFORMS.map((name) => [`@opum-ai/lore-${name}`, version])),
+      },
+      null,
+      2,
+    );
+  writeFileSync(resolve(rootPkg, "package.json"), manifestFor(options.staleRootReadme ? "9.9.8" : VERSION));
+  writeFileSync(
+    resolve(rootPkg, "README.md"),
+    [
+      "# lore",
+      "",
+      "- <!--lore-version:published-bullet:begin--><!--lore-version:published-bullet:end-->",
+      "",
+      "> <!--lore-version:status:begin--><!--lore-version:status:end-->",
+      "",
+    ].join("\n"),
+  );
+  execFileSync("node", [
+    resolve(import.meta.dir, "..", "scripts", "shipped-readme-version.mjs"),
+    "--write",
+    "--dir",
+    rootPkg,
+  ]);
+  if (options.staleRootReadme) writeFileSync(resolve(rootPkg, "package.json"), manifestFor(VERSION));
+  execFileSync("tar", ["-czf", resolve(source, rootTarball), "-C", rootStage, "package"]);
 
   // One artifact directory per platform, named exactly as release.yml uploads it. Since
   // LCLI-487 that is run id ONLY — the attempt suffix is gone, because a name carrying the
@@ -267,6 +313,14 @@ describeOnPosix("scripts/publish-release.sh", () => {
       const copied = resolve(scriptDir, "publish-release.sh");
       writeFileSync(copied, readFileSync(SCRIPT));
       chmodSync(copied, 0o755);
+      // The shipped-README gate (LCLI-510) is a sibling the script resolves relative to its own
+      // location, so a copy of publish-release.sh WITHOUT it is not a deployment that exists in
+      // the repository. Copy both, or this test measures a missing file rather than the
+      // cwd-independence it is named for.
+      writeFileSync(
+        resolve(scriptDir, "shipped-readme-version.mjs"),
+        readFileSync(resolve(import.meta.dir, "..", "scripts", "shipped-readme-version.mjs")),
+      );
 
       const defaultArtifacts = resolve(scriptDir, `release-${VERSION}`);
       mkdirSync(defaultArtifacts, { recursive: true });
@@ -332,6 +386,26 @@ describeOnPosix("scripts/publish-release.sh", () => {
       expect(out).not.toContain("not-an-npm-token-24ch");
       expect(out).not.toContain("STUB PUBLISH");
       expect(result.exitCode).not.toBe(0);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("refuses to publish a root tarball whose packed README names the PREVIOUS version (LCLI-510)", () => {
+    // THE DEFECT, reproduced on the path that actually publishes today. release.yml's `package`
+    // job gates the tarball IT packs; this script publishes whatever is in its artifacts
+    // directory, which the usage text says an operator may populate by hand — and the root
+    // launcher is the only one of the seven with no independently recorded qualification digest,
+    // so it is simultaneously the weakest-checked artifact and the only one carrying README.md.
+    const ws = makeWorkspace({ staleRootReadme: true });
+    try {
+      const r = runScript(ws, ws.root, ws.artifacts);
+      expect(r.out).toContain("packed README disagrees with the package.json being published");
+      expect(r.out).toContain("A3.2");
+      // It must refuse BEFORE the registry write, not report afterwards — a published version
+      // page is immutable, so a check that fires after publishing cannot be a gate.
+      expect(r.out).not.toContain("STUB PUBLISH");
+      expect(r.code).not.toBe(0);
     } finally {
       ws.cleanup();
     }

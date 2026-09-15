@@ -23,5 +23,6 @@
 - [OKF projection contract](okf-projection-contract.md)
 - [Operate autonomous Lore CLI documentation campaigns](operate-autonomous-lore-cli-documentation-campaigns.md)
 - [Portable Markdown — the subset lore guarantees](portable-markdown.md)
+- [Shipped-README version assertions in lore-cli](shipped-readme-version-record.md)
 - [Tech Stack](tech-stack.md)
 <!-- lore:index:end -->
