@@ -8,6 +8,7 @@
 
 import { createHash } from "node:crypto";
 import type { BacklogTask } from "../adapters/backlog";
+import { LoreError } from "../errors";
 import type { BundleGraph, Edge } from "./bundle";
 import { effectiveProfileFor, toRefList } from "./bundle";
 import { serializeConcept } from "./concept";
@@ -53,6 +54,24 @@ export interface ProjectionInput {
   readonly exporterVersion: string;
   readonly gitCommit: string | null;
   readonly generatedAt: string | null;
+  /**
+   * The producing adapter's {@link import("../adapters/tracker").TrackerAdapter.sourceAdapterVersion},
+   * stamped onto every task record (LCLI-494).
+   *
+   * **Required, and threaded from the adapter rather than written here.** It was a literal at this
+   * site — `"backlog-json/1"` on every record regardless of which backend produced it — so a
+   * Quest-backed export, which is lore's default for new bundles, claimed it came from Backlog.md.
+   * A field that omits an answer is recoverable; one that states a wrong answer is not, and this
+   * one sits in the same record as `dependencies`, whose emptiness is itself backend-dependent. A
+   * consumer trying to tell "no prerequisites" from "this backend does not report them" would reach
+   * for exactly this field and be misled.
+   *
+   * Required rather than defaulted so a new backend cannot reach this record without supplying one.
+   * `null` means no tracker backend is selected, in which case there are no task records to stamp;
+   * a `null` reaching a record is refused rather than written, so the invariant is executable
+   * instead of merely documented.
+   */
+  readonly sourceAdapterVersion: string | null;
   /** Active producer profile, used only for canonical concept serialization. */
   readonly profile?: Profile;
   /** Internal large-snapshot optimization; public export callers keep the default `true`. */
@@ -143,7 +162,7 @@ export function buildProjection(input: ProjectionInput): Projection {
       milestone: task.milestone,
       parentTaskId: task.parentTaskId,
       dependencies: [...task.dependencies],
-      sourceAdapterVersion: "backlog-json/1",
+      sourceAdapterVersion: requireSourceAdapterVersion(input.sourceAdapterVersion),
     });
   }
 
@@ -269,6 +288,26 @@ function conceptEdge(
     // the two look identical otherwise and are not equivalent for version reporting.
     ...(edge.relationOrdinal !== undefined ? { relationOrdinal: edge.relationOrdinal } : {}),
   };
+}
+
+/**
+ * The producing adapter's identity, or a refusal.
+ *
+ * `null` is only reachable when no tracker backend is selected, and that case yields no tasks — so
+ * this never fires in practice. It exists because "cannot happen" and "is prevented" are different
+ * facts: writing a `null` provenance into a record would be a quieter version of the defect this
+ * threading fixed, and an emitted `null` would be accepted by a tolerant reader as readily as a
+ * wrong string.
+ */
+function requireSourceAdapterVersion(value: string | null): string {
+  if (value === null) {
+    throw new LoreError(
+      "validation",
+      "a projection with task records needs the producing adapter's sourceAdapterVersion",
+      "build the projection from `listTasksWithSource`, which returns the tasks and their origin together",
+    );
+  }
+  return value;
 }
 
 function keyFor(...parts: readonly string[]): string {

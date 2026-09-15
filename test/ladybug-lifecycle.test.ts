@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
+import { BACKLOG_SOURCE_ADAPTER_VERSION } from "../src/adapters/backlog";
 import { buildGraph } from "../src/core/bundle";
 import { parseConcept } from "../src/core/concept";
 import type {
@@ -110,6 +111,7 @@ function fixtureSource(
   const built = buildProjection({
     graph,
     tasks,
+    sourceAdapterVersion: BACKLOG_SOURCE_ADAPTER_VERSION,
     docsRoot: "docs",
     okfVersion: "0.1",
     exporterVersion: "0.0.0",

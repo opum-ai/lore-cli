@@ -75,6 +75,9 @@ export function bunJiraSpawn(root: string, binary = "jira"): JiraSpawn {
 }
 
 /** Construct a Jira adapter. Configuration is non-secret; jira-cli owns credentials and HTTP. */
+/** This adapter's {@link TrackerAdapter.sourceAdapterVersion} (LCLI-494). */
+export const JIRA_SOURCE_ADAPTER_VERSION = "jira-rest/1";
+
 export function createJiraAdapter(
   root: string,
   config: JiraTrackerConfig,
@@ -257,6 +260,7 @@ export function createJiraAdapter(
   }
 
   return {
+    sourceAdapterVersion: JIRA_SOURCE_ADAPTER_VERSION,
     async probe(): Promise<TrackerCapability> {
       return (await ensureProbed()).capability;
     },

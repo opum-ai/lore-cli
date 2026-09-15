@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { basename, dirname, join, posix } from "node:path";
 import { z } from "zod";
 import type { BacklogAdapter, BacklogTask, ListTasksOptions } from "../../src/adapters/backlog";
+import { BACKLOG_SOURCE_ADAPTER_VERSION } from "../../src/adapters/backlog";
 import { loadBundle } from "../../src/core/bundle";
 import { EXPECTED_LADYBUG_STORAGE_VERSION, EXPECTED_LADYBUG_VERSION } from "../../src/core/ladybug-native";
 import {
@@ -170,6 +171,7 @@ export function createLadybugBenchmarkBacklogAdapter(root: string): BacklogAdapt
     throw new Error("benchmark task adapter supports only probe and listTasks");
   };
   return {
+    sourceAdapterVersion: BACKLOG_SOURCE_ADAPTER_VERSION,
     async probe() {
       return { version: "1.49.0", schemaVersion: 1 };
     },
@@ -225,6 +227,7 @@ export function generateLadybugBenchmarkFixture(
   const projection = buildProjection({
     graph,
     tasks,
+    sourceAdapterVersion: BACKLOG_SOURCE_ADAPTER_VERSION,
     docsRoot: "docs",
     okfVersion: "0.1",
     exporterVersion: LADYBUG_BENCHMARK_FIXTURE_EXPORTER_VERSION,

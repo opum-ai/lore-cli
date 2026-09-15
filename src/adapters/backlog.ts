@@ -809,6 +809,18 @@ export interface EditTaskPatch {
  * that is not `--json`-capable is refused before any command's output is trusted.
  */
 /** @deprecated Import the backend-neutral {@link TrackerAdapter} from `adapters/tracker` instead. */
+/**
+ * This adapter's {@link TrackerAdapter.sourceAdapterVersion}: Backlog.md read through
+ * `--json`, first adapter contract.
+ *
+ * **Unchanged from the literal it replaces, deliberately** (LCLI-494 AC#3). Projections retained
+ * before the value was threaded from the adapter already carry this exact string, and
+ * `lore provenance` reads those; renaming it would make every retained Backlog-backed record
+ * unattributable to keep a naming scheme tidy. What was wrong was never this value — it was that
+ * every OTHER backend was stamped with it too.
+ */
+export const BACKLOG_SOURCE_ADAPTER_VERSION = "backlog-json/1";
+
 export type BacklogAdapter = TrackerAdapter;
 
 /** Captures the display-cased id from a create's first stdout line (`Created task LORE-1` / `Created draft …`). */
@@ -917,6 +929,7 @@ export function createBacklogAdapter(spawn: BacklogSpawn, root = process.cwd()):
   }
 
   return {
+    sourceAdapterVersion: BACKLOG_SOURCE_ADAPTER_VERSION,
     probe: ensureProbed,
 
     statusFlow: async () => readStatusFlow(root),

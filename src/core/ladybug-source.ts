@@ -11,7 +11,7 @@ import { closeSync, lstatSync, openSync, readFileSync, readSync } from "node:fs"
 import { join } from "node:path";
 import type { BacklogAdapter, BacklogTask } from "../adapters/backlog";
 import { resolveHeadSha } from "../adapters/git";
-import { listTasksOrEmpty } from "../adapters/tracker";
+import { listTasksWithSource } from "../adapters/tracker";
 import { LoreError, WarningCollector } from "../errors";
 import { VERSION } from "../meta";
 import { loadBundle, walkMarkdown } from "./bundle";
@@ -214,11 +214,19 @@ export async function loadLadybugProjectionSource(
       profile,
       boundedMemory: true,
     });
-    const tasks = await listTasksOrEmpty(options.root, options.adapter);
+    const listing = await listTasksWithSource(options.root, options.adapter);
+    const tasks = listing.tasks;
     const gitCommit = resolveGitCommit(options.root);
     const projection = buildProjection({
       graph,
       tasks,
+      // The identity as STAMPED, not as available. This fingerprint is recomputed on the other side
+      // from the built records (see `stampedSourceAdapterVersion`), where an empty task list carries
+      // no identity at all -- so a configured adapter with zero tasks must contribute `null` here
+      // too. Passing the adapter's identity unconditionally would make the two sides disagree
+      // forever on an empty tracker, and the reuse fast path would miss on every reconcile with no
+      // error anywhere: exactly the failure LCLI-476 found twice.
+      sourceAdapterVersion: stampedSourceAdapterVersion(tasks.length, listing.sourceAdapterVersion),
       docsRoot: DOCS_DIR,
       okfVersion: graph.state.okfVersion,
       exporterVersion: VERSION,
@@ -315,6 +323,7 @@ export function prepareLadybugProjectionSource(
     profileInventory,
     gitCommit: manifest.bundle.gitCommit,
     tasks,
+    sourceAdapterVersion: stampedSourceAdapterVersion(tasks.length, tasks[0]?.sourceAdapterVersion ?? null),
     ladybugVersion: options.ladybugVersion,
     ladybugStorageVersion: options.ladybugStorageVersion,
     loreVersion,
@@ -359,13 +368,21 @@ export async function loadLadybugProjectionFreshness(
   for (let attempt = 0; attempt < 2; attempt++) {
     const inventory = readSourceInventory(options.root);
     const profileInventory = readProfileInventory(options.root);
-    const tasks = await listTasksOrEmpty(options.root, options.adapter);
+    const listing = await listTasksWithSource(options.root, options.adapter);
+    const tasks = listing.tasks;
     const gitCommit = resolveGitCommit(options.root);
     const inputFingerprint = projectionInputFingerprint({
       inventory,
       profileInventory,
       gitCommit,
       tasks,
+      // The identity as STAMPED, not as available. This fingerprint is recomputed on the other side
+      // from the built records (see `stampedSourceAdapterVersion`), where an empty task list carries
+      // no identity at all -- so a configured adapter with zero tasks must contribute `null` here
+      // too. Passing the adapter's identity unconditionally would make the two sides disagree
+      // forever on an empty tracker, and the reuse fast path would miss on every reconcile with no
+      // error anywhere: exactly the failure LCLI-476 found twice.
+      sourceAdapterVersion: stampedSourceAdapterVersion(tasks.length, listing.sourceAdapterVersion),
       ladybugVersion: options.ladybugVersion,
       ladybugStorageVersion: options.ladybugStorageVersion,
       loreVersion: VERSION,
@@ -385,6 +402,18 @@ export async function loadLadybugProjectionFreshness(
   );
 }
 
+/**
+ * The `sourceAdapterVersion` a task list actually stamps onto its records: the identity they carry,
+ * or `null` when there are no records to carry one.
+ *
+ * One rule with one home, because the identity arrives in two different shapes -- from the adapter
+ * on the freshness path, and off the already-built records on the source path -- and the two
+ * fingerprints must agree exactly or the cache never hits.
+ */
+function stampedSourceAdapterVersion(taskCount: number, identity: string | null): string | null {
+  return taskCount === 0 ? null : identity;
+}
+
 function projectionInputFingerprint(options: {
   readonly inventory: readonly SourceInventoryEntry[];
   readonly profileInventory: readonly ProfileInventoryEntry[];
@@ -393,6 +422,13 @@ function projectionInputFingerprint(options: {
   readonly ladybugVersion: string;
   readonly ladybugStorageVersion: string;
   readonly loreVersion: string;
+  /**
+   * The producing adapter's identity, folded into the fingerprint because it is now part of what
+   * the projection EMITS (LCLI-494). A cached generation built against one backend must not be
+   * reused after the repository is repointed at another — that is the same class of defect
+   * LCLI-476 found twice, a cached comparison made against a value the producer had moved on from.
+   */
+  readonly sourceAdapterVersion: string | null;
 }): string {
   const tasks = options.tasks
     .map((task) => ({
@@ -405,7 +441,7 @@ function projectionInputFingerprint(options: {
       assignees: [...task.assignees],
       milestone: task.milestone,
       parentTaskId: task.parentTaskId,
-      sourceAdapterVersion: "backlog-json/1",
+      sourceAdapterVersion: options.sourceAdapterVersion,
     }))
     .sort((a, b) => compareCodeUnits(a.id.toLowerCase(), b.id.toLowerCase()) || compareCodeUnits(a.id, b.id));
   const facts = {

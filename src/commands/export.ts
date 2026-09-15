@@ -3,7 +3,7 @@
 import { join } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { resolveHeadSha } from "../adapters/git";
-import { listTasksOrEmpty } from "../adapters/tracker";
+import { listTasksWithSource } from "../adapters/tracker";
 import { loadBundle } from "../core/bundle";
 import { loadProfile } from "../core/profile";
 import { buildProjection, PROJECTION_SCHEMA_VERSION } from "../core/projection";
@@ -32,11 +32,12 @@ export async function runExport(options: ExportOptions): Promise<number> {
   const warnings = new WarningCollector();
   const graph = loadBundle(join(options.root, DOCS_DIR), { warnings, profile });
   warnings.flush({ color: options.output.color, stderr: options.stderr });
-  const tasks = await listTasksOrEmpty(options.root, options.adapter);
+  const listing = await listTasksWithSource(options.root, options.adapter);
   const gitCommit = (options.resolveGitCommit ?? resolveHeadSha)(options.root);
   const projection = buildProjection({
     graph,
-    tasks,
+    tasks: listing.tasks,
+    sourceAdapterVersion: listing.sourceAdapterVersion,
     docsRoot: DOCS_DIR,
     okfVersion: graph.state.okfVersion,
     exporterVersion: VERSION,

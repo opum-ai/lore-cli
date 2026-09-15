@@ -7,7 +7,7 @@ import type {
   EditTaskPatch,
   ListTasksOptions,
 } from "../src/adapters/backlog";
-import { DEFAULT_STATUS_FLOW } from "../src/adapters/backlog";
+import { BACKLOG_SOURCE_ADAPTER_VERSION, DEFAULT_STATUS_FLOW } from "../src/adapters/backlog";
 import { type Concept, idFromPath } from "../src/core/concept";
 import type { Writer } from "../src/errors";
 import { LoreError } from "../src/errors";
@@ -254,6 +254,10 @@ export function fakeAdapter(
   };
   const probeOpt = opts.probe;
   return {
+    // The fake stands in for the Backlog adapter, so it carries the Backlog adapter's own identity
+    // rather than a literal — a fixture that invents its own provenance string is how a projection
+    // test comes to assert a value no adapter produces.
+    sourceAdapterVersion: BACKLOG_SOURCE_ADAPTER_VERSION,
     probe:
       probeOpt === undefined
         ? notImplemented("probe")
