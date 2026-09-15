@@ -254,6 +254,7 @@
 - 2026-09-15T03:31:18-05:00 d9e8037000b60ebbc7d334971ed08acce2ede3fe chore(LCLI-496): the bump is landed and nothing is tagged; record what is still open (#89)
 - 2026-09-15T04:01:24-05:00 1f14c799e1dd711d0869f81e81c386544eb965f9 docs(LCLI-496): adjudicate target.body's optionality against cli-contract 7.1 (#90)
 - 2026-09-15T04:20:56-05:00 408668d0df40ee57a51c20f67a5ed400d6949cc2 chore(LCLI-496): void a conclusion I recorded today, and write the post-tag list down (#92)
+- 2026-09-15T05:15:19-05:00 5c437eb5137c19f4fd87c445ba88068671b993cc chore(LCLI-496): my own handoff note went stale; record the invariant, and a flake escalation (#96)
 
 ## docs/adr
 
@@ -327,6 +328,7 @@
 - 2026-09-09T05:11:07-05:00 f8b49f27de5ef4a32415b4bc39f4a4e8d1e45be0 docs(LCLI-461): correct 0.3.5's release-truth qualification citation, close LCLI-461
 - 2026-09-13T21:09:55-05:00 8c771dd71e886b5f115f5644029f9fc41ce45397 docs(LCLI-485): write down docs/log.md's content contract (#25)
 - 2026-09-14T01:47:06-05:00 e5b4152f58ba0334b63f149769a31c5710b237db docs(LCLI-488): 0.6.2 is released — replace the current-state claims (#48)
+- 2026-09-15T07:42:47-05:00 2b6181dfa5cec0a621973e809056d8f101f1add7 docs(LCLI-496): 0.7.0 is released — replace the release-truth and README current-state claims (#99)
 
 ## docs/runbooks
 
