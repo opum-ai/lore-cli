@@ -256,6 +256,9 @@
 - 2026-09-15T04:20:56-05:00 408668d0df40ee57a51c20f67a5ed400d6949cc2 chore(LCLI-496): void a conclusion I recorded today, and write the post-tag list down (#92)
 - 2026-09-15T05:15:19-05:00 5c437eb5137c19f4fd87c445ba88068671b993cc chore(LCLI-496): my own handoff note went stale; record the invariant, and a flake escalation (#96)
 - 2026-09-15T11:43:19-05:00 e4b384b92db59087eff27ea1eabfc5adc1c63225 fix(LCLI-333): unstrand the "Blocked" record and delete the override standing in for it (#108)
+- 2026-09-15T14:50:48-05:00 a390713c94f34896bf06130317fda23e60635940 fix(LCLI-510): generate the README's version lines, and refuse a release whose PACKED README disagrees
+- 2026-09-15T15:00:16-05:00 8b613e25352bfade06cb5de708be722ba8cc1050 fix(LCLI-510): markers must be INLINE — a line-initial one broke the rendered npm page
+- 2026-09-15T15:06:41-05:00 6051d57f054da204ea3682db14e1cde107a45c74 fix(LCLI-510): give clause 3 a sanctioned escape hatch, and prove the hatch ACCEPTS
 
 ## docs/adr
 
@@ -330,6 +333,7 @@
 - 2026-09-13T21:09:55-05:00 8c771dd71e886b5f115f5644029f9fc41ce45397 docs(LCLI-485): write down docs/log.md's content contract (#25)
 - 2026-09-14T01:47:06-05:00 e5b4152f58ba0334b63f149769a31c5710b237db docs(LCLI-488): 0.6.2 is released — replace the current-state claims (#48)
 - 2026-09-15T07:42:47-05:00 2b6181dfa5cec0a621973e809056d8f101f1add7 docs(LCLI-496): 0.7.0 is released — replace the release-truth and README current-state claims (#99)
+- 2026-09-15T15:01:41-05:00 5e5e5edabcfa8c7cd291e09f2fe64454bf0ae82e fix(LCLI-510): A4 re-runs the assertions instead of grepping — the literal would have gone red on a CORRECT release
 
 ## docs/runbooks
 

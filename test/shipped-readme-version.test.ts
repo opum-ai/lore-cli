@@ -371,6 +371,95 @@ describe("rendering — a marker may never be the first content on its line", ()
   });
 });
 
+describe("the N+1th region — nothing is hardcoded to exactly the two that exist today", () => {
+  // The harder half of quest-cli's escape-hatch discipline. They had to prove ONE marked region
+  // is usable; this implementation declares its regions in code, so what has to be demonstrated
+  // is that ADDING one works — generation, byte-equality, clause-3 masking and the rendering rule
+  // all generalising past the two that happen to exist. Everything else in this suite exercises
+  // those two, so a machine silently specialised to "published-bullet" and "status" would pass
+  // the whole file.
+  //
+  // It proves it by patching a COPY of the real script rather than by restating its internals:
+  // a third region is declared the way a future maintainer would declare one, and the real
+  // binary is then run against a README carrying three.
+  const THIRD = "extra";
+  const THIRD_BEGIN = `<!--lore-version:${THIRD}:begin-->`;
+  const THIRD_END = `<!--lore-version:${THIRD}:end-->`;
+
+  /** Copy the real script and declare one more region in it, the way a maintainer would. */
+  function scriptWithThirdRegion(): string {
+    const source = readFileSync(SCRIPT, "utf8");
+    const withId = source.replace(
+      'const REGION_IDS = ["published-bullet", "status"];',
+      `const REGION_IDS = ["published-bullet", "status", "${THIRD}"];`,
+    );
+    expect(withId).not.toBe(source); // the anchor still exists
+    const withTemplate = withId.replace(
+      '  return new Map([\n    [\n      "published-bullet",',
+      '  return new Map([\n    ["' +
+        THIRD +
+        '", ` built from ${pkg.name}@${pkg.version}`],\n    [\n      "published-bullet",',
+    );
+    expect(withTemplate).not.toBe(withId);
+    const dir = mkdtempSync(join(tmpdir(), "lore-readme-n1-"));
+    const copied = join(dir, "shipped-readme-version.mjs");
+    writeFileSync(copied, withTemplate);
+    return copied;
+  }
+
+  function threeRegionReadme(body: string): string {
+    return `${fixtureReadme()}\nBuilt:${THIRD_BEGIN}${body}${THIRD_END}\n`;
+  }
+
+  function runThird(readme: string, pkg: object = PKG) {
+    const dir = mkdtempSync(join(tmpdir(), "lore-readme-n1-fx-"));
+    writeFileSync(join(dir, "README.md"), readme);
+    writeFileSync(join(dir, "package.json"), JSON.stringify(pkg, null, 2));
+    return spawnSync("node", [scriptWithThirdRegion(), "--check", "--dir", dir], { encoding: "utf8" });
+  }
+
+  test("ACCEPTS a third region whose content matches — the machinery generalises past two", () => {
+    const run = runThird(threeRegionReadme(" built from @opum-ai/lore@0.7.0"));
+    expect(run.stderr).toBe("");
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("3 generated regions byte-equal");
+  });
+
+  test("the third region is byte-checked like the other two, and named when it drifts", () => {
+    const run = runThird(threeRegionReadme(" built from @opum-ai/lore@0.6.2"));
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain(`A3.2 region "${THIRD}"`);
+    // ...and only it. The two originals still match, so this is not a blanket failure.
+    expect(run.stderr).not.toContain('A3.2 region "status"');
+    expect(run.stderr).toContain("1 shipped-README version assertion(s) failed");
+  });
+
+  test("the third region's bytes are masked for clause 3, exactly like the other two", () => {
+    // Its generated content carries this package's own name NEXT TO a version. If masking were
+    // specialised to the two known regions, clause 3 would fire on the region's own output —
+    // a gate that refuses what its own generator produces.
+    const run = runThird(threeRegionReadme(" built from @opum-ai/lore@0.7.0"));
+    expect(run.stderr).not.toContain("A3.3");
+    expect(run.status).toBe(0);
+  });
+
+  test("a missing third region is reported by ITS id, not by one of the original two", () => {
+    const run = runThird(`${fixtureReadme()}\n`);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain(`A3.1 region "${THIRD}"`);
+  });
+
+  test("--write fills the third region too", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lore-readme-n1-write-"));
+    writeFileSync(join(dir, "README.md"), threeRegionReadme(" stale"));
+    writeFileSync(join(dir, "package.json"), JSON.stringify(PKG, null, 2));
+    const script = scriptWithThirdRegion();
+    expect(spawnSync("node", [script, "--write", "--dir", dir], { encoding: "utf8" }).stderr).toBe("");
+    expect(readFileSync(join(dir, "README.md"), "utf8")).toContain(" built from @opum-ai/lore@0.7.0");
+    expect(spawnSync("node", [script, "--check", "--dir", dir], { encoding: "utf8" }).status).toBe(0);
+  });
+});
+
 describe("--write round-trips", () => {
   test("a drifted README is repaired by --write and then passes --check", () => {
     const dir = mkdtempSync(join(tmpdir(), "lore-readme-write-"));

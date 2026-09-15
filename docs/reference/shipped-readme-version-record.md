@@ -253,6 +253,28 @@ without the hatch, accepted with it, and that the hatch does **not** disable
 byte-equality — a blanket exemption is the failure that would turn the hatch
 into a hole, and it has its own mutation row.
 
+### The N+1th region is proved too, not just the two that exist
+
+quest-cli had to show that *one* marked region is usable. This implementation
+declares its regions in code, so the thing that has to be shown is that **adding**
+one works — generation, byte-equality, clause-3 masking, `--write` and the
+rendering rule all generalising past the two that happen to exist today.
+
+Every other test in the suite exercises those two, so a machine silently
+specialised to `published-bullet` and `status` would pass the entire file. The
+N+1 tests patch a **copy of the real script** to declare a third region the way a
+maintainer would, then run the real binary against a README carrying three. They
+assert it is accepted when it matches, byte-checked and named *by its own id*
+when it drifts, reported by its own id when missing, filled by `--write`, and —
+the one most likely to be specialised — that its bytes are **masked for clause
+3** like the others. That last one matters because the third region's generated
+content deliberately carries the package's own name next to a version: if masking
+were specialised to the two known ids, the gate would refuse what its own
+generator produces.
+
+Mutation: restricting the region machinery to the first two ids fails all five,
+and nothing else in the suite notices.
+
 ### A4 re-runs the assertions; it does not grep for a sentence
 
 The first version of the read-back searched the served README for the literal
@@ -309,8 +331,10 @@ passes first time may be asserting the wrong thing; this is what says otherwise.
 | byte-equality disabled | 5 — every A3.2 test, the `--write` round trip, and the tarball gate |
 | the inline-marker rendering check removed | 2 — both rendering tests |
 | an allow span made a blanket exemption | 3 — including the hatch's own acceptance test |
+| stray-marker detection reverted to first-occurrence | 1 |
+| region machinery specialised to the first two ids | 5 — and nothing else in the suite notices |
 | the gate deleted from `publish-release.sh` | 1 — the refusal test written for it |
-| *(unmutated)* | **0 of 28** |
+| *(unmutated)* | **0 of 33** |
 
 The acceptance half is tested as deliberately as the rejection half: the
 legitimate non-package tokens stay green, the historical-narration block stays
