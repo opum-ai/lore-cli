@@ -504,6 +504,19 @@ publish is explicitly marked public. Root `package.json` and all six
    repository's per-clause record is
    [Shipped-README version assertions in lore-cli](../reference/shipped-readme-version-record.md).
 
+   **After publishing, what you read back is npm's package-level `readme`
+   field, not a per-version page.** Measured 2026-09-15:
+   `npm view @opum-ai/lore@0.7.0 readme`, `...@0.6.2 readme` and
+   `...@0.6.1 readme` all return the same 14446 bytes — npm serves whatever the
+   most recent publish carried, and the version in the spec is inert. So a
+   read-back that disagrees within the propagation window (LCLI-460: 0.5.0 took
+   ~25 minutes) is most likely the registry still serving the *previous*
+   release, not a defect. `scripts/readme-readback.sh` automates that
+   distinction in CI: it retries, and fails only when the served page satisfies
+   neither this release's assertions nor the previous one's. Record the package
+   and the time you read, never "the page for version X" — naming an object you
+   did not read is the defect class this whole gate exists to close.
+
    Keep the README's copyable install commands versionless (`npx
    @opum-ai/lore`, `bunx @opum-ai/lore`, and package-manager installs without
    an `@<version>` suffix), so they continue to resolve the current release

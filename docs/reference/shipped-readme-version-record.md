@@ -59,7 +59,7 @@ built to the count rather than to the claim each line makes will either miss the
 | A3.1 — every region present | **exercised**, per region | same script, all three modes |
 | A3.2 — region byte-equal to generated | **exercised** — *and this repository is the only side that ever will* | same script, all three modes |
 | A3.3 — no name/version pair outside every region | **exercised**, as **block-scoped** adjacency | same script, all three modes |
-| A4 — post-publish read-back naming its object | **exercised** | `release.yml`'s `publish` job, by re-running `--check` over the bytes the registry served; step 1a of `publish-release.sh`'s closing checklist for the manual path |
+| A4 — post-publish read-back naming its object | **exercised** | `scripts/readme-readback.sh`, called by `release.yml`'s `publish` job, by re-running `--check` over the bytes the registry served; step 1a of `publish-release.sh`'s closing checklist for the manual path |
 | A5 — this record | **exercised** | this file |
 | *(local)* markers must be inline, never line-initial | **exercised** | same script, all three modes — not a contract clause; see below |
 | *(local)* clause 3 has a sanctioned exemption | **exercised** | hand-written allow spans; see below |
@@ -348,8 +348,11 @@ gate that had become always-red would be visible rather than reassuring.
   artifact.
 - `.github/workflows/release.yml`, `package` job — **the gate**, run immediately
   after `npm pack` against the tarball about to be published.
-- `.github/workflows/release.yml`, `publish` job — A4 read-back, naming the
-  package and version it read.
+- `scripts/readme-readback.sh` — the A4 read-back, called by `release.yml`'s
+  `publish` job, naming the package and version it read. It is a script rather
+  than an inline `run:` block so that `test/readme-readback.test.ts` can drive
+  every branch of it against a stubbed `npm`; see "A4 shipped two defects" below
+  for why that mattered.
 - `scripts/publish-release.sh` — the same tarball gate before any registry
   write. Not redundant with the workflow's: this script publishes whatever is in
   its artifacts directory, which an operator may populate by hand, and the root
@@ -371,3 +374,145 @@ The README's "pair with `quest` 0.7.0" sentence remains hand-maintained and sits
 outside both regions. It is out of scope here twice over: it asserts another
 package's version rather than this one's, and reconciling the lockstep claim
 with the exception is LCLI-511's work.
+
+**Say what the gate does not cover, because its success message sounds wider
+than it is.** A green run prints "no name/version pair outside any of them",
+and the runbook now takes README.md off the post-publish checklist. A reader
+can reasonably draw "the README's version claims are current" from those two
+facts together, and that is more than clause 3 guarantees: clause 3 is
+*name-adjacency*, so a version claim in a block that never names
+`@opum-ai/lore` is invisible to it by design. The lockstep sentence is exactly
+such a block — it carries `quest` and a number, and nothing else. Today that
+sentence is the only known instance; it is not checked, and it will be false the
+day lore and quest diverge, which LCLI-511 exists to resolve.
+
+## What an adversarial review found after the first implementation passed CI
+
+Everything in this section was found **after** a fully green run (`35018902430`
+on `930935d9`, all five required contexts including `windows-latest`). None of
+it was reachable by the suite as it then stood. It is recorded because the
+pattern — not the individual bugs — is the reusable part: *green proves the
+tests pass, not that the gate measures what its message claims.*
+
+### Clause 3 was blind to this README's own house style
+
+`VERSION_TOKEN` was anchored `(?<![\w.])...(?![\w.])`, and its docblock asserted
+that this made `v0.7.0` match "at the digits". It did not: `v` is a word
+character, so the lookbehind rejected it. The trailing class rejected any
+version ending a sentence for the same reason. Measured:
+
+| input | old | new |
+|---|---|---|
+| `v0.7.0` | no match | match |
+| `` `v0.6.2` `` | no match | match |
+| `the release is 0.6.2.` | no match | match |
+| `0.6.2.3` | no match | no match — still not a version |
+| `rev0.7.0` | no match | no match — still not a version |
+
+Two sentences naming this package next to a stale version therefore scored
+**exit 0** against the real README, with the gate printing its affirmative
+"no name/version pair outside any of them". This was not a generic regex nit:
+the generated `status` region itself writes ``Tag `v0.7.0` ``, so `v<version>`
+is precisely what the next hand-written release sentence reaches for.
+
+**The comment was worse than the bug.** A docblock stating behaviour the code
+does not have is what the next reader checks *instead of* the code, so it would
+have survived the next review too.
+
+### A4 shipped two defects, in a step no test could reach
+
+A4 ran in exactly one place: inside a real `npm publish`, seconds after the only
+irreversible action in the release. Both defects below were found by reading it,
+not by running it, and neither was reachable by any test while the logic sat
+inline in `release.yml`.
+
+**It named an object it had never read.** The step wrote
+`spec="@opum-ai/lore@${version}"` and reported "the README the registry serves
+for `${spec}`". npm's `readme` is a **packument-level** field, not a per-version
+page. Measured 2026-09-15 against the live registry:
+
+```
+npm view @opum-ai/lore@0.7.0 readme  -> 14446 bytes, sha256 25b24c8dd262bb9c...
+npm view @opum-ai/lore@0.6.2 readme  -> the SAME 14446 bytes
+npm view @opum-ai/lore@0.6.1 readme  -> the SAME 14446 bytes
+```
+
+The version qualifier is inert for that field; npm serves whatever the most
+recent publish carried. So the step named a version-specific page while reading
+a package-level one — the same defect class as the stale README it exists to
+catch, inside the fix for it.
+
+**It would have gone red on a correct release.** The step guarded only the case
+where the registry serves an *empty* readme, treating that as propagation lag.
+But a lagging replica does not serve nothing — it serves **the previous
+release's README**, which is byte-for-byte the thing A4 flags. LCLI-460 records
+0.5.0 taking ~25 minutes to propagate, and the preceding visibility-wait step is
+explicitly allowed to finish with packages still pending. A false alarm seconds
+after an irreversible publish is close to the worst possible failure mode, and
+it is the *second* time this exact shape appeared in this change: the first
+draft of A4 grepped for a literal the markers split.
+
+The fix is to **discriminate the two hypotheses instead of assuming one**. A4
+now retries within the registry window, and when the window is exhausted it asks
+whether the served README satisfies the *previous* release's assertions. If it
+does, that is propagation lag wearing the costume of a defect, and it warns. It
+fails only when the page matches **no** release we published — when lag has been
+positively ruled out.
+
+### The one documented invariant with no test behind it
+
+`splitBlocks` reads the **original** lines, and its docblock explains why:
+structure taken from the masked text would let a fully-masked line read as blank
+and tear one paragraph in two, hiding a name/version pair straddling the seam.
+The invariant is real — a fixture with the package name before a fully-masked
+line and a stale version after it is refused by the real script and **accepted**
+by the mutant — and nothing in the suite noticed when it was inverted. It has a
+test now.
+
+### Mask offsets counted the wrong unit
+
+`maskRegions` spread with `[...text]`, which iterates **code points**, while
+region offsets come from `indexOf`, which counts **UTF-16 code units**. One
+astral character before a region — an emoji in a heading, an ordinary README
+edit — shifted every mask right by one per astral char. The observable failure
+is a **false red on a correct file**, whose error message points at the
+generator's own output and tells the author to move a claim that is already
+inside a region. The mirror hazard is a mask sliding onto real text and hiding a
+genuine pair. `README.md` has zero astral characters today; that is luck, not a
+guarantee.
+
+### Two smaller ones, same shape
+
+The manual path's post-publish checklist still printed
+`npm view ... | grep -n 'Status: .* released'`, which matches **nothing** against
+the README this tool generates — the markers split the literal, so there is no
+space after `Status:`. The workflow's copy of that mistake had been fixed; the
+operator-facing copy had not, and the operator is the one holding the
+irreversible action. It now runs `--check` over the served bytes, like A4.
+
+And `publish-release.sh` reported exit 2 — "the checker could not read its
+input" — with the detailed stale-README story, sending an operator to fix a file
+that is fine when the real problem is a missing or truncated tarball.
+
+### The mutation matrix for the new tests
+
+Every fix above is held by a test that was checked to fail without it:
+
+| Mutation | Tests that fail |
+|---|---|
+| `VERSION_TOKEN` reverted | 2 — SHAPE E, SHAPE F |
+| `maskRegions` back to code-point spread | 1 — the astral acceptance test |
+| `splitBlocks` reads the masked lines | 1 — the straddle test |
+| container-prefix pattern reverted | 1 — the `> - ` rendering test |
+| A4's lag discrimination removed | 1 — the previous-release warning test |
+
+**One of these is honest about being weaker than it looks.** The second astral
+test ("still REFUSES a stale pair when astral characters are present") does
+*not* fail under the code-point mutation — the planted pair sits far enough from
+any region that the shifted mask never reaches it. It is kept as the acceptance
+half of a pair, not claimed as a discriminating test.
+
+The A4 tests were written against a stubbed `npm`, and the lag test **failed on
+its first run** — the stub matched the `versions` argument at the wrong position,
+so it answered every read with the readme and the lag branch was unreachable.
+That is the failure a test is supposed to have before it is believed.
