@@ -144,10 +144,24 @@ const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "sev
 
 /**
  * A version token, matched loosely on purpose. Clause 3 is a floor and a floor that misses
- * `1.2.3-rc.1` is not one. Anchored on a digit boundary so `1.3.14` is one token rather than two
- * and so `v0.7.0` matches at the digits.
+ * `1.2.3-rc.1` is not one.
+ *
+ * Two boundary cases are deliberate, and BOTH were missing until LCLI-510's review caught them --
+ * the comment here claimed the first one already worked, which is worse than no comment because it
+ * is what the next reader checks instead of the code:
+ *
+ *   - `v0.7.0` matches, at the `v`. The old lookbehind rejected a leading `v` as a word character,
+ *     so the house style of this very file -- the generated `status` region writes ``Tag `v0.7.0` ``
+ *     -- was invisible to clause 3. The next hand-written sentence about a release reaches for
+ *     `v<version>`, and the clause would have waved it through while reporting that it checked.
+ *   - A version ending a sentence matches. `the latest release is 0.6.2.` was invisible for the
+ *     same reason: a trailing `.` was treated as "this is part of a longer token".
+ *
+ * What still must NOT match is a genuinely longer dotted token: `0.6.2.3` is not a version this
+ * clause should pick `0.6.2` out of, so a following dot only ends the token when a word character
+ * does not follow it.
  */
-const VERSION_TOKEN = /(?<![\w.])\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?![\w.])/;
+const VERSION_TOKEN = /(?<![\w.])v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?!\w)(?!\.[\w])/;
 
 /** Narrow an unknown thrown value to something printable, without swallowing a non-Error. */
 function messageOf(error) {
@@ -283,7 +297,12 @@ function locateAllowSpans(text) {
  * marker — survives verbatim, which is the point.
  */
 function maskRegions(text, spans) {
-  const chars = [...text];
+  // split("") and NOT [...text]: `region.start`/`end` come from indexOf, which counts UTF-16 code
+  // units, while spreading counts CODE POINTS. One astral character (an emoji in a heading or a
+  // feature bullet -- ordinary edits for a README) before a region shifts every mask offset right
+  // by one per astral char, which both false-reds a correct file and can slide the mask onto real
+  // text and hide a genuine pair. This file has none today; that is luck, not a guarantee.
+  const chars = text.split("");
   for (const { start, end } of spans) {
     for (let i = start; i < end; i += 1) {
       if (chars[i] !== "\n") chars[i] = " ";
@@ -377,7 +396,10 @@ function checkAdjacency(text, regions, allowSpans, pkgName) {
 function assertInlineMarkers(text) {
   const problems = [];
   text.split("\n").forEach((line, index) => {
-    const content = line.replace(/^\s*(?:[-*+]\s+|\d+\.\s+)?(?:>\s?)*\s*/, "");
+    // Container prefixes nest and may repeat, and the real-world order is blockquote FIRST:
+    // `> - <!--...-->` is a bullet inside a blockquote. The old pattern accepted only
+    // bullet-then-quote, so `> - ` slipped past and the npm page rendered literal `**`.
+    const content = line.replace(/^(?:\s*(?:>\s?|[-*+]\s+|\d+[.)]\s+))*\s*/, "");
     if (!content.startsWith("<!--lore-version:")) return;
     problems.push(
       `RENDERING, line ${index + 1}: a region marker is the first content on its line, so ` +
@@ -466,7 +488,18 @@ function writeRegions(root) {
   const ordered = [...regions.entries()].sort((a, b) => b[1].start - a[1].start);
   let text = original;
   for (const [id, { start, end }] of ordered) {
-    text = text.slice(0, start) + expected.get(id) + text.slice(end);
+    const replacement = expected.get(id);
+    if (typeof replacement !== "string") {
+      // Without this, `--write` splices the literal string "undefined" into the README for any id
+      // in REGION_IDS that generate() does not produce. `--check` catches it immediately, but
+      // `--write` is the command the runbook tells people to run, and a README carrying the word
+      // "undefined" is a worse thing to hand someone than a refusal.
+      console.error(
+        `::error::generate() produced no content for region "${id}", so --write has nothing to put there. This is a bug in generate(), not in README.md; refusing to write rather than splice "undefined" into the file.`,
+      );
+      return 2;
+    }
+    text = text.slice(0, start) + replacement + text.slice(end);
   }
 
   if (text === original) {

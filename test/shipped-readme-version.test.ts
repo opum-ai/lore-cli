@@ -519,3 +519,97 @@ describe("usage", () => {
     expect(spawnSync("node", [SCRIPT], { encoding: "utf8" }).status).toBe(2);
   });
 });
+
+// ── Boundary shapes the clause was blind to until PR #118's review ──────────────────────────────
+//
+// Every test below is a shape that scored exit 0 — an ALWAYS-GREEN gate — against the first
+// implementation, or a correct file the gate would have REFUSED. Both directions are represented
+// on purpose: a gate that is wrong in the accepting direction ships a stale npm page, and one that
+// is wrong in the refusing direction fails a correct release, which is the harder of the two to
+// diagnose because the failure looks like a real defect.
+describe("A3.3 clause 3 — version-token boundaries", () => {
+  test("SHAPE E — a `v`-prefixed version, which is this README's OWN house style", () => {
+    // The generated status region writes ``Tag `v0.7.0` ``, so `v<version>` is what the next
+    // hand-written sentence about a release reaches for. The original lookbehind rejected a
+    // leading `v` as a word character and waved the whole shape through.
+    const run = checkFixture(
+      `${fixtureReadme()}\nInstall the current release, \`@opum-ai/lore\` \`v0.6.2\`, from npm.\n`,
+    );
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("A3.3 clause 3");
+    expect(run.stderr).toContain("v0.6.2");
+  });
+
+  test("SHAPE F — a version ending a sentence, where the full stop hid the token", () => {
+    const run = checkFixture(`${fixtureReadme()}\nThe latest published version of \`@opum-ai/lore\` is 0.6.2.\n`);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("A3.3 clause 3");
+    expect(run.stderr).toContain("0.6.2");
+  });
+
+  test("ACCEPTS a longer dotted token — widening the tail must not make `0.6.2.3` a version", () => {
+    // The guard against fixing SHAPE F by deleting the tail anchor outright. A four-segment token
+    // is not a version this clause should pick `0.6.2` out of.
+    const run = checkFixture(`${fixtureReadme()}\nThe \`@opum-ai/lore\` build identifier was 0.6.2.3 that week.\n`);
+    expect(run.stderr).toBe("");
+    expect(run.status).toBe(0);
+  });
+
+  test("ACCEPTS a `v` that is merely the tail of a word — `rev0.7.0` is not a version token", () => {
+    const run = checkFixture(`${fixtureReadme()}\nThe \`@opum-ai/lore\` internal marker rev0.7.0 is not a release.\n`);
+    expect(run.stderr).toBe("");
+    expect(run.status).toBe(0);
+  });
+});
+
+describe("structure is read from the ORIGINAL lines, not the masked ones", () => {
+  // The one invariant the implementation documents as load-bearing and had NO test behind it.
+  // A fully-masked line reads as blank, so splitting on the masked text tears one paragraph into
+  // two and hides a name/version pair straddling the seam.
+  const ALLOW_BEGIN = "<!--lore-version:allow:begin-->";
+  const ALLOW_END = "<!--lore-version:allow:end-->";
+
+  test("a pair straddling a fully-masked line is caught — the masked line must not split the block", () => {
+    const straddle = [
+      `The launcher \`@opum-ai/lore\` is documented below.${ALLOW_BEGIN}`,
+      "this entire line lives inside the span and masks to blanks",
+      `still inside${ALLOW_END} and it was 0.6.2 back then.`,
+    ].join("\n");
+    const run = checkFixture(`${fixtureReadme()}\n${straddle}\n`);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("A3.3 clause 3");
+  });
+});
+
+describe("mask offsets are UTF-16 code units, like the indices that produce them", () => {
+  test("ACCEPTS a correct README carrying astral characters ahead of every region", () => {
+    // `[...text]` spreads by CODE POINT while region offsets come from indexOf, which counts code
+    // units. One emoji in a heading shifted every mask right by one and false-redded a correct
+    // file, pointing the operator at the generator's own output and telling them to move a claim
+    // that was already inside a region.
+    const withEmoji = fixtureReadme().replace("# lore", `# lore ${"🧭".repeat(40)}`);
+    const run = checkFixture(withEmoji);
+    expect(run.stderr).toBe("");
+    expect(run.status).toBe(0);
+  });
+
+  test("and still REFUSES a stale pair when astral characters are present", () => {
+    // The mirror hazard: a mask sliding off its region can also hide a genuine pair.
+    const withEmoji = fixtureReadme().replace("# lore", `# lore ${"🧭".repeat(40)}`);
+    const run = checkFixture(`${withEmoji}\nStill shipping \`@opum-ai/lore\` 0.6.2 today.\n`);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("A3.3 clause 3");
+  });
+});
+
+describe("rendering — container prefixes nest, and the blockquote comes first", () => {
+  test("`> - ` is caught: a bullet INSIDE a blockquote is the ordinary Markdown order", () => {
+    // The original prefix pattern accepted bullet-then-quote only, so the real-world nesting
+    // slipped through and the npm page would render literal `**` and backticks.
+    const run = checkFixture(
+      `${fixtureReadme()}\n> - ${"<!--lore-version:allow:begin-->"}x${"<!--lore-version:allow:end-->"}\n`,
+    );
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("RENDERING");
+  });
+});
