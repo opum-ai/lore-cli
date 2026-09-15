@@ -82,6 +82,7 @@ export const LORE_COMMANDS: readonly CommandSummary[] = [
   { name: "export", summary: "Emit a deterministic, consumer-neutral OKF projection as JSONL" },
   { name: "query", summary: "Full-text search the bundle with frontmatter filters" },
   { name: "context", summary: "Assemble a concept + neighbor summaries within a token budget" },
+  { name: "read", summary: "Read one concept exactly as authored, with no budget and no assembly" },
   { name: "agent", summary: "List context profiles or compile bounded task-scoped evidence" },
   { name: "instructions", summary: "Print task-scoped agent guidance on demand" },
   { name: "agents", summary: "Regenerate the agent bridges (SKILL.md + the CLAUDE.md/AGENTS.md nudge)" },

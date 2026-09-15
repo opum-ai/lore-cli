@@ -196,13 +196,57 @@ describe("buildContext — token budget", () => {
     expect(data.tokenEstimate).toBe(target + firstCost);
   });
 
-  test("the target is always included even when it alone exceeds the budget", () => {
+  test("a supplied budget is a CEILING: the target's body is dropped rather than overrun (LCLI-478)", () => {
+    // This replaces the previous contract, which emitted the whole target however large and merely
+    // set `truncated`. That was the caller asking for a guarantee and receiving a label -- the
+    // defect LCLI-478 exists to remove -- so the old test is rewritten rather than deleted, because
+    // what changed is the promise, not the coverage.
     writeChainBundle();
     const g = graph();
-    const data = buildContext(g, "stories/bulk", { depth: 1, maxTokens: 1 });
-    expect(data.neighbors).toEqual([]);
-    expect(data).toMatchObject({ total: 2, shown: 0, truncated: true });
-    expect(data.tokenEstimate).toBe(g.tokenEstimate("stories/bulk")); // target still counted
+    const wholeBody = g.tokenEstimate("stories/bulk");
+    const identity = buildContext(g, "stories/bulk", { depth: 1, maxTokens: wholeBody - 1 });
+    expect(identity.tokenEstimate).toBeLessThanOrEqual(wholeBody - 1);
+    expect(identity.target.body).toBeUndefined();
+    expect(identity.omitted?.fields).toEqual(["target.body"]);
+    expect(identity.truncated).toBe(true);
+    // The body is the only field a budget drops, and the target's identity always survives.
+    expect(identity.target.id).toBe("stories/bulk");
+    expect(identity.target.type).toBe("Story");
+  });
+
+  test("a budget too small to NAME the target refuses instead of returning something unusable", () => {
+    writeChainBundle();
+    const error = expectError("validation", () => buildContext(graph(), "stories/bulk", { depth: 1, maxTokens: 1 }));
+    expect(error.message).toContain("to name its target");
+    expect(error.hint).toContain("lore read");
+    // Required-versus-budget in the input, matching `lore agent context`'s own refusal for the same
+    // situation -- one spelling, so the two commands cannot come to disagree about it.
+    expect(error.input).toMatchObject({ id: "stories/bulk", maxTokens: 1 });
+  });
+
+  test("the omission report is present whenever a budget is supplied, INCLUDING when nothing was dropped", () => {
+    // The zero case is the load-bearing half. If `omitted` appeared only when something was
+    // dropped, its absence would be ambiguous between "nothing was dropped" and "a version that
+    // does not report omission", and a consumer would have to diff against a full fetch to tell.
+    writeChainBundle();
+    const whole = buildContext(graph(), "stories/bulk", { depth: 2, maxTokens: 100_000 });
+    expect(whole.omitted).toEqual({ records: [], fields: [] });
+    expect(whole.truncated).toBe(false);
+    // ...and absent entirely with no budget, which is a DIFFERENT statement: nothing could have
+    // been dropped, so there is no projection to report on.
+    expect(buildContext(graph(), "stories/bulk", { depth: 2 }).omitted).toBeUndefined();
+  });
+
+  test("dropped neighbors are named by id, in the order they would have been included", () => {
+    writeChainBundle();
+    const g = graph();
+    const whole = buildContext(g, "stories/bulk", { depth: 2 });
+    const partial = buildContext(g, "stories/bulk", {
+      depth: 2,
+      maxTokens: g.tokenEstimate("stories/bulk") + (whole.neighbors[0]?.tokenEstimate ?? 0),
+    });
+    expect(partial.omitted?.records).toEqual(whole.neighbors.slice(partial.shown).map((n) => n.id));
+    expect(partial.tokenEstimate).toBeLessThanOrEqual(partial.maxTokens as number);
   });
 
   test("an omitted budget keeps every neighbor within depth (nothing truncated)", () => {
@@ -213,15 +257,17 @@ describe("buildContext — token budget", () => {
     expect(data.maxTokens).toBeUndefined();
   });
 
-  test("an over-budget target with no neighbors still reports truncated (not a silent overrun)", () => {
+  test("a depth-0 pack is bounded too, so no shape of request can overrun the budget", () => {
+    // depth 0 → zero neighbors, so `shown < total` can never fire. Before LCLI-478 that made the
+    // target body the one unbounded thing in the pack; now it is dropped like anything else and
+    // `truncated` still tells the caller the pack is not whole.
     writeChainBundle();
     const g = graph();
-    // depth 0 → zero neighbors, so `shown < total` cannot fire; the only over-budget
-    // signal is the target body itself exceeding --max-tokens.
-    const data = buildContext(g, "stories/bulk", { depth: 0, maxTokens: 1 });
+    const budget = g.tokenEstimate("stories/bulk") - 1;
+    const data = buildContext(g, "stories/bulk", { depth: 0, maxTokens: budget });
     expect(data).toMatchObject({ total: 0, shown: 0, truncated: true });
-    expect(data.tokenEstimate).toBe(g.tokenEstimate("stories/bulk"));
-    expect(data.tokenEstimate).toBeGreaterThan(1); // pack is over the requested budget
+    expect(data.tokenEstimate).toBeLessThanOrEqual(budget);
+    expect(data.omitted).toEqual({ records: [], fields: ["target.body"] });
   });
 });
 
@@ -279,13 +325,39 @@ describe("lore context — command", () => {
     expect(text).not.toContain("lower --depth"); // the counterfactual clause is gone
   });
 
-  test("plain mode warns when the always-included target alone exceeds --max-tokens", () => {
+  test("plain mode names the dropped body in place of it, rather than leaving a gap (LCLI-478)", () => {
+    // The old contract printed the whole body plus an "over budget" warning. There is no such state
+    // any more, so the line that reported it is gone: a line that can never render reads as a
+    // guarantee that something still checks. What replaces it sits where the body WOULD have been,
+    // because a blank space there is the plain-text form of the ambiguity `omitted` removes.
     writeChainBundle();
+    const budget = graph().tokenEstimate("stories/bulk") - 1;
     const stdout = capture();
-    runContext({ root, output: PLAIN_CTX, stdout, stderr: capture(), args: ["stories/bulk", "--max-tokens", "1"] });
+    runContext({
+      root,
+      output: PLAIN_CTX,
+      stdout,
+      stderr: capture(),
+      args: ["stories/bulk", "--max-tokens", String(budget)],
+    });
     const text = stdout.text();
-    expect(text).toContain("over budget:");
-    expect(text).toContain("exceeds the 1-token limit");
+    expect(text).toContain(`[body omitted to fit the ${budget}-token budget`);
+    expect(text).toContain("lore read stories/bulk");
+    expect(text).not.toContain("over budget:");
+  });
+
+  test("a budget too small to name the target refuses at the command layer too", () => {
+    writeChainBundle();
+    const error = expectError("validation", () =>
+      runContext({
+        root,
+        output: PLAIN_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        args: ["stories/bulk", "--max-tokens", "1"],
+      }),
+    );
+    expect(error.message).toContain("to name its target");
   });
 
   test("an unknown id surfaces as a not_found error", () => {

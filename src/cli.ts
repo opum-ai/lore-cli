@@ -36,6 +36,7 @@ import { runOrphans } from "./commands/orphans";
 import { runPath } from "./commands/path";
 import { runProvenance } from "./commands/provenance";
 import { runQuery } from "./commands/query";
+import { runRead } from "./commands/read";
 import { runRename } from "./commands/rename";
 import { runReplace } from "./commands/replace";
 import { runScaffold } from "./commands/scaffold";
@@ -615,6 +616,14 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
       stderr: context.stderr,
       adapter: context.adapter,
       retrieval: context.retrieval ?? loadRetrievalGraph,
+    }),
+  read: (args, context, output) =>
+    runRead({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      stderr: context.stderr,
     }),
   agent: (args, context, output) =>
     runAgent({

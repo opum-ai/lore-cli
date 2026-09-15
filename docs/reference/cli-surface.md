@@ -688,9 +688,68 @@ lore context stories/bulk-archive-orders --max-tokens 4000 --depth 2
 | | |
 |---|---|
 | **Args** | `<id>` (workspace mode requires `<member-id>::<source-id>`) |
-| **Key flags** | `--max-tokens <n>` (token budget; if omitted, no cap is applied — output is bounded only by `--depth`) · `--depth <n>` (neighbor radius, default 1) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
-| **Output** | `kind: context.export` — target body + neighbor summaries, with `tokenEstimate`/`truncated` and `backend`; workspace JSON adds scope and target/neighbor provenance |
-| **Exit** | `0` ok · `2` bad usage (missing `<id>`, unknown/repeated flag, non-integer/out-of-range `--max-tokens`/`--depth`) · `3` `<id>` not found |
+| **Key flags** | `--max-tokens <n>` (token budget, **enforced as a hard ceiling**; if omitted, no cap is applied — output is bounded only by `--depth`) · `--depth <n>` (neighbor radius, default 1) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
+| **Output** | `kind: context.export` — target body + neighbor summaries, with `tokenEstimate`/`truncated`/`omitted` and `backend`; workspace JSON adds scope and target/neighbor provenance |
+| **Exit** | `0` ok · `2` bad usage (missing `<id>`, unknown/repeated flag, non-integer/out-of-range `--max-tokens`/`--depth`) · `3` `<id>` not found · `6` `--max-tokens` too small to name the target |
+
+**A supplied `--max-tokens` is a ceiling, not a hint.** The emitted pack's
+`tokenEstimate` never exceeds it. To stay within it, `lore context` drops
+neighbors nearest-first, and then — only if the target still does not fit — the
+target's own `body`. Omitting the flag applies no cap at all (LCLI-203), which
+is unchanged; what changed is what happens when it *is* supplied, which used to
+be an advisory label on an over-budget pack.
+
+**Nothing is dropped silently.** Whenever `--max-tokens` is supplied, `data`
+carries `omitted`:
+
+```jsonc
+"omitted": { "records": ["specs/archive", "adr/0001-x"], "fields": ["target.body"] }
+```
+
+`records` names the dropped neighbors by id, in the order they would have been
+included; `fields` names any field the budget removed from the pack. **Both are
+present even when nothing was dropped**, as empty arrays — if `omitted` appeared
+only on a trimmed pack, its absence would be ambiguous between "nothing was
+dropped" and "a version of lore that does not report omission", and a consumer
+would have to diff against a full fetch to tell. With no `--max-tokens` the key
+is absent entirely, which is a different and unambiguous statement: no projection
+was active, so nothing could have been dropped.
+
+A budget too small to hold even the target's *identity* (`id`, `type`, `title`)
+is refused with exit `6` naming the required figure, rather than answered with
+something unusable. The budget bounds the pack's **content** — the same
+`tokenEstimate` it has always reported; the omission accounting sits outside it.
+
+When you need a concept's text rather than a budgeted pack, use
+[`read`](#read) — a separate operation with no budget at all.
+
+### `read`
+
+Read **one concept exactly as authored** — its frontmatter mapping and its full
+body, verbatim. No assembly, no neighborhood, no ranking, and **no budget flag at
+all**: there is no configuration under which this command returns less than the
+whole concept.
+
+```
+lore read adr/0021-typed-authored-relationships-and-claim-state
+```
+
+| | |
+|---|---|
+| **Args** | `<id>` (normalized like [`rename`](#rename), so path/`.md`/`./` forms resolve) |
+| **Key flags** | none |
+| **Output** | `kind: read.concept` — `id`, `path`, `type`, `frontmatter`, `body`, `tokenEstimate`. Plain/pretty is one header line, a blank line, then the body verbatim, so `lore read <id> \| tail -n +3` recovers the body byte-for-byte |
+| **Exit** | `0` ok · `2` bad usage (missing/extra `<id>`, unknown flag) · `3` `<id>` not found |
+
+It is a **separate operation** from [`context`](#context) rather than a flag on
+it, deliberately. `context` assembles and is lossy by design — it selects,
+orders, and enforces a ceiling. That is right for a caller feeding a model a
+budget it must not exceed and wrong for a caller who needs to quote a document;
+collapsing the two into one operation makes the caller who needs fidelity and the
+caller who needs cheapness share a code path, and one of them loses.
+
+`read` reports no `backend`, and that absence is deliberate: an exact read is
+always a direct filesystem load, so there is no backend choice to report.
 
 ### `agent`
 
