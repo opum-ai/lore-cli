@@ -831,6 +831,17 @@ anything = true
       ...DEFAULTS,
       tracker: { ...DEFAULTS.tracker, backend: "quest" },
       agents: { ...DEFAULTS.agents, skillSource: "plugin" },
+      // TEMPORARY, and the third value the committed header documents. Quest 0.7.0
+      // renamed its paused status "Blocked" -> "Paused" and LCLI-333 is stranded at
+      // the old literal — on 0.7.0 a record there cannot leave it, so lore cannot be
+      // made green by moving the record. "in-progress" is what classify() already
+      // gives a status matching the backend's pausedStatus (LCLI-455), so the override
+      // produces the SAME rollup the record will once it reaches "Paused".
+      //
+      // DELETE THIS, and the config entry, when quest 0.7.1 installs and LCLI-333
+      // moves (LCLI-504 AC#2). This assertion is what makes that removal loud: leaving
+      // it would keep classifying a literal no conformant quest can emit.
+      reconcile: { ...DEFAULTS.reconcile, overrides: { Blocked: "in-progress" } },
     });
   });
 });
