@@ -19,6 +19,7 @@ import {
   type TaskResolution,
   taskBlockConcepts,
 } from "../src/commands/reconcile-shared";
+import { BACKLOG_STATUS_FLOW_HINTS } from "../src/core/reconcile";
 import { LoreError } from "../src/errors";
 import { concept, fakeAdapter, makeTask } from "./helpers";
 
@@ -80,6 +81,7 @@ describe("gatherReconciliation", () => {
     expect(await readReconcileConfig(root, adapter)).toEqual({
       flow: ["Queued", "Building", "Shipped"],
       overrides: {},
+      hints: BACKLOG_STATUS_FLOW_HINTS,
     });
   });
 
@@ -96,6 +98,7 @@ describe("gatherReconciliation", () => {
       flow: ["To Do", "In Progress", "Done"],
       overrides: {},
       pausedStatus: "Blocked",
+      hints: BACKLOG_STATUS_FLOW_HINTS,
     });
   });
 
@@ -108,6 +111,7 @@ describe("gatherReconciliation", () => {
     expect(await readReconcileConfig(root, adapter)).toEqual({
       flow: ["To Do", "In Progress", "Done"],
       overrides: {},
+      hints: BACKLOG_STATUS_FLOW_HINTS,
     });
   });
 
@@ -203,7 +207,11 @@ describe("gatherReconciliation", () => {
     const doc = concept("stories/x.md", { tasks: ["lore-1"], status: "todo" });
     const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
 
-    const [target] = await gatherReconciliation(root, [doc], adapter, { flow: ["Todo", "Done"], overrides: {} });
+    const [target] = await gatherReconciliation(root, [doc], adapter, {
+      flow: ["Todo", "Done"],
+      overrides: {},
+      hints: BACKLOG_STATUS_FLOW_HINTS,
+    });
     expect(target?.newTaskStatus).toBe("done");
   });
 

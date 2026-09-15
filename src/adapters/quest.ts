@@ -2,6 +2,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { QUEST_STATUS_FLOW_HINTS } from "../core/reconcile";
 import { type ErrorType, errnoCode, LoreError } from "../errors";
 import type { BacklogComment, BacklogCriterion, BacklogTask, BacklogTaskDetail, ListTasksOptions } from "./backlog";
 import { atLeast } from "./semver";
@@ -388,6 +389,7 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
   }
   return {
     sourceAdapterVersion: QUEST_SOURCE_ADAPTER_VERSION,
+    statusFlowHints: QUEST_STATUS_FLOW_HINTS,
     probe: ensure,
     async statusFlow() {
       return statusFlow(await data(["task", "status-flow", "--json"], "task status-flow --json", "task.status-flow"));

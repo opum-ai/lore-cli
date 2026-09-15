@@ -31,6 +31,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as yaml from "js-yaml";
 import { z } from "zod";
+import { BACKLOG_STATUS_FLOW_HINTS } from "../core/reconcile";
 import { deriveMessage, errnoCode, LoreError, readFileIfPresent, stderrHint } from "../errors";
 import { compareSemver, parseSemver } from "./semver";
 import type { TrackerAdapter } from "./tracker";
@@ -930,6 +931,7 @@ export function createBacklogAdapter(spawn: BacklogSpawn, root = process.cwd()):
 
   return {
     sourceAdapterVersion: BACKLOG_SOURCE_ADAPTER_VERSION,
+    statusFlowHints: BACKLOG_STATUS_FLOW_HINTS,
     probe: ensureProbed,
 
     statusFlow: async () => readStatusFlow(root),

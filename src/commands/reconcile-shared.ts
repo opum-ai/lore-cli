@@ -18,7 +18,12 @@ import { loadConfig } from "../config";
 import { toRefList } from "../core/bundle";
 import type { Concept } from "../core/concept";
 import type { ManagedTaskRow } from "../core/managed-block";
-import { type ReconciledStatus, reconcileStatus, validateReconcileInputs } from "../core/reconcile";
+import {
+  type ReconciledStatus,
+  reconcileStatus,
+  type StatusFlowHints,
+  validateReconcileInputs,
+} from "../core/reconcile";
 import { RESERVED_STEMS } from "../core/scaffold";
 import { LoreError } from "../errors";
 // `mapWithConcurrency`/`TASK_DETAILS_CONCURRENCY` moved to the neutral `./concurrency` module
@@ -94,6 +99,12 @@ export interface ReconcileConfig {
   readonly overrides: Readonly<Record<string, string>>;
   /** The backend's non-terminal "paused" status excluded from `flow` (LCLI-455), if it has one. */
   readonly pausedStatus?: string;
+  /**
+   * The ACTIVE backend's own status-flow hints (LCLI-503), carried alongside the flow it describes
+   * so a validation error names where this project's flow actually comes from rather than
+   * `backlog/config.yml` unconditionally.
+   */
+  readonly hints: StatusFlowHints;
 }
 
 /**
@@ -108,7 +119,7 @@ export async function readReconcileConfig(root: string, adapter = defaultAdapter
   const flow = await adapter.statusFlow();
   const pausedStatus = await adapter.pausedStatus?.();
   const config = loadConfig({ root });
-  return { flow, overrides: config.reconcile.overrides, pausedStatus };
+  return { flow, overrides: config.reconcile.overrides, pausedStatus, hints: adapter.statusFlowHints };
 }
 
 /**
@@ -123,7 +134,7 @@ export async function readReconcileConfig(root: string, adapter = defaultAdapter
  */
 export async function resolveReconcileConfig(root: string, adapter = defaultAdapter(root)): Promise<ReconcileConfig> {
   const resolved = await readReconcileConfig(root, adapter);
-  validateReconcileInputs(resolved.flow, resolved.overrides);
+  validateReconcileInputs(resolved.flow, resolved.overrides, resolved.hints);
   return resolved;
 }
 
@@ -179,7 +190,7 @@ export async function gatherReconciliation(
   if (configOverride === undefined && configErrorOverride !== undefined) {
     throw configErrorOverride;
   }
-  const { flow, overrides, pausedStatus } =
+  const { flow, overrides, pausedStatus, hints } =
     configOverride ?? (await resolveReconcileConfig(root, adapterOverride ?? defaultAdapter(root)));
 
   const allTaskIds = dedupeTaskIds(eligible.flatMap((e) => e.linked));
@@ -197,6 +208,7 @@ export async function gatherReconciliation(
       flow,
       overrides,
       pausedStatus,
+      hints,
     );
     const rows: ManagedTaskRow[] = detailList.map((d) => ({
       id: d.id,
