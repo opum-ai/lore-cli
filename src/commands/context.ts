@@ -36,7 +36,12 @@ import { loadBundle } from "../core/bundle";
 import { idFromPath } from "../core/concept";
 import { buildContext, type ContextExport, DEFAULT_DEPTH } from "../core/context";
 import { loadProfile } from "../core/profile";
-import { loadRetrievalGraph, type RetrievalGraphLoader } from "../core/retrieval";
+import {
+  loadRetrievalGraph,
+  type RetrievalBackend,
+  type RetrievalGraphLoader,
+  withRetrievalBackend,
+} from "../core/retrieval";
 import { DOCS_DIR } from "../core/scaffold";
 import { parseQualifiedWorkspaceId, qualifyWorkspaceId } from "../core/workspace-contract";
 import type { WorkspaceRetrievalContext, WorkspaceRetrievalSelection } from "../core/workspace-retrieval";
@@ -95,7 +100,7 @@ export function runContext(options: ContextOptions): number | Promise<number> {
           loaded.indexed === undefined
             ? loaded.graph
             : withConceptBody(loaded.graph, parsed.id, await loaded.indexed.readConceptBody(parsed.id));
-        return finishContext(options, parsed, graph, advisories, loaded.workspace);
+        return finishContext(options, parsed, graph, advisories, loaded.backend, loaded.workspace);
       } finally {
         await loaded.dispose?.();
       }
@@ -103,7 +108,7 @@ export function runContext(options: ContextOptions): number | Promise<number> {
   }
   const profile = loadProfile({ root: options.root });
   const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, profile });
-  return finishContext(options, parsed, graph, advisories);
+  return finishContext(options, parsed, graph, advisories, "reference");
 }
 
 function withConceptBody(
@@ -124,6 +129,7 @@ function finishContext(
   parsed: ContextArgs,
   graph: ReturnType<typeof loadBundle>,
   advisories: WarningCollector,
+  backend: RetrievalBackend,
   workspace?: WorkspaceRetrievalContext,
 ): number {
   // Flush load warnings before buildContext, which throws not_found for an unknown
@@ -144,7 +150,7 @@ function finishContext(
           })),
           workspace: workspace.scope,
         };
-  emit(contextRenderable(data), options.output, options.stdout);
+  emit(contextRenderable(withRetrievalBackend(data, backend)), options.output, options.stdout);
   return EXIT_OK;
 }
 

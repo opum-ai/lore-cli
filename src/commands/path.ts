@@ -1,7 +1,7 @@
 /** `lore path`: bounded deterministic paths across exact authored typed edges. */
 
 import type { BacklogAdapter } from "../adapters/backlog";
-import { loadRetrievalGraph, type RetrievalGraphLoader } from "../core/retrieval";
+import { loadRetrievalGraph, type RetrievalGraphLoader, withRetrievalBackend } from "../core/retrieval";
 import { findPaths } from "../core/traversal";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext } from "../output";
@@ -60,7 +60,7 @@ export async function runPath(options: PathCommandOptions): Promise<number> {
       },
       ...traversalOptions(flags),
     });
-    emit(pathRenderable(data), options.output, options.stdout);
+    emit(pathRenderable(withRetrievalBackend(data, loaded.backend)), options.output, options.stdout);
     return EXIT_OK;
   } finally {
     await loaded.dispose?.();

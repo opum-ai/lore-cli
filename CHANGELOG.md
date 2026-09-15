@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`lore graph`, `query`, `context`, `path` and `impact` now name the retrieval backend that served
+  the request** (LCLI-499). Their `--json` `data` carries `backend`: `"indexed"` or `"reference"`.
+  This is a new capability, not a restoration — no version of lore has ever exposed a positive
+  backend signal, confirmed by opum-cli-e2e reading `retrieval.ts`, `workspace-retrieval.ts` and all
+  five command files and verifying empirically against 0.6.2.
+  - **Present on every successful response, never only on a degraded one.** A marker that appeared
+    only when something went wrong would have an absence ambiguous between "the good case" and "a
+    version that does not report this". The existing stderr advisory has exactly that defect: the
+    reference backend is reached by more than one route and at least one of them prints nothing, so
+    empty stderr is consistent with both "indexed ran" and "fell back silently". A partial signal
+    invites the inference that it is total.
+  - **Why it matters now.** LCLI-497 disabled the indexed backend outright on any Quest-backed
+    workspace with a prerequisite, and could only be found by accident, because nothing a consumer
+    can read said which path ran. Fixing that without this leaves the class undetectable.
+  - Added at the envelope layer, so `core/query`, `core/graph`, `core/context` and `core/traversal`
+    stay storage-neutral: which backend answered is a fact about the load, not about the result.
+    The `--json` envelope is versioned additively (cli-contract §7), so no `schemaVersion` moves, and
+    plain/pretty rendering is unchanged.
+  - **Backend parity comparisons must now exclude one field and assert it separately** — the two
+    backends are required to agree on the answer and to disagree about `backend`. `lore`'s own
+    indexed/reference conformance suite and the ladybug benchmark's parity gate were updated to do
+    exactly that, which makes them stronger: they now check that each backend names itself, which
+    byte equality never could.
+
+
 - **Typed authored relationships, and claim state as its own axis** (LCLI-477,
   [ADR-0021](docs/adr/0021-typed-authored-relationships-and-claim-state.md)). Until now a bundle had
   exactly one way to record that one document depends on, contradicts, or competes with another —

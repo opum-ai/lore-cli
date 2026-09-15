@@ -39,7 +39,12 @@ import { buildGraphExport, type GraphExport, toDot } from "../core/graph";
 import { loadProfile } from "../core/profile";
 import { subgraph } from "../core/query";
 import { isProofRelationKind } from "../core/relations";
-import { loadRetrievalGraph, type RetrievalGraphLoader } from "../core/retrieval";
+import {
+  loadRetrievalGraph,
+  type RetrievalBackend,
+  type RetrievalGraphLoader,
+  withRetrievalBackend,
+} from "../core/retrieval";
 import { DOCS_DIR } from "../core/scaffold";
 import { parseQualifiedWorkspaceId, qualifyWorkspaceId } from "../core/workspace-contract";
 import type { WorkspaceRetrievalContext, WorkspaceRetrievalSelection } from "../core/workspace-retrieval";
@@ -100,7 +105,7 @@ export function runGraph(options: GraphOptions): number | Promise<number> {
       ...(parsed.workspace !== undefined ? { workspace: parsed.workspace } : {}),
     }).then(async (loaded) => {
       try {
-        return finishGraph(options, parsed, loaded.graph, advisories, loaded.workspace);
+        return finishGraph(options, parsed, loaded.graph, advisories, loaded.backend, loaded.workspace);
       } finally {
         await loaded.dispose?.();
       }
@@ -108,7 +113,10 @@ export function runGraph(options: GraphOptions): number | Promise<number> {
   }
   const profile = loadProfile({ root: options.root });
   const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, profile });
-  return finishGraph(options, parsed, graph, advisories);
+  // This path IS the reference backend -- an in-memory load of the bundle from disk -- so it reports
+  // itself as one. Leaving it unreported because no retrieval loader was involved would make the
+  // field absent exactly where a consumer cannot otherwise tell.
+  return finishGraph(options, parsed, graph, advisories, "reference");
 }
 
 function finishGraph(
@@ -116,6 +124,7 @@ function finishGraph(
   parsed: GraphArgs,
   graph: ReturnType<typeof loadBundle>,
   advisories: WarningCollector,
+  backend: RetrievalBackend,
   workspace?: WorkspaceRetrievalContext,
 ): number {
   // Flush load warnings before the subgraph lookup, which throws not_found for an
@@ -139,7 +148,7 @@ function finishGraph(
     data = proofOnlyView(data);
   }
 
-  emit(graphRenderable(data, parsed.dot), options.output, options.stdout);
+  emit(graphRenderable(withRetrievalBackend(data, backend), parsed.dot), options.output, options.stdout);
   return EXIT_OK;
 }
 

@@ -30,7 +30,12 @@ import type { BacklogAdapter } from "../adapters/backlog";
 import { loadBundle } from "../core/bundle";
 import { loadProfile } from "../core/profile";
 import { type FieldFilter, type QueryResult, query } from "../core/query";
-import { loadRetrievalGraph, type RetrievalGraphLoader } from "../core/retrieval";
+import {
+  loadRetrievalGraph,
+  type RetrievalBackend,
+  type RetrievalGraphLoader,
+  withRetrievalBackend,
+} from "../core/retrieval";
 import { DOCS_DIR } from "../core/scaffold";
 import type { WorkspaceRetrievalContext, WorkspaceRetrievalSelection } from "../core/workspace-retrieval";
 import { EXIT_OK, LoreError, singleLine, stripAnsiAndControls, WarningCollector, type Writer } from "../errors";
@@ -100,7 +105,7 @@ export function runQuery(options: QueryCommandOptions): number | Promise<number>
           fields: parsed.fields,
           limit: parsed.limit,
         });
-        return finishQuery(options, parsed, loaded.graph, advisories, indexedResult, loaded.workspace);
+        return finishQuery(options, parsed, loaded.graph, advisories, loaded.backend, indexedResult, loaded.workspace);
       } finally {
         await loaded.dispose?.();
       }
@@ -108,7 +113,7 @@ export function runQuery(options: QueryCommandOptions): number | Promise<number>
   }
   const profile = loadProfile({ root: options.root });
   const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, profile });
-  return finishQuery(options, parsed, graph, advisories);
+  return finishQuery(options, parsed, graph, advisories, "reference");
 }
 
 function finishQuery(
@@ -116,6 +121,7 @@ function finishQuery(
   parsed: QueryArgs,
   graph: ReturnType<typeof loadBundle>,
   advisories: WarningCollector,
+  backend: RetrievalBackend,
   indexedResult?: QueryResult,
   workspace?: WorkspaceRetrievalContext,
 ): number {
@@ -139,7 +145,7 @@ function finishQuery(
           hits: data.hits.map((hit) => ({ ...hit, provenance: workspace.provenanceById.get(hit.id) })),
           workspace: workspace.scope,
         };
-  emit(queryRenderable(scoped), options.output, options.stdout);
+  emit(queryRenderable(withRetrievalBackend(scoped, backend)), options.output, options.stdout);
   return EXIT_OK;
 }
 
