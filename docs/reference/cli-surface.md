@@ -487,7 +487,7 @@ humans for orientation, by consumers for navigation, and by
 |---|---|
 | **Args** | optional `<id>` (subgraph rooted at one concept; normalized like [`rename`](#rename), so path/`.md`/`./` forms resolve; workspace mode requires `<member-id>::<source-id>`) |
 | **Key flags** | `--dot` (emit Graphviz DOT; mutually exclusive with `--json`) · `--depth <n>` (bound subgraph radius) · `--proof-only` (show only proof-bearing relations) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
-| **Output** | `kind: graph.export` — nodes, edges, token estimates (or DOT text under `--dot`). A relation edge additionally carries `statement`, `version`, `relationOrdinal` and `versionState`. Workspace JSON adds scope, per-node provenance, and exact explicit workspace links. Machine JSON is the global `--json` envelope, as for every command. |
+| **Output** | `kind: graph.export` — nodes, edges, token estimates (or DOT text under `--dot`). A relation edge additionally carries `statement`, `version`, `relationOrdinal` and `versionState`. Workspace JSON adds scope, per-node provenance, and exact explicit workspace links. `data.backend` names the retrieval backend that served the request. Machine JSON is the global `--json` envelope, as for every command. |
 | **Exit** | `0` ok · `2` bad usage (`--dot` with `--json`, bad flag/`--depth`) · `3` root `<id>` not found |
 
 `--proof-only` filters the **edges**; the node set and the `--depth` radius are
@@ -515,7 +515,7 @@ does not guess whether an id names a concept or task.
 |---|---|
 | **Args** | `<from> <to>` |
 | **Key flags** | required `--from-kind <concept\|task>` · required `--to-kind <concept\|task>` · required `--direction <outbound\|inbound\|either>` · `--edge <kind>` (repeatable allowlist) · `--proof-only` · `--max-depth <n>` (default 4, max 16) · `--limit <n>` (default 20, max 100) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
-| **Output** | `kind: path.result`, schema `lore-path-result/1` — normalized typed scope, selected edge kinds, effective limits, shortest exact edge chains, endpoint and edge provenance, `shown`, `edgeVisits`, `depthBoundReached`, `truncated`, and `complete` |
+| **Output** | `kind: path.result`, schema `lore-path-result/1` — normalized typed scope, selected edge kinds, effective limits, shortest exact edge chains, endpoint and edge provenance, `shown`, `edgeVisits`, `depthBoundReached`, `truncated`, `complete`, and `backend` |
 | **Exit** | `0` ok (no path is an empty successful result) · `2` bad/missing kind, direction, edge, depth, limit, or scope · `3` typed endpoint not found · `4` source unavailable · `6` malformed/drifting projection |
 
 ### `impact`
@@ -528,7 +528,7 @@ endpoint appears once with a canonical shortest evidence chain and is labeled
 |---|---|
 | **Args** | `<id>` |
 | **Key flags** | required `--kind <concept\|task>` · required `--direction <outbound\|inbound\|either>` · `--edge <kind>` (repeatable allowlist) · `--proof-only` · `--max-depth <n>` (default 4, max 16) · `--limit <n>` (default 20, max 100) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
-| **Output** | `kind: impact.result`, schema `lore-impact-result/1` — normalized typed root, selected edge kinds, effective limits, direct/transitive impacts, exact evidence chains and provenance, `shown`, `edgeVisits`, `depthBoundReached`, `truncated`, and `complete` |
+| **Output** | `kind: impact.result`, schema `lore-impact-result/1` — normalized typed root, selected edge kinds, effective limits, direct/transitive impacts, exact evidence chains and provenance, `shown`, `edgeVisits`, `depthBoundReached`, `truncated`, `complete`, and `backend` |
 | **Exit** | `0` ok (no impacts is successful) · `2` bad/missing kind, direction, edge, depth, limit, or scope · `3` typed root not found · `4` source unavailable · `6` malformed/drifting projection |
 
 `--proof-only` is a preset for `--edge`: it selects the proof-bearing relation
@@ -545,6 +545,25 @@ almost always a typo and is reported as one; a preset naming kinds the bundle ha
 not used yet is the correct, informative answer — a proof-only view of a bundle
 with no proof relations is legitimately empty. See
 [ADR-0021](../adr/0021-typed-authored-relationships-and-claim-state.md).
+
+### The retrieval backend, reported
+
+`graph`, `query`, `context`, `path` and `impact` all load through the same
+retrieval layer, which prefers a verified indexed generation and falls back to
+an in-memory reference load. Their `--json` `data` carries **`backend`** —
+`"indexed"` or `"reference"` — naming the one that actually served the request.
+
+It is present on **every** successful response, never only on a degraded one.
+That is the whole point rather than a detail: a marker that appeared only when
+something went wrong would have an absence ambiguous between "the good case" and
+"a version that does not report this". The stderr advisory already has that
+problem — the fallback is reached by more than one route and at least one of them
+prints nothing — so empty stderr is not evidence that the indexed backend ran.
+`backend` is a positive signal and can be asserted on directly.
+
+The two backends are required to produce the same answer, so this is the one
+field in these payloads that is expected to differ between them; a parity
+comparison should exclude it and assert it separately.
 
 Both commands enforce a hard 10,000-edge visit budget in addition to the
 requested depth and result limits. Hitting the result or visit budget sets
@@ -650,7 +669,7 @@ lore query "archive" --type Story --tag orders --status in-progress
 |---|---|
 | **Args** | `"<text>"` (optional; filters alone are valid) |
 | **Key flags** | `--type <T>` · `--tag <t>` (repeatable) · `--status <S>` · `--limit <n>` (default bounded) · `--field k=v` (arbitrary frontmatter filter) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
-| **Output** | `kind: query.results` — ranked `[{ id, type, title, snippet, score }]` with `total`/`shown`/`truncated`; workspace JSON adds scope and per-hit provenance |
+| **Output** | `kind: query.results` — ranked `[{ id, type, title, snippet, score }]` with `total`/`shown`/`truncated` and `backend`; workspace JSON adds scope and per-hit provenance |
 | **Exit** | `0` ok (zero hits is still `0`) · `2` bad filter syntax |
 
 ### `context`
@@ -670,7 +689,7 @@ lore context stories/bulk-archive-orders --max-tokens 4000 --depth 2
 |---|---|
 | **Args** | `<id>` (workspace mode requires `<member-id>::<source-id>`) |
 | **Key flags** | `--max-tokens <n>` (token budget; if omitted, no cap is applied — output is bounded only by `--depth`) · `--depth <n>` (neighbor radius, default 1) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
-| **Output** | `kind: context.export` — target body + neighbor summaries, with `tokenEstimate`/`truncated`; workspace JSON adds scope and target/neighbor provenance |
+| **Output** | `kind: context.export` — target body + neighbor summaries, with `tokenEstimate`/`truncated` and `backend`; workspace JSON adds scope and target/neighbor provenance |
 | **Exit** | `0` ok · `2` bad usage (missing `<id>`, unknown/repeated flag, non-integer/out-of-range `--max-tokens`/`--depth`) · `3` `<id>` not found |
 
 ### `agent`

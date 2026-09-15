@@ -3,7 +3,12 @@
 import { isAbsolute } from "node:path";
 import { run } from "../../src/cli";
 import { buildGraphExport } from "../../src/core/graph";
-import { loadRetrievalGraph, type RetrievalGraph, type RetrievalGraphLoader } from "../../src/core/retrieval";
+import {
+  loadRetrievalGraph,
+  type RetrievalGraph,
+  type RetrievalGraphLoader,
+  stripRetrievalBackend,
+} from "../../src/core/retrieval";
 import type { Writer } from "../../src/errors";
 import { benchmarkDigest, ladybugGenerationCount } from "./accounting";
 import { createLadybugBenchmarkBacklogAdapter } from "./fixture";
@@ -63,8 +68,8 @@ export async function executeLadybugBenchmarkWorker(
     });
     const operationNanoseconds = elapsedNanoseconds(started);
     if (code !== 0) throw new Error(`benchmark command ${request.operation.kind} exited ${code}: ${stderr.text()}`);
-    const emitted = stdout.text();
-    return workerResult(request, loaded, operationNanoseconds, emitted, Buffer.byteLength(emitted), stderr.text());
+    const emitted = emittedPayload(stdout.text());
+    return workerResult(request, loaded, operationNanoseconds, emitted.bytes, emitted.length, stderr.text());
   } finally {
     await loaded.dispose?.();
   }
@@ -166,9 +171,9 @@ async function executeLoadedOperation(
   const measured = elapsedNanoseconds(started);
   const cpuMicroseconds = operationCpuMicroseconds(cpuStarted);
   if (code !== 0) throw new Error(`benchmark command ${request.operation.kind} exited ${code}: ${stderr.text()}`);
-  const emitted = stdout.text();
+  const emitted = emittedPayload(stdout.text());
   return {
-    result: workerResult(request, loaded, measured, emitted, Buffer.byteLength(emitted), stderr.text()),
+    result: workerResult(request, loaded, measured, emitted.bytes, emitted.length, stderr.text()),
     cpuMicroseconds,
   };
 }
@@ -184,6 +189,25 @@ function operationCpuMicroseconds(started: NodeJS.CpuUsage): { user: number; sys
 
 function load(root: string, policy: BenchmarkPolicy): Promise<RetrievalGraph> {
   return loadRetrievalGraph({ root, policy, adapter: createLadybugBenchmarkBacklogAdapter(root) });
+}
+
+/**
+ * One CLI-emitted payload, normalized for parity, with its byte length taken from the SAME bytes.
+ *
+ * `resultDigest` and `emittedBytes` are both asserted EQUAL across the indexed and reference
+ * workers, so both are comparisons rather than measurements of this run's cost. Since LCLI-499 the
+ * two backends are required to disagree about exactly one field, `data.backend`, and its two values
+ * are also different lengths -- so normalizing the digest alone would trade a digest mismatch for a
+ * byte-count mismatch and look like a different defect. Returning both from one place is what keeps
+ * them measuring the same bytes.
+ *
+ * The worker's own `backend` field still carries the fact this removes, and the two workers
+ * reporting DIFFERENT backends is now itself assertable -- a stronger guarantee than the byte
+ * equality it replaces, not a weaker one.
+ */
+function emittedPayload(text: string): { readonly bytes: string; readonly length: number } {
+  const bytes = stripRetrievalBackend(text);
+  return { bytes, length: Buffer.byteLength(bytes) };
 }
 
 function workerResult(

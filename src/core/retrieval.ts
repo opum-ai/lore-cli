@@ -31,6 +31,69 @@ import {
 } from "./workspace-retrieval";
 
 export type RetrievalBackend = "indexed" | "reference";
+
+/** A command result carrying the backend that produced it. See {@link withRetrievalBackend}. */
+export type WithRetrievalBackend<T> = T & { readonly backend: RetrievalBackend };
+
+/**
+ * Stamp a result with the backend that served it, for the `--json` envelope's `data`.
+ *
+ * Every retrieval-family command emits through this, and its `backend` argument is REQUIRED rather
+ * than optional so a call site cannot quietly omit it. That is the whole design of LCLI-499: until
+ * now `RetrievalBackend` existed internally and reached no consumer, so nobody downstream could
+ * prove the indexed path ran, prove it did not, or assert on either — which is why LCLI-497 (a
+ * corruption that disabled the indexed backend entirely on any tracker with a prerequisite) could
+ * only be found by accident.
+ *
+ * It is stamped on EVERY successful response, never only on a degraded one. A field that reported
+ * the backend on some paths and not others reproduces the original defect at higher resolution: the
+ * stderr advisory already behaves that way — three routes reach the reference backend under the
+ * `auto` policy and one of them warns nothing at all — so empty stderr is consistent with both
+ * "indexed ran" and "fell back silently". A partial signal invites the inference that it is total.
+ *
+ * It is added at the ENVELOPE layer rather than inside the shaping functions because `core/query`,
+ * `core/graph`, `core/context` and `core/traversal` are storage-neutral by contract: which backend
+ * answered is a fact about the load, not about the result, and teaching each shaper about storage
+ * to carry one string would trade a real boundary for a small convenience.
+ *
+ * The `--json` envelope is versioned ADDITIVELY (cli-contract §7: consumers tolerate unknown keys),
+ * so this needs no `schemaVersion` bump. Plain and pretty rendering is unchanged — the renderers
+ * read the fields they name and ignore the rest.
+ */
+export function withRetrievalBackend<T extends object>(data: T, backend: RetrievalBackend): WithRetrievalBackend<T> {
+  return { ...data, backend };
+}
+
+/**
+ * Remove the {@link withRetrievalBackend} stamp from a `--json` envelope's text, for the one kind of
+ * comparison that must ignore it: **backend parity**.
+ *
+ * The indexed and reference backends are required to produce the same answer, and are now required
+ * to DISAGREE about exactly one field. A parity check that compares raw bytes therefore fails on
+ * every result, and a parity check that quietly stopped comparing whole results to accommodate that
+ * would be worse than the failure. This removes precisely the one field, so the rest of the payload
+ * is still compared byte-for-byte — and a caller that wants the stamp itself asserts it separately,
+ * which is a stronger check than the one it replaces.
+ *
+ * Non-JSON input (plain or pretty output, an error envelope on stderr, an empty stream) is returned
+ * unchanged rather than rejected: a parity comparison covers those modes too, and they carry no
+ * stamp to remove.
+ */
+export function stripRetrievalBackend(envelopeJson: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(envelopeJson);
+  } catch {
+    return envelopeJson;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return envelopeJson;
+  const envelope = parsed as { data?: unknown };
+  if (typeof envelope.data !== "object" || envelope.data === null || Array.isArray(envelope.data)) {
+    return envelopeJson;
+  }
+  const { backend: _backend, ...data } = envelope.data as Record<string, unknown>;
+  return JSON.stringify({ ...envelope, data });
+}
 export type RetrievalPolicy = "auto" | RetrievalBackend;
 
 /** Internal provenance proving which verified snapshot supplied an indexed graph. */

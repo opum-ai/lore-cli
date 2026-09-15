@@ -17,7 +17,12 @@ import type { BacklogAdapter } from "../src/adapters/backlog";
 import { run } from "../src/cli";
 import type { LadybugNativeDriver, LadybugNativeLoader } from "../src/core/ladybug-native";
 import { canonicalJson, LADYBUG_CACHE_REL_ROOT } from "../src/core/ladybug-source";
-import { loadReferenceRetrievalGraph, loadRetrievalGraph, type RetrievalGraphLoader } from "../src/core/retrieval";
+import {
+  loadReferenceRetrievalGraph,
+  loadRetrievalGraph,
+  type RetrievalGraphLoader,
+  stripRetrievalBackend,
+} from "../src/core/retrieval";
 import { WarningCollector } from "../src/errors";
 import { capture, fakeAdapter, gitRun, makeTask } from "./helpers";
 
@@ -77,6 +82,24 @@ interface Observation {
   readonly code: number;
   readonly stdout: string;
   readonly stderr: string;
+}
+
+/**
+ * Assert two observations are the same result, ignoring the one field they are REQUIRED to differ
+ * on since LCLI-499: `data.backend`. Everything else -- payload, exit code, stderr -- is still
+ * compared exactly. The backend is asserted separately and positively, which is a stronger check
+ * than the byte equality it replaces rather than a relaxation of it.
+ */
+function expectSameResult(actual: Observation, expected: Observation): void {
+  expect({ ...actual, stdout: stripRetrievalBackend(actual.stdout) }).toEqual({
+    ...expected,
+    stdout: stripRetrievalBackend(expected.stdout),
+  });
+}
+
+/** The `data.backend` an observed `--json` payload reported, or `undefined` when it reported none. */
+function backendOf(observation: Observation): string | undefined {
+  return (JSON.parse(observation.stdout) as { data?: { backend?: string } }).data?.backend;
 }
 
 async function invoke(
@@ -216,9 +239,50 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
     test(name, async () => {
       const reference = await invoke(referenceLoader, args, options);
       const indexed = await invoke(indexedLoader, args, options);
-      expect(indexed).toEqual(reference);
+      expectSameResult(indexed, reference);
     });
   }
+
+  test("every retrieval-family command names the backend that served it (LCLI-499)", async () => {
+    // The conformance cases above prove the two backends AGREE. This one proves they can be told
+    // apart, which until now nothing downstream could do: `RetrievalBackend` existed internally and
+    // reached no consumer, so a dead indexed backend and a live one were indistinguishable through
+    // the public contract. That is why LCLI-497 could only be found by accident.
+    const commands: readonly (readonly string[])[] = [
+      ["graph", "--json"],
+      ["query", "archive", "--json"],
+      ["context", "stories/root", "--json"],
+      [
+        "path",
+        "stories/root",
+        "TASK-1",
+        "--from-kind",
+        "concept",
+        "--to-kind",
+        "task",
+        "--direction",
+        "outbound",
+        "--json",
+      ],
+      ["impact", "stories/root", "--kind", "concept", "--direction", "outbound", "--json"],
+    ];
+    for (const args of commands) {
+      expect(backendOf(await invoke(indexedLoader, args))).toBe("indexed");
+      expect(backendOf(await invoke(referenceLoader, args))).toBe("reference");
+    }
+  });
+
+  test("the stamp is present on a successful response, not only a degraded one (LCLI-499)", async () => {
+    // The property that makes the field worth having. A marker that appeared only when something
+    // went wrong would have an ABSENCE ambiguous between "the good case" and "a version that does
+    // not report this" -- the same defect the stderr advisory already has, since one of the three
+    // routes to the reference backend warns nothing at all.
+    const observed = await invoke(indexedLoader, ["graph", "--json"]);
+    // Nothing degraded: no fallback advisory anywhere on stderr (the fixture's own content
+    // advisories are unrelated and expected). The stamp is there all the same.
+    expect(observed.stderr).not.toMatch(/using the in-memory reference backend/);
+    expect(backendOf(observed)).toBe("indexed");
+  });
 
   test("relation qualifiers and version state survive an indexed read (LCLI-477)", async () => {
     // Compared field-by-field rather than only through the generic conformance cases above, because
@@ -242,13 +306,13 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
       relationOrdinal: 1,
       versionState: "unversioned",
     });
-    expect(observed).toEqual(await invoke(referenceLoader, ["graph", "--json"]));
+    expectSameResult(observed, await invoke(referenceLoader, ["graph", "--json"]));
   });
 
   test("a proof-only view selects the same edges from either backend", async () => {
     const args = ["graph", "--proof-only", "--json"];
     const indexed = await invoke(indexedLoader, args);
-    expect(indexed).toEqual(await invoke(referenceLoader, args));
+    expectSameResult(indexed, await invoke(referenceLoader, args));
     const kinds = (JSON.parse(indexed.stdout).data as { edges: { kind: string }[] }).edges.map((edge) => edge.kind);
     // `alternative` is authored in this fixture and must not appear; neither may `link` or `specs`.
     expect(kinds).toEqual(["requires"]);
@@ -308,7 +372,7 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
   test("lexical score ties break by ascending id in both implementations", async () => {
     const reference = await invoke(referenceLoader, ["query", "tielex", "--json"]);
     const indexed = await invoke(indexedLoader, ["query", "tielex", "--json"]);
-    expect(indexed).toEqual(reference);
+    expectSameResult(indexed, reference);
     const envelope = JSON.parse(indexed.stdout) as { data: { hits: Array<{ id: string; score: number }> } };
     expect(envelope.data.hits.map((hit) => hit.id)).toEqual(["reference/tie-a", "reference/tie-b"]);
     expect(envelope.data.hits[0]?.score).toBe(envelope.data.hits[1]?.score);
@@ -322,7 +386,7 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
       ["query", "--json"],
       ["context", "missing", "--json"],
     ] as const) {
-      expect(await invoke(indexedLoader, args)).toEqual(await invoke(referenceLoader, args));
+      expectSameResult(await invoke(indexedLoader, args), await invoke(referenceLoader, args));
     }
   });
 
@@ -330,7 +394,7 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
     writeFileSync(join(root, "docs/specs/archive.md"), "---\ntype: Spec\ntags: invalid-scalar\n---\n");
     const expected = await invoke(referenceLoader, ["graph", "--json"]);
     const actual = await invoke(automaticLoader, ["graph", "--json"]);
-    expect(actual).toEqual(expected);
+    expectSameResult(actual, expected);
     expect(actual.code).toBe(6);
     expect(actual.stdout).toBe("");
   });
@@ -359,7 +423,7 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
         }),
       ["graph", "--json"],
     );
-    expect(indexed).toEqual(await invoke(referenceLoader, ["graph", "--json"]));
+    expectSameResult(indexed, await invoke(referenceLoader, ["graph", "--json"]));
   });
 
   test("the default Commander handler selects indexed retrieval when the native path is supported", async () => {
@@ -424,7 +488,7 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
 
     const expected = await invoke(referenceLoader, ["query", "archive", "--json"]);
     const recovered = await invoke(automaticLoader, ["query", "archive", "--json"]);
-    expect(recovered).toEqual(expected);
+    expectSameResult(recovered, expected);
     expect(readdirSync(join(root, LADYBUG_CACHE_REL_ROOT)).some((name) => name.startsWith(".corrupt-"))).toBe(true);
   });
 
@@ -466,7 +530,7 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
         }),
       ["context", "stories/root", "--json"],
     );
-    expect(actual).toEqual(expected);
+    expectSameResult(actual, expected);
     expect(loads).toBe(0);
     expect(readFileSync(controlPath, "utf8")).toBe(unsupportedBytes);
     expect(lstatSync(generation).mode & 0o222).not.toBe(0);
@@ -503,7 +567,7 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
         }),
       ["graph", "--json"],
     );
-    expect(actual).toEqual(expected);
+    expectSameResult(actual, expected);
     expect(loads).toBe(0);
   });
 
@@ -535,7 +599,8 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
     });
     expect(selected.backend).toBe("indexed");
     expect(selected.provenance?.sourceFingerprint).toBe(built.provenance?.sourceFingerprint);
-    expect(await invoke(automaticLoader, ["graph", "--json"])).toEqual(
+    expectSameResult(
+      await invoke(automaticLoader, ["graph", "--json"]),
       await invoke(referenceLoader, ["graph", "--json"]),
     );
   });
@@ -641,6 +706,50 @@ describe("native lazy-loading and fallback boundary", () => {
     expect(warnings.list()).toContain(
       "native indexed retrieval is unsupported on this platform; using the in-memory reference backend",
     );
+  });
+
+  test("every route to the reference backend reports itself, warned or not (LCLI-499)", async () => {
+    // `loadRetrievalGraph` reaches the reference backend by more than one route and they do NOT all
+    // announce themselves: the unsupported-platform and failed-attempt routes warn, and the route
+    // taken when no indexed generation exists returns `loadReferenceGraph(options)` with no advisory
+    // at all. That is why empty stderr cannot be read as "indexed ran", and why the field had to be
+    // a positive signal rather than the absence of a negative one.
+    //
+    // What makes the field total is structural rather than enumerated: there is exactly ONE function
+    // producing a reference graph and `backend` is a REQUIRED field on `RetrievalGraph`, so a route
+    // cannot return one without a stamp — the routes differ only in whether they also warn. The
+    // three drivable from the public options are asserted here; the fourth returns the identical
+    // call and cannot be forced through `RetrievalGraphOptions`, which is itself the reason this
+    // test asserts the invariant rather than the instance.
+    const explicit = await loadRetrievalGraph({ root, adapter, policy: "reference", resolveGitCommit: () => null });
+    expect(explicit.backend).toBe("reference");
+    await explicit.dispose?.();
+
+    const unsupportedWarnings = new WarningCollector();
+    const unsupported = await loadRetrievalGraph({
+      root,
+      adapter,
+      platform: "win32",
+      warnings: unsupportedWarnings,
+      resolveGitCommit: () => null,
+    });
+    expect(unsupported.backend).toBe("reference");
+    expect(unsupportedWarnings.list().join("\n")).toContain("using the in-memory reference backend");
+    await unsupported.dispose?.();
+
+    const failedWarnings = new WarningCollector();
+    const failed = await loadRetrievalGraph({
+      root,
+      adapter,
+      warnings: failedWarnings,
+      resolveGitCommit: () => null,
+      loadNativeDriver: async () => {
+        throw new Error("native boundary is unavailable for this test");
+      },
+    });
+    expect(failed.backend).toBe("reference");
+    expect(failedWarnings.list().join("\n")).toContain("using the in-memory reference backend");
+    await failed.dispose?.();
   });
 
   test("command usage errors are resolved before any retrieval or native boundary", async () => {

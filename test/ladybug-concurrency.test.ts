@@ -63,7 +63,7 @@ import {
   readSourceInventory,
 } from "../src/core/ladybug-source";
 import { buildProjection } from "../src/core/projection";
-import { loadReferenceRetrievalGraph, type RetrievalGraphLoader } from "../src/core/retrieval";
+import { loadReferenceRetrievalGraph, type RetrievalGraphLoader, stripRetrievalBackend } from "../src/core/retrieval";
 import { LoreError } from "../src/errors";
 import { VERSION } from "../src/meta";
 import { capture } from "./helpers";
@@ -405,9 +405,13 @@ nativeDescribe("Ladybug real-process concurrency and crash recovery", () => {
 
 describe("automatic retrieval fallback advisory parity", () => {
   test("accepts every sanitized fallback advisory without masking other stderr", () => {
+    // A real `--json` envelope rather than a placeholder object, because the parity assertion now
+    // reads `data.backend` -- and a fixture that does not look like the thing it stands for is how a
+    // check quietly stops covering the case it names. Each advisory below announces a fallback, so
+    // the payload these observations carry must be the reference backend's.
     const expected: Observation = {
       code: 0,
-      stdout: '{"ok":true}\n',
+      stdout: '{"schemaVersion":1,"kind":"graph.export","data":{"nodes":[],"backend":"reference"},"principal":null}\n',
       stderr: "warning: retained fixture diagnostic\n",
     };
     const fallbackAdvisories = [
@@ -613,10 +617,21 @@ async function invoke(root: string, retrieval?: RetrievalGraphLoader): Promise<O
 
 function expectAutomaticParity(automatic: Observation, expected: Observation): void {
   expect(automatic.code).toBe(expected.code);
-  expect(automatic.stdout).toBe(expected.stdout);
+  // Compared with the retrieval backend stamp removed (LCLI-499): the two backends must produce the
+  // same answer and are now required to disagree about exactly that one field. Everything else is
+  // still compared byte-for-byte.
+  expect(stripRetrievalBackend(automatic.stdout)).toBe(stripRetrievalBackend(expected.stdout));
 
   const automaticLines = automatic.stderr.split("\n").filter(Boolean);
   const fallbackLines = automaticLines.filter((line) => REPOSITORY_FALLBACK_WARNING.test(line));
+
+  // The stamp is the point of LCLI-499, so it is asserted rather than merely tolerated: the payload
+  // always names a backend, and a run that announced a fallback must name `reference`. The converse
+  // is deliberately NOT asserted -- one route to the reference backend warns nothing at all, so
+  // "no warning" does not imply "indexed", which is the whole reason a positive field was needed.
+  const backend = reportedBackend(automatic.stdout);
+  expect(backend === "indexed" || backend === "reference").toBe(true);
+  if (fallbackLines.length > 0) expect(backend).toBe("reference");
   expect(fallbackLines.length).toBeLessThanOrEqual(1);
   for (const line of fallbackLines) {
     expect(line).toMatch(REPOSITORY_FALLBACK_WARNING);
@@ -624,6 +639,15 @@ function expectAutomaticParity(automatic: Observation, expected: Observation): v
   expect(automaticLines.filter((line) => !REPOSITORY_FALLBACK_WARNING.test(line))).toEqual(
     expected.stderr.split("\n").filter(Boolean),
   );
+}
+
+/** The `data.backend` an observed `--json` payload reported, or `undefined` for a non-JSON stream. */
+function reportedBackend(stdout: string): string | undefined {
+  try {
+    return (JSON.parse(stdout) as { data?: { backend?: string } }).data?.backend;
+  } catch {
+    return undefined;
+  }
 }
 
 function lockOwnerToken(path: string): string {

@@ -239,6 +239,8 @@
 - 2026-09-14T18:43:25-05:00 72fcf6c36258485105b8d77194673892b80b8f5f feat(LCLI-477): typed authored relationships, and claim state as its own axis
 - 2026-09-14T18:45:37-05:00 ab8241b0862384e0965b56049e7a419aedc5dbb7 chore(LCLI-477): regenerate docs/log.md after the rebase onto dev
 - 2026-09-14T18:57:06-05:00 01f4ef749e38c8a97b540d08e8958b995c7a3f60 feat(LCLI-477): typed authored relationships, and claim state as its own axis (#76)
+- 2026-09-14T20:12:22-05:00 27070ef8da4db605a8ef377c139993636e71c105 chore(LCLI-478): write lore's half of the bounded-read contract as DEC-2 (#77)
+- 2026-09-14T20:25:45-05:00 72fb203cb4f8b6df12b91c4986819a3d0c9fb39f feat(LCLI-499): every retrieval-family command names the backend that served it
 
 ## docs/adr
 

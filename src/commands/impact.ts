@@ -1,7 +1,7 @@
 /** `lore impact`: bounded deterministic impact expansion across exact authored typed edges. */
 
 import type { BacklogAdapter } from "../adapters/backlog";
-import { loadRetrievalGraph, type RetrievalGraphLoader } from "../core/retrieval";
+import { loadRetrievalGraph, type RetrievalGraphLoader, withRetrievalBackend } from "../core/retrieval";
 import { findImpact } from "../core/traversal";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext } from "../output";
@@ -52,7 +52,7 @@ export async function runImpact(options: ImpactCommandOptions): Promise<number> 
       },
       ...traversalOptions(flags),
     });
-    emit(impactRenderable(data), options.output, options.stdout);
+    emit(impactRenderable(withRetrievalBackend(data, loaded.backend)), options.output, options.stdout);
     return EXIT_OK;
   } finally {
     await loaded.dispose?.();
