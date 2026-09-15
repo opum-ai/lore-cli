@@ -135,6 +135,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The indexed-retrieval fallback names its cause, and every route announces itself** (LCLI-498).
+  One sentence — "native indexed retrieval failed" — covered a corrupt snapshot, an unloadable
+  driver and a version mismatch alike, so a user could not act on it and a maintainer could not
+  triage it without attaching a debugger. That is literally the route LCLI-497 had to take.
+  - The reasons are a **closed set defined in one place**: unsupported platform, driver
+    unavailable, verification failed, no usable snapshot, preflight failed, unrecognised. A closed
+    set rather than the underlying error's own text for two reasons that both matter — the cause
+    reads "Ladybug projection verification failed: …", and the storage engine is an implementation
+    detail this CLI does not expose; and a free-form interpolation is not testable, while a caller
+    can assert that a reason *is* `verification-failed`.
+  - **The route that fell back silently now warns too.** Under the default policy there were three
+    ways to reach the reference backend and one of them emitted nothing at all, so empty stderr was
+    consistent with both "indexed ran" and "fell back". A signal that fires on some routes and not
+    others invites the inference that it is total. Found by opum-cli-e2e asking what their own
+    stderr assertion could actually prove.
+  - Verification failures are classified from a **declared marker** the driver stamps, not by
+    matching the message text — a proxy that happens to correlate with the thing you mean is not
+    the thing you mean, which is LCLI-497's lesson one layer up.
+  - Workspace retrieval uses the same reasons, deriving its sentence from the shared one rather
+    than restating it, so the two vocabularies cannot drift.
+
+
 - **Projection task records now name the adapter that actually produced them** (LCLI-494).
   `sourceAdapterVersion` was the literal `"backlog-json/1"` written at the projection site, so every
   record claimed Backlog.md whatever had run — including on a Quest-backed repository, which is

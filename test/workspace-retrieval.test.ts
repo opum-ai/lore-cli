@@ -16,7 +16,11 @@ import {
 import { type LadybugProjectionSource, prepareLadybugProjectionSource } from "../src/core/ladybug-source";
 import { buildProjection } from "../src/core/projection";
 import type { QueryResult } from "../src/core/query";
-import type { RetrievalGraphLoader } from "../src/core/retrieval";
+import {
+  type ReferenceFallbackReason,
+  type RetrievalGraphLoader,
+  referenceFallbackMessage,
+} from "../src/core/retrieval";
 import { loadWorkspaceRetrievalGraph } from "../src/core/workspace-retrieval";
 import { loadWorkspaceProjection } from "../src/core/workspace-source";
 import { WarningCollector } from "../src/errors";
@@ -52,6 +56,15 @@ afterEach(() => {
   makeWritable(root);
   rmSync(root, { recursive: true, force: true });
 });
+
+/**
+ * The workspace spelling of a fallback advisory: the shared closed-set sentence with the one word
+ * that differs. Derived from the production message rather than restated, so a new reason cannot be
+ * added there and silently stop being covered here.
+ */
+function workspaceFallbackMessage(reason: ReferenceFallbackReason): string {
+  return referenceFallbackMessage(reason).replace("indexed retrieval", "indexed workspace retrieval");
+}
 
 describe("workspace source and reference retrieval", () => {
   test("namespaces duplicate ids and carries complete locator-free provenance", async () => {
@@ -305,8 +318,8 @@ describe("workspace source and reference retrieval", () => {
     expect(warnings.count).toBe(3);
     expect(warnings.list()).toContain(
       process.platform === "win32"
-        ? "native indexed workspace retrieval is unsupported on this platform; using the in-memory reference backend"
-        : "native indexed workspace retrieval failed; using the in-memory reference backend",
+        ? workspaceFallbackMessage("unsupported-platform")
+        : workspaceFallbackMessage("driver-unavailable"),
     );
 
     const privateLocator = join(root, "private-location");
@@ -430,9 +443,7 @@ describe("workspace source and reference retrieval", () => {
     });
     expect(graph.backend).toBe("reference");
     expect(loaded).toBeFalse();
-    expect(warnings.list()).toEqual([
-      "native indexed workspace retrieval is unsupported on this platform; using the in-memory reference backend",
-    ]);
+    expect(warnings.list()).toEqual([workspaceFallbackMessage("unsupported-platform")]);
   });
 });
 

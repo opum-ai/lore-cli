@@ -16,6 +16,7 @@ import type { Concept } from "./concept";
 import type { LadybugDatabaseVerification, LadybugIndexedReader } from "./ladybug-native";
 import {
   canonicalJson,
+  INDEXED_VERIFICATION_FAILURE,
   LADYBUG_INDEX_FORMAT,
   type LadybugProjectionSource,
   type ProjectionConceptRecord,
@@ -1852,5 +1853,6 @@ function corrupt(message: string): never {
     "validation",
     `Ladybug projection verification failed: ${message}`,
     "quarantine and rebuild the disposable local projection under exclusive writer ownership",
+    { code: INDEXED_VERIFICATION_FAILURE },
   );
 }
