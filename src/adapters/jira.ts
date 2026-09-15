@@ -1,6 +1,7 @@
 /** Jira Cloud tracker adapter backed exclusively by the installed `jira` CLI. */
 
 import type { JiraTrackerConfig } from "../config";
+import { JIRA_STATUS_FLOW_HINTS } from "../core/reconcile";
 import { errnoCode, LoreError } from "../errors";
 import type {
   BacklogComment,
@@ -261,6 +262,7 @@ export function createJiraAdapter(
 
   return {
     sourceAdapterVersion: JIRA_SOURCE_ADAPTER_VERSION,
+    statusFlowHints: JIRA_STATUS_FLOW_HINTS,
     async probe(): Promise<TrackerCapability> {
       return (await ensureProbed()).capability;
     },

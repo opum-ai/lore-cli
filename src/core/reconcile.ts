@@ -7,9 +7,9 @@
  * doc claiming `done` while a linked task is still open. This module is the shared pure engine
  * behind that computation: the command layer (LORE-24+) resolves each linked task id to its raw
  * `status` string (the LORE-21 adapter's `viewTask`/`listTasks`) and reads the project's ordered
- * status flow from `backlog/config.yml` (`statuses:`), then calls {@link reconcileStatus}. `lore
- * sync` writes the result; `lore check` diffs it against the persisted `status` and never writes
- * (ADR-0007).
+ * status flow from the ACTIVE tracker backend (`TrackerAdapter.statusFlow()`), then calls
+ * {@link reconcileStatus}. `lore sync` writes the result; `lore check` diffs it against the
+ * persisted `status` and never writes (ADR-0007).
  *
  * Per-repo `[reconcile.overrides]` (`.lore/config.toml`, LORE-26) lets a project map a specific
  * Backlog status straight to a {@link ReconciledStatus}, bypassing `statusFlow` position entirely —
@@ -18,7 +18,7 @@
  *
  * Per the core contract (lore-design §2.1) this module is pure: two string arrays (plus an optional
  * overrides map) in, a derived status (or `null`) or a typed {@link LoreError} out — no filesystem,
- * no spawn, no clock. Reading `backlog/config.yml` and resolving each task's live status are
+ * no spawn, no clock. Reading the backend's status flow and resolving each task's live status are
  * command-layer concerns, kept out of this engine so it stays a single deterministic function over
  * already-resolved data.
  *
@@ -37,6 +37,72 @@ const RECONCILED_STATUSES: readonly ReconciledStatus[] = ["todo", "in-progress",
 type StatusPosition = "not-started" | "active" | "terminal";
 
 /**
+ * The reader-facing hint each status-flow error carries, supplied by the ACTIVE tracker backend
+ * rather than written as a literal at the throw site (LCLI-503).
+ *
+ * Every one of these hints used to name `backlog/config.yml` unconditionally, so on a Quest- or
+ * Jira-backed workspace they sent the reader to a file that does not exist and would not be read —
+ * the same defect shape `TrackerAdapter.sourceAdapterVersion` was introduced to fix on the
+ * projection side (LCLI-494), where every record claimed `backlog-json/1` regardless of which
+ * backend produced it. The repair is the same one: make it part of a contract a new backend cannot
+ * satisfy without supplying its own answer, so the value cannot drift back to a literal.
+ *
+ * Each field is a COMPLETE hint, not a noun phrase interpolated into a shared sentence frame,
+ * because the advice genuinely differs by backend rather than only the filename: a Backlog project
+ * fixes a degenerate flow by editing `statuses:`, while a Quest workspace has no such key to edit
+ * at all. The one exception is {@link statusNotInFlow}, whose `[reconcile.overrides]` escape hatch
+ * lives in `.lore/config.toml` for every backend and is therefore appended here rather than
+ * repeated three times, where it could drift.
+ */
+export interface StatusFlowHints {
+  /** Flow carries fewer than two entries. A complete imperative. */
+  readonly degenerateFlow: string;
+  /** Flow carries a duplicate entry. A complete imperative. */
+  readonly duplicateEntry: string;
+  /**
+   * A task's status is absent from the flow with no override. The backend-specific half only —
+   * {@link classify} appends the backend-independent `[reconcile.overrides]` escape hatch.
+   */
+  readonly statusNotInFlow: string;
+}
+
+/**
+ * Backlog.md's hints — also this engine's DEFAULT, so a caller that predates the
+ * {@link StatusFlowHints} parameter keeps the wording it has always emitted, verbatim. Kept byte
+ * for byte as the strings these three throw sites carried before LCLI-503 split them out.
+ */
+export const BACKLOG_STATUS_FLOW_HINTS: StatusFlowHints = {
+  degenerateFlow:
+    'set `statuses:` in `backlog/config.yml` to an ordered list of at least two statuses (e.g. ["To Do", "In Progress", "Done"])',
+  duplicateEntry:
+    "each entry in `backlog/config.yml`'s `statuses:` must be unique so its position in the flow is unambiguous",
+  statusNotInFlow: "the task's status must match one of `backlog/config.yml`'s `statuses:` exactly",
+};
+
+/**
+ * Quest's hints. Quest's flow is not a file a reader edits — it comes from the workspace's own
+ * lifecycle policy and is read back with `quest task status-flow` — so the advice points at that
+ * command and at the `[reconcile.overrides]` escape hatch, never at a path.
+ */
+export const QUEST_STATUS_FLOW_HINTS: StatusFlowHints = {
+  degenerateFlow:
+    'run `quest task status-flow` to see the workspace\'s configured statuses; quest needs at least two for lore to tell "not started" from "terminal"',
+  duplicateEntry:
+    "each status quest reports from `quest task status-flow` must be unique so its position in the flow is unambiguous",
+  statusNotInFlow: "the task's status must match one of the statuses `quest task status-flow` reports, exactly",
+};
+
+/** Jira's hints. Its flow is lore's own `[tracker.jira] status_flow`, not anything Jira serves. */
+export const JIRA_STATUS_FLOW_HINTS: StatusFlowHints = {
+  degenerateFlow:
+    'set `status_flow` under `[tracker.jira]` in .lore/config.toml to an ordered list of at least two statuses (e.g. ["To Do", "In Progress", "Done"])',
+  duplicateEntry:
+    "each entry in `[tracker.jira]`'s `status_flow` in .lore/config.toml must be unique so its position in the flow is unambiguous",
+  statusNotInFlow:
+    "the task's status must match one of `[tracker.jira]`'s `status_flow` entries in .lore/config.toml, exactly",
+};
+
+/**
  * Per-repo `[reconcile.overrides]` (`.lore/config.toml`, `config.ts`'s {@link ReconcileConfig.overrides}):
  * a raw Backlog status string → the {@link ReconciledStatus} it should contribute to the rollup,
  * **bypassing** {@link StatusFlow} position entirely for that status (ADR-0009 §3). `config.ts` parses
@@ -47,8 +113,9 @@ type StatusPosition = "not-started" | "active" | "terminal";
 export type StatusOverrides = Readonly<Record<string, string>>;
 
 /**
- * A project's status set, **ordered** exactly as configured (`backlog/config.yml` `statuses:` /
- * `backlog config get statuses`) — never the hardcoded `["To Do", "In Progress", "Done"]` default
+ * A project's status set, **ordered** exactly as the ACTIVE backend configures it — Backlog's
+ * `backlog/config.yml` `statuses:`, Quest's `quest task status-flow`, or Jira's
+ * `[tracker.jira] status_flow` — never the hardcoded `["To Do", "In Progress", "Done"]` default
  * (backlog-cli-contract.md §3.1). Index `0` is the not-started state; the last index is the
  * terminal ("done") state; everything between is an active/started state (`In Progress`,
  * `Review`, `Testing`, …). Reading this from config is a command-layer concern — this engine only
@@ -83,7 +150,7 @@ export type StatusFlow = readonly string[];
  *
  * @param taskStatuses the raw configured `status` string of every linked task (AC#1: any custom
  *   flow, not just the three defaults), in any order — order does not affect the rollup.
- * @param statusFlow the project's ordered status set, resolved from Backlog config.
+ * @param statusFlow the project's ordered status set, resolved from the active backend's config.
  * @param overrides per-repo `[reconcile.overrides]` (default `{}`): a status matching a key here
  *   contributes its mapped {@link ReconciledStatus} directly, bypassing `statusFlow` position
  *   entirely — the escape hatch for a status a strict ordered flow cannot classify unambiguously
@@ -107,13 +174,14 @@ export function reconcileStatus(
   statusFlow: StatusFlow,
   overrides: StatusOverrides = {},
   pausedStatus?: string,
+  hints: StatusFlowHints = BACKLOG_STATUS_FLOW_HINTS,
 ): ReconciledStatus | null {
   if (taskStatuses.length === 0) {
     return null;
   }
-  validateStatusFlow(statusFlow);
+  validateStatusFlow(statusFlow, hints);
   const validatedOverrides = validateOverrides(overrides);
-  const positions = taskStatuses.map((status) => classify(status, statusFlow, validatedOverrides, pausedStatus));
+  const positions = taskStatuses.map((status) => classify(status, statusFlow, validatedOverrides, pausedStatus, hints));
   if (positions.every((position) => position === "terminal")) {
     return "done";
   }
@@ -135,8 +203,12 @@ export function reconcileStatus(
  *
  * @throws LoreError `validation` — see {@link reconcileStatus}'s throws for the exact conditions.
  */
-export function validateReconcileInputs(statusFlow: StatusFlow, overrides: StatusOverrides = {}): void {
-  validateStatusFlow(statusFlow);
+export function validateReconcileInputs(
+  statusFlow: StatusFlow,
+  overrides: StatusOverrides = {},
+  hints: StatusFlowHints = BACKLOG_STATUS_FLOW_HINTS,
+): void {
+  validateStatusFlow(statusFlow, hints);
   validateOverrides(overrides);
 }
 
@@ -147,12 +219,12 @@ export function validateReconcileInputs(statusFlow: StatusFlow, overrides: Statu
  * carrying a duplicate entry (an entry's position — and so its not-started/active/terminal
  * classification — would depend on which occurrence is meant).
  */
-function validateStatusFlow(statusFlow: StatusFlow): void {
+function validateStatusFlow(statusFlow: StatusFlow, hints: StatusFlowHints): void {
   if (statusFlow.length < 2) {
     throw new LoreError(
       "validation",
       `cannot reconcile status: the project's configured status flow has ${statusFlow.length} ${statusFlow.length === 1 ? "entry" : "entries"} (need at least 2 to distinguish "not started" from "terminal")`,
-      'set `statuses:` in `backlog/config.yml` to an ordered list of at least two statuses (e.g. ["To Do", "In Progress", "Done"])',
+      hints.degenerateFlow,
       { statusFlow },
     );
   }
@@ -162,7 +234,7 @@ function validateStatusFlow(statusFlow: StatusFlow): void {
       throw new LoreError(
         "validation",
         `cannot reconcile status: the project's configured status flow has a duplicate entry ${JSON.stringify(status)}`,
-        "each entry in `backlog/config.yml`'s `statuses:` must be unique so its position in the flow is unambiguous",
+        hints.duplicateEntry,
         { statusFlow },
       );
     }
@@ -220,7 +292,8 @@ function classify(
   status: string,
   statusFlow: StatusFlow,
   overrides: ReadonlyMap<string, ReconciledStatus>,
-  pausedStatus?: string,
+  pausedStatus: string | undefined,
+  hints: StatusFlowHints,
 ): StatusPosition {
   const override = overrides.get(status);
   if (override !== undefined) {
@@ -234,7 +307,7 @@ function classify(
     throw new LoreError(
       "validation",
       `cannot reconcile status: task status ${JSON.stringify(status)} is not in the project's configured status flow (${statusFlow.map((s) => JSON.stringify(s)).join(", ")}) and has no [reconcile.overrides] entry`,
-      "the task's status must match one of `backlog/config.yml`'s `statuses:` exactly, or add a `[reconcile.overrides]` entry for it in .lore/config.toml",
+      `${hints.statusNotInFlow}, or add a \`[reconcile.overrides]\` entry for it in .lore/config.toml`,
       { status, statusFlow },
     );
   }

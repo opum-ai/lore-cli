@@ -9,6 +9,7 @@ import type {
 } from "../src/adapters/backlog";
 import { BACKLOG_SOURCE_ADAPTER_VERSION, DEFAULT_STATUS_FLOW } from "../src/adapters/backlog";
 import { type Concept, idFromPath } from "../src/core/concept";
+import { BACKLOG_STATUS_FLOW_HINTS } from "../src/core/reconcile";
 import type { Writer } from "../src/errors";
 import { LoreError } from "../src/errors";
 import type { GitSpawn, GitSpawnResult } from "../src/state";
@@ -258,6 +259,7 @@ export function fakeAdapter(
     // rather than a literal — a fixture that invents its own provenance string is how a projection
     // test comes to assert a value no adapter produces.
     sourceAdapterVersion: BACKLOG_SOURCE_ADAPTER_VERSION,
+    statusFlowHints: BACKLOG_STATUS_FLOW_HINTS,
     probe:
       probeOpt === undefined
         ? notImplemented("probe")

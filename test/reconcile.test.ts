@@ -11,7 +11,13 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { reconcileStatus, type StatusFlow } from "../src/core/reconcile";
+import {
+  BACKLOG_STATUS_FLOW_HINTS,
+  JIRA_STATUS_FLOW_HINTS,
+  QUEST_STATUS_FLOW_HINTS,
+  reconcileStatus,
+  type StatusFlow,
+} from "../src/core/reconcile";
 import { exitCodeFor, LoreError } from "../src/errors";
 
 /** The Backlog default 3-state flow. */
@@ -210,5 +216,97 @@ describe("reconcileStatus — fail-loud on a degenerate status flow", () => {
   test("an empty taskStatuses array never validates the flow (AC#2 short-circuits first)", () => {
     // Even a degenerate flow is fine when there are no tasks to classify against it.
     expect(reconcileStatus([], [])).toBeNull();
+  });
+});
+
+describe("status-flow hints name the ACTIVE backend, not `backlog/config.yml` unconditionally (LCLI-503)", () => {
+  // The three throws below carried a hardcoded `backlog/config.yml` before this fix. On a
+  // quest-backed workspace that file does not exist and would not be read — lore's own reconcile
+  // config is `.lore/config.toml` and the flow comes from the backend-polymorphic
+  // `adapter.statusFlow()`. Each backend now supplies its own hint via `TrackerAdapter.statusFlowHints`.
+  const DUP_FLOW: StatusFlow = ["To Do", "Done", "Done"];
+
+  describe("Backlog — wording is unchanged, byte for byte", () => {
+    // The default parameter is what preserves this: any caller written before LCLI-503 keeps the
+    // exact hint it always emitted, so this fix cannot regress a Backlog-backed project's output.
+    test("a degenerate flow still says to set `statuses:` in backlog/config.yml", () => {
+      const err = loreError(() => reconcileStatus(["To Do"], ["To Do"], {}, undefined, BACKLOG_STATUS_FLOW_HINTS));
+      expect(err.hint).toBe(
+        'set `statuses:` in `backlog/config.yml` to an ordered list of at least two statuses (e.g. ["To Do", "In Progress", "Done"])',
+      );
+    });
+
+    test("a duplicate entry still names backlog/config.yml's `statuses:`", () => {
+      const err = loreError(() => reconcileStatus(["Done"], DUP_FLOW, {}, undefined, BACKLOG_STATUS_FLOW_HINTS));
+      expect(err.hint).toBe(
+        "each entry in `backlog/config.yml`'s `statuses:` must be unique so its position in the flow is unambiguous",
+      );
+    });
+
+    test("an off-flow status still names backlog/config.yml's `statuses:` plus the overrides escape hatch", () => {
+      const err = loreError(() => reconcileStatus(["Blocked"], DEFAULT_FLOW, {}, undefined, BACKLOG_STATUS_FLOW_HINTS));
+      expect(err.hint).toBe(
+        "the task's status must match one of `backlog/config.yml`'s `statuses:` exactly, or add a `[reconcile.overrides]` entry for it in .lore/config.toml",
+      );
+    });
+
+    test("omitting the hints argument is the same as passing Backlog's — the default keeps old callers correct", () => {
+      const withDefault = loreError(() => reconcileStatus(["Blocked"], DEFAULT_FLOW));
+      const explicit = loreError(() =>
+        reconcileStatus(["Blocked"], DEFAULT_FLOW, {}, undefined, BACKLOG_STATUS_FLOW_HINTS),
+      );
+      expect(withDefault.hint).toBe(explicit.hint as string);
+    });
+  });
+
+  describe("Quest — never points at a file the workspace does not have", () => {
+    const questHint = (run: () => unknown): string => loreError(run).hint as string;
+
+    test("an off-flow status points at `quest task status-flow` and the overrides escape hatch", () => {
+      // This is the exact error a quest-backed `lore check` prints today when a record carries a
+      // status outside the configured flow — the one that sent readers to backlog/config.yml.
+      const hint = questHint(() => reconcileStatus(["Blocked"], DEFAULT_FLOW, {}, undefined, QUEST_STATUS_FLOW_HINTS));
+      expect(hint).toContain("quest task status-flow");
+      expect(hint).toContain("[reconcile.overrides]");
+      expect(hint).toContain(".lore/config.toml");
+    });
+
+    test("a degenerate flow points at `quest task status-flow`", () => {
+      const hint = questHint(() => reconcileStatus(["To Do"], ["To Do"], {}, undefined, QUEST_STATUS_FLOW_HINTS));
+      expect(hint).toContain("quest task status-flow");
+    });
+
+    test("a duplicate entry points at `quest task status-flow`", () => {
+      const hint = questHint(() => reconcileStatus(["Done"], DUP_FLOW, {}, undefined, QUEST_STATUS_FLOW_HINTS));
+      expect(hint).toContain("quest task status-flow");
+    });
+
+    test("no quest hint mentions backlog/config.yml — the defect this task exists for", () => {
+      // Asserted over the whole constant rather than per-throw, so a hint added later cannot
+      // reintroduce the Backlog path without failing here.
+      for (const hint of Object.values(QUEST_STATUS_FLOW_HINTS)) {
+        expect(hint).not.toContain("backlog/config.yml");
+        expect(hint).not.toContain("backlog/");
+      }
+    });
+  });
+
+  describe("Jira — names lore's own config key, not a Backlog path and not Jira itself", () => {
+    test("every Jira hint names `status_flow` under `[tracker.jira]`, and none names backlog/config.yml", () => {
+      // Jira's flow is neither a Backlog file nor something Jira serves: it is lore's own
+      // `[tracker.jira] status_flow` in .lore/config.toml. A third distinct answer is why this
+      // could not be fixed with a backlog-or-quest boolean.
+      for (const hint of Object.values(JIRA_STATUS_FLOW_HINTS)) {
+        expect(hint).toContain("status_flow");
+        expect(hint).not.toContain("backlog/config.yml");
+      }
+    });
+  });
+
+  test("the three backends give three DIFFERENT answers for the same off-flow status", () => {
+    const hintFor = (hints: typeof BACKLOG_STATUS_FLOW_HINTS): string =>
+      loreError(() => reconcileStatus(["Blocked"], DEFAULT_FLOW, {}, undefined, hints)).hint as string;
+    const hints = [BACKLOG_STATUS_FLOW_HINTS, QUEST_STATUS_FLOW_HINTS, JIRA_STATUS_FLOW_HINTS].map(hintFor);
+    expect(new Set(hints).size).toBe(3);
   });
 });

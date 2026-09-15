@@ -1,6 +1,7 @@
 /** Backend-neutral tracker contract and construction seam. */
 
 import { type JiraTrackerConfig, loadConfig, type TrackerBackend, type TrackerConfig } from "../config";
+import type { StatusFlowHints } from "../core/reconcile";
 import { LoreError } from "../errors";
 import { resolveTrackerSelection } from "../tracker-selection";
 import {
@@ -53,6 +54,17 @@ export interface TrackerAdapter {
    * it releases.
    */
   readonly sourceAdapterVersion: string;
+  /**
+   * The reader-facing hints lore's status-flow errors carry for THIS backend (LCLI-503) — where
+   * its {@link statusFlow} actually comes from and how to change it.
+   *
+   * A synchronous property for the same reason as {@link sourceAdapterVersion}, and added for the
+   * same defect: the three throws in `core/reconcile.ts` named `backlog/config.yml` as a literal,
+   * so a Quest-backed workspace was told to edit a file it does not have. Being on this interface
+   * is what stops the literal coming back — a new backend cannot be added without saying where its
+   * own flow lives.
+   */
+  readonly statusFlowHints: StatusFlowHints;
   /** Validate that the configured backend is reachable and supports the required operations. */
   probe(): Promise<TrackerCapability>;
   /** Return the backend/project's ordered workflow statuses without performing task I/O. */

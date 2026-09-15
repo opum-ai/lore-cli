@@ -229,7 +229,7 @@ export async function runSync(options: SyncOptions): Promise<number> {
       : await readReconcileConfig(options.root, options.adapter)
     : undefined;
   if (config !== undefined) {
-    validateReconcileInputs(config.flow, config.overrides);
+    validateReconcileInputs(config.flow, config.overrides, config.hints);
   }
   const targets = await gatherReconciliation(options.root, scoped, options.adapter, config);
 

@@ -22,6 +22,7 @@ import {
   readSourceInventory,
 } from "../../src/core/ladybug-source";
 import { buildProjection } from "../../src/core/projection";
+import { BACKLOG_STATUS_FLOW_HINTS } from "../../src/core/reconcile";
 import { VERSION } from "../../src/meta";
 import { LADYBUG_BENCHMARK_TASK_SNAPSHOT_REL_PATH, LADYBUG_BENCHMARK_TASK_SNAPSHOT_SCHEMA } from "./fixture-contract";
 
@@ -172,6 +173,7 @@ export function createLadybugBenchmarkBacklogAdapter(root: string): BacklogAdapt
   };
   return {
     sourceAdapterVersion: BACKLOG_SOURCE_ADAPTER_VERSION,
+    statusFlowHints: BACKLOG_STATUS_FLOW_HINTS,
     async probe() {
       return { version: "1.49.0", schemaVersion: 1 };
     },

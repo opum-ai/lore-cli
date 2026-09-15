@@ -19,6 +19,7 @@ import {
   slugify,
 } from "../src/core/check";
 import { type ManagedTaskRow, regenerateTaskBlock } from "../src/core/managed-block";
+import { BACKLOG_STATUS_FLOW_HINTS } from "../src/core/reconcile";
 import { EXIT_CODES, EXIT_OK, EXIT_UNCAUGHT, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture, concept, fakeAdapter, makeTask, storyDoc } from "./helpers";
@@ -1869,7 +1870,7 @@ describe("driftFindingsForBundle — docPath agrees with the fixable/isDocsRoot 
     };
     const concepts = [concept("stories/x.md", { type: "Story", status: "todo", tasks: ["lore-1"] })];
     const pooled = {
-      config: { flow: ["To Do", "In Progress", "Done"], overrides: {} },
+      config: { flow: ["To Do", "In Progress", "Done"], overrides: {}, hints: BACKLOG_STATUS_FLOW_HINTS },
       details: new Map([
         ["lore-1", { ok: true as const, detail: makeTask("LORE-1", { status: row.status, file: row.file }) }],
       ]),
