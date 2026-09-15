@@ -296,6 +296,9 @@ export function bunQuestSpawn(root: string, binary = "quest"): QuestSpawn {
   };
 }
 
+/** This adapter's {@link TrackerAdapter.sourceAdapterVersion} (LCLI-494). */
+export const QUEST_SOURCE_ADAPTER_VERSION = "quest-json/1";
+
 export function createQuestAdapter(root: string, options: QuestAdapterOptions = {}): TrackerAdapter {
   const binary = options.binary ?? "quest";
   const spawn = options.spawn ?? bunQuestSpawn(root, binary);
@@ -384,6 +387,7 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
     return list(await data(["task", "list", "--json"], "task list --json", "task.list"), opts);
   }
   return {
+    sourceAdapterVersion: QUEST_SOURCE_ADAPTER_VERSION,
     probe: ensure,
     async statusFlow() {
       return statusFlow(await data(["task", "status-flow", "--json"], "task status-flow --json", "task.status-flow"));

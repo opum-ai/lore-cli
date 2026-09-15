@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { BACKLOG_SOURCE_ADAPTER_VERSION } from "../src/adapters/backlog";
 import { run } from "../src/cli";
 import { type BundleGraph, buildGraph } from "../src/core/bundle";
 import type { Concept } from "../src/core/concept";
@@ -547,6 +548,7 @@ function source(seed: string, concepts: readonly Concept[]): LadybugProjectionSo
   const projection = buildProjection({
     graph,
     tasks: [makeTask(`TASK-${seed.toUpperCase()}`, { title: `${seed} task` })],
+    sourceAdapterVersion: BACKLOG_SOURCE_ADAPTER_VERSION,
     docsRoot: "docs",
     okfVersion: "0.1",
     exporterVersion: "0.0.0",

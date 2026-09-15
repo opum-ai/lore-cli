@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { BACKLOG_SOURCE_ADAPTER_VERSION } from "../src/adapters/backlog";
 import { runAgent } from "../src/commands/agent";
 import type { AgentContextExport } from "../src/core/agent-context";
 import { loadAgentProfiles } from "../src/core/agent-profile";
@@ -79,6 +80,7 @@ function source(seed: string, concepts: readonly Concept[]): LadybugProjectionSo
   const projection = buildProjection({
     graph,
     tasks: [makeTask(`TASK-${seed.toUpperCase()}`, { title: `${seed} task` })],
+    sourceAdapterVersion: BACKLOG_SOURCE_ADAPTER_VERSION,
     docsRoot: "docs",
     okfVersion: "0.1",
     exporterVersion: "0.0.0",

@@ -42,6 +42,7 @@ import {
   generateLadybugBenchmarkFixture,
   loadLadybugBenchmarkFixtureSpec,
 } from "../benchmark/ladybug/fixture";
+import { BACKLOG_SOURCE_ADAPTER_VERSION } from "../src/adapters/backlog";
 import { run } from "../src/cli";
 import { loadBundle } from "../src/core/bundle";
 import {
@@ -469,6 +470,7 @@ function sourceForFixture(fixture: GeneratedLadybugBenchmarkFixture): LadybugPro
   const projection = buildProjection({
     graph,
     tasks: fixture.tasks,
+    sourceAdapterVersion: BACKLOG_SOURCE_ADAPTER_VERSION,
     docsRoot: "docs",
     okfVersion: "0.1",
     exporterVersion: VERSION,

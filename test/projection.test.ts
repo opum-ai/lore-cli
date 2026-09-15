@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
+import { BACKLOG_SOURCE_ADAPTER_VERSION } from "../src/adapters/backlog";
+import { QUEST_SOURCE_ADAPTER_VERSION } from "../src/adapters/quest";
 
 const SRC = resolve(import.meta.dir, "..", "src");
 
@@ -11,7 +13,7 @@ import { buildGraph } from "../src/core/bundle";
 import { parseConcept } from "../src/core/concept";
 import { buildProjection } from "../src/core/projection";
 import type { OutputContext } from "../src/output";
-import { capture, fakeAdapter, makeTask } from "./helpers";
+import { capture, expectError, fakeAdapter, makeTask } from "./helpers";
 
 const PLAIN: OutputContext = { mode: "plain", color: false };
 
@@ -33,6 +35,7 @@ describe("OKF projection core", () => {
     const input = {
       graph,
       tasks,
+      sourceAdapterVersion: BACKLOG_SOURCE_ADAPTER_VERSION,
       docsRoot: "docs",
       okfVersion: "0.1",
       exporterVersion: "0.1.0",
@@ -84,6 +87,7 @@ describe("OKF projection core", () => {
     const projection = buildProjection({
       graph,
       tasks,
+      sourceAdapterVersion: BACKLOG_SOURCE_ADAPTER_VERSION,
       docsRoot: "docs",
       okfVersion: "0.1",
       exporterVersion: "0.1.0",
@@ -152,11 +156,91 @@ describe("OKF projection core", () => {
     expect(offenders).toEqual([]);
   });
 
+  test("no module hard-codes an adapter identity; every site threads it from the adapter (LCLI-494)", () => {
+    // AC#5 answered rather than left implicit: LCLI-476's schema-version invariant IS widened here,
+    // to the identity literals, because this defect is the same class one field over. A literal
+    // `"backlog-json/1"` sat at the projection site and at the freshness fingerprint, so every
+    // record claimed Backlog.md whatever had produced it — and unlike the schema-version case it did
+    // not fail when a version moved, it just quietly said something untrue forever.
+    //
+    // A literal is fine in the adapter that DECLARES its own identity; nowhere else may spell one.
+    const declaring = new Set(["backlog.ts", "quest.ts", "jira.ts"].map((name) => join(SRC, "adapters", name)));
+    const offenders: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith(".ts") && !declaring.has(full)) {
+          readFileSync(full, "utf8")
+            .split("\n")
+            .forEach((line, index) => {
+              // The literal must LOOK like an identity (`<backend>-<transport>/<n>`); a `typeof x
+              // === "string"` guard names the same field and is not one.
+              if (/sourceAdapterVersion\s*(?::|!==|===)\s*"[^"]*\/[^"]*"/u.test(line)) {
+                offenders.push(`${relative(SRC, full)}:${index + 1}: ${line.trim()}`);
+              }
+            });
+        }
+      }
+    };
+    walk(SRC);
+    expect(offenders).toEqual([]);
+  });
+
+  test("the identity comes from the adapter that produced the tasks, not from the projection site", () => {
+    const { graph, tasks } = fixture();
+    const record = (identity: string) =>
+      buildProjection({
+        graph,
+        tasks,
+        sourceAdapterVersion: identity,
+        docsRoot: "docs",
+        okfVersion: "0.1",
+        exporterVersion: "0.1.0",
+        gitCommit: null,
+        generatedAt: null,
+      }).records.find((r) => r.record === "task");
+    expect(record(QUEST_SOURCE_ADAPTER_VERSION)).toMatchObject({ sourceAdapterVersion: "quest-json/1" });
+    expect(record(BACKLOG_SOURCE_ADAPTER_VERSION)).toMatchObject({ sourceAdapterVersion: "backlog-json/1" });
+  });
+
+  test("a retained projection carrying a historical identity still loads (LCLI-476's tolerant read)", () => {
+    // AC#4, and the evidence is better than a synthetic case: the retained snapshot fixture three
+    // other suites load carries `backlog-cli/1` — a spelling NO current adapter produces, from
+    // before the value was `backlog-json/1`. It validates today and must keep validating, because
+    // `lore provenance` reads retained snapshots and history cannot be re-exported. That is exactly
+    // why the Backlog adapter's value was left unchanged rather than renamed to match a scheme.
+    const retained = readFileSync(join(import.meta.dir, "fixtures/snapshot/v1.json"), "utf8");
+    expect(retained).toContain("backlog-cli/1");
+    expect(retained).not.toContain(BACKLOG_SOURCE_ADAPTER_VERSION);
+  });
+
+  test("a projection with task records refuses to be built without an adapter identity", () => {
+    // `null` is only reachable with no tracker backend selected, which yields no tasks — so this
+    // never fires in practice. It is asserted because "cannot happen" and "is prevented" are
+    // different facts, and a `null` provenance would be a quieter version of the defect the
+    // threading fixed: a tolerant reader accepts it exactly as readily as a wrong string.
+    const { graph, tasks } = fixture();
+    expectError("validation", () =>
+      buildProjection({
+        graph,
+        tasks,
+        sourceAdapterVersion: null,
+        docsRoot: "docs",
+        okfVersion: "0.1",
+        exporterVersion: "0.1.0",
+        gitCommit: null,
+        generatedAt: null,
+      }),
+    );
+  });
+
   test("generation time is excluded from the semantic stream hash", () => {
     const { graph, tasks } = fixture();
     const base = {
       graph,
       tasks,
+      sourceAdapterVersion: BACKLOG_SOURCE_ADAPTER_VERSION,
       docsRoot: "docs",
       okfVersion: "0.1",
       exporterVersion: "0.1.0",

@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { BACKLOG_SOURCE_ADAPTER_VERSION } from "../src/adapters/backlog";
 import { run } from "../src/cli";
 import { loadBundle } from "../src/core/bundle";
 import { checkBundle } from "../src/core/check";
@@ -441,6 +442,7 @@ describe("relations survive the operations that move concepts", () => {
     const records = buildProjection({
       graph: graph(),
       tasks: [],
+      sourceAdapterVersion: BACKLOG_SOURCE_ADAPTER_VERSION,
       docsRoot: "docs",
       okfVersion: "0.2",
       exporterVersion: "test",
@@ -454,6 +456,7 @@ describe("relations survive the operations that move concepts", () => {
     const plainEdge = buildProjection({
       graph: graph(),
       tasks: [],
+      sourceAdapterVersion: BACKLOG_SOURCE_ADAPTER_VERSION,
       docsRoot: "docs",
       okfVersion: "0.2",
       exporterVersion: "test",
