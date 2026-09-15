@@ -68,6 +68,116 @@ coupling, managed blocks, and cross-links stay coherent.
   `lore instructions <topic>` (`linking`, `sync`, `check`, `validation`, `workspace`).
 <!-- lore:agents:end -->
 
+## lore-cli — repository profile
+
+Facts true of this repository only. The operating model above is byte-identical
+fleet-wide; this block is where repositories legitimately differ. Keep these four
+headings in this order in every repo, and write "None known." rather than deleting
+a heading that has no entries yet.
+
+Written 2026-09-15, and it is a RESTORATION rather than a first draft. This
+section did not survive the fresh-history cutover for the public repository
+(`e3d75867`): no CLAUDE.md in the rebuilt history has ever carried one. What made
+that invisible is that three things went on describing a profile that was not
+here -- the shared operating block twice sends per-repository facts "to each
+repository's own profile block below", `ci.yml` cited its Ownership section by
+name, and `docs/reference/lore-cli-repository-notes.md` says the repo profile is
+one of the things that *stayed* in CLAUDE.md when reference material moved out
+(OPAG-37). All three were true before the cutover and false after it, and nothing
+compares prose to prose. Two of ten repositories were in this state; opum-agent
+owns the fleet-level half. Everything below was measured when written, not
+recovered from the old file.
+
+### Role
+
+Builds the `lore` CLI — an OKF-native documentation tool — and publishes it to npm
+as `@opum-ai/lore` with per-platform native binaries. Also the source of the
+`opum-lore` Claude Code plugin's skill content, cut from the same release tag as
+the CLI. It owns the tool; it does not own what any consuming repository decides
+to document with it.
+
+### Retirement machinery carried here
+
+None known. Checked rather than assumed: no suite, script, or CI job in this
+repository detects or sweeps leftover Treehouse, Codex, or OpenCode state. The
+only hits are product surface and stay — `src/core/codex-bridge.ts`,
+`src/core/antigravity-bridge.ts` and the `init` wizard's AGENTS.md option, which
+names OpenCode among the tools that read that file. That is a published flag set
+external users invoke, which the retirement-scope rule explicitly protects.
+
+### What other repositories read from here
+
+**`opum-marketplace` federates this repository's `skills/` directory by TAG.** Its
+`.claude-plugin/marketplace.json` pins `opum-ai/lore-cli` at a tag name, and
+`scripts/check-federated-content.mjs` re-resolves the whole chain — tag ref, tag
+object, commit, root tree, `skills/` subtree — against a recorded baseline in
+`scripts/federated-pin-baselines.json`. Read by ref 2026-09-15: pinned at `v0.7.0`,
+`skills/` baseline `2998f74d077845f8ad73f83aa296e37e034378a4`.
+
+Two things follow, and the second is the one that gets misstated. Anything landing
+under `skills/` changes what the next tag ships to plugin users, so it is not an
+internal-only edit. And **their check does not go red when this repository tags**
+— it re-resolves whatever ref is currently pinned, which is immutable, so an
+unrelated new tag never puts them at risk. The handshake (tracked as LCLI-469) is
+so their eventual pin bump is bookkeeping rather than archaeology: at tag-cut time
+send the tag name, tag object SHA, the commit it peels to, and the resolved
+`skills/` tree SHA, then send a second message when npm actually publishes, because
+they deliberately hold the pin until `dist-tags.latest` moves. Send the numbers to
+be re-resolved, not trusted; re-resolving them is the whole point of their file.
+
+No sibling repository references a `lore-cli/` file path by ref — checked across
+opum-agent, opum-doc, opum-cli-e2e and opum-marketplace on their own `dev`, 2026-09-15.
+The coupling above is the published artifact, not a path into this checkout.
+
+### Constraints and couplings to respect
+
+**A promotion leaves no green run on the SHA that lands on `main`, and the only
+run there is a failing one.** CI does not run on pushes to `dev` (LCLI-251), so a
+squash commit on `dev` never gets a run of its own; the promotion PR into `main`
+starts the only run on that SHA, and that run necessarily contains
+`promotion is manual` failing **by design** — it exists to put an unmissable red X
+on any PR targeting `main`, so nobody lands a promotion with the merge button. The
+gating evidence lives on the PR head that merged into `dev`, which is a different
+SHA. Measured on the 2026-09-15 promotion: `main` is `e4b384b9`, whose only run
+(34996985802) is a failure; the gating run is 34996243105 on `9d1d631d`. An auditor
+who looks for a green run on `main`'s SHA will find a red one and conclude the
+promotion was unqualified. Cite the `dev`-side run, and say which one.
+
+That run also carried a SECOND failure that was not designed — an npm E404 fetching
+`@types/node` in `docusaurus scaffold smoke`, upstream and unrelated. Re-running the
+failed jobs cleared it. Two reds wearing the same colour is the normal case here,
+not the exception, so read which jobs failed rather than the run's conclusion.
+
+**`dev` is gated; `main` is not.** Ruleset `require-ci-on-dev` (id `22838594`)
+requires five contexts as of 2026-09-15: `docker e2e harness (real lore + backlog
+binaries)`, `lint · typecheck · test (windows-latest)`, `lint · typecheck · test
+(ubuntu-latest)`, `Tracker integrity`, and `lore check (docs gate)` (LCLI-504).
+Two of those carry U+00B7, not an ASCII period — a required context is matched by
+RENDERED job name, and one that does not match is ABSENT rather than red, which
+blocks `dev` silently until an admin notices. Verify a new context by codepoint
+against a real run before writing it into the ruleset.
+`gh api repos/opum-ai/lore-cli/rules/branches/main` returns `[]`, so the honest
+phrasing for a promotion is "no checks are configured on `main`; they ran and
+passed on `dev`" — never "checks passed".
+
+The two promotion guards (`promotion is manual`, `main is fast-forward of dev`) are
+deliberately NOT required contexts: they only run on PRs into `main`, and requiring
+either would make the direct-push promotion permanently unpushable.
+
+**Promotion shape, which `ci.yml` cites as procedure:** open a PR from `dev` into
+`main`, confirm the newest run per context on that exact SHA, then
+`git push origin origin/dev:main` — the remote-tracking ref, never local `dev`,
+which can be stale in a recycled session and will silently fast-forward `main` to
+the wrong SHA. GitHub auto-marks the PR MERGED and no merge commit is created.
+Do not use the merge button: it staples a commit onto `main` that `dev` never has,
+and `main` can then never fast-forward again.
+
+**`release.yml` is `workflow_dispatch` only, with `publish` defaulting false.**
+Nothing on `main` publishes to a registry on a push, which is why promotion here is
+ordinary delivery rather than registry publication. If that trigger ever changes,
+promotion becomes an irreversible action and goes to this session's own user
+instead of the orchestrator.
+
 <!-- quest:agent-instructions:begin -->
 # Quest agent instructions
 

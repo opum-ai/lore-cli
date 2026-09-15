@@ -272,7 +272,11 @@ jobs:
     # depends on). Never touches the direct-push promotion path this repo
     # actually uses. Pattern copied from opum-doc's ODOC-73 guardrail
     # (docs/runbooks/promote-dev-to-main.md there); this repo's own procedure
-    # is documented in CLAUDE.md's repo profile — Ownership section.
+    # is documented in CLAUDE.md's repo profile, under "Constraints and couplings
+    # to respect". That citation named an "Ownership section" until 2026-09-15 and
+    # pointed at nothing: the profile itself was absent from CLAUDE.md, lost in the
+    # fresh-history cutover, and a gating workflow citing a section that does not
+    # exist is a defect in the workflow (LCLI-509).
     #
     # Deliberately NOT wired into any required status check: opum-doc verified
     # empirically that a check scoped to `pull_request` never runs on a direct
@@ -285,7 +289,7 @@ jobs:
     steps:
       - name: Refuse the merge button
         run: |
-          echo "::error::Promoting dev to main here is a fast-forward push (git push origin dev:main), never the GitHub merge button — the button staples a merge commit onto main that dev never had, breaking the ancestor relationship the promotion model depends on. Close this PR without merging; land the promotion with the exact command instead (CLAUDE.md's Ownership section)."
+          echo "::error::Promoting dev to main here is a fast-forward push (git push origin origin/dev:main), never the GitHub merge button — the button staples a merge commit onto main that dev never had, breaking the ancestor relationship the promotion model depends on. Push the REMOTE-TRACKING ref: local dev can be stale in a recycled session, and dev:main then fast-forwards main to the wrong SHA while still reporting success. Close this PR without merging; land the promotion with the exact command instead (CLAUDE.md's repo profile, \"Constraints and couplings to respect\")."
           exit 1
 
   main-is-fast-forward-of-dev:
@@ -295,7 +299,8 @@ jobs:
     # discovering it via a blocked future promotion. This is the guard that
     # matters most for this repo specifically: main carries zero branch rules
     # here (dev carries the one ruleset, require-ci-on-dev — see CLAUDE.md's
-    # repo profile), so nothing else stands between a bad push and main.
+    # repo profile, "Constraints and couplings to respect"), so nothing else
+    # stands between a bad push and main.
     #
     # Deliberately NOT wired into any required status check, for the same
     # reason as promotion-is-manual above: this job fires FROM the push it
