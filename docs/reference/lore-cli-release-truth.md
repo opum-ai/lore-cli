@@ -107,7 +107,13 @@ for the same reason `0.7.0` does not.
 against `SHA256SUMS.txt` before any registry write. All seven packages reached
 `0.6.1` with `latest` moved on each, and the script's clean-room `npx` install
 returned `0.6.1`. It carries no provenance attestation, for the same reason
-`0.6.2` does not.
+`0.6.2` does not. **`0.6.1` was a unilateral patch and an undeclared one**:
+quest stayed at 0.6.0, and the `[0.6.1]` CHANGELOG entry carries no pairing
+sentence — neither "Quest ships alongside" nor a declared break. Under the
+exact-version binding adopted in LCLI-511 that is the defect, and the
+0.6.0/0.6.1 version gap merely its symptom; quest's later 0.7.1 patch is the
+declared form of the same move. The CHANGELOG entry is history and is left as
+written; this annotation is the record.
 
 `0.6.0` was **RELEASED**. Published 2026-09-09 from tag `v0.6.0` at
 `59ba30e497f8e98aa6c6be022d9363fd718fb4ee`, by Release run `34393976910` via
@@ -303,9 +309,14 @@ Quest writes now require an explicit actor declaration, failing closed
 (`error_type: validation`) instead of silently defaulting to a fabricated
 human identity, unified across `lore link`/`lore unlink`/`lore init
 --migrate-backlog` (LCLI-434, unified in LCLI-459). From this release on, Lore
-and Quest move in lockstep, sharing one version number at every stacked
-release — quest-cli published 0.5.0 independently and in parallel, neither
-release waiting on the other. opum-cli-e2e qualified this release candidate
+and Quest are bound at the same exact version, and a unilateral patch on
+either side is a declared break of that binding — announced in the patching
+side's own changelog entry — never a release that falls outside the rule
+(reconciled with quest-cli's QCLI-306 wording under LCLI-511; an earlier
+revision here scoped the pairing to "every stacked release", which made
+lore's own undeclared 0.6.1 patch not-a-defect and was therefore untestable
+rather than lenient). Mechanically, quest-cli published 0.5.0 independently
+and in parallel, neither release waiting on the other. opum-cli-e2e qualified this release candidate
 (lore-cli dev `66aef64` paired with quest-cli dev `45cc742`) before either
 side tagged: the full cross-product suite came back green (415/426 pass; the
 remaining 8 fails and 4 blocked rows are expected pre-publish measurement
