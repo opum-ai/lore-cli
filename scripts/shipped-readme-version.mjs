@@ -259,9 +259,20 @@ function locateAllowSpans(text) {
     spans.push({ start: begin + ALLOW_BEGIN.length, end });
     cursor = end + ALLOW_END.length;
   }
-  const stray = text.indexOf(ALLOW_END);
-  if (stray !== -1 && spans.every((s) => s.end !== stray) && problems.length === 0) {
-    problems.push(`ALLOW end marker at offset ${stray} has no matching ${ALLOW_BEGIN}.`);
+  // Count every end marker rather than inspecting the first one. Checking only `indexOf(END)`
+  // finds a stray that PRECEDES the spans and misses one that follows them, which is the more
+  // likely typo — a deleted opener leaves its closer behind, downstream of the spans that parsed.
+  if (problems.length === 0) {
+    let ends = 0;
+    for (let at = text.indexOf(ALLOW_END); at !== -1; at = text.indexOf(ALLOW_END, at + ALLOW_END.length)) {
+      ends += 1;
+    }
+    if (ends !== spans.length) {
+      problems.push(
+        `ALLOW markers do not pair up: ${spans.length} complete span(s) but ${ends} end marker(s). ` +
+          `An unmatched ${ALLOW_END} means an opener was deleted and its closer left behind.`,
+      );
+    }
   }
   return { spans, problems };
 }

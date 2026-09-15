@@ -305,10 +305,18 @@ describe("the sanctioned escape hatch — an allow span, proved to ACCEPT as wel
     expect(run.stderr).toContain("never closed");
   });
 
-  test("a stray end marker with no opener is refused", () => {
-    const run = checkFixture(`${fixtureReadme()}\nHistory: done${ALLOW_END}\n`);
-    expect(run.status).toBe(1);
-    expect(run.stderr).toContain("no matching");
+  test("a stray end marker with no opener is refused, before the spans and after them", () => {
+    const before = checkFixture(`${fixtureReadme()}\nHistory: done${ALLOW_END}\n`);
+    expect(before.status).toBe(1);
+    expect(before.stderr).toContain("do not pair up");
+
+    // The likelier typo, and the one a first-occurrence check misses: a deleted opener leaves its
+    // closer behind DOWNSTREAM of spans that parsed cleanly.
+    const after = checkFixture(
+      `${fixtureReadme()}\nHistory: ${ALLOW_BEGIN}\`@opum-ai/lore@0.6.0\`${ALLOW_END} and \`0.6.1\`${ALLOW_END}\n`,
+    );
+    expect(after.status).toBe(1);
+    expect(after.stderr).toContain("do not pair up");
   });
 
   test("allow spans are repeatable, unlike the generated regions", () => {
