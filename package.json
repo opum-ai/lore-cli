@@ -72,6 +72,7 @@
     "format": "biome format --write .",
     "lint": "biome check .",
     "lint:shell": "bash scripts/lint-shell.sh",
+    "check:packages": "node scripts/check-package-artifacts.mjs",
     "lint:fix": "biome check --write .",
     "test": "bun test",
     "test:browser": "playwright test",

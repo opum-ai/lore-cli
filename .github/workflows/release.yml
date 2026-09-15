@@ -74,6 +74,20 @@ jobs:
       PLATFORM_MATRIX: ${{ needs.setup.outputs.matrix }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Assert the platform package SET is consistent (shared with ci.yml's package-set job, LCLI-513)
+        # Cross-checks the platform SET itself, not just per-platform fields: the setup job
+        # matrix literal, root package.json's optionalDependencies keys, and the directories
+        # under npm/ are three independently maintained declarations of "which platforms
+        # ship", and nothing else catches them drifting apart (a 6th platform added to one
+        # but not the others; a directory silently deleted by `git add -A`). This comparison
+        # used to live inline in the step below and ran ONLY here -- on a manual dispatch --
+        # so a lost platform directory landed on dev and was first seen mid-release. It now
+        # lives in scripts/check-package-artifacts.mjs, which ci.yml runs on every pull
+        # request; this step is the release-time call site of that ONE assertion, with the
+        # matrix passed in so the third declaration is compared too.
+        env:
+          PLATFORM_NAMES_SPACE: ${{ needs.setup.outputs.namesSpace }}
+        run: node scripts/check-package-artifacts.mjs --platforms "$PLATFORM_NAMES_SPACE"
       - name: Assert version, license, author, repository, os/cpu, binary filename, and the optionalDependencies pin all match
         # bin/lore.cjs resolves a platform optionalDependency purely by name; npm silently
         # SKIPS it if the installed version doesn't satisfy root's pinned range — for an
@@ -130,17 +144,10 @@ jobs:
               return { os: name.slice(0, dash), cpu: name.slice(dash + 1) };
             }
 
-            // Cross-check the platform SET itself, not just per-platform fields: the setup
-            // job matrix literal and the optionalDependencies keys are two independently
-            // maintained declarations of "which platforms ship" — nothing else catches them
-            // drifting apart (e.g. a 6th platform added to one but not the other).
-            const optionalDepNames = Object.keys(root.optionalDependencies || {}).sort();
-            const declaredPkgNames = platforms.map((name) => `@opum-ai/lore-${name}`).sort();
-            if (JSON.stringify(optionalDepNames) !== JSON.stringify(declaredPkgNames)) {
-              problems.push(
-                `platform set mismatch: setup job declares [${declaredPkgNames.join(", ")}], but root package.json optionalDependencies has [${optionalDepNames.join(", ")}]`,
-              );
-            }
+            // The platform SET (setup matrix vs optionalDependencies vs npm/ directories) is
+            // asserted by the previous step, via scripts/check-package-artifacts.mjs, so
+            // that ci.yml runs the identical comparison on every pull request (LCLI-513).
+            // Only the per-platform FIELDS are checked here.
 
             for (const { name, binary } of matrix) {
               const pkg = JSON.parse(fs.readFileSync(`npm/${name}/package.json`, "utf8"));

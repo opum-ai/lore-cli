@@ -64,6 +64,7 @@ describe("ci.yml exact-host LadybugDB qualification", () => {
       "check",
       "tracker",
       "docs-gate",
+      "package-set",
       "promotion-is-manual",
       "main-is-fast-forward-of-dev",
       "config-test-newest-bun",
