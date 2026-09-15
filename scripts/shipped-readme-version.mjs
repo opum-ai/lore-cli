@@ -16,7 +16,7 @@
  * THE CONTRACT. Five assertions agreed between lore-cli and quest-cli, recorded in opum-doc at
  * `docs/reference/shipped-readme-version-assertions.md`. Read it there, not here — this docblock
  * records only what THIS implementation does and why it diverges where it does. Cited SHA at the
- * time of writing: `opum-ai/opum-doc` main@b596ca5, superseding 7af9f7d, 0708fe5 and 0af2525.
+ * time of writing: `opum-ai/opum-doc` main@d56ea3f, superseding b596ca5, 7af9f7d, 0708fe5 and 0af2525.
  *
  * WHICH CLAUSES THIS SCRIPT EXERCISES. A5 asks each implementation to say which clauses it
  * EXERCISES, not which it enforces, because "enforces A3" is a conjunction that hides a clause
@@ -100,7 +100,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -142,6 +142,14 @@ function numberWord(n) {
 /**
  * The generated content of every region, keyed by id, derived from package.json alone.
  *
+ * WHY EACH REGION STARTS MID-SENTENCE, which looks arbitrary and is not. A CommonMark HTML
+ * block (type 2) starts at any line whose content begins with `<!--`, and runs to the line
+ * containing `-->` INCLUSIVE — so everything after a line-initial marker on that same line is
+ * emitted as raw text. Measured against GitHub's own renderer (`POST /markdown`): with the
+ * begin marker first in the line, the npm page showed a literal `**Status: 0.7.0 released.**`,
+ * asterisks and all. Anchoring each marker AFTER some hand-written text on its line makes it
+ * inline HTML, which renders as nothing. `assertInlineMarkers` keeps it that way.
+ *
  * Line breaks inside a template are LITERAL and fixed. A generator that re-wraps to a column
  * would make byte-equality depend on the version string's length, so a two-digit minor would
  * reflow the paragraph and the diff would stop being about the version. Fixed break points keep
@@ -158,11 +166,11 @@ function generate(pkg) {
   return new Map([
     [
       "published-bullet",
-      `Published on npm as **\`${pkg.name}@${pkg.version}\`** (bin \`lore\`) with ${numberWord(platformCount)}\n  exact-pinned platform packages${windowsArm}.`,
+      ` **\`${pkg.name}@${pkg.version}\`** (bin \`lore\`) with ${numberWord(platformCount)}\n  exact-pinned platform packages${windowsArm}.`,
     ],
     [
       "status",
-      `**Status: ${pkg.version} released.** Tag \`v${pkg.version}\`, the qualified workflow artifacts,\n> all ${numberWord(publicCount)} public \`${pkg.name}*\` npm packages with \`latest\` moved on each,\n> and a clean-registry install agree on \`${pkg.version}\`.`,
+      ` ${pkg.version} released.** Tag \`v${pkg.version}\`, the qualified workflow artifacts,\n> all ${numberWord(publicCount)} public \`${pkg.name}*\` npm packages with \`latest\` moved on each,\n> and a clean-registry install agree on \`${pkg.version}\`.`,
     ],
   ]);
 }
@@ -289,6 +297,35 @@ function checkAdjacency(text, regions, pkgName) {
   return problems;
 }
 
+/**
+ * A marker may never be the first thing on its line.
+ *
+ * A CommonMark HTML block starts at a line whose content begins with `<!--` and swallows the
+ * REST OF THAT LINE as raw text, so a line-initial begin marker makes the generated sentence
+ * render as literal asterisks and backticks on the npm page. This is a RENDERING assertion
+ * rather than a version one, and it is checked here because it is the failure mode a future
+ * hand-edit or a re-wrapped template reintroduces silently: the version would still be correct,
+ * and the page would still be wrong.
+ *
+ * "First thing on its line" means after any Markdown container prefix — list bullet, blockquote
+ * `>`, indentation — because those are stripped before the HTML-block rule is applied.
+ */
+function assertInlineMarkers(text) {
+  const problems = [];
+  text.split("\n").forEach((line, index) => {
+    const content = line.replace(/^\s*(?:[-*+]\s+|\d+\.\s+)?(?:>\s?)*\s*/, "");
+    if (!content.startsWith("<!--lore-version:")) return;
+    problems.push(
+      `RENDERING, line ${index + 1}: a region marker is the first content on its line, so ` +
+        "CommonMark reads it as an HTML block and emits the rest of the line as RAW TEXT. On the " +
+        "npm page the generated sentence renders as literal `**` and backticks.\n" +
+        `    ${line.trim()}\n` +
+        "    Anchor the marker after some hand-written text on the same line instead.",
+    );
+  });
+  return problems;
+}
+
 /** Clauses 1, 2 and 3 over one README/package.json pair. Returns every problem found. */
 function assertAll(readmeText, pkg, subject) {
   const { regions, problems } = locateRegions(readmeText);
@@ -311,6 +348,7 @@ function assertAll(readmeText, pkg, subject) {
   }
 
   problems.push(...checkAdjacency(readmeText, regions, pkg.name));
+  problems.push(...assertInlineMarkers(readmeText));
 
   if (problems.length > 0) {
     console.error(`::error::${subject}: ${problems.length} shipped-README version assertion(s) failed`);
@@ -324,10 +362,20 @@ function assertAll(readmeText, pkg, subject) {
   return 0;
 }
 
-/** Read `package/<path>` out of an npm tarball. */
+/**
+ * Read `package/<path>` out of an npm tarball.
+ *
+ * RUN FROM THE TARBALL'S OWN DIRECTORY, passing a bare filename. GNU tar — which is what is on
+ * PATH on a Windows runner — reads `C:\\...` as a `host:path` remote spec and fails with
+ * "Cannot connect to C: resolve failed". `--force-local` fixes that and does not exist in the
+ * bsdtar macOS ships, so there is no flag that is right on both. A relative name has no colon,
+ * which is right everywhere and needs no platform branch.
+ */
 function readFromTarball(tarball, path) {
+  const absolute = resolve(tarball);
   try {
-    return execFileSync("tar", ["-xzOf", tarball, `package/${path}`], {
+    return execFileSync("tar", ["-xzOf", basename(absolute), `package/${path}`], {
+      cwd: dirname(absolute),
       encoding: "utf8",
       maxBuffer: 32 * 1024 * 1024,
     });

@@ -81,9 +81,11 @@ function makeWorkspace(
     [
       "# lore",
       "",
-      "- <!--lore-version:published-bullet:begin--><!--lore-version:published-bullet:end-->",
+      // Markers sit AFTER text on their line, as the real README requires: a line whose content
+      // begins with `<!--` starts a CommonMark HTML block and renders the rest of the line raw.
+      "- Published on npm as<!--lore-version:published-bullet:begin--><!--lore-version:published-bullet:end-->",
       "",
-      "> <!--lore-version:status:begin--><!--lore-version:status:end-->",
+      "> **Status:<!--lore-version:status:begin--><!--lore-version:status:end-->",
       "",
     ].join("\n"),
   );
@@ -94,7 +96,10 @@ function makeWorkspace(
     rootPkg,
   ]);
   if (options.staleRootReadme) writeFileSync(resolve(rootPkg, "package.json"), manifestFor(VERSION));
-  execFileSync("tar", ["-czf", resolve(source, rootTarball), "-C", rootStage, "package"]);
+  // Bare filename + cwd, not an absolute path: GNU tar reads a Windows drive letter as a remote
+  // host spec. This suite is POSIX-only today, but the pattern should not be copied wrong.
+  execFileSync("tar", ["-czf", rootTarball, "package"], { cwd: rootStage });
+  writeFileSync(resolve(source, rootTarball), readFileSync(resolve(rootStage, rootTarball)));
 
   // One artifact directory per platform, named exactly as release.yml uploads it. Since
   // LCLI-487 that is run id ONLY — the attempt suffix is gone, because a name carrying the

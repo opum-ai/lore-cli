@@ -16,7 +16,7 @@ timestamp: 2026-09-15T19:42:41.478Z
 This is lore-cli's **A5 record**: which clauses of the shipped-README version
 contract this repository exercises, and where each one runs. The contract itself
 lives in opum-doc at `docs/reference/shipped-readme-version-assertions.md`
-(cited at `main@b596ca5`); it is not restated here, because two copies of one
+(cited at `main@d56ea3f`); it is not restated here, because two copies of one
 document maintained separately diverge while neither becomes false.
 
 It is written **clause by clause, each marked exercised or vacuous, and each
@@ -61,6 +61,7 @@ built to the count rather than to the claim each line makes will either miss the
 | A3.3 — no name/version pair outside every region | **exercised**, as **block-scoped** adjacency | same script, all three modes |
 | A4 — post-publish read-back naming its object | **exercised** | `release.yml`'s `publish` job; step 1a of `publish-release.sh`'s closing checklist for the manual path |
 | A5 — this record | **exercised** | this file |
+| *(local)* markers must be inline, never line-initial | **exercised** | same script, all three modes — not a contract clause; see below |
 
 Nothing here is vacuous. The one asymmetry worth stating in full is A3.2.
 
@@ -82,6 +83,38 @@ that does not exist.
 
 That is why this repository's clause-2 evidence is the mutation matrix below
 rather than a green CI run.
+
+## The assertion the contract does not have, and why this repository needs it
+
+The first implementation placed each region's begin marker immediately after the
+`- ` or `> ` container prefix. Every version assertion passed. GitHub's own
+renderer then showed the npm page emitting a literal
+`**Status: 0.7.0 released.**` — asterisks, backticks and all.
+
+A CommonMark HTML block (type 2) starts at any line whose **content** begins
+with `<!--` and runs to the line containing `-->` *inclusive*, so everything
+after a line-initial marker on that same line is emitted as raw text. The
+version was correct and the page was broken, and **no version check can see
+that combination** — which is why it is checked separately rather than assumed.
+
+The rule: a marker may never be the first content on its line, counting after
+any Markdown container prefix, because those are stripped before the HTML-block
+rule applies. Each region therefore begins mid-sentence — after
+`- Published on npm as`, and after `> **Status:` — which looks arbitrary in a
+diff and is not.
+
+**It was found by measurement, against `POST /markdown`, not by reading the
+spec.** That is worth recording because the natural place to stop was one step
+earlier: the gate was green, the tests were green, and the rendered artifact was
+the only thing that disagreed. The test for it is deliberately *version-neutral*
+— the marker moves to the start of its own line while the region's bytes stay
+identical, so clauses 1, 2 and 3 all still pass and the rendering finding is the
+only one raised. Most ways of moving a marker also move the region boundary and
+trip byte-equality, which would have let the test pass for the wrong reason.
+
+This is a property of putting generated regions in a **rendered** document. It
+is not in the shared contract because quest-cli took A2's absent arm and has no
+markers to place.
 
 ## The divergences, and why each one was necessary
 
@@ -175,6 +208,26 @@ Shapes B and C both assert, in the test itself, that no single planted line
 carries both — so a line-scoped implementation demonstrably would not have
 fired, rather than that being a claim about it.
 
+### One portability finding, because the gate shells out to `tar`
+
+The A1 tests failed on `windows-latest` and nowhere else (run 35016083790):
+
+```
+tar (child): Cannot connect to C: resolve failed
+```
+
+GNU tar — which is what is on `PATH` on a Windows runner — reads `C:\...` as a
+`host:path` remote spec. `--force-local` fixes GNU tar and **does not exist** in
+the bsdtar macOS ships, so no single flag is correct on both. Both the script
+and the tests now run `tar` from the tarball's own directory with a bare
+filename: a relative name has no colon, which is right everywhere and needs no
+platform branch.
+
+Worth noting that production never reaches this — the gate runs on
+`ubuntu-latest` in the workflow and on macOS in `publish-release.sh`. The
+Windows leg is a required context that exercised a path the release never takes,
+and it found a real defect in the script anyway.
+
 ### Mutation matrix
 
 Each wrong implementation was built and the suite re-run against it. A test that
@@ -186,7 +239,9 @@ passes first time may be asserting the wrong thing; this is what says otherwise.
 | a block overlapping a region made exempt | 2 — shapes C and D |
 | region excision made line-wise | 1 — shape D |
 | byte-equality disabled | 5 — every A3.2 test, the `--write` round trip, and the tarball gate |
-| *(unmutated)* | **0 of 20** |
+| the inline-marker rendering check removed | 2 — both rendering tests |
+| the gate deleted from `publish-release.sh` | 1 — the refusal test written for it |
+| *(unmutated)* | **0 of 23** |
 
 The acceptance half is tested as deliberately as the rejection half: the
 legitimate non-package tokens stay green, the historical-narration block stays

@@ -2,7 +2,7 @@
  * shipped-readme-version.test.ts — exercises `scripts/shipped-readme-version.mjs` (LCLI-510).
  *
  * WHY THE SHAPES MATTER MORE THAN THE COUNT. The contract this implements
- * (`opum-ai/opum-doc` main@b596ca5, `docs/reference/shipped-readme-version-assertions.md`)
+ * (`opum-ai/opum-doc` main@d56ea3f, `docs/reference/shipped-readme-version-assertions.md`)
  * records that clause 3 as originally stated — the package's own name adjacent to a version —
  * catches ONE of this README's three stale sites, because the `Status:` line carries no package
  * name at all. A proof that plants `@opum-ai/lore@0.6.2` somewhere, watches the gate go red and
@@ -25,7 +25,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -61,11 +61,11 @@ function fixtureReadme(): string {
     "# lore",
     "",
     "- Built on **Bun + TypeScript** with an exact-pinned **Commander** parser.",
-    `- ${BEGIN_BULLET}Published on npm as **\`@opum-ai/lore@0.7.0\`** (bin \`lore\`) with six`,
+    `- Published on npm as${BEGIN_BULLET} **\`@opum-ai/lore@0.7.0\`** (bin \`lore\`) with six`,
     `  exact-pinned platform packages, including Windows ARM64.${END_BULLET}`,
     "- The agent bridge is a generated **`.claude/skills/lore/SKILL.md`**.",
     "",
-    `> ${BEGIN_STATUS}**Status: 0.7.0 released.** Tag \`v0.7.0\`, the qualified workflow artifacts,`,
+    `> **Status:${BEGIN_STATUS} 0.7.0 released.** Tag \`v0.7.0\`, the qualified workflow artifacts,`,
     "> all seven public `@opum-ai/lore*` npm packages with `latest` moved on each,",
     `> and a clean-registry install agree on \`0.7.0\`.${END_STATUS}`,
     "> Released as a **pair with `quest` 0.7.0** — the two version numbers move in",
@@ -79,6 +79,25 @@ function fixtureReadme(): string {
     "the matching script-free platform package.",
     "",
   ].join("\n");
+}
+
+/**
+ * Build a `package/`-rooted tarball the way `npm pack` does.
+ *
+ * `tar` RUNS FROM `dir` WITH BARE FILENAMES because GNU tar — what is on PATH on a Windows
+ * runner — reads `C:\\...` as a `host:path` remote spec and fails with "Cannot connect to C:
+ * resolve failed". Measured on run 35016083790: both A1 tests failed there and nowhere else.
+ * `--force-local` fixes GNU tar and does not exist in the bsdtar macOS ships, so there is no
+ * flag correct on both; a relative name has no colon and needs no platform branch.
+ */
+function packFixture(name: string, pkg: object): string {
+  const dir = mkdtempSync(join(tmpdir(), `lore-readme-tar-${name}-`));
+  const pkgDir = join(dir, "package");
+  mkdirSync(pkgDir, { recursive: true });
+  writeFileSync(join(pkgDir, "README.md"), fixtureReadme());
+  writeFileSync(join(pkgDir, "package.json"), JSON.stringify(pkg, null, 2));
+  execFileSync("tar", ["-czf", `${name}.tgz`, "package"], { cwd: dir });
+  return join(dir, `${name}.tgz`);
 }
 
 /** Write a fixture tree and run `--check --dir` over it. */
@@ -129,7 +148,7 @@ describe("A3.1 — every declared region is present", () => {
   });
 
   test("a duplicated marker is reported as ambiguous rather than silently resolved to the first", () => {
-    const readme = `${fixtureReadme()}\n${BEGIN_BULLET}stowaway${END_BULLET}\n`;
+    const readme = `${fixtureReadme()}\nA second copy ${BEGIN_BULLET}stowaway${END_BULLET}\n`;
     const run = checkFixture(readme);
     expect(run.status).toBe(1);
     expect(run.stderr).toContain("more than once");
@@ -247,6 +266,49 @@ describe("A3.3 clause 3 — block-scoped adjacency, proved against four distinct
   });
 });
 
+describe("rendering — a marker may never be the first content on its line", () => {
+  // FOUND BY MEASUREMENT, NOT BY READING THE SPEC. The first implementation put the begin
+  // marker immediately after `- ` and `> `, which passed every version assertion. GitHub's own
+  // renderer (`POST /markdown`) then showed the npm page emitting a literal
+  // `**Status: 0.7.0 released.**`, asterisks and backticks and all: a CommonMark HTML block
+  // starts at a line whose content begins with `<!--` and swallows the REST OF THAT LINE as raw
+  // text. The version was correct and the page was wrong, which is the combination no
+  // version-only check can see.
+  test("a line-initial marker is reported, even though every version assertion still holds", () => {
+    // Deliberately VERSION-NEUTRAL: the marker moves to the start of its own line while the
+    // region's bytes stay identical, so clauses 1, 2 and 3 all still pass. That is what makes
+    // this test mean something — the page would be broken and nothing else in the file would
+    // say so. (Most ways of moving a marker also move the region boundary and trip clause 2,
+    // which would let this pass for the wrong reason.)
+    const readme = fixtureReadme().replace(
+      `- Published on npm as${BEGIN_BULLET} **`,
+      `- Published on npm as\n  ${BEGIN_BULLET} **`,
+    );
+    const run = checkFixture(readme);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("RENDERING");
+    expect(run.stderr).toContain("RAW TEXT");
+    expect(run.stderr).not.toContain("A3.2");
+    expect(run.stderr).not.toContain("A3.3");
+    expect(run.stderr).toContain("1 shipped-README version assertion(s) failed");
+  });
+
+  test("a marker after a blockquote prefix is caught too — container prefixes are stripped first", () => {
+    const readme = fixtureReadme().replace(`> **Status:${BEGIN_STATUS} `, `> ${BEGIN_STATUS}**Status: `);
+    const run = checkFixture(readme);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("RENDERING");
+  });
+
+  test("the real README's markers are all inline", () => {
+    const readme = readFileSync(join(import.meta.dir, "..", "README.md"), "utf8");
+    for (const line of readme.split("\n")) {
+      const content = line.replace(/^\s*(?:[-*+]\s+|\d+\.\s+)?(?:>\s?)*\s*/, "");
+      expect(content.startsWith("<!--lore-version:")).toBe(false);
+    }
+  });
+});
+
 describe("--write round-trips", () => {
   test("a drifted README is repaired by --write and then passes --check", () => {
     const dir = mkdtempSync(join(tmpdir(), "lore-readme-write-"));
@@ -260,8 +322,9 @@ describe("--write round-trips", () => {
     const written = spawnSync("node", [SCRIPT, "--write", "--dir", dir], { encoding: "utf8" });
     expect(written.stderr).toBe("");
     const repaired = readFileSync(join(dir, "README.md"), "utf8");
-    expect(repaired).toContain("**Status: 0.9.0 released.**");
+    expect(repaired).toContain("0.9.0 released.**");
     expect(repaired).toContain("@opum-ai/lore@0.9.0");
+    expect(repaired).not.toContain("0.7.0 released");
     // The hand-written text sharing lines with the markers must survive untouched.
     expect(repaired).toContain("> Released as a **pair with `quest` 0.7.0**");
     expect(spawnSync("node", [SCRIPT, "--check", "--dir", dir], { encoding: "utf8" }).status).toBe(0);
@@ -280,14 +343,7 @@ describe("--write round-trips", () => {
 
 describe("A1 — the subject is the packed artifact", () => {
   test("--tarball reads README.md out of a real tarball and fails on a stale one", () => {
-    const dir = mkdtempSync(join(tmpdir(), "lore-readme-tar-"));
-    const pkgDir = join(dir, "package");
-    execFileSync("mkdir", ["-p", pkgDir]);
-    writeFileSync(join(pkgDir, "README.md"), fixtureReadme());
-    writeFileSync(join(pkgDir, "package.json"), JSON.stringify({ ...PKG, version: "0.7.1" }, null, 2));
-    const tarball = join(dir, "stale.tgz");
-    execFileSync("tar", ["-czf", tarball, "-C", dir, "package"]);
-
+    const tarball = packFixture("stale", { ...PKG, version: "0.7.1" });
     const run = spawnSync("node", [SCRIPT, "--tarball", tarball], { encoding: "utf8" });
     expect(run.status).toBe(1);
     expect(run.stderr).toContain("A3.2");
@@ -295,14 +351,7 @@ describe("A1 — the subject is the packed artifact", () => {
   });
 
   test("--tarball passes on a tarball whose README matches its package.json", () => {
-    const dir = mkdtempSync(join(tmpdir(), "lore-readme-tar-ok-"));
-    const pkgDir = join(dir, "package");
-    execFileSync("mkdir", ["-p", pkgDir]);
-    writeFileSync(join(pkgDir, "README.md"), fixtureReadme());
-    writeFileSync(join(pkgDir, "package.json"), JSON.stringify(PKG, null, 2));
-    const tarball = join(dir, "good.tgz");
-    execFileSync("tar", ["-czf", tarball, "-C", dir, "package"]);
-
+    const tarball = packFixture("good", PKG);
     const run = spawnSync("node", [SCRIPT, "--tarball", tarball], { encoding: "utf8" });
     expect(run.stderr).toBe("");
     expect(run.status).toBe(0);

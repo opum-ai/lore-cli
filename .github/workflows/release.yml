@@ -562,7 +562,7 @@ jobs:
           echo "LINUX_X64_TARBALL=dist-npm/opum-ai-lore-linux-x64-${version}.tgz" >> "$GITHUB_ENV"
       - name: "Shipped-README version assertions against the PACKED tarball (LCLI-510)"
         # THE GATE for the contract in opum-doc's docs/reference/shipped-readme-version-assertions.md
-        # (main@b596ca5). It refuses the release when the README npm will serve as this package's
+        # (main@d56ea3f). It refuses the release when the README npm will serve as this package's
         # landing page disagrees with the package.json being published.
         #
         # WHY HERE AND NOT IN verify-versions. A1's subject is the file INSIDE the publishable
@@ -1089,7 +1089,7 @@ jobs:
           fi
           exit "$rc"
       - name: "Read the shipped README back off the registry, naming what was read (LCLI-510, A4)"
-        # A4 of the shipped-README version contract (opum-doc main@b596ca5). This is a
+        # A4 of the shipped-README version contract (opum-doc main@d56ea3f). This is a
         # CONFIRMATION and explicitly NOT the gate -- the gate is the `--tarball` step in the
         # `package` job. Published version pages are IMMUTABLE, so a read-back can only ever
         # observe the defect, never prevent it; treating it as the gate would repeat exactly the
