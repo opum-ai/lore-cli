@@ -560,6 +560,28 @@ jobs:
           ls -la dist-npm
           echo "ROOT_TARBALL=dist-npm/opum-ai-lore-${version}.tgz" >> "$GITHUB_ENV"
           echo "LINUX_X64_TARBALL=dist-npm/opum-ai-lore-linux-x64-${version}.tgz" >> "$GITHUB_ENV"
+      - name: "Shipped-README version assertions against the PACKED tarball (LCLI-510)"
+        # THE GATE for the contract in opum-doc's docs/reference/shipped-readme-version-assertions.md
+        # (main@ba3055d). It refuses the release when the README npm will serve as this package's
+        # landing page disagrees with the package.json being published.
+        #
+        # WHY HERE AND NOT IN verify-versions. A1's subject is the file INSIDE the publishable
+        # tarball, never the file in the working tree: a check reading the repository copy can pass
+        # while the packed one is stale, and the packed one is what the registry serves. This step
+        # therefore runs immediately after `npm pack` and reads package/README.md back out of the
+        # artifact that is about to be published, which is the only reading that can be wrong in
+        # the direction that matters.
+        #
+        # WHAT IT WOULD HAVE CAUGHT. `npm view @opum-ai/lore@0.7.0 readme` served a README
+        # asserting 0.6.2 on three lines, because the README bump is authored as post-tag
+        # bookkeeping and the tag therefore always carries the prior version's file. That is a
+        # release-machinery defect realised by the NEXT publish, so it is gated at release time
+        # rather than tested on a green tree.
+        #
+        # ci.yml gates the worktree copy too, via `bun test` — test/shipped-readme-version.test.ts
+        # runs `--check` against the real README on every pull request. That is early feedback and
+        # deliberately NOT the gate; this step is.
+        run: node scripts/shipped-readme-version.mjs --tarball "$ROOT_TARBALL"
       - name: Install-sanity — npx-equivalent resolution through the real launcher (LCLI-9 AC#2)
         run: |
           # Same comparison mechanism as ci.yml's compile-smoke job (ci.yml:56-64):
@@ -1066,6 +1088,49 @@ jobs:
             echo "::warning::still not visible on the registry read API after ${REGISTRY_WINDOW_SECONDS}s:${pending}. This is NOT proof the publish failed -- npm already confirmed it, and only the registry read API is behind (LCLI-460: 0.4.5 ~15s, 0.4.6 ~35s, 0.5.0 ~25min). Do NOT unpublish. Re-check before treating it as a failure."
           fi
           exit "$rc"
+      - name: "Read the shipped README back off the registry, naming what was read (LCLI-510, A4)"
+        # A4 of the shipped-README version contract (opum-doc main@ba3055d). This is a
+        # CONFIRMATION and explicitly NOT the gate -- the gate is the `--tarball` step in the
+        # `package` job. Published version pages are IMMUTABLE, so a read-back can only ever
+        # observe the defect, never prevent it; treating it as the gate would repeat exactly the
+        # failure the contract exists to catch.
+        #
+        # WHAT IT ACTUALLY READS, stated precisely because an earlier revision of this step got it
+        # wrong in the very way the contract is about. npm's `readme` is a PACKAGE-LEVEL field on
+        # the packument, NOT a per-version page. Measured 2026-09-15 against the live registry:
+        #
+        #     npm view @opum-ai/lore@0.7.0 readme  -> 14446 bytes, sha256 25b24c8dd262bb9c...
+        #     npm view @opum-ai/lore@0.6.2 readme  -> the SAME 14446 bytes
+        #     npm view @opum-ai/lore@0.6.1 readme  -> the SAME 14446 bytes
+        #
+        # The version in the spec is inert for this field: npm serves whatever the most recent
+        # publish carried. The previous revision wrote `spec="@opum-ai/lore@${version}"` and then
+        # reported "the README the registry serves for ${spec}", which names a version-specific
+        # object it had not read. That is the same defect class as the stale README itself, so it
+        # is fixed here rather than described.
+        #
+        # NOT REDUNDANT with the dist.shasum comparison above, which is about the tarball's bytes.
+        # npm extracts the `readme` field at publish time -- a separate copy from the one inside
+        # the tarball. This step is the only thing that compares that copy to what we packed.
+        #
+        # IT RE-RUNS THE SAME ASSERTIONS rather than grepping for a sentence. A literal-string
+        # check here was written first and was WRONG: the region markers split the rendered text,
+        # so `**Status: 0.7.0 released.**` does not appear contiguously in the source the registry
+        # serves, and the step would have gone red on a CORRECT release. Running `--check` over the
+        # served bytes cannot drift from the generator, because it IS the generator.
+        #
+        # WHY IT RETRIES, AND WHAT IT REFUSES TO CALL A FAILURE. Because the field is
+        # package-level and the read API lags (LCLI-460: 0.4.5 ~15s, 0.4.6 ~35s, 0.5.0 ~25min), a
+        # lagging replica does not serve an EMPTY readme -- it serves the PREVIOUS release's
+        # README, which is byte-for-byte the thing this step exists to flag. An earlier revision
+        # guarded only the empty case and would have gone red on a correct release during any lag:
+        # a false alarm seconds after the one irreversible action in the whole process. So this
+        # step discriminates the two hypotheses instead of assuming one. It fails ONLY when the
+        # served README satisfies neither this release's assertions nor the previous release's --
+        # i.e. when "the registry is still catching up" has been positively ruled out.
+        env:
+          REGISTRY_WINDOW_SECONDS: ${{ vars.REGISTRY_WINDOW_SECONDS || 1800 }}
+        run: bash scripts/readme-readback.sh
 
   provenance-post:
     name: verify this release's own provenance (LCLI-481)

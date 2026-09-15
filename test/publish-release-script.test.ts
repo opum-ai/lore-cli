@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -33,7 +34,9 @@ const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex
  * executables. `corruptPlatform` lets a test flip one recorded digest to prove the
  * independent check actually bites.
  */
-function makeWorkspace(options: { corruptPlatform?: string; legacyAttemptNames?: boolean } = {}) {
+function makeWorkspace(
+  options: { corruptPlatform?: string; legacyAttemptNames?: boolean; staleRootReadme?: boolean } = {},
+) {
   const root = mkdtempSync(resolve(tmpdir(), "lore-publish-test-"));
   const source = resolve(root, "npm-packages");
   const reports = resolve(root, "reports");
@@ -47,8 +50,56 @@ function makeWorkspace(options: { corruptPlatform?: string; legacyAttemptNames?:
     writeFileSync(resolve(source, file), bytes);
     digests.set(name, sha256(bytes));
   }
+  // THE ROOT LAUNCHER IS A REAL TARBALL, not a text file standing in for one, because since
+  // LCLI-510 the script reads package/README.md back out of it and refuses to publish when the
+  // packed README disagrees with the packed package.json. A stub whose bytes are not a gzip
+  // stream makes that gate fail as "could not read" on every test, which is indistinguishable
+  // from the gate working and is how a fixture quietly becomes the thing under test.
+  //
+  // Its README is produced by the REAL generator (`--write`), never restated here: a fixture
+  // carrying its own copy of the generated text passes happily while the two drift apart, which
+  // is the same defect shape LCLI-510 itself is about.
   const rootTarball = `opum-ai-lore-${VERSION}.tgz`;
-  writeFileSync(resolve(source, rootTarball), Buffer.from(`fake root launcher @ ${VERSION}\n`));
+  const rootStage = resolve(root, "root-stage");
+  const rootPkg = resolve(rootStage, "package");
+  mkdirSync(rootPkg, { recursive: true });
+  // `staleRootReadme` reproduces LCLI-510 exactly: the README is generated against the PREVIOUS
+  // version and package.json is then bumped, which is what post-tag bookkeeping produces.
+  const manifestFor = (version: string) =>
+    JSON.stringify(
+      {
+        name: "@opum-ai/lore",
+        version,
+        optionalDependencies: Object.fromEntries(PLATFORMS.map((name) => [`@opum-ai/lore-${name}`, version])),
+      },
+      null,
+      2,
+    );
+  writeFileSync(resolve(rootPkg, "package.json"), manifestFor(options.staleRootReadme ? "9.9.8" : VERSION));
+  writeFileSync(
+    resolve(rootPkg, "README.md"),
+    [
+      "# lore",
+      "",
+      // Markers sit AFTER text on their line, as the real README requires: a line whose content
+      // begins with `<!--` starts a CommonMark HTML block and renders the rest of the line raw.
+      "- Published on npm as<!--lore-version:published-bullet:begin--><!--lore-version:published-bullet:end-->",
+      "",
+      "> **Status:<!--lore-version:status:begin--><!--lore-version:status:end-->",
+      "",
+    ].join("\n"),
+  );
+  execFileSync("node", [
+    resolve(import.meta.dir, "..", "scripts", "shipped-readme-version.mjs"),
+    "--write",
+    "--dir",
+    rootPkg,
+  ]);
+  if (options.staleRootReadme) writeFileSync(resolve(rootPkg, "package.json"), manifestFor(VERSION));
+  // Bare filename + cwd, not an absolute path: GNU tar reads a Windows drive letter as a remote
+  // host spec. This suite is POSIX-only today, but the pattern should not be copied wrong.
+  execFileSync("tar", ["-czf", rootTarball, "package"], { cwd: rootStage });
+  writeFileSync(resolve(source, rootTarball), readFileSync(resolve(rootStage, rootTarball)));
 
   // One artifact directory per platform, named exactly as release.yml uploads it. Since
   // LCLI-487 that is run id ONLY — the attempt suffix is gone, because a name carrying the
@@ -267,6 +318,14 @@ describeOnPosix("scripts/publish-release.sh", () => {
       const copied = resolve(scriptDir, "publish-release.sh");
       writeFileSync(copied, readFileSync(SCRIPT));
       chmodSync(copied, 0o755);
+      // The shipped-README gate (LCLI-510) is a sibling the script resolves relative to its own
+      // location, so a copy of publish-release.sh WITHOUT it is not a deployment that exists in
+      // the repository. Copy both, or this test measures a missing file rather than the
+      // cwd-independence it is named for.
+      writeFileSync(
+        resolve(scriptDir, "shipped-readme-version.mjs"),
+        readFileSync(resolve(import.meta.dir, "..", "scripts", "shipped-readme-version.mjs")),
+      );
 
       const defaultArtifacts = resolve(scriptDir, `release-${VERSION}`);
       mkdirSync(defaultArtifacts, { recursive: true });
@@ -332,6 +391,26 @@ describeOnPosix("scripts/publish-release.sh", () => {
       expect(out).not.toContain("not-an-npm-token-24ch");
       expect(out).not.toContain("STUB PUBLISH");
       expect(result.exitCode).not.toBe(0);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("refuses to publish a root tarball whose packed README names the PREVIOUS version (LCLI-510)", () => {
+    // THE DEFECT, reproduced on the path that actually publishes today. release.yml's `package`
+    // job gates the tarball IT packs; this script publishes whatever is in its artifacts
+    // directory, which the usage text says an operator may populate by hand — and the root
+    // launcher is the only one of the seven with no independently recorded qualification digest,
+    // so it is simultaneously the weakest-checked artifact and the only one carrying README.md.
+    const ws = makeWorkspace({ staleRootReadme: true });
+    try {
+      const r = runScript(ws, ws.root, ws.artifacts);
+      expect(r.out).toContain("packed README disagrees with the package.json being published");
+      expect(r.out).toContain("A3.2");
+      // It must refuse BEFORE the registry write, not report afterwards — a published version
+      // page is immutable, so a check that fires after publishing cannot be a gate.
+      expect(r.out).not.toContain("STUB PUBLISH");
+      expect(r.code).not.toBe(0);
     } finally {
       ws.cleanup();
     }
@@ -563,5 +642,80 @@ describeOnPosix("scripts/publish-release.sh", () => {
     } finally {
       ws.cleanup();
     }
+  });
+});
+
+// ── The closing checklist is operator-facing REPORTING, and reporting is the half that lies ────
+//
+// Step 1a of this checklist shipped a command that matched nothing: it grepped for
+// `Status: .* released`, which does not occur in the README the generator produces because the
+// region markers split the literal. The workflow's copy of that same mistake had already been
+// fixed. This copy survived because `--dry-run` exits long before the checklist is ever printed,
+// so no test could reach it — the assertion had no way to be run, which is not the same as being
+// right. `--print-checklist` exists to close that, and these tests are why it exists.
+describeOnPosix("the closing checklist", () => {
+  const checklist = (version: string) =>
+    execFileSync("bash", [SCRIPT, version, RUN_ID, "--print-checklist"], { encoding: "utf8" });
+
+  /** Step 1a's RUNNABLE command block — the indented lines an operator copies, not the prose. */
+  function stepOneACommands(out: string) {
+    const body = out.slice(out.indexOf("1a. Read the shipped README back off the registry"));
+    return body.slice(0, body.indexOf("\n\n"));
+  }
+
+  test("step 1a re-runs the assertions and does NOT tell the operator to grep for a sentence", () => {
+    // Asserted against the COMMAND BLOCK, not the whole checklist: the prose below it quotes the
+    // old grep on purpose, to say why it went. A naive `not.toContain` over the full text fails
+    // on the explanation and would push the next author to delete the reasoning to get green.
+    const commands = stepOneACommands(checklist(VERSION));
+    expect(commands).toContain("shipped-readme-version.mjs --check");
+    expect(commands).not.toContain("grep");
+    // And the prose keeps the reason, which is the thing that stops it being re-added.
+    expect(checklist(VERSION)).toContain("DO NOT GREP FOR A SENTENCE");
+  });
+
+  test("THE REASON step 1a changed: that grep genuinely matches nothing in the real README", () => {
+    // Guards the premise rather than the wording. If the generator ever stops splitting the
+    // literal, this fails and the instruction could honestly go back to being a grep.
+    const readme = readFileSync(resolve(import.meta.dir, "..", "README.md"), "utf8");
+    expect(readme).not.toMatch(/Status: .* released/);
+    expect(readme).toMatch(/Status:<!--lore-version:status:begin--> \d+\.\d+\.\d+ released/);
+  });
+
+  test("it names the package it tells you to read, and the name is DERIVED not hardcoded", () => {
+    const out = checklist(VERSION);
+    expect(out).toContain("npm view @opum-ai/lore readme");
+    // The packument-level fact is the thing an operator must carry into their write-up.
+    expect(out).toContain("package-level");
+  });
+
+  test("nothing is left unexpanded — a shell artifact in an instruction is a broken instruction", () => {
+    const out = checklist(VERSION);
+    expect(out).not.toContain("${ROOT_PKG");
+    expect(out).not.toContain("\\$");
+    expect(out).not.toContain("$VERSION");
+    // `$(mktemp -d)` and `"$d/..."` are literal ON PURPOSE: they are shell for the operator to
+    // run, not values for this script to expand.
+    expect(out).toContain("$(mktemp -d)");
+  });
+
+  test("no version is hardcoded — LCLI-483 shipped a checklist naming v0.3.5 for months", () => {
+    const a = checklist("9.9.9");
+    const b = checklist("8.8.8");
+    expect(a).toContain("PUBLISHED 9.9.9");
+    expect(b).toContain("PUBLISHED 8.8.8");
+    // Substituting the version back must make the two identical: any surviving difference is a
+    // number that came from somewhere other than the argument.
+    expect(a.replaceAll("9.9.9", "<V>")).toBe(b.replaceAll("8.8.8", "<V>"));
+  });
+
+  test("--print-checklist touches nothing: no artifacts, no network, no registry", () => {
+    // It runs before the artifact resolution and every npm/gh call, so it must succeed with no
+    // stubs on PATH at all. If this ever needs a stub, the flag has stopped being inert.
+    const out = execFileSync("bash", [SCRIPT, VERSION, RUN_ID, "--print-checklist"], {
+      encoding: "utf8",
+      env: { ...process.env, PATH: "/usr/bin:/bin" },
+    });
+    expect(out).toContain("PUBLISHED");
   });
 });
