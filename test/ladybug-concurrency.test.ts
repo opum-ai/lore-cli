@@ -64,7 +64,13 @@ import {
   readSourceInventory,
 } from "../src/core/ladybug-source";
 import { buildProjection } from "../src/core/projection";
-import { loadReferenceRetrievalGraph, type RetrievalGraphLoader, stripRetrievalBackend } from "../src/core/retrieval";
+import {
+  loadReferenceRetrievalGraph,
+  REFERENCE_FALLBACK_REASONS,
+  type RetrievalGraphLoader,
+  referenceFallbackMessage,
+  stripRetrievalBackend,
+} from "../src/core/retrieval";
 import { LoreError } from "../src/errors";
 import { VERSION } from "../src/meta";
 import { capture } from "./helpers";
@@ -73,8 +79,15 @@ const REPOSITORY_ROOT = resolve(import.meta.dir, "..");
 const WORKER_PATH = join(REPOSITORY_ROOT, "benchmark", "ladybug", "concurrency-worker.ts");
 const SMALL_FIXTURE_PATH = join(REPOSITORY_ROOT, "benchmark", "ladybug", "fixtures", "v1", "small.json");
 const nativeDescribe = process.platform === "win32" ? describe.skip : describe;
-const REPOSITORY_FALLBACK_WARNING =
-  /^warning: (?:native indexed retrieval (?:failed|is unsupported on this platform)|indexed retrieval preflight failed before native activation); using the in-memory reference backend$/;
+/** Escape a literal for embedding in a RegExp — the messages carry no metacharacters today, and a
+ * future reason's wording must not silently turn this guard into a looser pattern. */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+const REPOSITORY_FALLBACK_WARNING = new RegExp(
+  `^warning: (?:${REFERENCE_FALLBACK_REASONS.map((reason) => escapeRegExp(referenceFallbackMessage(reason))).join("|")})$`,
+);
 const cleanupRoots: string[] = [];
 const evidenceRecords: LadybugConcurrencyEvidenceRecord[] = [];
 
@@ -416,9 +429,9 @@ describe("automatic retrieval fallback advisory parity", () => {
       stderr: "warning: retained fixture diagnostic\n",
     };
     const fallbackAdvisories = [
-      "warning: native indexed retrieval failed; using the in-memory reference backend",
-      "warning: native indexed retrieval is unsupported on this platform; using the in-memory reference backend",
-      "warning: indexed retrieval preflight failed before native activation; using the in-memory reference backend",
+      // Every reason in the closed set, derived rather than restated (LCLI-498) — a list written
+      // out by hand here would silently stop covering a reason added there.
+      ...REFERENCE_FALLBACK_REASONS.map((reason) => `warning: ${referenceFallbackMessage(reason)}`),
     ];
 
     for (const advisory of fallbackAdvisories) {

@@ -565,6 +565,16 @@ The two backends are required to produce the same answer, so this is the one
 field in these payloads that is expected to differ between them; a parity
 comparison should exclude it and assert it separately.
 
+When the indexed backend is not used, the fallback is announced on stderr and
+**names its cause**, drawn from a closed set: the platform is unsupported, the
+driver could not be loaded, the indexed snapshot disagrees with the exported
+records, no usable snapshot was available, the attempt failed before it could
+start, or the cause was unrecognised. Every route to the reference backend
+announces itself — a fallback that reported some routes and not others would
+make its own silence read as success. The advisory never names the storage
+engine, a path, or a query; the reasons are the CLI's own vocabulary, not the
+underlying error's text, so they can be relied on and asserted against.
+
 Both commands enforce a hard 10,000-edge visit budget in addition to the
 requested depth and result limits. Hitting the result or visit budget sets
 `truncated: true` and `complete: false`; reaching the requested depth is

@@ -16,14 +16,16 @@ import { join } from "node:path";
 import type { BacklogAdapter } from "../src/adapters/backlog";
 import { run } from "../src/cli";
 import type { LadybugNativeDriver, LadybugNativeLoader } from "../src/core/ladybug-native";
-import { canonicalJson, LADYBUG_CACHE_REL_ROOT } from "../src/core/ladybug-source";
+import { canonicalJson, INDEXED_VERIFICATION_FAILURE, LADYBUG_CACHE_REL_ROOT } from "../src/core/ladybug-source";
 import {
   loadReferenceRetrievalGraph,
   loadRetrievalGraph,
+  REFERENCE_FALLBACK_REASONS,
   type RetrievalGraphLoader,
+  referenceFallbackMessage,
   stripRetrievalBackend,
 } from "../src/core/retrieval";
-import { WarningCollector } from "../src/errors";
+import { LoreError, WarningCollector } from "../src/errors";
 import { capture, fakeAdapter, gitRun, makeTask } from "./helpers";
 
 const nativeDescribe = process.platform === "win32" ? describe.skip : describe;
@@ -492,6 +494,72 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
     expect(readdirSync(join(root, LADYBUG_CACHE_REL_ROOT)).some((name) => name.startsWith(".corrupt-"))).toBe(true);
   });
 
+  test("a verification failure is classified from a declared marker, not from its message (LCLI-498)", async () => {
+    // The classifier reads a marker the driver stamps on every verification error, rather than
+    // pattern-matching its prose. That distinction is the LCLI-497 lesson one layer up: a proxy that
+    // happens to correlate with the thing you mean is not the thing you mean, and a message is free
+    // to change without anyone noticing this stopped working.
+    //
+    // Staged with an injected reader rather than by corrupting a real generation, and the reason is
+    // worth stating: the lifecycle QUARANTINES AND REBUILDS tampered bytes before a read can fail on
+    // them (the test above proves exactly that), so corruption on disk produces a recovery, not a
+    // verification failure. The error here is the real shape — constructed from the same exported
+    // marker the driver's own `corrupt()` uses, so the two cannot drift.
+    const stderr = capture();
+    const result = await run(["bun", "lore", "graph", "--json"], {
+      cwd: root,
+      stdout: capture(),
+      stderr,
+      isTTY: false,
+      stderrIsTTY: false,
+      env: {},
+      adapter,
+      retrieval: (options) =>
+        loadRetrievalGraph({
+          ...options,
+          adapter,
+          resolveGitCommit: () => null,
+          loadNativeDriver: async () => {
+            const real = (await import("../src/core/ladybug-driver")) as LadybugNativeDriver;
+            return {
+              ...real,
+              openLadybugIndexedReader: (path, source) => ({
+                ...real.openLadybugIndexedReader(path, source),
+                readBundleGraph: () =>
+                  Promise.reject(
+                    new LoreError("validation", "Ladybug projection verification failed: staged", undefined, {
+                      code: INDEXED_VERIFICATION_FAILURE,
+                    }),
+                  ),
+              }),
+            };
+          },
+        }),
+    });
+    expect(result).toBe(0);
+    expect(stderr.text()).toContain(referenceFallbackMessage("verification-failed"));
+    // And not the sentence every cause used to share.
+    expect(stderr.text()).not.toContain(referenceFallbackMessage("driver-unavailable"));
+    // The internal vocabulary from the cause never reaches the user.
+    expect(stderr.text()).not.toMatch(/ladybug/i);
+  });
+
+  test("every fallback reason is a sentence the public contract can carry (LCLI-498 AC#3)", () => {
+    // The closed set exists partly so this can be asserted over ALL of it rather than over whichever
+    // reason a test happened to trigger. The storage engine is an implementation detail this CLI
+    // does not expose, which is exactly why interpolating the underlying error — whose text reads
+    // "Ladybug projection verification failed: …" — was not an option.
+    for (const reason of REFERENCE_FALLBACK_REASONS) {
+      const message = referenceFallbackMessage(reason);
+      expect(message).not.toMatch(/MATCH \(|recordKey|projection\.lbdb|ladybug|databasePath|sourceFingerprint/i);
+      expect(message).toContain("using the in-memory reference backend");
+    }
+    // ...and the reasons are distinct, which a set of identical sentences would not be.
+    expect(new Set(REFERENCE_FALLBACK_REASONS.map(referenceFallbackMessage)).size).toBe(
+      REFERENCE_FALLBACK_REASONS.length,
+    );
+  });
+
   test("known compatibility changes rebuild while a newer unsupported format is preserved and falls back without native load", async () => {
     const built = await loadRetrievalGraph({
       root,
@@ -530,7 +598,12 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
         }),
       ["context", "stories/root", "--json"],
     );
-    expectSameResult(actual, expected);
+    // The payload matches the reference backend's exactly; the stderr does not, and must not — this
+    // route previously fell back with NO advisory at all, so its silence was indistinguishable from
+    // the indexed path succeeding (LCLI-498). It now names the reason like every other route.
+    expect(actual.code).toBe(expected.code);
+    expect(stripRetrievalBackend(actual.stdout)).toBe(stripRetrievalBackend(expected.stdout));
+    expect(actual.stderr).toContain(referenceFallbackMessage("generation-unavailable"));
     expect(loads).toBe(0);
     expect(readFileSync(controlPath, "utf8")).toBe(unsupportedBytes);
     expect(lstatSync(generation).mode & 0o222).not.toBe(0);
@@ -567,7 +640,12 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
         }),
       ["graph", "--json"],
     );
-    expectSameResult(actual, expected);
+    // Same shape as the compatibility case above: identical payload, plus the advisory this route
+    // did not used to emit. A contended writer lock with no matching generation IS a fallback, and
+    // saying so is the difference between a user who can act and one who cannot tell (LCLI-498).
+    expect(actual.code).toBe(expected.code);
+    expect(stripRetrievalBackend(actual.stdout)).toBe(stripRetrievalBackend(expected.stdout));
+    expect(actual.stderr).toContain(referenceFallbackMessage("generation-unavailable"));
     expect(loads).toBe(0);
   });
 
@@ -627,7 +705,10 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
     expect(actual.code).toBe(expected.code);
     expect(actual.stdout).toBe(expected.stdout);
     expect(actual.stdout.split("\n").filter(Boolean)).toHaveLength(1);
-    expect(actual.stderr).toContain("native indexed retrieval failed; using the in-memory reference backend");
+    // The reason is asserted, not merely that some advisory appeared (LCLI-498): a native read
+    // failure is a DRIVER problem, and the sentence now says so instead of the one sentence that
+    // used to cover every cause.
+    expect(actual.stderr).toContain(referenceFallbackMessage("driver-unavailable"));
     expect(actual.stderr).not.toContain("private native read detail");
 
     const cacheRoot = join(root, LADYBUG_CACHE_REL_ROOT);
@@ -647,7 +728,7 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
     );
     expect(unavailable.code).toBe(expected.code);
     expect(unavailable.stdout).toBe(expected.stdout);
-    expect(unavailable.stderr).toContain("native indexed retrieval failed; using the in-memory reference backend");
+    expect(unavailable.stderr).toContain(referenceFallbackMessage("driver-unavailable"));
     expect(unavailable.stderr).not.toContain("private native loader detail");
     expect(readdirSync(generationRoot)).toEqual(generations);
     expect(readdirSync(cacheRoot).some((name) => name.startsWith(".corrupt-"))).toBe(false);
@@ -679,10 +760,9 @@ nativeDescribe("indexed/reference retrieval conformance", () => {
 
     expect(actual.code).toBe(expected.code);
     expect(actual.stdout).toBe(expected.stdout);
-    expect(actual.stderr).toContain(
-      "indexed retrieval preflight failed before native activation; using the in-memory reference backend",
-    );
-    expect(actual.stderr).not.toContain("native indexed retrieval failed");
+    expect(actual.stderr).toContain(referenceFallbackMessage("preflight-failed"));
+    // ...and specifically NOT the driver reason, which is the distinction that did not exist before.
+    expect(actual.stderr).not.toContain(referenceFallbackMessage("driver-unavailable"));
     expect(actual.stderr).not.toContain(privateDetail);
     expect(loads).toBe(0);
   });
@@ -703,9 +783,7 @@ describe("native lazy-loading and fallback boundary", () => {
     });
     expect(result.backend).toBe("reference");
     expect(loads).toBe(0);
-    expect(warnings.list()).toContain(
-      "native indexed retrieval is unsupported on this platform; using the in-memory reference backend",
-    );
+    expect(warnings.list()).toContain(referenceFallbackMessage("unsupported-platform"));
   });
 
   test("every route to the reference backend reports itself, warned or not (LCLI-499)", async () => {

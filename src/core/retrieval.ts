@@ -20,7 +20,11 @@ import {
   memoizeLadybugNativeLoader,
   supportsLadybugNative,
 } from "./ladybug-native";
-import { loadLadybugProjectionFreshness, loadLadybugProjectionSource } from "./ladybug-source";
+import {
+  isIndexedVerificationFailure,
+  loadLadybugProjectionFreshness,
+  loadLadybugProjectionSource,
+} from "./ladybug-source";
 import { loadProfile } from "./profile";
 import { DOCS_DIR } from "./scaffold";
 import { buildTraversalSnapshot, type TraversalSnapshot } from "./traversal";
@@ -169,7 +173,7 @@ export async function loadRetrievalGraph(options: RetrievalGraphOptions): Promis
       throw indexedUnavailable();
     }
     const reference = await loadReferenceGraph(options);
-    warnReferenceFallback(options.warnings, "unsupported");
+    warnReferenceFallback(options.warnings, "unsupported-platform");
     return reference;
   }
 
@@ -210,7 +214,14 @@ export async function loadRetrievalGraph(options: RetrievalGraphOptions): Promis
     });
     if (lifecycle.generation === undefined) {
       if (policy === "indexed") throw indexedUnavailable();
-      return loadReferenceGraph(options);
+      // This route used to return silently (LCLI-498). It is a fallback like any other -- no usable
+      // indexed snapshot, so the reference backend answered -- and a fallback that announces itself
+      // on two routes out of three is worse than one that never does, because its silence then
+      // reads as success. opum-cli-e2e found this by asking what their stderr assertion could
+      // actually prove.
+      const reference = await loadReferenceGraph(options);
+      warnReferenceFallback(options.warnings, "generation-unavailable");
+      return reference;
     }
     const native = await loadNative();
     indexedWarnings = new WarningCollector();
@@ -238,7 +249,7 @@ export async function loadRetrievalGraph(options: RetrievalGraphOptions): Promis
   } catch (cause) {
     if (policy === "indexed") throw cause;
     const reference = await loadReferenceGraph(options);
-    warnReferenceFallback(options.warnings, attemptState.nativeReached ? "failed" : "preflight");
+    warnReferenceFallback(options.warnings, fallbackReason(cause, attemptState.nativeReached));
     return reference;
   }
 }
@@ -277,17 +288,72 @@ function copyWarnings(from: WarningCollector, to?: WarningCollector): void {
   for (const message of from.list()) to.add(message);
 }
 
-function warnReferenceFallback(
-  warnings: WarningCollector | undefined,
-  reason: "unsupported" | "preflight" | "failed",
-): void {
-  warnings?.add(
-    reason === "unsupported"
-      ? "native indexed retrieval is unsupported on this platform; using the in-memory reference backend"
-      : reason === "preflight"
-        ? "indexed retrieval preflight failed before native activation; using the in-memory reference backend"
-        : "native indexed retrieval failed; using the in-memory reference backend",
-  );
+/**
+ * Why retrieval fell back to the in-memory reference backend — a **closed set**, defined here and
+ * nowhere else (LCLI-498).
+ *
+ * Before this, every fallback but one produced the same sentence, "native indexed retrieval
+ * failed", whether the cause was a corrupt edge record, an unopenable generation or an unsupported
+ * driver. A user could not act on it and a maintainer could not triage it without attaching a
+ * debugger and re-running under `policy: "indexed"` to see the real throw — which is literally the
+ * route LCLI-497 took.
+ *
+ * It is a closed set rather than the underlying error's own text for two reasons, and both matter.
+ * The cause reads "Ladybug projection verification failed: …", and the storage engine is an
+ * implementation detail this CLI does not expose — a constraint an existing test enforces. And a
+ * free-form interpolation is not testable: a caller can assert that a reason is `verification`, and
+ * cannot assert anything useful about a sentence that may change with any internal message.
+ */
+export const REFERENCE_FALLBACK_REASONS = [
+  "unsupported-platform",
+  "driver-unavailable",
+  "verification-failed",
+  "generation-unavailable",
+  "preflight-failed",
+  "unexpected",
+] as const;
+
+/** One member of the closed {@link REFERENCE_FALLBACK_REASONS} set. */
+export type ReferenceFallbackReason = (typeof REFERENCE_FALLBACK_REASONS)[number];
+
+/**
+ * The advisory for one fallback reason, in the CLI's own vocabulary.
+ *
+ * Every sentence names what happened and what it means for this run, and none names the storage
+ * engine, a filesystem path, or a query — the same constraint the public-output test already
+ * enforces, expressed here as data so a new reason cannot be added without a sentence that meets it.
+ */
+export function referenceFallbackMessage(reason: ReferenceFallbackReason): string {
+  return `${FALLBACK_CAUSES[reason]}; using the in-memory reference backend`;
+}
+
+const FALLBACK_CAUSES: Readonly<Record<ReferenceFallbackReason, string>> = Object.freeze({
+  "unsupported-platform": "indexed retrieval is unsupported on this platform",
+  "driver-unavailable": "the indexed retrieval driver could not be loaded",
+  "verification-failed": "the indexed snapshot disagrees with the exported records",
+  "generation-unavailable": "no usable indexed snapshot was available",
+  "preflight-failed": "indexed retrieval failed before it could start",
+  unexpected: "indexed retrieval failed for an unrecognised reason",
+});
+
+function warnReferenceFallback(warnings: WarningCollector | undefined, reason: ReferenceFallbackReason): void {
+  warnings?.add(referenceFallbackMessage(reason));
+}
+
+/**
+ * Classify a thrown cause into one of the closed reasons.
+ *
+ * `nativeReached` separates "we never got as far as the native boundary" from "we did and it went
+ * wrong", which no property of the error itself can tell you. Beyond that the classification reads
+ * a DECLARED marker the verification failure carries, not its message text: matching on prose is
+ * the proxy-instead-of-predicate mistake LCLI-497 was, one layer up.
+ */
+function fallbackReason(cause: unknown, nativeReached: boolean): ReferenceFallbackReason {
+  if (!nativeReached) return "preflight-failed";
+  if (cause instanceof LoreError) {
+    return cause.type === "validation" && isIndexedVerificationFailure(cause) ? "verification-failed" : "unexpected";
+  }
+  return cause instanceof Error ? "driver-unavailable" : "unexpected";
 }
 
 function indexedUnavailable(): LoreError {

@@ -10,8 +10,14 @@ import {
   memoizeLadybugNativeLoader,
   supportsLadybugNative,
 } from "./ladybug-native";
+import { isIndexedVerificationFailure } from "./ladybug-source";
 import { query } from "./query";
-import type { RetrievalGraph, RetrievalPolicy } from "./retrieval";
+import {
+  type ReferenceFallbackReason,
+  type RetrievalGraph,
+  type RetrievalPolicy,
+  referenceFallbackMessage,
+} from "./retrieval";
 import { buildTraversalSnapshot, type TraversalSnapshot, type TraversalSourceRecords } from "./traversal";
 import type { WorkspaceRecordProvenance, WorkspaceResultScope } from "./workspace-contract";
 import type { WorkspaceProjectedLink, WorkspaceProjection } from "./workspace-projection";
@@ -50,7 +56,7 @@ export async function loadWorkspaceRetrievalGraph(options: LoadWorkspaceRetrieva
   if (policy === "reference" || !supportsLadybugNative(options.platform)) {
     if (policy === "indexed" && !supportsLadybugNative(options.platform)) throw indexedUnavailable();
     const reference = await loadReference(options);
-    if (policy !== "reference") warnReferenceFallback(options.warnings, "unsupported");
+    if (policy !== "reference") warnReferenceFallback(options.warnings, "unsupported-platform");
     return reference;
   }
   const loadNative = memoizeLadybugNativeLoader(options.loadNativeDriver ?? loadLadybugNativeDriver);
@@ -85,7 +91,11 @@ export async function loadWorkspaceRetrievalGraph(options: LoadWorkspaceRetrieva
     });
     if (lifecycle.generation === undefined) {
       if (policy === "indexed") throw indexedUnavailable();
-      return referenceFromProjection(select(latest, options.selection.memberIds), options.includeTraversal);
+      // Announced like any other fallback (LCLI-498): this route returned silently, so its silence
+      // was indistinguishable from the indexed path succeeding.
+      const reference = referenceFromProjection(select(latest, options.selection.memberIds), options.includeTraversal);
+      warnReferenceFallback(options.warnings, "generation-unavailable");
+      return reference;
     }
     const projection = select(latest, options.selection.memberIds);
     const native = await loadNative();
@@ -119,7 +129,7 @@ export async function loadWorkspaceRetrievalGraph(options: LoadWorkspaceRetrieva
     // a partial indexed candidate.
     try {
       const reference = await loadReference(options);
-      warnReferenceFallback(options.warnings, "failed");
+      warnReferenceFallback(options.warnings, workspaceFallbackReason(cause));
       return reference;
     } catch {
       throw cause;
@@ -199,12 +209,28 @@ function copyWarnings(from: WarningCollector, to?: WarningCollector): void {
   to.merge(from);
 }
 
-function warnReferenceFallback(warnings: WarningCollector | undefined, reason: "unsupported" | "failed"): void {
-  warnings?.add(
-    reason === "unsupported"
-      ? "native indexed workspace retrieval is unsupported on this platform; using the in-memory reference backend"
-      : "native indexed workspace retrieval failed; using the in-memory reference backend",
-  );
+/**
+ * The workspace advisory for one fallback reason (LCLI-498).
+ *
+ * The reasons are the SAME closed set repository-local retrieval uses, because they describe the
+ * same events; only the word "workspace" differs, so a reader learns one vocabulary rather than two
+ * that drift. Adding a reason there adds it here with no change needed, which is the point of
+ * deriving the sentence rather than restating it.
+ */
+function warnReferenceFallback(warnings: WarningCollector | undefined, reason: ReferenceFallbackReason): void {
+  warnings?.add(referenceFallbackMessage(reason).replace("indexed retrieval", "indexed workspace retrieval"));
+}
+
+/**
+ * Classify a workspace fallback cause. Narrower than the repository-local classifier because this
+ * path has no preflight/native-reached distinction to draw: everything here happens after the
+ * boundary, so the only question is whether the snapshot disagreed with its records.
+ */
+function workspaceFallbackReason(cause: unknown): ReferenceFallbackReason {
+  if (cause instanceof LoreError) {
+    return cause.type === "validation" && isIndexedVerificationFailure(cause) ? "verification-failed" : "unexpected";
+  }
+  return cause instanceof Error ? "driver-unavailable" : "unexpected";
 }
 
 function indexedUnavailable(): LoreError {

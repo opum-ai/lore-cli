@@ -117,6 +117,26 @@ export interface ProjectionTaskRecord extends ProjectionRecord {
   readonly sourceAdapterVersion: string;
 }
 
+/**
+ * The marker a verification failure carries in its `input`, so a caller can classify it WITHOUT
+ * matching on its message text (LCLI-498).
+ *
+ * A declared code rather than a prose match, for the reason LCLI-497 made expensive: a proxy that
+ * happens to correlate with the thing you mean is not the thing you mean, and a message is free to
+ * change. The string deliberately says "indexed" and not the storage engine's name — it reaches
+ * public output in the error envelope, where an existing test forbids native identifiers.
+ */
+export const INDEXED_VERIFICATION_FAILURE = "indexed.verification-failed";
+
+/** Whether `error` is the verification failure {@link INDEXED_VERIFICATION_FAILURE} marks. */
+export function isIndexedVerificationFailure(error: LoreError): boolean {
+  return (
+    typeof error.input === "object" &&
+    error.input !== null &&
+    (error.input as { code?: unknown }).code === INDEXED_VERIFICATION_FAILURE
+  );
+}
+
 export interface ProjectionEdgeRecord extends ProjectionRecord {
   readonly record: "edge";
   readonly key: string;
