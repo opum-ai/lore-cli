@@ -252,6 +252,7 @@
 - 2026-09-14T22:01:31-05:00 9f4abdd23a22ea6e2f68fdc32eaa269382ff4af0 chore(LCLI-496): record the session handoff, and correct a stale brief (#85)
 - 2026-09-15T03:25:10-05:00 8598f885140b362f8be37d46728a893afa805067 docs(LCLI-469): the release runbook names the marketplace notification, at the tag (#87)
 - 2026-09-15T03:31:18-05:00 d9e8037000b60ebbc7d334971ed08acce2ede3fe chore(LCLI-496): the bump is landed and nothing is tagged; record what is still open (#89)
+- 2026-09-15T04:01:24-05:00 1f14c799e1dd711d0869f81e81c386544eb965f9 docs(LCLI-496): adjudicate target.body's optionality against cli-contract 7.1 (#90)
 
 ## docs/adr
 
