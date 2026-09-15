@@ -161,8 +161,17 @@ phrasing for a promotion is "no checks are configured on `main`; they ran and
 passed on `dev`" — never "checks passed".
 
 The two promotion guards (`promotion is manual`, `main is fast-forward of dev`) are
-deliberately NOT required contexts: they only run on PRs into `main`, and requiring
-either would make the direct-push promotion permanently unpushable.
+deliberately NOT required contexts, for two different reasons that an earlier
+revision of this paragraph collapsed into one. `promotion is manual` runs only on
+PRs into `main`, so requiring it would leave the direct push with no run to
+satisfy. `main is fast-forward of dev` runs only on the PUSH to `main` (it is
+`skipped` on every PR, so a green promotion-PR rollup says nothing about it), and
+fires from the very push it would gate, so it can only go red after the fact.
+It asserts both that the new tip already sits on `dev` and that the old tip is an
+ancestor of the new one (LCLI-514: before that it measured containment alone, and
+a rewind of `main` to an older `dev` commit stayed green). A docs-only push does
+not trigger it at all, because the `push` trigger carries `paths-ignore` for
+Markdown, `docs/` and `.claude/`.
 
 **Promotion shape, which `ci.yml` cites as procedure:** open a PR from `dev` into
 `main`, confirm the newest run per context on that exact SHA, then
