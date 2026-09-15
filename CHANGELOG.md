@@ -162,11 +162,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   record claimed Backlog.md whatever had run — including on a Quest-backed repository, which is
   lore's default for new bundles. Measured on this repository, before and after: `backlog-json/1` →
   `quest-json/1`.
-  - **A field that omits an answer is recoverable; one that states a wrong answer is not.** This one
-    sits in the same record as `dependencies`, whose emptiness is itself backend-dependent — Quest's
-    task list carries dependencies, Backlog.md's and Jira's do not — so a consumer trying to tell
-    "no prerequisites" from "this backend does not report them" would reach for exactly this field
-    and be misled.
+  - **A field that omits an answer is recoverable; one that states a wrong answer is not, because
+    nothing looks missing.** This one sits in the same record as `dependencies`, whose emptiness is
+    itself backend-dependent — Quest's task list carries dependencies, Backlog.md's and Jira's do
+    not — so a consumer trying to tell "no prerequisites" from "this backend does not report them"
+    would reach for exactly this field and be misled.
   - The value is now a **required member of the tracker adapter interface**, threaded from the
     producing adapter, so a new backend cannot reach a projection record without supplying one. The
     Backlog adapter keeps `backlog-json/1` deliberately: retained projections carry that exact
