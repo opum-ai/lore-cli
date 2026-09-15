@@ -1107,6 +1107,13 @@ jobs:
         # PREVENT the defect, not that it should be quiet about one -- a red here is the signal to
         # cut a patch release, and the propagation lag that would otherwise make this flaky is
         # handled as its own case below rather than by weakening the assertion.
+        #
+        # IT RE-RUNS THE SAME ASSERTIONS rather than grepping for a sentence. A literal-string
+        # check here was written first and was WRONG: the region markers split the rendered text,
+        # so `**Status: 0.7.0 released.**` does not appear contiguously in the source the registry
+        # serves, and the step would have gone red on a CORRECT release -- a false alarm seconds
+        # after the one irreversible action. Running `--check` over the served bytes cannot drift
+        # from the generator, because it IS the generator.
         run: |
           version="$(node -p "require('./package.json').version")"
           spec="@opum-ai/lore@${version}"
@@ -1116,12 +1123,13 @@ jobs:
             echo "::warning::${spec}: the registry served no readme field yet. Not a failure -- the read API lags publication (LCLI-460). Re-read before treating it as one."
             exit 0
           fi
-          expected="**Status: ${version} released.**"
-          if printf '%s' "$served" | grep -qF "$expected"; then
-            echo "A4 OK: ${spec}'s npm page carries \"${expected}\" -- the page names the version it is the page for."
+          workdir="$(mktemp -d)"
+          printf '%s\n' "$served" > "$workdir/README.md"
+          cp package.json "$workdir/package.json"
+          if node scripts/shipped-readme-version.mjs --check --dir "$workdir"; then
+            echo "A4 OK: the README the registry serves for ${spec} satisfies every assertion against ${spec}'s own package.json."
           else
-            echo "::error::A4 FAILED: ${spec}'s npm page does NOT carry \"${expected}\". The landing page for this release advertises some other version. This page is immutable; the fix is the next release, and the gate that should have stopped it is the --tarball step in the package job."
-            printf '%s\n' "$served" | grep -nE "Status: [0-9]+\.[0-9]+\.[0-9]+ released" || true
+            echo "::error::A4 FAILED for ${spec}: the README the REGISTRY serves does not satisfy the assertions, even though the packed tarball did. This page is immutable -- the fix is the next release, not an unpublish. Findings are above; the gate that should have stopped a stale pack is the --tarball step in the package job."
             exit 1
           fi
 

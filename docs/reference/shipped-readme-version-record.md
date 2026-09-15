@@ -59,7 +59,7 @@ built to the count rather than to the claim each line makes will either miss the
 | A3.1 — every region present | **exercised**, per region | same script, all three modes |
 | A3.2 — region byte-equal to generated | **exercised** — *and this repository is the only side that ever will* | same script, all three modes |
 | A3.3 — no name/version pair outside every region | **exercised**, as **block-scoped** adjacency | same script, all three modes |
-| A4 — post-publish read-back naming its object | **exercised** | `release.yml`'s `publish` job; step 1a of `publish-release.sh`'s closing checklist for the manual path |
+| A4 — post-publish read-back naming its object | **exercised** | `release.yml`'s `publish` job, by re-running `--check` over the bytes the registry served; step 1a of `publish-release.sh`'s closing checklist for the manual path |
 | A5 — this record | **exercised** | this file |
 | *(local)* markers must be inline, never line-initial | **exercised** | same script, all three modes — not a contract clause; see below |
 
@@ -207,6 +207,29 @@ count runs:
 Shapes B and C both assert, in the test itself, that no single planted line
 carries both — so a line-scoped implementation demonstrably would not have
 fired, rather than that being a claim about it.
+
+### A4 re-runs the assertions; it does not grep for a sentence
+
+The first version of the read-back searched the served README for the literal
+`**Status: 0.7.0 released.**`. That string does **not** appear contiguously in
+what the registry serves, because the region markers split it — the source reads
+`**Status:<!--lore-version:status:begin--> 0.7.0 released.**`. The step would
+have gone red on a **correct** release, seconds after the one irreversible
+action in the whole process, which is close to the worst possible false alarm.
+
+It now writes the served bytes to a temp directory beside this release's
+`package.json` and runs `--check` over them. That cannot drift from the
+generator, because it *is* the generator — and it checks clause 3 and the
+rendering rule against the registry's copy too, which the literal never would
+have. Proved both ways: the packed 0.7.0 README against 0.7.0's `package.json`
+exits 0; the same README against a 0.7.1 `package.json` — the registry serving
+the previous release's page, which is the defect A4 exists to observe — exits 1
+naming both regions.
+
+**Neither half of this was caught by a test.** It was caught by asking what the
+registry actually serves, which is the same question that found the rendering
+defect. The A4 step runs only inside a real publish, so a wrong assertion there
+is invisible until the moment it matters most.
 
 ### One portability finding, because the gate shells out to `tar`
 
