@@ -209,6 +209,3 @@ GitHub, in Obsidian, and under MkDocs/Docusaurus.*
 - [specs](specs/index.md)
 - [stories](stories/index.md)
 <!-- lore:index:end -->
-
-<!-- LCLI-504 gate proof (temporary): a deliberate broken cross-link, reverted in the very next commit. -->
-See [a concept that does not exist](reference/no-such-document.md).
