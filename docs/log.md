@@ -244,6 +244,7 @@
 - 2026-09-14T20:40:48-05:00 0205cb3dd6b2a8c5e0263ae6d1c8d30b1ecc6af0 feat(LCLI-499): every retrieval-family command names the backend that served it (#78)
 - 2026-09-14T20:51:21-05:00 e4dc251821e7d7049c173f9600d162b0982c4a9c feat(LCLI-478): --max-tokens becomes a ceiling, and `lore read` is the exact read
 - 2026-09-14T21:02:03-05:00 255aa0ac7d271444067a6f996b65a78ba1f4fade feat(LCLI-478): --max-tokens becomes a ceiling, and `lore read` is the exact read (#79)
+- 2026-09-14T21:10:11-05:00 0333665395d39bb4ec975c8258f750ed1da08d79 fix(LCLI-494): a task record names the adapter that produced it, not always Backlog
 
 ## docs/adr
 
