@@ -39,8 +39,10 @@ semantic exit codes, machine-readable `--json`).
 > **Status:<!--lore-version:status:begin--> 0.7.0 released.** Tag `v0.7.0`, the qualified workflow artifacts,
 > all seven public `@opum-ai/lore*` npm packages with `latest` moved on each,
 > and a clean-registry install agree on `0.7.0`.<!--lore-version:status:end-->
-> Released as a **pair with `quest` 0.7.0** — the two version numbers move in
-> lockstep.
+> Released as a **pair with `quest` 0.7.0**. The two CLIs are bound at the
+> same exact version, and a unilateral patch on either side is a declared
+> break of that binding, announced in its own changelog entry, never a silent
+> divergence.
 >
 > **Releases are currently manual, not a single dispatch.** OIDC trusted
 > publishing is configured on every package but cannot authenticate: GitHub
