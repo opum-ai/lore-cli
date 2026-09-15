@@ -1095,43 +1095,42 @@ jobs:
         # observe the defect, never prevent it; treating it as the gate would repeat exactly the
         # failure the contract exists to catch.
         #
+        # WHAT IT ACTUALLY READS, stated precisely because an earlier revision of this step got it
+        # wrong in the very way the contract is about. npm's `readme` is a PACKAGE-LEVEL field on
+        # the packument, NOT a per-version page. Measured 2026-09-15 against the live registry:
+        #
+        #     npm view @opum-ai/lore@0.7.0 readme  -> 14446 bytes, sha256 25b24c8dd262bb9c...
+        #     npm view @opum-ai/lore@0.6.2 readme  -> the SAME 14446 bytes
+        #     npm view @opum-ai/lore@0.6.1 readme  -> the SAME 14446 bytes
+        #
+        # The version in the spec is inert for this field: npm serves whatever the most recent
+        # publish carried. The previous revision wrote `spec="@opum-ai/lore@${version}"` and then
+        # reported "the README the registry serves for ${spec}", which names a version-specific
+        # object it had not read. That is the same defect class as the stale README itself, so it
+        # is fixed here rather than described.
+        #
         # NOT REDUNDANT with the dist.shasum comparison above, which is about the tarball's bytes.
-        # npm serves the package page from the `readme` field of the registry MANIFEST, which it
-        # extracts at publish time -- a separate copy from the one inside the tarball. This step is
-        # the only thing that compares that copy to what we packed.
-        #
-        # It RECORDS THE PACKAGE AND THE VERSION IT READ, not just a verdict. "read-back agrees"
-        # without naming its object is the claim shape that produced this whole class of defect.
-        #
-        # IT DOES FAIL THE JOB when the page is genuinely wrong. "Not the gate" means it cannot
-        # PREVENT the defect, not that it should be quiet about one -- a red here is the signal to
-        # cut a patch release, and the propagation lag that would otherwise make this flaky is
-        # handled as its own case below rather than by weakening the assertion.
+        # npm extracts the `readme` field at publish time -- a separate copy from the one inside
+        # the tarball. This step is the only thing that compares that copy to what we packed.
         #
         # IT RE-RUNS THE SAME ASSERTIONS rather than grepping for a sentence. A literal-string
         # check here was written first and was WRONG: the region markers split the rendered text,
         # so `**Status: 0.7.0 released.**` does not appear contiguously in the source the registry
-        # serves, and the step would have gone red on a CORRECT release -- a false alarm seconds
-        # after the one irreversible action. Running `--check` over the served bytes cannot drift
-        # from the generator, because it IS the generator.
-        run: |
-          version="$(node -p "require('./package.json').version")"
-          spec="@opum-ai/lore@${version}"
-          echo "A4 read-back: npm view ${spec} readme"
-          served="$(npm view "$spec" readme 2>/dev/null || true)"
-          if [ -z "$served" ]; then
-            echo "::warning::${spec}: the registry served no readme field yet. Not a failure -- the read API lags publication (LCLI-460). Re-read before treating it as one."
-            exit 0
-          fi
-          workdir="$(mktemp -d)"
-          printf '%s\n' "$served" > "$workdir/README.md"
-          cp package.json "$workdir/package.json"
-          if node scripts/shipped-readme-version.mjs --check --dir "$workdir"; then
-            echo "A4 OK: the README the registry serves for ${spec} satisfies every assertion against ${spec}'s own package.json."
-          else
-            echo "::error::A4 FAILED for ${spec}: the README the REGISTRY serves does not satisfy the assertions, even though the packed tarball did. This page is immutable -- the fix is the next release, not an unpublish. Findings are above; the gate that should have stopped a stale pack is the --tarball step in the package job."
-            exit 1
-          fi
+        # serves, and the step would have gone red on a CORRECT release. Running `--check` over the
+        # served bytes cannot drift from the generator, because it IS the generator.
+        #
+        # WHY IT RETRIES, AND WHAT IT REFUSES TO CALL A FAILURE. Because the field is
+        # package-level and the read API lags (LCLI-460: 0.4.5 ~15s, 0.4.6 ~35s, 0.5.0 ~25min), a
+        # lagging replica does not serve an EMPTY readme -- it serves the PREVIOUS release's
+        # README, which is byte-for-byte the thing this step exists to flag. An earlier revision
+        # guarded only the empty case and would have gone red on a correct release during any lag:
+        # a false alarm seconds after the one irreversible action in the whole process. So this
+        # step discriminates the two hypotheses instead of assuming one. It fails ONLY when the
+        # served README satisfies neither this release's assertions nor the previous release's --
+        # i.e. when "the registry is still catching up" has been positively ruled out.
+        env:
+          REGISTRY_WINDOW_SECONDS: ${{ vars.REGISTRY_WINDOW_SECONDS || 1800 }}
+        run: bash scripts/readme-readback.sh
 
   provenance-post:
     name: verify this release's own provenance (LCLI-481)

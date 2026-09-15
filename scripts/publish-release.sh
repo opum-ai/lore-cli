@@ -630,7 +630,19 @@ readme_gate_tarball="$ARTIFACTS/${ROOT_PKG#*:}"
 if [ ! -f "$readme_gate_tarball" ]; then
   die "the root launcher tarball is missing: $readme_gate_tarball"
 fi
-if ! node "$(dirname "${BASH_SOURCE[0]}")/shipped-readme-version.mjs" --tarball "$readme_gate_tarball"; then
+node "$(dirname "${BASH_SOURCE[0]}")/shipped-readme-version.mjs" --tarball "$readme_gate_tarball"
+readme_gate_rc=$?
+if [ "$readme_gate_rc" -eq 2 ]; then
+  # Exit 2 is "could not READ the input" -- a missing tar, an unparseable package.json -- and is a
+  # broken tool, not a stale README. Handing the operator the detailed LCLI-510 story for it sends
+  # them to fix a file that is fine.
+  die "the shipped-README gate could not read its input (exit 2), so it has verified NOTHING.
+
+This is a tooling or artifact failure, not a stale README: the tarball may be missing, truncated,
+or carrying an unparseable package.json. The message above says which. Fix that and re-run --
+do NOT publish on the strength of a check that did not complete."
+fi
+if [ "$readme_gate_rc" -ne 0 ]; then
   die "the packed README disagrees with the package.json being published.
 
 This is LCLI-510: the README bump is authored as post-tag bookkeeping, so the tag carries the
@@ -739,12 +751,34 @@ PUBLISHED $VERSION. Remaining, in order:
      the tag, and the tag always carried the older file. Do not restore the step.
 
   1a. Read the shipped README back off the registry and record WHAT YOU READ:
-         npm view @opum-ai/lore@$VERSION readme | grep -n 'Status: .* released'
-      It must name $VERSION. This is a confirmation, not a gate -- the page is already
-      immutable -- so a disagreement here is a defect to fix in the NEXT release, never
-      a reason to unpublish. Record the package and the version you read, not just the
-      verdict: "read-back agrees" without naming its object is the claim shape that
-      produced this whole class of defect.
+         d=\$(mktemp -d)
+         npm view ${ROOT_PKG%%:*} readme > "\$d/README.md"
+         cp package.json "\$d/package.json"
+         node scripts/shipped-readme-version.mjs --check --dir "\$d"
+
+      RE-RUN THE ASSERTIONS; DO NOT GREP FOR A SENTENCE. An earlier revision of this
+      step printed:
+         npm view ... readme | grep -n 'Status: .* released'
+      which matches NOTHING against the README this tool generates -- the region markers
+      split the literal, so the file reads `**Status:<!--...--> $VERSION released.**` and
+      there is no space after `Status:`. An operator running it verbatim gets empty output
+      and exit 1 seconds after the irreversible step, against an instruction telling them
+      the output must name the version. A check that re-runs the generator cannot drift
+      from it, because it IS the generator.
+
+      WHAT YOU ARE READING is npm's package-level \`readme\` field -- NOT a per-version
+      page. Measured 2026-09-15: \`npm view @opum-ai/lore@0.7.0 readme\`,
+      \`...@0.6.2 readme\` and \`...@0.6.1 readme\` all return the SAME 14446 bytes. The
+      version in the spec is inert for this field; npm serves whatever the most recent
+      publish carried. So record "the package-level readme for @opum-ai/lore, read at
+      <time>, which should now be $VERSION's" -- naming a version-specific page you did
+      not read is exactly the claim shape that produced this whole class of defect.
+
+      This is a confirmation, not a gate -- the page is already immutable -- so a
+      disagreement here is a defect to fix in the NEXT release, never a reason to
+      unpublish. And because the field is package-level and the read API lags (LCLI-460:
+      0.5.0 took ~25 minutes), a disagreement within that window is most likely the
+      registry still serving the PREVIOUS release's README. Re-read before concluding.
 
   2. Cut a non-draft, non-prerelease GitHub Release for v$VERSION, using
      CHANGELOG.md's [$VERSION] section as its body:
