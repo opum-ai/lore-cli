@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-15
+
+Quest ships 0.7.0 alongside this release, continuing the lockstep pairing. The release's theme:
+**0.7.0 makes the graph and the contract legible to an agent, not just to a reader** — anything an
+agent parses must be able to express what it does not currently say.
+
+### Provenance — read this before checking the packument
+
+- **0.7.0 ships with NO provenance attestation, and neither did 0.6.2 or 0.6.1.** This is expected
+  and is not tampering. OIDC trusted publishing still cannot authenticate for this repository:
+  GitHub issues immutable-format subject claims (`repo:opum-ai@<id>/lore-cli@<id>:...`) and npm's
+  Trusted Publishing matches the classic `repo:opum-ai/lore-cli:...` form, so the token exchange is
+  refused and npm returns E404 on PUT. There is no repository-level opt-out — setting
+  `use_immutable_subject: false` is accepted and has no effect. 0.7.0 therefore goes out through the
+  manual `scripts/publish-release.sh` path, and a manual publish cannot mint an attestation.
+  **LCLI-482 is open and unresolved**; do not read this release as having fixed it, and do not read
+  the absent attestation as evidence the tarballs were altered.
+- **Every version published before 2026-09-10 carries a provenance link that can never resolve.**
+  Unchanged from 0.6.2's entry and repeated because it is the other fact most likely to be misread:
+  the repository was deleted and recreated that day, destroying the commits those attestations pin.
+  The tarballs, checksums and signatures are intact and correctly signed; only the commit the
+  provenance *names* stopped existing, and npm forbids republishing a version, so this cannot be
+  repaired. A destroyed SHA **still resolves in a local clone's loose objects**, so `git cat-file`
+  wrongly reports it healthy — the live GitHub API is the only valid check (LCLI-481,
+  `docs/runbooks/release-publishing.md`).
+
 ### Added
 
 - **`lore read <id>` — one concept, exactly as authored** (LCLI-478). Its frontmatter mapping and
