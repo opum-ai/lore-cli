@@ -70,6 +70,18 @@ agent parses must be able to express what it does not currently say.
     notice in its place pointing at `lore read`. The former "over budget" footer is gone: the state
     it described cannot occur any more, and a line that can never render reads as a guarantee that
     something still checks.
+  - **Is this a `schemaVersion` bump? Deliberately no — and the reasoning is recorded here rather
+    than only the verdict.** [`cli-contract`](docs/reference/cli-contract.md) §7.1 makes *removing*
+    an existing field a breaking change, and a budgeted pack can now omit `target.body`, which
+    `0.6.2` always emitted — an oversized target went out in full, merely flagged `truncated`. It is
+    scoped as non-breaking for two reasons: the field is absent **only when the caller supplies
+    `--max-tokens`** and so opts into a bound, never on an unbudgeted call; and `data.omitted.fields`
+    names every field the budget removed and is **present even when empty**, so absence is always
+    positively reported rather than inferred. A consumer pinning `schemaVersion: 1` that reads
+    `target.body` unconditionally **on a budgeted call** must read `omitted.fields` instead.
+    Written down because a version signal that stays still is a *claim*, and an unstated claim is
+    indistinguishable from an oversight — the same principle this release applies everywhere else:
+    anything an agent parses must be able to express what it does not currently say.
   - **Documentation reconciled rather than left contradictory**: ADR-0015's "`--max-tokens` is a
     guardrail, not a guarantee" now says what is actually approximate — the `chars/4` unit, not the
     enforcement — and records that the previous wording described the defect. The agent-profile spec

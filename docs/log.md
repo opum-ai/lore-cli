@@ -251,6 +251,7 @@
 - 2026-09-14T21:47:14-05:00 f5dd0d1e77de7391f9e69bd11ccea907961c0eb8 chore(LCLI-496): the 0.7.0 feature burndown is complete; item 1's deadline is met (#82)
 - 2026-09-14T22:01:31-05:00 9f4abdd23a22ea6e2f68fdc32eaa269382ff4af0 chore(LCLI-496): record the session handoff, and correct a stale brief (#85)
 - 2026-09-15T03:25:10-05:00 8598f885140b362f8be37d46728a893afa805067 docs(LCLI-469): the release runbook names the marketplace notification, at the tag (#87)
+- 2026-09-15T03:31:18-05:00 d9e8037000b60ebbc7d334971ed08acce2ede3fe chore(LCLI-496): the bump is landed and nothing is tagged; record what is still open (#89)
 
 ## docs/adr
 
