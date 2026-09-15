@@ -16,7 +16,7 @@ timestamp: 2026-09-15T19:42:41.478Z
 This is lore-cli's **A5 record**: which clauses of the shipped-README version
 contract this repository exercises, and where each one runs. The contract itself
 lives in opum-doc at `docs/reference/shipped-readme-version-assertions.md`
-(cited at `main@d56ea3f`); it is not restated here, because two copies of one
+(cited at `main@ba3055d`); it is not restated here, because two copies of one
 document maintained separately diverge while neither becomes false.
 
 It is written **clause by clause, each marked exercised or vacuous, and each
@@ -62,8 +62,24 @@ built to the count rather than to the claim each line makes will either miss the
 | A4 — post-publish read-back naming its object | **exercised** | `release.yml`'s `publish` job, by re-running `--check` over the bytes the registry served; step 1a of `publish-release.sh`'s closing checklist for the manual path |
 | A5 — this record | **exercised** | this file |
 | *(local)* markers must be inline, never line-initial | **exercised** | same script, all three modes — not a contract clause; see below |
+| *(local)* clause 3 has a sanctioned exemption | **exercised** | hand-written allow spans; see below |
 
-Nothing here is vacuous. The one asymmetry worth stating in full is A3.2.
+Nothing here is vacuous **on this side**. Two of these constraints are vacuous
+on quest-cli's side, and — this is the distinction A5's wording change exists to
+preserve — **for two different reasons**:
+
+| Constraint | Vacuous for quest-cli because |
+|---|---|
+| A3.2 byte-equality | there is **no generator** — they took A2's absent arm, so nothing exists for the clause to guard |
+| marker placement must be inline | there are **no markers** — an absent-arm README has no regions to place |
+
+Collapsing those into one verdict about "the generated arm" would lose the fact
+that they are independent: an implementation could take the generated arm and
+have one without the other. Both are stated because "vacuous, no generator" and
+"vacuous, no markers" are different facts for whoever audits this next, and
+neither is the same as "not enforced".
+
+The asymmetry worth stating in full is A3.2.
 
 ### A3.2 is load-bearing here and vacuous in the other implementation
 
@@ -208,6 +224,35 @@ Shapes B and C both assert, in the test itself, that no single planted line
 carries both — so a line-scoped implementation demonstrably would not have
 fired, rather than that being a claim about it.
 
+### Clause 3 needed a sanctioned way past it, and the hatch is proved to ACCEPT
+
+The first implementation had none. Clause 3 refuses this package's own name next
+to a version outside a generated region, and some sentence will eventually need
+exactly that — ``` `@opum-ai/lore@0.6.0` was the last release carrying a
+provenance attestation ``` is honest, is history, and is **not derivable from
+`package.json`**, so it can never live in a generated region. With no exemption,
+the only way past it is to widen the predicate, and a predicate widened once
+measures less forever. The contract warns about this in quest-cli's terms:
+whoever meets the first legitimate version should *mark* it rather than loosen
+the matcher.
+
+So there is now a hand-written, repeatable allow span, masked for clause 3 only.
+It is deliberately **not** byte-checked — there is nothing to generate it from —
+and the inline-marker rendering rule still applies to it. An unterminated span
+is refused rather than run to end of file, because "exempt this sentence" and
+"exempt the rest of the README" differ by one missing marker.
+
+**The acceptance half is the point, and it came from quest-cli.** Their marked
+region is what their own docblock tells a future editor to reach for instead of
+loosening the matcher, and four pull requests of proving the *reject* path had
+never demonstrated that the hatch itself works. Applying "prove it accepts" to
+the escape hatch rather than only to the gate is a distinct discipline from
+applying it to the gate, and it is what surfaced that this repository had no
+hatch at all. The tests here prove, in this order: the sentence is refused
+without the hatch, accepted with it, and that the hatch does **not** disable
+byte-equality — a blanket exemption is the failure that would turn the hatch
+into a hole, and it has its own mutation row.
+
 ### A4 re-runs the assertions; it does not grep for a sentence
 
 The first version of the read-back searched the served README for the literal
@@ -263,8 +308,9 @@ passes first time may be asserting the wrong thing; this is what says otherwise.
 | region excision made line-wise | 1 — shape D |
 | byte-equality disabled | 5 — every A3.2 test, the `--write` round trip, and the tarball gate |
 | the inline-marker rendering check removed | 2 — both rendering tests |
+| an allow span made a blanket exemption | 3 — including the hatch's own acceptance test |
 | the gate deleted from `publish-release.sh` | 1 — the refusal test written for it |
-| *(unmutated)* | **0 of 23** |
+| *(unmutated)* | **0 of 28** |
 
 The acceptance half is tested as deliberately as the rejection half: the
 legitimate non-package tokens stay green, the historical-narration block stays

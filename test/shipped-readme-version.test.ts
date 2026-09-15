@@ -2,7 +2,7 @@
  * shipped-readme-version.test.ts — exercises `scripts/shipped-readme-version.mjs` (LCLI-510).
  *
  * WHY THE SHAPES MATTER MORE THAN THE COUNT. The contract this implements
- * (`opum-ai/opum-doc` main@d56ea3f, `docs/reference/shipped-readme-version-assertions.md`)
+ * (`opum-ai/opum-doc` main@ba3055d, `docs/reference/shipped-readme-version-assertions.md`)
  * records that clause 3 as originally stated — the package's own name adjacent to a version —
  * catches ONE of this README's three stale sites, because the `Status:` line carries no package
  * name at all. A proof that plants `@opum-ai/lore@0.6.2` somewhere, watches the gate go red and
@@ -263,6 +263,60 @@ describe("A3.3 clause 3 — block-scoped adjacency, proved against four distinct
     // This asserts the masking is real rather than a no-op that happens to agree.
     const readme = fixtureReadme().replace("> lockstep.", "> lockstep at `1.3.14`.");
     expect(checkFixture(readme).status).toBe(0);
+  });
+});
+
+describe("the sanctioned escape hatch — an allow span, proved to ACCEPT as well as to refuse", () => {
+  // quest-cli's point, adopted: "prove it accepts" applied to the ESCAPE HATCH, not just to the
+  // gate. Their marked region is the thing their own docblock tells a future editor to reach for
+  // instead of loosening the matcher, and it had never been demonstrated to work — four PRs of
+  // proving the reject path. The same was true here, worse: there was no hatch at all, so the
+  // only way past a legitimate name-plus-version was to widen the predicate. A predicate widened
+  // once measures less forever.
+  const ALLOW_BEGIN = "<!--lore-version:allow:begin-->";
+  const ALLOW_END = "<!--lore-version:allow:end-->";
+
+  test("ACCEPTS a legitimate name-plus-version that a generated region could never hold", () => {
+    // Honest history, not derivable from package.json, so it cannot live in a generated region.
+    // Without the hatch this is exactly the sentence that gets clause 3 loosened.
+    const sentence = "`@opum-ai/lore@0.6.0` was the last release carrying a provenance attestation.";
+    const refused = checkFixture(`${fixtureReadme()}\n${sentence}\n`);
+    expect(refused.status).toBe(1);
+    expect(refused.stderr).toContain("A3.3 clause 3");
+
+    const allowed = checkFixture(`${fixtureReadme()}\nHistory: ${ALLOW_BEGIN}${sentence}${ALLOW_END}\n`);
+    expect(allowed.stderr).toBe("");
+    expect(allowed.status).toBe(0);
+    expect(allowed.stdout).toContain("1 hand-written allow span");
+  });
+
+  test("an allow span does NOT disable byte-equality — it exempts clause 3 only", () => {
+    // The failure that would make the hatch a hole: wrapping the whole file and calling it exempt.
+    const readme = `${ALLOW_BEGIN}${fixtureReadme()}${ALLOW_END}`;
+    const run = checkFixture(readme, { ...PKG, version: "0.7.1" });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("A3.2");
+  });
+
+  test("an unterminated allow span is refused, not run to end of file", () => {
+    // "Exempt this sentence" and "exempt the rest of the README" differ by one missing marker.
+    const run = checkFixture(`${fixtureReadme()}\nHistory: ${ALLOW_BEGIN}see \`@opum-ai/lore@0.6.0\`.\n`);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("never closed");
+  });
+
+  test("a stray end marker with no opener is refused", () => {
+    const run = checkFixture(`${fixtureReadme()}\nHistory: done${ALLOW_END}\n`);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("no matching");
+  });
+
+  test("allow spans are repeatable, unlike the generated regions", () => {
+    const one = `${ALLOW_BEGIN}\`@opum-ai/lore@0.6.0\`${ALLOW_END}`;
+    const two = `${ALLOW_BEGIN}\`@opum-ai/lore@0.6.1\`${ALLOW_END}`;
+    const run = checkFixture(`${fixtureReadme()}\nShipped: ${one} and then ${two}.\n`);
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("2 hand-written allow span");
   });
 });
 

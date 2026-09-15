@@ -500,7 +500,7 @@ publish is explicitly marked public. Root `package.json` and all six
    packs. **Both read the file out of the tarball, never the worktree**, because
    a worktree check can pass while the packed file is stale and the packed one
    is what the registry serves. Contract: `opum-ai/opum-doc`
-   `docs/reference/shipped-readme-version-assertions.md` at main@d56ea3f; this
+   `docs/reference/shipped-readme-version-assertions.md` at main@ba3055d; this
    repository's per-clause record is
    [Shipped-README version assertions in lore-cli](../reference/shipped-readme-version-record.md).
 

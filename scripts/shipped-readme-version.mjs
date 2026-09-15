@@ -16,7 +16,7 @@
  * THE CONTRACT. Five assertions agreed between lore-cli and quest-cli, recorded in opum-doc at
  * `docs/reference/shipped-readme-version-assertions.md`. Read it there, not here — this docblock
  * records only what THIS implementation does and why it diverges where it does. Cited SHA at the
- * time of writing: `opum-ai/opum-doc` main@d56ea3f, superseding b596ca5, 7af9f7d, 0708fe5 and 0af2525.
+ * time of writing: `opum-ai/opum-doc` main@ba3055d, superseding d56ea3f, b596ca5, 7af9f7d, 0708fe5 and 0af2525.
  *
  * WHICH CLAUSES THIS SCRIPT EXERCISES. A5 asks each implementation to say which clauses it
  * EXERCISES, not which it enforces, because "enforces A3" is a conjunction that hides a clause
@@ -92,6 +92,11 @@
  *   --tarball <file>     clauses 1-3 against `package/README.md` and `package/package.json`
  *                        inside an `npm pack` tarball. THIS is the gate.
  *
+ * Every mode also checks two things the shared contract does not have, both local to putting
+ * generated regions in a RENDERED document: that no marker begins its line, and that clause 3's
+ * escape hatch is used rather than the predicate widened. See `assertInlineMarkers` and
+ * `ALLOW_BEGIN`.
+ *
  * EXIT CODES
  *   0  every declared assertion held
  *   1  at least one assertion failed; every failure is printed, not just the first
@@ -114,8 +119,26 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BEGIN = (id) => `<!--lore-version:${id}:begin-->`;
 const END = (id) => `<!--lore-version:${id}:end-->`;
 
-/** Every region this README declares. Order is the order failures are reported in. */
+/** Every generated region this README declares. Order is the order failures are reported in. */
 const REGION_IDS = ["published-bullet", "status"];
+
+/**
+ * THE SANCTIONED WAY PAST CLAUSE 3, and the reason nobody should ever loosen the matcher.
+ *
+ * Clause 3 refuses this package's own name next to a version outside a generated region. Some
+ * day a legitimate sentence will need exactly that — "`@opum-ai/lore@0.6.0` was the last release
+ * carrying a provenance attestation" is honest, is history, and is not derivable from
+ * package.json, so it can never live in a generated region. Without a sanctioned exemption the
+ * next person widens the predicate, and a predicate widened once measures less forever.
+ *
+ * An allow span is HAND-WRITTEN and deliberately NOT byte-checked — there is nothing to generate
+ * it from. It is masked for clause 3 only. Byte-equality does not apply to it, and the
+ * inline-marker rendering rule does, because it is still a marker in a rendered file.
+ *
+ * It is repeatable, unlike the generated regions, which are keyed by id and must appear once.
+ */
+const ALLOW_BEGIN = "<!--lore-version:allow:begin-->";
+const ALLOW_END = "<!--lore-version:allow:end-->";
 
 const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
 
@@ -214,13 +237,43 @@ function locateRegions(text) {
 }
 
 /**
+ * Every hand-written allow span, as byte ranges. Repeatable, so this walks rather than indexOf-ing
+ * once. An unterminated span is a finding rather than a silent run-to-end-of-file: the difference
+ * between "exempt this sentence" and "exempt the rest of the README" is the whole value of it.
+ */
+function locateAllowSpans(text) {
+  const spans = [];
+  const problems = [];
+  let cursor = 0;
+  while (true) {
+    const begin = text.indexOf(ALLOW_BEGIN, cursor);
+    if (begin === -1) break;
+    const end = text.indexOf(ALLOW_END, begin + ALLOW_BEGIN.length);
+    if (end === -1) {
+      problems.push(
+        `ALLOW span opened at offset ${begin} is never closed with ${ALLOW_END}. An unterminated ` +
+          "exemption would silently exempt the rest of the file, so it is refused instead.",
+      );
+      break;
+    }
+    spans.push({ start: begin + ALLOW_BEGIN.length, end });
+    cursor = end + ALLOW_END.length;
+  }
+  const stray = text.indexOf(ALLOW_END);
+  if (stray !== -1 && spans.every((s) => s.end !== stray) && problems.length === 0) {
+    problems.push(`ALLOW end marker at offset ${stray} has no matching ${ALLOW_BEGIN}.`);
+  }
+  return { spans, problems };
+}
+
+/**
  * Overwrite every region's bytes with spaces, preserving newlines so line and column numbers are
  * unchanged. Everything outside a region — including hand-written prose sharing a line with a
  * marker — survives verbatim, which is the point.
  */
-function maskRegions(text, regions) {
+function maskRegions(text, spans) {
   const chars = [...text];
-  for (const { start, end } of regions.values()) {
+  for (const { start, end } of spans) {
     for (let i = start; i < end; i += 1) {
       if (chars[i] !== "\n") chars[i] = " ";
     }
@@ -265,9 +318,9 @@ function splitBlocks(originalLines) {
  * on most lines of this README and matching it would make the clause unusable, which is how a
  * check gets loosened until it measures nothing.
  */
-function checkAdjacency(text, regions, pkgName) {
+function checkAdjacency(text, regions, allowSpans, pkgName) {
   const originalLines = text.split("\n");
-  const maskedLines = maskRegions(text, regions).split("\n");
+  const maskedLines = maskRegions(text, [...regions.values(), ...allowSpans]).split("\n");
   const namePattern = new RegExp(`${pkgName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:-[a-z0-9]+(?:-[a-z0-9]+)*|\\*)?`);
 
   const problems = [];
@@ -329,6 +382,8 @@ function assertInlineMarkers(text) {
 /** Clauses 1, 2 and 3 over one README/package.json pair. Returns every problem found. */
 function assertAll(readmeText, pkg, subject) {
   const { regions, problems } = locateRegions(readmeText);
+  const { spans: allowSpans, problems: allowProblems } = locateAllowSpans(readmeText);
+  problems.push(...allowProblems);
   const expected = generate(pkg);
 
   for (const id of REGION_IDS) {
@@ -347,7 +402,7 @@ function assertAll(readmeText, pkg, subject) {
     }
   }
 
-  problems.push(...checkAdjacency(readmeText, regions, pkg.name));
+  problems.push(...checkAdjacency(readmeText, regions, allowSpans, pkg.name));
   problems.push(...assertInlineMarkers(readmeText));
 
   if (problems.length > 0) {
@@ -357,7 +412,8 @@ function assertAll(readmeText, pkg, subject) {
   }
   console.log(
     `${subject}: README version assertions hold for ${pkg.name}@${pkg.version} ` +
-      `(${REGION_IDS.length} regions byte-equal, no name/version pair outside them).`,
+      `(${REGION_IDS.length} generated regions byte-equal, ${allowSpans.length} hand-written allow ` +
+      "span(s), no name/version pair outside any of them).",
   );
   return 0;
 }

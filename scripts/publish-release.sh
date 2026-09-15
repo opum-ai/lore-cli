@@ -623,7 +623,7 @@ report_state
 #
 # WHAT IT REFUSES: a root tarball whose packed README disagrees with its own packed package.json.
 # Run against the tarball, never the worktree -- a worktree check can pass while the packed file
-# is stale, and the packed one is what the registry serves (contract A1, opum-doc main@d56ea3f).
+# is stale, and the packed one is what the registry serves (contract A1, opum-doc main@ba3055d).
 hr
 say "checking the packed README's version assertions before any registry write"
 readme_gate_tarball="$ARTIFACTS/${ROOT_PKG#*:}"
