@@ -644,3 +644,78 @@ describeOnPosix("scripts/publish-release.sh", () => {
     }
   });
 });
+
+// ── The closing checklist is operator-facing REPORTING, and reporting is the half that lies ────
+//
+// Step 1a of this checklist shipped a command that matched nothing: it grepped for
+// `Status: .* released`, which does not occur in the README the generator produces because the
+// region markers split the literal. The workflow's copy of that same mistake had already been
+// fixed. This copy survived because `--dry-run` exits long before the checklist is ever printed,
+// so no test could reach it — the assertion had no way to be run, which is not the same as being
+// right. `--print-checklist` exists to close that, and these tests are why it exists.
+describeOnPosix("the closing checklist", () => {
+  const checklist = (version: string) =>
+    execFileSync("bash", [SCRIPT, version, RUN_ID, "--print-checklist"], { encoding: "utf8" });
+
+  /** Step 1a's RUNNABLE command block — the indented lines an operator copies, not the prose. */
+  function stepOneACommands(out: string) {
+    const body = out.slice(out.indexOf("1a. Read the shipped README back off the registry"));
+    return body.slice(0, body.indexOf("\n\n"));
+  }
+
+  test("step 1a re-runs the assertions and does NOT tell the operator to grep for a sentence", () => {
+    // Asserted against the COMMAND BLOCK, not the whole checklist: the prose below it quotes the
+    // old grep on purpose, to say why it went. A naive `not.toContain` over the full text fails
+    // on the explanation and would push the next author to delete the reasoning to get green.
+    const commands = stepOneACommands(checklist(VERSION));
+    expect(commands).toContain("shipped-readme-version.mjs --check");
+    expect(commands).not.toContain("grep");
+    // And the prose keeps the reason, which is the thing that stops it being re-added.
+    expect(checklist(VERSION)).toContain("DO NOT GREP FOR A SENTENCE");
+  });
+
+  test("THE REASON step 1a changed: that grep genuinely matches nothing in the real README", () => {
+    // Guards the premise rather than the wording. If the generator ever stops splitting the
+    // literal, this fails and the instruction could honestly go back to being a grep.
+    const readme = readFileSync(resolve(import.meta.dir, "..", "README.md"), "utf8");
+    expect(readme).not.toMatch(/Status: .* released/);
+    expect(readme).toMatch(/Status:<!--lore-version:status:begin--> \d+\.\d+\.\d+ released/);
+  });
+
+  test("it names the package it tells you to read, and the name is DERIVED not hardcoded", () => {
+    const out = checklist(VERSION);
+    expect(out).toContain("npm view @opum-ai/lore readme");
+    // The packument-level fact is the thing an operator must carry into their write-up.
+    expect(out).toContain("package-level");
+  });
+
+  test("nothing is left unexpanded — a shell artifact in an instruction is a broken instruction", () => {
+    const out = checklist(VERSION);
+    expect(out).not.toContain("${ROOT_PKG");
+    expect(out).not.toContain("\\$");
+    expect(out).not.toContain("$VERSION");
+    // `$(mktemp -d)` and `"$d/..."` are literal ON PURPOSE: they are shell for the operator to
+    // run, not values for this script to expand.
+    expect(out).toContain("$(mktemp -d)");
+  });
+
+  test("no version is hardcoded — LCLI-483 shipped a checklist naming v0.3.5 for months", () => {
+    const a = checklist("9.9.9");
+    const b = checklist("8.8.8");
+    expect(a).toContain("PUBLISHED 9.9.9");
+    expect(b).toContain("PUBLISHED 8.8.8");
+    // Substituting the version back must make the two identical: any surviving difference is a
+    // number that came from somewhere other than the argument.
+    expect(a.replaceAll("9.9.9", "<V>")).toBe(b.replaceAll("8.8.8", "<V>"));
+  });
+
+  test("--print-checklist touches nothing: no artifacts, no network, no registry", () => {
+    // It runs before the artifact resolution and every npm/gh call, so it must succeed with no
+    // stubs on PATH at all. If this ever needs a stub, the flag has stopped being inert.
+    const out = execFileSync("bash", [SCRIPT, VERSION, RUN_ID, "--print-checklist"], {
+      encoding: "utf8",
+      env: { ...process.env, PATH: "/usr/bin:/bin" },
+    });
+    expect(out).toContain("PUBLISHED");
+  });
+});

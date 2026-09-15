@@ -419,9 +419,17 @@ function assertAll(readmeText, pkg, subject) {
   problems.push(...allowProblems);
   const expected = generate(pkg);
 
+  // Counted, not assumed. The success line below reports how many regions were COMPARED, never
+  // REGION_IDS.length -- the loop has a `continue`, so the declared count and the verified count
+  // are two different numbers that happen to agree today only because clause 1 turns any gap into
+  // a failure before the line is reached. opum-marketplace shipped the same shape and it did lie
+  // there: a count taken from the declaration folded an unchecked entry into an OK total. A claim
+  // should be derived from the work done, not from the list the work was supposed to cover.
+  let regionsCompared = 0;
   for (const id of REGION_IDS) {
     const region = regions.get(id);
     if (!region) continue; // clause 1 already reported it
+    regionsCompared += 1;
     const actual = readmeText.slice(region.start, region.end);
     const want = expected.get(id);
     if (actual !== want) {
@@ -445,7 +453,7 @@ function assertAll(readmeText, pkg, subject) {
   }
   console.log(
     `${subject}: README version assertions hold for ${pkg.name}@${pkg.version} ` +
-      `(${REGION_IDS.length} generated regions byte-equal, ${allowSpans.length} hand-written allow ` +
+      `(${regionsCompared} generated regions byte-equal, ${allowSpans.length} hand-written allow ` +
       "span(s), no name/version pair outside any of them).",
   );
   return 0;

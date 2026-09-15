@@ -156,10 +156,16 @@ ROOT_PKG="@opum-ai/lore:opum-ai-lore-${VERSION}.tgz"
 
 DRY_RUN=0
 VERIFY_ONLY=0
+PRINT_CHECKLIST=0
 for arg in "$@"; do
   case "$arg" in
     --dry-run)     DRY_RUN=1 ;;
     --verify-only) VERIFY_ONLY=1 ;;
+    # Prints the closing checklist and exits, touching nothing. It exists so the checklist is
+    # TESTABLE: it is operator-facing instruction handed over seconds before irreversible work,
+    # and its step 1a shipped a command that matched nothing precisely because --dry-run exits
+    # long before this text is ever produced. An assertion nobody can run is not an assertion.
+    --print-checklist) PRINT_CHECKLIST=1 ;;
     -h|--help)     usage; exit 0 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
@@ -167,7 +173,83 @@ done
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 say() { printf '%s\n' "$*"; }
+
+print_closing_checklist() {
+  hr
+  # Deliberately an UNQUOTED heredoc so $VERSION interpolates. The previous version of
+  # this block was quoted ('DONE') and therefore hardcoded — it told every release, for
+  # months, to cut a GitHub Release for v0.3.5 and to message tmux panes that no longer
+  # exist. A closing message that names a fixed version is guaranteed to go stale the
+  # moment that version ships (LCLI-483). Keep perishable references OUT of here:
+  # no task ids, no session addresses, no version literals.
+  cat <<DONE
+  PUBLISHED $VERSION. Remaining, in order:
+
+    1. Update the release-truth doc so it states $VERSION is released. REPLACE the
+       current-state claim, do not merely add alongside it:
+           docs/reference/lore-cli-release-truth.md    (Current state section)
+
+       README.md IS NO LONGER ON THIS LIST, and that is the fix for LCLI-510 rather than
+       an omission. Its status block and npm line are GENERATED from package.json before
+       the tag, by scripts/shipped-readme-version.mjs, and the release refuses to publish
+       a tarball whose README disagrees. Bumping it here is what made every published
+       tarball's npm page advertise the PREVIOUS version: a sentence saying "$VERSION is
+       released" cannot honestly be written before it is, so the edit always landed after
+       the tag, and the tag always carried the older file. Do not restore the step.
+
+    1a. Read the shipped README back off the registry and record WHAT YOU READ:
+           d=\$(mktemp -d)
+           npm view ${ROOT_PKG%%:*} readme > "\$d/README.md"
+           cp package.json "\$d/package.json"
+           node scripts/shipped-readme-version.mjs --check --dir "\$d"
+
+        RE-RUN THE ASSERTIONS; DO NOT GREP FOR A SENTENCE. An earlier revision of this
+        step printed:
+           npm view ... readme | grep -n 'Status: .* released'
+        which matches NOTHING against the README this tool generates -- the region markers
+        split the literal, so the file reads \`**Status:<!--...--> $VERSION released.**\` and
+        there is no space after \`Status:\`. An operator running it verbatim gets empty output
+        and exit 1 seconds after the irreversible step, against an instruction telling them
+        the output must name the version. A check that re-runs the generator cannot drift
+        from it, because it IS the generator.
+
+        WHAT YOU ARE READING is npm's package-level \`readme\` field -- NOT a per-version
+        page. Measured 2026-09-15: \`npm view @opum-ai/lore@0.7.0 readme\`,
+        \`...@0.6.2 readme\` and \`...@0.6.1 readme\` all return the SAME 14446 bytes. The
+        version in the spec is inert for this field; npm serves whatever the most recent
+        publish carried. So record "the package-level readme for @opum-ai/lore, read at
+        <time>, which should now be $VERSION's" -- naming a version-specific page you did
+        not read is exactly the claim shape that produced this whole class of defect.
+
+        This is a confirmation, not a gate -- the page is already immutable -- so a
+        disagreement here is a defect to fix in the NEXT release, never a reason to
+        unpublish. And because the field is package-level and the read API lags (LCLI-460:
+        0.5.0 took ~25 minutes), a disagreement within that window is most likely the
+        registry still serving the PREVIOUS release's README. Re-read before concluding.
+
+    2. Cut a non-draft, non-prerelease GitHub Release for v$VERSION, using
+       CHANGELOG.md's [$VERSION] section as its body:
+           gh release create v$VERSION --title "Lore CLI $VERSION" --notes-file <notes>
+
+    3. Tell the downstream sessions. They deliberately do not describe a version as
+       published until told. Resolve each one with ListAgents and match on repository —
+       session names change on every restart, so never reuse a previously seen address:
+           opum-cli-e2e       re-run the qualification matrix against the published release
+           quest-cli          lore $VERSION is live
+           opum-marketplace   the resolved skills/ tree SHA for this tag, or its
+                              federated-content check goes red:
+                                  git ls-tree v$VERSION skills
+
+    4. Record HOW this shipped. If it was published by this script rather than by the
+       release workflow's OIDC job, say so in release-truth and state that the version
+       carries NO provenance attestation — a manual publish cannot produce one. Do not
+       let a reader infer provenance from an earlier version having it.
+DONE
+}
+
 hr()  { printf '%s\n' "────────────────────────────────────────────────────────────"; }
+
+[ "$PRINT_CHECKLIST" -eq 1 ] && { print_closing_checklist; exit 0; }
 
 # ── Artifacts ───────────────────────────────────────────────────────────────
 # This whole section used to be four `die`s that printed the command the operator should run
@@ -728,73 +810,4 @@ else
   say "    npx --yes @opum-ai/lore@$VERSION --version"
 fi
 
-hr
-# Deliberately an UNQUOTED heredoc so $VERSION interpolates. The previous version of
-# this block was quoted ('DONE') and therefore hardcoded — it told every release, for
-# months, to cut a GitHub Release for v0.3.5 and to message tmux panes that no longer
-# exist. A closing message that names a fixed version is guaranteed to go stale the
-# moment that version ships (LCLI-483). Keep perishable references OUT of here:
-# no task ids, no session addresses, no version literals.
-cat <<DONE
-PUBLISHED $VERSION. Remaining, in order:
-
-  1. Update the release-truth doc so it states $VERSION is released. REPLACE the
-     current-state claim, do not merely add alongside it:
-         docs/reference/lore-cli-release-truth.md    (Current state section)
-
-     README.md IS NO LONGER ON THIS LIST, and that is the fix for LCLI-510 rather than
-     an omission. Its status block and npm line are GENERATED from package.json before
-     the tag, by scripts/shipped-readme-version.mjs, and the release refuses to publish
-     a tarball whose README disagrees. Bumping it here is what made every published
-     tarball's npm page advertise the PREVIOUS version: a sentence saying "$VERSION is
-     released" cannot honestly be written before it is, so the edit always landed after
-     the tag, and the tag always carried the older file. Do not restore the step.
-
-  1a. Read the shipped README back off the registry and record WHAT YOU READ:
-         d=\$(mktemp -d)
-         npm view ${ROOT_PKG%%:*} readme > "\$d/README.md"
-         cp package.json "\$d/package.json"
-         node scripts/shipped-readme-version.mjs --check --dir "\$d"
-
-      RE-RUN THE ASSERTIONS; DO NOT GREP FOR A SENTENCE. An earlier revision of this
-      step printed:
-         npm view ... readme | grep -n 'Status: .* released'
-      which matches NOTHING against the README this tool generates -- the region markers
-      split the literal, so the file reads `**Status:<!--...--> $VERSION released.**` and
-      there is no space after `Status:`. An operator running it verbatim gets empty output
-      and exit 1 seconds after the irreversible step, against an instruction telling them
-      the output must name the version. A check that re-runs the generator cannot drift
-      from it, because it IS the generator.
-
-      WHAT YOU ARE READING is npm's package-level \`readme\` field -- NOT a per-version
-      page. Measured 2026-09-15: \`npm view @opum-ai/lore@0.7.0 readme\`,
-      \`...@0.6.2 readme\` and \`...@0.6.1 readme\` all return the SAME 14446 bytes. The
-      version in the spec is inert for this field; npm serves whatever the most recent
-      publish carried. So record "the package-level readme for @opum-ai/lore, read at
-      <time>, which should now be $VERSION's" -- naming a version-specific page you did
-      not read is exactly the claim shape that produced this whole class of defect.
-
-      This is a confirmation, not a gate -- the page is already immutable -- so a
-      disagreement here is a defect to fix in the NEXT release, never a reason to
-      unpublish. And because the field is package-level and the read API lags (LCLI-460:
-      0.5.0 took ~25 minutes), a disagreement within that window is most likely the
-      registry still serving the PREVIOUS release's README. Re-read before concluding.
-
-  2. Cut a non-draft, non-prerelease GitHub Release for v$VERSION, using
-     CHANGELOG.md's [$VERSION] section as its body:
-         gh release create v$VERSION --title "Lore CLI $VERSION" --notes-file <notes>
-
-  3. Tell the downstream sessions. They deliberately do not describe a version as
-     published until told. Resolve each one with ListAgents and match on repository —
-     session names change on every restart, so never reuse a previously seen address:
-         opum-cli-e2e       re-run the qualification matrix against the published release
-         quest-cli          lore $VERSION is live
-         opum-marketplace   the resolved skills/ tree SHA for this tag, or its
-                            federated-content check goes red:
-                                git ls-tree v$VERSION skills
-
-  4. Record HOW this shipped. If it was published by this script rather than by the
-     release workflow's OIDC job, say so in release-truth and state that the version
-     carries NO provenance attestation — a manual publish cannot produce one. Do not
-     let a reader infer provenance from an earlier version having it.
-DONE
+print_closing_checklist

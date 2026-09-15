@@ -516,3 +516,51 @@ The A4 tests were written against a stubbed `npm`, and the lag test **failed on
 its first run** — the stub matched the `versions` argument at the wrong position,
 so it answered every read with the readme and the lag branch was unreachable.
 That is the failure a test is supposed to have before it is believed.
+
+### What the fleet found next, by generalising the question
+
+The three findings above produced a rule — *ask what a gate's success message
+claims, versus what it measured* — and three sibling repositories ran it against
+their own gates within the hour. Two results came back that change this file.
+
+**The reporting is a separate thing from the assertion, and extracting the
+assertion does not put the reporting under test.** opum-marketplace already had
+both of their federated checkers in `scripts/` with passing suites, which is the
+remedy proposed above — and the defects survived anyway, because the success
+message is composed in the `import.meta.url === argv[1]` main block that no test
+reaches. One of theirs printed `market.plugins.length` ("3 plugin(s) checked")
+while checking only v-prefixed tag pins, silently folding a branch-pinned entry
+into an OK count.
+
+This file's own gate had the same shape, in the latent form: the success line
+reported `REGION_IDS.length` — the number of regions *declared* — while the loop
+that compares them carries a `continue`. The two numbers agree today only
+because clause 1 turns any missing region into a failure before the line is
+reached. That is a guard, not an identity, and it is one refactor from not
+holding. The count is now incremented by the comparison itself. **Stated
+honestly: this was never observed to lie here**, unlike opum-marketplace's,
+which did.
+
+The operator-facing checklist in `publish-release.sh` was the live instance. It
+is reporting, it shipped a command that matched nothing, and `--dry-run` exits
+long before it is printed — so no test could reach it, which is not the same as
+its being right. It now has `--print-checklist` and six tests, including one
+that guards the *reason* the instruction changed rather than its wording: if the
+generator ever stops splitting the literal, the test fails and the instruction
+could honestly go back to being a `grep`.
+
+**And the question generalises past this contract.** Asked as "does anything
+*outside* the step body repeat its claim without its caveat" (opum-cli-e2e's
+phrasing), it finds things that are not gates at all — a ruleset name, a check
+name, a line of CLAUDE.md. Run over this repository it returned one hit, and not
+in this contract: `ci.yml`'s `main-is-fast-forward-of-dev` job asserts that
+main's new HEAD is an ancestor of `dev`, which is **containment**, while its name
+claims **fast-forwardness**. A rewind of main to an older commit still on dev
+passes it. Filed as LCLI-514 with the measurement; it is not this task's to fix.
+
+The two release steps here survive the same question: "Shipped-README version
+assertions against the PACKED tarball" does assert against the packed tarball,
+and "Read the shipped README back off the registry, naming what was read" claims
+to read and to name, not to verify — which, after the lag fix above, is exactly
+what it does. Nothing in `CLAUDE.md`, `README.md` or `docs/reference/index.md`
+restates either claim.

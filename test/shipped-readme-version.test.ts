@@ -613,3 +613,26 @@ describe("rendering — container prefixes nest, and the blockquote comes first"
     expect(run.stderr).toContain("RENDERING");
   });
 });
+
+describe("the success message reports what it VERIFIED, not what it declared", () => {
+  // opum-marketplace shipped this exact shape and it lied there: a count taken from the
+  // declaration ("3 plugin(s) checked") folded a silently-skipped entry into an OK total. Here the
+  // loop has a `continue`, so declared and verified are genuinely two numbers; they agree today
+  // only because clause 1 turns any gap into a failure first. That is a guard, not an identity,
+  // and it is one refactor from not holding. The claim is now derived from the work done.
+  test("the region count equals the number of generated regions actually present in the file", () => {
+    const run = checkFixture(fixtureReadme());
+    expect(run.status).toBe(0);
+    const declared = (fixtureReadme().match(/<!--lore-version:(?!allow)[a-z-]+:begin-->/g) ?? []).length;
+    expect(run.stdout).toContain(`${declared} generated regions byte-equal`);
+  });
+
+  test("the allow-span count is likewise the number located, not a constant", () => {
+    const ALLOW_BEGIN = "<!--lore-version:allow:begin-->";
+    const ALLOW_END = "<!--lore-version:allow:end-->";
+    const one = `History: ${ALLOW_BEGIN}\`@opum-ai/lore@0.6.0\` shipped with provenance.${ALLOW_END}`;
+    const two = `Also: ${ALLOW_BEGIN}\`@opum-ai/lore@0.5.0\` did not.${ALLOW_END}`;
+    expect(checkFixture(`${fixtureReadme()}\n${one}\n`).stdout).toContain("1 hand-written allow span(s)");
+    expect(checkFixture(`${fixtureReadme()}\n${one}\n\n${two}\n`).stdout).toContain("2 hand-written allow span(s)");
+  });
+});
