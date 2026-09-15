@@ -523,6 +523,52 @@ publish is explicitly marked public. Root `package.json` and all six
 4. Merge to `dev`, promote to `main`, and wait for the full `main` CI matrix.
    Tag that verified commit and push the tag — nothing triggers automatically
    from the tag.
+
+   **In the same sitting, tell `opum-marketplace` the new tag and the resolved
+   `skills/` tree SHA** (LCLI-469). This is the one release step whose effect
+   lands in another repository, and it fires **on the tag** rather than on the
+   publish, so it is due here and not after step 6. `opum-marketplace` pins this
+   repository by tag and independently re-resolves the federation chain — tag
+   ref → tag object → commit → root tree → `skills/` subtree — comparing the
+   result against a recorded baseline. Their check runs on a daily schedule and
+   on pushes to their own `dev`/`main`, not only when their `marketplace.json`
+   changes, because a tag can move without their repository changing at all. So
+   a red check can surface over there with nobody having touched anything.
+
+   The two concrete files are named here rather than left as "their federation
+   check", because an abstract contract that never names the file implementing
+   it is invisible to whoever deletes that file:
+
+   - `opum-marketplace` `scripts/check-federated-content.mjs` — performs the
+     resolution and the comparison.
+   - `opum-marketplace` `scripts/federated-pin-baselines.json` — holds the
+     recorded `skills/` SHA per federated plugin (`opum-lore` here;
+     `opum-quest` is the adjacent row).
+
+   Resolve the four values and send them; do not make them re-derive it:
+
+   ```
+   git rev-parse v<version>                  # the tag object SHA
+   git rev-parse v<version>^{commit}         # the commit it peels to
+   git ls-tree v<version> skills             # the resolved skills/ tree SHA
+   ```
+
+   **The passing case is real and is the common one: re-tagging over
+   byte-identical `skills/` content needs no marketplace change at all.** The
+   baseline records a *content* SHA, not a tag, so a new tag whose `skills/`
+   subtree is unchanged resolves to the same value and their check stays green
+   untouched — a pin re-point that does not change the skill is a marketplace
+   no-op. Send the values anyway; letting them confirm a no-op costs one message
+   and is how the offer was framed. What must not happen is the other case going
+   unsent: when `skills/` **has** moved, their pin bump has to carry the
+   re-resolved baseline in the **same** change, or their check goes red.
+
+   Compare against the previous tag before sending, so you know which case you
+   are in and can say so:
+
+   ```
+   git diff --stat <previous-tag> v<version> -- skills/
+   ```
 5. Until LCLI-278 supplies an effective external approval control, dispatch
    `Release` with `publish: false` on that tag. Download only its
    `npm-packages` artifact, list and checksum the seven `.tgz` files, then
