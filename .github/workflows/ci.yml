@@ -263,6 +263,41 @@ jobs:
       - name: lore check
         run: bun run lore check
 
+  package-set:
+    # LCLI-513. The platform package SET on disk (the directories under npm/) must equal the
+    # set root package.json declares in optionalDependencies, and each must carry an explicit
+    # `files` list. release.yml has compared that set since LCLI-9 -- and release.yml is
+    # `workflow_dispatch` only, so the comparison never ran on a push or a pull request. A
+    # platform package silently deleted by a bare `git add -A` (which stages a deletion for
+    # any tracked file merely ABSENT from the tree, then reports the tree clean) would land on
+    # dev and first be detected mid-release. quest-cli lost npm/quest-darwin-arm64/ exactly
+    # this way on a tracker-only commit on 2026-09-15; its PR-time check caught it, ours did
+    # not exist. This job is the same assertion release.yml's verify-versions job now invokes
+    # -- ONE script, two call sites -- run where it can refuse a pull request.
+    #
+    # NOT a required context, deliberately: the dev ruleset is edited by an admin, by hand,
+    # against a real run's rendered job name, and this change does not touch it. Plain ASCII
+    # name so that, if it is ever promoted, it can be typed into the ruleset without a
+    # codepoint check.
+    #
+    # No `needs:` -- an upstream job that fails or skips would turn this context absent
+    # rather than red, and absent is not a verdict.
+    name: platform package set (npm/ vs optionalDependencies)
+    if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: ./.github/actions/setup-bun
+      # The versions this proof resolved, in the log rather than inferred from the pin: a
+      # reader comparing a run against their own machine needs the number, not the exit code.
+      - name: Toolchain
+        run: |
+          echo "bun $(bun --version)"
+          echo "node $(node --version)"
+      - name: Assert npm/ holds exactly the platform packages root package.json declares
+        run: bun run check:packages
+
   promotion-is-manual:
     # Fails on purpose on any PR targeting main, so the merge button shows an
     # unmissable red X exactly where a wrong promotion would otherwise land

@@ -7,6 +7,7 @@
   },
   "os": ["win32"],
   "cpu": ["x64"],
+  "files": ["bin/lore.exe"],
   "license": "MIT",
   "author": "Opum AI",
   "repository": {
