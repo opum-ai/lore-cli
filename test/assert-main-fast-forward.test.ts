@@ -135,5 +135,11 @@ describeOnPosix("main-fast-forward guard", () => {
     expect(ci).toMatch(/AFTER:\s*\$\{\{\s*github\.sha\s*\}\}/);
     // fetch-depth: 0 is load-bearing — ancestry on a shallow clone silently cannot be computed.
     expect(ci).toContain("fetch-depth: 0");
+    // The job fetches dev explicitly before calling the script. Deleting that line survived this
+    // suite with 0 red (mutation-checked 2026-09-15, prompted by opum-doc's ODOC-211 finding on
+    // the reference script): the unresolvable-ref test above exercises the script's own
+    // diagnosis, which is a different site from the workflow's fetch, so nothing here pinned the
+    // fetch to the job. This does.
+    expect(ci).toMatch(/git fetch origin dev\s*\n\s*bash scripts\/assert-main-fast-forward\.sh/);
   });
 });
