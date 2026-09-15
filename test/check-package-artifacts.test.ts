@@ -18,6 +18,12 @@
  *   - a manifest that does not parse                      — names the file;
  *   - a manifest whose name disagrees with its directory  — names both;
  *   - a manifest with no explicit `files` list            — names the discovered-set risk;
+ *   - a `files` list present but WRONG (other binary,
+ *     extra entry, empty, non-string)                     — names actual vs expected; presence
+ *                                                           alone passed a manifest that packs to
+ *                                                           package.json only;
+ *   - a stray file, a hidden directory, or a foreign
+ *     optionalDependencies key                            — each named;
  *   - the release matrix disagreeing with package.json    — uses release.yml's own sentence;
  *   - a tree the script cannot evaluate at all            — non-zero, never a pass.
  *
@@ -33,7 +39,7 @@ import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import * as yaml from "js-yaml";
 
 const REPO_ROOT = join(import.meta.dir, "..");
@@ -200,7 +206,85 @@ describe("check-package-artifacts.mjs rejects, each for its own reason", () => {
     const root = fixture({ manifest: { "linux-x64": (m) => ({ ...m, files: [] }) } });
     const result = run(root);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('"files" must be a non-empty list of non-empty strings, found []');
+    expect(result.stderr).toContain(
+      `${join("npm", "linux-x64", "package.json")}: "files" is [], expected exactly ["bin/lore"]`,
+    );
+  });
+
+  test("a platform package whose files list names the wrong binary — packs to package.json alone", () => {
+    // Measured during review: a darwin manifest declaring bin/lore.exe passes a presence-only
+    // check and `npm pack --dry-run` yields ONE file. Presence is not content.
+    const root = fixture({ manifest: { "darwin-arm64": (m) => ({ ...m, files: ["bin/lore.exe"] }) } });
+    const result = run(root);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `${join("npm", "darwin-arm64", "package.json")}: "files" is ["bin/lore.exe"], expected exactly ["bin/lore"]`,
+    );
+  });
+
+  test("a win32 platform package whose files list names the non-Windows binary", () => {
+    const root = fixture({ manifest: { "win32-x64": (m) => ({ ...m, files: ["bin/lore"] }) } });
+    const result = run(root);
+    expect(result.status).toBe(1);
+    // The path matters: a script with the os token inverted emits this very sentence for the five
+    // NON-win32 manifests, and an assertion without the path would pass on that (mutation M22).
+    expect(result.stderr).toContain(
+      `${join("npm", "win32-x64", "package.json")}: "files" is ["bin/lore"], expected exactly ["bin/lore.exe"]`,
+    );
+  });
+
+  test("a platform package whose files list carries an extra entry nothing qualified", () => {
+    const root = fixture({ manifest: { "linux-arm64": (m) => ({ ...m, files: ["bin/lore", "LICENSE"] }) } });
+    const result = run(root);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `${join("npm", "linux-arm64", "package.json")}: "files" is ["bin/lore","LICENSE"], expected exactly ["bin/lore"]`,
+    );
+  });
+
+  test("a platform package whose files list holds a non-string entry", () => {
+    const root = fixture({ manifest: { "linux-x64": (m) => ({ ...m, files: ["bin/lore", 3] }) } });
+    const result = run(root);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('"files" must be a list of non-empty strings, found ["bin/lore",3]');
+  });
+
+  test("a non-directory entry under npm/", () => {
+    const root = fixture();
+    writeFileSync(join(root, "npm", "README.md"), "stray\n");
+    const result = run(root);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`${join("npm", "README.md")} is not a directory`);
+  });
+
+  test("a hidden DIRECTORY under npm/ counts as an extra platform; a hidden FILE does not", () => {
+    const hidden = fixture();
+    mkdirSync(join(hidden, "npm", ".stale-darwin-x64"));
+    const dirResult = run(hidden);
+    expect(dirResult.status).toBe(1);
+    expect(dirResult.stderr).toContain(
+      "npm/.stale-darwin-x64/ exists, but root package.json optionalDependencies declares no",
+    );
+
+    const dsStore = fixture();
+    writeFileSync(join(dsStore, "npm", ".DS_Store"), "");
+    const fileResult = run(dsStore);
+    expect(fileResult.stderr).toBe("");
+    expect(fileResult.status).toBe(0);
+  });
+
+  test("an optionalDependencies key that is not an @opum-ai/lore-<platform> package", () => {
+    const rootText = JSON.stringify({
+      name: "@opum-ai/lore",
+      version: "0.7.0",
+      optionalDependencies: {
+        ...Object.fromEntries(PLATFORMS.map((p) => [`@opum-ai/lore-${p}`, "0.7.0"])),
+        fsevents: "2.3.3",
+      },
+    });
+    const result = run(fixture({ rootText }));
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('optionalDependencies key "fsevents" is not of the form @opum-ai/lore-<platform>');
   });
 
   test("a release matrix that disagrees with optionalDependencies, in release.yml's own words", () => {
@@ -241,6 +325,26 @@ describe("check-package-artifacts.mjs never passes a tree it could not evaluate"
     const result = run(root);
     expect(result.status).toBe(2);
     expect(result.stderr).toContain("could not read");
+  });
+
+  test("no environment variable can repoint the gate — only --root", () => {
+    // An env fallback once existed (LORE_PACKAGE_CHECK_ROOT) and appeared in no workflow, test or
+    // usage string; a gate that can be silently redirected is not a gate. Run WITHOUT --root, the
+    // way ci.yml does: an honoured fallback would point at nothing and exit 2, and a first draft of
+    // this test that passed --root could not tell (mutation M28). The success line names the root
+    // it evaluated, so the assertion is on the object measured, not only the exit code.
+    const env = { ...process.env, LORE_PACKAGE_CHECK_ROOT: "/nonexistent", LORE_PACKAGE_ROOT: "/nonexistent" };
+    const result = spawnSync("node", [SCRIPT], { encoding: "utf8", env });
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(`under ${resolve(REPO_ROOT)}`);
+  });
+
+  test("--platforms with no value is a usage error, exit 2", () => {
+    const result = run(fixture(), "--platforms");
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("--platforms needs a space-separated list of platform names");
+    expect(result.stderr).toContain("usage:");
   });
 
   test("an unknown argument is a usage error, exit 2", () => {

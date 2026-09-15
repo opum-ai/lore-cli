@@ -32,10 +32,20 @@
  *      directory with no declaration is an artifact nothing publishes;
  *   3. every `npm/<platform>/package.json` exists, parses, and carries the `name` its directory
  *      implies;
- *   4. every one of them carries an EXPLICIT `files` list. Without one, npm packs whatever the
- *      staging directory happens to contain — a discovered set, which changes membership in both
- *      directions without announcing it. An enumerated set does not. This is the declared-subject
- *      clause of the shipped-README contract arriving from the other direction (LCLI-510).
+ *   4. every one of them carries an EXPLICIT `files` list whose CONTENT is exactly the one binary
+ *      that platform ships: `["bin/lore.exe"]` when the os token before the first "-" is win32,
+ *      `["bin/lore"]` otherwise — the same convention release.yml derives `binary` from. Presence
+ *      alone is not enough: a darwin manifest declaring `["bin/lore.exe"]` packs to package.json
+ *      and nothing else (measured with `npm pack --dry-run` during review), an empty platform
+ *      package that only matching-host qualification would catch, mid-dispatch. Without any list,
+ *      npm packs whatever the staging directory happens to contain — a discovered set, which
+ *      changes membership in both directions without announcing it. An enumerated set does not.
+ *      This is the declared-subject clause of the shipped-README contract arriving from the other
+ *      direction (LCLI-510).
+ *
+ * Hidden DIRECTORIES under `npm/` count toward the set (`npm/.stale-darwin-x64/` is an extra
+ * directory, not an exemption); hidden FILES are skipped, because `.DS_Store` on a macOS checkout
+ * must not turn `check:packages` red.
  *
  * `--platforms "<names>"` adds a third declaration to the comparison: `release.yml`'s `setup` job
  * carries the build matrix as a literal, and it must name the same set. Passing it here is what
@@ -43,9 +53,9 @@
  * before any compile work) rather than two comparisons that can drift apart.
  *
  * WHAT IS DELIBERATELY NOT ASSERTED. Per-platform `version`, `license`, `author`, `repository`,
- * `os`/`cpu` and the binary filename stay in `release.yml`'s `verify-versions` job, which also
- * holds the build matrix those checks are derived from. This script is the SET gate; that job is
- * the field gate.
+ * `os`/`cpu` and the matrix entry's `binary` stay in `release.yml`'s `verify-versions` job, which
+ * also holds the build matrix those checks are derived from. This script is the SET gate (and the
+ * `files` content that defines each member); that job is the field gate.
  *
  * EXIT CODES
  *   0  every assertion held
@@ -54,8 +64,9 @@
  *      "Could not evaluate" is never a pass: a missing `npm/` is reported as exit 1 because it is
  *      a finding about the tree (every declared package is missing), not an inability to look.
  *
- * `--root <dir>` (or LORE_PACKAGE_CHECK_ROOT) points the check at a fixture tree so the tests can
- * drive every branch without restating the rule they are testing.
+ * `--root <dir>` points the check at a fixture tree so the tests can drive every branch without
+ * restating the rule they are testing. It is the ONLY way to repoint the gate: an environment
+ * fallback would silently redirect a call site nothing in a workflow or test names.
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -142,8 +153,8 @@ function checkPackageArtifacts(root, declaredPlatforms) {
     );
   } else {
     for (const entry of readdirSync(npmDir, { withFileTypes: true })) {
-      if (entry.name.startsWith(".")) continue;
       if (!entry.isDirectory()) {
+        if (entry.name.startsWith(".")) continue;
         problems.push(`${join(npmDir, entry.name)} is not a directory; npm/ holds only platform package directories`);
         continue;
       }
@@ -194,10 +205,17 @@ function checkPackageArtifacts(root, declaredPlatforms) {
       problems.push(
         `${manifestPath}: has no explicit "files" list (found ${JSON.stringify(files)}); without one npm packs whatever the staging directory contains, a discovered set rather than a declared one`,
       );
-    } else if (files.length === 0 || files.some((entry) => typeof entry !== "string" || entry.trim() === "")) {
-      problems.push(
-        `${manifestPath}: "files" must be a non-empty list of non-empty strings, found ${JSON.stringify(files)}`,
-      );
+    } else if (files.some((entry) => typeof entry !== "string" || entry.trim() === "")) {
+      problems.push(`${manifestPath}: "files" must be a list of non-empty strings, found ${JSON.stringify(files)}`);
+    } else {
+      // The os token is the segment before the first "-", already in npm's spelling ("win32",
+      // not "windows"); release.yml's verify-versions derives the matrix `binary` the same way.
+      const expectedFiles = [platform.slice(0, platform.indexOf("-")) === "win32" ? "bin/lore.exe" : "bin/lore"];
+      if (JSON.stringify(files) !== JSON.stringify(expectedFiles)) {
+        problems.push(
+          `${manifestPath}: "files" is ${JSON.stringify(files)}, expected exactly ${JSON.stringify(expectedFiles)} (the one binary ${platform} ships); any other list packs a package that installs without its binary or ships something no host qualified`,
+        );
+      }
     }
   }
 
@@ -205,7 +223,7 @@ function checkPackageArtifacts(root, declaredPlatforms) {
 }
 
 function parseArgs(argv) {
-  const options = { root: process.env.LORE_PACKAGE_CHECK_ROOT || REPO_ROOT, platforms: null };
+  const options = { root: REPO_ROOT, platforms: null };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--root") {
@@ -257,7 +275,7 @@ function main() {
   }
 
   console.log(
-    `npm/ holds exactly the ${result.platforms.length} platform packages root package.json declares (${formatSet(result.platforms)}), each with an explicit files list`,
+    `npm/ holds exactly the ${result.platforms.length} platform packages root package.json declares (${formatSet(result.platforms)}) under ${options.root}, each listing exactly its own binary in files`,
   );
   return 0;
 }
