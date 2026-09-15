@@ -241,6 +241,8 @@
 - 2026-09-14T18:57:06-05:00 01f4ef749e38c8a97b540d08e8958b995c7a3f60 feat(LCLI-477): typed authored relationships, and claim state as its own axis (#76)
 - 2026-09-14T20:12:22-05:00 27070ef8da4db605a8ef377c139993636e71c105 chore(LCLI-478): write lore's half of the bounded-read contract as DEC-2 (#77)
 - 2026-09-14T20:25:45-05:00 72fb203cb4f8b6df12b91c4986819a3d0c9fb39f feat(LCLI-499): every retrieval-family command names the backend that served it
+- 2026-09-14T20:40:48-05:00 0205cb3dd6b2a8c5e0263ae6d1c8d30b1ecc6af0 feat(LCLI-499): every retrieval-family command names the backend that served it (#78)
+- 2026-09-14T20:51:21-05:00 e4dc251821e7d7049c173f9600d162b0982c4a9c feat(LCLI-478): --max-tokens becomes a ceiling, and `lore read` is the exact read
 
 ## docs/adr
 

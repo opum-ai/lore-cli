@@ -204,8 +204,11 @@ detail enters the pack.
 
 Repeated compilation over byte-identical profile, task, budget, bundle, and
 retrieval inputs is byte-identical across indexed and reference paths. An agent
-may rerun with a narrower task or larger budget, or use `lore context <id>
---depth 0` to inspect a named omitted source.
+may rerun with a narrower task or larger budget, or use `lore read <id>` to
+inspect a named omitted source exactly and without a budget. (`lore context <id>
+--depth 0` is no longer the way to do that: since LCLI-478 a supplied
+`--max-tokens` is a hard ceiling there too, so a depth-0 pack may drop the very
+body the agent is trying to read.)
 
 ### Orchestrator contract
 

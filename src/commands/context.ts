@@ -45,7 +45,7 @@ import {
 import { DOCS_DIR } from "../core/scaffold";
 import { parseQualifiedWorkspaceId, qualifyWorkspaceId } from "../core/workspace-contract";
 import type { WorkspaceRetrievalContext, WorkspaceRetrievalSelection } from "../core/workspace-retrieval";
-import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
+import { EXIT_OK, LoreError, singleLine, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable, renderTruncationLine, truncation } from "../output";
 import { parseCommandArgs, singleOptionValue, workspaceSelection } from "./args";
 
@@ -248,10 +248,12 @@ function contextRenderable(data: ContextExport): Renderable<ContextExport> {
  * A human/pipe-stable context pack: a header naming the target, its depth/budget and
  * the pack's `~tokens`, then the target's full body, then a `neighbors (<shown> of
  * <total>)` section with one `- <id>  [<type>]  — <summary>` line each (the `— …`
- * dropped when a neighbor has no summary), and a trailing budget line: an
- * over-budget warning when the always-included target alone exceeds `--max-tokens`,
- * else the §3 truncation footer when the budget dropped neighbors. ANSI-free and
+ * dropped when a neighbor has no summary), and a trailing budget line. ANSI-free and
  * deterministic.
+ *
+ * When the budget dropped the target's body, the body is replaced by an explicit one-line notice
+ * naming the field and pointing at `lore read`. A blank space where the body should be would be the
+ * plain-text form of the same ambiguity the `omitted` field exists to remove.
  */
 function renderText(data: ContextExport): string {
   const budget = data.maxTokens !== undefined ? `, budget ${data.maxTokens}` : "";
@@ -261,7 +263,9 @@ function renderText(data: ContextExport): string {
       : []),
     `context: ${data.root}  [${data.target.type}] — depth ${data.depth}${budget}, ~${data.tokenEstimate} tokens (chars/4)`,
     "",
-    data.target.body.replace(/\n+$/, ""),
+    data.target.body === undefined
+      ? `[body omitted to fit the ${String(data.maxTokens)}-token budget — run \`lore read ${singleLine(data.root)}\` for the exact text]`
+      : data.target.body.replace(/\n+$/, ""),
     "",
     `neighbors (${data.shown} of ${data.total}):`,
   ];
@@ -277,18 +281,16 @@ function renderText(data: ContextExport): string {
 }
 
 /**
- * The trailing budget line for the pack, or `""` when it fully fit. Over budget (the
- * mandatory target alone exceeds `--max-tokens`, so no neighbor could be dropped to
- * help) gets an explicit warning; otherwise a dropped-neighbor count gets the §3
- * truncation footer. The hint is **only** `raise --max-tokens` — lowering `--depth`
- * cannot surface more neighbors (the included set is a budget-bound nearest-first
- * prefix, so a smaller `--depth` only removes farther candidates that were never
- * going to be included).
+ * The trailing budget line for the pack, or `""` when it fully fit: the §3 truncation footer when
+ * the budget dropped neighbors. The hint is **only** `raise --max-tokens` — lowering `--depth`
+ * cannot surface more neighbors (the included set is a budget-bound nearest-first prefix, so a
+ * smaller `--depth` only removes farther candidates that were never going to be included).
+ *
+ * The former "over budget" warning is gone because the state it described cannot occur any more
+ * (LCLI-478): a supplied budget is a ceiling, so a pack is never emitted above it. A line that can
+ * never render is worse than no line — it reads as a guarantee that something still checks.
  */
 function budgetFooter(data: ContextExport): string {
-  if (data.maxTokens !== undefined && data.tokenEstimate > data.maxTokens) {
-    return `over budget: ~${data.tokenEstimate} tokens exceeds the ${data.maxTokens}-token limit — the target is always included; raise --max-tokens`;
-  }
   return renderTruncationLine(truncation(data.total, data.shown, "raise --max-tokens to include more"));
 }
 

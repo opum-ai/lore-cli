@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`lore read <id>` — one concept, exactly as authored** (LCLI-478). Its frontmatter mapping and
+  full body, verbatim: no assembly, no neighborhood, no ranking, and **no budget flag at all**, so
+  there is no configuration under which it returns less than the whole concept. Plain output is one
+  header line, a blank line, then the body, so `lore read <id> | tail -n +3` recovers the body
+  byte-for-byte.
+  - A **separate operation** from `lore context` rather than a flag on it. `context` assembles and
+    is lossy by design; collapsing a bounded read and an exact read into one operation makes the
+    caller who needs fidelity and the caller who needs cheapness share a code path, and one of them
+    loses.
+  - It reports no `backend` (LCLI-499), and that absence is deliberate: an exact read is always a
+    direct filesystem load, so there is no backend choice to report.
+
+### Changed
+
+- **`lore context --max-tokens` is now a hard ceiling, not an advisory label** (LCLI-478). The
+  emitted pack's `tokenEstimate` never exceeds a supplied budget. Previously an oversized target was
+  emitted in full and merely flagged `truncated` — the caller asked for a guarantee and received a
+  suggestion, with no way to tell which they had got.
+  - To stay within the budget, `context` drops neighbors nearest-first and then, only if the target
+    still does not fit, the target's own `body`. **Omitting the flag applies no cap at all**
+    (LCLI-203), which is unchanged; what changed is what happens when it *is* supplied.
+  - **Nothing is dropped silently.** `data.omitted` carries `{ records, fields }` — dropped
+    neighbor ids in the order they would have been included, and any field the budget removed.
+    **Both are present even when nothing was dropped**, as empty arrays: if the marker appeared only
+    on a trimmed pack, its absence would be ambiguous between "nothing was dropped" and "a version
+    that does not report omission", and a consumer would have to diff against a full fetch to tell.
+    With no `--max-tokens` the key is absent entirely, which is a different and unambiguous
+    statement.
+  - A budget too small to hold even the target's **identity** is refused with exit `6` naming the
+    required figure, matching `lore agent context`'s existing refusal for the same situation, rather
+    than answered with something unusable.
+  - `target.body` is now optional in `context.export`, and the plain renderer prints an explicit
+    notice in its place pointing at `lore read`. The former "over budget" footer is gone: the state
+    it described cannot occur any more, and a line that can never render reads as a guarantee that
+    something still checks.
+  - **Documentation reconciled rather than left contradictory**: ADR-0015's "`--max-tokens` is a
+    guardrail, not a guarantee" now says what is actually approximate — the `chars/4` unit, not the
+    enforcement — and records that the previous wording described the defect. The agent-profile spec
+    no longer points at `lore context --depth 0` as the way to inspect an omitted source, because a
+    depth-0 pack is budgeted too and may drop the very body the agent is trying to read.
+  - Shares the contract quest-cli implements for `quest task view` (lore DEC-2 / quest DEC-3):
+    projection opt-in and additive, a supplied bound enforced, omission always reported including
+    the zero case. The unit and spelling differ because the substrates do — quest bounds by record
+    count, lore by tokens across an assembled pack.
+
+
 - **`lore graph`, `query`, `context`, `path` and `impact` now name the retrieval backend that served
   the request** (LCLI-499). Their `--json` `data` carries `backend`: `"indexed"` or `"reference"`.
   This is a new capability, not a restoration — no version of lore has ever exposed a positive

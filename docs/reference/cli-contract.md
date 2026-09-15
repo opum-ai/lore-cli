@@ -245,8 +245,10 @@ whole bundle so callers can budget context. These are a labeled **estimate**
 using the deterministic `chars / 4` heuristic — never presented as an exact
 tokenizer count. In `--json` they appear as numeric fields (e.g.
 `estimatedTokens`); in pretty/plain they are labeled "(est.)". The
-`lore context` budget honored via `--max-tokens` uses the same heuristic
-(see [CLI surface](cli-surface.md) and
+`lore context` budget honored via `--max-tokens` uses the same heuristic, and is
+**enforced** against it: a supplied budget is a ceiling the emitted pack never
+exceeds, with whatever was dropped named in `omitted`. The heuristic is what is
+approximate, not the enforcement (see [CLI surface](cli-surface.md) and
 [ADR-0015: lightweight retrieval, no vectors](../adr/0015-lightweight-retrieval-no-vectors.md)).
 
 ---

@@ -49,7 +49,7 @@
  * filesystem, prints, or reads flags.
  */
 
-import { singleLine } from "../errors";
+import { LoreError, singleLine } from "../errors";
 import { type BundleGraph, estimateTokens, frontmatterScalar } from "./bundle";
 import type { Concept } from "./concept";
 import { subgraph } from "./query";
@@ -63,9 +63,22 @@ export interface ContextTarget {
   readonly type: string;
   /** The concept's `title` frontmatter, when present and a non-empty scalar; omitted otherwise. */
   readonly title?: string;
-  /** The concept's full markdown body (verbatim, the pack's primary content). */
-  readonly body: string;
-  /** The chars/4 estimate over the target's full serialized bytes (== `lore graph`'s node estimate). */
+  /**
+   * The concept's full markdown body (verbatim, the pack's primary content).
+   *
+   * **Omitted** when `maxTokens` is supplied and cannot hold it (LCLI-478). It is the one field a
+   * budget may drop, and dropping it is never silent: `omitted.fields` names it, and the pack is
+   * `truncated`. An exact, unbudgeted read of the same concept is `lore read` — a different
+   * operation on purpose, because a caller who needs fidelity and a caller who needs cheapness must
+   * not share a code path.
+   */
+  readonly body?: string;
+  /**
+   * What the target costs the budget: the chars/4 estimate over its full serialized bytes (==
+   * `lore graph`'s node estimate) when {@link body} is present, and the chars/4 of its emitted
+   * identity (`id` + `type` + `title`) when the budget dropped the body — charged the same way a
+   * neighbor entry is, because that is what the pack then carries.
+   */
   readonly tokenEstimate: number;
   /** Complete locator-free provenance in explicit workspace mode. */
   readonly provenance?: WorkspaceRecordProvenance;
@@ -124,8 +137,36 @@ export interface ContextExport {
    * within budget", never a silent overrun.
    */
   readonly truncated: boolean;
+  /**
+   * What the budget dropped, present whenever `maxTokens` was supplied — **including when nothing
+   * was dropped**, in which case both arrays are empty (LCLI-478).
+   *
+   * The zero case is the load-bearing half. If this appeared only when something was omitted, its
+   * ABSENCE would be ambiguous between "nothing was omitted" and "a version of lore that does not
+   * report omission", and a consumer would have to diff against a full fetch to tell — which is the
+   * defect a bounded read exists to remove, one layer down. It costs two empty arrays.
+   *
+   * Omitted entirely when no budget was supplied, because no projection was active: absent then
+   * means "nothing could have been dropped", which is a different and unambiguous statement.
+   */
+  readonly omitted?: ContextOmission;
   /** Explicit selected workspace scope; absent for repository-local output. */
   readonly workspace?: WorkspaceResultScope;
+}
+
+/** What a `maxTokens` budget dropped from a {@link ContextExport}. */
+export interface ContextOmission {
+  /**
+   * The ids of the neighbors the budget dropped, in the nearest-first order they would have been
+   * included in. Ids rather than a bare count, so a consumer can fetch exactly what it is missing —
+   * `shown`/`total` already carry the count.
+   */
+  readonly records: readonly string[];
+  /**
+   * The field paths the budget dropped from the pack, currently only `"target.body"`. A field path
+   * rather than a boolean, so a later field that becomes droppable needs no new shape.
+   */
+  readonly fields: readonly string[];
 }
 
 /** Options for {@link buildContext}. */
@@ -133,8 +174,10 @@ export interface BuildContextOptions {
   /** The neighbor radius in hops from the target. Defaults to `1`. */
   readonly depth?: number;
   /**
-   * The token budget for the whole pack. When omitted, no neighbor is dropped for
-   * size — the pack is bounded only by `depth`.
+   * The token budget for the whole pack, **enforced as a hard ceiling** when supplied: the returned
+   * pack's `tokenEstimate` never exceeds it (LCLI-478). When omitted, nothing is dropped for size —
+   * the pack is bounded only by `depth`, which is LCLI-203's documented "no cap" behaviour and is
+   * unchanged.
    */
   readonly maxTokens?: number;
 }
@@ -166,13 +209,35 @@ export function buildContext(graph: BundleGraph, root: string, options: BuildCon
   // subgraph throws not_found for an unknown root, so this is also the id guard.
   const reached = subgraph(graph, root, depth);
   const targetConcept = conceptAt(graph, root);
-  const target: ContextTarget = {
+  const title = titleField(targetConcept.frontmatter.title);
+  const identity: ContextTarget = {
     id: root,
     type: targetConcept.type,
-    ...titleField(targetConcept.frontmatter.title),
-    body: targetConcept.body,
-    tokenEstimate: graph.tokenEstimate(root),
+    ...title,
+    tokenEstimate: estimateTokens(`${root} ${targetConcept.type}${title.title === undefined ? "" : ` ${title.title}`}`),
   };
+  const withBody: ContextTarget = { ...identity, body: targetConcept.body, tokenEstimate: graph.tokenEstimate(root) };
+
+  // The irreducible floor. A pack whose subject cannot even be NAMED within the budget is not a
+  // smaller pack, it is a different thing -- so this refuses rather than returning something the
+  // caller cannot use. The shape matches `lore agent context`'s own mandatory-evidence refusal
+  // (exit 6, required-versus-budget in the message, the caller's options in the hint), because a
+  // second spelling for the same situation is how two commands come to disagree about it.
+  if (maxTokens !== undefined && identity.tokenEstimate > maxTokens) {
+    throw new LoreError(
+      "validation",
+      `context for "${root}" needs ~${identity.tokenEstimate} tokens to name its target, above budget ${maxTokens}`,
+      "raise --max-tokens, or use `lore read` for an exact unbudgeted read of one concept",
+      { id: root, maxTokens, requiredTokens: identity.tokenEstimate },
+    );
+  }
+
+  // The body is the pack's primary content, so it is charged before any neighbor and dropped only
+  // when the whole target does not fit. Dropping it is what makes the budget a CEILING rather than
+  // a suggestion: before LCLI-478 an oversized target was emitted in full and merely flagged
+  // `truncated`, which is a caller asking for a guarantee and receiving a label.
+  const bodyFits = maxTokens === undefined || withBody.tokenEstimate <= maxTokens;
+  const target = bodyFits ? withBody : identity;
 
   // Every reached id but the root is a neighbor (subgraph yields only real concepts),
   // so the candidate count is known without materializing the dropped ones.
@@ -183,20 +248,29 @@ export function buildContext(graph: BundleGraph, root: string, options: BuildCon
   // the budget (a predictable prefix), so a dropped neighbor's summary is never even
   // computed. An omitted budget keeps every neighbor.
   const neighbors: ContextNeighbor[] = [];
+  const dropped: string[] = [];
   let tokenEstimate = target.tokenEstimate;
+  let filling = true;
   for (const id of reached) {
     if (id === root) {
       continue;
     }
+    if (!filling) {
+      // Past the cut: the id is recorded so the caller knows exactly what it is missing, but the
+      // concept is never shaped -- naming a dropped neighbor must not cost what including it would.
+      dropped.push(id);
+      continue;
+    }
     const neighbor = neighborOf(conceptAt(graph, id), id);
     if (maxTokens !== undefined && tokenEstimate + neighbor.tokenEstimate > maxTokens) {
-      break;
+      filling = false;
+      dropped.push(id);
+      continue;
     }
     neighbors.push(neighbor);
     tokenEstimate += neighbor.tokenEstimate;
   }
 
-  const overBudget = maxTokens !== undefined && tokenEstimate > maxTokens;
   return {
     root,
     depth,
@@ -206,7 +280,8 @@ export function buildContext(graph: BundleGraph, root: string, options: BuildCon
     tokenEstimate,
     total,
     shown: neighbors.length,
-    truncated: neighbors.length < total || overBudget,
+    truncated: neighbors.length < total || !bodyFits,
+    ...(maxTokens === undefined ? {} : { omitted: { records: dropped, fields: bodyFits ? [] : ["target.body"] } }),
   };
 }
 

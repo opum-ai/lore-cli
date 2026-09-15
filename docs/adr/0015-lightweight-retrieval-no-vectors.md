@@ -190,9 +190,22 @@ rendered consumer's search) — it never becomes a runtime dependency of lore.
   but highly-relevant concept will not appear in `context` output; only the
   authored neighborhood does. The fix is to add the missing cross-link, which is
   again the desired incentive.
-- **Token budgeting is approximate.** The `chars/4` estimate can under- or
-  over-count for a specific model's tokenizer, so `--max-tokens` is a guardrail,
-  not a guarantee — it is labeled an estimate wherever surfaced.
+- **Token budgeting is exact in its own unit and approximate in the model's.**
+  Since [LCLI-478](../../.quest/completed/LCLI-478.json) a supplied `--max-tokens`
+  is a hard ceiling: `lore context` never returns a pack whose `tokenEstimate`
+  exceeds it, dropping neighbors and then the target's body rather than
+  overrunning, and naming what it dropped. What remains approximate is the unit,
+  not the enforcement — the `chars/4` estimate can under- or over-count against a
+  specific model's tokenizer, so the guarantee is "this pack is at or below the
+  number you gave, measured the way lore measures", never "the model will see at
+  most that many tokens". It stays labeled an estimate wherever surfaced.
+
+  This paragraph previously read "`--max-tokens` is a guardrail, not a
+  guarantee", which was true of the implementation and is the thing LCLI-478
+  changed: a caller asked for a bound and received a suggestion, with no way to
+  tell which they had got. An exact, unbudgeted read of one concept is
+  [`lore read`](../reference/cli-surface.md#read), a separate operation on
+  purpose.
 
 ## Alternatives considered
 

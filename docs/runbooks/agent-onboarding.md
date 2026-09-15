@@ -448,7 +448,8 @@ non-destructive.
 | Pull guidance on demand | `lore instructions [<topic>]` | just-in-time, mirrors `backlog instructions` |
 | Discover the surface | `lore help --json` | capability manifest in the canonical envelope |
 | Refactor across docs | `lore replace` / `lore rename` / `lore supersede` | graph-aware; skips managed regions |
-| Get bounded context for an id | `lore context <id> --max-tokens N` | body + 1-line neighbor summaries |
+| Get bounded context for an id | `lore context <id> --max-tokens N` | body + 1-line neighbor summaries, never above N; `omitted` names what was dropped |
+| Read one concept exactly, no budget | `lore read <id>` | the concept verbatim — use this when you need to quote it |
 | Get task-scoped context for a role | `lore agent context <profile> --task "<text>"` | deterministic evidence from a committed profile allowlist |
 
 ---
