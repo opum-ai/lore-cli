@@ -248,6 +248,7 @@
 - 2026-09-14T21:19:48-05:00 66a296ace9bec0070dc00e12c5d7fdc34bd7c126 fix(LCLI-494): a task record names the adapter that produced it, not always Backlog (#80)
 - 2026-09-14T21:32:43-05:00 c94088bcd9bdff869261605b89f57f7124d3e9a5 fix(LCLI-498): the fallback advisory names its cause, and every route announces itself
 - 2026-09-14T21:41:24-05:00 c1a25492d5aa42f83b61600ed4ea1a54ba691639 fix(LCLI-498): the fallback advisory names its cause, and every route announces itself (#81)
+- 2026-09-14T21:47:14-05:00 f5dd0d1e77de7391f9e69bd11ccea907961c0eb8 chore(LCLI-496): the 0.7.0 feature burndown is complete; item 1's deadline is met (#82)
 
 ## docs/adr
 
