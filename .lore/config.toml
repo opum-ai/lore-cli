@@ -9,6 +9,12 @@
 # on disk. See docs/adr/0013-lore-state-directory.md for the full
 # tracker-backend contract.
 #
+# This file sets exactly three non-default values, and test/config.test.ts pins
+# that list so a fourth cannot arrive silently: tracker.backend = "quest" (the
+# 2026-09-03 cutover above), agents.skill_source = "plugin" (LCLI-444), and the
+# [reconcile.overrides] entry below, which is TEMPORARY and names its own
+# removal condition at the site (LCLI-504).
+#
 # The Confluence API token is NEVER stored here — it is read only from
 # $LORE_CONFLUENCE_TOKEN, and a token committed under [confluence] is rejected
 # with a fail-loud validation error.
@@ -20,6 +26,24 @@ backend = "quest"
 # Status roll-up policy for `lore sync` / `lore check`:
 # all tasks Done -> done; any In Progress -> in-progress; else todo.
 mode = "task-rollup"
+
+[reconcile.overrides]
+# Quest 0.7.0 renamed its paused status "Blocked" -> "Paused". LCLI-333 was
+# parked under the old literal and is STRANDED there: on quest 0.7.0 a record
+# at "Blocked" cannot leave it -- task pause, task start and edit --status are
+# each refused, and edit to "Paused" is refused by design. Measured by lore-web
+# on 0.7.0; LWEB-80 and QCLI-271 are stranded the same way, and quest-cli has
+# ruled the fix ahead of its other work as 0.7.1.
+#
+# "in-progress" is not a guess: it is exactly what lore's own classify() gives
+# a status matching the backend's pausedStatus (LCLI-455), so this override
+# produces the SAME rollup the record will produce once it reaches "Paused".
+# The override is a stand-in for the rename, not a reinterpretation of it.
+#
+# REMOVE THIS once quest 0.7.1 installs and LCLI-333 moves to "Paused"
+# (LCLI-504 AC#2). Left in place it would silently keep classifying a literal
+# no conformant quest can emit any more.
+"Blocked" = "in-progress"
 
 [validate]
 external_links = false      # external-link liveness is opt-in (`lore check --external`)

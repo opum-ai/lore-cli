@@ -206,6 +206,63 @@ jobs:
       - name: Managed instructions are current
         run: quest agents --check --require-installed --target claude
 
+  docs-gate:
+    # LCLI-504. The fleet operating rule is "`lore check` exiting 0 is the definition of
+    # done for a docs change", and until this job existed nothing in CI ran it — in this
+    # repository or in seven others (OPAG-146). A gate nothing runs is a gate that
+    # silently stopped gating: measured on dev at effd5dea, `lore check` was exiting 6
+    # and had been for some time, with no build anywhere to say so.
+    #
+    # Deliberately NOT `needs: tracker`, even though both install the Quest CLI. A
+    # `needs:` would make this context SKIP whenever tracker fails, and a skipped
+    # context is absent rather than green — which blocks dev until someone with admin
+    # rights notices. That is the same trap the `check` job's own comment warns about
+    # above, reached through a dependency instead of an `if:`. The duplicated
+    # version-resolution step below is the cheaper half of that trade.
+    name: lore check (docs gate)
+    # The shared narrow-mode skip guard, as on every job but `check` and the two
+    # promotion guardrails; test/ci-workflow.test.ts asserts it. It is false only under
+    # `workflow_dispatch`, never on a pull request or a push, so it cannot make this
+    # context absent where a required check is actually consumed.
+    if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: ./.github/actions/setup-bun
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+      # Quest is a HARD requirement here, not a convenience: this repository's tracker
+      # backend is quest, so `lore check`'s reconciliation shells out to
+      # `quest task status-flow` and `quest task view`. Measured rather than assumed —
+      # with the binary off PATH, `lore check` exits 3 ("the `quest` CLI is not installed
+      # or not on PATH") after printing its file counts.
+      #
+      # Version DERIVED from the managed block in CLAUDE.md for the reasons the tracker
+      # job states at length: a second pin drifts from the block that already declares
+      # the version, and a float turns an unrelated upstream publish into a red build on
+      # somebody's unrelated PR. Keep the two copies in step.
+      - name: Resolve the Quest version CLAUDE.md declares
+        id: quest
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/.*Quest CLI \([0-9][0-9.]*\).*/\1/p' CLAUDE.md | head -1)"
+          if [ -z "$version" ]; then
+            echo "::error file=CLAUDE.md::No 'Quest CLI <version>' line found in the managed block. The docs gate cannot resolve the tracker backend it must read."
+            exit 1
+          fi
+          echo "Declared Quest version: $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - run: npm install -g "@opum-ai/quest@${{ steps.quest.outputs.version }}"
+
+      # Runs lore FROM SOURCE, not the published package. In this repository that is the
+      # stronger assertion of the two: a PR that breaks `lore check` fails on its own
+      # code rather than on whatever version happens to be installed, and the docs bundle
+      # is validated by the lore the PR actually proposes.
+      - name: lore check
+        run: bun run lore check
+
   promotion-is-manual:
     # Fails on purpose on any PR targeting main, so the merge button shows an
     # unmissable red X exactly where a wrong promotion would otherwise land
