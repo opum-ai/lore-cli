@@ -131,22 +131,66 @@ The coupling above is the published artifact, not a path into this checkout.
 
 ### Constraints and couplings to respect
 
-**A promotion leaves no green run on the SHA that lands on `main`, and the only
-run there is a failing one.** CI does not run on pushes to `dev` (LCLI-251), so a
-squash commit on `dev` never gets a run of its own; the promotion PR into `main`
-starts the only run on that SHA, and that run necessarily contains
-`promotion is manual` failing **by design** — it exists to put an unmissable red X
-on any PR targeting `main`, so nobody lands a promotion with the merge button. The
-gating evidence lives on the PR head that merged into `dev`, which is a different
-SHA. Measured on the 2026-09-15 promotion: `main` is `e4b384b9`, whose only run
-(34996985802) is a failure; the gating run is 34996243105 on `9d1d631d`. An auditor
-who looks for a green run on `main`'s SHA will find a red one and conclude the
-promotion was unqualified. Cite the `dev`-side run, and say which one.
+**The SHA that lands on `main` carries TWO runs of `ci.yml`, and they disagree on
+purpose: the `pull_request` one is red by design, the `push` one is your green.**
+Ask for them by SHA and read the event column, because `gh run list` shows you the
+newest and it reads like the only one:
 
-That run also carried a SECOND failure that was not designed — an npm E404 fetching
-`@types/node` in `docusaurus scaffold smoke`, upstream and unrelated. Re-running the
-failed jobs cleared it. Two reds wearing the same colour is the normal case here,
-not the exception, so read which jobs failed rather than the run's conclusion.
+```sh
+gh api "repos/opum-ai/lore-cli/actions/runs?head_sha=<sha>" \
+  -q '.workflow_runs[] | "\(.id) \(.name) \(.event) \(.status)/\(.conclusion)"'
+```
+
+That query is repository-wide, not `ci.yml`-scoped, so filter on the name before
+counting: `upstream-backlog-watch.yml` fires on a schedule against whatever SHA
+`dev` happens to hold, and a promotion makes `dev`'s tip and `main`'s tip the same
+commit — so a third, unrelated, green `schedule` run routinely appears alongside
+the two. Run verbatim against `ccda1dd7` on 2026-09-16 it returns exactly that:
+`35155792741` CI push success, `35155304664` CI pull_request failure, and
+`35090664272` Upstream Backlog.md --json tag watch schedule success.
+
+Main's landing commit is the one commit here that gets both, because `ci.yml`'s
+`push:` trigger is `branches: [main]` — LCLI-251 dropped `dev`, so a `dev` squash
+commit still gets no run of its own. The `pull_request` run necessarily contains
+`promotion is manual` failing **by design**: it exists to put an unmissable red X
+on any PR targeting `main`, so nobody lands a promotion with the merge button. The
+`push` run is the one that fires from the promotion itself and is where
+`main is fast-forward of dev` actually executes (it is `skipped` on every PR).
+
+Measured across two promotions. 2026-09-16, landing `ccda1dd7`: `35155304664`
+(pull_request) failure whose ONLY red job is `promotion is manual`, and
+`35155792741` (push) `success` across all fifteen jobs. 2026-09-15, landing
+`e4b384b9`: `34996985802` (pull_request) failure, and `34997754121` (push) with
+every substantive job green including `main is fast-forward of dev`, carrying the
+aggregate `cancelled` only because `lint · typecheck · test (macos-latest)` — not
+a required context — was cancelled. The promotion before it repeats the shape
+exactly: `34999719292` on `41ac5a65`, same one cancelled macos job, rest green.
+
+An earlier revision of this paragraph said the landing SHA's "only run" was a
+failure and warned that an auditor would find a red one. It had enumerated the
+`pull_request` runs and stated a conclusion about the runs on the SHA — the two
+objects differ by precisely the `push` run. That is the failure mode the fleet
+operating block's **"Name the object you measured and the object your claim is
+about"** paragraph (under its Tools heading, imported at the top of this file)
+exists to name, committed here in the profile that imports it. Reading the
+warning is evidently not the same as applying it, which is the argument for
+writing the query above rather than the conclusion.
+Correcting it does not make a green push run a *gate*:
+`rules/branches/main` still returns `[]` (re-read 2026-09-16), so it is evidence,
+not enforcement. Two caveats keep the new claim honest. A docs-only promotion
+produces no push run at all, because that trigger carries `paths-ignore` for
+`**/*.md`, `docs/**`, `backlog/**` and `.claude/**`. And the gating evidence is
+still the run on the PR head that merged into `dev`, a third SHA again —
+`35030927529` on `02deee37` for the 2026-09-16 promotion, `34996243105` on
+`9d1d631d` for the one before. Cite the `dev`-side run, and say which one.
+
+The 2026-09-15 `pull_request` run also carried a SECOND failure that was not
+designed — an npm E404 fetching `@types/node` in `docusaurus scaffold smoke`,
+upstream and unrelated. Re-running the failed jobs cleared it. Two reds wearing
+the same colour is the normal case here, not the exception, so read which jobs
+failed rather than the run's conclusion — and note that the same rule is what
+makes the `cancelled` push runs above readable as green-but-for-one-cancelled-job
+rather than as failures.
 
 **`dev` is gated; `main` is not.** Ruleset `require-ci-on-dev` (id `22838594`)
 requires five contexts as of 2026-09-15: `docker e2e harness (real lore + backlog
