@@ -334,7 +334,46 @@ jobs:
           LADYBUG_CONCURRENCY_EVIDENCE: artifacts/ladybug-concurrency-evidence-v1.json
         run: |
           mkdir -p artifacts
-          bun test --isolate \
+          # LCLI-491. This invocation carried no --timeout, so every test here ran
+          # under bun's bare default of 5000ms (`bun test --help`: "per-test timeout
+          # ... default is 5000") -- never a value anyone chose for this job. Run
+          # 34801853367 (2026-09-14, attempt 1) failed with "test/ladybug-lifecycle.test.ts
+          # > builds, verifies, reuses, disposes, and deterministically rebuilds one
+          # immutable generation -- timed out after 5000ms", then passed on re-run.
+          #
+          # Measured directly from real GitHub-hosted-runner job logs (bun's own
+          # per-test "(pass) ... [Xms]" lines), not estimated: five clean passes of
+          # that exact test at 687.23ms / 718.41ms / 722.52ms / 738.54ms / 1889.87ms
+          # (release runs 34888537835, 34783940117, 34786808767, a same-job rerun of
+          # 34968280818, and 34968280818 itself), plus the one failure clocked at
+          # 5000.81ms -- a floor, not a true duration, since the timeout truncated it.
+          # The fixture this test builds is a fixed two-concept/one-task snapshot
+          # (see fixtureSource() in test/ladybug-lifecycle.test.ts), not data that
+          # scales run to run, so the spread is runner I/O contention on the native
+          # LadybugDB build, not unbounded work -- 5000ms was simply too tight a
+          # safety margin for that contention, not a wrong test.
+          #
+          # This exact test, on essentially the same runner image (ubuntu-24.04 /
+          # ubuntu-latest), already runs under an explicit --timeout=10000 as part of
+          # ci.yml's "lint · typecheck · test (ubuntu-latest)" required check on every
+          # PR -- a far larger real sample than this job's handful of release
+          # dispatches -- with no recorded flake. Matching that number here rather
+          # than inventing a new one keeps one budget for one test across both
+          # workflows, so a future reader cannot raise just this one back down by
+          # reflex without also contradicting the still-passing ci.yml leg.
+          # 10000ms sits ~5.3x above the largest clean sample (1889.87ms) and ~2x
+          # above the failing run's observed floor (5000.81ms).
+          #
+          # This is bun's own hang-detection safety valve, not a performance
+          # assertion the test makes about itself (its expect()s are all behavioral:
+          # classification, outcome, permissions, deterministic control equality) --
+          # so widening it is not weakening a release gate, it is correcting an
+          # unset default to match the budget already proven for the same test
+          # elsewhere. Per-test timing already reaches the job log for free (bun
+          # prints it); if a trend needs watching later, read the logs
+          # (`gh run view --job <id> --log`) rather than building new gate machinery
+          # for a single flaky-test fix.
+          bun test --isolate --timeout=10000 \
             test/ladybug-concurrency.test.ts \
             test/ladybug-lifecycle.test.ts \
             test/indexed-retrieval.test.ts
