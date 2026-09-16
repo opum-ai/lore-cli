@@ -382,6 +382,15 @@ Every backend must implement the complete task surface (`probe`, `listTasks`,
 `viewTask`, label and text search, create, and edit) plus `statusFlow()`. The
 status method owns the configured project's ordered workflow vocabulary; the
 reconciliation layer must never read another backend's configuration directly.
+Each backend answers `statusFlow()` from its own source, never a shared file:
+Backlog reads the project's `backlog/config.yml` `statuses:` key (falling back
+to a built-in default flow when absent); Quest calls the live `task
+status-flow --json` subprocess command, since a Quest workspace has no config
+file of its own to read; Jira reads lore's own `[tracker.jira] status_flow` in
+`.lore/config.toml` rather than querying Jira's service. See
+[ADR-0022](../adr/0022-tracker-status-flow-is-backend-polymorphic-not-backlog-config.md),
+which supersedes [ADR-0009](../adr/0009-story-task-coupling-reconciliation.md)
+on this one point.
 
 The contract also preserves four hardening obligations across implementations:
 

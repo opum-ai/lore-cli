@@ -259,6 +259,7 @@
 - 2026-09-15T14:50:48-05:00 a390713c94f34896bf06130317fda23e60635940 fix(LCLI-510): generate the README's version lines, and refuse a release whose PACKED README disagrees
 - 2026-09-15T15:00:16-05:00 8b613e25352bfade06cb5de708be722ba8cc1050 fix(LCLI-510): markers must be INLINE — a line-initial one broke the rendered npm page
 - 2026-09-15T15:06:41-05:00 6051d57f054da204ea3682db14e1cde107a45c74 fix(LCLI-510): give clause 3 a sanctioned escape hatch, and prove the hatch ACCEPTS
+- 2026-09-15T16:14:45-05:00 bc4d58a0812cc8d7c4cb100c2d2339f685ba5da2 fix(LCLI-510): generate the README's version lines, and refuse a release whose packed README disagrees (#118)
 
 ## docs/adr
 
@@ -334,6 +335,7 @@
 - 2026-09-14T01:47:06-05:00 e5b4152f58ba0334b63f149769a31c5710b237db docs(LCLI-488): 0.6.2 is released — replace the current-state claims (#48)
 - 2026-09-15T07:42:47-05:00 2b6181dfa5cec0a621973e809056d8f101f1add7 docs(LCLI-496): 0.7.0 is released — replace the release-truth and README current-state claims (#99)
 - 2026-09-15T15:01:41-05:00 5e5e5edabcfa8c7cd291e09f2fe64454bf0ae82e fix(LCLI-510): A4 re-runs the assertions instead of grepping — the literal would have gone red on a CORRECT release
+- 2026-09-15T16:57:43-05:00 eaa966374aa846ff9d94f9182c292719af8bb1ac docs(LCLI-511): the lockstep is an exact-version binding, and a unilateral patch is a declared break of it (#121)
 
 ## docs/runbooks
 

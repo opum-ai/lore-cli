@@ -2,9 +2,18 @@
 type: ADR
 title: "ADR-0009: Story↔Task coupling & status reconciliation"
 description: "How lore couples a Story doc to Backlog.md tasks (doc→task via the Story's tasks: frontmatter, task→doc via a queryable doc:<conceptId> label), and how it reconciles a Story's status from live task statuses using the status set read from Backlog config rather than a hardcoded list."
-tags: [adr, backlog, coupling, status, reconciliation, labels, story]
-summary: "Story task IDs are the coupling source of truth, Backlog labels provide back-references, and live task statuses determine Story status."
+tags:
+  - adr
+  - backlog
+  - coupling
+  - status
+  - reconciliation
+  - labels
+  - story
+summary: Story task IDs are the coupling source of truth, Backlog labels provide back-references, and live task statuses determine Story status.
 timestamp: 2026-06-21T00:00:00Z
+status: superseded
+superseded_by: adr/0022-tracker-status-flow-is-backend-polymorphic-not-backlog-config
 ---
 
 # ADR-0009: Story↔Task coupling & status reconciliation
@@ -12,6 +21,24 @@ timestamp: 2026-06-21T00:00:00Z
 ## Status
 
 Accepted — 2026-06-21
+
+Superseded for the status-vocabulary source only by
+[ADR-0022](0022-tracker-status-flow-is-backend-polymorphic-not-backlog-config.md) —
+2026-09-16 (LCLI-506). §3's "the status vocabulary is read from Backlog config
+(`backlog/config.yml`), not hardcoded" was accurate when lore had exactly one tracker
+integration; it stopped being unconditionally true once Backlog, Quest, and Jira became
+interchangeable backends behind `TrackerAdapter.statusFlow()`, each answering from its own
+source (Backlog's `backlog/config.yml`, Quest's live `task status-flow` policy, Jira's
+`[tracker.jira] status_flow` in `.lore/config.toml` — never Jira's own service). ADR-0022
+records the corrected, per-backend picture. Every other decision below — the `tasks:`
+frontmatter as doc→task source of truth, the `doc:<conceptId>` label as the queryable
+task→doc back-reference, ID case/collision rules, and `lore rename`'s back-reference move —
+is unaffected and remains the active design; only §3's vocabulary-source sentence and the
+"Hardcode the status vocabulary" alternative below describe a Backlog-only assumption this
+repository has since moved past. The text below is left as originally written, per this
+project's ADR immutability convention (see [the ADR log's Process section](index.md#process)) —
+read it as the historical record of what was decided in 2026-06-21, not as the current source
+of truth for where the status vocabulary comes from.
 
 ## Context
 

@@ -48,4 +48,5 @@ the same convention rather than a bare `slug.md`.
 - [Separate OKF lifecycle from Lore task progress](0019-separate-okf-lifecycle-from-lore-task-progress.md)
 - [Tracker version gates are minimum floors, not bounded allowlists](0020-tracker-version-gates-are-minimum-floors.md)
 - [Typed authored relationships and claim state](0021-typed-authored-relationships-and-claim-state.md)
+- [Tracker status flow is backend-polymorphic, not Backlog config](0022-tracker-status-flow-is-backend-polymorphic-not-backlog-config.md)
 <!-- lore:index:end -->
