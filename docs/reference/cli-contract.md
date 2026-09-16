@@ -134,7 +134,8 @@ Every `--json` success response on stdout is a single JSON object:
 {
   "schemaVersion": 1,
   "kind": "query.results",
-  "data": { }
+  "data": { },
+  "principal": null
 }
 ```
 
@@ -143,6 +144,7 @@ Every `--json` success response on stdout is a single JSON object:
 | `schemaVersion` | integer | Version of the envelope contract (§7). Bumped only on a breaking change to the JSON shape. |
 | `kind` | string | Names the payload shape so a caller can switch on it without inferring structure. Dotted `command.payload` form. |
 | `data` | object \| array | The typed body for that `kind`. Its internal shape is governed per-`kind`. |
+| `principal` | `null` | Reserved for a future ratified principal reference. Always `null` today — no command sets it to anything else. It is present on every envelope so its position is stable once it is ratified, but it is **not yet part of the stable contract**: consumers must not depend on its value, and must not treat its mere presence as meaningful beyond "reserved, unset." |
 
 The envelope is emitted on **stdout**, alone, with no leading or trailing prose,
 no progress lines, and a single trailing newline. Pretty-printing (indentation)
@@ -450,7 +452,7 @@ discipline.
 | Concern | Rule |
 |---|---|
 | Mode precedence | `--json` > `--plain` > pretty; plain auto-selected on non-TTY |
-| Success payload | `{ schemaVersion, kind, data }` on stdout, exit `0` |
+| Success payload | `{ schemaVersion, kind, data, principal }` on stdout, exit `0` (`principal` reserved, always `null`; §2) |
 | Failure (`--json`) | `{ error_type, message, hint, input }` on **stderr**, stdout empty, exit ≠ 0 |
 | Streams | stdout = data only; stderr = diagnostics only |
 | Exit codes | 0 ok · 2 usage · 3 not-found · 4 denied · 5 conflict · 6 validation/drift · (1 = uncaught bug) |
