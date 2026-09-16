@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runOrphans } from "../src/commands/orphans";
@@ -257,6 +257,47 @@ describe("success envelope (cli-contract §2)", () => {
     const env = successEnvelope("graph.export", data);
     expect(env.data).toBe(data);
     expect(Object.keys(env)).toEqual(["schemaVersion", "kind", "data", "principal"]);
+  });
+});
+
+// The doc claims to be the CANONICAL spec (cli-contract.md's own opening line), so a field the
+// emitter adds and the doc never mentions is the exact drift LCLI-505 found: `principal` shipped
+// in `successEnvelope()` while the §2 example and field table stayed three-field forever. Both
+// tests below read the real file on disk rather than a copy of its text, so they fail the moment
+// the doc and the type disagree again — by field COUNT (test 1) or by an unnamed field (test 2),
+// which are two different ways the same defect can recur (the example forgets a field the table
+// still names, or vice versa).
+describe("cli-contract.md §2 stays honest about the envelope it claims to specify", () => {
+  function readSection2(): string {
+    const doc = readFileSync(join(import.meta.dir, "..", "docs", "reference", "cli-contract.md"), "utf8");
+    const heading = "## 2. The canonical `--json` success envelope";
+    const start = doc.indexOf(heading);
+    expect(start).toBeGreaterThan(-1); // the heading itself must not have moved/been renamed
+    const rest = doc.slice(start + heading.length);
+    const nextHeading = rest.search(/\n## \d/); // next top-level numbered section
+    return rest.slice(0, nextHeading === -1 ? undefined : nextHeading);
+  }
+
+  test("the §2 JSON example's fields exactly match successEnvelope()'s, in the same order", () => {
+    const section = readSection2();
+    const fence = section.match(/```json\n([\s\S]*?)```/);
+    const exampleJson = fence?.[1];
+    if (exampleJson === undefined) {
+      throw new Error("could not find §2's fenced JSON example — has the heading or code fence moved?");
+    }
+    const documented = JSON.parse(exampleJson);
+    const emitted = successEnvelope("query.results", {});
+    expect(Object.keys(documented)).toEqual(Object.keys(emitted));
+  });
+
+  test("every field successEnvelope() emits is named (in backticks) somewhere in §2's own text", () => {
+    // Generalizes past `principal` specifically: whatever SuccessEnvelope grows next, this fails
+    // until §2's prose/table catches up, without needing to be told the new field's name.
+    const section = readSection2();
+    const emitted = successEnvelope("query.results", {});
+    for (const key of Object.keys(emitted)) {
+      expect(section).toContain(`\`${key}\``);
+    }
   });
 });
 
