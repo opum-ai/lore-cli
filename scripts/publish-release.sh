@@ -46,8 +46,16 @@
 #     digest CI recorded independently. Read "DIGEST PROVENANCE" below for what that does
 #     and does not prove -- the distinction is the whole point and it is easy to overstate.
 #     Publishing is effectively irreversible; npm unpublish is heavily restricted.
-#   - Publishes the six PLATFORM packages first and the root launcher LAST, so the launcher
-#     is never resolvable before the binary it execs exists.
+#   - Publishes the six PLATFORM packages first, then GATES the root launcher behind a
+#     registry-READ visibility poll over those six plus a fixed propagation cushion, so the
+#     launcher is not published until every platform package is CONFIRMED VISIBLE to a read
+#     -- not merely published in the sense that its PUT returned. Publish ORDER alone used to
+#     be described as the guarantee here and it is FALSE: LCLI-502 measured 0.7.0 publishing
+#     platform packages first and the root last, in that order, while the registry's read API
+#     resolved the root 121 SECONDS before the last platform package -- because the platform
+#     packages are optionalDependencies, an install in that window SUCCEEDED WITH THE BINARY
+#     SILENTLY MISSING rather than failing loudly. Ordering the WRITES cannot produce the
+#     guarantee; only gating on READS can. See "REGISTRY GATE BEFORE THE ROOT LAUNCHER" below.
 #   - Resumable: a version already on the registry is skipped, not re-attempted. This is
 #     what made five failed 0.6.2 attempts cost nothing.
 #   - --dry-run does everything except the two mutating calls.
@@ -636,6 +644,15 @@ report_state() {
 # evidence, and record what you saw if you change it.
 REGISTRY_WINDOW_SECONDS="${REGISTRY_WINDOW_SECONDS:-1800}"
 
+# CONSUMER-VISIBLE PROPAGATION LAGS "THE PUBLISHER'S OWN READ SAYS VISIBLE" BY 0-20 SECONDS
+# (LCLI-502), measured externally by opum-cli-e2e across five packages on 2026-09-15, from
+# outside the publishing credential. So "wait_for_all_visible returned true" is EARLY for a
+# real installer by up to this margin regardless of where the poll sits in this script. This
+# fixed cushion is added AFTER every platform package reads visible and BEFORE the root
+# launcher is published, closing the gap a poll alone cannot close. Overridable for tests;
+# do not shorten it in production without new evidence, same rule as REGISTRY_WINDOW_SECONDS.
+PROPAGATION_CUSHION_SECONDS="${PROPAGATION_CUSHION_SECONDS:-20}"
+
 # Space-separated string rather than an array on purpose: this script runs on macOS, whose
 # /bin/bash is 3.2, where "${arr[@]}" on an EMPTY array under `set -u` aborts the script.
 # Package names contain no spaces, so word splitting is safe here.
@@ -682,10 +699,22 @@ wait_for_all_visible() {
   say "  a known, recurring, worsening lag on this package set (LCLI-460): 0.4.5 ~15s,"
   say "  0.4.6 ~35s, 0.5.0 ~25min. Longer than 30 minutes is new, not necessarily wrong."
   say ""
+  say "  IT MAY ALSO NOT BE LAG AT ALL (LCLI-502). npm 12 can park a publish in a non-public"
+  say "  STAGED state pending a maintainer's 2FA approval; a staged version occupies the same"
+  say "  semver slot as a published one but is invisible to a registry read under ANY token,"
+  say "  including the one that staged it. This poll cannot tell the two apart by itself --"
+  say "  check independently of this script's own read:"
+  say "      npm stage list <package-name>"
+  say "          can itself report nothing for a package that IS staged, if the credential"
+  say "          running it is a shortlived/trust-relationship token -- npm's own docs say"
+  say "          such tokens cannot run 'npm stage' subcommands at all. Empty is not proof."
+  say "      https://www.npmjs.com/  (the package's own page, or your pending-approvals)"
+  say "          the one place a pending 2FA approval is visible regardless of token type."
+  say ""
   say "  Do this, in order: wait and re-check with --verify-only; then confirm the version"
   say "  really is absent from the registry rather than merely slow. Reach for npm unpublish"
   say "  only if you have established the publish itself did not happen -- it is destructive"
-  say "  and it is the wrong tool for a propagation delay."
+  say "  and it is the wrong tool for either a propagation delay or a stalled 2FA approval."
   return 1
 }
 
@@ -742,8 +771,62 @@ hr
 [ "$DRY_RUN" -eq 1 ] && say "DRY RUN — no registry writes will be made"
 say "publishing platform packages first, root launcher last"
 
+# ── Staged / 2FA detection at publish time (LCLI-502) ────────────────────────────────────
+# WHAT THIS IS AND IS NOT, stated plainly because it was investigated rather than guessed.
+#
+# Read on this machine on 2026-09-16, npm@12.0.2 as installed
+# (~/.nvm/versions/node/v24.20.0/lib/node_modules/npm): lib/commands/publish.js,
+# lib/commands/stage/{index,publish}.js, node_modules/libnpmpublish/lib/publish.js,
+# node_modules/npm-registry-fetch/lib/{check-response,index}.js, lib/utils/auth.js, and
+# docs/content/commands/npm-stage.md (npm's own shipped documentation).
+#
+# WHAT THE SOURCE ESTABLISHES:
+#   - `npm publish` and `npm stage publish` are different CLI commands, not two outcomes of
+#     one call. Only `stage publish` sets `opts.stage = true`; only that path ever prints the
+#     literal text "(staged" (lib/commands/publish.js, the `stagedMsg` branch). An ordinary
+#     `npm publish` success line is always exactly "+ <name>@<version>" -- by construction,
+#     never that string. This script only ever calls `npm publish`.
+#   - `npm publish`'s registry write passes `ignoreBody: true` for a successful (2xx) response
+#     (libnpmpublish/lib/publish.js: `ignoreBody: !opts.stage`), so the response BODY is
+#     discarded on success -- npm's own success path could not notice a body saying "this was
+#     staged, not published" even if the registry sent one. This is why AC2 of LCLI-502 says
+#     "distinguish it by something other than the publisher's own read": for a plain
+#     `npm publish`, the publisher's own read of ITS OWN CALL cannot see this, by construction.
+#   - An OTP/2FA CHALLENGE, unlike staging, IS visible on the calling side: it throws with
+#     `err.code === 'EOTP'`, or the response is an HTTP 401 whose body matches the registry's
+#     own `/one-time pass/` heuristic (npm-registry-fetch/lib/check-response.js). In a
+#     non-interactive shell (stdin/stdout not both a TTY) npm's own `otplease` re-throws that
+#     immediately rather than prompting (lib/utils/auth.js) -- so under either credential path
+#     this script actually uses (Keychain/NPM_TOKEN granular-access-token-with-bypass, or the
+#     ~/.npmrc session-token fallback), an OTP challenge FAILS the `npm publish` call outright;
+#     it does not print a quiet success. npm's own docs table ("Token Behavior", npm-stage.md)
+#     document staging as reachable only via the separate `npm stage publish` verb, or via a
+#     trust-relationship/OIDC token -- neither of which this script uses.
+#
+# WHAT COULD NOT BE VERIFIED: this machine has no path to trigger a real staged publish or a
+# real 2FA challenge against npm's live registry, so nothing above is confirmed end-to-end --
+# it is confirmed against the npm CLI's own shipped source and documentation, which is the
+# closest available source of truth in this environment. quest-cli measured an actual staged
+# outcome in production (a trust-relationship token, which this script does not use), so the
+# mechanism is real; it is this script's OWN exposure to it that could not be reproduced.
+#
+# So this is a PLUGGABLE, defense-in-depth hook, not a claim that it closes a reproduced hole
+# in this script's current credential paths: it scans `npm publish`'s own captured
+# stdout+stderr for the exact strings/codes npm's source uses for an OTP challenge or a staged
+# outcome, in case a future npm release, token type, or package policy changes what this
+# script's plain `npm publish` call can produce.
+looks_like_2fa_or_staging() {
+  # `*'one-time pass'*` alone also matches "...requires a one-time password..." (the longer
+  # phrase contains the shorter one as a substring), so that longer pattern is not listed as a
+  # separate alternative -- shellcheck (SC2221/SC2222) correctly flags it as dead when it is.
+  case "$1" in
+    *EOTP*|*'one-time pass'*|*'(staged'*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 publish_one() {
-  local pkg="$1" tarball="$ARTIFACTS/$2"
+  local pkg="$1" tarball="$ARTIFACTS/$2" out rc
   if published "$pkg"; then
     say "  skip     $pkg@$VERSION (already on the registry)"
     return 0
@@ -754,15 +837,59 @@ publish_one() {
     return 0
   fi
   say "  publish  $pkg@$VERSION"
-  npm publish "$tarball" || return 1
+  out="$(npm publish "$tarball" 2>&1)"; rc=$?
+  [ -n "$out" ] && printf '%s\n' "$out"
+  if looks_like_2fa_or_staging "$out"; then
+    die "npm publish for $pkg@$VERSION printed text this script recognises as a 2FA challenge
+or a STAGED (non-public) outcome rather than an ordinary publish -- see the comment above
+looks_like_2fa_or_staging() for exactly what that recognition is and is not based on
+(LCLI-502). npm's own exit code was $rc. Resolve this as a human: check
+    npm stage list $pkg
+    https://www.npmjs.com/
+since a staged version is invisible to this script's own registry reads under any token, then
+re-run -- publishing is resumable and nothing further has been written."
+  fi
+  return "$rc"
 }
 
 failed=0
 for entry in "${PLATFORM_PKGS[@]}"; do
   publish_one "${entry%%:*}" "${entry#*:}" || { failed=1; break; }
 done
-[ "$failed" -eq 0 ] || die "a platform package failed to publish — stopping BEFORE the root launcher,
-so the launcher never resolves to a binary that is not there. Fix and re-run; this script is resumable."
+[ "$failed" -eq 0 ] || die "a platform package failed to publish. Stopping before the root
+launcher, which this script never publishes until every platform package is CONFIRMED VISIBLE
+on the registry's read API (not merely publish order -- see the registry gate below).
+Fix and re-run; this script is resumable."
+
+# ── Registry gate before the root launcher (LCLI-502) ────────────────────────────────────
+# Publish ORDER alone is not the guarantee this script used to claim (see the header and the
+# die() above for what changed and why). Measured on 0.7.0: the root launcher became
+# resolvable on the registry's READ API at 79s while a platform package (linux-arm64) did not
+# resolve until 200s -- 121 seconds where `npm install` SUCCEEDED WITH THE BINARY MISSING,
+# because the platform packages are optionalDependencies. Ordering the WRITES cannot produce
+# the guarantee; only gating on READS can. Skipped entirely in --dry-run, matching this
+# script's documented safety property that dry-run performs no mutating call and nothing that
+# only makes sense around one -- a real registry poll here would also make every existing
+# --dry-run test wait out the full REGISTRY_WINDOW_SECONDS against a stub that never publishes.
+if [ "$DRY_RUN" -eq 1 ]; then
+  say "  would    wait for all six platform packages to be registry-visible, then wait"
+  say "           ${PROPAGATION_CUSHION_SECONDS}s more, before publishing the root launcher"
+else
+  say "gating the root launcher on registry visibility of all six platform packages"
+  platform_pkg_list=""
+  for entry in "${PLATFORM_PKGS[@]}"; do platform_pkg_list="$platform_pkg_list ${entry%%:*}"; done
+  if ! wait_for_all_visible "${platform_pkg_list# }"; then
+    die "the root launcher was NOT published. One or more platform packages never became
+visible on the registry's read API within ${REGISTRY_WINDOW_SECONDS}s of being published (see
+the TIMEOUT detail above, which now also covers the STAGED/2FA possibility). Do NOT unpublish
+anything on the strength of this alone -- resolve whichever it is, then re-run this script;
+publishing is resumable and nothing further has been written."
+  fi
+  say "propagation cushion: waiting ${PROPAGATION_CUSHION_SECONDS}s more before publishing the"
+  say "  root launcher -- consumer-visible reads lag a publisher's own 'visible' read by 0-20s,"
+  say "  measured externally across five packages (opum-cli-e2e, 2026-09-15, LCLI-502)"
+  sleep "$PROPAGATION_CUSHION_SECONDS"
+fi
 
 publish_one "${ROOT_PKG%%:*}" "${ROOT_PKG#*:}" || die "root launcher failed to publish"
 

@@ -648,8 +648,21 @@ publish is explicitly marked public. Root `package.json` and all six
    since sealing. Six of seven are independently verified; do not round that up.
 
    It publishes platform packages first and stops **before** the root
-   launcher if any of them fails, so the launcher is never resolvable before the
-   binary it execs. It is resumable, skipping versions already published, and
+   launcher if any of them fails — but publish ORDER alone does not make the
+   launcher unresolvable-before-its-binary, and used to be described here as if
+   it did (LCLI-502). `0.7.0` published in exactly this order and the
+   registry's READ API still resolved the root launcher 121 seconds before the
+   last platform package, because registry-read visibility is per-package and
+   not ordered by publish order; an install inside that window **succeeded
+   with the binary silently missing**, since the platform packages are
+   `optionalDependencies`. The script now **gates** the root launcher's publish
+   behind a registry-visibility poll over all six platform packages plus a
+   fixed propagation cushion (20s, for lag measured beyond what the poll itself
+   catches), and treats a `npm publish` call whose own output looks like a
+   2FA/staged-publish signal as a distinct case rather than an ordinary
+   failure — see "REGISTRY GATE BEFORE THE ROOT LAUNCHER" and
+   `looks_like_2fa_or_staging()` in the script for the exact mechanism and its
+   citations. It is resumable, skipping versions already published, and
    ends with a clean-temp-dir `npx` install smoke. Digest verification runs
    ahead of the auth check, so a rehearsal proves the bytes are right before
    any **npm** credential exists — but note the prerequisite that replaced the
