@@ -42,6 +42,7 @@ import { parseConcept } from "../src/core/concept";
 import { buildHermesContextDoc, HERMES_CONTEXT_REL_PATH } from "../src/core/hermes-bridge";
 import { EXIT_CODES, exitCodeFor, LoreError, reportError, WarningCollector } from "../src/errors";
 import type { OutputContext } from "../src/output";
+import type { TrackerMigrationResult } from "../src/tracker-migration";
 import { capture, expectError, fakeAdapter, gitRun } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
@@ -89,6 +90,7 @@ async function init(
     prompter?: InitPrompter;
     adapter?: BacklogAdapter;
     migrateBacklog?: InitOptions["migrateBacklog"];
+    previewBacklogMigration?: InitOptions["previewBacklogMigration"];
     agentAvailability?: () => { claude: boolean; codex: boolean };
     git?: GitPreflight;
     trackerEnvironment?: () => TrackerEnvironment;
@@ -115,6 +117,7 @@ async function init(
     prompter: extra.prompter,
     adapter: extra.adapter,
     migrateBacklog: extra.migrateBacklog,
+    previewBacklogMigration: extra.previewBacklogMigration,
     agentAvailability: extra.agentAvailability ?? (() => ({ claude: true, codex: false })),
     git: extra.git ?? gitStub(),
     trackerEnvironment: extra.trackerEnvironment,
@@ -173,6 +176,7 @@ function scriptedPrompter(answers: {
   retryPreservingIds?: boolean;
   sourceFamily?: string;
   removeBacklog?: boolean;
+  confirmExclusions?: boolean;
 }): InitPrompter {
   return {
     confirm: async (question, defaultValue) => {
@@ -185,6 +189,10 @@ function scriptedPrompter(answers: {
       // The same applies to LCLI-358.3's install and switch-tracker offers, and to LCLI-466's
       // post-refusal retry offer.
       if (question.includes("own Backlog id")) return answers.retryPreservingIds ?? defaultValue;
+      // LCLI-521's pre-apply exclusion confirm, matched before the catch-all for the same reason as
+      // every branch above: without it, `obsidian: false` would silently decline a partial import
+      // the test never meant to answer.
+      if (question.includes("leave the record(s) above")) return answers.confirmExclusions ?? defaultValue;
       if (question.includes("git repository")) return answers.git ?? defaultValue;
       if (question.includes("is not installed")) return answers.install ?? defaultValue;
       if (question.includes("different tracker")) return answers.switchTracker ?? defaultValue;
@@ -1067,6 +1075,7 @@ describe("lore init — legacy zero-config tracker boundary", () => {
     sourceFingerprint: "sha256:source",
     mappings: [{ sourceIdentifier: "LCLI-1", sourceFolder: "tasks", targetIdentifier: "T-1", aliases: ["LCLI-1"] }],
     survivors: [],
+    excluded: [],
     taskFingerprints: { "T-1": "sha256:task" },
     state: "applied" as const,
   };
@@ -1089,6 +1098,91 @@ describe("lore init — legacy zero-config tracker boundary", () => {
     });
     expect(result.migration).toEqual(migrationResult);
     expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
+  });
+
+  /**
+   * LCLI-521 AC#3: the flag path cannot prompt (no prompter exists on this path at all), so it
+   * warns instead of asking and always proceeds — the operator already chose
+   * `--preserve-source-ids --source-family` explicitly. `init()`'s helper renders `--json`
+   * internally and parses stdout as JSON to build `result`, so `result.migration.excluded` matching
+   * `excludingResult` also proves the warning text itself never reached stdout (a leaked warning
+   * would have broken that JSON.parse).
+   */
+  test("the flag path warns on stderr and proceeds when preserving ids leaves a family behind (LCLI-521 AC#3)", async () => {
+    legacyBundle();
+    const excludingResult: TrackerMigrationResult = {
+      ...migrationResult,
+      excluded: [
+        { sourceIdentifier: "LORE-1", family: "LORE" },
+        { sourceIdentifier: "LORE-2", family: "LORE" },
+      ],
+    };
+    const { result, stderr } = await init({
+      args: ["--tracker", "quest", "--migrate-backlog", "--preserve-source-ids", "--source-family", "LCLI"],
+      migrateBacklog: async () => excludingResult,
+    });
+    expect(result.migration).toEqual(excludingResult);
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
+    expect(stderr).toContain("2 record(s) in LORE will NOT be imported");
+    expect(stderr).toContain("LORE-1");
+    expect(stderr).toContain("LORE-2");
+  });
+
+  test("the flag path says nothing about exclusions when nothing was excluded", async () => {
+    legacyBundle();
+    const { stderr } = await init({
+      args: ["--tracker", "quest", "--migrate-backlog", "--preserve-source-ids", "--source-family", "LCLI"],
+      migrateBacklog: async () => migrationResult,
+    });
+    expect(stderr).not.toContain("will NOT be imported");
+  });
+
+  // The `init()` helper above always renders `--json` (so its tests can parse `result`), which never
+  // exercises `renderPretty`/`renderPlain` directly — these two go through `runInit` with a real
+  // plain/pretty `OutputContext` instead, the same pattern `describe("lore init — output rendering")`
+  // uses elsewhere in this file.
+  test("plain mode surfaces the excluded count and families in the final summary (LCLI-521 AC#1)", async () => {
+    legacyBundle();
+    const excludingResult: TrackerMigrationResult = {
+      ...migrationResult,
+      excluded: [
+        { sourceIdentifier: "LORE-1", family: "LORE" },
+        { sourceIdentifier: "LORE-2", family: "LORE" },
+      ],
+    };
+    const stdout = capture();
+    await runInit({
+      root,
+      git: gitStub(),
+      output: { mode: "plain", color: false },
+      stdout,
+      stderr: capture(),
+      clock: FIXED_CLOCK,
+      args: ["--tracker", "quest", "--migrate-backlog", "--preserve-source-ids", "--source-family", "LCLI"],
+      migrateBacklog: async () => excludingResult,
+    });
+    expect(stdout.lines()).toContain("migration-excluded count=2 families=LORE");
+  });
+
+  test("pretty mode surfaces the excluded count and families in the final summary (LCLI-521 AC#1)", async () => {
+    legacyBundle();
+    const excludingResult: TrackerMigrationResult = {
+      ...migrationResult,
+      excluded: [{ sourceIdentifier: "LORE-1", family: "LORE" }],
+    };
+    const stdout = capture();
+    await runInit({
+      root,
+      git: gitStub(),
+      output: { mode: "pretty", color: false },
+      stdout,
+      stderr: capture(),
+      clock: FIXED_CLOCK,
+      args: ["--tracker", "quest", "--migrate-backlog", "--preserve-source-ids", "--source-family", "LCLI"],
+      migrateBacklog: async () => excludingResult,
+    });
+    expect(stdout.text()).toContain("1 record(s) left behind (LORE)");
+    expect(stdout.text()).toContain("re-run with --preserve-source-ids --source-family <PREFIX>");
   });
 
   test("leaves the backend unpinned when migration preflight fails", async () => {
@@ -1279,7 +1373,11 @@ describe("lore init — legacy zero-config tracker boundary", () => {
     "the destination workspace, or rename the id in the source, then retry.";
   type MigrationOptions = { preserveSourceIds?: boolean; sourceFamily?: string } | undefined;
 
-  function migrationWizard(answers: { retryPreservingIds?: boolean; sourceFamily?: string }): {
+  function migrationWizard(answers: {
+    retryPreservingIds?: boolean;
+    sourceFamily?: string;
+    confirmExclusions?: boolean;
+  }): {
     prompter: InitPrompter;
     askedDefaults: string[];
   } {
@@ -1321,6 +1419,15 @@ describe("lore init — legacy zero-config tracker boundary", () => {
         if (migrationOptions?.preserveSourceIds !== true) throw new LoreError("conflict", ALIAS_COLLISION);
         return migrationResult;
       },
+      // LCLI-521's pre-apply exclusion check calls this separately, before `migrateBacklog` runs the
+      // real retry — nothing excluded here, so `confirmFamilyExclusions` returns without prompting.
+      previewBacklogMigration: async () => ({
+        sourceFingerprint: "sha256:source",
+        digest: "sha256:reviewed",
+        mappings: [],
+        requiresApproval: true,
+        excluded: [],
+      }),
     });
     // The retry carries BOTH flags Quest requires together, and only after the first attempt failed.
     expect(calls).toEqual([undefined, { preserveSourceIds: true, sourceFamily: "TASK" }]);
@@ -1349,6 +1456,13 @@ describe("lore init — legacy zero-config tracker boundary", () => {
         if (migrationOptions?.preserveSourceIds !== true) throw new LoreError("conflict", ALIAS_COLLISION);
         return migrationResult;
       },
+      previewBacklogMigration: async () => ({
+        sourceFingerprint: "sha256:source",
+        digest: "sha256:reviewed",
+        mappings: [],
+        requiresApproval: true,
+        excluded: [],
+      }),
     });
     expect(calls[1]).toEqual({ preserveSourceIds: true, sourceFamily: "LCLI" });
   });
@@ -1377,6 +1491,12 @@ describe("lore init — legacy zero-config tracker boundary", () => {
           throw new LoreError("conflict", PRESERVATION_REFUSED, undefined, report);
         throw new LoreError("conflict", ALIAS_COLLISION);
       },
+      // LCLI-521's own exclusion-check preview hits the SAME preservation refusal a real Quest
+      // would give — `confirmFamilyExclusions` must classify and report it exactly like
+      // `retryWithPreservedIds` does, before ever reaching the retry that carries `calls`.
+      previewBacklogMigration: async () => {
+        throw new LoreError("conflict", PRESERVATION_REFUSED, undefined, report);
+      },
     });
     let thrown: unknown;
     try {
@@ -1392,10 +1512,145 @@ describe("lore init — legacy zero-config tracker boundary", () => {
     expect(error.message).toContain("No further flag resolves a remaining id collision here");
     expect(error.hint).toContain("rename or remove the conflicting record");
     expect(error.input).toEqual(report);
-    // Two attempts, never a third: there is no flag left to offer.
-    expect(calls).toEqual([undefined, { preserveSourceIds: true, sourceFamily: "TASK" }]);
+    // One attempt through the full migrate lifecycle (the default-mode refusal), never a second: the
+    // preservation-mode dead end is now discovered by LCLI-521's own pre-apply exclusion check, which
+    // calls Quest's read-only preview directly rather than through `retryWithPreservedIds` — so it
+    // stops before `migrateBacklog` would ever be asked for a real preservation-mode attempt.
+    expect(calls).toEqual([undefined]);
     // And the backend is left unpinned, exactly as a failed flag-path migration leaves it.
     expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).not.toContain("[tracker]");
+  });
+
+  /**
+   * LCLI-521 AC#2 (the fleet-preferred fix): the wizard's retry asks BEFORE applying whenever the
+   * chosen family leaves other records behind, rather than only reporting it in the finished
+   * summary. Proven with a fake seam here; proven against real `backlog`/`quest` binaries in the
+   * task's implementation notes (a real two-family repro: LCLI-1, LCLI-1.1, LCLI-2 plus LORE-1,
+   * LORE-2, quest task-id-prefix `LCLI` so the flattened dotted subtask collides with the literal
+   * `LCLI-2` — exactly this test's shape, just driven by a real subprocess instead of a fake).
+   */
+  test("the wizard warns and asks before applying when the chosen family leaves others behind, and proceeds on confirm (LCLI-521 AC#2)", async () => {
+    legacyBundle();
+    const calls: MigrationOptions[] = [];
+    const previewCalls: MigrationOptions[] = [];
+    const { prompter, askedDefaults } = migrationWizard({ retryPreservingIds: true, confirmExclusions: true });
+    const { result, stderr } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      adapter: fakeAdapter([], { probe: "ok" }),
+      agentAvailability: () => ({ claude: false, codex: false }),
+      migrateBacklog: async (migrationOptions) => {
+        calls.push(migrationOptions);
+        if (migrationOptions?.preserveSourceIds !== true) throw new LoreError("conflict", ALIAS_COLLISION);
+        return migrationResult;
+      },
+      previewBacklogMigration: async (migrationOptions) => {
+        previewCalls.push(migrationOptions);
+        return {
+          sourceFingerprint: "sha256:source",
+          digest: "sha256:reviewed",
+          mappings: [],
+          requiresApproval: true,
+          excluded: [
+            { sourceIdentifier: "LORE-1", family: "LORE" },
+            { sourceIdentifier: "LORE-2", family: "LORE" },
+          ],
+        };
+      },
+    });
+    // The exclusion check runs with the SAME family the operator just answered, before the retry
+    // that actually applies anything.
+    expect(previewCalls).toEqual([{ preserveSourceIds: true, sourceFamily: "TASK" }]);
+    expect(askedDefaults).toEqual(["TASK"]);
+    expect(calls).toEqual([undefined, { preserveSourceIds: true, sourceFamily: "TASK" }]);
+    expect(result.migration).toEqual(migrationResult);
+    expect(result.tracker).toBe("quest");
+    // Named in the warning: the count, the family left behind, and what to run instead.
+    expect(stderr).toContain("2 record(s) in LORE will NOT be imported");
+    expect(stderr).toContain("LORE-1");
+    expect(stderr).toContain("LORE-2");
+    expect(stderr).toContain("--preserve-source-ids --source-family <PREFIX>");
+  });
+
+  test("the wizard aborts a partial import when the operator declines the exclusion warning (LCLI-521 AC#2)", async () => {
+    legacyBundle();
+    const calls: MigrationOptions[] = [];
+    const { prompter } = migrationWizard({ retryPreservingIds: true, confirmExclusions: false });
+    const promise = runInit({
+      root,
+      git: gitStub(),
+      output: JSON_CTX,
+      stdout: capture(),
+      stderr: capture(),
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      adapter: fakeAdapter([], { probe: "ok" }),
+      agentAvailability: () => ({ claude: false, codex: false }),
+      jira: fakeJira(),
+      migrateBacklog: async (migrationOptions) => {
+        calls.push(migrationOptions);
+        if (migrationOptions?.preserveSourceIds !== true) throw new LoreError("conflict", ALIAS_COLLISION);
+        return migrationResult;
+      },
+      previewBacklogMigration: async () => ({
+        sourceFingerprint: "sha256:source",
+        digest: "sha256:reviewed",
+        mappings: [],
+        requiresApproval: true,
+        excluded: [{ sourceIdentifier: "LORE-1", family: "LORE" }],
+      }),
+    });
+    let thrown: unknown;
+    try {
+      await promise;
+    } catch (cause) {
+      thrown = cause;
+    }
+    expect(thrown).toBeInstanceOf(LoreError);
+    const error = thrown as LoreError;
+    // A declined confirmation, not a Quest refusal: exit 4 (denied), not the collision's exit 5.
+    expect(error.type).toBe("denied");
+    expect(error.message).toContain("was not confirmed");
+    expect(error.message).toContain("1 record(s) outside TASK");
+    expect(error.hint).toContain("one family per run");
+    // The full preview+apply migrate lifecycle is never reached a second time: nothing was applied.
+    expect(calls).toEqual([undefined]);
+    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).not.toContain("[tracker]");
+  });
+
+  test("no exclusion prompt when the chosen family leaves nothing behind", async () => {
+    legacyBundle();
+    let promptedForExclusions = false;
+    const { prompter } = migrationWizard({ retryPreservingIds: true });
+    const wrapped: InitPrompter = {
+      ...prompter,
+      confirm: async (question, defaultValue) => {
+        if (question.includes("leave the record(s) above")) promptedForExclusions = true;
+        return prompter.confirm(question, defaultValue);
+      },
+    };
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter: wrapped,
+      adapter: fakeAdapter([], { probe: "ok" }),
+      agentAvailability: () => ({ claude: false, codex: false }),
+      migrateBacklog: async (migrationOptions) => {
+        if (migrationOptions?.preserveSourceIds !== true) throw new LoreError("conflict", ALIAS_COLLISION);
+        return migrationResult;
+      },
+      previewBacklogMigration: async () => ({
+        sourceFingerprint: "sha256:source",
+        digest: "sha256:reviewed",
+        mappings: [],
+        requiresApproval: true,
+        excluded: [],
+      }),
+    });
+    expect(promptedForExclusions).toBe(false);
+    expect(result.migration).toEqual(migrationResult);
   });
 
   test("declining the retry re-raises Quest's own refusal untouched", async () => {
@@ -3004,6 +3259,7 @@ describe("lore init — removing backlog/ after a plain --migrate-backlog (LCLI-
     sourceFingerprint: "sha256:source",
     mappings: [],
     survivors: [],
+    excluded: [],
     taskFingerprints: {},
     state: "applied" as const,
   };

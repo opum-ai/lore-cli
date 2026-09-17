@@ -159,11 +159,29 @@ export interface QuestMigrationMapping {
   readonly targetIdentifier: string;
   readonly aliases: readonly string[];
 }
+/**
+ * A source record `--preserve-source-ids` left behind because it belongs to a different id family
+ * than the one selected for this run (LCLI-521). Measured against quest 0.7.1: this is what the
+ * task that filed LCLI-521 called `survivors` on the strength of the field's name alone. Verified
+ * against quest-cli's own source (src/application/migration/backlog-public.ts) rather than trusted:
+ * `survivors` is receipt-only idempotency bookkeeping -- which records a resumed/replayed apply
+ * still needs to write -- and is present (and non-empty on a normal successful run) regardless of
+ * family; it is NOT "left behind". `excluded` is the actual field for that, is PREVIEW-only
+ * (mutates nothing), and is present only when `--preserve-source-ids` was requested -- a real
+ * two-family repro's default-mode preview never carries it at all. See LCLI-521's task notes for the
+ * repro that established this and the exact commands that reproduce it.
+ */
+export interface QuestMigrationExcludedRecord {
+  readonly sourceIdentifier: string;
+  readonly family: string;
+}
 export interface QuestMigrationPreview {
   readonly sourceFingerprint: string;
   readonly digest: string;
   readonly mappings: readonly QuestMigrationMapping[];
   readonly requiresApproval: true;
+  /** Preservation mode only (see {@link QuestMigrationExcludedRecord}); absent in default mode. */
+  readonly excluded?: readonly QuestMigrationExcludedRecord[];
 }
 export interface QuestMigrationReceipt {
   readonly schemaVersion: 1;
@@ -171,6 +189,13 @@ export interface QuestMigrationReceipt {
   readonly digest: string;
   readonly sourceFingerprint: string;
   readonly mappings: readonly QuestMigrationMapping[];
+  /**
+   * Idempotency bookkeeping, not "what got left behind" (see {@link QuestMigrationExcludedRecord}
+   * for the field that actually means that). This is the set of target ids that exist as a result of
+   * this apply, whether written this run or already present from an earlier resumed/replayed one —
+   * on a normal successful run it tracks `mappings` and is never a "some records didn't make it"
+   * signal.
+   */
   readonly survivors: readonly string[];
   readonly taskFingerprints: Readonly<Record<string, string>>;
   readonly state: "applying" | "applied" | "failed" | "rolled-back";
@@ -687,7 +712,26 @@ function migrationPreview(value: unknown): QuestMigrationPreview {
     digest: string(value.digest, "migration digest"),
     mappings: migrationMappings(value.mappings),
     requiresApproval: true,
+    excluded: migrationExcluded(value.excluded),
   };
+}
+/**
+ * `excluded` is omitted entirely by a default-mode preview (verified against a real two-family
+ * repro, LCLI-521) and by any Quest older than the field, so absence is a normal shape, not drift —
+ * unlike every other preview/receipt field here, `undefined` is accepted rather than rejected.
+ */
+function migrationExcluded(value: unknown): readonly QuestMigrationExcludedRecord[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value))
+    throw new LoreError("drift", "Quest returned invalid migration exclusions", QUEST_VERSION_SET_HINT);
+  return value.map((item) => {
+    if (!record(item))
+      throw new LoreError("drift", "Quest returned an invalid migration exclusion", QUEST_VERSION_SET_HINT);
+    return {
+      sourceIdentifier: string(item.sourceIdentifier, "migration exclusion source identifier"),
+      family: string(item.family, "migration exclusion family"),
+    };
+  });
 }
 function migrationReceipt(value: unknown): QuestMigrationReceipt {
   if (

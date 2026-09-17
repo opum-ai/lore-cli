@@ -19,6 +19,14 @@ export interface TrackerMigrationResult {
   readonly sourceFingerprint: string;
   readonly mappings: readonly QuestMigrationMapping[];
   readonly survivors: readonly string[];
+  /**
+   * Records `--preserve-source-ids` left behind because they belong to a different id family than
+   * the one selected for this run (LCLI-521). Always present, empty (`[]`) outside preservation mode
+   * or when nothing was excluded — never `undefined` here, so a renderer can check `.length` without
+   * an existence guard; the optionality lives one layer down, on Quest's own preview response (see
+   * {@link QuestMigrationExcludedRecord}), because a default-mode preview omits the field entirely.
+   */
+  readonly excluded: readonly QuestMigrationExcludedRecord[];
   readonly taskFingerprints: Readonly<Record<string, string>>;
   readonly state: "applied";
 }
@@ -28,6 +36,12 @@ export interface QuestMigrationMapping {
   readonly sourceFolder: string;
   readonly targetIdentifier: string;
   readonly aliases: readonly string[];
+}
+
+/** Mirrors {@link import("./adapters/quest").QuestMigrationExcludedRecord} (LCLI-521) — see that type's doc comment for why this is `excluded`, not `survivors`. */
+export interface QuestMigrationExcludedRecord {
+  readonly sourceIdentifier: string;
+  readonly family: string;
 }
 
 /** Lore-owned crash-recovery record. It deliberately contains only public Quest receipt data. */
@@ -111,7 +125,10 @@ export async function migrateBacklogTasksToQuest(
       receipt = await migration.apply(source, pending.digest, migrationOptions);
     }
     assertReceipt(pending, receipt);
-    return result(receipt);
+    // `pending` is the preview this run (or an earlier crashed one) already reviewed and durably
+    // recorded, so it carries the same `excluded` a fresh preview would — it is that fresh preview,
+    // read back from disk rather than re-fetched, per this branch's own resume contract above.
+    return result(receipt, pending);
   }
   const preview = await migration.preview(source, migrationOptions);
   assertPreview(preview);
@@ -119,15 +136,17 @@ export async function migrateBacklogTasksToQuest(
   store.write(source, preview);
   const receipt = await migration.apply(source, preview.digest, migrationOptions);
   assertReceipt(preview, receipt);
-  return result(receipt);
+  return result(receipt, preview);
 }
 
-function result(receipt: QuestMigrationReceipt): TrackerMigrationResult {
+function result(receipt: QuestMigrationReceipt, preview: QuestMigrationPreview): TrackerMigrationResult {
   return {
     digest: receipt.digest,
     sourceFingerprint: receipt.sourceFingerprint,
     mappings: receipt.mappings,
     survivors: receipt.survivors,
+    // Preservation mode only (LCLI-521); a default-mode preview never sets this.
+    excluded: preview.excluded ?? [],
     taskFingerprints: receipt.taskFingerprints,
     state: "applied",
   };

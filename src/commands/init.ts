@@ -96,6 +96,7 @@ import {
   isQuestVersionFloorFailure,
   isQuestWorkspaceNotInitializedFailure,
   type QuestBacklogMigrationOptions,
+  type QuestMigrationPreview,
 } from "../adapters/quest";
 import { createTrackerAdapter } from "../adapters/tracker";
 import {
@@ -126,6 +127,7 @@ import {
   clearPendingQuestMigration,
   hasPendingQuestMigration,
   migrateBacklogTasksToQuest,
+  type QuestMigrationExcludedRecord,
   type TrackerMigrationResult,
 } from "../tracker-migration";
 import {
@@ -314,6 +316,15 @@ export interface InitOptions {
    * a retry that re-runs with `preserveSourceIds`/`sourceFamily` rather than only that one ran.
    */
   migrateBacklog?: (migrationOptions?: QuestBacklogMigrationOptions) => Promise<TrackerMigrationResult>;
+  /**
+   * Read-only preview seam (LCLI-521); defaults to Quest's own preview call, unaltered and
+   * unrepeated. Separate from {@link InitOptions.migrateBacklog} on purpose: that seam is a full
+   * preview+apply replacement in tests and has no intermediate preview to hand back, but the
+   * pre-apply exclusion warning (see `confirmFamilyExclusions`) needs the preview ALONE, before
+   * anything is approved or written, so it can offer to abort a partial import instead of only
+   * reporting one afterward.
+   */
+  previewBacklogMigration?: (migrationOptions?: QuestBacklogMigrationOptions) => Promise<QuestMigrationPreview>;
   /** Injectable executable discovery for the interactive agent choices. */
   agentAvailability?: () => AgentAvailability;
   /**
@@ -510,6 +521,9 @@ export function runInit(options: InitOptions): number | Promise<number> {
       preserveSourceIds: parsed.preserveSourceIds,
       sourceFamily: parsed.sourceFamily,
     }).then((migration) => {
+      // LCLI-521 AC#3: this path cannot prompt, so it warns rather than asks and always proceeds —
+      // the operator already chose --preserve-source-ids and the family explicitly.
+      warnExcludedFamilies(options, migration, parsed.sourceFamily);
       persistTrackerBackend(options.root, "quest");
       clearPendingQuestMigration(options.root);
       // Only AFTER the selection is persisted (LCLI-467): the migration succeeded, so Quest is the
@@ -939,6 +953,15 @@ function runBacklogMigration(
   );
 }
 
+/** {@link InitOptions.previewBacklogMigration}, defaulting to Quest's own read-only preview. */
+function previewBacklogMigrationFor(
+  options: InitOptions,
+  migrationOptions?: QuestBacklogMigrationOptions,
+): Promise<QuestMigrationPreview> {
+  if (options.previewBacklogMigration !== undefined) return options.previewBacklogMigration(migrationOptions);
+  return createQuestBacklogMigration(options.root).preview(options.root, migrationOptions);
+}
+
 /**
  * The wizard's migration (LCLI-466). It runs exactly what the flag path runs — Quest's preview, then
  * its apply — and adds one thing the wizard alone can offer: a way OUT of an id-collision refusal
@@ -992,6 +1015,9 @@ async function runWizardBacklogMigration(
           "preserving Backlog ids requires an id family",
           "answer the family prompt, or run `lore init --tracker quest --migrate-backlog --preserve-source-ids --source-family <PREFIX>`",
         );
+      // LCLI-521 AC#2: ask BEFORE writing anything if this family leaves others behind, rather than
+      // only reporting it once the migration has already applied.
+      await confirmFamilyExclusions(options, prompter, family);
       return await retryWithPreservedIds(options, family);
     } finally {
       prompter.close();
@@ -1023,6 +1049,78 @@ function needsManualResolution(cause: unknown, message: string): LoreError {
     "rename or remove the conflicting record in the Quest workspace, or rename the id in the Backlog project, then run `lore init --tracker quest --migrate-backlog` again",
     cause instanceof LoreError ? cause.input : undefined,
   );
+}
+
+/**
+ * LCLI-521 AC#2, the fleet's stated preference for removing a surprise over documenting it:
+ * preservation mode imports exactly one id family per run (Quest's own contract — see
+ * `familyHint`'s doc comment), so a Backlog holding more than one family always leaves the rest
+ * behind. Ask BEFORE anything is written whenever that is about to happen, instead of only
+ * reporting it in the finished summary. Reached only from the wizard's collision retry today; the
+ * flag path cannot prompt at all, so it warns and proceeds instead — see {@link warnExcludedFamilies}.
+ *
+ * Calls Quest's preview a SECOND time: the migration this triggers (`retryWithPreservedIds`)
+ * re-previews internally before it applies. That is deliberate, not an oversight — preview mutates
+ * nothing and is deterministic (proven against a real two-family repro, LCLI-521's task notes), so
+ * the extra round trip costs one local subprocess call, not correctness. `assertReceipt`'s own
+ * digest check is what would catch it if the source ever did drift between the two calls.
+ */
+async function confirmFamilyExclusions(options: InitOptions, prompter: InitPrompter, family: string): Promise<void> {
+  const migrationOptions: QuestBacklogMigrationOptions = { preserveSourceIds: true, sourceFamily: family };
+  let preview: QuestMigrationPreview;
+  try {
+    preview = await previewBacklogMigrationFor(options, migrationOptions);
+  } catch (cause) {
+    // The same dead end `retryWithPreservedIds` would reach applying for real — report it here,
+    // before the operator is asked to confirm an import that cannot succeed.
+    const collision = classifyMigrationCollision(cause);
+    if (collision?.kind === "preservation-refused") throw needsManualResolution(cause, collision.message);
+    throw cause;
+  }
+  const excluded = preview.excluded ?? [];
+  if (excluded.length === 0) return;
+  const stderr = options.stderr ?? process.stderr;
+  stderr.write(renderExclusionNotice(excluded, family));
+  const proceed = await prompter.confirm(
+    `Import only ${family} now and leave the record(s) above for a later run?`,
+    // Defaults to NO, matching this wizard's one other lossy/partial question (backlog/ removal,
+    // BACKLOG_REMOVAL_QUESTION): a bare Enter must not be how an operator accepts an incomplete import.
+    false,
+  );
+  if (!proceed) {
+    throw new LoreError(
+      "denied",
+      `Backlog id preservation was not confirmed: ${excluded.length} record(s) outside ${family} would be left behind`,
+      "answer yes to import only that family now and migrate the rest in a later run (one family per run), " +
+        "or resolve the alias collision in the Backlog project so a default-mode migration can import everything at once",
+    );
+  }
+}
+
+/** Shared by the wizard's pre-apply confirm and the flag path's post-apply notice (LCLI-521). */
+function renderExclusionNotice(excluded: readonly QuestMigrationExcludedRecord[], importedFamily: string): string {
+  const families = [...new Set(excluded.map((record) => record.family))].sort();
+  const ids = excluded.map((record) => record.sourceIdentifier).sort();
+  return (
+    `\nPreserving Backlog ids imports one id family per run (${importedFamily} here). ` +
+    `${excluded.length} record(s) in ${families.join(", ")} will NOT be imported by this run:\n` +
+    ids.map((id) => `  ${id}`).join("\n") +
+    "\nRun again with --preserve-source-ids --source-family <PREFIX> for each remaining family.\n"
+  );
+}
+
+/**
+ * The flag path's answer to the question the wizard asks interactively (LCLI-521 AC#3): a
+ * non-interactive `--preserve-source-ids` run cannot be asked to confirm anything, so it is told
+ * instead and proceeds — the operator already chose the flag and the family explicitly, so refusing
+ * what was asked for outright would break an existing scripted caller with no way to opt back in.
+ * Mirrors `resolveScriptedBacklogRemoval`'s "warn on stderr, never silently" shape for the analogous
+ * backlog-removal question. Stderr only, never stdout: a `--json` run's stdout is the envelope alone
+ * (cli-contract §4), and `migration.excluded` already carries this same data there in full.
+ */
+function warnExcludedFamilies(options: InitOptions, migration: TrackerMigrationResult, importedFamily?: string): void {
+  if (migration.excluded.length === 0 || importedFamily === undefined) return;
+  (options.stderr ?? process.stderr).write(renderExclusionNotice(migration.excluded, importedFamily));
 }
 
 /**
@@ -1206,6 +1304,9 @@ function runCoordinatedCutover(options: InitOptions, parsed: InitArgs): Promise<
     sourceFingerprint: plan.quest.sourceFingerprint,
     mappings: [],
     survivors: [],
+    // The coordinated cutover never accepts --preserve-source-ids/--source-family (tracker-cutover.ts
+    // has no such options), so it can never leave a family behind — always empty, not merely unset.
+    excluded: [],
     taskFingerprints: {},
     state: "applied" as const,
   }));
@@ -2337,6 +2438,18 @@ function renderPretty(data: InitResult, opts: { color: boolean }): string {
     lines.push(
       `migration: ${data.migration.state}, ${data.migration.mappings.length} mapped (${data.migration.digest})`,
     );
+    // LCLI-521 AC#1: surface what --preserve-source-ids left behind in the finished summary too,
+    // not only in the wizard's pre-apply warning — a flag-path or --plain run never sees that warning.
+    if (data.migration.excluded.length > 0) {
+      const families = [...new Set(data.migration.excluded.map((record) => record.family))].sort();
+      lines.push(
+        paint(
+          `  ${data.migration.excluded.length} record(s) left behind (${families.join(", ")}): re-run with --preserve-source-ids --source-family <PREFIX> to import them`,
+          ANSI.yellow,
+          opts.color,
+        ),
+      );
+    }
   }
   if (data.backlogRemoval !== undefined) {
     lines.push(
@@ -2403,6 +2516,10 @@ function renderPlain(data: InitResult): string {
     lines.push(
       `migration state=${data.migration.state} mappings=${data.migration.mappings.length} digest=${data.migration.digest}`,
     );
+    if (data.migration.excluded.length > 0) {
+      const families = [...new Set(data.migration.excluded.map((record) => record.family))].sort();
+      lines.push(`migration-excluded count=${data.migration.excluded.length} families=${families.join(",")}`);
+    }
   }
   if (data.backlogRemoval !== undefined) {
     lines.push(
