@@ -1042,6 +1042,17 @@ function needsManualResolution(cause: unknown, message: string): LoreError {
  * - **"until you commit"** bounds the recovery honestly. `git checkout -- backlog/` restores the
  *   deletion right up to the moment the operator commits it, and not afterwards (after that it is
  *   an ordinary revert of a commit, which is a different instruction).
+ *
+ * **"puts every file back" is true of every state this notice can now be shown for** (LCLI-523 /
+ * LCLI-524): `backlogRemovalReadiness` refuses to reach this notice at all when a file under
+ * `backlog/` is gitignored-but-present (no committed copy to restore) or is a symlink/non-regular
+ * entry (which `archiveAndDeleteBacklog` would refuse mid-transaction rather than delete). The one
+ * standing, deliberate exception is `backlog/.locks/`, gitignored BY DESIGN (ADR-0012 §4) and
+ * exempted from that check on purpose — its contents are "operational, not source" (transient
+ * concurrency-control lock files), so `archiveAndDeleteBacklog` still deletes them like everything
+ * else in the snapshot, and git — having never tracked them — cannot restore them. That is not a
+ * gap this notice's wording needs to name: a lock file is disposable by the same design decision
+ * that gitignores it, not a Backlog record this promise is about.
  */
 const BACKLOG_REMOVAL_NOTICE =
   "\nThe migration is applied; backlog/ still holds the migrated task files.\n" +
