@@ -116,7 +116,9 @@ import { ANSI, EXIT_OK, LoreError, paint, WarningCollector, type Writer } from "
 import { emit, type OutputContext, type Renderable } from "../output";
 import { applyCutover } from "../tracker-cutover";
 import {
+  classifyMigrationCollision,
   clearPendingQuestMigration,
+  hasPendingQuestMigration,
   migrateBacklogTasksToQuest,
   type TrackerMigrationResult,
 } from "../tracker-migration";
@@ -280,8 +282,12 @@ export interface InitOptions {
   prompter?: InitPrompter;
   /** The Backlog adapter for the coupling capability check; defaults to the real `backlog` binary on PATH. */
   adapter?: BacklogAdapter;
-  /** Explicit Quest migration seam; defaults to Quest's public receipt lifecycle. */
-  migrateBacklog?: () => Promise<TrackerMigrationResult>;
+  /**
+   * Explicit Quest migration seam; defaults to Quest's public receipt lifecycle. Receives the same
+   * {@link QuestBacklogMigrationOptions} the real lifecycle would (LCLI-466), so a test can observe
+   * a retry that re-runs with `preserveSourceIds`/`sourceFamily` rather than only that one ran.
+   */
+  migrateBacklog?: (migrationOptions?: QuestBacklogMigrationOptions) => Promise<TrackerMigrationResult>;
   /** Injectable executable discovery for the interactive agent choices. */
   agentAvailability?: () => AgentAvailability;
   /**
@@ -843,12 +849,98 @@ function runBacklogMigration(
   options: InitOptions,
   migrationOptions?: QuestBacklogMigrationOptions,
 ): Promise<TrackerMigrationResult> {
-  if (options.migrateBacklog !== undefined) return options.migrateBacklog();
+  if (options.migrateBacklog !== undefined) return options.migrateBacklog(migrationOptions);
   return migrateBacklogTasksToQuest(
     createQuestBacklogMigration(options.root),
     options.root,
     undefined,
     migrationOptions,
+  );
+}
+
+/**
+ * The wizard's migration (LCLI-466). It runs exactly what the flag path runs — Quest's preview, then
+ * its apply — and adds one thing the wizard alone can offer: a way OUT of an id-collision refusal
+ * without the operator re-running `lore init` by hand with flags the wizard never mentioned.
+ *
+ * The crux is that Quest's default-mode refusal does not say which of the two causes it hit; it
+ * names both (see {@link classifyMigrationCollision}, which is deliberate about claiming nothing).
+ * So this does not "detect positional renumbering and fix it". It asks, then lets Quest's own
+ * preservation-mode PREVIEW — which writes nothing — be the authority on whether a fix exists:
+ *
+ *  - the preview produces a plan → it was positional renumbering, and the migration proceeds;
+ *  - the preview returns the preservation refusal → it is a genuine dual id claim in the destination
+ *    workspace, no flag resolves it, and the operator is told that rather than offered a second
+ *    retry that cannot work.
+ *
+ * Declining the offer re-raises Quest's own refusal untouched, so the answer "no" costs nothing and
+ * the exit code is the same one the flag path gives.
+ */
+async function runWizardBacklogMigration(
+  options: InitOptions,
+  prompter: InitPrompter,
+): Promise<TrackerMigrationResult> {
+  try {
+    return await runBacklogMigration(options);
+  } catch (cause) {
+    const collision = classifyMigrationCollision(cause);
+    if (collision === undefined) throw cause;
+    if (collision.kind === "preservation-refused") throw needsManualResolution(cause, collision.message);
+    // A refusal raised by the PREVIEW has approved nothing, which is the only state a retry with
+    // different options can be offered from — see `hasPendingQuestMigration`.
+    if (hasPendingQuestMigration(options.root)) throw cause;
+    const stderr = options.stderr ?? process.stderr;
+    stderr.write(
+      `\nQuest refused the Backlog migration and wrote nothing:\n  ${collision.message}\n` +
+        "Lore can retry keeping each record's own Backlog id (`--preserve-source-ids`). Quest's own\n" +
+        "preview decides whether that actually resolves this — nothing is applied if it does not.\n",
+    );
+    try {
+      if (!(await prompter.confirm("Retry the migration keeping each record's own Backlog id?", true))) throw cause;
+      const family = (
+        await prompter.ask(
+          "Which Backlog id family should be imported (one family per run, e.g. LCLI)?",
+          collision.sourceFamilyHint ?? "",
+        )
+      ).trim();
+      // Mirrors `assertFlagCombinations`' vocabulary for the same condition on the flag path: Quest
+      // requires a family whenever ids are preserved, so an unanswered prompt fails here rather than
+      // spawning a migration that cannot be accepted.
+      if (family === "")
+        throw usage(
+          "preserving Backlog ids requires an id family",
+          "answer the family prompt, or run `lore init --tracker quest --migrate-backlog --preserve-source-ids --source-family <PREFIX>`",
+        );
+      return await retryWithPreservedIds(options, family);
+    } finally {
+      prompter.close();
+    }
+  }
+}
+
+/** The second attempt, in preservation mode; its refusal is the one that is unambiguous. */
+async function retryWithPreservedIds(options: InitOptions, sourceFamily: string): Promise<TrackerMigrationResult> {
+  try {
+    return await runBacklogMigration(options, { preserveSourceIds: true, sourceFamily });
+  } catch (cause) {
+    const collision = classifyMigrationCollision(cause);
+    if (collision?.kind !== "preservation-refused") throw cause;
+    throw needsManualResolution(cause, collision.message);
+  }
+}
+
+/**
+ * The dead end: Quest has said, in its own words, that no further flag resolves the collision, so
+ * Lore says so too instead of offering another retry. Quest's message and its itemized report are
+ * carried through verbatim — the operator needs to know WHICH ids clash — and the exit code stays
+ * `conflict` (5), the same one the flag path returns.
+ */
+function needsManualResolution(cause: unknown, message: string): LoreError {
+  return new LoreError(
+    "conflict",
+    `Quest refused the Backlog migration and no migration flag resolves it: ${message}`,
+    "rename or remove the conflicting record in the Quest workspace, or rename the id in the Backlog project, then run `lore init --tracker quest --migrate-backlog` again",
+    cause instanceof LoreError ? cause.input : undefined,
   );
 }
 
@@ -1042,7 +1134,10 @@ async function runInteractiveWizard(
   }
   const base = applyBaseScaffold(options, plan);
 
-  const migration = migrateBacklog ? await runBacklogMigration(options) : undefined;
+  // The wizard's own migration (LCLI-466): identical to the flag path's until Quest refuses on an id
+  // collision, which is the one failure an interactive run can offer a way out of — the prompter is
+  // reusable after the `finally` above closed it (`createRealPrompter` re-opens readline on demand).
+  const migration = migrateBacklog ? await runWizardBacklogMigration(options, prompter) : undefined;
   // LCLI-356 AC#2, extended to the wizard (opag ruling, 2026-08-31): verified BEFORE persisting,
   // exactly like the explicit `--tracker` path — the commitment is the selection, whether the
   // operator typed it or accepted the prompt's default. Unlike the silent zero-config default

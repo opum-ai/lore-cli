@@ -205,3 +205,77 @@ function assertReceipt(preview: QuestMigrationPreview, receipt: QuestMigrationRe
 function sameMappings(left: readonly QuestMigrationMapping[], right: readonly QuestMigrationMapping[]): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
+
+/**
+ * Whether a Lore-owned crash-recovery record already names an approved digest for `root`.
+ *
+ * The wizard's collision retry (LCLI-466) asks this before offering to re-run with different
+ * migration options: once a preview has been approved and recorded, {@link
+ * migrateBacklogTasksToQuest} resumes by re-applying THAT digest, and Quest re-derives its plan from
+ * whatever options it is handed — so a retry that changes the options against an already-recorded
+ * digest could only be refused a second time, for a different and more confusing reason. The retry
+ * is therefore offered only when nothing has been approved yet, which is every refusal raised by the
+ * preview itself.
+ */
+export function hasPendingQuestMigration(
+  root: string,
+  store: PendingMigrationStore = diskPendingMigrationStore,
+): boolean {
+  return store.read(root) !== undefined;
+}
+
+/**
+ * Quest's two id-collision refusals, as they are actually returned rather than as they might be
+ * inferred. Both are `conflict` (exit 5); what separates them is whether an automatic fix exists.
+ *
+ * - `alias-collision` is Quest's refusal in its DEFAULT positional-renumbering mode. Measured
+ *   against quest 0.7.1 (QCLI-256) its message names BOTH possible causes in one sentence — "If
+ *   this is from positional renumbering ... --preserve-source-ids ... avoids it by keeping each
+ *   record's own source id instead" and "If instead this exact id is already a live, unrelated claim
+ *   in the destination workspace, --preserve-source-ids will not resolve it" — and carries no
+ *   structured `input` at all. It is a human explanation of two possibilities, NOT a machine-readable
+ *   statement of which one occurred: two real repros built to produce the two different causes
+ *   returned the same sentence, differing only in the id it quotes. So this classification
+ *   deliberately claims nothing about the cause. It says only "an automatic fix might apply".
+ * - `preservation-refused` is Quest's refusal in preservation mode and is unambiguous: "No further
+ *   flag resolves a remaining id collision here". It is also structured (`input.collisions` /
+ *   `input.unpreservable`), so it can be acted on without reading prose.
+ *
+ * Which leaves exactly one reliable discriminator: Quest's own preservation-mode PREVIEW, which
+ * mutates nothing. It either produces a plan — the collision was positional renumbering and the
+ * retry resolves it — or returns `preservation-refused`, a genuine dual claim no flag can fix.
+ * Callers must not read `alias-collision` as "preservation will fix this".
+ */
+export type MigrationCollision =
+  | { readonly kind: "alias-collision"; readonly message: string; readonly sourceFamilyHint?: string }
+  | { readonly kind: "preservation-refused"; readonly message: string; readonly input?: unknown };
+
+/** Classify a failed migration; `undefined` for anything that is not one of Quest's id-collision refusals. */
+export function classifyMigrationCollision(cause: unknown): MigrationCollision | undefined {
+  if (!(cause instanceof LoreError) || cause.type !== "conflict") return undefined;
+  if (/id preservation refused/i.test(cause.message) || hasCollisionReport(cause.input))
+    return { kind: "preservation-refused", message: cause.message, input: cause.input };
+  if (/alias collision/i.test(cause.message))
+    return { kind: "alias-collision", message: cause.message, sourceFamilyHint: familyHint(cause.message) };
+  return undefined;
+}
+
+/** Quest's itemized preservation-mode report: id collisions it cannot resolve, and unpreservable source ids. */
+function hasCollisionReport(input: unknown): boolean {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return false;
+  const report = input as { collisions?: unknown; unpreservable?: unknown };
+  return (
+    (Array.isArray(report.collisions) && report.collisions.length > 0) ||
+    (Array.isArray(report.unpreservable) && report.unpreservable.length > 0)
+  );
+}
+
+/**
+ * A SUGGESTED id family, read out of the quoted id in Quest's refusal (`Alias collision: "TASK-2"
+ * conflicts with "TASK-2"`). It is offered as a prompt default the operator can overtype, never as a
+ * decision: when the pattern does not match, nothing changes except that the operator is asked with
+ * no default filled in. That keeps the prose-reading confined to a convenience.
+ */
+function familyHint(message: string): string | undefined {
+  return /["'`]([A-Za-z][A-Za-z0-9_]*)-\d/.exec(message)?.[1];
+}
