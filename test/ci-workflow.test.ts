@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as yaml from "js-yaml";
 
@@ -115,6 +117,80 @@ describe("ci.yml exact-host LadybugDB qualification", () => {
     expect(testScript).toContain("lore_bun_status=$" + "{PIPESTATUS[0]}");
     expect(testScript).toContain('exit "$' + '{lore_bun_status}"');
     expect(testScript).toContain("else\n  bun test --isolate --timeout=10000");
+  });
+
+  test("the Bun-epoll retry (LCLI-507) triggers on the bounded-timeout exit as well as the EEXIST string", () => {
+    // The same race can present as a quick EEXIST error (the original guard) OR
+    // as a full hang killed by the `timeout --kill-after=10s 6m` wrapper with
+    // exit 124 — job 104458113048 on PR #107 hit exactly that and the grep-only
+    // guard missed it. This asserts the source contains the widened condition;
+    // "ci.yml ubuntu Bun-epoll retry trigger (LCLI-507)" below exercises it.
+    const testScript = loadWorkflow().jobs.check?.steps?.find((step) => step.name === "Test")?.run ?? "";
+    expect(testScript).toContain(
+      'if grep -Fq "error: EEXIST: file already exists, epoll_ctl" "$' +
+        '{lore_bun_log}" || [[ "$' +
+        '{lore_bun_status}" -eq 124 ]]; then',
+    );
+  });
+});
+
+describe("ci.yml ubuntu Bun-epoll retry trigger (LCLI-507)", () => {
+  // Extracts the actual retry condition from ci.yml's ubuntu Test step, rather
+  // than a hand-copied approximation of it, so this test tracks the real guard
+  // and fails loudly if a future edit narrows it back to a single signal.
+  function extractRetryCondition(): string {
+    const testScript = loadWorkflow().jobs.check?.steps?.find((step) => step.name === "Test")?.run ?? "";
+    const match = testScript.match(/if (grep -Fq "error: EEXIST:[^\n]*?); then\n/);
+    const condition = match?.[1];
+    if (!condition) {
+      throw new Error("could not find the ubuntu Bun-epoll retry condition in ci.yml's Test step");
+    }
+    return condition;
+  }
+
+  // Runs the extracted condition in a real bash subshell against a fabricated
+  // log file and exit status, exactly the two inputs the condition reads in
+  // ci.yml, and reports whether the retry branch fired. This is a behavioral
+  // check of the guard's logic, not a second string match.
+  function retryFires(logContents: string, exitStatus: number): boolean {
+    const dir = mkdtempSync(join(tmpdir(), "lcli-507-retry-"));
+    try {
+      const logPath = join(dir, "lore-bun-test.log");
+      writeFileSync(logPath, logContents);
+      const condition = extractRetryCondition();
+      const script = `
+        lore_bun_log="${logPath}"
+        lore_bun_status=${exitStatus}
+        if ${condition}; then
+          echo RETRY
+        else
+          echo NO_RETRY
+        fi
+      `;
+      const result = spawnSync("bash", ["-c", script], { encoding: "utf8" });
+      if (result.status !== 0) {
+        throw new Error(`retry-condition harness exited ${result.status}: ${result.stderr}`);
+      }
+      return result.stdout.trim() === "RETRY";
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  test("retries on the EEXIST string, as before", () => {
+    expect(retryFires("error: EEXIST: file already exists, epoll_ctl\n", 1)).toBe(true);
+  });
+
+  test("retries on exit 124 (the bounded-timeout hang) even with no EEXIST in the log", () => {
+    expect(retryFires("", 124)).toBe(true);
+  });
+
+  test("retries when both signals are present", () => {
+    expect(retryFires("error: EEXIST: file already exists, epoll_ctl\n", 124)).toBe(true);
+  });
+
+  test("does not retry a genuine product-test failure — neither signal present", () => {
+    expect(retryFires("FAIL: expected 1 to equal 2\n", 1)).toBe(false);
   });
 });
 
