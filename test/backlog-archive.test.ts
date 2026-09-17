@@ -19,16 +19,19 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { bunGitPreflightSpawn, type GitPreflightSpawn } from "../src/adapters/git-preflight";
 import {
   type ArchiveEvidence,
   type ArchiveTransaction,
   archiveAndDeleteBacklog,
+  backlogRemovalReadiness,
   buildArchive,
   planBacklogSnapshot,
   verifyArchive,
   type ZipWriter,
 } from "../src/backlog-archive";
 import { LoreError } from "../src/errors";
+import { gitRun } from "./helpers";
 
 /** Exact-bytes STORE zip writer: names → bytes, round-trips without transformation (JSON+b64 container). */
 const exactZip: ZipWriter = {
@@ -287,6 +290,157 @@ describe("backlog archive-and-delete (LCLI-333.1)", () => {
       expect(() => verifyArchive(root, ev, exactZip)).not.toThrow();
       rmSync(join(root, "backlog"), { recursive: true, force: true });
       expect(() => verifyArchive(root, ev, exactZip)).not.toThrow(); // still verifies post-delete
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * LCLI-467. Two preconditions on OFFERING an archive-and-delete to an external user, both of which
+ * the prompt copy's honesty depends on:
+ *
+ *  - the archive really is gitignored, so "gitignored, not committed" is a fact rather than a hope;
+ *  - git really does hold what is about to be deleted, so "recoverable via `git checkout --`" is
+ *    true for this repository rather than for the typical one.
+ */
+describe("archive evidence is genuinely gitignored (LCLI-467 AC#1)", () => {
+  test("buildArchive writes .lore/archive/.gitignore ignoring the whole directory", () => {
+    const root = fixture();
+    try {
+      buildArchive(root, planBacklogSnapshot(root), exactZip, "gi");
+      const ignore = readFileSync(join(root, ".lore/archive/.gitignore"), "utf8");
+      // `*` covers the zip, the inventory, and the ignore file itself — git reads an ignore file it
+      // is ignoring, so nothing under .lore/archive/ ever reaches `git status`.
+      expect(ignore.split("\n")).toContain("*");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an operator's own .lore/archive/.gitignore is never overwritten", () => {
+    const root = fixture();
+    try {
+      mkdirSync(join(root, ".lore/archive"), { recursive: true });
+      writeFileSync(join(root, ".lore/archive/.gitignore"), "mine\n");
+      buildArchive(root, planBacklogSnapshot(root), exactZip, "gi2");
+      expect(readFileSync(join(root, ".lore/archive/.gitignore"), "utf8")).toBe("mine\n");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("backlogRemovalReadiness — git must prove the deletion is recoverable (LCLI-467)", () => {
+  /** A scripted read-only git: `ls-files` answers first, `status` second. */
+  function git(answers: { tracked?: string; status?: string; exitCode?: number; throws?: boolean }): GitPreflightSpawn {
+    return (args) => {
+      if (answers.throws === true) throw new Error("spawn ENOENT");
+      const stdout = args[0] === "ls-files" ? (answers.tracked ?? "backlog/config.yml\n") : (answers.status ?? "");
+      return { exitCode: answers.exitCode ?? 0, stdout, stderr: "" };
+    };
+  }
+
+  test("tracked and clean is ready", () => {
+    const root = fixture();
+    try {
+      expect(backlogRemovalReadiness(root, git({}))).toEqual({ ready: true });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an UNTRACKED backlog/ is refused: there is no committed copy to restore", () => {
+    const root = fixture();
+    try {
+      const readiness = backlogRemovalReadiness(root, git({ tracked: "" }));
+      expect(readiness.ready).toBe(false);
+      expect(readiness.ready === false && readiness.reason).toContain("not tracked by git");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a DIRTY backlog/ is refused: `git checkout --` would restore committed bytes over an edit", () => {
+    const root = fixture();
+    try {
+      const readiness = backlogRemovalReadiness(root, git({ status: " M backlog/config.yml\n" }));
+      expect(readiness.ready).toBe(false);
+      expect(readiness.ready === false && readiness.reason).toContain("uncommitted changes");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("git refusing to answer is refused too — an unanswered question has not proven recovery", () => {
+    const root = fixture();
+    try {
+      const refused = backlogRemovalReadiness(root, git({ exitCode: 128 }));
+      expect(refused.ready).toBe(false);
+      expect(refused.ready === false && refused.reason).toContain("git worktree");
+      const missing = backlogRemovalReadiness(root, git({ throws: true }));
+      expect(missing.ready).toBe(false);
+      expect(missing.ready === false && missing.reason).toContain("could not be run");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a backlog/ that does not exist is not ready, and no git call is made", () => {
+    const root = mkdtempSync(join(tmpdir(), "lcli-archive-"));
+    try {
+      let called = false;
+      const readiness = backlogRemovalReadiness(root, () => {
+        called = true;
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      expect(readiness.ready).toBe(false);
+      expect(called).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("against REAL git: committed is ready, an edit or an untracked file is not", () => {
+    const root = fixture();
+    try {
+      const spawn = bunGitPreflightSpawn(root);
+      // Not a repository yet: git answers, and the answer is "cannot prove it".
+      expect(backlogRemovalReadiness(root, spawn).ready).toBe(false);
+      gitRun(root, ["init"]);
+      gitRun(root, ["add", "backlog"]);
+      gitRun(root, ["-c", "user.email=t@example.test", "-c", "user.name=T", "commit", "-m", "backlog"]);
+      expect(backlogRemovalReadiness(root, spawn)).toEqual({ ready: true });
+      writeFileSync(join(root, "backlog/tasks/a.md"), "edited\n");
+      expect(backlogRemovalReadiness(root, spawn).ready).toBe(false);
+      gitRun(root, ["checkout", "--", "backlog"]);
+      expect(backlogRemovalReadiness(root, spawn)).toEqual({ ready: true });
+      writeFileSync(join(root, "backlog/tasks/new.md"), "untracked\n");
+      expect(backlogRemovalReadiness(root, spawn).ready).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Review finding (LCLI-467, PR #140): the untracked half of the gate is disarmed by CONFIG, not
+  // by argv, so the case above cannot catch it. `status.showUntrackedFiles=no` is a real setting for
+  // large repositories and can arrive from a global ~/.gitconfig the operator has forgotten; with
+  // it set, a bare `git status --porcelain` reports nothing and the gate collapses to "some file
+  // here is tracked", deleting the untracked file it promises to refuse. This asserts the readiness
+  // probe demands the answer it needs rather than the one the repository happens to give it.
+  test("against REAL git: status.showUntrackedFiles=no does NOT disarm the untracked check", () => {
+    const root = fixture();
+    try {
+      const spawn = bunGitPreflightSpawn(root);
+      gitRun(root, ["init"]);
+      gitRun(root, ["add", "backlog"]);
+      gitRun(root, ["-c", "user.email=t@example.test", "-c", "user.name=T", "commit", "-m", "backlog"]);
+      gitRun(root, ["config", "status.showUntrackedFiles", "no"]);
+      // The setting is genuinely in force: a bare status sees nothing, which is the trap.
+      writeFileSync(join(root, "backlog/tasks/hidden.md"), "untracked\n");
+      expect(spawn(["status", "--porcelain", "--", "backlog"]).stdout.trim()).toBe("");
+      // The probe must refuse anyway.
+      expect(backlogRemovalReadiness(root, spawn).ready).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

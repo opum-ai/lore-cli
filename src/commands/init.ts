@@ -84,7 +84,12 @@ import * as readline from "node:readline/promises";
 import type { Readable, Writable } from "node:stream";
 import { isCancel as clackIsCancel, multiselect as clackMultiselect } from "@clack/prompts";
 import { type BacklogAdapter, isBacklogVersionFloorFailure } from "../adapters/backlog";
-import { type GitPreflight, realGitPreflight } from "../adapters/git-preflight";
+import {
+  bunGitPreflightSpawn,
+  type GitPreflight,
+  type GitPreflightSpawn,
+  realGitPreflight,
+} from "../adapters/git-preflight";
 import { type JiraOnboarding, realJiraOnboarding } from "../adapters/jira-onboarding";
 import {
   createQuestBacklogMigration,
@@ -101,6 +106,7 @@ import {
   type TrackerEnvironmentEntry,
   trackerEntry,
 } from "../adapters/tracker-environment";
+import { archiveAndDeleteBacklog, backlogRemovalReadiness, verifyArchive } from "../backlog-archive";
 import {
   CONFIG_REL_PATH,
   type JiraTrackerConfig,
@@ -129,6 +135,7 @@ import {
   resolveTrackerSelection,
   type TrackerSelection,
 } from "../tracker-selection";
+import { storeZipWriter } from "../zip-store";
 import { type AgentsResult, applyAgentsBridge, bridgeActionColor, renderTrailer } from "./agents";
 import { type AntigravityBridgeResult, applyAntigravityBridge } from "./antigravity-bridge";
 import { optionValues, parseCommandArgs, singleOptionValue, usage } from "./args";
@@ -189,6 +196,25 @@ export interface InitResult {
   tracker?: TrackerBackend;
   /** Quest-owned Backlog migration receipt, present only after explicit verified application. */
   migration?: TrackerMigrationResult;
+  /** What happened to `backlog/` after a migration, present iff a plain `--migrate-backlog` run resolved that question (LCLI-467). */
+  backlogRemoval?: InitBacklogRemoval;
+}
+
+/**
+ * The answer to "and what happened to `backlog/`?" after a plain `--migrate-backlog` run
+ * (LCLI-467). Present on {@link InitResult} whenever a migration ran outside the coordinated
+ * `--adopt-manifest` cutover — including when nothing was removed, because "left in place" is an
+ * outcome a scripted caller has to be able to read rather than infer from an absent field.
+ */
+export interface InitBacklogRemoval {
+  /** Whether `backlog/` was archived and then DELETED from the working tree this run. */
+  readonly removed: boolean;
+  /** Why it was not removed — declined, not asked for, or refused as unrecoverable. Present iff `removed` is `false`. */
+  readonly reason?: string;
+  /** The verified, gitignored archive's repo-relative path. Present iff `removed`. */
+  readonly zipRel?: string;
+  /** How many files the archive holds — and therefore how many were deleted. Present iff `removed`. */
+  readonly entryCount?: number;
 }
 
 /** The interactive wizard's minimal prompt vocabulary — confirm (yes/no) and choose (one of a fixed list). Injected so the wizard is unit-testable without a real terminal. */
@@ -308,6 +334,15 @@ export interface InitOptions {
    */
   git?: GitPreflight;
   /**
+   * The READ-ONLY git transport `backlogRemovalReadiness` asks whether `backlog/` is tracked and
+   * clean before an archive-and-delete is offered or performed (LCLI-467). Separate from
+   * {@link InitOptions.git}, which answers the two onboarding questions and cannot be widened from
+   * here (`adapters/git-preflight.ts` owns that interface); defaults to the real `git` rooted at
+   * {@link InitOptions.root}. Injected in tests so a removal case never depends on the temp
+   * directory happening to be a repository.
+   */
+  backlogGit?: GitPreflightSpawn;
+  /**
    * The live jira-cli read seam (LCLI-358.4); defaults to the real `jira`-shelling
    * {@link realJiraOnboarding}. Injected in tests so the profile-selection and project-validation
    * branches run with neither jira-cli installed nor any credential on the machine.
@@ -357,6 +392,10 @@ interface InitArgs {
   preserveSourceIds: boolean;
   /** `--source-family <PREFIX>`: the id family to import when `--preserve-source-ids` is set. Required together. */
   sourceFamily?: string;
+  /** `--remove-backlog`: after a successful `--migrate-backlog`, archive and DELETE `backlog/` from the working tree (LCLI-467). */
+  removeBacklog: boolean;
+  /** `--no-remove-backlog`: the explicit opposite answer — keep `backlog/` on disk, and say nothing further about it (LCLI-467). */
+  noRemoveBacklog: boolean;
   /** `--adopt-manifest <path>`: coordinate a knowledge-adoption manifest with `--migrate-backlog` as one cutover (LCLI-333.1). */
   adoptManifest?: string;
   /** `--approval-digest <digest>`: the adoption preview's approval digest binding the cutover's adoption leg. Required with `--adopt-manifest`. */
@@ -473,7 +512,21 @@ export function runInit(options: InitOptions): number | Promise<number> {
     }).then((migration) => {
       persistTrackerBackend(options.root, "quest");
       clearPendingQuestMigration(options.root);
-      return finishNonInteractive(options, parsed, base, clock, priorSelection, migration);
+      // Only AFTER the selection is persisted (LCLI-467): the migration succeeded, so Quest is the
+      // tracker whatever the operator decided about the old files, and a refused removal must not
+      // leave a repository whose tasks moved but whose config did not.
+      const backlogRemoval = resolveScriptedBacklogRemoval(options, parsed, migration);
+      return finishNonInteractive(
+        options,
+        parsed,
+        base,
+        clock,
+        priorSelection,
+        migration,
+        undefined,
+        undefined,
+        backlogRemoval,
+      );
     });
   }
   if (parsed.tracker !== undefined) {
@@ -689,6 +742,30 @@ function assertFlagCombinations(parsed: InitArgs, root: string): void {
       "it's an option on the Backlog-to-Quest migration; pass --migrate-backlog to run one",
     );
   }
+  // LCLI-467 AC#3. A scripted caller must be able to say which outcome it wants, and the two
+  // spellings are opposite answers to one question — the same shape, and the same vocabulary, as
+  // `--migrate-backlog`/`--keep-backlog-tasks` above.
+  if (parsed.removeBacklog && parsed.noRemoveBacklog) {
+    throw usage(
+      "--remove-backlog and --no-remove-backlog are mutually exclusive",
+      "pass at most one: they are opposite answers to the same question",
+    );
+  }
+  if ((parsed.removeBacklog || parsed.noRemoveBacklog) && !parsed.migrateBacklog) {
+    throw usage(
+      `${parsed.removeBacklog ? "--remove-backlog" : "--no-remove-backlog"} only means something with --migrate-backlog`,
+      "it answers what happens to backlog/ once its tasks are in Quest; pass --migrate-backlog to run a migration",
+    );
+  }
+  // The coordinated cutover archives and deletes backlog/ as its own ordered phase, BEFORE it
+  // selects Quest — so neither spelling is the control there: `--remove-backlog` would be a no-op
+  // that reads like a cause, and `--no-remove-backlog` would be a request the cutover cannot honor.
+  if ((parsed.removeBacklog || parsed.noRemoveBacklog) && parsed.adoptManifest !== undefined) {
+    throw usage(
+      `${parsed.removeBacklog ? "--remove-backlog" : "--no-remove-backlog"} cannot be combined with --adopt-manifest: the coordinated cutover already archives and deletes backlog/ as a verified phase of its own`,
+      "drop the flag to run the cutover, or drop --adopt-manifest to run a plain migration you can answer this question for",
+    );
+  }
   // One message per unmet condition (LCLI-358.5 AC#4). These used to share a single sentence that
   // named neither cause: "--migrate-backlog requires --tracker quest in a legacy zero-config
   // Backlog bundle" was raised for a wrong `--tracker` value, for a missing project, AND — because
@@ -772,6 +849,8 @@ function finishNonInteractive(
   verified?: InitTrackerCheck,
   /** The package `--install-tracker` installed this run, if any (LCLI-358.3). */
   installedPackage?: string,
+  /** What a plain `--migrate-backlog` run did about `backlog/` (LCLI-467); absent when no migration ran. */
+  backlogRemoval?: InitBacklogRemoval,
 ): number | Promise<number> {
   const scaffoldTargets = [...new Set(parsed.scaffolds)];
   // Detected on every run, not only the wizard's (LCLI-358.3): three PATH lookups and three
@@ -811,6 +890,7 @@ function finishNonInteractive(
         installed: installedPackage,
         tracker: parsed.tracker,
         migration,
+        backlogRemoval,
       }),
       options.output,
       options.stdout,
@@ -837,6 +917,7 @@ function finishNonInteractive(
         installed: installedPackage,
         tracker: parsed.tracker,
         migration,
+        backlogRemoval,
       }),
       options.output,
       options.stdout,
@@ -942,6 +1023,155 @@ function needsManualResolution(cause: unknown, message: string): LoreError {
     "rename or remove the conflicting record in the Quest workspace, or rename the id in the Backlog project, then run `lore init --tracker quest --migrate-backlog` again",
     cause instanceof LoreError ? cause.input : undefined,
   );
+}
+
+/**
+ * What a run is allowed to do to `backlog/` once its tasks are in Quest, written as prose the
+ * operator reads BEFORE the question rather than as a flag name (LCLI-467 AC#1).
+ *
+ * Every clause here is literal, and the wording is the deliverable, not decoration:
+ *
+ * - **"deleted"**, not "archived". The operation unlinks every file under `backlog/` from the
+ *   working tree. Describing it as archiving and leaving the deletion to be inferred is exactly
+ *   what this task's description forbids.
+ * - **the zip is not the safety net.** It is repository-local, gitignored (see
+ *   `backlog-archive.ts`'s `writeArchiveGitignore`, which is what makes that word true) and never
+ *   committed, so it protects one working tree and nothing else. Git is the durable record, which
+ *   is why {@link backlogRemovalReadiness} refuses to let this even be offered unless git actually
+ *   holds the bytes.
+ * - **"until you commit"** bounds the recovery honestly. `git checkout -- backlog/` restores the
+ *   deletion right up to the moment the operator commits it, and not afterwards (after that it is
+ *   an ordinary revert of a commit, which is a different instruction).
+ */
+const BACKLOG_REMOVAL_NOTICE =
+  "\nThe migration is applied; backlog/ still holds the migrated task files.\n" +
+  "Removing it DELETES every file under backlog/ from your working tree. A verified zip copy is\n" +
+  "written to .lore/archive/ first — but that copy is gitignored and never committed, so it is a\n" +
+  "convenience, not the safety net. Git is: until you commit the deletion, `git checkout --\n" +
+  "backlog/` puts every file back.\n";
+
+/** The question itself. Carries the deletion in its own first clause, so an operator who skips the notice above still reads it. */
+const BACKLOG_REMOVAL_QUESTION =
+  "Delete backlog/ from the working tree now (a verified zip is kept in .lore/archive/)?";
+
+/**
+ * Archive-and-delete `backlog/`, reusing the cutover's own leg verbatim (LCLI-467 AC#2).
+ *
+ * **Reused as-is rather than reimplemented lighter.** `archiveAndDeleteBacklog(root, zip, id, txn)`
+ * takes a root, a zip transport, an id fragment and an injectable fs seam — and nothing else. It
+ * reads no cutover plan, writes no `state.json`, knows nothing about `--adopt-manifest`, the
+ * adoption ledger, or the Quest receipt; `tracker-cutover.ts` supplies `id` from its own digest and
+ * persists the evidence afterwards, which is coordination the CALLER performs, not an assumption
+ * the leg carries. Its one residual coupling is cosmetic: the staging directory it renames
+ * `backlog/` into during its commit boundary lives under `.lore/cutover/`, and it is transient —
+ * the transaction prunes it on success and names it in the error when it cannot. So the
+ * `--adopt-manifest`-coordinated assumptions are separable, and a lighter variant would mean a
+ * second, less-verified deletion path over the same user files: it is the plan → build → verify →
+ * re-hash → atomic-rename → re-verify → unlink pipeline that makes "your files are in the archive
+ * OR still on disk" true at every exit point, and the prompt above promises exactly that.
+ *
+ * `verifyArchive` is re-run on the returned evidence for the same reason `applyCutover` re-runs it:
+ * the deletion has already happened by then, so this is the assertion that what replaced the files
+ * is intact, not a precondition.
+ */
+function removeBacklogDirectory(options: InitOptions, id: string): InitBacklogRemoval {
+  const evidence = archiveAndDeleteBacklog(options.root, storeZipWriter, id);
+  verifyArchive(options.root, evidence, storeZipWriter);
+  return { removed: true, zipRel: evidence.zipRel, entryCount: evidence.entries.length };
+}
+
+/** `backlogRemovalReadiness` against the injected (or real) read-only git transport. */
+function readBacklogRemovalReadiness(options: InitOptions): ReturnType<typeof backlogRemovalReadiness> {
+  return backlogRemovalReadiness(options.root, options.backlogGit ?? bunGitPreflightSpawn(options.root));
+}
+
+/**
+ * The id fragment naming this run's archive. The cutover uses its Quest migration digest; a plain
+ * migration has the same digest available, so the two paths name their evidence the same way and a
+ * `.lore/archive/backlog-<digest>.zip` can be traced back to the migration that caused it.
+ */
+function archiveId(migration: TrackerMigrationResult): string {
+  return migration.digest.replace(/[^A-Za-z0-9._-]/g, "").slice(0, 24) || "migration";
+}
+
+/**
+ * The scripted answer (LCLI-467 AC#3): a non-interactive `--migrate-backlog` resolves the question
+ * from flags alone, and **never silently**.
+ *
+ * - `--remove-backlog` → archive and delete, or REFUSE with the reason git gave. A caller that
+ *   asked for a destructive operation and cannot have it safely gets an error, not a quiet skip:
+ *   `denied` (exit 4) is the contract's "the operation is refused" code, and the refusal names the
+ *   unmet precondition so the caller can fix it and rerun.
+ * - `--no-remove-backlog` → keep it, silently. The choice was explicit, so there is nothing to say.
+ * - neither → keep it, and SAY SO on stderr, naming both flags. This is the case AC#3 calls
+ *   "silently skipped": the default has to stay non-destructive for every existing scripted caller,
+ *   so the flag that changes it is surfaced rather than the behavior.
+ */
+function resolveScriptedBacklogRemoval(
+  options: InitOptions,
+  parsed: InitArgs,
+  migration: TrackerMigrationResult,
+): InitBacklogRemoval {
+  if (!parsed.removeBacklog) {
+    if (!parsed.noRemoveBacklog) {
+      (options.stderr ?? process.stderr).write(
+        "\nbacklog/ was left in place: its tasks are in Quest, but the files are still on disk.\n" +
+          "Pass --remove-backlog to delete them (a verified zip is kept in .lore/archive/), or\n" +
+          "--no-remove-backlog to keep them without this notice.\n",
+      );
+    }
+    return {
+      removed: false,
+      reason: parsed.noRemoveBacklog ? "--no-remove-backlog was passed" : "no --remove-backlog/--no-remove-backlog",
+    };
+  }
+  const readiness = readBacklogRemovalReadiness(options);
+  if (!readiness.ready) {
+    throw new LoreError(
+      "denied",
+      `refusing --remove-backlog: ${readiness.reason}`,
+      "commit or clean backlog/ so `git checkout -- backlog/` can restore it, then rerun; or drop --remove-backlog",
+      { reason: readiness.reason },
+    );
+  }
+  return removeBacklogDirectory(options, archiveId(migration));
+}
+
+/**
+ * The wizard's answer (LCLI-467 AC#1), and the one place in this file that asks a question AFTER a
+ * write.
+ *
+ * That is a deliberate, named exception to the wizard's "every question is asked before the first
+ * byte" invariant (LCLI-358.1, commented at the call site), and it is the SECOND one — LCLI-466's
+ * post-refusal retry offer is the first, recorded as LCLI-519. It sits on the same side of the line
+ * as that one and for a stronger reason: the question is not merely better informed after the
+ * migration, it does not EXIST before it. Asking up front would mean asking an operator to
+ * pre-authorize deleting files on the strength of a migration that has not run and may still
+ * refuse — and a "yes" collected then would be acted on by a later phase they can no longer see.
+ * The invariant's purpose is that a refused run leaves the directory as it found it; a question
+ * asked here can only ever be reached by a run whose migration already succeeded, and answering it
+ * "no" still leaves `backlog/` exactly as found.
+ *
+ * When git cannot prove the files are recoverable the question is not asked AT ALL — the operator
+ * is told why instead. An unrecoverable deletion is not a choice worth offering.
+ */
+async function offerBacklogRemoval(
+  options: InitOptions,
+  prompter: InitPrompter,
+  migration: TrackerMigrationResult,
+): Promise<InitBacklogRemoval> {
+  const stderr = options.stderr ?? process.stderr;
+  const readiness = readBacklogRemovalReadiness(options);
+  if (!readiness.ready) {
+    stderr.write(`\nbacklog/ was left in place: ${readiness.reason}.\n`);
+    return { removed: false, reason: readiness.reason };
+  }
+  stderr.write(BACKLOG_REMOVAL_NOTICE);
+  // Defaults to NO. A bare Enter is the answer an operator gives when they are not reading, and the
+  // one destructive question in this wizard must not be the one that answers itself.
+  const remove = await prompter.confirm(BACKLOG_REMOVAL_QUESTION, false);
+  if (!remove) return { removed: false, reason: "declined at the prompt" };
+  return removeBacklogDirectory(options, archiveId(migration));
 }
 
 /**
@@ -1152,6 +1382,19 @@ async function runInteractiveWizard(
   persistTrackerBackend(options.root, tracker, jira);
   if (migration !== undefined) clearPendingQuestMigration(options.root);
 
+  // LCLI-467. Asked here, after the selection is persisted, for the reason {@link
+  // offerBacklogRemoval} documents: the question does not exist until the migration has actually
+  // succeeded. The prompter is reusable after the `finally` above closed it, the same way
+  // LCLI-466's retry offer above relies on (`createRealPrompter` re-opens readline on demand).
+  let backlogRemoval: InitBacklogRemoval | undefined;
+  if (migration !== undefined) {
+    try {
+      backlogRemoval = await offerBacklogRemoval(options, prompter, migration);
+    } finally {
+      prompter.close();
+    }
+  }
+
   const clock = options.clock ?? (() => new Date());
   const agents = wantAgents ? applyAgentsBridge({ root: options.root, force: false, check: false }) : undefined;
   const codex = wantCodex ? applyCodexBridge({ root: options.root, force: false, check: false }) : undefined;
@@ -1182,6 +1425,7 @@ async function runInteractiveWizard(
     trackerCheck,
     tracker,
     migration,
+    backlogRemoval,
   };
   emit(initRenderable(result), options.output, options.stdout);
   return EXIT_OK;
@@ -1625,6 +1869,8 @@ function parseInitArgs(args: readonly string[]): InitArgs {
   const keepBacklogTasks = parsed.flags.has("keep-backlog-tasks");
   const preserveSourceIds = parsed.flags.has("preserve-source-ids");
   const sourceFamily = singleOptionValue(parsed, "source-family");
+  const removeBacklog = parsed.flags.has("remove-backlog");
+  const noRemoveBacklog = parsed.flags.has("no-remove-backlog");
   const allowNoGit = parsed.flags.has("allow-no-git");
   const installTracker = parsed.flags.has("install-tracker");
   const noInstallTracker = parsed.flags.has("no-install-tracker");
@@ -1733,6 +1979,8 @@ function parseInitArgs(args: readonly string[]): InitArgs {
     keepBacklogTasks,
     preserveSourceIds,
     sourceFamily,
+    removeBacklog,
+    noRemoveBacklog,
     adoptManifest: adoptManifestValue,
     approvalDigest: approvalDigestValue,
     allowNoGit,
@@ -2077,6 +2325,13 @@ function renderPretty(data: InitResult, opts: { color: boolean }): string {
       `migration: ${data.migration.state}, ${data.migration.mappings.length} mapped (${data.migration.digest})`,
     );
   }
+  if (data.backlogRemoval !== undefined) {
+    lines.push(
+      data.backlogRemoval.removed
+        ? `backlog/: deleted from the working tree, ${data.backlogRemoval.entryCount} file(s) archived to ${data.backlogRemoval.zipRel}`
+        : `backlog/: left in place (${data.backlogRemoval.reason})`,
+    );
+  }
   if (data.interactive) {
     lines.push("Run `lore instructions` for the canonical agent loop.");
   }
@@ -2134,6 +2389,13 @@ function renderPlain(data: InitResult): string {
   if (data.migration !== undefined) {
     lines.push(
       `migration state=${data.migration.state} mappings=${data.migration.mappings.length} digest=${data.migration.digest}`,
+    );
+  }
+  if (data.backlogRemoval !== undefined) {
+    lines.push(
+      data.backlogRemoval.removed
+        ? `backlog-removal deleted files=${data.backlogRemoval.entryCount} archive=${data.backlogRemoval.zipRel}`
+        : "backlog-removal kept",
     );
   }
   return lines.join("\n");
