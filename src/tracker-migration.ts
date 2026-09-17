@@ -245,6 +245,18 @@ export function hasPendingQuestMigration(
  * mutates nothing. It either produces a plan — the collision was positional renumbering and the
  * retry resolves it — or returns `preservation-refused`, a genuine dual claim no flag can fix.
  * Callers must not read `alias-collision` as "preservation will fix this".
+ *
+ * WHEN quest-cli QCLI-322 SHIPS, DO NOT DELETE THE PREVIEW CALL IN FAVOUR OF A `cause` FIELD.
+ * quest-cli confirmed (2026-09-17) that Quest CAN tell a destination claim from an internal
+ * renumbering at its throw site — so a structured cause is coming — and argued against relying on
+ * it here, for a reason that outlives the field: that discriminator is necessary but NOT sufficient
+ * for "preservation would resolve it". Preservation can independently refuse on an unpreservable
+ * record (unresolvable parent) or on preserved ids that collide among themselves, so a cause
+ * derived from the discriminator alone can promise a retry that then refuses — the exact failure
+ * QCLI-256 exists to prevent, in a new costume. Only computing the preservation outcome answers it,
+ * which is what asking the preview does. A `cause` field may improve the PROMPT COPY (naming the
+ * likely cause before asking); it must never replace the preview as the authority on whether the
+ * retry can succeed.
  */
 export type MigrationCollision =
   | { readonly kind: "alias-collision"; readonly message: string; readonly sourceFamilyHint?: string }
