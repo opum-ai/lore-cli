@@ -39,13 +39,23 @@ platform, output from a job that never completed, under the same filename as
 the original. **Nothing below is false**: every claim was verified against
 attempt 1's real data on 2026-09-15, before the re-run existed. It is only the
 bare run-id citation that stopped resolving to what it meant when written.
-Anyone re-verifying a claim below against the live API should use
-`.../actions/runs/34968280818/attempts/1`, not the bare run id — the same
-"cite the blob, not the branch" precedent this repo already set in
-[Release publishing](../runbooks/release-publishing.md) for `0.6.0`'s run
-`34393976910` (there, a 404 from a history rewrite; here, a wrong-but-live
-answer from a re-run — different mechanism, same rule: trust the digests in
-this record, not the CI link).
+**Staleness is detectable; recovery is not — the two halves of a run id do not
+degrade the same way.** Run METADATA is attempt-scoped and answers correctly
+forever: `.../actions/runs/34968280818/attempts/1` will keep saying `success`
+with its real job list no matter how many later attempts run. Run ARTIFACTS
+are not attempt-scoped at all — `.../attempts/1/artifacts` is a hard 404 — so
+`attempts/1` tells a reader that attempt 1 succeeded, but cannot hand back the
+bytes it produced. The only thing that can is a copy taken at citation time
+(this is why opum-cli-e2e could catch the `win32-x64` divergence at all: five
+of its six re-fetched reports matched an earlier retained copy byte-for-byte,
+and the sixth didn't). So: cite `.../attempts/1` to make a claim VERIFIABLE,
+but don't read it as a recovery route — this record's own six-tarball digest
+match is not independently reproducible from GitHub anymore, only trustable
+because it was performed and recorded before the re-run. Same rule this repo
+already set in [Release publishing](../runbooks/release-publishing.md) for
+`0.6.0`'s run `34393976910` (there, a 404 from a history rewrite; here, a
+wrong-but-live answer from a re-run — different mechanism, same conclusion:
+trust the digests in this record, not the CI link).
 
 `0.7.0` is **RELEASED**. Published 2026-09-15 from tag `v0.7.0` (annotated tag
 object `9208d9c51dfcb2e0e75b086ac9a3b5fc9ca7618c`, peeling to
