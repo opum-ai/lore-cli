@@ -72,9 +72,62 @@ describe("migrateBacklogTasksToQuest", () => {
       sourceFingerprint: "sha256:source",
       mappings: preview.mappings,
       survivors: [],
+      excluded: [],
       taskFingerprints: { "T-1": "sha256:task" },
       state: "applied",
     });
+  });
+
+  /**
+   * LCLI-521. `excluded` is preview-only (Quest's own contract — a default-mode preview never sets
+   * it), so this is what a preservation-mode result carries through. Verified against a real
+   * two-family repro (backlog 1.50.1, quest 0.7.1) before this test was written — see the task's
+   * implementation notes for the exact commands.
+   */
+  test("threads a preservation-mode preview's excluded records into the result (LCLI-521)", async () => {
+    const excludingPreview: QuestMigrationPreview = {
+      ...preview,
+      excluded: [
+        { sourceIdentifier: "LORE-1", family: "LORE" },
+        { sourceIdentifier: "LORE-2", family: "LORE" },
+      ],
+    };
+    const result = await migrateBacklogTasksToQuest(
+      migration({
+        preview: async () => excludingPreview,
+        apply: async () => receipt,
+      }),
+      "/source",
+      memoryStore(),
+      { preserveSourceIds: true, sourceFamily: "LCLI" },
+    );
+    expect(result.excluded).toEqual([
+      { sourceIdentifier: "LORE-1", family: "LORE" },
+      { sourceIdentifier: "LORE-2", family: "LORE" },
+    ]);
+  });
+
+  test("a resumed migration's excluded records come back from the recorded pending preview, not re-fetched", async () => {
+    const excludingPreview: QuestMigrationPreview = {
+      ...preview,
+      excluded: [{ sourceIdentifier: "LORE-1", family: "LORE" }],
+    };
+    const store = memoryStore();
+    store.write("/source", excludingPreview);
+    let previewCalls = 0;
+    const result = await migrateBacklogTasksToQuest(
+      migration({
+        preview: async () => {
+          previewCalls += 1;
+          throw new Error("must not re-preview on resume");
+        },
+        status: async () => receipt,
+      }),
+      "/source",
+      store,
+    );
+    expect(previewCalls).toBe(0);
+    expect(result.excluded).toEqual([{ sourceIdentifier: "LORE-1", family: "LORE" }]);
   });
 
   test("threads preserveSourceIds/sourceFamily to both preview and apply (LCLI-465)", async () => {

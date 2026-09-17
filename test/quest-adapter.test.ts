@@ -401,6 +401,94 @@ describe("Quest 0.2 tracker adapter", () => {
       expect(applyArgs).toEqual(expect.arrayContaining(["--preserve-source-ids", "--source-family", "LCLI"]));
     });
 
+    /**
+     * LCLI-521. Verified against a real quest 0.7.1 preservation-mode preview before this test was
+     * written: the live envelope carries `excluded`, even though `quest migration backlog preview
+     * --help`'s own "fields" list (digest/mappings/requiresApproval/sourceFingerprint) does not
+     * mention it — the help text undersold the real response.
+     */
+    test("a preservation-mode preview's excluded records are parsed through (LCLI-521)", async () => {
+      const previewResponse = {
+        sourceFingerprint: "sha256:s",
+        digest: "sha256:d",
+        requiresApproval: true as const,
+        mappings: [],
+        excluded: [
+          { sourceIdentifier: "LORE-1", family: "LORE" },
+          { sourceIdentifier: "LORE-2", family: "LORE" },
+        ],
+        // A field this adapter does not read (QCLI-168's `renumbered`): present on the real envelope,
+        // must not break parsing of an otherwise-valid preview.
+        renumbered: [{ sourceIdentifier: "LCLI-1.1", targetIdentifier: "LCLI-3", reason: "dotted_subtask_translated" }],
+      };
+      const migration = createQuestBacklogMigration("/repo", {
+        spawn: async (readonlyArgs) => {
+          const args = [...readonlyArgs];
+          if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+          if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
+          if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
+          if (args.slice(0, 3).join(" ") === "migration backlog preview")
+            return ok("migration.backlog-preview", previewResponse);
+          throw new Error(`unexpected quest call: ${args.join(" ")}`);
+        },
+        workspaceInitialized: () => true,
+        actor: { id: "lore-cli-session", kind: "delegated-agent", accountableHumanId: "jdnewhouse" },
+      });
+      const preview = await migration.preview("/source", { preserveSourceIds: true, sourceFamily: "LCLI" });
+      expect(preview.excluded).toEqual([
+        { sourceIdentifier: "LORE-1", family: "LORE" },
+        { sourceIdentifier: "LORE-2", family: "LORE" },
+      ]);
+    });
+
+    test("a default-mode preview with no excluded field parses to undefined, not an empty array", async () => {
+      const previewResponse = {
+        sourceFingerprint: "sha256:s",
+        digest: "sha256:d",
+        requiresApproval: true as const,
+        mappings: [],
+      };
+      const migration = createQuestBacklogMigration("/repo", {
+        spawn: async (readonlyArgs) => {
+          const args = [...readonlyArgs];
+          if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+          if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
+          if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
+          if (args.slice(0, 3).join(" ") === "migration backlog preview")
+            return ok("migration.backlog-preview", previewResponse);
+          throw new Error(`unexpected quest call: ${args.join(" ")}`);
+        },
+        workspaceInitialized: () => true,
+        actor: { id: "lore-cli-session", kind: "delegated-agent", accountableHumanId: "jdnewhouse" },
+      });
+      const preview = await migration.preview("/source");
+      expect(preview.excluded).toBeUndefined();
+    });
+
+    test("a malformed excluded entry is drift, not a silent skip", async () => {
+      const previewResponse = {
+        sourceFingerprint: "sha256:s",
+        digest: "sha256:d",
+        requiresApproval: true as const,
+        mappings: [],
+        excluded: [{ sourceIdentifier: "LORE-1" }], // missing `family`
+      };
+      const migration = createQuestBacklogMigration("/repo", {
+        spawn: async (readonlyArgs) => {
+          const args = [...readonlyArgs];
+          if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+          if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
+          if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
+          if (args.slice(0, 3).join(" ") === "migration backlog preview")
+            return ok("migration.backlog-preview", previewResponse);
+          throw new Error(`unexpected quest call: ${args.join(" ")}`);
+        },
+        workspaceInitialized: () => true,
+        actor: { id: "lore-cli-session", kind: "delegated-agent", accountableHumanId: "jdnewhouse" },
+      });
+      await expect(migration.preview("/source")).rejects.toMatchObject({ type: "drift" });
+    });
+
     test("omitted preserveSourceIds/sourceFamily add no flags at all — the default positional-renumbering path is byte-identical to before this option existed", async () => {
       const calls: string[][] = [];
       const previewResponse = {
