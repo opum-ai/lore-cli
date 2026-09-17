@@ -155,6 +155,24 @@ silence. That gate reads the project, not the configuration: a bundle with
 `backend = "backlog"` already written reaches Quest through exactly the same
 two flags as a zero-config one.
 
+**An id collision offers a way out inside the same run.** Quest refuses a
+migration whose ids clash, with one `conflict` (exit `5`) message that names two
+possible causes — positional renumbering (a dotted subtask flattening and
+shifting a later allocation, which `--preserve-source-ids --source-family
+<PREFIX>` avoids) and an id already claimed by an unrelated record in the
+destination workspace (which no flag resolves). The message does not say which
+one occurred, so the wizard does not guess: it prints Quest's refusal, offers to
+retry keeping each record's own Backlog id, and asks which id family to import,
+pre-filled from the id Quest quoted. The retry is decided by Quest's own
+preservation-mode preview, which writes nothing — it either produces a plan and
+the migration completes in the same run, or it refuses again, and `init` reports
+that the collision needs manual resolution (rename or remove the conflicting
+record) instead of offering a second retry that cannot work. Declining the offer
+re-raises Quest's own refusal unchanged. Both outcomes leave `[tracker]`
+unwritten unless a migration actually applied. The prompt-free equivalents are
+`--preserve-source-ids` and `--source-family <PREFIX>`, which must be passed
+together and only with `--migrate-backlog`.
+
 **Choosing `jira` configures it in the same run.** A jira selection is useless
 without a `[tracker.jira]` table — `createTrackerAdapter` refuses the backend
 without one — so `init` resolves that table before it persists the selection.

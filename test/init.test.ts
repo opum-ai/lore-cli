@@ -170,12 +170,16 @@ function scriptedPrompter(answers: {
   jiraProfile?: string;
   jiraProject?: string;
   backlogTasks?: string;
+  retryPreservingIds?: boolean;
+  sourceFamily?: string;
 }): InitPrompter {
   return {
     confirm: async (question, defaultValue) => {
       // Matched before the catch-all below (LCLI-358.1): the git preflight is a `confirm` too, and
       // without its own branch a test that answers `obsidian: false` would silently decline git.
-      // The same applies to LCLI-358.3's install and switch-tracker offers.
+      // The same applies to LCLI-358.3's install and switch-tracker offers, and to LCLI-466's
+      // post-refusal retry offer.
+      if (question.includes("own Backlog id")) return answers.retryPreservingIds ?? defaultValue;
       if (question.includes("git repository")) return answers.git ?? defaultValue;
       if (question.includes("is not installed")) return answers.install ?? defaultValue;
       if (question.includes("different tracker")) return answers.switchTracker ?? defaultValue;
@@ -208,6 +212,9 @@ function scriptedPrompter(answers: {
     ask: async (question, defaultValue) => {
       if (question.includes("jira-cli profile")) return answers.jiraProfile ?? defaultValue;
       if (question.includes("project key")) return answers.jiraProject ?? defaultValue;
+      // LCLI-466's family prompt. Unanswered, it falls through to `defaultValue` like every other
+      // question here — which is the suggestion Lore read out of Quest's own refusal.
+      if (question.includes("id family")) return answers.sourceFamily ?? defaultValue;
       return defaultValue;
     },
     close: () => {},
@@ -1244,6 +1251,206 @@ describe("lore init — legacy zero-config tracker boundary", () => {
     expect(result.migration).toEqual(migrationResult);
     expect(result.tracker).toBe("quest");
     expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
+  });
+
+  /**
+   * LCLI-466. Both strings are copied VERBATIM from quest 0.7.1 on this machine, produced by two
+   * real repros with the real `backlog` and `quest` binaries: one where a dotted subtask's
+   * positional renumbering shifted a later allocation, and one where the destination workspace
+   * already held the ids. Quest returns the SAME default-mode sentence for both — it names both
+   * causes rather than the one that occurred — which is why the wizard asks and then lets Quest's
+   * own preservation-mode preview decide, instead of reading the cause out of the prose.
+   */
+  const ALIAS_COLLISION =
+    'Alias collision: "TASK-2" conflicts with "TASK-2". If this is from positional renumbering ' +
+    "(for example a dotted subtask flattening and shifting a later allocation), --preserve-source-ids " +
+    "--source-family <PREFIX> avoids it by keeping each record's own source id instead. If instead " +
+    "this exact id is already a live, unrelated claim in the destination workspace, " +
+    "--preserve-source-ids will not resolve it -- rename or remove the conflicting record in the " +
+    "destination, or rename the id in the source, before retrying.";
+  const PRESERVATION_REFUSED =
+    "Backlog id preservation refused: 2 id collision(s). See the itemized report for detail. No " +
+    "further flag resolves a remaining id collision here: rename or remove the conflicting record in " +
+    "the destination workspace, or rename the id in the source, then retry.";
+  type MigrationOptions = { preserveSourceIds?: boolean; sourceFamily?: string } | undefined;
+
+  function migrationWizard(answers: { retryPreservingIds?: boolean; sourceFamily?: string }): {
+    prompter: InitPrompter;
+    askedDefaults: string[];
+  } {
+    const askedDefaults: string[] = [];
+    const base = scriptedPrompter({
+      tracker: "quest",
+      backlogTasks: "migrate",
+      agents: false,
+      site: "none",
+      obsidian: false,
+      ...answers,
+    });
+    return {
+      askedDefaults,
+      prompter: {
+        ...base,
+        ask: async (question, defaultValue) => {
+          if (question.includes("id family")) askedDefaults.push(defaultValue);
+          return base.ask(question, defaultValue);
+        },
+      },
+    };
+  }
+
+  test("an id-collision refusal is retried with --preserve-source-ids in the same run (AC#2, LCLI-466)", async () => {
+    legacyBundle();
+    const calls: MigrationOptions[] = [];
+    const { prompter, askedDefaults } = migrationWizard({ retryPreservingIds: true });
+    const { result, stderr } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      adapter: fakeAdapter([], { probe: "ok" }),
+      agentAvailability: () => ({ claude: false, codex: false }),
+      migrateBacklog: async (migrationOptions) => {
+        calls.push(migrationOptions);
+        // Exactly what Quest does: the default positional-renumbering run refuses, the
+        // preservation run produces a plan.
+        if (migrationOptions?.preserveSourceIds !== true) throw new LoreError("conflict", ALIAS_COLLISION);
+        return migrationResult;
+      },
+    });
+    // The retry carries BOTH flags Quest requires together, and only after the first attempt failed.
+    expect(calls).toEqual([undefined, { preserveSourceIds: true, sourceFamily: "TASK" }]);
+    // The family prompt is pre-filled from the id Quest quoted — a suggestion, overtypable.
+    expect(askedDefaults).toEqual(["TASK"]);
+    // No second `lore init`: this run completes the migration and pins Quest.
+    expect(result.migration).toEqual(migrationResult);
+    expect(result.tracker).toBe("quest");
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
+    expect(stderr).toContain("Alias collision");
+    expect(stderr).toContain("wrote nothing");
+  });
+
+  test("the operator's own family answer overrides the suggestion read out of Quest's message", async () => {
+    legacyBundle();
+    const calls: MigrationOptions[] = [];
+    const { prompter } = migrationWizard({ retryPreservingIds: true, sourceFamily: "LCLI" });
+    await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      adapter: fakeAdapter([], { probe: "ok" }),
+      agentAvailability: () => ({ claude: false, codex: false }),
+      migrateBacklog: async (migrationOptions) => {
+        calls.push(migrationOptions);
+        if (migrationOptions?.preserveSourceIds !== true) throw new LoreError("conflict", ALIAS_COLLISION);
+        return migrationResult;
+      },
+    });
+    expect(calls[1]).toEqual({ preserveSourceIds: true, sourceFamily: "LCLI" });
+  });
+
+  test("a genuine dual id claim is reported as needing manual resolution, with no retry that cannot work", async () => {
+    legacyBundle();
+    const calls: MigrationOptions[] = [];
+    const report = { collisions: [{ candidate: "TASK-1", conflictsWith: "TASK-1" }], unpreservable: [] };
+    const { prompter } = migrationWizard({ retryPreservingIds: true });
+    const promise = runInit({
+      root,
+      git: gitStub(),
+      output: JSON_CTX,
+      stdout: capture(),
+      stderr: capture(),
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      adapter: fakeAdapter([], { probe: "ok" }),
+      agentAvailability: () => ({ claude: false, codex: false }),
+      jira: fakeJira(),
+      migrateBacklog: async (migrationOptions) => {
+        calls.push(migrationOptions);
+        // Quest's preservation-mode preview is the authority, and here it refuses outright.
+        if (migrationOptions?.preserveSourceIds === true)
+          throw new LoreError("conflict", PRESERVATION_REFUSED, undefined, report);
+        throw new LoreError("conflict", ALIAS_COLLISION);
+      },
+    });
+    let thrown: unknown;
+    try {
+      await promise;
+    } catch (cause) {
+      thrown = cause;
+    }
+    expect(thrown).toBeInstanceOf(LoreError);
+    const error = thrown as LoreError;
+    // Still exit 5, and Quest's own words are carried rather than paraphrased.
+    expect(error.type).toBe("conflict");
+    expect(error.message).toContain("no migration flag resolves it");
+    expect(error.message).toContain("No further flag resolves a remaining id collision here");
+    expect(error.hint).toContain("rename or remove the conflicting record");
+    expect(error.input).toEqual(report);
+    // Two attempts, never a third: there is no flag left to offer.
+    expect(calls).toEqual([undefined, { preserveSourceIds: true, sourceFamily: "TASK" }]);
+    // And the backend is left unpinned, exactly as a failed flag-path migration leaves it.
+    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).not.toContain("[tracker]");
+  });
+
+  test("declining the retry re-raises Quest's own refusal untouched", async () => {
+    legacyBundle();
+    const refusal = new LoreError("conflict", ALIAS_COLLISION);
+    const calls: MigrationOptions[] = [];
+    const { prompter } = migrationWizard({ retryPreservingIds: false });
+    const promise = runInit({
+      root,
+      git: gitStub(),
+      output: JSON_CTX,
+      stdout: capture(),
+      stderr: capture(),
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      adapter: fakeAdapter([], { probe: "ok" }),
+      agentAvailability: () => ({ claude: false, codex: false }),
+      jira: fakeJira(),
+      migrateBacklog: async (migrationOptions) => {
+        calls.push(migrationOptions);
+        throw refusal;
+      },
+    });
+    await expect(promise).rejects.toBe(refusal);
+    expect(calls).toEqual([undefined]);
+  });
+
+  test("a migration failure that is not an id collision is re-raised without any retry offer", async () => {
+    legacyBundle();
+    const failure = new LoreError("validation", "Quest workspace is not available");
+    const base = scriptedPrompter({
+      tracker: "quest",
+      backlogTasks: "migrate",
+      agents: false,
+      site: "none",
+      obsidian: false,
+    });
+    const prompter: InitPrompter = {
+      ...base,
+      confirm: async (question, defaultValue) => {
+        if (question.includes("own Backlog id")) throw new Error("no retry may be offered for a non-collision failure");
+        return base.confirm(question, defaultValue);
+      },
+    };
+    const promise = runInit({
+      root,
+      git: gitStub(),
+      output: JSON_CTX,
+      stdout: capture(),
+      stderr: capture(),
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      adapter: fakeAdapter([], { probe: "ok" }),
+      agentAvailability: () => ({ claude: false, codex: false }),
+      jira: fakeJira(),
+      migrateBacklog: async () => Promise.reject(failure),
+    });
+    await expect(promise).rejects.toBe(failure);
   });
 
   test("jira and none stay reachable in a repository that has Backlog tasks (AC#1)", async () => {
