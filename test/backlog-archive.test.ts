@@ -332,11 +332,20 @@ describe("archive evidence is genuinely gitignored (LCLI-467 AC#1)", () => {
 });
 
 describe("backlogRemovalReadiness — git must prove the deletion is recoverable (LCLI-467)", () => {
-  /** A scripted read-only git: `ls-files` answers first, `status` second. */
+  /**
+   * A scripted read-only git: `ls-files` answers first, `status` second. The default `tracked`
+   * lists BOTH files `fixture()` actually writes to disk — `backlogRemovalReadiness` now also
+   * cross-checks a real `planBacklogSnapshot` walk of the fixture directory against this list
+   * (LCLI-523), so a default that under-reports what is on disk would misfire as "ignored but
+   * present" rather than exercising the "tracked and clean" case it names.
+   */
   function git(answers: { tracked?: string; status?: string; exitCode?: number; throws?: boolean }): GitPreflightSpawn {
     return (args) => {
       if (answers.throws === true) throw new Error("spawn ENOENT");
-      const stdout = args[0] === "ls-files" ? (answers.tracked ?? "backlog/config.yml\n") : (answers.status ?? "");
+      const stdout =
+        args[0] === "ls-files"
+          ? (answers.tracked ?? "backlog/config.yml\nbacklog/tasks/a.md\n")
+          : (answers.status ?? "");
       return { exitCode: answers.exitCode ?? 0, stdout, stderr: "" };
     };
   }
@@ -441,6 +450,84 @@ describe("backlogRemovalReadiness — git must prove the deletion is recoverable
       expect(spawn(["status", "--porcelain", "--", "backlog"]).stdout.trim()).toBe("");
       // The probe must refuse anyway.
       expect(backlogRemovalReadiness(root, spawn).ready).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // LCLI-523: a gitignored file is invisible to BOTH `git ls-files` and `git status --porcelain
+  // --untracked-files=all` (ignored files are never reported by either, tracked or not), so the two
+  // checks above see a tracked-clean backlog/ and say ready:true even though `git checkout --
+  // backlog/` cannot restore the ignored file — it has no committed copy. Real repro, not the
+  // scripted git fake above: a real .gitignore rule, a real ignored file on disk.
+  test("against REAL git: a gitignored file under backlog/ is refused, even though git ls-files and git status both read clean", () => {
+    const root = fixture();
+    try {
+      const spawn = bunGitPreflightSpawn(root);
+      mkdirSync(join(root, "backlog/drafts"), { recursive: true });
+      writeFileSync(join(root, ".gitignore"), "backlog/drafts/\n");
+      gitRun(root, ["init"]);
+      gitRun(root, ["add", "backlog", ".gitignore"]);
+      gitRun(root, ["-c", "user.email=t@example.test", "-c", "user.name=T", "commit", "-m", "backlog"]);
+      // The tracked-and-clean set alone is ready.
+      expect(backlogRemovalReadiness(root, spawn)).toEqual({ ready: true });
+      // Now drop a genuinely ignored file into the tree.
+      writeFileSync(join(root, "backlog/drafts/idea.md"), "an idea\n");
+      expect(spawn(["ls-files", "--", "backlog"]).stdout).not.toContain("drafts/idea.md");
+      expect(spawn(["status", "--porcelain", "--untracked-files=all", "--", "backlog"]).stdout.trim()).toBe("");
+      const readiness = backlogRemovalReadiness(root, spawn);
+      expect(readiness.ready).toBe(false);
+      expect(readiness.ready === false && readiness.reason).toContain("backlog/drafts/idea.md");
+      expect(readiness.ready === false && readiness.reason).toContain("gitignored");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // LCLI-524: git tracks a symlink natively and reports it clean, so the two git checks say
+  // ready:true for a state `archiveAndDeleteBacklog` (via planBacklogSnapshot) then refuses at
+  // drift — aborting `lore init` mid-run instead of never being offered. Real repro: a real symlink,
+  // committed and clean, exactly the shape a tracked-and-clean git status would otherwise pass.
+  test("against REAL git: a symlink under backlog/ is refused, matching what archiveAndDeleteBacklog itself would refuse", () => {
+    const root = fixture();
+    try {
+      if (process.platform === "win32") return; // symlink creation needs elevation on Windows CI
+      const spawn = bunGitPreflightSpawn(root);
+      writeFileSync(join(root, "outside.md"), "elsewhere\n");
+      symlinkSync("../outside.md", join(root, "backlog/link.md"));
+      gitRun(root, ["init"]);
+      gitRun(root, ["add", "backlog", "outside.md"]);
+      gitRun(root, ["-c", "user.email=t@example.test", "-c", "user.name=T", "commit", "-m", "backlog+link"]);
+      // Git tracks the symlink itself and reports the tree clean.
+      expect(spawn(["ls-files", "--", "backlog"]).stdout).toContain("backlog/link.md");
+      expect(spawn(["status", "--porcelain", "--untracked-files=all", "--", "backlog"]).stdout.trim()).toBe("");
+      const readiness = backlogRemovalReadiness(root, spawn);
+      expect(readiness.ready).toBe(false);
+      expect(readiness.ready === false && readiness.reason).toContain("symlink");
+      // And archiveAndDeleteBacklog would indeed refuse the same tree, confirming the gate now
+      // agrees with the archive instead of aborting it mid-run.
+      expect(() => planBacklogSnapshot(root)).toThrow(/symlink/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // LCLI-523 AC3: backlog/.locks/ is gitignored BY DESIGN (ADR-0012 §4) — the new disk-vs-git
+  // cross-check must not treat that exemption as drift, or every ordinary lore-managed project
+  // would be refused.
+  test("against REAL git: backlog/.locks/ (gitignored by design, ADR-0012 §4) does not trip the new check", () => {
+    const root = fixture();
+    try {
+      const spawn = bunGitPreflightSpawn(root);
+      mkdirSync(join(root, "backlog/.locks"), { recursive: true });
+      writeFileSync(join(root, ".gitignore"), "backlog/.locks/\n");
+      gitRun(root, ["init"]);
+      gitRun(root, ["add", "backlog", ".gitignore"]);
+      gitRun(root, ["-c", "user.email=t@example.test", "-c", "user.name=T", "commit", "-m", "backlog"]);
+      writeFileSync(join(root, "backlog/.locks/some-task.lock"), "pid:1\n");
+      expect(spawn(["ls-files", "--", "backlog"]).stdout).not.toContain(".locks");
+      expect(spawn(["status", "--porcelain", "--untracked-files=all", "--", "backlog"]).stdout.trim()).toBe("");
+      expect(backlogRemovalReadiness(root, spawn)).toEqual({ ready: true });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
