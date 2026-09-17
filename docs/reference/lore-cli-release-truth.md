@@ -78,6 +78,59 @@ inside 72 hours, which makes misreading this state the one genuinely destructive
 move available at this step. Use `scripts/publish-release.sh <version> <run-id>
 --verify-only`, which reads the registry and nothing else.
 
+**The 0.7.0 visibility numbers above ALSO mean the root launcher resolved 121
+SECONDS BEFORE the last platform package, and the script's own "publish order
+protects installers" claim was false (LCLI-502).** Publish order was
+platform-packages-then-root, exactly as documented, and visibility order was
+NOT: the root launcher (`lore`) became resolvable at 79s while
+`lore-linux-arm64` did not resolve until 200s. Because the platform packages
+are `optionalDependencies` with no hard-dependency fallback, an install inside
+that 121-second window **succeeded with the binary silently missing** rather
+than failing loudly — the worse of the two failure shapes. `0.6.2` measured the
+same shape (three packages absent, ~120s) and was wrongly filed as "propagation
+noise, release sound" at the time; the property that actually matters — the
+launcher never resolving before the binary it execs — had already failed
+there too. Ordering the writes cannot produce that guarantee, because
+propagation is a per-package registry-read property, not a publish-time one;
+only gating on reads can. `scripts/publish-release.sh` now does exactly that:
+it polls all six platform packages' registry visibility, waits a further fixed
+cushion (20s, for 0-20s of additional consumer-side lag measured externally by
+opum-cli-e2e), and only then publishes the root launcher — see the "REGISTRY
+GATE BEFORE THE ROOT LAUNCHER" section of the script itself for the exact
+mechanism and its citations.
+
+**A sibling session reading these same per-package registry timestamps once
+inferred publish ORDER from them; that inference is wrong, and the mistake is
+easy to repeat.** npm's packument `time[<version>]` field records when the
+registry finished PROCESSING a version, not when the publisher's `PUT` was
+issued — for `0.7.0` the two orders happened to agree on six of seven
+positions (the exception being two packages resolved in the same polling
+interval), which made the timestamps LOOK like publish order while actually
+recording propagation/visibility order instead. Do not re-derive publish
+sequencing from `time[<version>]`; read it only as when each version became
+visible to a registry read, which is a different fact.
+
+**"npm publish reported success" does not rule out a non-public STAGED
+outcome, and this script's own credential paths were checked (not merely
+assumed) rather than able to reproduce it live.** npm 12 can park a version in
+a non-public state pending a maintainer's 2FA approval (`npm stage publish`);
+a staged version occupies the same semver slot as a published one but is
+invisible to a registry read under ANY token, including the one that staged
+it. Reading npm@12's own shipped source (`lib/commands/publish.js`,
+`lib/commands/stage/*.js`, `node_modules/libnpmpublish/lib/publish.js`) and
+its own docs (`npm-stage`) on 2026-09-16: staging is reachable only via the
+distinct `npm stage publish` verb, or a trust-relationship/OIDC credential —
+this script uses neither (a Keychain/`NPM_TOKEN` granular-access-token with
+2FA bypass, or a `~/.npmrc` session-token fallback), so the specific silent-
+success-while-staged shape could not be reproduced against this script's own
+publish path. The gate added for LCLI-502 is defense-in-depth for that
+possibility regardless: it scans each `npm publish` call's own captured
+output for the OTP/staging signal strings npm's source actually uses, and its
+registry-visibility timeout message tells an operator to check `npm stage
+list <package>` (which can itself report nothing under a restricted-token
+type — also verified against npm's docs, not assumed) and npmjs.com directly,
+rather than presenting a stall as ordinary propagation lag.
+
 **The npm token used for this publish was exposed in a transcript on 2026-09-14
 and had NOT been rotated at publish time.** The owner was asked directly before
 the publish, with rotate-first offered as the recommended option, and chose to

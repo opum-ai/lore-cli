@@ -643,6 +643,143 @@ describeOnPosix("scripts/publish-release.sh", () => {
       ws.cleanup();
     }
   });
+
+  // LCLI-502: publish ORDER (platform packages before the root launcher) is necessary but not
+  // sufficient — 0.7.0 published in that order and the registry's READ API still resolved the
+  // root launcher 121s before the last platform package. This test runs the REAL (non-dry-run)
+  // publish path — --dry-run stops before `npm publish` is ever invoked, so it cannot observe
+  // publish ORDER at all — with a custom npm stub that delays ONE platform package's registry
+  // visibility by exactly one poll, and asserts from a call log that the root launcher's
+  // `npm publish` never fires until that package's delayed visibility actually resolves.
+  test("holds the root launcher until a delayed platform package is registry-visible, not merely published (LCLI-502)", () => {
+    const ws = makeWorkspace();
+    try {
+      const log = resolve(ws.root, "npm-calls.log");
+      const state = resolve(ws.root, "npm-state");
+      writeFileSync(log, "");
+      const delayed = "@opum-ai/lore-linux-x64";
+
+      // Overwrite the shared npm stub for this one test only. `view` reports a package MISSING
+      // until this stub's OWN `publish` branch has recorded it (a marker file) — a package can
+      // never appear visible before it was actually published. Once published, every package is
+      // visible immediately EXCEPT `delayed`, which reports one more MISS before its first HIT —
+      // reproducing "the PUT returned, the registry read has not caught up yet" without staging
+      // a claim about WHY. Every view/publish call is appended to `log`, in order, which is what
+      // the assertions below read to prove ordering rather than mere absence of a crash.
+      writeFileSync(
+        resolve(ws.bin, "npm"),
+        `#!/usr/bin/env bash
+set -uo pipefail
+LOG="${log}"
+STATE="${state}"
+VERSION="${VERSION}"
+DELAYED="${delayed}"
+mkdir -p "$STATE"
+# Package names contain "/" (the @opum-ai/ scope), which cannot appear inside a single path
+# segment used as a marker filename -- sanitise before ever touching or testing a marker path.
+safe() { printf '%s' "\${1//\\//_}"; }
+case "\${1:-}" in
+  ping) exit 0 ;;
+  view)
+    spec="$2"
+    field="\${3:-}"
+    if [ "$field" = "dist-tags.latest" ]; then
+      name="$spec"
+    else
+      name="\${spec%@*}"
+    fi
+    if [ ! -f "$STATE/published-$(safe "$name")" ]; then
+      echo "VIEW-MISS $name (not yet published)" >> "$LOG"
+      exit 1
+    fi
+    if [ "$name" = "$DELAYED" ]; then
+      n=0
+      [ -f "$STATE/delayed-count" ] && n="$(cat "$STATE/delayed-count")"
+      n=$((n+1))
+      echo "$n" > "$STATE/delayed-count"
+      if [ "$n" -le 1 ]; then
+        echo "VIEW-MISS $name (staged-visibility-lag #$n)" >> "$LOG"
+        exit 1
+      fi
+      echo "VIEW-HIT $name (#$n)" >> "$LOG"
+      echo "$VERSION"
+      exit 0
+    fi
+    echo "VIEW-HIT $name" >> "$LOG"
+    echo "$VERSION"
+    exit 0
+    ;;
+  publish)
+    tarball="$2"
+    base="$(basename "$tarball")"
+    stripped="\${base%-$VERSION.tgz}"
+    name="@opum-ai/\${stripped#opum-ai-}"
+    echo "PUBLISH $name" >> "$LOG"
+    touch "$STATE/published-$(safe "$name")"
+    echo "STUB PUBLISH $tarball"
+    exit 0
+    ;;
+  dist-tag) exit 0 ;;
+  *) exit 0 ;;
+esac
+`,
+      );
+      chmodSync(resolve(ws.bin, "npm"), 0o755);
+      // The final install-smoke step shells out to the REAL npx if unstubbed. This test uses the
+      // non-dry-run path specifically to observe publish ordering, so npx must be inert too —
+      // nothing here should ever touch the network.
+      writeFileSync(resolve(ws.bin, "npx"), "#!/usr/bin/env bash\nexit 0\n");
+      chmodSync(resolve(ws.bin, "npx"), 0o755);
+
+      const result = Bun.spawnSync({
+        cmd: ["bash", SCRIPT, VERSION, RUN_ID],
+        cwd: ws.root,
+        env: {
+          ...process.env,
+          PATH: `${ws.bin}${delimiter}${process.env.PATH}`,
+          ARTIFACTS: ws.artifacts,
+          NPM_TOKEN: "",
+          // Fast and bounded: the gate only needs to survive ONE backoff sleep (5s) to prove it
+          // actually waited. The propagation cushion is zeroed so this test measures the GATE,
+          // not the separate fixed post-visibility wait (which is not under test here).
+          PROPAGATION_CUSHION_SECONDS: "0",
+          REGISTRY_WINDOW_SECONDS: "90",
+        },
+      });
+      const out = result.stdout.toString() + result.stderr.toString();
+      expect(result.exitCode).toBe(0);
+
+      const lines = readFileSync(log, "utf8").split("\n").filter(Boolean);
+      const firstIndex = (pred: (line: string) => boolean) => lines.findIndex(pred);
+
+      const platformPublished = firstIndex((l) => l === `PUBLISH ${delayed}`);
+      const lagObserved = firstIndex((l) => l.includes(`VIEW-MISS ${delayed} (staged-visibility-lag`));
+      const lagResolved = firstIndex((l) => l.startsWith(`VIEW-HIT ${delayed}`));
+      const rootPublished = firstIndex((l) => l === "PUBLISH @opum-ai/lore");
+
+      expect(platformPublished).toBeGreaterThanOrEqual(0);
+      expect(lagObserved).toBeGreaterThanOrEqual(0);
+      expect(lagResolved).toBeGreaterThanOrEqual(0);
+      expect(rootPublished).toBeGreaterThanOrEqual(0);
+
+      // The defect this guards: publish ORDER alone (every platform package's `npm publish`
+      // called before the root's) is necessary but not sufficient — the script must also have
+      // OBSERVED the delayed package as visible before publishing root, not merely have sent
+      // its PUT first, and it must have genuinely POLLED (seen at least one MISS) rather than
+      // assumed visibility from publish order.
+      expect(platformPublished).toBeLessThan(lagObserved);
+      expect(lagObserved).toBeLessThan(lagResolved);
+      expect(lagResolved).toBeLessThan(rootPublished);
+
+      // And the gate actually paused for it: a script that ignored the delay entirely could
+      // still satisfy the ordering asserted above by accident if `wait_for_all_visible` were a
+      // no-op that happened to be called late. The "waiting" progress line is printed only
+      // while the shared window still has a package pending.
+      expect(out).toContain("waiting  1 package(s) not visible yet");
+    } finally {
+      ws.cleanup();
+    }
+  }, 20_000);
 });
 
 // ── The closing checklist is operator-facing REPORTING, and reporting is the half that lies ────
