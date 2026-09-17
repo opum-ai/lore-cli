@@ -39,6 +39,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, posix } from "node:path";
+import { bunGitPreflightSpawn, type GitPreflightSpawn } from "./adapters/git-preflight";
 import { ensureDir } from "./commands/fswrite";
 import { LoreError } from "./errors";
 
@@ -118,6 +119,7 @@ export function buildArchive(
   if (entries.length === 0)
     throw new LoreError("validation", "refusing to archive an empty backlog snapshot", "nothing to preserve");
   mkdirSync(join(root, ARCHIVE_DIR), { recursive: true });
+  writeArchiveGitignore(root);
   const zipRel = `${ARCHIVE_DIR}/backlog-${sanitizeId(id)}.zip`;
   const files = new Map<string, Uint8Array>();
   for (const e of entries) files.set(e.path, readFileSync(join(root, e.path)));
@@ -409,4 +411,82 @@ function pruneEmptyDirs(dir: string): void {
   } catch {
     /* first non-prunable dir stops this branch; remaining content surfaces via the caller */
   }
+}
+
+/**
+ * The bytes of `.lore/archive/.gitignore`. `*` ignores every entry in this directory INCLUDING the
+ * ignore file itself: git still reads an ignore file it is itself ignoring, so the whole archive
+ * directory stays out of `git status` without touching the repository's own `.gitignore`.
+ */
+const ARCHIVE_GITIGNORE = `# lore backlog archive — machine-local recovery evidence, never committed.
+# Git itself is the durable record of anything committed before removal; this zip is a convenience
+# copy for one working tree, not a published artifact.
+*
+`;
+
+/**
+ * Make this module's first invariant TRUE at the point of use rather than by assumption.
+ *
+ * The header above says the archive is "gitignored", and in a repository scaffolded by `lore init`
+ * it was not: `.lore/.gitignore` (`core/scaffold.ts`) ignores `cache/` only, so a zip written here
+ * was an ordinary untracked file that a `git add -A` would commit. Writing the rule into the
+ * archive directory itself makes the claim hold for every repository — including ones whose
+ * `.lore/` predates any change to the scaffold — which is what lets `init`'s removal prompt say
+ * "gitignored, not committed" honestly (LCLI-467 AC#1).
+ *
+ * Idempotent and non-destructive: an existing file is left exactly as found.
+ */
+function writeArchiveGitignore(root: string): void {
+  const abs = join(root, ARCHIVE_DIR, ".gitignore");
+  if (existsSync(abs)) return;
+  writeFileSync(abs, ARCHIVE_GITIGNORE);
+}
+
+/** Whether removing `backlog/` is safe to even OFFER, and — when it is not — why not. */
+export type BacklogRemovalReadiness = { readonly ready: true } | { readonly ready: false; readonly reason: string };
+
+/**
+ * The precondition on OFFERING an archive-and-delete of `backlog/` to an external user (LCLI-467).
+ *
+ * `archiveAndDeleteBacklog` is failure-atomic about its own transaction, but it cannot bring a file
+ * back once the transaction has settled, and the zip it writes is machine-local, gitignored and
+ * uncommitted — a convenience copy, not a durable archive. **Git is the safety net**, so the
+ * operation is only the ordinary, recoverable one this task's framing assumes when git actually
+ * holds what is about to be deleted. Two read-only conditions:
+ *
+ *  - `backlog/` is TRACKED — `git ls-files` returns something. An untracked tree has no committed
+ *    copy to restore, so deleting it is irreversible rather than recoverable.
+ *  - `backlog/` is CLEAN — `git status --porcelain` is empty for that pathspec. A modified,
+ *    staged-but-uncommitted, or untracked file's current bytes exist only in the working tree;
+ *    `git checkout -- backlog/` restores the COMMITTED bytes and would silently lose the edit.
+ *
+ * Anything else git says (not a worktree, git missing, a refusal of its own) is `ready: false` too:
+ * the question is whether recovery is PROVEN available, and an unanswered question has not proven
+ * it. This performs no writes and never throws — a caller uses it to decide whether to ask at all
+ * (interactive), or to refuse with a reason (a scripted `--remove-backlog`).
+ */
+export function backlogRemovalReadiness(
+  root: string,
+  spawn: GitPreflightSpawn = bunGitPreflightSpawn(root),
+  dir = "backlog",
+): BacklogRemovalReadiness {
+  if (!existsSync(join(root, dir))) return { ready: false, reason: `${dir}/ does not exist` };
+  let tracked: { exitCode: number; stdout: string };
+  let status: { exitCode: number; stdout: string };
+  try {
+    tracked = spawn(["ls-files", "--", dir]);
+    status = spawn(["status", "--porcelain", "--", dir]);
+  } catch (cause) {
+    return { ready: false, reason: `git could not be run (${describeCause(cause)}), so recovery cannot be proven` };
+  }
+  if (tracked.exitCode !== 0 || status.exitCode !== 0)
+    return {
+      ready: false,
+      reason: `git could not report on ${dir}/ (is this a git worktree?), so recovery cannot be proven`,
+    };
+  if (tracked.stdout.trim() === "")
+    return { ready: false, reason: `${dir}/ is not tracked by git, so deleting it would not be recoverable` };
+  if (status.stdout.trim() !== "")
+    return { ready: false, reason: `${dir}/ has uncommitted changes, which git could not restore after a deletion` };
+  return { ready: true };
 }

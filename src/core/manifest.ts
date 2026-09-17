@@ -287,6 +287,17 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
           "The id family to import when --preserve-source-ids is set (e.g. LCLI, when a Backlog holds more than one)",
       },
       {
+        name: "remove-backlog",
+        takesValue: false,
+        summary:
+          "After a successful --migrate-backlog: DELETE backlog/ from the working tree, keeping a verified gitignored zip in .lore/archive/ (refused unless git already tracks backlog/ clean)",
+      },
+      {
+        name: "no-remove-backlog",
+        takesValue: false,
+        summary: "After a successful --migrate-backlog: keep backlog/ on disk, explicitly and without a notice",
+      },
+      {
         name: "adopt-manifest",
         takesValue: true,
         summary: "Coordinate a knowledge-adoption manifest with --migrate-backlog as one cutover",

@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { BACKLOG_VERSION_FLOOR_CODE, type BacklogAdapter } from "../src/adapters/backlog";
-import { type GitPreflight, realGitPreflight } from "../src/adapters/git-preflight";
+import { bunGitPreflightSpawn, type GitPreflight, realGitPreflight } from "../src/adapters/git-preflight";
 import type { JiraOnboarding, JiraProfile, JiraProjectSummary } from "../src/adapters/jira-onboarding";
 import {
   MIN_QUEST_VERSION,
@@ -172,9 +172,14 @@ function scriptedPrompter(answers: {
   backlogTasks?: string;
   retryPreservingIds?: boolean;
   sourceFamily?: string;
+  removeBacklog?: boolean;
 }): InitPrompter {
   return {
     confirm: async (question, defaultValue) => {
+      // LCLI-467's post-migration removal offer, matched before the catch-all below for the same
+      // reason every branch here is: without it, `obsidian: false` would quietly decline a question
+      // it was never asked about — or, worse, `obsidian: true` would accept a deletion.
+      if (question.includes("Delete backlog/")) return answers.removeBacklog ?? defaultValue;
       // Matched before the catch-all below (LCLI-358.1): the git preflight is a `confirm` too, and
       // without its own branch a test that answers `obsidian: false` would silently decline git.
       // The same applies to LCLI-358.3's install and switch-tracker offers, and to LCLI-466's
@@ -2982,5 +2987,231 @@ describe("lore init — configuring the jira backend (LCLI-358.4)", () => {
     await init({ args: ["--tracker", "quest"], jira: fakeJira({ calls }), adapter: fakeAdapter([], { probe: "ok" }) });
     await init({ args: ["--tracker", "none"], jira: fakeJira({ calls }) });
     expect(calls).toEqual([]);
+  });
+});
+
+/**
+ * LCLI-467 — what happens to `backlog/` once its tasks are in Quest.
+ *
+ * These run against a REAL git repository in the temp root rather than a stubbed transport: the
+ * whole safety argument for this feature is "git already holds these bytes", and a stub that says
+ * so proves nothing about the transport `lore init` actually uses. The deletion, the archive, and
+ * the uncommitted-deletion residue are all read back from the filesystem and from git itself.
+ */
+describe("lore init — removing backlog/ after a plain --migrate-backlog (LCLI-467)", () => {
+  const migrationResult = {
+    digest: "sha256:reviewed",
+    sourceFingerprint: "sha256:source",
+    mappings: [],
+    survivors: [],
+    taskFingerprints: {},
+    state: "applied" as const,
+  };
+
+  /** A legacy bundle whose `backlog/` is genuinely committed — the only state removal is offered in. */
+  function committedBacklog(): void {
+    legacyBundle();
+    writeFileSync(join(root, "backlog", "tasks", "task-1 - First.md"), "---\nid: task-1\n---\n\n# First\n");
+    gitRun(root, ["init"]);
+    gitRun(root, ["add", "backlog"]);
+    gitRun(root, ["-c", "user.email=t@example.test", "-c", "user.name=T", "commit", "-m", "backlog"]);
+  }
+
+  function git(args: string[]): { exitCode: number; stdout: string } {
+    return bunGitPreflightSpawn(root)(args);
+  }
+
+  test("the wizard offers removal, and accepting DELETES backlog/ behind a verified, ignored archive (AC#1)", async () => {
+    committedBacklog();
+    const { result, stderr } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter: scriptedPrompter({
+        tracker: "quest",
+        backlogTasks: "migrate",
+        agents: false,
+        site: "none",
+        obsidian: false,
+        removeBacklog: true,
+      }),
+      adapter: fakeAdapter([], { probe: "ok" }),
+      migrateBacklog: async () => migrationResult,
+      agentAvailability: () => ({ claude: false, codex: false }),
+    });
+    // The copy says what happens, in the words AC#1 requires: deletion, a verified local zip, the
+    // zip being gitignored rather than committed, and git as the bounded recovery route.
+    expect(stderr).toContain("DELETES every file under backlog/ from your working tree");
+    expect(stderr).toContain(".lore/archive/");
+    expect(stderr).toContain("gitignored and never committed");
+    expect(stderr).toContain("git checkout --");
+    // The files are genuinely gone, not moved aside.
+    expect(existsSync(join(root, "backlog"))).toBe(false);
+    const removal = result.backlogRemoval;
+    expect(removal?.removed).toBe(true);
+    expect(removal?.entryCount).toBe(2);
+    // The archive is present, and gitignored — so "not committed" is enforced, not merely intended.
+    expect(existsSync(join(root, removal?.zipRel ?? ""))).toBe(true);
+    expect(git(["check-ignore", "-q", removal?.zipRel ?? ""]).exitCode).toBe(0);
+    // And git sees the deletion as UNCOMMITTED work, which is what `git checkout -- backlog/` acts on.
+    const status = git(["status", "--porcelain", "--", "backlog"]).stdout;
+    expect(status).toContain("backlog/config.yml");
+    expect(status.trimStart().startsWith("D")).toBe(true);
+    gitRun(root, ["checkout", "--", "backlog"]);
+    expect(existsSync(join(root, "backlog", "config.yml"))).toBe(true);
+  });
+
+  test("declining leaves backlog/ exactly as found, and the offered default is NO", async () => {
+    committedBacklog();
+    const offeredDefaults: boolean[] = [];
+    const base = scriptedPrompter({
+      tracker: "quest",
+      backlogTasks: "migrate",
+      agents: false,
+      site: "none",
+      obsidian: false,
+      removeBacklog: false,
+    });
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter: {
+        ...base,
+        confirm: async (question, defaultValue) => {
+          if (question.includes("Delete backlog/")) offeredDefaults.push(defaultValue);
+          return base.confirm(question, defaultValue);
+        },
+      },
+      adapter: fakeAdapter([], { probe: "ok" }),
+      migrateBacklog: async () => migrationResult,
+      agentAvailability: () => ({ claude: false, codex: false }),
+    });
+    expect(existsSync(join(root, "backlog", "config.yml"))).toBe(true);
+    expect(result.backlogRemoval).toEqual({ removed: false, reason: "declined at the prompt" });
+    expect(existsSync(join(root, ".lore/archive"))).toBe(false);
+    // A bare Enter must not delete anything: the one destructive question here defaults to NO.
+    expect(offeredDefaults).toEqual([false]);
+  });
+
+  test("an UNRECOVERABLE backlog/ is never offered for deletion at all (the question is not asked)", async () => {
+    committedBacklog();
+    writeFileSync(join(root, "backlog", "tasks", "task-2 - Uncommitted.md"), "---\nid: task-2\n---\n");
+    const asked: string[] = [];
+    const base = scriptedPrompter({
+      tracker: "quest",
+      backlogTasks: "migrate",
+      agents: false,
+      site: "none",
+      obsidian: false,
+      // Answering YES is the point: even a would-be acceptance cannot reach a deletion git cannot undo.
+      removeBacklog: true,
+    });
+    const { result, stderr } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter: {
+        ...base,
+        confirm: async (question, defaultValue) => {
+          asked.push(question);
+          return base.confirm(question, defaultValue);
+        },
+      },
+      adapter: fakeAdapter([], { probe: "ok" }),
+      migrateBacklog: async () => migrationResult,
+      agentAvailability: () => ({ claude: false, codex: false }),
+    });
+    expect(asked.some((question) => question.includes("Delete backlog/"))).toBe(false);
+    expect(stderr).toContain("uncommitted changes");
+    expect(existsSync(join(root, "backlog", "tasks", "task-2 - Uncommitted.md"))).toBe(true);
+    expect(result.backlogRemoval?.removed).toBe(false);
+  });
+
+  test("--remove-backlog is the scripted equivalent, and removes it without a prompt (AC#3)", async () => {
+    committedBacklog();
+    const { result } = await init({
+      args: ["--tracker", "quest", "--migrate-backlog", "--remove-backlog"],
+      migrateBacklog: async () => migrationResult,
+    });
+    expect(existsSync(join(root, "backlog"))).toBe(false);
+    expect(result.backlogRemoval?.removed).toBe(true);
+    expect(git(["status", "--porcelain", "--", "backlog"]).stdout.trim()).not.toBe("");
+  });
+
+  test("a scripted run with NEITHER flag keeps backlog/ and says so — the skip is never silent (AC#3)", async () => {
+    committedBacklog();
+    const { result, stderr } = await init({
+      args: ["--tracker", "quest", "--migrate-backlog"],
+      migrateBacklog: async () => migrationResult,
+    });
+    expect(existsSync(join(root, "backlog", "config.yml"))).toBe(true);
+    expect(stderr).toContain("backlog/ was left in place");
+    expect(stderr).toContain("--remove-backlog");
+    expect(stderr).toContain("--no-remove-backlog");
+    expect(result.backlogRemoval).toEqual({
+      removed: false,
+      reason: "no --remove-backlog/--no-remove-backlog",
+    });
+  });
+
+  test("--no-remove-backlog keeps it with no notice: the choice was already explicit (AC#3)", async () => {
+    committedBacklog();
+    const { result, stderr } = await init({
+      args: ["--tracker", "quest", "--migrate-backlog", "--no-remove-backlog"],
+      migrateBacklog: async () => migrationResult,
+    });
+    expect(existsSync(join(root, "backlog", "config.yml"))).toBe(true);
+    expect(stderr).not.toContain("backlog/ was left in place");
+    expect(result.backlogRemoval).toEqual({ removed: false, reason: "--no-remove-backlog was passed" });
+  });
+
+  test("--remove-backlog over an unrecoverable backlog/ is REFUSED, not silently skipped", async () => {
+    committedBacklog();
+    writeFileSync(join(root, "backlog", "config.yml"), "statuses:\n  - Done\n");
+    const err = await Promise.resolve(
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        clock: FIXED_CLOCK,
+        args: ["--tracker", "quest", "--migrate-backlog", "--remove-backlog"],
+        migrateBacklog: async () => migrationResult,
+      }),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught as LoreError,
+    );
+    expect(err?.type).toBe("denied");
+    expect(exitCodeFor(err as LoreError)).toBe(EXIT_CODES.denied);
+    expect(err?.message).toContain("uncommitted changes");
+    expect(err?.hint).toContain("git checkout -- backlog/");
+    // The refusal is of the DELETION only: the migration already applied, so the selection stands.
+    expect(existsSync(join(root, "backlog", "config.yml"))).toBe(true);
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
+  });
+
+  test.each([
+    [
+      "both spellings at once",
+      ["--tracker", "quest", "--migrate-backlog", "--remove-backlog", "--no-remove-backlog"],
+      "mutually exclusive",
+    ],
+    ["--remove-backlog with no migration", ["--tracker", "quest", "--remove-backlog"], "only means something with"],
+    [
+      "--no-remove-backlog with no migration",
+      ["--tracker", "quest", "--no-remove-backlog"],
+      "only means something with",
+    ],
+    [
+      "either spelling against the coordinated cutover",
+      ["--tracker", "quest", "--migrate-backlog", "--adopt-manifest", "m.json", "--remove-backlog"],
+      "already archives and deletes backlog/",
+    ],
+  ] as const)("flag pairing is refused up front: %s", (_name, args, expected) => {
+    legacyBundle();
+    const err = expectError("usage", () =>
+      runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), args: [...args] }),
+    );
+    expect(err.message).toContain(expected);
   });
 });
