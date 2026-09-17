@@ -421,4 +421,28 @@ describe("backlogRemovalReadiness — git must prove the deletion is recoverable
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  // Review finding (LCLI-467, PR #140): the untracked half of the gate is disarmed by CONFIG, not
+  // by argv, so the case above cannot catch it. `status.showUntrackedFiles=no` is a real setting for
+  // large repositories and can arrive from a global ~/.gitconfig the operator has forgotten; with
+  // it set, a bare `git status --porcelain` reports nothing and the gate collapses to "some file
+  // here is tracked", deleting the untracked file it promises to refuse. This asserts the readiness
+  // probe demands the answer it needs rather than the one the repository happens to give it.
+  test("against REAL git: status.showUntrackedFiles=no does NOT disarm the untracked check", () => {
+    const root = fixture();
+    try {
+      const spawn = bunGitPreflightSpawn(root);
+      gitRun(root, ["init"]);
+      gitRun(root, ["add", "backlog"]);
+      gitRun(root, ["-c", "user.email=t@example.test", "-c", "user.name=T", "commit", "-m", "backlog"]);
+      gitRun(root, ["config", "status.showUntrackedFiles", "no"]);
+      // The setting is genuinely in force: a bare status sees nothing, which is the trap.
+      writeFileSync(join(root, "backlog/tasks/hidden.md"), "untracked\n");
+      expect(spawn(["status", "--porcelain", "--", "backlog"]).stdout.trim()).toBe("");
+      // The probe must refuse anyway.
+      expect(backlogRemovalReadiness(root, spawn).ready).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

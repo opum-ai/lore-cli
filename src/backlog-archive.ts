@@ -475,7 +475,14 @@ export function backlogRemovalReadiness(
   let status: { exitCode: number; stdout: string };
   try {
     tracked = spawn(["ls-files", "--", dir]);
-    status = spawn(["status", "--porcelain", "--", dir]);
+    // `--untracked-files=all` is load-bearing, not tidiness: bare `git status --porcelain` honours
+    // the repository or user `status.showUntrackedFiles` setting, and `no` — a real setting people
+    // apply to large repos, and one that can arrive from a forgotten global ~/.gitconfig — makes an
+    // untracked file under backlog/ invisible here. The gate would then collapse to "some file in
+    // this directory is tracked" and delete the untracked one, which is exactly the case the doc
+    // comment above says it refuses. Passing the option explicitly overrides the config, so the
+    // answer this function needs is the answer it demands rather than the one it happens to get.
+    status = spawn(["status", "--porcelain", "--untracked-files=all", "--", dir]);
   } catch (cause) {
     return { ready: false, reason: `git could not be run (${describeCause(cause)}), so recovery cannot be proven` };
   }
