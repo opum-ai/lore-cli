@@ -452,13 +452,26 @@ export type BacklogRemovalReadiness = { readonly ready: true } | { readonly read
  * back once the transaction has settled, and the zip it writes is machine-local, gitignored and
  * uncommitted — a convenience copy, not a durable archive. **Git is the safety net**, so the
  * operation is only the ordinary, recoverable one this task's framing assumes when git actually
- * holds what is about to be deleted. Two read-only conditions:
+ * holds what is about to be deleted. Three read-only conditions:
  *
  *  - `backlog/` is TRACKED — `git ls-files` returns something. An untracked tree has no committed
  *    copy to restore, so deleting it is irreversible rather than recoverable.
  *  - `backlog/` is CLEAN — `git status --porcelain` is empty for that pathspec. A modified,
  *    staged-but-uncommitted, or untracked file's current bytes exist only in the working tree;
  *    `git checkout -- backlog/` restores the COMMITTED bytes and would silently lose the edit.
+ *  - the ON-DISK tree agrees with what git reported (LCLI-523/LCLI-524). The two git questions
+ *    above only ever see what git already knows about: an IGNORED file is invisible to
+ *    `git status --porcelain` even with `--untracked-files=all` (ignored files are never listed,
+ *    tracked or not), and a SYMLINK reads as clean because git tracks the link itself rather than
+ *    walking through it. Both pass the checks above and both defeat `git checkout -- backlog/`
+ *    (an ignored file has no committed copy; `archiveAndDeleteBacklog` refuses to archive through a
+ *    symlink at all, which would otherwise abort the transaction mid-run instead of refusing here).
+ *    {@link planBacklogSnapshot} is the same disk walk `archiveAndDeleteBacklog` performs, so
+ *    running it here makes the gate agree with what the archive actually does: its drift refusal
+ *    (symlink or non-regular entry) becomes `ready: false` instead of propagating, and any regular
+ *    file it finds that `git ls-files` did not report is an ignored-but-present file, also
+ *    `ready: false`. `backlog/.locks/` is exempt from that last check — it is gitignored BY DESIGN
+ *    (ADR-0012 §4), so an ordinary lore-managed project must still read `ready: true`.
  *
  * Anything else git says (not a worktree, git missing, a refusal of its own) is `ready: false` too:
  * the question is whether recovery is PROVEN available, and an unanswered question has not proven
@@ -474,7 +487,13 @@ export function backlogRemovalReadiness(
   let tracked: { exitCode: number; stdout: string };
   let status: { exitCode: number; stdout: string };
   try {
-    tracked = spawn(["ls-files", "--", dir]);
+    // `-c core.quotePath=false` is a global option (must precede the subcommand): without it, git's
+    // default C-style quoting renders any non-ASCII byte in an `ls-files` path as an escaped octal
+    // sequence inside a quoted string (e.g. `"caf\303\251.md"` for `café.md`) instead of the raw
+    // UTF-8 bytes — which would never string-equal the raw path `planBacklogSnapshot` reads off
+    // disk below, wrongly refusing a tracked, clean, non-ASCII filename as "gitignored but
+    // present". Same fix, same failure mode, as `adapters/git.ts`'s `history()` (LORE-143).
+    tracked = spawn(["-c", "core.quotePath=false", "ls-files", "--", dir]);
     // `--untracked-files=all` is load-bearing, not tidiness: bare `git status --porcelain` honours
     // the repository or user `status.showUntrackedFiles` setting, and `no` — a real setting people
     // apply to large repos, and one that can arrive from a forgotten global ~/.gitconfig — makes an
@@ -495,5 +514,39 @@ export function backlogRemovalReadiness(
     return { ready: false, reason: `${dir}/ is not tracked by git, so deleting it would not be recoverable` };
   if (status.stdout.trim() !== "")
     return { ready: false, reason: `${dir}/ has uncommitted changes, which git could not restore after a deletion` };
+
+  // Both git questions read clean, but git only ever reports on paths it already knows about.
+  // planBacklogSnapshot is a read-only lstat walk of the same tree archiveAndDeleteBacklog will
+  // actually archive: it refuses (throws) on a symlink or non-regular entry (LCLI-524), and its
+  // returned entries are every REGULAR file on disk, including ones git is deliberately not
+  // tracking (LCLI-523). Neither call mutates anything.
+  let snapshot: readonly ArchiveEntry[];
+  try {
+    snapshot = planBacklogSnapshot(root, dir);
+  } catch (cause) {
+    // The snapshot walk's own LoreError message already names the offending path and the reason
+    // (symlink / non-regular entry) — reuse it verbatim rather than re-deriving a second wording.
+    const reason =
+      cause instanceof LoreError
+        ? cause.message
+        : `${dir}/ could not be scanned (${describeCause(cause)}), so recovery cannot be proven`;
+    return { ready: false, reason };
+  }
+  const trackedPaths = new Set(
+    tracked.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0),
+  );
+  // backlog/.locks/ is gitignored BY DESIGN (ADR-0012 §4): its contents will never appear in
+  // `git ls-files`, and that is not drift. Everything else the disk walk found that git did not
+  // report is an ignored-but-present file `git checkout -- backlog/` cannot restore.
+  const locksPrefix = `${posix.join(dir, ".locks")}/`;
+  const ignoredButPresent = snapshot.find((e) => !e.path.startsWith(locksPrefix) && !trackedPaths.has(e.path));
+  if (ignoredButPresent !== undefined)
+    return {
+      ready: false,
+      reason: `"${ignoredButPresent.path}" is gitignored (or otherwise untracked) but present on disk, so \`git checkout -- ${dir}/\` could not restore it`,
+    };
   return { ready: true };
 }

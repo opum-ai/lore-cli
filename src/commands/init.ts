@@ -1140,13 +1140,26 @@ function warnExcludedFamilies(options: InitOptions, migration: TrackerMigrationR
  * - **"until you commit"** bounds the recovery honestly. `git checkout -- backlog/` restores the
  *   deletion right up to the moment the operator commits it, and not afterwards (after that it is
  *   an ordinary revert of a commit, which is a different instruction).
+ *
+ * **"puts every backlog/ record back" is true of every state this notice can now be shown for**
+ * (LCLI-523 / LCLI-524): `backlogRemovalReadiness` refuses to reach this notice at all when a file
+ * under `backlog/` is gitignored-but-present (no committed copy to restore) or is a
+ * symlink/non-regular entry (which `archiveAndDeleteBacklog` would refuse mid-transaction rather
+ * than delete). The one standing, deliberate exception is `backlog/.locks/`, gitignored BY DESIGN
+ * (ADR-0012 §4) and exempted from that check on purpose — its contents are "operational, not
+ * source" (transient concurrency-control lock files), so `archiveAndDeleteBacklog` still deletes
+ * them like everything else in the snapshot, and git — having never tracked them — cannot restore
+ * them. A lock file is disposable by the same design decision that gitignores it, not a Backlog
+ * record this promise is about — so the copy below says "record", not "file", and names the
+ * exception explicitly rather than leaving a reader to discover it the hard way.
  */
 const BACKLOG_REMOVAL_NOTICE =
   "\nThe migration is applied; backlog/ still holds the migrated task files.\n" +
   "Removing it DELETES every file under backlog/ from your working tree. A verified zip copy is\n" +
   "written to .lore/archive/ first — but that copy is gitignored and never committed, so it is a\n" +
   "convenience, not the safety net. Git is: until you commit the deletion, `git checkout --\n" +
-  "backlog/` puts every file back.\n";
+  "backlog/` puts every backlog/ record back — lore's own operational lock files under\n" +
+  "backlog/.locks/ are never committed and are not part of this promise.\n";
 
 /** The question itself. Carries the deletion in its own first clause, so an operator who skips the notice above still reads it. */
 const BACKLOG_REMOVAL_QUESTION =
