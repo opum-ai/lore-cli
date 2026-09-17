@@ -333,19 +333,21 @@ describe("archive evidence is genuinely gitignored (LCLI-467 AC#1)", () => {
 
 describe("backlogRemovalReadiness — git must prove the deletion is recoverable (LCLI-467)", () => {
   /**
-   * A scripted read-only git: `ls-files` answers first, `status` second. The default `tracked`
-   * lists BOTH files `fixture()` actually writes to disk — `backlogRemovalReadiness` now also
-   * cross-checks a real `planBacklogSnapshot` walk of the fixture directory against this list
-   * (LCLI-523), so a default that under-reports what is on disk would misfire as "ignored but
-   * present" rather than exercising the "tracked and clean" case it names.
+   * A scripted read-only git: `ls-files` answers first, `status` second. Matched by `args.includes`
+   * rather than `args[0]`, because `backlogRemovalReadiness` now prefixes the `ls-files` call with
+   * `-c core.quotePath=false` (LCLI-523 review fix) — `args[0]` is `"-c"`, not `"ls-files"`, on that
+   * call. The default `tracked` lists BOTH files `fixture()` actually writes to disk —
+   * `backlogRemovalReadiness` now also cross-checks a real `planBacklogSnapshot` walk of the
+   * fixture directory against this list (LCLI-523), so a default that under-reports what is on disk
+   * would misfire as "ignored but present" rather than exercising the "tracked and clean" case it
+   * names.
    */
   function git(answers: { tracked?: string; status?: string; exitCode?: number; throws?: boolean }): GitPreflightSpawn {
     return (args) => {
       if (answers.throws === true) throw new Error("spawn ENOENT");
-      const stdout =
-        args[0] === "ls-files"
-          ? (answers.tracked ?? "backlog/config.yml\nbacklog/tasks/a.md\n")
-          : (answers.status ?? "");
+      const stdout = args.includes("ls-files")
+        ? (answers.tracked ?? "backlog/config.yml\nbacklog/tasks/a.md\n")
+        : (answers.status ?? "");
       return { exitCode: answers.exitCode ?? 0, stdout, stderr: "" };
     };
   }
@@ -479,6 +481,33 @@ describe("backlogRemovalReadiness — git must prove the deletion is recoverable
       expect(readiness.ready).toBe(false);
       expect(readiness.ready === false && readiness.reason).toContain("backlog/drafts/idea.md");
       expect(readiness.ready === false && readiness.reason).toContain("gitignored");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Adversarial-review finding on LCLI-523 (medium severity, confirmed reproducible): git's default
+  // core.quotePath=true C-style-escapes any non-ASCII byte in `ls-files` output (`café.md` comes
+  // back as `"caf\303\251.md"`), which would never string-equal the raw UTF-8 path
+  // `planBacklogSnapshot` reads off disk — wrongly refusing a genuinely tracked, clean, non-ASCII
+  // filename as "gitignored but present" (a false refusal, exit 4 on a scripted `--remove-backlog`).
+  // Same failure mode `adapters/git.ts`'s `history()` already guards against with the same fix.
+  test("against REAL git: a tracked, clean non-ASCII filename passes readiness cleanly (core.quotePath regression)", () => {
+    const root = fixture();
+    try {
+      const spawn = bunGitPreflightSpawn(root);
+      writeFileSync(join(root, "backlog/café.md"), "un café\n");
+      gitRun(root, ["init"]);
+      gitRun(root, ["add", "backlog"]);
+      gitRun(root, ["-c", "user.email=t@example.test", "-c", "user.name=T", "commit", "-m", "backlog"]);
+      // Confirm the trap is real: git's default quoting DOES mangle the raw path.
+      const quotedDefault = Bun.spawnSync(["git", "ls-files", "--", "backlog"], {
+        cwd: root,
+        stdout: "pipe",
+      }).stdout.toString("utf8");
+      expect(quotedDefault).not.toContain("café.md");
+      expect(quotedDefault).toContain("caf");
+      expect(backlogRemovalReadiness(root, spawn)).toEqual({ ready: true });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -487,7 +487,13 @@ export function backlogRemovalReadiness(
   let tracked: { exitCode: number; stdout: string };
   let status: { exitCode: number; stdout: string };
   try {
-    tracked = spawn(["ls-files", "--", dir]);
+    // `-c core.quotePath=false` is a global option (must precede the subcommand): without it, git's
+    // default C-style quoting renders any non-ASCII byte in an `ls-files` path as an escaped octal
+    // sequence inside a quoted string (e.g. `"caf\303\251.md"` for `café.md`) instead of the raw
+    // UTF-8 bytes — which would never string-equal the raw path `planBacklogSnapshot` reads off
+    // disk below, wrongly refusing a tracked, clean, non-ASCII filename as "gitignored but
+    // present". Same fix, same failure mode, as `adapters/git.ts`'s `history()` (LORE-143).
+    tracked = spawn(["-c", "core.quotePath=false", "ls-files", "--", dir]);
     // `--untracked-files=all` is load-bearing, not tidiness: bare `git status --porcelain` honours
     // the repository or user `status.showUntrackedFiles` setting, and `no` — a real setting people
     // apply to large repos, and one that can arrive from a forgotten global ~/.gitconfig — makes an
