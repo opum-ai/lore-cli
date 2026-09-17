@@ -21,6 +21,32 @@ availability claim.
 
 ### Current state
 
+**Addendum 2026-09-17 (LCLI-531): read every bare `34968280818` citation below
+as attempt 1, not as a live link.** Release run `34968280818` was dispatched a
+second time on 2026-09-16T23:42Z (`jeremy-newhouse`, confirmed via
+`triggering_actor`), attempt 2, which was cancelled — `win32-x64` and
+`win32-arm64` mid-matrix. `gh run view`/`gh api .../actions/runs/34968280818`
+and `gh run download` all resolve a run id to its LATEST attempt, so the same
+bare command that returned `success` on 2026-09-15 now returns `cancelled`,
+and the six `ladybug-package-qualification-*` artifacts this record's digest
+check cites were silently replaced by attempt 2's uploads — GitHub exposes no
+`/attempts/1/artifacts` endpoint, so the originals are gone from the API.
+opum-cli-e2e's independent comparison (relayed via opum-agent, OPAG-165) found
+five of six reports byte-identical across both attempts; the sixth,
+`win32-x64`, differs (`stderrSha256`) and its attempt-2 producer is the
+cancelled job — so `gh run download 34968280818` today serves, for that one
+platform, output from a job that never completed, under the same filename as
+the original. **Nothing below is false**: every claim was verified against
+attempt 1's real data on 2026-09-15, before the re-run existed. It is only the
+bare run-id citation that stopped resolving to what it meant when written.
+Anyone re-verifying a claim below against the live API should use
+`.../actions/runs/34968280818/attempts/1`, not the bare run id — the same
+"cite the blob, not the branch" precedent this repo already set in
+[Release publishing](../runbooks/release-publishing.md) for `0.6.0`'s run
+`34393976910` (there, a 404 from a history rewrite; here, a wrong-but-live
+answer from a re-run — different mechanism, same rule: trust the digests in
+this record, not the CI link).
+
 `0.7.0` is **RELEASED**. Published 2026-09-15 from tag `v0.7.0` (annotated tag
 object `9208d9c51dfcb2e0e75b086ac9a3b5fc9ca7618c`, peeling to
 `5c437eb5137c19f4fd87c445ba88068671b993cc`), **manually via
