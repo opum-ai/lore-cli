@@ -45,6 +45,7 @@ import { runSnapshot } from "./commands/snapshot";
 import { runSupersede } from "./commands/supersede";
 import { runSync } from "./commands/sync";
 import { runTasks } from "./commands/tasks";
+import { runTypes } from "./commands/types";
 import { runValidate } from "./commands/validate";
 import { buildManifest } from "./core/manifest";
 import { loadReferenceRetrievalGraph, loadRetrievalGraph, type RetrievalGraphLoader } from "./core/retrieval";
@@ -520,6 +521,8 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
     }),
   schema: (args, context, output) =>
     runSchema({ root: context.cwd || process.cwd(), output, args, stdout: context.stdout }),
+  types: (args, context, output) =>
+    runTypes({ root: context.cwd || process.cwd(), output, args, stdout: context.stdout }),
   scaffold: (args, context, output) =>
     runScaffold({ root: context.cwd || process.cwd(), output, args, stdout: context.stdout }),
   graph: (args, context, output) =>

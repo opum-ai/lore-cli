@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { compileProfile, defaultProfile, parseProfile } from "../src/core/profile";
-import { isKnownType, validateFrontmatter } from "../src/core/schema";
+import { isKnownType, unknownTypeHint, validateFrontmatter } from "../src/core/schema";
 import { EXIT_CODES, LoreError, WarningCollector } from "../src/errors";
 
 /** Assert `fn` throws a `validation` {@link LoreError}, returning it for further assertions. */
@@ -155,7 +155,8 @@ describe("schema — the error tier (throws, exit 6)", () => {
       ),
     ).not.toThrow();
     expect(warnings.list()).toEqual([
-      'unknown type "Attested Computation" in docs/computations/legacy.md; validated on `type` only',
+      'unknown type "Attested Computation" in docs/computations/legacy.md; validated on `type` only ' +
+        "(known types: Epic, Story, Spec, ADR, Runbook, Reference)",
     ]);
   });
 
@@ -457,6 +458,34 @@ name = "Attested Computation"
       validateFrontmatter({ type: "Glossary", anything: { nested: true }, count: 3 }, { warnings }),
     ).not.toThrow();
     expect(warnings.list().some((w) => w.includes('unknown type "Glossary"'))).toBe(true);
+  });
+
+  describe("unknownTypeHint (LCLI-537) — names the valid set, and a nearest-match suggestion when close enough", () => {
+    test("names every declared type in the unknown-type warning itself", () => {
+      const warnings = new WarningCollector();
+      validateFrontmatter({ type: "Glossary" }, { warnings });
+      const message = warnings.list()[0] as string;
+      for (const known of defaultProfile().types.keys()) {
+        expect(message).toContain(known);
+      }
+      expect(message).not.toContain("did you mean");
+    });
+
+    test("a close typo gets a did-you-mean suggestion", () => {
+      const hint = unknownTypeHint("Stroy", defaultProfile());
+      expect(hint).toContain('did you mean "Story"?');
+      expect(hint).toContain("known types:");
+    });
+
+    test("a genuinely different unknown type gets no suggestion, only the known set", () => {
+      const hint = unknownTypeHint("Widget", defaultProfile());
+      expect(hint).not.toContain("did you mean");
+      expect(hint).toContain("known types:");
+    });
+
+    test("the suggestion is case-insensitive", () => {
+      expect(unknownTypeHint("story ", defaultProfile())).toContain('did you mean "Story"?');
+    });
   });
 
   test("an extra key on a known type warns but does not throw", () => {

@@ -7,7 +7,7 @@ description: >-
   key flags, output kind, and exit codes — for the CLI that is lore's primary
   interface for humans, Claude Code, Codex, and CI. Covers init, new, validate,
   check, sync, link/unlink, tasks, orphans, graph, path, impact, explorer, query, context, replace,
-  rename, supersede, scaffold, schema, agents, instructions, help, and the
+  rename, supersede, scaffold, schema, types, agents, instructions, help, and the
   deferred publish/mcp commands.
 tags: [reference, cli, commands, flags, exit-codes, agent, ci]
 summary: >-
@@ -1003,6 +1003,31 @@ The agent bridge is CLI-generated, not a separate runtime (see
 [ADR-0004](../adr/0004-cli-first-skill-bridge-mcp-deferred.md) and the
 [agent onboarding runbook](../runbooks/agent-onboarding.md)).
 
+### `types`
+
+Print the active profile's declared type vocabulary directly: for every declared type, its name and
+slug, required body sections, declared template (if any), and full field set — each field's
+requiredness, a short shape label (`string`/`list`/`datetime`/`number`/`integer`/`boolean`/`enum`/…),
+enum values when it has a closed vocabulary, and whether it's `common` (carried by every declared
+type) or specific to this one. Read-only and requires no type name up front — unlike [`schema
+export`](#schema), which writes `.lore/schemas/*.schema.json` files and requires already knowing a
+type to inspect one usefully. Field shapes are read from the same generated Draft-7 JSON Schema
+`schema export` writes, so a `types` report and what's on disk under `.lore/schemas/` never disagree.
+
+```
+lore types
+lore types --type Story
+```
+
+| | |
+|---|---|
+| **Args** | none |
+| **Key flags** | `--type <T>` (scope the report to one declared type) |
+| **Output** | `kind: types.report` — the profile's declared type vocabulary |
+| **Exit** | `0` ok · `2` unknown `--type` |
+
+---
+
 ### `agents`
 
 Generate/refresh the agent bridges: write `.claude/skills/lore/SKILL.md` (how
@@ -1059,7 +1084,7 @@ without opening files. Mirrors the `backlog instructions` idiom.
 
 | | |
 |---|---|
-| **Args** | optional `<topic>` (`overview` default; also `linking`, `sync`, `check`, `validation`, `workspace`) |
+| **Args** | optional `<topic>` (`overview` default; also `linking`, `sync`, `check`, `validation`, `types`, `workspace`, `agents`) |
 | **Key flags** | — |
 | **Output** | `kind: instructions.text` — the guidance body, plus the full topic index for `--json` callers |
 | **Exit** | `0` ok · `2` bad usage (unknown flag/extra argument) · `3` unknown topic |

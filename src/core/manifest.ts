@@ -553,6 +553,18 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     examples: ["lore schema export"],
   },
   {
+    name: "types",
+    summary: "Print the active profile's declared type vocabulary — fields, requiredness, sections",
+    args: "",
+    flags: [{ name: "type", takesValue: true, summary: "Scope the report to one declared type" }],
+    json: true,
+    kind: "types.report",
+    // Read-only profile introspection: no bundle/read/write/backlog/git seam. `--type` resolution
+    // reuses `schema export`'s own usage(2) diagnostic for an unknown value — no command-specific extra.
+    exitCodes: exitCodesFor(["profile"]),
+    examples: ["lore types", "lore types --type Story"],
+  },
+  {
     name: "scaffold",
     summary: "Generate a downstream docs consumer's config additively, rewriting nothing",
     args: "<target>",

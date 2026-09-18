@@ -244,6 +244,66 @@ export function canonicalType(input: string, profile: Profile = defaultProfile()
 }
 
 /**
+ * The parenthetical the unknown-type warning appends after "validated on `type` only" (LCLI-537):
+ * the profile's full valid type set, plus a nearest-match "did you mean" suggestion when one is
+ * close enough to be worth surfacing. Exported so {@link import("../commands/types").runTypes} and
+ * tests can reuse the exact wording `validateFrontmatter` emits.
+ *
+ * `case` (the profile's declared casing convention, {@link Profile.case}) intentionally plays no
+ * part here: a same-name-different-casing typo never reaches this function at all —
+ * {@link canonicalType}'s `byLowerName` lookup already resolves it upstream in
+ * {@link validateFrontmatter}, so every input this function ever sees differs from every known type
+ * by more than casing. The suggestion is a plain case-insensitive edit distance across the known
+ * names instead ({@link nearestKnownType}).
+ */
+export function unknownTypeHint(type: string, profile: Profile): string {
+  const known = [...profile.types.keys()];
+  if (known.length === 0) {
+    return "the active profile declares no types";
+  }
+  const suggestion = nearestKnownType(type, known);
+  const knownList = `known types: ${known.join(", ")}`;
+  return suggestion === undefined ? knownList : `did you mean "${suggestion}"? ${knownList}`;
+}
+
+/**
+ * The closest known type name to `input` by case-insensitive Levenshtein edit distance, or
+ * `undefined` when nothing is close enough to be a plausible typo rather than a coincidence. Ties
+ * keep the first (declaration-order) candidate. The threshold scales with the input's length
+ * (`max(2, ceil(length / 3))`) so a short name like `"ADR"` still needs a tight match while a
+ * longer custom type name tolerates a couple more edits.
+ */
+function nearestKnownType(input: string, known: readonly string[]): string | undefined {
+  const lower = input.trim().toLowerCase();
+  let best: string | undefined;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const candidate of known) {
+    const distance = levenshteinDistance(lower, candidate.toLowerCase());
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = candidate;
+    }
+  }
+  const threshold = Math.max(2, Math.ceil(lower.length / 3));
+  return best !== undefined && bestDistance <= threshold ? best : undefined;
+}
+
+/** Classic single-row Levenshtein edit distance (insert/delete/substitute), case-sensitive — callers fold case themselves. */
+function levenshteinDistance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let diagonal = row[0] as number;
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const above = row[j] as number;
+      row[j] = a[i - 1] === b[j - 1] ? diagonal : 1 + Math.min(diagonal, above, row[j - 1] as number);
+      diagonal = above;
+    }
+  }
+  return row[b.length] as number;
+}
+
+/**
  * The **required body sections** (`##` headings) a concept of `type` must carry under `profile` —
  * the per-type tier-2 section contract `lore validate` enforces as an **error** (ADR-0007). An
  * unknown (producer-extension) type yields `[]` (OKF tolerance: lore never imposes a section shape
@@ -311,8 +371,13 @@ export function validateFrontmatter(fm: Record<string, unknown>, options: Valida
   const compiled = profile.types.get(canonicalType(type, profile));
   if (compiled === undefined) {
     // Unknown type: the non-empty-`type` floor (OKF 0.2 §11; 0.1 §9) is already satisfied, so this is a
-    // tolerated producer extension — warn, validate nothing further, leave every key untouched.
-    options.warnings?.add(`unknown type "${type}"${where}; validated on \`type\` only`);
+    // tolerated producer extension — warn, validate nothing further, leave every key untouched. The
+    // warning names the valid set (and a nearest-match suggestion, when one is close enough) so the
+    // caller can self-correct without hand-reading `.lore/profile.toml`/`.lore/schemas/*.json` — see
+    // `unknownTypeHint` (LCLI-537; previously this named only the rejected value).
+    options.warnings?.add(
+      `unknown type "${type}"${where}; validated on \`type\` only (${unknownTypeHint(type, profile)})`,
+    );
     return type;
   }
 
@@ -601,8 +666,15 @@ export function emitSchemaFiles(profile: Profile, options: EmitSchemaFilesOption
   }));
 }
 
-/** Add the 0.2 shared families and the type-specific computation contract to editor schemas. */
-function schemaForVersion(type: CompiledType, profile: Profile): Record<string, unknown> {
+/**
+ * Add the 0.2 shared families and the type-specific computation contract to editor schemas. Exported
+ * (beyond {@link emitSchemaFiles}'s own use) so `lore types` ({@link import("../commands/types").runTypes}
+ * via {@link import("./type-vocabulary").buildTypeVocabulary}) reports the SAME effective field set that
+ * ships to `.lore/schemas/*.json` — a caller asking "what fields does this type actually carry" would
+ * otherwise see the profile-declared fields alone and miss the version-conditional OKF 0.2 families,
+ * which is not what "the active type vocabulary" means for a 0.2 bundle.
+ */
+export function schemaForVersion(type: CompiledType, profile: Profile): Record<string, unknown> {
   const schema = type.jsonSchema;
   if (profile.okfVersion !== "0.2") {
     return schema;

@@ -183,6 +183,30 @@ returns exit 6 when any error-tier finding exists (or any warning under
 \`--strict\`) -- the report is the payload, the exit code is the gate signal.`,
 };
 
+const TYPES: InstructionTopic = {
+  key: "types",
+  title: "Discovering the active type vocabulary (`lore types`, LCLI-537)",
+  body: `\`lore types [--type <T>]\` prints the active profile's declared type
+vocabulary directly -- every type's name and slug, its required body sections, and its full field
+set (each field's requiredness, a short shape label like \`string\`/\`list\`/\`datetime\`/\`enum\`, and
+whether it's \`common\` to every declared type or specific to this one). With no \`--type\` it reports
+every declared type; \`--type <T>\` scopes it to one, the same way \`lore schema export --type <T>\`
+does.
+
+This is a read-only discovery command, distinct from \`lore schema export\`: \`schema export\`
+*writes* \`.lore/schemas/<slug>.schema.json\` files for editor autocomplete and requires already
+knowing a type name to inspect one usefully -- \`types\` answers "what types does this bundle
+actually support" in one call, with no file written and no type name assumed up front. Reach for it
+before hand-reading \`.lore/profile.toml\` and \`.lore/schemas/*.json\` and reconciling the two
+yourself, and before authoring a concept of a type you are not certain the active profile declares.
+
+An unknown \`type:\` value in an authored concept -- caught by \`lore validate\`/\`lore check\`'s
+unknown-type warning -- now names the profile's full valid set and, when one is close enough to be a
+plausible typo, a "did you mean" suggestion, instead of naming only the rejected value. Run
+\`lore types\` to see the same valid set with full field detail, not just the bare names the warning
+lists.`,
+};
+
 const WORKSPACE: InstructionTopic = {
   key: "workspace",
   title: "Multi-repository projection and bounded retrieval (`--workspace`)",
@@ -279,7 +303,7 @@ in scope for this run, not that it silently passed.`,
 };
 
 /** The detailed, task-scoped topics (everything except `overview`). */
-const DETAIL_TOPICS: readonly InstructionTopic[] = [LINKING, SYNC, CHECK, VALIDATION, WORKSPACE, AGENTS];
+const DETAIL_TOPICS: readonly InstructionTopic[] = [LINKING, SYNC, CHECK, VALIDATION, TYPES, WORKSPACE, AGENTS];
 
 /** Render the `key   title` topic-index lines shared by the overview body and (indirectly) its JSON `topics` field. */
 function topicIndexLines(topics: readonly InstructionTopic[]): string {

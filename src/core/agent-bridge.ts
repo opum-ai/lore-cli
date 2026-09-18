@@ -71,6 +71,10 @@ export const LORE_COMMANDS: readonly CommandSummary[] = [
   { name: "tasks", summary: "Show the live status rollup for a concept's linked tasks" },
   { name: "orphans", summary: "Report tasks with no owning doc + docs whose linked task vanished" },
   { name: "schema", summary: "Export the profile's editor JSON Schemas to .lore/schemas/" },
+  {
+    name: "types",
+    summary: "Print the active profile's declared type vocabulary — fields, requiredness, sections",
+  },
   { name: "scaffold", summary: "Generate a downstream docs consumer's config additively, rewriting nothing" },
   { name: "graph", summary: "Emit the bundle's cross-link graph as json or dot" },
   { name: "path", summary: "Find bounded paths across exact authored concept and task edges" },
