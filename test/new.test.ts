@@ -260,6 +260,28 @@ describe("lore new — user templates override built-ins (AC#2)", () => {
     expect(readFileSync(join(root, result.path), "utf8")).toContain("from rich template");
   });
 
+  test("--template <name> and <name>.md resolve the SAME file (LCLI-536 AC#1)", () => {
+    // Both spellings against ONE fixture, in one test, because the criterion is their EQUALITY --
+    // two separate tests each passing would not prove they agree.
+    writeFileSync(join(root, ".lore/templates/rich.md"), "\n# {{title}}\n\nfrom rich template\n");
+    // Identical title, different --out: the rendered body interpolates {{title}}, so differing
+    // titles would make the two files differ for a reason that has nothing to do with the flag.
+    const bare = newCmd(["reference", "Same title", "--template", "rich", "--out", "docs/reference/a"]);
+    const dotted = newCmd(["reference", "Same title", "--template", "rich.md", "--out", "docs/reference/b"]);
+    const read = (p: string): string => readFileSync(join(root, p), "utf8");
+    expect(read(dotted.result.path)).toBe(read(bare.result.path));
+    expect(read(dotted.result.path)).toContain("from rich template");
+  });
+
+  test("neither spelling's not-found hint suggests a doubled extension (LCLI-536 AC#2)", () => {
+    for (const spelling of ["missing", "missing.md"]) {
+      const err = expectError(["reference", "Orders table", "--template", spelling]);
+      expect(err.type).toBe("not_found");
+      expect(err.hint).toContain(".lore/templates/missing.md");
+      expect(err.hint).not.toContain("missing.md.md");
+    }
+  });
+
   test("--template <name>.md resolves the same file as <name> (LCLI-536)", () => {
     // The regression: `--template` never stripped a trailing `.md` (the profile-declared
     // `template` has since LORE-185), so `.md` was appended to a name that already had one and
