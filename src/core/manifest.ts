@@ -411,7 +411,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
   {
     name: "check",
     summary:
-      "Validate links/anchors + reconciliation drift across the bundle (CI gate); strict_types escalates an unknown type",
+      "Validate links/anchors + reconciliation/committed-schema drift across the bundle (CI gate); strict_types escalates an unknown type",
     args: "[paths…]",
     flags: [
       { name: "strict", takesValue: false, summary: "Treat warnings as failures for the exit code" },
@@ -541,7 +541,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
   },
   {
     name: "schema",
-    summary: "Export the profile's editor JSON Schemas to .lore/schemas/",
+    summary: "Export the profile's editor JSON Schemas to .lore/schemas/ (the fix for `lore check`'s schema-drift)",
     args: "export",
     flags: [
       { name: "out", takesValue: true, summary: "Output directory (default .lore/schemas/)" },

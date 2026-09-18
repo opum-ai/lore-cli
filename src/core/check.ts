@@ -72,8 +72,8 @@ export type CheckSeverity = Severity;
 
 /**
  * Which check produced a {@link CheckFinding}. `broken-link`/`broken-anchor` and
- * `status-drift`/`managed-block-drift`/`unsupported-task-coupling`/`index-drift` are all
- * error-tier gate findings; `unknown-type`/`portability` are warn-tier lints; `external-link`
+ * `status-drift`/`managed-block-drift`/`unsupported-task-coupling`/`index-drift`/`schema-drift`
+ * are all error-tier gate findings; `unknown-type`/`portability` are warn-tier lints; `external-link`
  * is the opt-in, non-deterministic liveness advisory (`--external`) that never fails the gate
  * (ADR-0007). `double-frontmatter` (LCLI-372) is error-tier defense-in-depth: a file whose body
  * itself opens with a second, parseable `---` frontmatter fence -- the shape `lore new` already
@@ -98,6 +98,7 @@ export type CheckRule =
   | "managed-block-drift"
   | "unsupported-task-coupling"
   | "index-drift"
+  | "schema-drift"
   | "okf-version"
   | "unknown-type"
   | "portability"
@@ -737,6 +738,89 @@ export function indexDriftFindings(input: IndexDriftInput): CheckFinding[] {
         rule: "index-drift",
         file: path,
         message: `the <!-- lore:index --> block is stale${hint}`,
+      });
+    }
+  }
+  return findings;
+}
+
+// ── Committed-schema drift (LCLI-539) ────────────────────────────────────────────
+
+/** The inputs {@link schemaDriftFindings} compares: what is committed, versus what the generator emits now. */
+export interface SchemaDriftInput {
+  /**
+   * Every `<slug>.schema.json` currently committed under `.lore/schemas/`, keyed by its
+   * repo-relative POSIX path, with its exact on-disk bytes. An ABSENT map (`null`) means the
+   * directory does not exist at all, which is never drift — see {@link schemaDriftFindings}.
+   */
+  readonly committed: ReadonlyMap<string, string> | null;
+  /**
+   * The same paths' bytes as the active profile's generator emits them right now — the return of
+   * the very emitter `lore schema export` and `lore init` write from, so a match here means the two
+   * agree by construction rather than by a recorded expectation.
+   */
+  readonly regenerated: ReadonlyMap<string, string>;
+}
+
+/**
+ * The **schema-drift** findings: the assertion that `lore schema export` would be a **no-op**.
+ *
+ * `.lore/schemas/*.json` is a COMMITTED artifact that looks authoritative — an agent, a human, or
+ * an editor's YAML language server following the `$schema` modeline `lore new`/`lore init` stamps
+ * reads it to learn what a type may contain. Nothing else in lore compares those committed bytes
+ * against what the generator produces today, so a profile-affecting change that ships without a
+ * re-export leaves a confident, wrong answer in the repository with every gate green. That is
+ * precisely how `story.schema.json` came to be missing four properties the generator had emitted
+ * since LCLI-477 (ADR-0021's `relations`, `claim_outcome`, `claim_evidence_level`, `claim_version`)
+ * while `lore check` reported "0 errors, 0 warnings" on the stale bundle.
+ *
+ * Asserted as a PROPERTY — regenerate and compare against the live generator — never as a pinned
+ * hash of expected bytes. A hash records which bytes were current when someone wrote it down and
+ * can say nothing about whether they still are, which is the same failure this check exists to
+ * catch, one level up.
+ *
+ * Three conditions, each mapping to something `lore schema export` would do:
+ *
+ * - **stale** — a committed file whose bytes differ from the regenerated ones (export overwrites).
+ * - **missing** — a profile type with no committed schema at all (export writes it).
+ * - **orphaned** — a committed `<slug>.schema.json` no profile type owns (a full export to the
+ *   managed directory prunes it).
+ *
+ * A `committed` of `null` — no `.lore/schemas/` directory — yields NO findings. A bundle that has
+ * never exported its schemas is not drifted, it simply has none, and failing that would turn this
+ * gate into a demand that every repository adopt an optional feature. Absence and disagreement are
+ * different facts, and only the second is drift.
+ */
+export function schemaDriftFindings(input: SchemaDriftInput): CheckFinding[] {
+  if (input.committed === null) {
+    return [];
+  }
+  const findings: CheckFinding[] = [];
+  for (const [path, regenerated] of input.regenerated) {
+    const current = input.committed.get(path);
+    if (current === undefined) {
+      findings.push({
+        severity: "error",
+        rule: "schema-drift",
+        file: path,
+        message: "the active profile declares this type but no schema is committed for it — run `lore schema export`",
+      });
+    } else if (current !== regenerated) {
+      findings.push({
+        severity: "error",
+        rule: "schema-drift",
+        file: path,
+        message: "the committed schema no longer matches what this profile generates — run `lore schema export`",
+      });
+    }
+  }
+  for (const path of input.committed.keys()) {
+    if (!input.regenerated.has(path)) {
+      findings.push({
+        severity: "error",
+        rule: "schema-drift",
+        file: path,
+        message: "no type in the active profile owns this schema — run `lore schema export` to prune it",
       });
     }
   }

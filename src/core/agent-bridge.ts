@@ -67,7 +67,7 @@ export const LORE_COMMANDS: readonly CommandSummary[] = [
   {
     name: "check",
     summary:
-      "Validate links/anchors + reconciliation drift across the bundle (CI gate); strict_types escalates an unknown type",
+      "Validate links/anchors + reconciliation/committed-schema drift across the bundle (CI gate); strict_types escalates an unknown type",
   },
   { name: "replace", summary: "Find-and-replace across the bundle, skipping managed regions" },
   { name: "rename", summary: "Move a concept and repoint every inbound link + ref" },
@@ -77,7 +77,10 @@ export const LORE_COMMANDS: readonly CommandSummary[] = [
   { name: "sync", summary: "Reconcile status + managed task blocks, regen index/log, commit backlog/" },
   { name: "tasks", summary: "Show the live status rollup for a concept's linked tasks" },
   { name: "orphans", summary: "Report tasks with no owning doc + docs whose linked task vanished" },
-  { name: "schema", summary: "Export the profile's editor JSON Schemas to .lore/schemas/" },
+  {
+    name: "schema",
+    summary: "Export the profile's editor JSON Schemas to .lore/schemas/ (the fix for `lore check`'s schema-drift)",
+  },
   {
     name: "types",
     summary: "Print the active profile's declared type vocabulary — fields, requiredness, sections",

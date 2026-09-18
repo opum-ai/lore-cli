@@ -99,7 +99,8 @@ const CHECK: InstructionTopic = {
   body: `\`lore check [paths...]\` is lore's read-only CI gate. It always emits the
 full \`check.report\` on stdout (\`kind: check.report\` under \`--json\`) --
 findings for broken bundle-scoped links, rotted heading anchors, reconciliation
-drift (a Story's written status or managed block gone stale), unknown active-
+drift (a Story's written status or managed block gone stale), committed-schema
+drift, unknown active-
 profile types, and portability-lint warnings. Relative \`.md\` links that normalize
 above the selected bundle root are not resolved; the report exposes them through
 \`skippedOutOfBundleLinkCount\`, which is informational and never changes the exit.
@@ -124,6 +125,25 @@ Off by default; a bundle that never declares the key is unaffected. The same
 knob also makes \`lore new <type> ...\` refuse to scaffold an unrecognized
 \`<type>\` (exit 6) instead of warning and writing anyway, and \`lore validate\`
 promotes its own \`unknown-type\` finding the identical way.
+
+**Committed-schema drift** (\`schema-drift\`, error-tier, LCLI-539) asserts that
+\`lore schema export\` would be a no-op: every \`.lore/schemas/<slug>.schema.json\`
+is regenerated in memory from the active profile and compared byte-for-byte
+against what is committed. Three conditions fail the gate -- a committed schema
+whose bytes no longer match the generator, a profile type with no committed
+schema at all, and a committed schema no profile type owns (the file a full
+export would prune). **The fix for all three is \`lore schema export\`.**
+It is asserted as a property -- regenerate and compare against the live
+generator -- never as a pinned hash of expected bytes, because a hash records
+which bytes were current when someone wrote it down and can say nothing about
+whether they still are. A repository with no \`.lore/schemas/\` directory at all
+is never drifted: it is unexported, and absence and disagreement are different
+facts. This exists because \`.lore/schemas/*.json\` is committed and looks
+authoritative -- an agent, a human, or an editor's YAML language server
+following the \`$schema\` modeline reads it to learn what a type may contain --
+and nothing else in lore compared those bytes against the generator, so a
+profile-affecting change shipped without a re-export left a confident, wrong
+answer in the repository with every gate green.
 
 check's throws (each carries a \`--json\` error envelope) are \`usage\`
 (exit 2, a bad flag, or a bundle-root path argument that exists but isn't a
