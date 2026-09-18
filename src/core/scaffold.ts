@@ -247,7 +247,9 @@ const DEFAULT_PROFILE_TOML = `# lore profile — committed, declarative type voc
 # [profile]
 # name = "my-project"      # required once any line below is uncommented
 # okf_version = "0.2"      # required; supported targets are 0.1 and 0.2
-# case = "Title"           # type-name casing convention (advisory; powers the did-you-mean hint)
+# case = "Title"           # type-name casing convention (advisory only; does not power the
+#                          # unknown-type did-you-mean hint -- run \`lore types\` to see the
+#                          # valid set instead)
 # resource_base = ""       # prefix for the stamped \`resource\` link (empty = none)
 # strict_types = false     # true = an unknown \`type:\` fails \`new\`/\`check\`/\`validate\` outright,
 #                          # not just under --strict (LCLI-538)
