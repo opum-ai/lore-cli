@@ -260,6 +260,35 @@ describe("lore new — user templates override built-ins (AC#2)", () => {
     expect(readFileSync(join(root, result.path), "utf8")).toContain("from rich template");
   });
 
+  test("--template <name>.md resolves the same file as <name> (LCLI-536)", () => {
+    // The regression: `--template` never stripped a trailing `.md` (the profile-declared
+    // `template` has since LORE-185), so `.md` was appended to a name that already had one and
+    // lore looked for `rich.md.md` — failing even though the exact file the user named exists.
+    writeFileSync(join(root, ".lore/templates/rich.md"), "\n# {{title}}\n\nfrom rich template\n");
+    const { result } = newCmd(["reference", "Orders table", "--template", "rich.md"]);
+    expect(readFileSync(join(root, result.path), "utf8")).toContain("from rich template");
+  });
+
+  test("a missing --template's hint names the real file, not a doubled one (LCLI-536)", () => {
+    // Asserted separately from resolution above: the hint told the user to create
+    // `.lore/templates/missing.md.md`, which would have made the error PERMANENT for anyone who
+    // followed it. A fix that resolved correctly but left the hint doubled reddens only this test.
+    const err = expectError(["reference", "Orders table", "--template", "missing.md"]);
+    expect(err.type).toBe("not_found");
+    expect(err.hint).toContain(".lore/templates/missing.md");
+    expect(err.hint).not.toContain("missing.md.md");
+    expect(err.input).toMatchObject({ path: ".lore/templates/missing.md" });
+    // The message still echoes what the user actually typed.
+    expect(err.message).toContain('"missing.md"');
+  });
+
+  test("--template '.md' is left intact rather than reduced to an empty stem (LCLI-536)", () => {
+    // Stripping unconditionally would turn `.md` into "" and resolve `.lore/templates/.md`.
+    const err = expectError(["reference", "Orders table", "--template", ".md"]);
+    expect(err.type).toBe("not_found");
+    expect(err.hint).toContain(".lore/templates/.md.md");
+  });
+
   test("a canonical-case template file (Reference.md) is honored on case-sensitive filesystems", () => {
     // The default lookup tries the type's canonical case before lowercasing, so a user template
     // named with the documented `<type>` spelling overrides the built-in even on Linux/CI.

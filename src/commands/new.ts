@@ -377,8 +377,8 @@ function resolveTemplate(parsed: NewArgs, type: string, root: string, profile: P
   if (parsed.template !== undefined) {
     assertTemplateNameConfined(parsed.template);
   }
-  const declared = profile.types.get(type)?.template?.replace(/\.md$/i, "");
-  const base = parsed.template ?? declared ?? type;
+  const declared = templateStem(profile.types.get(type)?.template);
+  const base = templateStem(parsed.template) ?? declared ?? type;
   // A named template source — the CLI flag or a profile's own declared filename — is refused if
   // it resolves through a symlink (LORE-91, widened to `declared` by LORE-185's AC#2); the bare
   // type-name convention lookup below carries no such refusal, matching the pre-LORE-185 scope.
@@ -391,11 +391,15 @@ function resolveTemplate(parsed: NewArgs, type: string, root: string, profile: P
     }
   }
   if (parsed.template !== undefined) {
+    // The message echoes what the user TYPED; the hint and `input.path` name the file lore
+    // actually looked for. Before LCLI-536 both used the raw value, so `--template feature.md`
+    // told the user to create `feature.md.md` — advice that would have made the error permanent.
+    const missing = `${TEMPLATES_DIR}/${templateStem(parsed.template)}.md`;
     throw new LoreError(
       "not_found",
       `template "${parsed.template}" not found in ${TEMPLATES_DIR}/`,
-      `create ${TEMPLATES_DIR}/${parsed.template}.md, or omit --template to use the built-in`,
-      { path: `${TEMPLATES_DIR}/${parsed.template}.md` },
+      `create ${missing}, or omit --template to use the built-in`,
+      { path: missing },
     );
   }
   return builtinTemplateFor(type);
@@ -429,6 +433,25 @@ function assertTemplateNameConfined(name: string): void {
 }
 
 /** The template filenames to try for a base, the name as given first then its lower-cased form (deduped). */
+/**
+ * The template *stem* for a caller-supplied name — the filename without its `.md`, since
+ * {@link resolveTemplate} appends `.md` itself when building the candidate path.
+ *
+ * Shared by BOTH named sources on purpose. The profile-declared `template` has stripped a trailing
+ * `.md` since LORE-185, but `--template` never did, so `--template feature.md` resolved
+ * `.lore/templates/feature.md.md` and its own not-found hint told the user to create the doubled
+ * file (LCLI-536). The defect was not the missing `.replace` so much as the fact that two parallel
+ * sources normalized differently; one helper is what stops them drifting apart again.
+ *
+ * A name that is nothing BUT the extension (`.md`) is left alone rather than reduced to an empty
+ * stem, which would otherwise resolve the directory itself as a candidate path.
+ */
+function templateStem(name: string | undefined): string | undefined {
+  if (name === undefined) return undefined;
+  const stem = name.replace(/\.md$/i, "");
+  return stem === "" ? name : stem;
+}
+
 function templateCandidates(base: string): string[] {
   const lower = base.toLowerCase();
   return base === lower ? [base] : [base, lower];
