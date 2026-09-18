@@ -75,6 +75,36 @@ describe("lore new — scaffolding a known type", () => {
     expect(raw).toContain("# Computation\n");
   });
 
+  test("the hyphenated slug scaffolds the canonical type, not a warn-only unknown (LCLI-534 AC#2)", () => {
+    // The failure mode this task found: `lore new attested-computation` wrote the slug VERBATIM as
+    // the type, so the doc was never schema-validated -- `lore validate` emitted only an
+    // unknown-type WARNING and every gate passed at exit 0. The end-to-end assertion is that the
+    // scaffolded doc now carries the canonical type and produces NO warning at all.
+    const { result } = newCmd(["attested-computation", "Revenue probe"]);
+    expect(result.type).toBe("Attested Computation");
+    const raw = readFileSync(join(root, result.path), "utf8");
+    expect(raw).toContain("type: Attested Computation");
+    expect(raw).toContain("# yaml-language-server: $schema=");
+    expect(raw).toContain("runtime:");
+
+    const warnings = new WarningCollector();
+    loadBundle(join(root, "docs"), { warnings });
+    expect(warnings.list().filter((w) => String(w).includes("unknown type"))).toEqual([]);
+  });
+
+  test("the hyphenated and space-separated spellings scaffold identically (LCLI-534)", () => {
+    // `attested computation` already worked; the slug form must reach the same place rather than
+    // merely stop warning.
+    const hyphen = newCmd(["attested-computation", "Probe one"]);
+    const spaced = newCmd(["attested computation", "Probe two"]);
+    expect(hyphen.result.type).toBe(spaced.result.type);
+    const norm = (p: string): string =>
+      readFileSync(join(root, p), "utf8")
+        .replace(/probe-(one|two)/g, "X")
+        .replace(/Probe (one|two)/g, "X");
+    expect(norm(hyphen.result.path)).toBe(norm(spaced.result.path));
+  });
+
   test("the new doc loads cleanly: loadBundle yields no warnings (AC#1)", () => {
     newCmd(["reference", "Orders table"]);
     const warnings = new WarningCollector();

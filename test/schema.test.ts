@@ -40,6 +40,37 @@ describe("schema — the default (story-convention) profile", () => {
     expect(canonicalType("attested-computation")).toBe("Attested Computation");
   });
 
+  test("a CUSTOM profile-declared multi-word type is reachable from its slug too (LCLI-534 AC#1)", () => {
+    // The fix must live in the general lookup, not be a special case for the one built-in
+    // multi-word type. A profile nobody shipped proves that: `QA Plan` has no entry anywhere in
+    // lore's source, so only a general slug index can resolve `qa-plan`.
+    const profile = compileProfile(
+      parseProfile(
+        Bun.TOML.parse(`
+[profile]
+name = "custom-multiword"
+okf_version = "0.2"
+
+[base.fields]
+type = { required = true }
+summary = {}
+
+[[types]]
+name = "QA Plan"
+
+[[types]]
+name = "Rollout Checklist"
+`) as Record<string, unknown>,
+        "inline-custom-multiword",
+      ),
+    );
+    expect(canonicalType("qa-plan", profile)).toBe("QA Plan");
+    expect(canonicalType("rollout-checklist", profile)).toBe("Rollout Checklist");
+    // ...and the canonical and space-separated spellings still resolve, unchanged.
+    expect(canonicalType("QA Plan", profile)).toBe("QA Plan");
+    expect(canonicalType("qa plan", profile)).toBe("QA Plan");
+  });
+
   test("canonicalType still folds case on a single-word name (LCLI-534 regression guard)", () => {
     // Asserted separately from the slug case so a change that fixes slugs by BREAKING name
     // resolution reddens this test and not that one.
