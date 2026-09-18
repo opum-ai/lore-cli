@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { commandHandlerNames, run } from "../src/cli";
+import { runExport } from "../src/commands/export";
 import { type HelpOptions, renderTopLevelHelp, runHelp } from "../src/commands/help";
 import { LORE_COMMANDS } from "../src/core/agent-bridge";
 import {
@@ -13,7 +14,8 @@ import {
   type ManifestFlag,
   manifestCommandNames,
 } from "../src/core/manifest";
-import { EXIT_CODES, EXIT_OK, EXIT_UNCAUGHT } from "../src/errors";
+import { PROJECTION_SCHEMA_VERSION } from "../src/core/projection";
+import { EXIT_CODES, EXIT_OK, EXIT_UNCAUGHT, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture, expectError } from "./helpers";
 
@@ -657,6 +659,63 @@ describe("manifest ⇔ parser — required-flag lockstep guard (LCLI-479)", () =
       runHelp({ output: PLAIN_CTX, args: [command.name], stdout });
       const usageLine = stdout.text().split("\n")[3] as string;
       for (const flag of required) expect(usageLine).toContain(`--${flag.name}`);
+    }
+  });
+});
+
+describe("manifest — advertised values must not go stale (LCLI-512)", () => {
+  test("no manifest example or flag summary names a projection schema version lore rejects", () => {
+    // `lore export --help` advertised `--schema-version 1.0` and shipped it as a worked EXAMPLE
+    // while the exporter had moved to 1.1 -- so running the tool's own documented example exited 2.
+    // The version now derives from PROJECTION_SCHEMA_VERSION everywhere; this asserts nobody
+    // re-hardcodes one, in any command, not just `export`.
+    const stale: string[] = [];
+    for (const command of buildManifest().commands) {
+      // Two different shapes, so two different scans. An EXAMPLE names the flag, so the version is
+      // only meaningful when it follows `--schema-version`. A flag SUMMARY is prose ("Projection
+      // schema version (currently 1.1)") and names no flag, so any version-shaped token in it is
+      // the advertised value. An earlier revision of this test scanned both with the flag-anchored
+      // pattern and therefore never covered summaries at all -- caught by mutation-testing it,
+      // which is the only reason this comment exists rather than a silently weaker test.
+      for (const example of command.examples) {
+        for (const [, version] of example.matchAll(/--schema-version[ =]+"?(\d+\.\d+)"?/g)) {
+          if (version !== PROJECTION_SCHEMA_VERSION) stale.push(`${command.name} example: ${example}`);
+        }
+      }
+      for (const flag of command.flags.filter((f) => f.name === "schema-version")) {
+        for (const [version] of flag.summary.matchAll(/\d+\.\d+/g)) {
+          if (version !== PROJECTION_SCHEMA_VERSION) stale.push(`${command.name} --${flag.name}: ${flag.summary}`);
+        }
+      }
+    }
+    expect(stale).toEqual([]);
+  });
+
+  test("every `lore export` manifest example is accepted, not merely advertised", async () => {
+    // Stronger than string-matching the version: it RUNS each advertised example and requires it
+    // not to be a usage error (exit 2). An example that is wrong for some OTHER reason is caught
+    // too, which a version comparison alone could never do.
+    const root = mkdtempSync(join(tmpdir(), "lore-export-manifest-"));
+    try {
+      const command = findManifestCommand("export") as ManifestCommand;
+      expect(command).toBeDefined();
+      for (const example of command.examples) {
+        const args = example.split(/\s+/).slice(2); // drop "lore" and the command name
+        // The assertion is specifically "not a USAGE error". Running in an empty directory means
+        // the example legitimately fails later, on the missing bundle -- so the check is on the
+        // error's TYPE, not on success. A stale `--schema-version` is rejected during argument
+        // parsing and would surface here as `usage`, which is exactly the defect being guarded.
+        let outcome: string;
+        try {
+          outcome = String(await runExport({ root, args, output: PLAIN_CTX, stdout: capture(), stderr: capture() }));
+        } catch (err) {
+          outcome = err instanceof LoreError ? err.type : "non-lore-error";
+        }
+        expect({ example, outcome }).not.toMatchObject({ outcome: "usage" });
+        expect({ example, outcome }).not.toMatchObject({ outcome: String(EXIT_CODES.usage) });
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });
