@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { compileProfile, defaultProfile, parseProfile } from "../src/core/profile";
-import { isKnownType, unknownTypeHint, validateFrontmatter } from "../src/core/schema";
+import { compileProfile, defaultProfile, parseProfile, profileTypeDeclaresField } from "../src/core/profile";
+import { canonicalType, isKnownType, unknownTypeHint, validateFrontmatter } from "../src/core/schema";
 import { EXIT_CODES, LoreError, WarningCollector } from "../src/errors";
 
 /** Assert `fn` throws a `validation` {@link LoreError}, returning it for further assertions. */
@@ -31,6 +31,77 @@ describe("schema — the default (story-convention) profile", () => {
   test("isKnownType narrows known vs unknown types against the default profile", () => {
     expect(isKnownType("Story")).toBe(true);
     expect(isKnownType("Glossary")).toBe(false);
+  });
+
+  test("canonicalType resolves a multi-word type from its lower-kebab slug (LCLI-534)", () => {
+    // The regression: `Attested Computation` is the one multi-word built-in, and its byLowerName
+    // key contains a SPACE — unspellable as a shell argument — so it was unreachable from the very
+    // slug that already names its schema and template files.
+    expect(canonicalType("attested-computation")).toBe("Attested Computation");
+  });
+
+  test("a CUSTOM profile-declared multi-word type is reachable from its slug too (LCLI-534 AC#1)", () => {
+    // The fix must live in the general lookup, not be a special case for the one built-in
+    // multi-word type. A profile nobody shipped proves that: `QA Plan` has no entry anywhere in
+    // lore's source, so only a general slug index can resolve `qa-plan`.
+    const profile = compileProfile(
+      parseProfile(
+        Bun.TOML.parse(`
+[profile]
+name = "custom-multiword"
+okf_version = "0.2"
+
+[base.fields]
+type = { required = true }
+summary = {}
+
+[[types]]
+name = "QA Plan"
+
+[[types]]
+name = "Rollout Checklist"
+`) as Record<string, unknown>,
+        "inline-custom-multiword",
+      ),
+    );
+    expect(canonicalType("qa-plan", profile)).toBe("QA Plan");
+    expect(canonicalType("rollout-checklist", profile)).toBe("Rollout Checklist");
+    // ...and the canonical and space-separated spellings still resolve, unchanged.
+    expect(canonicalType("QA Plan", profile)).toBe("QA Plan");
+    expect(canonicalType("qa plan", profile)).toBe("QA Plan");
+  });
+
+  test("canonicalType still folds case on a single-word name (LCLI-534 regression guard)", () => {
+    // Asserted separately from the slug case so a change that fixes slugs by BREAKING name
+    // resolution reddens this test and not that one.
+    expect(canonicalType("story")).toBe("Story");
+    expect(canonicalType("ADR")).toBe("ADR");
+    expect(canonicalType("  Reference  ")).toBe("Reference");
+  });
+
+  test("canonicalType still returns an unknown producer-extension type verbatim (LCLI-534)", () => {
+    // Slug resolution must not start folding tokens that name no type; an OKF producer extension
+    // keeps the author's own casing.
+    expect(canonicalType("GlossaryEntry")).toBe("GlossaryEntry");
+    expect(canonicalType("not-a-type")).toBe("not-a-type");
+  });
+
+  test("a slug-resolved type is a KNOWN type to every consumer, not just to `lore new` (LCLI-534)", () => {
+    // The two resolution sites (schema.ts canonicalType, profile.ts canonicalProfileType) must
+    // agree. If only one learned slugs, `lore new` would scaffold the canonical type while
+    // field-level consumers still treated the slug as an unknown producer extension.
+    //
+    // Asserted as an EQUIVALENCE against the canonical spelling rather than a bare `true`, so the
+    // test cannot pass by accident on a field that happens to be declared on every type. NB
+    // `runtime` is NOT usable here: it belongs to the OKF 0.2 section-10 contract, not to the
+    // profile's declared fields (the built-in declares `fields: {}` for this type).
+    expect(isKnownType(canonicalType("attested-computation"))).toBe(true);
+    for (const field of ["summary", "relations", "runtime", "nonexistent"]) {
+      expect(profileTypeDeclaresField("attested-computation", field)).toBe(
+        profileTypeDeclaresField("Attested Computation", field),
+      );
+    }
+    expect(profileTypeDeclaresField("attested-computation", "summary")).toBe(true);
   });
 
   test("each known type carries a generated validator", () => {

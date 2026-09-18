@@ -231,6 +231,17 @@ export interface Profile {
   /** Canonical `type` value keyed by its lower-cased spelling, for case-insensitive resolution. */
   readonly byLowerName: ReadonlyMap<string, string>;
   /**
+   * Canonical `type` value keyed by its LOWER-KEBAB slug ({@link slugForTypeName}), so a
+   * multi-word type is reachable from the same token that already names its schema and template
+   * files (`attested-computation` → `Attested Computation`). Without this a multi-word type is
+   * unreachable from its own natural slug: {@link byLowerName} holds `"attested computation"`
+   * with a SPACE, which no shell-friendly argument can spell (LCLI-534).
+   *
+   * Unambiguous by an invariant the compiler already enforces rather than by assumption: two type
+   * names that reduce to the same slug are a hard load error above, so slug → name is a function.
+   */
+  readonly bySlug: ReadonlyMap<string, string>;
+  /**
    * The canonical frontmatter key emission order: base fields (declaration order) then each type's
    * own fields appended in first-seen order (ADR-0011 append-slot = profile declaration order).
    * `concept.ts` orders known keys by this on serialize; unknown producer keys follow verbatim.
@@ -705,6 +716,7 @@ export function compileProfile(parsed: ParsedProfile): Profile {
 
   const types = new Map<string, CompiledType>();
   const byLowerName = new Map<string, string>();
+  const bySlug = new Map<string, string>();
   const canonicalKeyOrder: string[] = [...declaredBase];
   const seenKeys = new Set<string>([...declaredBase, ...reservedBase]);
 
@@ -737,6 +749,7 @@ export function compileProfile(parsed: ParsedProfile): Profile {
     };
     types.set(type.name, compiled);
     byLowerName.set(type.name.toLowerCase(), type.name);
+    bySlug.set(compiled.slug, type.name);
   }
   // Reserved coupling fields trail every authored/known key in the global canonical order.
   canonicalKeyOrder.push(...reservedBase);
@@ -749,6 +762,7 @@ export function compileProfile(parsed: ParsedProfile): Profile {
     strictTypes: parsed.strictTypes,
     types,
     byLowerName,
+    bySlug,
     canonicalKeyOrder,
   };
 }
@@ -1011,7 +1025,11 @@ export function profileTypeDeclaresField(type: string, field: string, profile: P
 /** Resolve a type token to the active profile's canonical spelling without importing schema.ts. */
 function canonicalProfileType(type: string, profile: Profile): string {
   const trimmed = type.trim();
-  return profile.byLowerName.get(trimmed.toLowerCase()) ?? trimmed;
+  const lower = trimmed.toLowerCase();
+  // Name first, slug second — see {@link canonicalType}, whose resolution order this mirrors
+  // deliberately. The two must agree: if only one learned slugs, `profileTypeDeclaresField` would
+  // call a slug an unknown producer extension while `lore new` treated it as the known type.
+  return profile.byLowerName.get(lower) ?? profile.bySlug.get(lower) ?? trimmed;
 }
 
 // ── Validators (mirroring config.ts's hand-rolled shape checks) ────────────────—
