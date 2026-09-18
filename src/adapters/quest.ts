@@ -372,6 +372,9 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
     if (!Object.hasOwn(envelope, "data")) throw drift(operation, "did not include envelope data");
     return envelope;
   }
+  // Resolved once, during the same probe that already reads the manifest -- no extra spawn.
+  let ifRevisionSupported = false;
+
   async function probe(): Promise<TrackerCapability> {
     assertWorkspace();
     const versionResult = await invoke(["--version"], "--version");
@@ -395,6 +398,7 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
     if (manifest.kind !== "manifest.registry")
       throw drift("manifest --json", `returned kind ${JSON.stringify(manifest.kind)}, expected "manifest.registry"`);
     verifyManifest(manifest.data);
+    ifRevisionSupported = supportsIfRevision(manifest.data);
     const flow = await run(["task", "status-flow", "--json"], "task status-flow --json");
     if (flow.kind !== "task.status-flow")
       throw drift("task status-flow --json", `returned kind ${JSON.stringify(flow.kind)}, expected "task.status-flow"`);
@@ -472,6 +476,13 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
       for (const label of patch.addLabels ?? []) args.push("--add-label", safe(label));
       for (const label of patch.removeLabels ?? []) args.push("--remove-label", safe(label));
       for (const doc of patch.doc ?? []) args.push("--doc", safe(doc));
+      // `ensure()` has already run by the time `data` returns, but the flag is read BEFORE the
+      // call below, so probe explicitly first -- otherwise the very first edit of a process would
+      // read `ifRevisionSupported` while it is still its pre-probe default.
+      await ensure();
+      if (patch.ifRevision !== undefined && ifRevisionSupported) {
+        args.push("--if-revision", safe(patch.ifRevision));
+      }
       await data([...args, "--json"], "task edit", "task.updated");
     },
   };
@@ -677,6 +688,27 @@ function pausedStatusField(value: unknown): string | undefined {
     );
   return paused;
 }
+/**
+ * Whether this Quest's manifest advertises `--if-revision` on `task edit` (QCLI-277).
+ *
+ * DETECTED BY PRESENCE, NEVER BY A VERSION COMPARISON. The flag arrived in a patch release, and
+ * this fleet has repeatedly measured one version string naming two different byte-sets -- so a
+ * `>=` test would both miss a Quest that has it and claim it on one that does not. The manifest is
+ * the tracker's own statement of what it accepts, which is the thing actually being asked about.
+ *
+ * Getting this wrong in the other direction would be worse than the bug it fixes: passing an
+ * unknown flag unconditionally would raise lore's effective Quest floor from MIN_QUEST_VERSION to
+ * whichever release added it, breaking every Quest in between. That is an external compatibility
+ * change, and it is not one a bug fix gets to make silently.
+ */
+function supportsIfRevision(manifestData: unknown): boolean {
+  if (!record(manifestData) || !Array.isArray(manifestData.commands)) return false;
+  const edit = manifestData.commands.find((c) => record(c) && c.name === "task edit");
+  if (!record(edit) || !record(edit.parameters)) return false;
+  const flags = (edit.parameters as Record<string, unknown>).flags;
+  return record(flags) && Object.hasOwn(flags, "--if-revision");
+}
+
 function verifyManifest(value: unknown): void {
   if (!record(value) || !Array.isArray(value.commands))
     throw drift("manifest --json", "did not contain a commands array");
@@ -828,6 +860,10 @@ function detail(value: unknown): BacklogTaskDetail {
     throw new LoreError("drift", "Quest returned invalid subtasks", QUEST_VERSION_SET_HINT);
   return {
     ...task,
+    // Optional by CONTRACT, not by defensiveness: a Quest that does not emit `revision` simply
+    // yields undefined, and the optimistic-concurrency precondition is then skipped rather than
+    // failing the read (LCLI-522).
+    ...(typeof value.revision === "string" && value.revision !== "" ? { revision: value.revision } : {}),
     file: nullableString(value.file ?? value.path, "task file"),
     reporter: nullableString(value.reporter, "reporter"),
     createdAt: nullableString(value.createdAt, "createdAt"),
