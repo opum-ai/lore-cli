@@ -1190,12 +1190,42 @@ describe("runCheck — exit codes and discovery", () => {
       severity: "warning",
       rule: "unknown-type",
       file: "badtype/x.md",
-      message: 'unknown type "badtype" in badtype/x.md; validated on `type` only',
+      message:
+        'unknown type "badtype" in badtype/x.md; validated on `type` only (known types: Epic, Story, Spec, ADR, Runbook, Reference)',
     });
 
     const strict = opts(["--strict"]);
     expect(runCheck(strict)).toBe(EXIT_CODES.validation);
     expect((strict.stdout as ReturnType<typeof capture>).text()).toContain("[unknown-type]");
+  });
+
+  test("LCLI-538: `profile.strict_types` makes an unknown type an unconditional error, no --strict needed", () => {
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      [
+        "[profile]",
+        'name = "demo"',
+        'okf_version = "0.1"',
+        "strict_types = true",
+        "[base.fields]",
+        "type = { required = true }",
+        "[[types]]",
+        'name = "Reference"',
+        "[[types]]",
+        'name = "ADR"',
+      ].join("\n"),
+    );
+    mkdirSync(join(root, "docs", "badtype"), { recursive: true });
+    writeFileSync(join(root, "docs", "badtype", "x.md"), "---\ntype: badtype\ncustom: kept\n---\n# X\n");
+
+    const options = opts([], JSON_CTX); // deliberately no --strict
+    expect(runCheck(options)).toBe(EXIT_CODES.validation);
+    const report = JSON.parse((options.stdout as ReturnType<typeof capture>).text());
+    expect(report.data.errorCount).toBeGreaterThan(0);
+    expect(report.data.findings).toContainEqual(
+      expect.objectContaining({ severity: "error", rule: "unknown-type", file: "badtype/x.md" }),
+    );
   });
 
   test("LCLI-306: active-profile types are known while the structural root index keeps its built-in profile", () => {

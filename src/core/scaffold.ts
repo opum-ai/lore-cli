@@ -249,6 +249,8 @@ const DEFAULT_PROFILE_TOML = `# lore profile — committed, declarative type voc
 # okf_version = "0.2"      # required; supported targets are 0.1 and 0.2
 # case = "Title"           # type-name casing convention (advisory; powers the did-you-mean hint)
 # resource_base = ""       # prefix for the stamped \`resource\` link (empty = none)
+# strict_types = false     # true = an unknown \`type:\` fails \`new\`/\`check\`/\`validate\` outright,
+#                          # not just under --strict (LCLI-538)
 
 # [base.fields]
 # Fields every type carries. \`type\` MUST be required (OKF's one hard requirement).

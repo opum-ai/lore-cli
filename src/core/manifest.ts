@@ -374,7 +374,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
   },
   {
     name: "new",
-    summary: "Scaffold a typed concept from a template",
+    summary: "Scaffold a typed concept from a template (rejects an unknown type under strict_types)",
     args: '<type> "<title>"',
     flags: [
       { name: "var", takesValue: true, repeatable: true, summary: "Fill a `{{k}}` template placeholder (k=v)" },
@@ -395,7 +395,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
   },
   {
     name: "validate",
-    summary: "Check concept files against OKF + the lore profile (per-file)",
+    summary: "Check concept files against OKF + the lore profile (per-file); strict_types escalates an unknown type",
     args: "[paths…]",
     flags: [
       { name: "type", takesValue: true, summary: "Limit the report to one concept type" },
@@ -410,7 +410,8 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
   },
   {
     name: "check",
-    summary: "Validate links/anchors + reconciliation drift across the bundle (CI gate)",
+    summary:
+      "Validate links/anchors + reconciliation drift across the bundle (CI gate); strict_types escalates an unknown type",
     args: "[paths…]",
     flags: [
       { name: "strict", takesValue: false, summary: "Treat warnings as failures for the exit code" },

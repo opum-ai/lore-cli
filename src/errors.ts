@@ -624,6 +624,8 @@ export function reportError(err: unknown, opts: { json: boolean; color?: boolean
  */
 export class WarningCollector {
   private readonly messages: string[] = [];
+  /** Per-message `kind`, index-aligned with {@link messages}, for {@link entries}. */
+  private readonly messageKinds: (string | undefined)[] = [];
   /** Machine-readable tags attached to warnings via {@link add}'s optional `kind`, for {@link has}. */
   private readonly kinds = new Set<string>();
 
@@ -635,6 +637,7 @@ export class WarningCollector {
    */
   add(message: string, kind?: string): void {
     this.messages.push(message);
+    this.messageKinds.push(kind);
     if (kind !== undefined) {
       this.kinds.add(kind);
     }
@@ -660,9 +663,26 @@ export class WarningCollector {
     return [...this.messages];
   }
 
+  /**
+   * A snapshot of every collected warning paired with its optional machine-readable `kind`, in
+   * insertion order — the structured counterpart to {@link list}. Lets a caller single out one
+   * tagged warning (e.g. the unknown-type warning, tagged `"unknown-type"` by
+   * {@link import("./core/schema").validateFrontmatter}) and treat it differently from the rest —
+   * escalating it under a stricter policy — without falling back to matching on message text
+   * (LCLI-538). Most callers only ever need {@link list}; this is for the few that must
+   * discriminate by `kind`.
+   */
+  entries(): ReadonlyArray<{ readonly message: string; readonly kind?: string }> {
+    return this.messages.map((message, i) => {
+      const kind = this.messageKinds[i];
+      return kind === undefined ? { message } : { message, kind };
+    });
+  }
+
   /** Append another collector's messages and machine-readable kinds in order. */
   merge(other: WarningCollector): void {
     this.messages.push(...other.messages);
+    this.messageKinds.push(...other.messageKinds);
     for (const kind of other.kinds) this.kinds.add(kind);
   }
 

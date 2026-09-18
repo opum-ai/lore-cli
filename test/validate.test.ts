@@ -68,6 +68,63 @@ custom: anything
     expect(report.findings.some((f) => f.severity === "warning" && /unknown type/.test(f.message))).toBe(true);
   });
 
+  test("LCLI-538: `strict_types` escalates the unknown-type finding to an unconditional error", () => {
+    const strictProfile = compileProfile(
+      parseProfile(
+        {
+          profile: { name: "x", okf_version: "0.1", strict_types: true },
+          base: { fields: { type: { required: true } } },
+          types: [{ name: "ADR" }],
+        },
+        "test-profile",
+      ),
+    );
+    const raw = `---
+type: Glossary
+---
+
+# Term
+`;
+    const report = validateConceptText("docs/glossary/term.md", raw, strictProfile);
+    expect(report.ok).toBe(false); // now an error-severity finding
+    expect(report.skipped).toBe(false);
+    expect(report.findings).toContainEqual(
+      expect.objectContaining({
+        severity: "error",
+        rule: "unknown-type",
+        message: expect.stringContaining("Glossary"),
+      }),
+    );
+  });
+
+  test("LCLI-538 AC#3: with `strict_types` explicitly false, the unknown-type finding is unchanged", () => {
+    const profileOff = compileProfile(
+      parseProfile(
+        {
+          profile: { name: "x", okf_version: "0.1", strict_types: false },
+          base: { fields: { type: { required: true } } },
+          types: [{ name: "ADR" }],
+        },
+        "test-profile",
+      ),
+    );
+    const raw = `---
+type: Glossary
+---
+
+# Term
+`;
+    const report = validateConceptText("docs/glossary/term.md", raw, profileOff);
+    expect(report.ok).toBe(true);
+    expect(report.findings).toContainEqual(
+      expect.objectContaining({
+        severity: "warning",
+        rule: "unknown-type",
+        message: expect.stringContaining("Glossary"),
+      }),
+    );
+  });
+
   test("a missing `type` is an error finding (not a skip)", () => {
     const raw = `---
 title: No type here
@@ -679,6 +736,35 @@ describe("validate (command)", () => {
     const strict = validateCmd(["docs/reference/r.md", "--strict"]);
     expect(strict.report.warningCount).toBeGreaterThan(0);
     expect(strict.code).toBe(EXIT_CODES.validation);
+  });
+
+  test("LCLI-538: `profile.strict_types` fails an unknown type at exit 6 with no `--strict` passed", () => {
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      [
+        "[profile]",
+        'name = "demo"',
+        'okf_version = "0.1"',
+        "strict_types = true",
+        "[base.fields]",
+        "type = { required = true }",
+        "title = {}",
+        "summary = {}",
+        "[[types]]",
+        'name = "ADR"',
+      ].join("\n"),
+    );
+    mkdirSync(join(root, "docs/glossary"), { recursive: true });
+    writeFileSync(
+      join(root, "docs/glossary/term.md"),
+      "---\ntype: Glossary\ntitle: Term\nsummary: A term.\n---\n\n# Term\n",
+    );
+    const { code, report } = validateCmd(["docs/glossary/term.md"]);
+    expect(code).toBe(EXIT_CODES.validation);
+    expect(report.errorCount).toBeGreaterThan(0);
+    expect(report.files[0]?.findings).toContainEqual(
+      expect.objectContaining({ severity: "error", rule: "unknown-type" }),
+    );
   });
 
   test("--type limits a directory run to one type", () => {

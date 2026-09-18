@@ -349,8 +349,11 @@ export function typeDirectory(type: string): string {
  * It **returns the resolved type** (the `type` value, trimmed). Behavior by tier:
  *
  * - Missing/empty `type` → throw (`validation`). This is the OKF 0.2 §11 floor (0.1 §9).
- * - Unknown `type` → warn; the type-only floor already passed, so nothing else is checked and
- *   every key is preserved (OKF tolerance).
+ * - Unknown `type` → warn (tagged `"unknown-type"` on `options.warnings`, LCLI-538 — see
+ *   {@link Profile.strictTypes} for who reads that tag and escalates it); the type-only floor
+ *   already passed, so nothing else is checked and every key is preserved (OKF tolerance). This
+ *   function's own throw/warn split is unaffected by `profile.strictTypes` — it is never
+ *   consulted here; escalation happens at the three call sites {@link Profile.strictTypes} names.
  * - Known `type` with a mistyped field → throw (`validation`) citing the field(s). A `type`
  *   carrying surrounding whitespace, or spelled in a different casing than the profile's
  *   canonical form (`story` for `Story`), classifies via {@link canonicalType} — so it is
@@ -377,6 +380,7 @@ export function validateFrontmatter(fm: Record<string, unknown>, options: Valida
     // `unknownTypeHint` (LCLI-537; previously this named only the rejected value).
     options.warnings?.add(
       `unknown type "${type}"${where}; validated on \`type\` only (${unknownTypeHint(type, profile)})`,
+      "unknown-type",
     );
     return type;
   }

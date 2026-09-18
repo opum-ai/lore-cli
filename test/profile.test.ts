@@ -73,6 +73,10 @@ describe("defaultProfile — the built-in story convention (AC#3)", () => {
     expect(p.name).toBe("story-convention");
   });
 
+  test("never opts into strict_types on a project's behalf (LCLI-538 AC#3)", () => {
+    expect(defaultProfile().strictTypes).toBe(false);
+  });
+
   test("canonical key order: base, then Story's own fields, then the reserved fields LAST", () => {
     // Reserved fields trail per-type fields, matching the order lore emitted before the profile
     // existed (ADR-0011 byte-stability), so a Story with tasks/specs AND supersedes keeps its
@@ -342,6 +346,15 @@ describe("parseProfile — grammar errors throw (exit 6)", () => {
     );
   });
 
+  test("a non-boolean profile.strict_types is an error (LCLI-538)", () => {
+    expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1", strict_types: "yes" },
+        base: { fields: { type: { required: true } } },
+      }),
+    );
+  });
+
   test("a non-string sections entry is an error", () => {
     expectValidation(() =>
       parse({
@@ -487,6 +500,36 @@ describe("parseProfile — grammar errors throw (exit 6)", () => {
       }),
     );
     expect(err.message).toContain("types[0].fields.labels.default");
+  });
+});
+
+describe("profile.strict_types — a per-bundle opt-in, off by default (LCLI-538)", () => {
+  const doc = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    profile: { name: "x", okf_version: "0.1", ...extra },
+    base: { fields: { type: { required: true } } },
+    types: [{ name: "ADR" }],
+  });
+
+  test("defaults to false when the key is absent", () => {
+    const compiled = compileProfile(parseProfile(doc(), "test-profile"));
+    expect(compiled.strictTypes).toBe(false);
+  });
+
+  test("parses profile.strict_types = true through to the compiled Profile", () => {
+    const compiled = compileProfile(parseProfile(doc({ strict_types: true }), "test-profile"));
+    expect(compiled.strictTypes).toBe(true);
+  });
+
+  test("an explicit profile.strict_types = false is unchanged from the default", () => {
+    const compiled = compileProfile(parseProfile(doc({ strict_types: false }), "test-profile"));
+    expect(compiled.strictTypes).toBe(false);
+  });
+
+  test("profileForBundle preserves strict_types across an okfVersion override", () => {
+    const compiled = compileProfile(parseProfile(doc({ okf_version: "0.2", strict_types: true }), "test-profile"));
+    const forOlder = profileForBundle(compiled, { okfVersion: "0.1", source: "declared" });
+    expect(forOlder.strictTypes).toBe(true);
+    expect(forOlder.okfVersion).toBe("0.1");
   });
 });
 
