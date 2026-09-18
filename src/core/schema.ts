@@ -234,13 +234,20 @@ export function isKnownType(type: string, profile: Profile = defaultProfile()): 
  * Resolve a user-supplied `<type>` token to its canonical spelling in `profile`. `lore new`
  * accepts a type case-insensitively (`story`, `ADR`, `reference`), so a token whose lower-case
  * form names a profile type returns that type's canonical casing (`Story`, `ADR`, `Reference`) —
- * the value lore writes to `type:` and keys its schema by. An **unknown** type is a tolerated OKF
- * producer extension: it is returned **trimmed but otherwise verbatim** (the author's own casing
- * preserved), never folded or rejected.
+ * the value lore writes to `type:` and keys its schema by. A token that names a type's LOWER-KEBAB
+ * slug resolves too (`attested-computation` → `Attested Computation`), which is the only way a
+ * multi-word type is reachable from a command line: its `byLowerName` key contains a SPACE
+ * (LCLI-534). An **unknown** type is a tolerated OKF producer extension: it is returned **trimmed
+ * but otherwise verbatim** (the author's own casing preserved), never folded or rejected.
+ *
+ * Name beats slug when both match. That precedence is near-theoretical — a lower-cased name can
+ * only equal a different type's slug if their slugs collide, which fails profile load — but the
+ * order is fixed here so the two lookups can never be read as interchangeable.
  */
 export function canonicalType(input: string, profile: Profile = defaultProfile()): string {
   const trimmed = input.trim();
-  return profile.byLowerName.get(trimmed.toLowerCase()) ?? trimmed;
+  const lower = trimmed.toLowerCase();
+  return profile.byLowerName.get(lower) ?? profile.bySlug.get(lower) ?? trimmed;
 }
 
 /**
