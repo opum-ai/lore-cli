@@ -17,6 +17,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { LoreError } from "../errors";
 import { digestHex } from "./ladybug-source";
 import {
+  isRetainedQualifierBackfill,
   parseRetainedSnapshot,
   type RetainedScopeKind,
   type RetainedSnapshot,
@@ -55,7 +56,16 @@ export function retainSnapshot(root: string, snapshot: RetainedSnapshot): Retain
   const same = existing.find((candidate) => candidate.snapshotKey === normalized.snapshotKey);
   if (same !== undefined) {
     const loaded = loadSnapshot(canonicalRoot, selection, normalized.snapshotKey);
-    if (serializeRetainedSnapshot(loaded) !== serializeRetainedSnapshot(normalized)) {
+    if (
+      serializeRetainedSnapshot(loaded) !== serializeRetainedSnapshot(normalized) &&
+      // Ruling 13: `snapshotKey` derives from the source projection stream rather than from the
+      // retained bytes, so a Lore that newly carries the ADR-0021 qualifiers re-retains the same
+      // key over different bytes. Reporting that as a corrupt cache would be a false report — the
+      // only thing that changed is Lore's own serializer. The entry stays as retained: it is
+      // genuinely a record of a retention that carried no qualifiers, and back-dating it would
+      // falsify that. Anything the predicate does not recognise still throws.
+      !isRetainedQualifierBackfill(loaded, normalized)
+    ) {
       throw new LoreError(
         "validation",
         "retained snapshot key refers to different bytes",

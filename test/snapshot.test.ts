@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LadybugProjectionSource } from "../src/core/ladybug-source";
@@ -214,6 +214,108 @@ describe("explicit retained snapshot store", () => {
   });
 });
 
+describe("ADR-0021 relation qualifiers on retained edges (LCLI-540, rulings 12 and 13)", () => {
+  const QUALIFIED = { statement: "cites", version: "1.2.0", relationOrdinal: 3 } as const;
+  const qualifiedEdge = (qualifiers: Readonly<Record<string, unknown>> = QUALIFIED) =>
+    edgeFact(D("a"), D("b"), D("c"), "relates", 0, D("a"), qualifiers);
+  const plainEdge = () => edgeFact(D("a"), D("b"), D("c"), "relates", 0, D("a"));
+  const storeRoot = () => mkdtempSync(join(tmpdir(), "lore-snapshot-qualifier-"));
+
+  // Ruling 12 — the projection's qualifiers reach the retained bytes at all.
+  test("ruling 12: the retained edge value carries statement, version and relationOrdinal", () => {
+    const source = {
+      repositoryScopeKey: D("f"),
+      snapshotKey: D("1"),
+      commitKey: D("d"),
+      exportDigest: D("1"),
+      manifest: { bundle: { id: D("e"), gitCommit: C("1") } },
+      concepts: [],
+      tasks: [],
+      authoredEdges: [
+        {
+          key: D("a"),
+          from: D("b"),
+          to: D("c"),
+          kind: "relates",
+          target: "target",
+          ordinal: 0,
+          dangling: false,
+          statement: "cites",
+          version: "1.2.0",
+          relationOrdinal: 3,
+        },
+      ],
+    } as unknown as LadybugProjectionSource;
+    const edge = buildRepositoryRetainedSnapshot(source).facts.find((fact) => fact.kind === "edge");
+    expect(edge?.value).toMatchObject({ statement: "cites", version: "1.2.0", relationOrdinal: 3 });
+  });
+
+  // Ruling 12 — the format version stays /1, so a document written before this still validates.
+  test("ruling 12: a snapshot retained before the qualifiers landed still parses at /1", () => {
+    const before = parseRetainedSnapshot(structuredClone(sharedFixture.to));
+    expect(before.schemaVersion).toBe("lore-retained-snapshot/1");
+  });
+
+  // Ruling 12 — absence must stay absence, not become null, or every pre-existing edge
+  // would report as `changed` against itself.
+  test("ruling 12: an absent qualifier is omitted from the retained bytes rather than nulled", () => {
+    const bytes = JSON.stringify(repositorySnapshot(D("1"), C("1"), [plainEdge()]));
+    expect(bytes).not.toContain("relationOrdinal");
+    expect(bytes).not.toContain('"statement"');
+  });
+
+  // Ruling 13, the requirement itself: the upgrade re-retain must succeed.
+  test("ruling 13: re-retaining the same key after the qualifiers land succeeds", () => {
+    const root = storeRoot();
+    expect(retainSnapshot(root, repositorySnapshot(D("1"), C("1"), [plainEdge()])).action).toBe("retained");
+    const again = retainSnapshot(root, repositorySnapshot(D("1"), C("1"), [qualifiedEdge()]));
+    expect(again.action).toBe("unchanged");
+    expect(again.retained).toBe(1);
+  });
+
+  // Ruling 13, CONSTRAINT bullet 1 — divergence outside the three qualifier keys.
+  test("ruling 13: a byte difference outside the qualifier keys still reports different bytes", () => {
+    const root = storeRoot();
+    retainSnapshot(root, repositorySnapshot(D("1"), C("1"), [plainEdge()]));
+    const tampered = repositorySnapshot(D("1"), C("1"), [edgeFact(D("a"), D("b"), D("c"), "supersedes", 0, D("a"))]);
+    expect(() => retainSnapshot(root, tampered)).toThrow("refers to different bytes");
+  });
+
+  // Ruling 13, CONSTRAINT bullet 3 — suppression is scoped to the upgrade difference, so a
+  // qualifier that CHANGED is a real difference rather than a backfill.
+  test("ruling 13: a changed qualifier value still reports different bytes", () => {
+    const root = storeRoot();
+    retainSnapshot(root, repositorySnapshot(D("1"), C("1"), [qualifiedEdge()]));
+    const moved = repositorySnapshot(D("1"), C("1"), [qualifiedEdge({ ...QUALIFIED, relationOrdinal: 9 })]);
+    expect(() => retainSnapshot(root, moved)).toThrow("refers to different bytes");
+  });
+
+  // Ruling 13, CONSTRAINT bullet 3, the other direction — a qualifier that DISAPPEARED is not an
+  // upgrade, and must not be suppressed just because the remaining fields match.
+  test("ruling 13: a qualifier that disappeared still reports different bytes", () => {
+    const root = storeRoot();
+    retainSnapshot(root, repositorySnapshot(D("1"), C("1"), [qualifiedEdge()]));
+    expect(() => retainSnapshot(root, repositorySnapshot(D("1"), C("1"), [plainEdge()]))).toThrow(
+      "refers to different bytes",
+    );
+  });
+
+  // Ruling 13, CONSTRAINT bullet 2 — identity. A file whose declared snapshotKey disagrees with
+  // the identity its contained path implies must still throw, and this is a DISTINCT assertion
+  // from field-level divergence: the bytes here differ only in the key itself.
+  test("ruling 13: a snapshot whose declared key disagrees with its contained path still throws", () => {
+    const root = storeRoot();
+    retainSnapshot(root, repositorySnapshot(D("1"), C("1"), [qualifiedEdge()]));
+    const scopeRoot = join(root, ".lore/cache/snapshots/1/repository", "f".repeat(64));
+    const stored = join(scopeRoot, `${"1".repeat(64)}.json`);
+    const forged = JSON.parse(readFileSync(stored, "utf8")) as { snapshotKey: string };
+    forged.snapshotKey = D("2");
+    chmodSync(stored, 0o600);
+    writeFileSync(stored, JSON.stringify(forged), "utf8");
+    expect(() => listSnapshots(root, { kind: "repository", scopeKey: D("f") })).toThrow("identity disagree");
+  });
+});
+
 function repositorySnapshot(snapshotKey: string, commit: string, facts: readonly RetainedFact[]): RetainedSnapshot {
   const repository = repositoryProvenance(commit, snapshotKey);
   return parseRetainedSnapshot({
@@ -269,6 +371,7 @@ function edgeFact(
   kind: string,
   ordinal: number,
   sourceRecordKey = recordKey,
+  qualifiers: Readonly<Record<string, unknown>> = {},
 ): RetainedFact {
   return {
     kind: "edge",
@@ -291,6 +394,7 @@ function edgeFact(
       workspaceFromKind: null,
       workspaceToKind: null,
       workspaceLinkKind: null,
+      ...qualifiers,
     },
   };
 }

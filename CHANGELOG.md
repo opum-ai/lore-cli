@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Retained snapshots now carry the ADR-0021 relation qualifiers** (LCLI-540). `edgeValue` dropped
+  `statement`, `version` and `relationOrdinal` — the three fields `ProjectionEdgeRecord` declares
+  under the comment *"carried verbatim so an indexed read is as precise as a direct one"* — so the
+  projection carried them and the retained snapshot did not. The consequence was that `lore changed`
+  could never report a relation re-pin, and `lore provenance` could not recover which
+  `claim_version` was cited at a past snapshot, which is the question ADR-0021 exists to answer.
+  The three fields are now optional members of the retained edge value and **the format version
+  stays `lore-retained-snapshot/1`**: every snapshot written before this release still validates.
+- **`lore snapshot retain` no longer reports a corrupt cache when only Lore's serializer changed.**
+  A snapshot key derives from the source projection stream rather than from the retained bytes, so
+  re-retaining a commit you had already retained before upgrading produced the same key over
+  different bytes and raised *"retained snapshot key refers to different bytes"*. That was a false
+  report — nothing of yours had changed. The upgrade difference is now recognised and the retain
+  succeeds. It is recognised **narrowly**: a qualifier whose value changed, a qualifier that
+  disappeared, and any difference outside those three fields all still raise the original error.
+
+### Upgrade notes — two things that will look like bugs and are not
+
+Both have the same shape: *you upgraded, and something looks broken.*
+
+- **A one-time wave of `changed` edges.** `lore changed` compares the retained value field by field,
+  so every edge that gains a qualifier compares unequal to its older retained self exactly once.
+  Comparing two snapshots both retained after this release shows nothing spurious.
+- **Snapshots written by this release cannot be read by an older Lore.** The retained edge schema
+  rejects unknown keys, so an older binary reading a newer snapshot fails validation — and because
+  the store parses every file in a scope to enumerate it, that fails the whole scope rather than the
+  one file. This only bites a deliberate downgrade: a pinned older Lore, a bisect, or a second
+  worktree. The store is the gitignored local cache under `.lore/cache/snapshots/`, so the remedy is
+  to remove the scope directory and re-retain. Nothing shared or committed is affected.
+
 ## [0.7.0] - 2026-09-15
 
 Quest ships 0.7.0 alongside this release, continuing the lockstep pairing. The release's theme:

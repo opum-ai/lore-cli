@@ -174,6 +174,11 @@ const edgeValueSchema = z
     workspaceFromKind: z.enum(["concept", "task"]).nullable(),
     workspaceToKind: z.enum(["concept", "task"]).nullable(),
     workspaceLinkKind: z.string().min(1).nullable(),
+    // ADR-0021 relation qualifiers (ruling 12, opum-doc main 0853e64). Optional, so every
+    // document written before this landed still validates and the format version stays /1.
+    statement: z.string().min(1).optional(),
+    version: z.string().min(1).optional(),
+    relationOrdinal: z.number().int().nonnegative().optional(),
   })
   .strict();
 const factBaseSchema = z
@@ -284,6 +289,59 @@ export function parseRetainedSnapshot(value: unknown): RetainedSnapshot {
     );
   }
   return parsed;
+}
+
+/** The ADR-0021 relation qualifiers ruling 12 added to `edgeValueSchema` as optional fields. */
+export const RETAINED_EDGE_QUALIFIER_KEYS = ["relationOrdinal", "statement", "version"] as const;
+
+/**
+ * Whether `incoming` differs from `stored` ONLY by gaining ADR-0021 relation qualifiers that an
+ * older Lore never retained — the upgrade difference ruling 13 (opum-doc `main` 0853e64) requires
+ * to succeed instead of being reported as a corrupt cache.
+ *
+ * Deliberately narrow, because the constraint is that a genuinely damaged file must still throw:
+ *
+ * - everything outside the three qualifier keys is compared verbatim, so any other divergence —
+ *   including a `snapshotKey` that disagrees with the identity its contents imply — returns false;
+ * - a qualifier already present in `stored` must be present in `incoming` and equal, so a CHANGED
+ *   or REMOVED qualifier is a real difference rather than an upgrade;
+ * - at least one qualifier must actually be gained, so this is never a blanket "ignore byte
+ *   differences when the key matches". Measured as defence-in-depth rather than a live guard: a
+ *   mutation replacing `return gained` with `return true` reddens nothing, because if the stripped
+ *   forms match AND no qualifier differs then the two snapshots are byte-identical and
+ *   {@link retainSnapshot} never consults this predicate at all. Kept because the predicate is
+ *   exported and a future caller need not hold that precondition.
+ */
+export function isRetainedQualifierBackfill(stored: RetainedSnapshot, incoming: RetainedSnapshot): boolean {
+  if (canonicalJson(withoutEdgeQualifiers(stored)) !== canonicalJson(withoutEdgeQualifiers(incoming))) return false;
+  let gained = false;
+  for (const [index, storedFact] of stored.facts.entries()) {
+    if (storedFact.kind !== "edge") continue;
+    const incomingFact = incoming.facts[index];
+    if (incomingFact === undefined) return false;
+    for (const key of RETAINED_EDGE_QUALIFIER_KEYS) {
+      const before = storedFact.value[key];
+      const after = incomingFact.value[key];
+      if (before === undefined) {
+        if (after !== undefined) gained = true;
+        continue;
+      }
+      if (after !== before) return false;
+    }
+  }
+  return gained;
+}
+
+function withoutEdgeQualifiers(snapshot: RetainedSnapshot): unknown {
+  return {
+    ...snapshot,
+    facts: snapshot.facts.map((fact) => {
+      if (fact.kind !== "edge") return fact;
+      const value: Record<string, unknown> = { ...fact.value };
+      for (const key of RETAINED_EDGE_QUALIFIER_KEYS) delete value[key];
+      return { ...fact, value };
+    }),
+  };
 }
 
 export function serializeRetainedSnapshot(value: unknown): string {
@@ -498,6 +556,12 @@ function edgeValue(record: ProjectionEdgeRecord): Record<string, unknown> {
     workspaceFromKind: record.workspaceFromKind ?? null,
     workspaceToKind: record.workspaceToKind ?? null,
     workspaceLinkKind: record.workspaceLinkKind ?? null,
+    // Carried verbatim, matching ProjectionEdgeRecord's stated intent: an indexed read is as
+    // precise as a direct one. Left undefined rather than null when the source has no qualifier —
+    // canonicalValue drops undefined, so absence stays absence in the retained bytes.
+    statement: record.statement,
+    version: record.version,
+    relationOrdinal: record.relationOrdinal,
   };
 }
 
