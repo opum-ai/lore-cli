@@ -709,7 +709,7 @@ Emit the complete repository OKF and task snapshot as deterministic, consumer-ne
 | | |
 |---|---|
 | **Args** | none |
-| **Key flags** | `--schema-version 1.0` (the only supported breaking-contract version) |
+| **Key flags** | `--schema-version 1.1` (the only supported breaking-contract version) |
 | **Output** | JSONL by default: manifest, concepts, concept edges, tasks, task edges, trailer. Global `--json` emits `kind: projection.export` with the same records. |
 | **Exit** | `0` ok · `2` bad/unsupported schema or flag · `3` missing bundle/Backlog · `4` denied read · `6` malformed bundle, Backlog drift, or Git failure |
 

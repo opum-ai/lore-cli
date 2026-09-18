@@ -1,4 +1,10 @@
-/** `lore export --schema-version 1.0` — deterministic JSONL OKF projection. */
+/**
+ * `lore export --schema-version <PROJECTION_SCHEMA_VERSION>` — deterministic JSONL OKF projection.
+ *
+ * The supported version is {@link PROJECTION_SCHEMA_VERSION} and is never spelled out here: this
+ * comment, the manifest summary and the manifest example each carried a literal "1.0" that went
+ * stale when the exporter moved to 1.1 (LCLI-512).
+ */
 
 import { join } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";

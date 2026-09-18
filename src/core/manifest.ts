@@ -47,6 +47,7 @@
 
 import { EXIT_CODES, EXIT_OK, EXIT_UNCAUGHT } from "../errors";
 import { SCHEMA_VERSION } from "../output";
+import { PROJECTION_SCHEMA_VERSION } from "./projection";
 
 /** One flag in the manifest: the bare name (no leading `--`), whether it takes a value, and a one-liner. */
 export interface ManifestFlag {
@@ -791,13 +792,16 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
       {
         name: "schema-version",
         takesValue: true,
-        summary: "Projection schema version (currently 1.0)",
+        // Derived, never spelled out: the manifest and the example below advertised a hardcoded
+        // "1.0" while the exporter had moved to 1.1, so `lore export --schema-version 1.0` -- the
+        // tool's own documented example -- exited 2 (LCLI-512).
+        summary: `Projection schema version (currently ${PROJECTION_SCHEMA_VERSION})`,
       },
     ],
     json: true,
     kind: "projection.export",
     exitCodes: exitCodesFor(["bundle", "backlog", "git"]),
-    examples: ["lore export", "lore export --schema-version 1.0"],
+    examples: ["lore export", `lore export --schema-version ${PROJECTION_SCHEMA_VERSION}`],
   },
   {
     name: "query",
