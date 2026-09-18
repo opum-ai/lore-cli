@@ -329,6 +329,35 @@ export function builtinTemplateFor(type: string): string {
   return Object.hasOwn(BUILTIN_TEMPLATES, type) ? (BUILTIN_TEMPLATES[type] as string) : GENERIC_TEMPLATE;
 }
 
+/**
+ * Whether `type` has a built-in body template of its own, as opposed to falling back to the
+ * lenient {@link GENERIC_TEMPLATE}. Exposed so `lore new` can tell the two cases apart without
+ * comparing rendered strings — a profile-declared type reaches the generic fallback, and that is
+ * exactly the case {@link sectionScaffoldTemplate} exists to improve on (LCLI-535).
+ */
+export function hasBuiltinTemplate(type: string): boolean {
+  return Object.hasOwn(BUILTIN_TEMPLATES, type);
+}
+
+/**
+ * A body scaffold carrying one empty `## ` heading per declared required section.
+ *
+ * `lore validate` ENFORCES a profile type's declared `sections` (validate.ts's
+ * `requiredSectionFindings`, one error per missing `##` heading) but `lore new` did not SCAFFOLD
+ * them, so the tool's own scaffold emitted a file the tool's own validator immediately rejected
+ * (LCLI-535). The built-in types were unaffected only because their hand-written templates happen
+ * to carry their sections already — which is why this is keyed off {@link hasBuiltinTemplate}
+ * rather than applied to everything.
+ *
+ * Takes plain strings rather than a `Profile` on purpose: this module stays decoupled from the
+ * profile (see {@link BUILTIN_TEMPLATES}), so the lookup lives in the caller and this function
+ * stays a pure formatter. Headings are emitted at `##` because that is the only depth
+ * `requiredSectionFindings` matches.
+ */
+export function sectionScaffoldTemplate(sections: readonly string[]): string {
+  return `\n# {{title}}\n\n${sections.map((section) => `## ${section}\n`).join("\n")}`;
+}
+
 // ── Built-in body templates ──────────────────────────────────────────────────────
 //
 // Each is the markdown **body** (everything after the frontmatter fence) for a type, using

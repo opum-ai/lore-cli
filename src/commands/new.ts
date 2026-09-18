@@ -30,7 +30,13 @@ import {
   typeDirectory,
   unknownTypeHint,
 } from "../core/schema";
-import { buildNewConcept, builtinTemplateFor, slugify } from "../core/template";
+import {
+  buildNewConcept,
+  builtinTemplateFor,
+  hasBuiltinTemplate,
+  sectionScaffoldTemplate,
+  slugify,
+} from "../core/template";
 import { EXIT_OK, errnoCode, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { assertNotReservedStem, optionValues, parseCommandArgs } from "./args";
@@ -397,6 +403,16 @@ function resolveTemplate(parsed: NewArgs, type: string, root: string, profile: P
       `create ${TEMPLATES_DIR}/${parsed.template}.md, or omit --template to use the built-in`,
       { path: `${TEMPLATES_DIR}/${parsed.template}.md` },
     );
+  }
+  // A profile-declared type reaches the generic fallback, which carries no sections -- while
+  // `lore validate` enforces whatever `sections` that type declares. Scaffold them instead, so
+  // `lore new` cannot emit a file `lore validate` immediately rejects (LCLI-535). Keyed off
+  // `hasBuiltinTemplate` so the built-in types keep their hand-written skeletons untouched.
+  if (!hasBuiltinTemplate(type)) {
+    const sections = profile.types.get(type)?.requiredSections ?? [];
+    if (sections.length > 0) {
+      return sectionScaffoldTemplate(sections);
+    }
   }
   return builtinTemplateFor(type);
 }

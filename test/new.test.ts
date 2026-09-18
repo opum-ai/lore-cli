@@ -5,6 +5,8 @@ import { join, relative, sep } from "node:path";
 import { runInit } from "../src/commands/init";
 import { type NewResult, runNew } from "../src/commands/new";
 import { loadBundle } from "../src/core/bundle";
+import { loadProfile } from "../src/core/profile";
+import { validateConceptText } from "../src/core/validate";
 import { LoreError, WarningCollector } from "../src/errors";
 import { VERSION } from "../src/meta";
 import type { OutputContext } from "../src/output";
@@ -125,6 +127,82 @@ describe("lore new — scaffolding a known type", () => {
     const text = readFileSync(join(root, result.path), "utf8");
     expect(text).toContain("type: QA Plan");
     expect(text).toContain("## Coverage"); // the profile-declared template was rendered
+  });
+
+  test("a profile-declared type's sections are SCAFFOLDED, not just enforced (LCLI-535)", () => {
+    // The tool's own scaffold emitted a file the tool's own validator immediately rejected:
+    // `sections` are enforced by `lore validate` but were never written by `lore new`.
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      [
+        "[profile]",
+        'name = "demo"',
+        'okf_version = "0.2"',
+        "[base.fields]",
+        "type = { required = true }",
+        "title = {}",
+        "summary = {}",
+        "[[types]]",
+        'name = "Feature"',
+        'sections = ["Problem", "Behaviour", "Acceptance criteria"]',
+      ].join("\n"),
+    );
+    const { result } = newCmd(["feature", "Probe feature"]);
+    const text = readFileSync(join(root, result.path), "utf8");
+    for (const section of ["## Problem", "## Behaviour", "## Acceptance criteria"]) {
+      expect(text).toContain(section);
+    }
+  });
+
+  test("a scaffolded profile type passes lore validate immediately (LCLI-535)", () => {
+    // The property that actually matters, asserted through the VALIDATOR rather than by string
+    // match: a fix that emitted headings at the wrong depth would satisfy the test above and
+    // still fail here, because required sections are matched at `##` only.
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      [
+        "[profile]",
+        'name = "demo"',
+        'okf_version = "0.2"',
+        "[base.fields]",
+        "type = { required = true }",
+        "title = {}",
+        "summary = {}",
+        "[[types]]",
+        'name = "Feature"',
+        'sections = ["Problem", "Behaviour"]',
+      ].join("\n"),
+    );
+    const { result } = newCmd(["feature", "Probe feature"]);
+    const report = validateConceptText(
+      result.path,
+      readFileSync(join(root, result.path), "utf8"),
+      loadProfile({ root }),
+    );
+    expect(report.findings.filter((f) => f.rule === "required-section")).toEqual([]);
+  });
+
+  test("a profile-declared type with NO sections still gets the generic body (LCLI-535)", () => {
+    // Guards the other side of the branch: section scaffolding must not swallow the generic
+    // fallback for a type that declares none.
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      [
+        "[profile]",
+        'name = "demo"',
+        'okf_version = "0.2"',
+        "[base.fields]",
+        "type = { required = true }",
+        "title = {}",
+        "summary = {}",
+        "[[types]]",
+        'name = "Memo"',
+      ].join("\n"),
+    );
+    const { result } = newCmd(["memo", "Probe memo"]);
+    const text = readFileSync(join(root, result.path), "utf8");
+    expect(text).toContain("Describe this Memo here.");
+    expect(text).not.toContain("## ");
   });
 
   test("--summary and --tags land on the frontmatter", () => {
