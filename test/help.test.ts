@@ -126,6 +126,7 @@ describe("core/manifest — shape and invariants", () => {
       tasks: [0, 2, 3, 4, 6], // bundle (3/4/6) + backlog (3/6); no write seam → no 5
       orphans: [0, 2, 3, 4, 6], // same seams as tasks: bundle + backlog; a report, not a gate
       schema: [0, 2, 4, 5, 6], // no 3: no read seam / no id lookup
+      types: [0, 2, 6], // profile (6) only: read-only introspection, no write/read/bundle seam
       scaffold: [0, 2, 4, 5, 6], // profile (6) + write (4/5); no 3: no read seam / no id lookup
       graph: [0, 2, 3, 4, 6],
       path: [0, 2, 3, 4, 6],
@@ -167,7 +168,7 @@ describe("core/manifest — shape and invariants", () => {
     // shape in CLAUDE.md, and it fails GREEN.
     //
     // Live coverage — a real envelope compared against the manifest — exists for exactly TWO of the
-    // 29 commands (`init` and `new`, in test/cli.test.ts). The other 27 are covered only by the
+    // 30 commands (`init` and `new`, in test/cli.test.ts). The other 28 are covered only by the
     // transcription below. LCLI-365 tracks closing that; until it does, do not read a pass here as
     // evidence that a command emits what it declares.
     const golden: Record<string, string> = {
@@ -185,6 +186,7 @@ describe("core/manifest — shape and invariants", () => {
       tasks: "tasks.rollup",
       orphans: "orphans.report",
       schema: "schema.result",
+      types: "types.report",
       scaffold: "scaffold.result",
       graph: "graph.export",
       path: "path.result",

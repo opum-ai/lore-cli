@@ -175,6 +175,7 @@ the [CLI surface](cli-surface.md):
 | `tasks.rollup` | `lore tasks` | a concept's linked tasks' live configured-tracker status — `{ concept, status?, tasks: [{id,title,status}] }` |
 | `orphans.report` | `lore orphans` | coupling gaps — `{ orphanTasks[], danglingLinks[] }` (either section omitted under `--tasks-only`/`--docs-only`) |
 | `schema.result` | `lore schema` | schema files written |
+| `types.report` | `lore types` | the active profile's declared type vocabulary — fields, requiredness, sections |
 | `graph.export` | `lore graph` | nodes, edges, per-doc/bundle token estimates |
 | `query.results` | `lore query` | ranked hits with `total`/`shown`/`truncated` (§3) |
 | `context.export` | `lore context` | concept body + neighbor summaries; token budget accounting |

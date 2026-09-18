@@ -77,9 +77,19 @@ export type FieldKind = (typeof FIELD_KINDS)[number];
 export type ScalarKind = Exclude<FieldKind, "list">;
 
 /**
- * The casing convention a profile's type names follow. Powers the unknown-type
- * "did you mean" hint and is advisory only — it never coerces an authored `type`
- * value. `Title` is the default (and what both the story convention and ECK use).
+ * The casing convention a profile's type names follow. Advisory only — it never coerces an
+ * authored `type` value, and nothing reads it at runtime today. `Title` is the default (and what
+ * both the story convention and ECK use).
+ *
+ * CORRECTED (LCLI-537): an earlier revision of this comment claimed this field "powers the
+ * unknown-type 'did you mean' hint". Grepping the source for "did you mean" before that task found
+ * only this one comment — no hint was ever emitted anywhere, wired to `case` or otherwise. It could
+ * not have been: `type`'s case-insensitive resolution ({@link canonicalType}'s `byLowerName` lookup)
+ * already runs before the unknown-type branch in `validateFrontmatter`, so every input that actually
+ * reaches that branch differs from every known type by more than casing — a same-name-different-case
+ * suggestion built from `case` would never have anything to suggest. LCLI-537 added the actual hint
+ * (`unknownTypeHint`, `core/schema.ts`): a plain case-insensitive edit-distance match across the
+ * profile's known type names, independent of this field.
  */
 export const CASE_STYLES = ["Title", "lower", "UPPER", "kebab", "snake"] as const;
 
@@ -180,7 +190,7 @@ export interface Profile {
   readonly name: string;
   /** The OKF version the profile targets, stamped on the bundle-root index. */
   readonly okfVersion: OkfVersion;
-  /** The declared casing convention (advisory; powers the did-you-mean hint). */
+  /** The declared casing convention (advisory only; see {@link CASE_STYLES}'s docstring — it does not power the unknown-type "did you mean" hint, despite an earlier comment here claiming it did). */
   readonly case: CaseStyle;
   /** The base a stamped `resource` value joins to a concept path (empty → no `resource` stamped). */
   readonly resourceBase: string;

@@ -119,7 +119,7 @@ describe("runInstructions — topic resolution", () => {
   });
 
   test("each detail topic resolves to its own body", () => {
-    for (const key of ["linking", "sync", "check", "validation", "workspace", "agents"]) {
+    for (const key of ["linking", "sync", "check", "validation", "types", "workspace", "agents"]) {
       const { code, data } = instructions([key]);
       expect(code).toBe(0);
       expect(data.topic).toBe(key);
