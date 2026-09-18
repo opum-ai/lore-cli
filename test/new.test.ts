@@ -290,6 +290,57 @@ describe("lore new — user templates override built-ins (AC#2)", () => {
     expect(readFileSync(join(root, result.path), "utf8")).toContain("from rich template");
   });
 
+  test("--template <name> and <name>.md resolve the SAME file (LCLI-536 AC#1)", () => {
+    // Both spellings against ONE fixture, in one test, because the criterion is their EQUALITY --
+    // two separate tests each passing would not prove they agree.
+    writeFileSync(join(root, ".lore/templates/rich.md"), "\n# {{title}}\n\nfrom rich template\n");
+    // Identical title, different --out: the rendered body interpolates {{title}}, so differing
+    // titles would make the two files differ for a reason that has nothing to do with the flag.
+    const bare = newCmd(["reference", "Same title", "--template", "rich", "--out", "docs/reference/a"]);
+    const dotted = newCmd(["reference", "Same title", "--template", "rich.md", "--out", "docs/reference/b"]);
+    const read = (p: string): string => readFileSync(join(root, p), "utf8");
+    expect(read(dotted.result.path)).toBe(read(bare.result.path));
+    expect(read(dotted.result.path)).toContain("from rich template");
+  });
+
+  test("neither spelling's not-found hint suggests a doubled extension (LCLI-536 AC#2)", () => {
+    for (const spelling of ["missing", "missing.md"]) {
+      const err = expectError(["reference", "Orders table", "--template", spelling]);
+      expect(err.type).toBe("not_found");
+      expect(err.hint).toContain(".lore/templates/missing.md");
+      expect(err.hint).not.toContain("missing.md.md");
+    }
+  });
+
+  test("--template <name>.md resolves the same file as <name> (LCLI-536)", () => {
+    // The regression: `--template` never stripped a trailing `.md` (the profile-declared
+    // `template` has since LORE-185), so `.md` was appended to a name that already had one and
+    // lore looked for `rich.md.md` — failing even though the exact file the user named exists.
+    writeFileSync(join(root, ".lore/templates/rich.md"), "\n# {{title}}\n\nfrom rich template\n");
+    const { result } = newCmd(["reference", "Orders table", "--template", "rich.md"]);
+    expect(readFileSync(join(root, result.path), "utf8")).toContain("from rich template");
+  });
+
+  test("a missing --template's hint names the real file, not a doubled one (LCLI-536)", () => {
+    // Asserted separately from resolution above: the hint told the user to create
+    // `.lore/templates/missing.md.md`, which would have made the error PERMANENT for anyone who
+    // followed it. A fix that resolved correctly but left the hint doubled reddens only this test.
+    const err = expectError(["reference", "Orders table", "--template", "missing.md"]);
+    expect(err.type).toBe("not_found");
+    expect(err.hint).toContain(".lore/templates/missing.md");
+    expect(err.hint).not.toContain("missing.md.md");
+    expect(err.input).toMatchObject({ path: ".lore/templates/missing.md" });
+    // The message still echoes what the user actually typed.
+    expect(err.message).toContain('"missing.md"');
+  });
+
+  test("--template '.md' is left intact rather than reduced to an empty stem (LCLI-536)", () => {
+    // Stripping unconditionally would turn `.md` into "" and resolve `.lore/templates/.md`.
+    const err = expectError(["reference", "Orders table", "--template", ".md"]);
+    expect(err.type).toBe("not_found");
+    expect(err.hint).toContain(".lore/templates/.md.md");
+  });
+
   test("a canonical-case template file (Reference.md) is honored on case-sensitive filesystems", () => {
     // The default lookup tries the type's canonical case before lowercasing, so a user template
     // named with the documented `<type>` spelling overrides the built-in even on Linux/CI.
