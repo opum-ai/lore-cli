@@ -19,9 +19,24 @@
  *   `{{summary}}`) plus any `--var`, and *reports* an unfilled token rather than leaving a
  *   literal `{{…}}` in the file, so a missing value fails loud (exit `6`).
  *
- * The {@link BUILTIN_TEMPLATES} carry each known type's conventional section skeleton; a user
- * template under `.lore/templates/` overrides the built-in body wholesale (AC#2) — that
- * filesystem resolution is the command's concern, not this module's.
+ * **What "by construction" does and does not cover** (reconciled by LCLI-535, whose AC#3 exists
+ * because this header and the {@link BUILTIN_TEMPLATES} note below described two different
+ * guarantees). There are three body sources, and only two of them are lore's to guarantee:
+ *
+ * - A **built-in** type renders {@link BUILTIN_TEMPLATES}, which carry that type's conventional
+ *   section skeleton. Validates by construction.
+ * - A **profile-declared** type with no template file used to fall through to the lenient
+ *   {@link GENERIC_TEMPLATE}, which carries no sections at all — so `lore new` emitted a file
+ *   `lore validate` immediately rejected, since a profile's declared `sections` ARE enforced.
+ *   That was the gap: the guarantee was stated unconditionally and held only for the built-ins.
+ *   {@link sectionScaffoldTemplate} now closes it, and `commands/new.ts` selects it.
+ * - A **user template** under `.lore/templates/` overrides the body wholesale (AC#2). lore cannot
+ *   guarantee this one and does not try: a user who removes a required heading from their own
+ *   template gets a `lore validate` error, which is the correct outcome rather than a defect.
+ *   That filesystem resolution is the command's concern, not this module's.
+ *
+ * So the claim is precisely: **every body lore itself generates carries its type's required
+ * sections.** An overriding user template is outside it, deliberately.
  */
 
 import { posix } from "node:path";
@@ -327,6 +342,35 @@ function renderBody(input: BuildNewConceptInput): string {
  */
 export function builtinTemplateFor(type: string): string {
   return Object.hasOwn(BUILTIN_TEMPLATES, type) ? (BUILTIN_TEMPLATES[type] as string) : GENERIC_TEMPLATE;
+}
+
+/**
+ * Whether `type` has a built-in body template of its own, as opposed to falling back to the
+ * lenient {@link GENERIC_TEMPLATE}. Exposed so `lore new` can tell the two cases apart without
+ * comparing rendered strings — a profile-declared type reaches the generic fallback, and that is
+ * exactly the case {@link sectionScaffoldTemplate} exists to improve on (LCLI-535).
+ */
+export function hasBuiltinTemplate(type: string): boolean {
+  return Object.hasOwn(BUILTIN_TEMPLATES, type);
+}
+
+/**
+ * A body scaffold carrying one empty `## ` heading per declared required section.
+ *
+ * `lore validate` ENFORCES a profile type's declared `sections` (validate.ts's
+ * `requiredSectionFindings`, one error per missing `##` heading) but `lore new` did not SCAFFOLD
+ * them, so the tool's own scaffold emitted a file the tool's own validator immediately rejected
+ * (LCLI-535). The built-in types were unaffected only because their hand-written templates happen
+ * to carry their sections already — which is why this is keyed off {@link hasBuiltinTemplate}
+ * rather than applied to everything.
+ *
+ * Takes plain strings rather than a `Profile` on purpose: this module stays decoupled from the
+ * profile (see {@link BUILTIN_TEMPLATES}), so the lookup lives in the caller and this function
+ * stays a pure formatter. Headings are emitted at `##` because that is the only depth
+ * `requiredSectionFindings` matches.
+ */
+export function sectionScaffoldTemplate(sections: readonly string[]): string {
+  return `\n# {{title}}\n\n${sections.map((section) => `## ${section}\n`).join("\n")}`;
 }
 
 // ── Built-in body templates ──────────────────────────────────────────────────────
