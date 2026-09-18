@@ -32,7 +32,7 @@
  */
 
 import { lookup as dnsLookup } from "node:dns/promises";
-import { statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, posix } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { resolveHeadCommitDate } from "../adapters/git";
@@ -51,6 +51,7 @@ import {
   isAddressLiteral,
   isIsoCalendarDate,
   reconcileDriftFindings,
+  schemaDriftFindings,
   tallySeverity,
 } from "../core/check";
 import { type Concept, parseConcept, tryReadFrontmatter } from "../core/concept";
@@ -58,7 +59,7 @@ import { generateIndexes } from "../core/indexes";
 import { type BundleState, type BundleVersionIssue, resolveBundleState, taskRollupFieldFor } from "../core/okf-version";
 import { loadProfile, type Profile, profileForBundle, profileTypeDeclaresField } from "../core/profile";
 import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
-import { canonicalType, unknownTypeHint } from "../core/schema";
+import { canonicalType, emitSchemaFiles, SCHEMAS_DIR, unknownTypeHint } from "../core/schema";
 import {
   ANSI,
   EXIT_CODES,
@@ -234,6 +235,8 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
       result.findings.map((finding) => prefixFinding(finding, result.bundle.label, multi)),
     ),
     ...bundles.flatMap((bundle) => tryIndexDriftForBundle(options.root, bundle, profile, multi)),
+    // Repo-scoped, so it is called once rather than per bundle — see `schemaDriftForRoot`.
+    ...schemaDriftForRoot(options.root, profile),
   ];
   const baseReport = mergeFindings(linkReport, scanFindings);
   const needsReconciliation = conceptBundleResults.some(
@@ -446,6 +449,62 @@ function tryIndexDriftForBundle(root: string, bundle: Bundle, profile: Profile, 
   } catch {
     return [];
   }
+}
+
+/**
+ * The **schema-drift** seam (LCLI-539): read the committed `.lore/schemas/*.schema.json`, regenerate
+ * the same set in memory from the active profile, and hand both to the pure
+ * {@link schemaDriftFindings}.
+ *
+ * REPO-SCOPED, not bundle-scoped, which is why this takes no `Bundle` and is called once rather than
+ * per bundle like {@link tryIndexDriftForBundle}. `.lore/schemas/` belongs to the repository's
+ * profile, not to any one docs root, so prefixing its findings with a bundle label would attribute a
+ * repo-level file to an arbitrary bundle in a multi-bundle run.
+ *
+ * Regenerates IN MEMORY via {@link emitSchemaFiles} — the same emitter `lore schema export` and
+ * `lore init` write from — rather than exporting to a scratch directory and diffing. Same property,
+ * and it holds where the export cannot: `lore check` then needs no writable path, cannot leave a
+ * scratch directory behind when it throws, and gates a read-only checkout unchanged.
+ *
+ * Unlike {@link tryIndexDriftForBundle}, a failure here is NOT swallowed. That function is
+ * best-effort because it re-parses the whole bundle and a malformed concept is a gap it inherited
+ * rather than introduced. This reads a handful of JSON files from a directory whose contents lore
+ * itself owns; an unreadable `.lore/schemas/` is a real fault, and a drift gate that silently
+ * reports "no drift" when it could not look is the fail-green shape the check exists to remove.
+ * A MISSING directory is different from an unreadable one and is handled as "no schemas committed"
+ * — see {@link schemaDriftFindings}.
+ */
+function schemaDriftForRoot(root: string, profile: Profile): CheckFinding[] {
+  const regenerated = new Map(emitSchemaFiles(profile, { dir: SCHEMAS_DIR }).map((file) => [file.path, file.contents]));
+  return schemaDriftFindings({ committed: readCommittedSchemas(root), regenerated });
+}
+
+/**
+ * Every committed `<slug>.schema.json` under `.lore/schemas/`, keyed by repo-relative POSIX path, or
+ * `null` when the directory does not exist — the "never exported" case, which is not drift.
+ *
+ * Only `*.schema.json` is collected, mirroring exactly what `lore schema export`'s prune pass walks,
+ * so an unrelated file a team parks in that directory is neither compared nor reported. `ENOENT` is
+ * the one error mapped to `null`; every other failure propagates, per {@link schemaDriftForRoot}.
+ */
+function readCommittedSchemas(root: string): Map<string, string> | null {
+  const dir = join(root, SCHEMAS_DIR);
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw cause;
+  }
+  const committed = new Map<string, string>();
+  for (const entry of entries.sort()) {
+    if (entry.endsWith(".schema.json")) {
+      committed.set(posix.join(SCHEMAS_DIR, entry), readFileSync(join(dir, entry), "utf8"));
+    }
+  }
+  return committed;
 }
 
 /** The gate's exit code from a {@link CheckReport}: `6` on any error, or any warning under `--strict`. */
