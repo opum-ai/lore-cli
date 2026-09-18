@@ -8,6 +8,7 @@ import {
   CHANGED_DEFAULT_LIMIT,
   compareRetainedSnapshots,
   findRetainedProvenance,
+  isRetainedQualifierBackfill,
   parseRetainedSnapshot,
   type RetainedFact,
   type RetainedRepositoryProvenance,
@@ -298,6 +299,20 @@ describe("ADR-0021 relation qualifiers on retained edges (LCLI-540, rulings 12 a
     expect(() => retainSnapshot(root, repositorySnapshot(D("1"), C("1"), [plainEdge()]))).toThrow(
       "refers to different bytes",
     );
+  });
+
+  // Ruling 13 — the `gained` clause, reached DIRECTLY rather than through retainSnapshot. The
+  // mutation run showed that replacing `return gained` with `return true` reddens nothing, because
+  // retainSnapshot only consults the predicate after a byte difference and this input has none.
+  // The predicate is exported, so a direct caller can hold a weaker precondition than retainSnapshot
+  // does, and this case is that caller: stripped forms equal, no qualifier differing, none gained.
+  test("ruling 13: the predicate refuses a pair that gained no qualifier, even though nothing differs", () => {
+    const snapshot = repositorySnapshot(D("1"), C("1"), [qualifiedEdge()]);
+    expect(isRetainedQualifierBackfill(snapshot, snapshot)).toBe(false);
+    const plain = repositorySnapshot(D("1"), C("1"), [plainEdge()]);
+    expect(isRetainedQualifierBackfill(plain, plain)).toBe(false);
+    // And it still says yes to the difference it exists for, so the refusal above is not blanket.
+    expect(isRetainedQualifierBackfill(plain, snapshot)).toBe(true);
   });
 
   // Ruling 13, CONSTRAINT bullet 2 — identity. A file whose declared snapshotKey disagrees with

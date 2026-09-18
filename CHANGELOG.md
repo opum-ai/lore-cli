@@ -32,6 +32,11 @@ Both have the same shape: *you upgraded, and something looks broken.*
 - **A one-time wave of `changed` edges.** `lore changed` compares the retained value field by field,
   so every edge that gains a qualifier compares unequal to its older retained self exactly once.
   Comparing two snapshots both retained after this release shows nothing spurious.
+- **A snapshot retained before this release never gains the qualifiers.** The retained entry is left
+  exactly as it was retained rather than rewritten, because it is a record of what Lore held at that
+  time and back-dating it would claim Lore had recorded qualifiers when it had not. Re-retaining that
+  commit now reports `unchanged`, which is honest — nothing changed. To get the qualifiers for a past
+  commit, delete that snapshot and retain it again.
 - **Snapshots written by this release cannot be read by an older Lore.** The retained edge schema
   rejects unknown keys, so an older binary reading a newer snapshot fails validation — and because
   the store parses every file in a scope to enumerate it, that fails the whole scope rather than the
