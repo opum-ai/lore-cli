@@ -6,7 +6,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -158,6 +159,38 @@ describe("docker E2E helper library is actually shipped into the image (LCLI-360
     // Defined in the sourceable library, not inline, so selftest.sh can drive it without Docker.
     expect(readFileSync(STEPS_LIB, "utf8")).toContain("assert_non_vacuous()");
     expect(readFileSync(join(ROOT, "docker", "e2e", "selftest.sh"), "utf8")).toContain("assert_non_vacuous");
+  });
+
+  test("the selftest stays a GATE when a case is appended below everything (LCLI-533)", () => {
+    // The defect: selftest.sh's tail was `[ "$SELF_FAIL" -eq 0 ] || exit 1` -- a CONDITIONAL exit
+    // that calls exit only when SELF_FAIL is already nonzero at that line. With SELF_FAIL at 0,
+    // nothing exits, execution falls off the end, and the status becomes whatever ran last. A case
+    // appended below therefore ran, could fail, was never counted, and the script exited 0.
+    //
+    // Proven the same way the defect was found: copy the script, append a deliberately-failing
+    // probe at the TRUE end of the file, and require the exit code to flip.
+    const dir = mkdtempSync(join(tmpdir(), "lore-selftest-gate-"));
+    try {
+      mkdirSync(join(dir, "lib"), { recursive: true });
+      copyFileSync(join(ROOT, "docker", "e2e", "lib", "steps.sh"), join(dir, "lib", "steps.sh"));
+      const copied = join(dir, "selftest.sh");
+      copyFileSync(join(ROOT, "docker", "e2e", "selftest.sh"), copied);
+
+      // Both directions, as two separate measurements: a gate proven only to reject could be one
+      // that always rejects, and the clean run is what rules that out.
+      const clean = spawnSync("bash", [copied], { encoding: "utf8" });
+      expect({ where: "clean", status: clean.status }).toEqual({ where: "clean", status: 0 });
+      expect(clean.stdout).toContain(" 0 bad ");
+
+      appendFileSync(copied, '\nexpect pass "deliberately wrong expectation" -- false\n');
+      const appended = spawnSync("bash", [copied], { encoding: "utf8" });
+      expect({ where: "appended", status: appended.status }).toEqual({ where: "appended", status: 1 });
+      // ...and it is COUNTED, not merely fatal: the old summary read "0 bad" while a named failure
+      // printed underneath it, which is how this survived being looked at.
+      expect(appended.stdout).toContain(" 1 bad ");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("the selftest exists, is wired into CI, and runs before the container build", () => {
