@@ -11,7 +11,10 @@
  * `check` is a **gate**, so a coherence failure is not a thrown {@link LoreError}: it emits
  * the full `check.report` on stdout and then *returns* exit `6` when any broken bundle-scoped
  * link or rotted anchor exists (or any warning under `--strict`). Unknown-type and portability
- * findings alone are advisory and do not fail the gate (ADR-0007). Only a *usage* error
+ * findings alone are advisory and do not fail the gate by default (ADR-0007) — unless the active
+ * profile opts an unknown type out of that tolerance with `[profile] strict_types = true`
+ * (LCLI-538), in which case it is an unconditional error regardless of `--strict`; see
+ * {@link import("../core/profile").Profile.strictTypes}. Only a *usage* error
  * (bad flag) or an *I/O* failure (an unreadable path) throws, funneling through the router's
  * one error seam like every command.
  *
@@ -55,7 +58,7 @@ import { generateIndexes } from "../core/indexes";
 import { type BundleState, type BundleVersionIssue, resolveBundleState, taskRollupFieldFor } from "../core/okf-version";
 import { loadProfile, type Profile, profileForBundle, profileTypeDeclaresField } from "../core/profile";
 import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
-import { canonicalType } from "../core/schema";
+import { canonicalType, unknownTypeHint } from "../core/schema";
 import {
   ANSI,
   EXIT_CODES,
@@ -324,8 +327,10 @@ interface ConceptBundleResult {
 /**
  * Best-effort, per-bundle-root scan of already-read files for unknown active-profile types and parse
  * of profile-supported, `tasks:`-declaring {@link Concept}s for reconciliation. An unknown type
- * becomes an `unknown-type` warning, matching `lore validate`'s producer-extension diagnostic and
- * therefore gating only under `--strict`. A parsed concept whose type does not declare `tasks`
+ * becomes an `unknown-type` finding, matching `lore validate`'s producer-extension diagnostic:
+ * ordinarily a warning (gating only under `--strict`), or an unconditional error when the active
+ * profile sets `[profile] strict_types = true` (LCLI-538) — see
+ * {@link import("../core/profile").Profile.strictTypes}. A parsed concept whose type does not declare `tasks`
  * becomes an `unsupported-task-coupling` finding instead, so the gate reports it without attempting
  * Backlog resolution or managed-block regeneration. NEVER throws — a scan failure is carried as
  * `error`
@@ -369,11 +374,17 @@ function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleRe
       const judgingProfile = effectiveProfileFor(file.path, "index.md", bundleProfile);
       const authoredType = typeof raw.type === "string" ? raw.type.trim() : "";
       if (authoredType !== "" && !judgingProfile.types.has(canonicalType(authoredType, judgingProfile))) {
+        // Escalates to an unconditional error when the active profile sets `strict_types`
+        // (LCLI-538) -- independent of `--strict`, see `Profile.strictTypes`'s own docstring for
+        // why the two compose rather than one subsuming the other. The message now names the
+        // valid set + a did-you-mean suggestion via the same `unknownTypeHint` schema.ts's own
+        // unknown-type warning uses (LCLI-537 left this site's wording unreconciled; LCLI-538
+        // reconciles it while touching this exact branch for the strict_types escalation).
         findings.push({
-          severity: "warning",
+          severity: judgingProfile.strictTypes ? "error" : "warning",
           rule: "unknown-type",
           file: file.path,
-          message: `unknown type ${JSON.stringify(authoredType)} in ${file.path}; validated on \`type\` only`,
+          message: `unknown type ${JSON.stringify(authoredType)} in ${file.path}; validated on \`type\` only (${unknownTypeHint(authoredType, judgingProfile)})`,
         });
       }
       if (!Object.hasOwn(raw, "tasks")) {

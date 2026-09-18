@@ -259,14 +259,17 @@ lore new reference "Orders table" --template reference --var owner=payments
 
 `<type>` is one of the story-convention types (`Reference`, `Spec`, `ADR`,
 `Runbook`, `Epic`, `Story`) or any user-defined type — unknown types are
-accepted (OKF tolerance) and scaffolded with the lenient `type`-only shape.
+accepted (OKF tolerance) and scaffolded with the lenient `type`-only shape,
+**unless** the active profile sets `[profile] strict_types = true`
+(`.lore/profile.toml`, LCLI-538), in which case an unrecognized `<type>` is
+refused outright — see [ADR-0007's amendment](../adr/0007-validation-and-coherence.md).
 
 | | |
 |---|---|
 | **Args** | `<type>` `"<title>"` |
 | **Key flags** | `--tags a,b` · `--template <name>` (file under `.lore/templates/`) · `--var k=v` (repeatable; fills `{{k}}`) · `--summary "<sentence>"` |
 | **Output** | `kind: new.result` — `{ id, path, type }` |
-| **Exit** | `0` ok · `2` bad type/var syntax · `5` target path already exists · `6` template missing required `{{var}}` |
+| **Exit** | `0` ok · `2` bad type/var syntax · `5` target path already exists · `6` template missing required `{{var}}`, or an unrecognized `<type>` under `strict_types` |
 
 ---
 
@@ -289,7 +292,11 @@ Tiered per-file validation:
   validated against the strict [Zod schema](../adr/0006-schema-types-templates.md)
   (the single source of truth) → **error** if violated.
 - **Unknown type / extra keys** — accepted but → **warning** (OKF tolerance;
-  custom frontmatter passes through untouched).
+  custom frontmatter passes through untouched) — **unless** the active profile
+  sets `[profile] strict_types = true`, in which case an unknown `type`
+  specifically → **error**, independent of `--strict` (LCLI-538; extra keys
+  are unaffected by this knob). See
+  [ADR-0007's amendment](../adr/0007-validation-and-coherence.md).
 - **Frontmatter quote-safety** — values that would serialize ambiguously are
   flagged (see [ADR-0011](../adr/0011-frontmatter-serialization-stability.md)).
 
@@ -298,7 +305,7 @@ Tiered per-file validation:
 | **Args** | optional `[paths…]` or glob (default: whole bundle) |
 | **Key flags** | `--type <T>` (limit to one type) · `--strict` (treat warnings as errors) |
 | **Output** | `kind: validate.report` — per-file findings tiered error/warning |
-| **Exit** | `0` clean (or warnings only) · `6` any error (or any warning under `--strict`) |
+| **Exit** | `0` clean (or warnings only) · `6` any error (or any warning under `--strict`, or an unknown type under `strict_types`) |
 
 ### `check`
 
@@ -310,6 +317,11 @@ The **drift gate** — read-only, never writes. Aggregates:
   [`sync`](#sync)). See [ADR-0009](../adr/0009-story-task-coupling-reconciliation.md).
 - **Managed-block drift** — reports any `<!-- lore:tasks -->` region that
   `sync` would change.
+- **Unknown active-profile type** — a concept's `type` not declared by the
+  active profile → **warning** by default (OKF tolerance, matching
+  `validate`'s own unknown-type finding) — **unless** the active profile sets
+  `[profile] strict_types = true`, in which case → **error**, independent of
+  `--strict` (LCLI-538; see [ADR-0007's amendment](../adr/0007-validation-and-coherence.md)).
 - **Bundle-scoped link + heading-anchor validation** — whole-bundle pure-JS
   pass: every `.md` cross-link whose resolved target stays inside the selected
   bundle root must resolve, and every such `#anchor` must hit a real heading.
@@ -340,7 +352,7 @@ The **drift gate** — read-only, never writes. Aggregates:
 | **Args** | optional `[paths…]` (default: whole bundle) |
 | **Key flags** | `--strict` (treat deterministic warnings as failures for the exit code) · `--as-of YYYY-MM-DD` (pin date-sensitive rules; default HEAD commit date) · `--external` (also probe external-URL liveness — advisory, never gates) |
 | **Output** | `kind: check.report` — `findings`, `errorCount`, `warningCount`, `fileCount`, `skippedOutOfBundleLinkCount`, `complete`; plus optional `externalFindings` when `--external` ran. The skipped count is informational and never affects severity counts or exit status. |
-| **Exit** | `0` no broken bundle-scoped links/anchors and no status/managed-block drift · `2` invalid/non-calendar `--as-of` · `3` a linked task id no longer exists, or a date-sensitive rule needs the absent HEAD commit date · `6` any broken bundle-scoped link/anchor, any status/managed-block drift (or any deterministic warning under `--strict`). Skipped out-of-bundle links and external-liveness results never affect the exit. |
+| **Exit** | `0` no broken bundle-scoped links/anchors and no status/managed-block drift · `2` invalid/non-calendar `--as-of` · `3` a linked task id no longer exists, or a date-sensitive rule needs the absent HEAD commit date · `6` any broken bundle-scoped link/anchor, any status/managed-block drift (or any deterministic warning under `--strict`, or an unknown type under `strict_types`). Skipped out-of-bundle links and external-liveness results never affect the exit. |
 
 ---
 

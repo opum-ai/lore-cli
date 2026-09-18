@@ -112,6 +112,19 @@ stdout, is the payload). cli-contract.md's exit table labels this condition
 \`validation\` -- \`lore validate\`'s own error_type for a different command;
 check has no error_type split of its own to branch on.
 
+An unknown \`type:\` is ordinarily this warn-only, \`--strict\`-gated tier -- and
+this repository's own CI gate (\`ci.yml\`) runs bare \`bun run lore check\`, no
+\`--strict\`, so by default an unrecognized type ships through the actual gate at
+exit 0 (LCLI-538). A bundle that wants that closed sets
+\`[profile] strict_types = true\` in \`.lore/profile.toml\`: with it set, an unknown
+type is an unconditional error on this same finding, every run, whether or not
+\`--strict\` is passed -- the two compose (a bundle may set \`strict_types\` and
+still pass \`--strict\` for everything else) rather than one subsuming the other.
+Off by default; a bundle that never declares the key is unaffected. The same
+knob also makes \`lore new <type> ...\` refuse to scaffold an unrecognized
+\`<type>\` (exit 6) instead of warning and writing anyway, and \`lore validate\`
+promotes its own \`unknown-type\` finding the identical way.
+
 check's throws (each carries a \`--json\` error envelope) are \`usage\`
 (exit 2, a bad flag, or a bundle-root path argument that exists but isn't a
 directory), \`not_found\` (exit 3, a given bundle-root path that doesn't
@@ -161,8 +174,11 @@ non-empty) as an error if violated; per-type frontmatter shape and required
 sections against a Zod schema generated from the declarative
 \`.lore/profile.toml\` (the source of truth per ADR-0006's LORE-46 amendment)
 as an error if violated for known types; an unknown \`type\` or extra
-frontmatter keys as a warning only (OKF tolerates unknown fields -- custom
-frontmatter passes through untouched); a stale \`resource:\` value that no
+frontmatter keys as a warning only by default (OKF tolerates unknown fields --
+custom frontmatter passes through untouched) -- unless the active profile sets
+\`[profile] strict_types = true\`, in which case an unknown \`type\` specifically
+is an unconditional error, independent of \`--strict\` (LCLI-538; extra keys and
+every other warning are unaffected by this knob); a stale \`resource:\` value that no
 longer matches what the profile computes for the concept's current path as
 a warning (rule "resource"); and frontmatter values that would serialize
 ambiguously as quote-safety findings -- mostly errors (an unquoted YAML
@@ -204,7 +220,12 @@ An unknown \`type:\` value in an authored concept -- caught by \`lore validate\`
 unknown-type warning -- now names the profile's full valid set and, when one is close enough to be a
 plausible typo, a "did you mean" suggestion, instead of naming only the rejected value. Run
 \`lore types\` to see the same valid set with full field detail, not just the bare names the warning
-lists.`,
+lists.
+
+That warning is advisory (OKF tolerates an unknown type) unless the profile sets
+\`[profile] strict_types = true\` (\`lore instructions check\`/\`validation\`, LCLI-538), in which case
+it fails \`lore new\`/\`lore check\`/\`lore validate\` outright. Run \`lore types\` first either way --
+knowing the valid set before authoring is cheaper than discovering the rejection after.`,
 };
 
 const WORKSPACE: InstructionTopic = {

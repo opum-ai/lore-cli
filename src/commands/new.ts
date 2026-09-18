@@ -21,7 +21,15 @@ import { loadBundleState } from "../core/bundle";
 import { idFromPath } from "../core/concept";
 import { loadProfile, type Profile, profileForBundle, templateConfinementViolation } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
-import { canonicalType, isKnownType, SCHEMAS_DIR, schemaFileName, schemaModeline, typeDirectory } from "../core/schema";
+import {
+  canonicalType,
+  isKnownType,
+  SCHEMAS_DIR,
+  schemaFileName,
+  schemaModeline,
+  typeDirectory,
+  unknownTypeHint,
+} from "../core/schema";
 import { buildNewConcept, builtinTemplateFor, slugify } from "../core/template";
 import { EXIT_OK, errnoCode, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
@@ -84,8 +92,9 @@ interface NewArgs {
 /**
  * Run `lore new`: parse the arguments, resolve the template, render the concept, and write it
  * never-clobbering. Returns the exit code (`0`). A missing positional or bad flag throws a
- * `usage` {@link LoreError} (exit `2`); an unfilled `{{placeholder}}` or invalid frontmatter a
- * `validation` error (exit `6`); an existing target a `conflict` (exit `5`).
+ * `usage` {@link LoreError} (exit `2`); an unfilled `{{placeholder}}`, invalid frontmatter, or an
+ * unrecognized `<type>` when the active profile sets `strict_types` (LCLI-538) a `validation`
+ * error (exit `6`); an existing target a `conflict` (exit `5`).
  */
 export function runNew(options: NewOptions): number {
   const clock = options.clock ?? (() => new Date());
@@ -103,6 +112,18 @@ export function runNew(options: NewOptions): number {
     throw usage(
       `"${parsed.type}" is not a valid type`,
       "a type must start with a letter and contain only letters, digits, dashes, or underscores — or be declared in .lore/profile.toml",
+    );
+  }
+  // LCLI-538: `[profile] strict_types = true` closes the fails-green gap where an unrecognized
+  // type shipped through `lore new` (and the real, un-`--strict` CI gate) at exit 0. Off by
+  // default (AC#3): a bundle that never declares the key sees no change here. Checked before any
+  // path/template resolution or write, so a rejected type never touches the filesystem.
+  if (!isKnownType(type, profile) && profile.strictTypes) {
+    throw new LoreError(
+      "validation",
+      `unknown type "${type}"; \`profile.strict_types\` requires a known type (${unknownTypeHint(type, profile)})`,
+      "declare this type under [[types]] in .lore/profile.toml, or unset strict_types to allow a producer-extension type",
+      { type },
     );
   }
 

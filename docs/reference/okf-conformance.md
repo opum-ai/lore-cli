@@ -83,7 +83,7 @@ meaning distinct:
 |---|---|---|---|
 | 1 | Unparseable frontmatter or missing/empty `type` | Error, exit `6` | OKF 0.2 §11 / 0.1 §9 |
 | 2 | A known Lore-profile type has malformed fields or lacks required body sections | Error, exit `6` | Lore producer profile |
-| 3 | Unknown `type`, extra key on a known type, missing/long `summary`, or a legacy field | Warning; exit `0` unless `--strict` | Lore advisory layered inside OKF tolerance |
+| 3 | Unknown `type`, extra key on a known type, missing/long `summary`, or a legacy field | Warning; exit `0` unless `--strict`, or unless the finding is an unknown `type` and the profile sets `strict_types` | Lore advisory layered inside OKF tolerance |
 | Cross-cutting | Quote-safety or stale computed `resource` | Error or warning by rule | Lore portability/profile policy |
 
 Tier 2 does not narrow what a general OKF consumer must accept. It states what
@@ -92,6 +92,13 @@ types retain the OKF `type`-only floor, and unknown keys remain preserved.
 
 `--strict` promotes warnings for repository policy. That promotion is a Lore CI
 choice, not a retroactive claim that OKF rejects the document.
+
+`.lore/profile.toml`'s `[profile] strict_types = true` (LCLI-538) is the same kind of Lore CI
+choice, scoped narrower and applied unconditionally: it promotes *only* the unknown-`type` Tier-3
+finding, on every `lore new`/`lore check`/`lore validate` run, whether or not `--strict` is also
+passed — the two compose rather than one subsuming the other. Off by default. Like `--strict`, it
+is a repository's own stricter-than-OKF policy, never a claim that OKF itself rejects an unknown
+`type` — see [ADR-0007's amendment](../adr/0007-validation-and-coherence.md).
 
 ## OKF 0.2 field-family audit
 
@@ -258,7 +265,11 @@ the shared numeric exit code.
 - [x] Unknown types and keys are tolerated and preserved.
 - [x] Known types pass Lore's stricter producer profile.
 - [x] Cross-links use Lore's portable relative form.
-- [x] `lore validate --strict` and `lore check --strict` are the repository gates.
+- [x] `lore check` (bare, no `--strict`, no `strict_types`) is this repository's own actual CI gate
+      (`.github/workflows/ci.yml`) — corrected 2026-09-18 (LCLI-538): an earlier revision of this
+      line claimed `--strict` for both `validate` and `check`, but neither runs in CI here, and this
+      repository declares no `.lore/profile.toml` (so `strict_types` is unset too, per AC#3's own
+      default). Adopting either is a separate decision, not implied by this bundle passing today.
 
 ## See also
 

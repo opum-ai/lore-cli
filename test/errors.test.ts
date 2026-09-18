@@ -647,6 +647,20 @@ describe("WarningCollector", () => {
     expect(warnings.has("late")).toBe(false);
   });
 
+  test("entries() pairs each message with its kind, in insertion order, merge included (LCLI-538)", () => {
+    const warnings = new WarningCollector();
+    warnings.add("unknown type 'Widget'", "unknown-type");
+    warnings.add("missing summary");
+    const more = new WarningCollector();
+    more.add("unreadable directory", "unreadable-directory");
+    warnings.merge(more);
+    expect(warnings.entries()).toEqual([
+      { message: "unknown type 'Widget'", kind: "unknown-type" },
+      { message: "missing summary" },
+      { message: "unreadable directory", kind: "unreadable-directory" },
+    ]);
+  });
+
   test("flush writes each warning to stderr and returns the count", () => {
     const warnings = new WarningCollector();
     warnings.add("first");

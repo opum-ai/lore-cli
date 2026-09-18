@@ -59,9 +59,16 @@ export const LORE_COMMANDS: readonly CommandSummary[] = [
     name: "init",
     summary: "Scaffold an OKF bundle; a bare TTY run also wizards the agent bridge/scaffolds/backlog check",
   },
-  { name: "new", summary: "Scaffold a typed concept from a template" },
-  { name: "validate", summary: "Check concept files against OKF + the lore profile (per-file)" },
-  { name: "check", summary: "Validate links/anchors + reconciliation drift across the bundle (CI gate)" },
+  { name: "new", summary: "Scaffold a typed concept from a template (rejects an unknown type under strict_types)" },
+  {
+    name: "validate",
+    summary: "Check concept files against OKF + the lore profile (per-file); strict_types escalates an unknown type",
+  },
+  {
+    name: "check",
+    summary:
+      "Validate links/anchors + reconciliation drift across the bundle (CI gate); strict_types escalates an unknown type",
+  },
   { name: "replace", summary: "Find-and-replace across the bundle, skipping managed regions" },
   { name: "rename", summary: "Move a concept and repoint every inbound link + ref" },
   { name: "supersede", summary: "Mark a concept superseded by another, wiring both ways" },

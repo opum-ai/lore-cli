@@ -46,6 +46,13 @@ use the ignored `.lore/cache/contexts/` directory. Profiles and generated packs
 are Lore state rather than OKF concepts; the exact contract is in
 [Agent profile context retrieval](../specs/agent-profile-context-retrieval.md).
 
+Amended — 2026-09-18 (LCLI-538): `profile.toml`'s `[profile]` table gains a fourth key,
+**`strict_types`** — a plain boolean, default `false`. It escalates the unknown-type Tier-3 warning
+([ADR-0007's amendment](0007-validation-and-coherence.md)) to an unconditional error for `lore
+new`/`lore check`/`lore validate`, independent of `--strict`. Like `resource_base`, it is zero-config
+(absent or `false` changes nothing) and lives in `.lore/profile.toml`, never `config.toml` — it
+governs the type *vocabulary*'s strictness, not an operational reconcile/validate/Confluence knob.
+
 ## Context
 
 lore is repo-resident and repo-is-source-of-truth, but it still has a small

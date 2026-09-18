@@ -460,6 +460,16 @@ name = "Attested Computation"
     expect(warnings.list().some((w) => w.includes('unknown type "Glossary"'))).toBe(true);
   });
 
+  test('the unknown-type warning is tagged "unknown-type" (LCLI-538) for a caller that escalates it', () => {
+    const warnings = new WarningCollector();
+    validateFrontmatter({ type: "Glossary" }, { warnings });
+    const entry = warnings.entries().find((e) => e.message.includes('unknown type "Glossary"'));
+    expect(entry?.kind).toBe("unknown-type");
+    // validateFrontmatter's own throw/warn split never consults `profile.strictTypes` — it always
+    // warns here regardless; escalation is the caller's job (validate.ts/check.ts/new.ts).
+    expect(warnings.list()).toHaveLength(1);
+  });
+
   describe("unknownTypeHint (LCLI-537) — names the valid set, and a nearest-match suggestion when close enough", () => {
     test("names every declared type in the unknown-type warning itself", () => {
       const warnings = new WarningCollector();

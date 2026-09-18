@@ -500,6 +500,50 @@ describe("lore new — unknown types are accepted (OKF tolerance)", () => {
   });
 });
 
+describe("lore new — `profile.strict_types` makes an unknown type an unconditional error (LCLI-538)", () => {
+  function enableStrictTypes(): void {
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      [
+        "[profile]",
+        'name = "demo"',
+        'okf_version = "0.1"',
+        "strict_types = true",
+        "[base.fields]",
+        "type = { required = true }",
+        "title = {}",
+        "[[types]]",
+        'name = "ADR"',
+      ].join("\n"),
+    );
+  }
+
+  test("an unknown type is a validation error (exit 6), naming the valid set", () => {
+    enableStrictTypes();
+    const err = expectError(["Decision", "Pick a queue"]);
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain('unknown type "Decision"');
+    expect(err.message).toContain("strict_types");
+    expect(err.message).toContain("known types: ADR");
+    // Rejected before any write: never a half-written scaffold left on disk.
+    expect(existsSync(join(root, "docs/decision/pick-a-queue.md"))).toBe(false);
+  });
+
+  test("a known (profile-declared) type is unaffected", () => {
+    enableStrictTypes();
+    const { code, result } = newCmd(["adr", "Use soft deletes"]);
+    expect(code).toBe(0);
+    expect(result.type).toBe("ADR");
+  });
+
+  test("AC#3: with the knob absent (the default scaffolded profile), an unknown type is still only a warning", () => {
+    // No enableStrictTypes() call: the default `lore init` profile leaves strict_types unset.
+    const { code, stderr } = newCmd(["Decision", "Pick a queue"]);
+    expect(code).toBe(0);
+    expect(stderr.text()).toContain('unknown type "Decision"');
+  });
+});
+
 describe("lore new — never clobbers an existing target (exit 5)", () => {
   // Uses "reference" rather than "adr": ADR auto-numbers each new file to a fresh, unused
   // ordinal (LCLI-373), so two "adr" runs with the same title no longer collide on their own —

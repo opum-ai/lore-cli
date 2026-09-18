@@ -64,6 +64,32 @@ generic GitHub slug/duplicate primitive to `github-slugger`; cross-document
 checking, portable-link policy, and finding semantics remain Lore-owned. See the
 [dependency boundary audit](../reference/dependency-boundary-audit.md).
 
+Amended — 2026-09-18 (LCLI-538): **the Tier-3 unknown-type warning is now the one Tier-3 finding a
+bundle may promote to an unconditional error**, via a new `.lore/profile.toml` `[profile]
+strict_types = true` key (see [ADR-0013](0013-lore-state-directory.md)). Motivation: LCLI-306
+(above) made `check --strict` and `validate --strict` agree that an unknown type fails only under
+`--strict`, but this repository's own CI gate (`.github/workflows/ci.yml`) runs bare `bun run lore
+check`, and CLAUDE.md's own rule is "`lore check` exiting 0 is the definition of done" — no
+`--strict` anywhere in the gate a maintainer actually relies on. So an unrecognized type shipped
+through the real gate at exit 0 by default, indistinguishable from a type that was never checked at
+all — the same fails-green shape LCLI-534 was rated HIGH for.
+
+`strict_types` is deliberately **not** a redefinition of `--strict`, and the two compose rather than
+one subsuming the other: `--strict` is a per-invocation flag promoting *every* deterministic warning
+(unknown type, extra key, missing summary, portability lint, …) for one run; `strict_types` is a
+per-bundle, committed policy escalating *only* the unknown-type finding, on every run, with or
+without `--strict`. A bundle may set `strict_types` and still separately pass `--strict` for
+everything else. It is a **plain boolean**, off by default (so a bundle that never declares the key
+sees no change — the Tier-3 default above is unchanged), scoped to exactly the three surfaces that
+can ship an unrecognized type in the first place: `lore new <type> ...` refuses to scaffold one,
+and `lore check`/`lore validate` report it as `severity: "error"` rather than `"warning"`. It does
+**not** change the tolerant, whole-bundle parse every other command (`sync`, `query`, `graph`, …)
+shares — an unknown type still loads into the graph exactly as before, so this is narrower than
+"unknown types are no longer tolerated"; it is "the three write/report gates refuse to ship one
+silently." A closed vocabulary of per-type exemptions (rather than one bundle-wide switch) was
+considered and left for a later task if ever needed — see `src/core/profile.ts`'s
+`Profile.strictTypes` for the full mechanism.
+
 ## Context
 
 lore must answer two distinct questions about a docs bundle, and conflating

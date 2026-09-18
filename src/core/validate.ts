@@ -26,7 +26,11 @@
  *   the same {@link tryParseConcept} throw) **plus** its {@link requiredSectionsFor required
  *   body sections} (this module).
  * - **Tier 3 — extensions (warning):** an unknown `type`, an extra key on a known type, or a
- *   missing/over-long `summary` — collected from the {@link WarningCollector}.
+ *   missing/over-long `summary` — collected from the {@link WarningCollector}. Unlike the other
+ *   two, an unknown `type` is not unconditionally a warning: `rule: "unknown-type"` escalates to
+ *   an **error** when the active profile sets `[profile] strict_types = true` (LCLI-538, see
+ *   {@link import("./profile").Profile.strictTypes}) — a per-bundle opt-in, off by default, so
+ *   this tier's OKF-tolerance default is unchanged for a bundle that does not declare it.
  * - **Cross-cutting — quote-safety:** unquoted frontmatter scalars that a YAML-1.1 consumer
  *   would coerce to a non-string (or that carry a YAML indicator), so the value is
  *   parser-dependent across the bundle's target renderers ({@link quoteSafetyFindings}).
@@ -52,7 +56,7 @@ import { expectedResource } from "./template";
 export type { Severity };
 
 /** Which check produced a {@link Finding}, for machine consumers and grouped display. */
-export type FindingRule = "frontmatter" | "required-section" | "quote-safety" | "resource";
+export type FindingRule = "frontmatter" | "required-section" | "quote-safety" | "resource" | "unknown-type";
 
 /** One tiered problem found in a single file — the shared {@link BaseFinding} narrowed to `validate`'s rules. */
 export type Finding = BaseFinding<FindingRule>;
@@ -138,8 +142,16 @@ export function validateConceptText(
   }
 
   const findings: Finding[] = [];
-  for (const message of warnings.list()) {
-    findings.push({ severity: "warning", rule: "frontmatter", message });
+  for (const entry of warnings.entries()) {
+    // The unknown-type warning is tagged `"unknown-type"` (schema.ts, LCLI-538) so it — and only
+    // it — escalates to an error when the active profile opts into `strict_types`; every other
+    // Tier-3 advisory (extra key, missing/over-long summary) stays a plain warning regardless.
+    const isUnknownType = entry.kind === "unknown-type";
+    findings.push({
+      severity: isUnknownType && effective.strictTypes ? "error" : "warning",
+      rule: isUnknownType ? "unknown-type" : "frontmatter",
+      message: entry.message,
+    });
   }
   findings.push(...requiredSectionFindings(concept.type, concept.body, effective));
   findings.push(...resourceDriftFindings(path, concept, effective));

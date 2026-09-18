@@ -139,6 +139,12 @@ export interface ParsedProfile {
   readonly okfVersion: OkfVersion;
   readonly case: CaseStyle;
   readonly resourceBase: string;
+  /**
+   * `[profile] strict_types` (default `false`, LCLI-538): whether an unrecognized `type` is an
+   * unconditional validation error rather than the Tier-3 OKF-tolerance warning ADR-0007 documents.
+   * See {@link Profile.strictTypes} for the full rationale and its scope.
+   */
+  readonly strictTypes: boolean;
   /** Fields every type carries, in declaration order (insertion-ordered object). `type` must be required. */
   readonly baseFields: Readonly<Record<string, FieldSpec>>;
   /** Declared types, in declaration order. */
@@ -194,6 +200,32 @@ export interface Profile {
   readonly case: CaseStyle;
   /** The base a stamped `resource` value joins to a concept path (empty → no `resource` stamped). */
   readonly resourceBase: string;
+  /**
+   * `[profile] strict_types` (default `false`, LCLI-538): whether an unrecognized `type` fails
+   * `lore new`/`lore check`/`lore validate` as an unconditional error, rather than only the Tier-3
+   * OKF-tolerance warning ADR-0007 documents ("fails only under `--strict`"). This repository's own
+   * `ci.yml` gate runs bare `bun run lore check` (no `--strict`), so before this knob existed an
+   * unrecognized type shipped through the actual CI gate at exit `0` — the same fails-green shape
+   * LCLI-534 was rated HIGH for.
+   *
+   * Deliberately **independent of `--strict`**, not a redefinition of it: `--strict` is a per-
+   * invocation flag that promotes *every* deterministic warning (unknown type, extra key, missing
+   * summary, portability lint, …) for a single run, opt-in each time it matters. `strict_types` is
+   * a per-bundle, committed policy that escalates *only* the unknown-type finding, every run,
+   * whether or not `--strict` is passed — the two compose (a bundle may set `strict_types` and
+   * still separately choose `--strict` for everything else) rather than one subsuming the other.
+   * Scoped to `new`/`check`/`validate` only: it does **not** change {@link import("./schema").validateFrontmatter}'s
+   * own throw contract, so a tolerant whole-bundle parse (`lore sync`/`query`/`graph`/…, all built on
+   * {@link import("./concept").tryParseConcept} via {@link import("./bundle").loadBundle}) is
+   * unaffected — an unknown type still loads into the graph exactly as before. Escalation happens
+   * at each of the three read/report/write sites instead: {@link import("../commands/new").runNew}
+   * throws a `validation` {@link LoreError} before writing when the requested type is unknown;
+   * {@link import("../core/validate").validateConceptText} promotes its per-file finding's severity
+   * to `error`; {@link import("../commands/check").runCheck}'s own separate unknown-type scan does
+   * the same. A plain boolean, not a richer per-type allow/exempt list — see ADR-0007's amendment
+   * for why a closed vocabulary of exemptions was left for a later task if ever needed.
+   */
+  readonly strictTypes: boolean;
   /** Compiled types keyed by canonical `type` value, in declaration order. */
   readonly types: ReadonlyMap<string, CompiledType>;
   /** Canonical `type` value keyed by its lower-cased spelling, for case-insensitive resolution. */
@@ -348,6 +380,7 @@ export function parseProfile(doc: Record<string, unknown>, source: string): Pars
   // Trim at the config boundary so a whitespace-only `resource_base` is treated as unset (no stamp)
   // and a base padded with stray whitespace can never join into an embedded-space (broken) URL.
   const resourceBase = (asString(profileTable.resource_base, "profile.resource_base", source) ?? "").trim();
+  const strictTypes = asBoolean(profileTable.strict_types, "profile.strict_types", source) ?? false;
 
   const baseTable = asTable(doc.base, "base", source) ?? {};
   const baseFields = parseFieldTable(asTable(baseTable.fields, "base.fields", source) ?? {}, "base.fields", source);
@@ -371,7 +404,7 @@ export function parseProfile(doc: Record<string, unknown>, source: string): Pars
       { key: "types" },
     );
   }
-  return { name, okfVersion, case: caseStyle, resourceBase, baseFields, types };
+  return { name, okfVersion, case: caseStyle, resourceBase, strictTypes, baseFields, types };
 }
 
 /** The keys a `[[types]]` table may declare. */
@@ -713,6 +746,7 @@ export function compileProfile(parsed: ParsedProfile): Profile {
     okfVersion: parsed.okfVersion,
     case: parsed.case,
     resourceBase: parsed.resourceBase,
+    strictTypes: parsed.strictTypes,
     types,
     byLowerName,
     canonicalKeyOrder,
@@ -890,6 +924,9 @@ function storyConventionProfile(okfVersion: OkfVersion = CURRENT_OKF_VERSION): P
     okfVersion,
     case: "Title",
     resourceBase: "",
+    // The built-in profile never opts in on a project's behalf (AC#3, LCLI-538): `strict_types`
+    // is a per-bundle policy choice, declared in a committed `.lore/profile.toml`, never a default.
+    strictTypes: false,
     baseFields: {
       type: { required: true, kind: "string" },
       title: optionalString,
