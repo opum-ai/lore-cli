@@ -260,6 +260,8 @@
 - 2026-09-15T15:00:16-05:00 8b613e25352bfade06cb5de708be722ba8cc1050 fix(LCLI-510): markers must be INLINE — a line-initial one broke the rendered npm page
 - 2026-09-15T15:06:41-05:00 6051d57f054da204ea3682db14e1cde107a45c74 fix(LCLI-510): give clause 3 a sanctioned escape hatch, and prove the hatch ACCEPTS
 - 2026-09-15T16:14:45-05:00 bc4d58a0812cc8d7c4cb100c2d2339f685ba5da2 fix(LCLI-510): generate the README's version lines, and refuse a release whose packed README disagrees (#118)
+- 2026-09-16T18:55:31-05:00 758ea94ef73f572b798c1d24c03cca7f2db20946 docs(LCLI-506): ADR-0009's status vocabulary claim is Backlog-only and stale — supersede it on that point (#128)
+- 2026-09-16T19:22:53-05:00 3ccb3489b3b8d750bca23822cf1923a72ebd2461 fix(LCLI-502): gate the root launcher on registry visibility, not publish order (#131)
 
 ## docs/adr
 
@@ -336,6 +338,11 @@
 - 2026-09-15T07:42:47-05:00 2b6181dfa5cec0a621973e809056d8f101f1add7 docs(LCLI-496): 0.7.0 is released — replace the release-truth and README current-state claims (#99)
 - 2026-09-15T15:01:41-05:00 5e5e5edabcfa8c7cd291e09f2fe64454bf0ae82e fix(LCLI-510): A4 re-runs the assertions instead of grepping — the literal would have gone red on a CORRECT release
 - 2026-09-15T16:57:43-05:00 eaa966374aa846ff9d94f9182c292719af8bb1ac docs(LCLI-511): the lockstep is an exact-version binding, and a unilateral patch is a declared break of it (#121)
+- 2026-09-16T18:57:07-05:00 e18661ed1aee417fdb7f98ad3894d5806e599634 docs(LCLI-505): cli-contract.md §2 was wrong about its own envelope's field set (#129)
+- 2026-09-16T20:17:39-05:00 c7251b60c27c24f437d3fe38d7e6fc24465f5a68 fix(LCLI-466): offer the wizard a way out of a Quest id-collision refusal (#137)
+- 2026-09-16T20:54:49-05:00 0035f43eeb2084bf4f82c9a26975d3f7b3ee4461 feat(LCLI-467): offer to delete backlog/ after a plain --migrate-backlog (#140)
+- 2026-09-16T23:02:45-05:00 6d654342624ca7725f9e342231eec85291bffda1 docs(LCLI-531): flag stale release-run citation after a workflow re-run (#145)
+- 2026-09-16T23:15:21-05:00 73780d3a491f31c9a4c85edbf6670a889e77c39e fix(LCLI-521): warn before a --preserve-source-ids retry leaves a family behind (#146)
 
 ## docs/runbooks
 
