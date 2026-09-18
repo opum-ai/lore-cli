@@ -19,9 +19,24 @@
  *   `{{summary}}`) plus any `--var`, and *reports* an unfilled token rather than leaving a
  *   literal `{{…}}` in the file, so a missing value fails loud (exit `6`).
  *
- * The {@link BUILTIN_TEMPLATES} carry each known type's conventional section skeleton; a user
- * template under `.lore/templates/` overrides the built-in body wholesale (AC#2) — that
- * filesystem resolution is the command's concern, not this module's.
+ * **What "by construction" does and does not cover** (reconciled by LCLI-535, whose AC#3 exists
+ * because this header and the {@link BUILTIN_TEMPLATES} note below described two different
+ * guarantees). There are three body sources, and only two of them are lore's to guarantee:
+ *
+ * - A **built-in** type renders {@link BUILTIN_TEMPLATES}, which carry that type's conventional
+ *   section skeleton. Validates by construction.
+ * - A **profile-declared** type with no template file used to fall through to the lenient
+ *   {@link GENERIC_TEMPLATE}, which carries no sections at all — so `lore new` emitted a file
+ *   `lore validate` immediately rejected, since a profile's declared `sections` ARE enforced.
+ *   That was the gap: the guarantee was stated unconditionally and held only for the built-ins.
+ *   {@link sectionScaffoldTemplate} now closes it, and `commands/new.ts` selects it.
+ * - A **user template** under `.lore/templates/` overrides the body wholesale (AC#2). lore cannot
+ *   guarantee this one and does not try: a user who removes a required heading from their own
+ *   template gets a `lore validate` error, which is the correct outcome rather than a defect.
+ *   That filesystem resolution is the command's concern, not this module's.
+ *
+ * So the claim is precisely: **every body lore itself generates carries its type's required
+ * sections.** An overriding user template is outside it, deliberately.
  */
 
 import { posix } from "node:path";
