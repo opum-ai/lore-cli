@@ -21,7 +21,41 @@ set -uo pipefail
 RESULTS_DIR="$(mktemp -d)"
 REPORT="$RESULTS_DIR/report.jsonl"
 export RESULTS_DIR REPORT
-trap 'rm -rf "$RESULTS_DIR"' EXIT
+
+# The single EXIT handler: cleanup, the summary, AND the verdict (LCLI-533).
+#
+# It owns all three because bash permits only ONE EXIT trap -- registering a second would silently
+# replace the cleanup this script already had and leak the temp directory.
+#
+# Why an EXIT handler rather than a check at the bottom of the file, which is what this used to be:
+# the tail was `[ "$SELF_FAIL" -eq 0 ] || exit 1`, a CONDITIONAL exit that calls exit only when
+# SELF_FAIL is already nonzero AT THAT LINE. With SELF_FAIL at 0 -- true for every case that exists
+# today -- no exit is called, execution falls off the end, and the process status becomes whatever
+# the last command returned. A case appended below that line therefore ran, could FAIL, was never
+# counted into the printed summary, and left the script exiting 0. Confirmed by appending a
+# deliberately-failing probe: the summary read "28 ok, 0 bad", byte-identical to a clean run, while
+# a named failure printed underneath it and the exit code stayed 0.
+#
+# A second check placed after the old one would not have fixed it: a trailing check only ever sees
+# cases inserted ABOVE itself, and appending at the END of the file is exactly how this happens --
+# so a trailing guard is structurally blind to the next occurrence of the bug it was added for.
+# (opum-cli-e2e measured this directly on their own harness in TASK-61: their first version WAS a
+# plain `if` at the bottom, and a deliberately appended section walked straight past it.)
+# An EXIT handler observes the true final state no matter where in the file a case is added, which
+# is the property AC#2 asks for.
+#
+# Counters are read with `${...:-0}` because this handler is registered BEFORE they are initialized
+# -- deliberately, so the temp directory is protected from the moment it exists -- and `set -u`
+# would otherwise turn an early failure into a confusing unbound-variable error instead of the real
+# one. `exit "$rc"` preserves a non-verdict failure (a bad `source`, say) rather than flattening it.
+_selftest_on_exit() {
+  local rc=$?
+  rm -rf "$RESULTS_DIR"
+  printf '\n==== harness selftest: %s ok, %s bad ====\n' "${SELF_PASS:-0}" "${SELF_FAIL:-0}"
+  [ "${SELF_FAIL:-0}" -eq 0 ] || exit 1
+  exit "$rc"
+}
+trap _selftest_on_exit EXIT
 
 # shellcheck source=lib/steps.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/steps.sh"
@@ -146,5 +180,5 @@ expect fail "REJECTS a run one case below the floor"       -- _probe_floor 329 0
 expect fail "REJECTS a truncated run"                      -- _probe_floor 12 0 330
 expect fail "REJECTS a run where NOTHING ran -- the green-failure case"  -- _probe_floor 0 0 330
 
-printf '\n==== harness selftest: %s ok, %s bad ====\n' "$SELF_PASS" "$SELF_FAIL"
-[ "$SELF_FAIL" -eq 0 ] || exit 1
+# No summary or exit here on purpose: _selftest_on_exit owns both (LCLI-533). Anything appended
+# below this line is still counted and can still turn the run red -- which is the whole point.
