@@ -103,12 +103,18 @@ describe("alias SLUG ownership (depends on the bySlug seeding and the emitter)",
     // comparison move together, and the test would assert only that the emitter agrees with
     // itself. It did exactly that in its first draft and survived a mutant that deleted the alias
     // emission outright.
-    const canonicalOnly = emitSchemaFiles(compileProfile(parseProfile(aliasedDoc([]), "test-profile")));
-    const arcBytes = canonicalOnly.find((f) => f.path.endsWith("arc.schema.json"))?.contents as string;
-    const committed = new Map(canonicalOnly.map((f) => [f.path, f.contents] as const));
+    const emitted = emitSchemaFiles(compiled());
+    const arcBytes = emitted.find((f) => f.path.endsWith("arc.schema.json"))?.contents as string;
+    // Build `committed` with the alias path added BY THIS TEST rather than taken from the
+    // emitter's own alias output -- that is what keeps the two sides from moving together. If the
+    // emitter stops emitting the alias path, this committed file becomes orphaned and the case
+    // goes red, which is exactly the mutant it has to catch.
+    const committed = new Map(
+      emitted.filter((f) => !f.path.endsWith("story.schema.json")).map((f) => [f.path, f.contents] as const),
+    );
     committed.set(".lore/schemas/story.schema.json", arcBytes);
 
-    const regenerated = new Map(emitSchemaFiles(compiled()).map((f) => [f.path, f.contents] as const));
+    const regenerated = new Map(emitted.map((f) => [f.path, f.contents] as const));
     expect(schemaDriftFindings({ committed, regenerated })).toEqual([]);
   });
 });
@@ -158,5 +164,44 @@ describe("a profile with no aliases is unchanged", () => {
     );
     expect(p.types.get("Note")?.aliases).toEqual([]);
     expect(emitSchemaFiles(p).map((f) => f.path)).toEqual([".lore/schemas/note.schema.json"]);
+  });
+});
+
+describe("alias ACCEPTANCE — the type field admits an alias spelling (LCLI-558)", () => {
+  test("a document carrying the ALIAS spelling validates against the canonical type", () => {
+    // LCLI-553 shipped resolution without this and the regression stayed live: an un-migrated
+    // document resolved to Arc and was then rejected by `z.literal("Arc")`, so `lore link` still
+    // refused it. The failure had moved from the coupling gate to the validation gate.
+    const type = compiled().types.get("Arc");
+    expect(type?.schema.safeParse({ type: "Story", title: "t" }).success).toBe(true);
+    expect(type?.schema.safeParse({ type: "Arc", title: "t" }).success).toBe(true);
+  });
+
+  test("an UNDECLARED type is still rejected — acceptance widens to declared aliases only", () => {
+    expect(compiled().types.get("Arc")?.schema.safeParse({ type: "Saga", title: "t" }).success).toBe(false);
+  });
+
+  test("the emitted JSON Schema admits both spellings, and the alias file stays byte-identical", () => {
+    const files = emitSchemaFiles(compiled());
+    const arc = files.find((f) => f.path.endsWith("arc.schema.json"));
+    const story = files.find((f) => f.path.endsWith("story.schema.json"));
+    const typeProp = (JSON.parse(arc?.contents as string).properties as Record<string, unknown>).type;
+    expect(typeProp).toEqual({ type: "string", enum: ["Arc", "Story"] });
+    expect(story?.contents).toBe(arc?.contents as string);
+  });
+
+  test("an ALIASLESS type keeps its existing `const` form — no churn for profiles without aliases", () => {
+    const plain = compileProfile(
+      parseProfile(
+        {
+          profile: { name: "plain", okf_version: "0.2" },
+          base: { fields: { type: { required: true } } },
+          types: [{ name: "Note" }],
+        },
+        "test-profile",
+      ),
+    );
+    const json = JSON.parse(emitSchemaFiles(plain)[0]?.contents as string);
+    expect((json.properties as Record<string, unknown>).type).toEqual({ type: "string", const: "Note" });
   });
 });

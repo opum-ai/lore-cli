@@ -817,7 +817,7 @@ export function compileProfile(parsed: ParsedProfile): Profile {
       }
     }
     const fieldOrder = [...declaredBase, ...ownNew, ...reservedBase];
-    const schema = buildTypeSchema(type.name, merged, fieldOrder);
+    const schema = buildTypeSchema(type.name, merged, fieldOrder, type.aliases ?? []);
     const compiled: CompiledType = {
       name: type.name,
       slug: slugForTypeName(type.name),
@@ -908,18 +908,30 @@ function acceptsStampedResource(spec: FieldSpec | undefined): boolean {
 
 /**
  * Build a type's loose Zod object from its merged fields, emitting properties in `fieldOrder`
- * so the generated JSON Schema's property order is stable and declaration-driven. `type` is
- * always a `z.literal(name)` (the OKF floor). A reserved coupling field with no declared spec
+ * so the generated JSON Schema's property order is stable and declaration-driven. `type` accepts
+ * the canonical name and any DEPRECATED ALIAS (LCLI-558) -- a plain `z.literal(name)` when the
+ * type has no aliases, so an aliasless profile's emitted JSON Schema keeps its existing `const`
+ * form byte-for-byte. A reserved coupling field with no declared spec
  * uses its built-in {@link RESERVED_FIELDS} validator; everything else comes from {@link fieldToZod}.
  * Loose (not strict) so extra keys pass — the extra-key warning is computed separately, preserving
  * OKF producer-extension tolerance.
  */
-function buildTypeSchema(name: string, merged: Record<string, FieldSpec>, fieldOrder: readonly string[]): z.ZodType {
+function buildTypeSchema(
+  name: string,
+  merged: Record<string, FieldSpec>,
+  fieldOrder: readonly string[],
+  aliases: readonly string[] = [],
+): z.ZodType {
   const shape: Record<string, z.ZodType> = {};
   for (const fieldName of fieldOrder) {
     const reserved = RESERVED_FIELDS[fieldName];
     if (fieldName === "type") {
-      shape[fieldName] = z.literal(name);
+      // Resolving the alias is NOT enough on its own: an un-migrated document resolves to this
+      // type and is then rejected here unless the literal admits the old spelling too. LCLI-553
+      // shipped the resolution without this and `lore link` still refused the very documents the
+      // alias exists to keep working -- the failure moved from the coupling gate to the
+      // validation gate rather than going away.
+      shape[fieldName] = aliases.length === 0 ? z.literal(name) : z.literal([name, ...aliases]);
     } else if (merged[fieldName] !== undefined) {
       shape[fieldName] = fieldToZod(merged[fieldName] as FieldSpec);
     } else if (reserved !== undefined) {
