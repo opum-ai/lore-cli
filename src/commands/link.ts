@@ -432,44 +432,86 @@ async function removeBackRefs(
   // backlog branch's own `git status` (scoped to exactly these paths) is what decides which of
   // them, if any, are actually dirty and worth staging (mirrors runLink's refs).
   const refs: TrackerWriteRef[] = [];
-  const outcomes = await runSequentially(taskIds, async (taskId) => {
-    // `verifiedViewTask` (LORE-177) refuses a detail whose own `id` doesn't match `taskId` — never
-    // used below to decide `hadLabel`/`hadDoc` or compute `removeDoc`'s result, which would
-    // otherwise borrow (and remove from) another task's documentation entirely.
-    const detail = await verifiedViewTask(adapter, taskId);
-    if (detail === null) {
-      return "skipped" as const; // the task no longer exists in Backlog — nothing to clean up
-    }
-    const hadLabel = hasLabel(detail, label);
-    // Matched case-insensitively, like `hasLabel` — necessary for `--allow-missing`, whose
-    // `docPath` is *reconstructed* from the given id, not read from a live concept's real path, so
-    // it may not match the originally-stored casing exactly. Safe because `assertNoLabelCaseCollision`
-    // already ran up front and ruled out any other concept whose id (and so doc path) could
-    // case-collide, so a case-insensitive match here can't strip a different concept's real entry.
-    const hadDoc = containsCaseInsensitive(detail.documentation, docPath);
-    if (!hadLabel && !hadDoc) {
-      // Neither the label nor the doc entry is present, so there is no Backlog edit to make — but
-      // the task's file can still be dirty and uncommitted on disk if a PRIOR `lore unlink` run
-      // already applied this exact removal and then its own `commitBacklogFiles` call failed (e.g.
-      // a rejected pre-commit hook — LORE-121's pattern, LORE-179). Recording the path here, even
-      // though this run makes no edit, lets `commitBacklogFiles`'s own `git status` (scoped to
-      // exactly this path) decide whether there is real drift to stage and commit: a clean file
-      // reports nothing dirty and stays a true no-op (AC#3), while a dirty one gets picked up and
-      // committed by this retry (AC#1) instead of silently no-opping forever.
-      if (detail.file) {
-        refs.push({ taskId, file: commitFileFor(backend, detail.file) });
+  const outcomes = await runSequentially(taskIds, (taskId) =>
+    withConflictRetry(async () => {
+      // `verifiedViewTask` (LORE-177) refuses a detail whose own `id` doesn't match `taskId` — never
+      // used below to decide `hadLabel`/`hadDoc` or compute `removeDoc`'s result, which would
+      // otherwise borrow (and remove from) another task's documentation entirely.
+      const detail = await verifiedViewTask(adapter, taskId);
+      if (detail === null) {
+        return "skipped" as const; // the task no longer exists in Backlog — nothing to clean up
       }
-      return "already-absent" as const; // nothing to remove — skip the edit entirely
-    }
-    // An empty `desiredDocs` is not special-cased: the real adapter's `--doc` accumulator
-    // (`for (const doc of patch.doc ?? [])`) sends zero flags for `[]`, identical to `undefined` —
-    // Backlog is left with whatever it already had (it cannot clear `--doc` via an empty value,
-    // contract §2.4), so a stale annotation cosmetically lingers either way.
-    await adapter.editTask(taskId, { removeLabels: [label], doc: removeDoc(detail.documentation, docPath) });
-    refs.push({ taskId, file: commitFileFor(backend, detail.file) });
-    return "removed" as const;
-  });
+      const hadLabel = hasLabel(detail, label);
+      // Matched case-insensitively, like `hasLabel` — necessary for `--allow-missing`, whose
+      // `docPath` is *reconstructed* from the given id, not read from a live concept's real path, so
+      // it may not match the originally-stored casing exactly. Safe because `assertNoLabelCaseCollision`
+      // already ran up front and ruled out any other concept whose id (and so doc path) could
+      // case-collide, so a case-insensitive match here can't strip a different concept's real entry.
+      const hadDoc = containsCaseInsensitive(detail.documentation, docPath);
+      if (!hadLabel && !hadDoc) {
+        // Neither the label nor the doc entry is present, so there is no Backlog edit to make — but
+        // the task's file can still be dirty and uncommitted on disk if a PRIOR `lore unlink` run
+        // already applied this exact removal and then its own `commitBacklogFiles` call failed (e.g.
+        // a rejected pre-commit hook — LORE-121's pattern, LORE-179). Recording the path here, even
+        // though this run makes no edit, lets `commitBacklogFiles`'s own `git status` (scoped to
+        // exactly this path) decide whether there is real drift to stage and commit: a clean file
+        // reports nothing dirty and stays a true no-op (AC#3), while a dirty one gets picked up and
+        // committed by this retry (AC#1) instead of silently no-opping forever.
+        if (detail.file) {
+          refs.push({ taskId, file: commitFileFor(backend, detail.file) });
+        }
+        return "already-absent" as const; // nothing to remove — skip the edit entirely
+      }
+      // An empty `desiredDocs` is not special-cased: the real adapter's `--doc` accumulator
+      // (`for (const doc of patch.doc ?? [])`) sends zero flags for `[]`, identical to `undefined` —
+      // Backlog is left with whatever it already had (it cannot clear `--doc` via an empty value,
+      // contract §2.4), so a stale annotation cosmetically lingers either way.
+      await adapter.editTask(taskId, {
+        removeLabels: [label],
+        doc: removeDoc(detail.documentation, docPath),
+        // The precondition comes from the SAME read that decided the label was present, which is
+        // what makes it a guard rather than decoration (LCLI-522).
+        ...(detail.revision === undefined ? {} : { ifRevision: detail.revision }),
+      });
+      refs.push({ taskId, file: commitFileFor(backend, detail.file) });
+      return "removed" as const;
+    }),
+  );
   return { outcomes, refs };
+}
+
+/**
+ * How many times a read-modify-write cycle is re-attempted after the tracker refuses it because the
+ * record moved underneath. Small and bounded: a conflict means a competing writer WON, so retrying
+ * is only worth it while contention is incidental -- an unbounded loop against a busy record would
+ * spin rather than converge.
+ */
+const CONFLICT_RETRY_LIMIT = 3;
+
+/**
+ * Run one read-modify-write cycle, retrying a bounded number of times when the tracker rejects the
+ * write with a `conflict` because the record changed after the read (LCLI-522).
+ *
+ * `run` MUST perform its own read: the whole point is that a retry re-reads and re-decides against
+ * the record's new state. Re-issuing the same patch would just lose the race again, more loudly.
+ *
+ * Quest deliberately does not retry a write conflict for the caller -- its own agent contract says
+ * the caller should re-read and perform a bounded retry -- so this is the caller half of that
+ * contract rather than a workaround for a missing feature.
+ *
+ * Without this, adding the precondition would trade a silent clobber for a user-visible failure on
+ * a link that used to succeed. That would be more CORRECT and less USEFUL; the retry is what makes
+ * the fix an improvement in both directions rather than one.
+ */
+async function withConflictRetry<T>(run: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await run();
+    } catch (error) {
+      const isConflict = error instanceof LoreError && error.type === "conflict";
+      if (!isConflict || attempt >= CONFLICT_RETRY_LIMIT) throw error;
+    }
+  }
 }
 
 /** One task's outcome after {@link moveBackRefs} moves its back-reference to a concept's new id/path. */
@@ -521,56 +563,59 @@ export async function moveBackRefs(
   // edit here, so there is no drift of this kind for it to hide. A `failed` edit likewise
   // contributes nothing.
   const refs: TrackerWriteRef[] = [];
-  const settled = await runSequentially(taskIds, async (taskId) => {
-    const detail = await verifiedViewTask(adapter, taskId);
-    if (detail === null) {
-      return "already-current" as const; // the task no longer exists in Backlog — nothing to move
-    }
-    // `hasLabel`'s case-insensitive match can't distinguish "old" from "new" when a rename is
-    // case-only (oldLabel/newLabel are then the SAME domain, just differently cased) — testing them
-    // independently would find the one stored label under both names and wrongly conclude both are
-    // present. Use an exact match for "is the new label already correct" and a case-insensitive
-    // scan (excluding anything already exactly the new label) for "is there a stale label to
-    // remove" — this handles a case-only rename (fixes the stored label's casing) and a normal
-    // rename that already separately carries the new label (still removes the stale old one)
-    // identically and correctly.
-    const hasExactNewLabel = detail.labels.includes(newLabel);
-    const staleLabel = detail.labels.find((l) => l.toLowerCase() === oldLabel.toLowerCase() && l !== newLabel);
-    const hasOldDoc = detail.documentation.includes(oldDocPath);
-    const hasNewDoc = detail.documentation.includes(newDocPath);
-    if (!hasExactNewLabel && staleLabel === undefined && !hasOldDoc && !hasNewDoc) {
-      // No trace of this concept's back-reference at all, old or new — the task was never given
-      // one (e.g. linked with `--no-back-ref`) or had it stripped by hand. There is nothing to
-      // *move*; unlike `runLink`, moving never introduces a back-reference that wasn't already
-      // present under the old id, so this is left alone rather than newly adding one.
-      return "already-current" as const;
-    }
-    if (hasExactNewLabel && staleLabel === undefined && hasNewDoc && !hasOldDoc) {
-      // Already fully migrated to the new label/doc, so there is no Backlog edit to make — but the
-      // task's file can still be dirty and uncommitted on disk if a PRIOR `lore rename` run already
-      // applied this exact move and then its own `commitBacklogFiles` call failed (e.g. a rejected
-      // pre-commit hook — LORE-121's pattern, LORE-179). Recording the path here, even though this
-      // run makes no edit, lets `commitBacklogFiles`'s own `git status` (scoped to exactly this
-      // path) decide whether there is real drift to stage and commit: a clean file reports nothing
-      // dirty and stays a true no-op (AC#3), while a dirty one gets picked up and committed by this
-      // retry (AC#2) instead of silently no-opping forever.
-      if (detail.file) {
-        refs.push({ taskId, file: commitFileFor(backend, detail.file) });
+  const settled = await runSequentially(taskIds, (taskId) =>
+    withConflictRetry(async () => {
+      const detail = await verifiedViewTask(adapter, taskId);
+      if (detail === null) {
+        return "already-current" as const; // the task no longer exists in Backlog — nothing to move
       }
-      return "already-current" as const; // already fully migrated — nothing to move
-    }
-    const docs = detail.documentation.filter((d) => d !== oldDocPath);
-    if (!docs.includes(newDocPath)) {
-      docs.push(newDocPath);
-    }
-    await adapter.editTask(taskId, {
-      addLabels: hasExactNewLabel ? undefined : [newLabel],
-      removeLabels: staleLabel !== undefined ? [staleLabel] : undefined,
-      doc: docs,
-    });
-    refs.push({ taskId, file: commitFileFor(backend, detail.file) });
-    return "moved" as const;
-  });
+      // `hasLabel`'s case-insensitive match can't distinguish "old" from "new" when a rename is
+      // case-only (oldLabel/newLabel are then the SAME domain, just differently cased) — testing them
+      // independently would find the one stored label under both names and wrongly conclude both are
+      // present. Use an exact match for "is the new label already correct" and a case-insensitive
+      // scan (excluding anything already exactly the new label) for "is there a stale label to
+      // remove" — this handles a case-only rename (fixes the stored label's casing) and a normal
+      // rename that already separately carries the new label (still removes the stale old one)
+      // identically and correctly.
+      const hasExactNewLabel = detail.labels.includes(newLabel);
+      const staleLabel = detail.labels.find((l) => l.toLowerCase() === oldLabel.toLowerCase() && l !== newLabel);
+      const hasOldDoc = detail.documentation.includes(oldDocPath);
+      const hasNewDoc = detail.documentation.includes(newDocPath);
+      if (!hasExactNewLabel && staleLabel === undefined && !hasOldDoc && !hasNewDoc) {
+        // No trace of this concept's back-reference at all, old or new — the task was never given
+        // one (e.g. linked with `--no-back-ref`) or had it stripped by hand. There is nothing to
+        // *move*; unlike `runLink`, moving never introduces a back-reference that wasn't already
+        // present under the old id, so this is left alone rather than newly adding one.
+        return "already-current" as const;
+      }
+      if (hasExactNewLabel && staleLabel === undefined && hasNewDoc && !hasOldDoc) {
+        // Already fully migrated to the new label/doc, so there is no Backlog edit to make — but the
+        // task's file can still be dirty and uncommitted on disk if a PRIOR `lore rename` run already
+        // applied this exact move and then its own `commitBacklogFiles` call failed (e.g. a rejected
+        // pre-commit hook — LORE-121's pattern, LORE-179). Recording the path here, even though this
+        // run makes no edit, lets `commitBacklogFiles`'s own `git status` (scoped to exactly this
+        // path) decide whether there is real drift to stage and commit: a clean file reports nothing
+        // dirty and stays a true no-op (AC#3), while a dirty one gets picked up and committed by this
+        // retry (AC#2) instead of silently no-opping forever.
+        if (detail.file) {
+          refs.push({ taskId, file: commitFileFor(backend, detail.file) });
+        }
+        return "already-current" as const; // already fully migrated — nothing to move
+      }
+      const docs = detail.documentation.filter((d) => d !== oldDocPath);
+      if (!docs.includes(newDocPath)) {
+        docs.push(newDocPath);
+      }
+      await adapter.editTask(taskId, {
+        addLabels: hasExactNewLabel ? undefined : [newLabel],
+        removeLabels: staleLabel !== undefined ? [staleLabel] : undefined,
+        doc: docs,
+        ...(detail.revision === undefined ? {} : { ifRevision: detail.revision }),
+      });
+      refs.push({ taskId, file: commitFileFor(backend, detail.file) });
+      return "moved" as const;
+    }),
+  );
   const outcomes = taskIds.map((task, i): MovedBackRef => {
     const outcome = settled[i] as PromiseSettledResult<"moved" | "already-current">;
     if (outcome.status === "fulfilled") {

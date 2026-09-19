@@ -395,6 +395,46 @@ describe("lore unlink — removal (AC#2)", () => {
     });
   });
 
+  test("retries the whole read-modify-write when the tracker reports a conflict (LCLI-522)", async () => {
+    // lore's label edits are read-modify-write. Under a precondition, a competing writer landing
+    // between the read and the write makes the write REFUSE rather than clobber -- and the retry is
+    // what keeps that an improvement rather than a link that used to succeed now failing.
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    const adapter = fakeAdapter(
+      [makeTask("LORE-1", { labels: ["doc:stories/x"], documentation: ["docs/stories/x.md"] })],
+      { editTaskConflictsFirst: 2 },
+    );
+
+    const { code, report } = await unlinkCmd(["stories/x", "lore-1"], adapter);
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks).toEqual([{ task: "lore-1", status: "removed", backRef: "removed" }]);
+    // Three attempts: two refused, the third applied. Asserting the COUNT is what distinguishes a
+    // retry that converges from one that happened to succeed first time.
+    expect(adapter.calls).toHaveLength(3);
+  });
+
+  test("gives up after a bounded number of conflicts rather than spinning (LCLI-522)", async () => {
+    // The other half, and the one that matters for a busy record: an unbounded retry would hang
+    // instead of reporting. Four conflicts exceeds the limit of three retries after the first try.
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    const adapter = fakeAdapter(
+      [makeTask("LORE-1", { labels: ["doc:stories/x"], documentation: ["docs/stories/x.md"] })],
+      { editTaskConflictsFirst: 99 },
+    );
+
+    // A back-ref failure is reported by THROWING a `drift` LoreError naming the task -- the
+    // established contract for a failed edit, unchanged by this task.
+    const error = (await unlinkCmd(["stories/x", "lore-1"], adapter).then(
+      () => null,
+      (e: unknown) => e,
+    )) as LoreError;
+    expect(error).toBeInstanceOf(LoreError);
+    expect(error.message).toContain("failed");
+    // Bounded: the first attempt plus CONFLICT_RETRY_LIMIT retries, and no more. Without the
+    // bound this test would not fail -- it would hang, which is the failure mode being excluded.
+    expect(adapter.calls).toHaveLength(4);
+  });
+
   test("preserves a different doc's reference while removing this one", async () => {
     writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
     const adapter = fakeAdapter([makeTask("LORE-1", { documentation: ["docs/stories/x.md", "docs/other/y.md"] })]);

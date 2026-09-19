@@ -35,6 +35,20 @@ function manifest(): Record<string, unknown> {
     ].map(([name, kind, mutates]) => ({ name, schemaVersion: 1, kind, mutates })),
   };
 }
+/**
+ * The same manifest, but advertising `--if-revision` on `task edit` the way a Quest that supports
+ * QCLI-277 does. Kept separate from {@link manifest} on purpose: the default stub advertises NO
+ * flags, so every pre-existing test exercises the unsupported path, and the supported path is only
+ * reached by a test that opts in.
+ */
+function manifestWithIfRevision(): Record<string, unknown> {
+  const base = manifest();
+  const commands = (base.commands as Record<string, unknown>[]).map((c) =>
+    c.name === "task edit" ? { ...c, parameters: { flags: { "--if-revision": { value: "string" } } } } : c,
+  );
+  return { ...base, commands };
+}
+
 function flow() {
   return { statuses: ["To Do", "In Progress", "Done"], terminalStatuses: ["Done"] };
 }
@@ -877,5 +891,102 @@ describe("quest adapter structured criteria", () => {
       type: "validation",
       message: "`quest --version` did not print a bare semver",
     });
+  });
+});
+
+describe("Quest adapter — optimistic concurrency on read-modify-write (LCLI-522)", () => {
+  /** Drive one `editTask` against a chosen manifest and return the argv it spawned. */
+  async function editArgs(manifestData: Record<string, unknown>, patch: Record<string, unknown>): Promise<string[]> {
+    const calls: string[][] = [];
+    const spawn: QuestSpawn = async (readonlyArgs) => {
+      const args = [...readonlyArgs];
+      calls.push(args);
+      if (args[0] === "--version") return { exitCode: 0, stdout: "0.7.1\n", stderr: "" };
+      if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifestData);
+      if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
+      if (args.slice(0, 2).join(" ") === "task edit") return ok("task.updated", task());
+      throw new Error(`unexpected Quest call: ${args.join(" ")}`);
+    };
+    await createQuestAdapter("/repo", {
+      spawn,
+      workspaceInitialized: () => true,
+      actor: { id: "t", kind: "human" },
+    }).editTask("QUEST-2", patch);
+    return calls.find((c) => c.slice(0, 2).join(" ") === "task edit") as string[];
+  }
+
+  test("passes --if-revision when the manifest advertises it", async () => {
+    const args = await editArgs(manifestWithIfRevision(), { removeLabels: ["docs"], ifRevision: "sha256:abc" });
+    expect(args).toContain("--if-revision");
+    expect(args[args.indexOf("--if-revision") + 1]).toBe("sha256:abc");
+  });
+
+  test("OMITS --if-revision when the manifest does not advertise it", async () => {
+    // The compatibility half, and the more important of the two: passing an unknown flag would
+    // raise lore's effective Quest floor above MIN_QUEST_VERSION and break every Quest between it
+    // and the release that added the flag. Detected by PRESENCE, never by a version comparison --
+    // note this stub reports 0.7.1, the very version that does support it, so a version-based
+    // implementation would pass this flag here and fail this test.
+    const args = await editArgs(manifest(), { removeLabels: ["docs"], ifRevision: "sha256:abc" });
+    expect(args).not.toContain("--if-revision");
+  });
+
+  test("omits --if-revision when the caller has no revision to assert", async () => {
+    const args = await editArgs(manifestWithIfRevision(), { removeLabels: ["docs"] });
+    expect(args).not.toContain("--if-revision");
+  });
+
+  test("viewTask surfaces the record revision so a caller can feed it back", async () => {
+    const spawn: QuestSpawn = async (readonlyArgs) => {
+      const args = [...readonlyArgs];
+      if (args[0] === "--version") return { exitCode: 0, stdout: "0.7.1\n", stderr: "" };
+      if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifestWithIfRevision());
+      if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
+      if (args.slice(0, 2).join(" ") === "task view") return ok("task.view", task({ revision: "sha256:live" }));
+      throw new Error(`unexpected Quest call: ${args.join(" ")}`);
+    };
+    const detail = await adapter(spawn).viewTask("QUEST-2");
+    expect(detail?.revision).toBe("sha256:live");
+  });
+
+  test("a Quest that emits no revision yields undefined rather than failing the read", async () => {
+    const spawn: QuestSpawn = async (readonlyArgs) => {
+      const args = [...readonlyArgs];
+      if (args[0] === "--version") return { exitCode: 0, stdout: "0.7.1\n", stderr: "" };
+      if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
+      if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
+      if (args.slice(0, 2).join(" ") === "task view") return ok("task.view", task());
+      throw new Error(`unexpected Quest call: ${args.join(" ")}`);
+    };
+    const detail = await adapter(spawn).viewTask("QUEST-2");
+    expect(detail?.revision).toBeUndefined();
+    expect(detail?.id).toBe("QUEST-2");
+  });
+
+  test("an exit-5 conflict surfaces as a `conflict` LoreError the caller can retry on", async () => {
+    const spawn: QuestSpawn = async (readonlyArgs) => {
+      const args = [...readonlyArgs];
+      if (args[0] === "--version") return { exitCode: 0, stdout: "0.7.1\n", stderr: "" };
+      if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifestWithIfRevision());
+      if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
+      if (args.slice(0, 2).join(" ") === "task edit")
+        return {
+          exitCode: 5,
+          stdout: "",
+          stderr: JSON.stringify({ error_type: "conflict", message: "revision mismatch", hint: "re-read the task" }),
+        };
+      throw new Error(`unexpected Quest call: ${args.join(" ")}`);
+    };
+    // The retry in link.ts keys off exactly this type, so the mapping is the contract between them.
+    const error = (await createQuestAdapter("/repo", {
+      spawn,
+      workspaceInitialized: () => true,
+      actor: { id: "t", kind: "human" },
+    })
+      .editTask("QUEST-2", { removeLabels: ["docs"], ifRevision: "sha256:stale" })
+      .then(() => null)
+      .catch((e: unknown) => e)) as LoreError;
+    expect(error).toBeInstanceOf(LoreError);
+    expect(error.type).toBe("conflict");
   });
 });

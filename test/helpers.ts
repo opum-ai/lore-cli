@@ -240,6 +240,12 @@ export function fakeAdapter(
     bulkListDrops?: readonly string[];
     /** Thrown by every `editTask` call, regardless of id — mirrors a real actor-context failure (LCLI-459), identical for every task in a batch. */
     editTaskThrows?: LoreError;
+    /**
+     * Reject the first N `editTask` calls PER TASK with a `conflict` LoreError, then behave
+     * normally (LCLI-522). Models a competing writer that wins the race a bounded number of times,
+     * which is the only way to tell a retry that converges from one that does not.
+     */
+    editTaskConflictsFirst?: number;
   } = {},
 ): BacklogAdapter & { calls: EditCall[] } {
   const tasks = new Map<string, BacklogTaskDetail>();
@@ -250,6 +256,7 @@ export function fakeAdapter(
   const poisonViews = new Set((opts.poisonViews ?? []).map((id) => id.toLowerCase()));
   const bulkListDrops = new Set((opts.bulkListDrops ?? []).map((id) => id.toLowerCase()));
   const calls: EditCall[] = [];
+  const conflictsServed = new Map<string, number>();
   const notImplemented = (name: string) => (): never => {
     throw new Error(`fakeAdapter: ${name} is not implemented`);
   };
@@ -309,6 +316,15 @@ export function fakeAdapter(
       calls.push({ id, patch });
       if (opts.editTaskThrows !== undefined) {
         throw opts.editTaskThrows;
+      }
+      if (opts.editTaskConflictsFirst !== undefined) {
+        const seen = conflictsServed.get(id.toLowerCase()) ?? 0;
+        if (seen < opts.editTaskConflictsFirst) {
+          conflictsServed.set(id.toLowerCase(), seen + 1);
+          throw new LoreError("conflict", `task "${id}" changed since it was read`, "re-read the task and retry", {
+            id,
+          });
+        }
       }
       if (poison.has(id.toLowerCase())) {
         throw new Error(`simulated Backlog failure editing ${id}`);

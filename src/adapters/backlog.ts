@@ -617,6 +617,13 @@ export interface BacklogTask {
  * `parentTaskTitle`.
  */
 export interface BacklogTaskDetail extends BacklogTask {
+  /**
+   * An opaque token identifying the exact record state this view was read from, when the tracker
+   * provides one — fed back as {@link EditTaskPatch.ifRevision} so a read-modify-write can refuse
+   * rather than clobber (LCLI-522). `undefined` from any tracker without the concept, which is the
+   * unchanged path for Backlog and Jira.
+   */
+  readonly revision?: string;
   /** Project-relative (`backlog/tasks/…`) or `null` on a not-yet-written task; upstream carries no absolute path. */
   readonly file: string | null;
   readonly reporter: string | null;
@@ -796,6 +803,20 @@ export interface EditTaskPatch {
   readonly status?: string;
   /** Documentation refs to set (`--doc`) — SET/REPLACE the whole array (contract §2.4). */
   readonly doc?: readonly string[];
+  /**
+   * The record revision this patch was computed against — an OPTIMISTIC-CONCURRENCY PRECONDITION,
+   * not a field to write (LCLI-522).
+   *
+   * lore's label edits are read-modify-write: `lore link` reads a task's current labels, decides
+   * which to remove, and then writes. A competing writer landing in between made that decision
+   * stale and the write applied anyway, silently clobbering a change lore never saw.
+   *
+   * An adapter that supports the precondition refuses the write when the record has moved and
+   * reports a `conflict`; the caller re-reads and retries. An adapter that does not support it
+   * IGNORES this field, which is why it is optional rather than required — Backlog and Jira have
+   * no equivalent, and lore's behaviour against them is unchanged.
+   */
+  readonly ifRevision?: string;
 }
 
 /**
