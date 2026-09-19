@@ -671,10 +671,22 @@ export interface EmitSchemaFilesOptions {
 export function emitSchemaFiles(profile: Profile, options: EmitSchemaFilesOptions = {}): SchemaFile[] {
   const dir = options.dir ?? SCHEMAS_DIR;
   const types = options.only ? [options.only] : [...profile.types.values()];
-  return types.map((type) => ({
-    path: posix.join(dir, schemaFileName(type.name)),
-    contents: `${JSON.stringify(schemaForVersion(type, profile), null, 2)}\n`,
-  }));
+  return types.flatMap((type) => {
+    const contents = `${JSON.stringify(schemaForVersion(type, profile), null, 2)}\n`;
+    // A type's DEPRECATED ALIASES each get a byte-identical file of their own (LCLI-553), so a
+    // consumer who references `.lore/schemas/<oldSlug>.schema.json` by path keeps resolving across
+    // a type rename. Emitting them HERE rather than special-casing the drift gate is what makes
+    // them owned rather than orphaned: `schemaDriftFindings` defines "owned" as whatever this
+    // emitter produces, so one change buys both the file and its ownership.
+    //
+    // Emitted under a single-`--type` export too. A `--type` export that skipped them would leave
+    // the bundle reporting the alias file as `missing` until the next full export — the drift gate
+    // compares against a FULL regeneration regardless of how the last export was scoped.
+    return [type.name, ...type.aliases].map((spelling) => ({
+      path: posix.join(dir, schemaFileName(spelling)),
+      contents,
+    }));
+  });
 }
 
 /**

@@ -13,7 +13,9 @@
  * otherwise keep driving editor validation from a removed type's rules). Pruning never runs against a
  * non-default `--out`: that directory isn't lore-owned, so a pre-existing `*.schema.json` sitting
  * there — including one placed by an unrelated tool — must never be silently deleted. A single-`--type`
- * export touches only that one file and prunes nothing.
+ * export touches only that type's own files and prunes nothing — "files" plural since LCLI-553,
+ * because a type with deprecated aliases emits a byte-identical schema per alias spelling beside
+ * its canonical one; it still never touches another TYPE's file.
  *
  * The emitted Draft-7 schemas are what makes the `# yaml-language-server: $schema=…` modeline `lore
  * new`/`lore init` stamp resolve, driving YAML autocomplete in VS Code/Obsidian (AC#1); because the
