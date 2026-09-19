@@ -7,8 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-18
+
+Released as a **pair with `quest` 0.9.0**, and the mismatched numbers are the point. "The pair"
+means released and qualified together, not numbered alike. Exact-version lockstep was retired by
+decision: the two CLIs have independent change sets, and a matched version string that is not a
+matched contract invites callers to use the number as a compatibility check. **Detect a capability
+by presence, never by comparing versions.**
+
+The theme: **0.8.0 makes lore's own type vocabulary reachable, and stops lore emitting things its
+own validator rejects.** Three of the fixes below are cases where the tool contradicted itself — a
+scaffold its validator refused, a documented example its parser rejected, a type it suggested but
+could not resolve.
+
+### Provenance — read this before checking the packument
+
+- **0.8.0 ships with NO provenance attestation, and neither did 0.7.0, 0.6.2 or 0.6.1.** Expected,
+  not tampering. **LCLI-482 remains open and unresolved**: OIDC trusted publishing still cannot
+  authenticate for this repository. GitHub issues immutable-format subject claims
+  (`repo:opum-ai@<id>/lore-cli@<id>:...`) and npm's Trusted Publishing matches the classic
+  `repo:opum-ai/lore-cli:...` form, so the exchange is refused and npm returns E404 on PUT. There is
+  no repository-level opt-out — setting `use_immutable_subject: false` is accepted and has no
+  effect. 0.8.0 therefore goes out through the manual `scripts/publish-release.sh` path, which
+  cannot mint an attestation. Do not read this release as having fixed it.
+
+### Added
+
+- **`lore types` — the type vocabulary, as data** (LCLI-537). Prints the active profile, its OKF
+  version and casing convention, then every declared type with its slug, its required sections and
+  its full field table. The unknown-type warning now also names the valid set and offers a nearest
+  match, so a typo is answerable without opening `profile.toml`.
+- **`profile.strict_types`** (LCLI-538). Makes an unknown type an unconditional **error** rather
+  than a warning, for projects that do not want tolerated producer extensions. Off by default;
+  existing bundles are unaffected.
+
+### Changed
+
+- **`lore check` now detects committed-schema drift** (LCLI-539). A `.lore/schemas/*.json` that no
+  longer matches what the profile would generate is reported rather than silently trusted.
+  - **This can turn a previously-green `lore check` red on content you did not touch**, which is
+    the intended behaviour: the drift was already there and unreported. Regenerate the schemas to
+    clear it. Consuming repositories that run `lore check` as a required CI context pin lore by
+    hand, so this reaches them only when they bump that pin deliberately.
+
 ### Fixed
 
+- **`lore new <multi-word-type>` is reachable from its own slug** (LCLI-534). `Attested
+  Computation` is the one multi-word built-in and it was unreachable from `attested-computation`:
+  type resolution consulted only the lower-cased NAME, whose key contains a space — a spelling no
+  shell argument can carry. `lore new attested-computation "X"` therefore wrote
+  `type: attested-computation` verbatim, emitted no `$schema` modeline, scaffolded no `runtime`
+  field, and `lore validate` degraded to an unknown-type **warning** while suggesting the very type
+  it had failed to resolve. Type resolution now also consults each type's lower-kebab slug, in both
+  resolution sites, so a slug-named type is known to every consumer rather than only to `lore new`.
+- **`lore new` scaffolds a profile type's declared sections** (LCLI-535). A type's `sections` are
+  **enforced** by `lore validate` but were never **written** by `lore new`, so the tool's own
+  scaffold produced a file the tool's own validator immediately rejected. Built-in types were
+  unaffected only because their hand-written templates already carry theirs. A user template that
+  overrides the body wholesale is deliberately outside the guarantee — removing a required heading
+  from your own template is your decision, and `lore validate` will say so.
+- **`lore new --template <name>.md` resolves the file you named** (LCLI-536). The extension was
+  appended to a name that already had one, so lore looked for `feature.md.md` and failed even
+  though the exact file existed — and the not-found hint told you to create the doubled file,
+  advice that would have made the error permanent. Both template sources now normalize identically.
+- **`lore export --help` advertises a version the exporter accepts** (LCLI-512). Help, the manifest
+  and `cli-surface.md` all claimed `--schema-version 1.0` and shipped it as a worked example while
+  the exporter had moved to `1.1`, so running the tool's own documented example exited 2. Every
+  advertised value now derives from the constant rather than restating it, and two guards fail the
+  build if a literal is reintroduced anywhere — one of which *runs* each advertised example.
+- **`lore link`/`lore unlink` no longer clobber a concurrent tracker edit** (LCLI-522). Label edits
+  are read-modify-write: lore read a task's labels, decided what to remove, then wrote — and a
+  competing writer landing in between made that decision stale while the write applied anyway.
+  Against a tracker that supports an optimistic-concurrency precondition, lore now asserts the
+  revision it read and retries the whole read-decide-write cycle, bounded, when the record moved.
+  - **Support is detected by presence, never by a version comparison.** Passing the flag
+    unconditionally would have raised lore's effective tracker floor and broken every version in
+    between — an external compatibility change wearing the costume of a bug fix. Trackers without
+    the concept are unaffected.
 - **Retained snapshots now carry the ADR-0021 relation qualifiers** (LCLI-540). `edgeValue` dropped
   `statement`, `version` and `relationOrdinal` — the three fields `ProjectionEdgeRecord` declares
   under the comment *"carried verbatim so an indexed read is as precise as a direct one"* — so the
@@ -17,6 +92,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `claim_version` was cited at a past snapshot, which is the question ADR-0021 exists to answer.
   The three fields are now optional members of the retained edge value and **the format version
   stays `lore-retained-snapshot/1`**: every snapshot written before this release still validates.
+  `lore-retained-snapshot/2` was considered and deliberately NOT taken, so that existing snapshots
+  keep validating; the qualifiers are additive and optional precisely to make that possible.
 - **`lore snapshot retain` no longer reports a corrupt cache when only Lore's serializer changed.**
   A snapshot key derives from the source projection stream rather than from the retained bytes, so
   re-retaining a commit you had already retained before upgrading produced the same key over
@@ -25,10 +102,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   succeeds. It is recognised **narrowly**: a qualifier whose value changed, a qualifier that
   disappeared, and any difference outside those three fields all still raise the original error.
 
-### Upgrade notes — two things that will look like bugs and are not
+### Internal — the release's own gates
 
-Both have the same shape: *you upgraded, and something looks broken.*
+- **`docker/e2e/selftest.sh` stays a gate as it grows** (LCLI-533). A failing assertion appended
+  below its reporting line ran, printed, was never counted, and left the script exiting **0** — in a
+  required CI step whose entire purpose is that a gate must be *observed* failing rather than
+  assumed to work. The conditional-exit idiom at the tail is replaced by an `exit` handler, which
+  observes the true final state no matter where a future case is added. A trailing check would not
+  have been enough: it only ever sees cases inserted *above* itself, and appending at the end of the
+  file is exactly how this arrives.
 
+### Upgrade notes — things that will look like bugs and are not
+
+Each has the same shape: *you upgraded, and something looks broken.*
+
+- **`lore check` may go red on content you never edited.** See LCLI-539 above. The drift was already
+  present and unreported; regenerating the committed schemas clears it.
 - **A one-time wave of `changed` edges.** `lore changed` compares the retained value field by field,
   so every edge that gains a qualifier compares unequal to its older retained self exactly once.
   Comparing two snapshots both retained after this release shows nothing spurious.
