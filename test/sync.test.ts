@@ -842,14 +842,14 @@ describe("lore sync — a freshly `lore new`-created Story (LORE-59 regression)"
     // Build the body from the REAL built-in Story template -- not the storyDoc() helper above,
     // which hardcodes the markers and would not catch a template regression -- then hand-add
     // `tasks:` frontmatter the way `lore link` would, mirroring exactly what a fresh
-    // `lore new Story "X"; lore link stories/x LORE-1` leaves on disk.
-    const body = renderTemplate(builtinTemplateFor("Story"), {
-      type: "Story",
+    // `lore new Arc "X"; lore link arcs/x LORE-1` leaves on disk.
+    const body = renderTemplate(builtinTemplateFor("Arc"), {
+      type: "Arc",
       title: "X",
       timestamp: "2026-06-25T12:00:00Z",
-      summary: "A new story.",
+      summary: "A new arc.",
     }).text;
-    writeDoc("stories/x.md", `---\ntype: Story\ntitle: X\ntasks:\n  - lore-1\n---\n${body}`);
+    writeDoc("stories/x.md", `---\ntype: Arc\ntitle: X\ntasks:\n  - lore-1\n---\n${body}`);
     const adapter = fakeAdapter([makeTask("LORE-1")]);
 
     const { code } = await syncCmd([], adapter);

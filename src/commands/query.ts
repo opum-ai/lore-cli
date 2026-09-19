@@ -28,7 +28,7 @@
 import { join } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { loadBundle } from "../core/bundle";
-import { loadProfile } from "../core/profile";
+import { loadProfile, type Profile } from "../core/profile";
 import { type FieldFilter, type QueryResult, query } from "../core/query";
 import {
   loadRetrievalGraph,
@@ -88,6 +88,10 @@ const NARROW_HINT = "narrow with --type/--tag/--status/--field, or raise --limit
 export function runQuery(options: QueryCommandOptions): number | Promise<number> {
   const parsed = parseQueryArgs(options.args);
   const advisories = new WarningCollector();
+  // Loaded before the retrieval branch, not after it: BOTH backends resolve `--type` through
+  // this profile's deprecated aliases (LCLI-554), and the indexed path returns before the
+  // in-memory path's own load was ever reached.
+  const profile = loadProfile({ root: options.root });
   const retrieval = options.retrieval ?? (parsed.workspace !== undefined ? loadRetrievalGraph : undefined);
   if (retrieval !== undefined) {
     return retrieval({
@@ -104,16 +108,25 @@ export function runQuery(options: QueryCommandOptions): number | Promise<number>
           status: parsed.status,
           fields: parsed.fields,
           limit: parsed.limit,
+          profile,
         });
-        return finishQuery(options, parsed, loaded.graph, advisories, loaded.backend, indexedResult, loaded.workspace);
+        return finishQuery(
+          options,
+          parsed,
+          loaded.graph,
+          advisories,
+          loaded.backend,
+          indexedResult,
+          loaded.workspace,
+          profile,
+        );
       } finally {
         await loaded.dispose?.();
       }
     });
   }
-  const profile = loadProfile({ root: options.root });
   const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, profile });
-  return finishQuery(options, parsed, graph, advisories, "reference");
+  return finishQuery(options, parsed, graph, advisories, "reference", undefined, undefined, profile);
 }
 
 function finishQuery(
@@ -124,6 +137,7 @@ function finishQuery(
   backend: RetrievalBackend,
   indexedResult?: QueryResult,
   workspace?: WorkspaceRetrievalContext,
+  profile?: Profile,
 ): number {
   advisories.flush({ color: options.output.color, stderr: options.stderr });
 
@@ -136,6 +150,7 @@ function finishQuery(
       status: parsed.status,
       fields: parsed.fields,
       limit: parsed.limit,
+      ...(profile !== undefined ? { profile } : {}),
     });
   const scoped: QueryResult =
     workspace === undefined

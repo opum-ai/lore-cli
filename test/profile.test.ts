@@ -50,7 +50,7 @@ describe("defaultProfile — the built-in story convention (AC#3)", () => {
   test("compiles the story types followed by OKF 0.2 Attested Computation", () => {
     expect([...defaultProfile().types.keys()]).toEqual([
       "Epic",
-      "Story",
+      "Arc",
       "Spec",
       "ADR",
       "Runbook",
@@ -61,7 +61,7 @@ describe("defaultProfile — the built-in story convention (AC#3)", () => {
 
   test("the built-in OKF 0.1 consumer profile retains only the legacy six types", () => {
     const legacy = profileForBundle(defaultProfile(), { okfVersion: "0.1", source: "declared" });
-    expect([...legacy.types.keys()]).toEqual(["Epic", "Story", "Spec", "ADR", "Runbook", "Reference"]);
+    expect([...legacy.types.keys()]).toEqual(["Epic", "Arc", "Spec", "ADR", "Runbook", "Reference"]);
     expect(legacy.okfVersion).toBe("0.1");
   });
 
@@ -77,9 +77,9 @@ describe("defaultProfile — the built-in story convention (AC#3)", () => {
     expect(defaultProfile().strictTypes).toBe(false);
   });
 
-  test("canonical key order: base, then Story's own fields, then the reserved fields LAST", () => {
+  test("canonical key order: base, then Arc's own fields, then the reserved fields LAST", () => {
     // Reserved fields trail per-type fields, matching the order lore emitted before the profile
-    // existed (ADR-0011 byte-stability), so a Story with tasks/specs AND supersedes keeps its
+    // existed (ADR-0011 byte-stability), so an Arc with tasks/specs AND supersedes keeps its
     // on-disk key order. OKF 0.2 `generated` uses the existing append path rather than moving any
     // of these declared fields.
     //

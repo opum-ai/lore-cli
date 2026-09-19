@@ -156,6 +156,28 @@ describe("query — frontmatter filters", () => {
     expect(query(graph(), { type: "REFERENCE" }).hits.map((h) => h.id)).toEqual(["reference/orders"]);
   });
 
+  test("--type resolves a DEPRECATED ALIAS in BOTH directions (LCLI-554 regression)", () => {
+    // The fixture's story is un-migrated (`type: Story`); `arcs/migrated` is the canonical
+    // spelling. After the Story -> Arc rename a plain case-folded compare silently returned
+    // ZERO hits for `--type Story` -- a documented CLI example -- and canonicalizing only the
+    // FILTER would have been worse still, dropping the un-migrated documents the alias exists
+    // to serve. Both spellings must select both documents.
+    writeMixedBundle();
+    writeDoc("arcs/migrated.md", "---\ntype: Arc\ntitle: Migrated\nsummary: Already renamed.\n---\nBody.\n");
+    const both = ["arcs/migrated", "stories/bulk-archive"];
+    for (const spelling of ["Arc", "arc", "Story", "story"]) {
+      expect(
+        query(graph(), { type: spelling })
+          .hits.map((h) => h.id)
+          .sort(),
+      ).toEqual(both);
+    }
+    // Controls: a type with no aliases is unaffected, and an unknown type still selects nothing
+    // -- so the fix resolves aliases rather than loosening the filter generally.
+    expect(query(graph(), { type: "Reference" }).hits.map((h) => h.id)).toEqual(["reference/orders"]);
+    expect(query(graph(), { type: "Bogus" }).hits).toEqual([]);
+  });
+
   test("--status matches case-insensitively; a concept without status never matches", () => {
     writeMixedBundle();
     expect(query(graph(), { status: "in progress" }).hits.map((h) => h.id)).toEqual(["stories/bulk-archive"]);

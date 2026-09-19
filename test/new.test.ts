@@ -57,10 +57,23 @@ describe("lore new — scaffolding a known type", () => {
   });
 
   test("accepts a case-insensitive type token and writes the canonical type", () => {
-    const { result } = newCmd(["STORY", "Bulk archive orders"]);
-    expect(result.type).toBe("Story");
-    expect(result.path).toBe("docs/stories/bulk-archive-orders.md");
-    expect(readFileSync(join(root, result.path), "utf8")).toContain("type: Story");
+    const { result } = newCmd(["ARC", "Bulk archive orders"]);
+    expect(result.type).toBe("Arc");
+    expect(result.path).toBe("docs/arcs/bulk-archive-orders.md");
+    expect(readFileSync(join(root, result.path), "utf8")).toContain("type: Arc");
+  });
+
+  test("a DEPRECATED ALIAS token scaffolds the canonical type, and MIGRATES it (LCLI-554)", () => {
+    // `lore new Story` must keep working for an existing caller, and the document it writes is
+    // an Arc: the canonical `type:`, the canonical docs/arcs/ directory, and Arc's own body
+    // template (managed block included). The alias is an input spelling, never an output one.
+    const { result } = newCmd(["Story", "Retire the old spelling"]);
+    expect(result.type).toBe("Arc");
+    expect(result.path).toBe("docs/arcs/retire-the-old-spelling.md");
+    const written = readFileSync(join(root, result.path), "utf8");
+    expect(written).toContain("type: Arc");
+    expect(written).not.toContain("type: Story");
+    expect(written).toContain("<!-- lore:tasks:begin -->");
   });
 
   test("scaffolds Attested Computation under its slug with its schema and conventional heading", () => {

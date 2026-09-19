@@ -71,9 +71,12 @@ describe("lore schema export — default (story-convention) profile", () => {
     const { code, result } = exportSchemas(["export"]);
     expect(code).toBe(0);
     expect(result.out).toBe(".lore/schemas");
-    expect(result.count).toBe(7);
+    // 8, not 7, for 7 types: Arc's deprecated `Story` alias owns a schema file of its own
+    // (LCLI-553 ruling (c)) so a consumer referencing the old path keeps resolving.
+    expect(result.count).toBe(8);
     expect(result.files.map((f) => f.path)).toEqual([
       ".lore/schemas/epic.schema.json",
+      ".lore/schemas/arc.schema.json",
       ".lore/schemas/story.schema.json",
       ".lore/schemas/spec.schema.json",
       ".lore/schemas/adr.schema.json",
@@ -161,15 +164,35 @@ describe("lore schema export — default (story-convention) profile", () => {
 
 describe("lore schema export — --type", () => {
   test("exports exactly the named type", () => {
-    const { result } = exportSchemas(["export", "--type", "Story"]);
-    expect(result.count).toBe(1);
-    expect(result.files.map((f) => f.path)).toEqual([".lore/schemas/story.schema.json"]);
+    const { result } = exportSchemas(["export", "--type", "Arc"]);
+    // One TYPE, two FILES: the canonical slug and the deprecated alias's own (LCLI-553).
+    expect(result.count).toBe(2);
+    expect(result.files.map((f) => f.path)).toEqual([
+      ".lore/schemas/arc.schema.json",
+      ".lore/schemas/story.schema.json",
+    ]);
     expect(existsSync(join(root, ".lore/schemas/epic.schema.json"))).toBe(false);
   });
 
   test("resolves the type case-insensitively", () => {
-    const { result } = exportSchemas(["export", "--type", "story"]);
-    expect(result.files.map((f) => f.path)).toEqual([".lore/schemas/story.schema.json"]);
+    const { result } = exportSchemas(["export", "--type", "arc"]);
+    expect(result.files.map((f) => f.path)).toEqual([
+      ".lore/schemas/arc.schema.json",
+      ".lore/schemas/story.schema.json",
+    ]);
+  });
+
+  test("a DEPRECATED ALIAS names the same type and emits the same pair (LCLI-554)", () => {
+    // The published surface: `lore schema export --type Story` must not become a usage error
+    // for an existing caller, and must produce the identical file set.
+    for (const spelling of ["Story", "story"]) {
+      const { result } = exportSchemas(["export", "--type", spelling]);
+      expect(result.count).toBe(2);
+      expect(result.files.map((f) => f.path)).toEqual([
+        ".lore/schemas/arc.schema.json",
+        ".lore/schemas/story.schema.json",
+      ]);
+    }
   });
 
   test("an unknown --type is a usage error listing the available types, and writes nothing", () => {
@@ -177,7 +200,7 @@ describe("lore schema export — --type", () => {
       runSchema({ root, output: JSON_CTX, stdout: capture(), args: ["export", "--type", "Bogus"] }),
     );
     expect(err.message).toContain("Bogus");
-    expect(err.hint).toContain("Story");
+    expect(err.hint).toContain("Arc");
     expect(existsSync(join(root, ".lore/schemas"))).toBe(false);
   });
 });
@@ -199,7 +222,7 @@ describe("lore schema export — --out", () => {
   test("a trailing `--` end-of-options marker is a no-op", () => {
     const { code, result } = exportSchemas(["export", "--"]);
     expect(code).toBe(0);
-    expect(result.count).toBe(7);
+    expect(result.count).toBe(8);
   });
 });
 

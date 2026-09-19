@@ -215,10 +215,18 @@ describe("buildNewConcept — frontmatter is structural, never substituted", () 
     expect(concept.frontmatter.tags).toEqual(["retention", "orders"]);
   });
 
-  test("the Story template ships the lore:tasks managed-block markers (LORE-59)", () => {
-    const body = builtinTemplateFor("Story");
+  test("the Arc template ships the lore:tasks managed-block markers (LORE-59)", () => {
+    const body = builtinTemplateFor("Arc");
     expect(body).toContain("<!-- lore:tasks:begin -->");
     expect(body).toContain("<!-- lore:tasks:end -->");
+  });
+
+  test("builtinTemplateFor is keyed by CANONICAL name only, never by an alias (LCLI-554)", () => {
+    // Deliberate: BUILTIN_TEMPLATES is a plain string map independent of the active profile, and
+    // `lore new` canonicalizes its type token before reaching here (new.ts). Pinned so the
+    // generic fallback on a deprecated spelling reads as the contract rather than as a bug --
+    // `lore new Story` is covered end-to-end in new.test.ts and does get the Arc body.
+    expect(builtinTemplateFor("Story")).toBe(builtinTemplateFor("Glossary"));
   });
 });
 

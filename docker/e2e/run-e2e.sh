@@ -341,6 +341,16 @@ for T in Epic Story Spec ADR Runbook Reference; do
 done
 STORY_PATH="${DOC_PATH[Story]}"
 STORY_ID="${DOC_ID[Story]}"
+# The directory `lore new Story` actually lands in, DERIVED rather than hardcoded. The Story ->
+# Arc rename (LCLI-554) moved it from docs/stories/ to docs/arcs/: `Story` is now a deprecated
+# alias that canonicalizes to Arc, so it scaffolds under Arc's own conventional directory. Three
+# scoped `lore check` phases below used the literal `docs/stories` and silently began checking a
+# directory that no longer exists. Deriving it means a future directory change cannot do that
+# again. The loops above deliberately keep saying `Story`, which makes this harness an end-to-end
+# regression test that the deprecated spelling still works against real binaries.
+STORY_DIR="$(dirname "$STORY_PATH")"
+check "lore new Story resolved to a real directory via its deprecated alias" '[ -d "$STORY_DIR" ]'
+
 
 # ── Phase 3d: lore new flag long-tail -- --var/--template/--summary/--tags/--out (LORE-66 AC4) ──
 # A custom .lore/templates/spec.md exercises --var (body placeholder fill) via the DEFAULT
@@ -511,7 +521,7 @@ step_fail "AC2: lore sync -- an archived linked task fails loud exactly like a v
   '.error_type == "not_found" and (.message | contains("'"$TASK2_LC"'"))' \
   -- lore sync "$STORY_ID" --json
 
-lore check docs/stories --json >/tmp/check-archive-out 2>/tmp/check-archive-err
+lore check "$STORY_DIR" --json >/tmp/check-archive-out 2>/tmp/check-archive-err
 CHECK_ARCHIVE_RC=$?
 check "AC2: lore check on the archived-task bundle ALSO exits 3 but still emits its check.report on stdout first (mirrors the vanished-task asymmetry)" \
   '[ "$CHECK_ARCHIVE_RC" -eq 3 ] && jq -e ".kind == \"check.report\"" /tmp/check-archive-out >/dev/null 2>&1'
@@ -748,7 +758,7 @@ step_fail "lore sync: a vanished linked task fails loud (not_found, exit 3, empt
   '.error_type == "not_found" and (.message | contains("'"$TASK5_LC"'"))' \
   -- lore sync "$VANISH_STORY_ID" --json
 
-lore check docs/stories --json >/tmp/check-vanish-out 2>/tmp/check-vanish-err
+lore check "$STORY_DIR" --json >/tmp/check-vanish-out 2>/tmp/check-vanish-err
 CHECK_VANISH_RC=$?
 check "lore check: a vanished linked task ALSO exits 3, but (unlike sync) still emits its check.report on stdout first" \
   '[ "$CHECK_VANISH_RC" -eq 3 ] \
@@ -886,7 +896,7 @@ rm -f "$STRICT_PROBE_PATH"
 # ── Phase 9: check — the drift-gate loop ─────────────────────────────────────
 # `check`'s positional args are bundle roots, not individual files. Run the reconciliation drift
 # loop from the actual bundle root so `docs/index.md` supplies `okf_version: 0.2`; treating
-# `docs/stories` as a standalone root would intentionally select legacy-missing 0.1 semantics.
+# the concept directory as a standalone root would intentionally select legacy-missing 0.1 semantics.
 # `sync` takes a concept id, same as phase 4 above.
 step "lore check: clean bundle" 0 -- lore check
 cp "$BROKEN_FIXTURES/dangling-link.md" docs/reference/e2e-broken-dangling-link.md
@@ -920,7 +930,7 @@ step "lore check: clean again after healing the block-body drift" 0 -- lore chec
 # `lore sync`, but against `lore check` here instead.
 cp backlog/config.yml /tmp/config-yml-before-ac3-f2.yml
 sed -i 's|^statuses:.*$|statuses: "not-a-list"|' backlog/config.yml || true
-lore check docs/stories --json >/tmp/check-f2-out 2>/tmp/check-f2-err
+lore check "$STORY_DIR" --json >/tmp/check-f2-out 2>/tmp/check-f2-err
 CHECK_F2_RC=$?
 check "AC3: check --json's F2 dual-stream shape on a deferred validation error: check.report still lands on stdout, AND a validation ErrorEnvelope lands on stderr, exit 6" \
   '[ "$CHECK_F2_RC" -eq 6 ] \
@@ -1370,7 +1380,7 @@ step_json "lore sync: heal the ADR index left stale by Phase 16's unsynced `lore
 
 # ── Phase 17: schema export ─────────────────────────────────────────────────────
 step_json "lore schema export" '.kind == "schema.result"' -- lore schema export --json
-for T in epic story spec adr runbook reference attested-computation; do
+for T in epic arc story spec adr runbook reference attested-computation; do
   check "schema export produced valid JSON for $T" "jq -e . .lore/schemas/${T}.schema.json >/dev/null 2>&1"
 done
 
@@ -1383,13 +1393,22 @@ check "LCLI-299 AC2: single-type schema probe starts from an absent directory" \
 step_json "LCLI-299 AC2: schema export --type writes exactly the Story schema" \
   '.kind == "schema.result"
    and .data.out == "'"$LCLI299_TYPE_OUT"'"
-   and .data.count == 1
+   and .data.count == 2
    and (.data.removed | length) == 0
-   and ([.data.files[].path] == ["'"$LCLI299_TYPE_OUT"'/story.schema.json"])' \
+   and (([.data.files[].path] | sort) == [
+     "'"$LCLI299_TYPE_OUT"'/arc.schema.json",
+     "'"$LCLI299_TYPE_OUT"'/story.schema.json"
+   ])' \
   -- lore schema export --type Story --out "$LCLI299_TYPE_OUT" --json
-check "LCLI-299 AC2: single-type output contains only one valid Story schema" \
-  '[ "$(find "$LCLI299_TYPE_OUT" -maxdepth 1 -type f -name "*.schema.json" | wc -l)" -eq 1 ] \
-   && jq -e . "$LCLI299_TYPE_OUT/story.schema.json" >/dev/null 2>&1'
+# One TYPE, two FILES: Arc's deprecated `Story` alias owns a schema file of its own (LCLI-553
+# ruling (c)), so scoping to a single type still emits the canonical slug and the alias's.
+# Asked for by the DEPRECATED spelling on purpose -- this is the end-to-end proof, against the
+# real binaries, that `lore schema export --type Story` did not become a usage error (LCLI-554).
+check "LCLI-299 AC2: single-type output contains exactly the Arc schema and its alias" \
+  '[ "$(find "$LCLI299_TYPE_OUT" -maxdepth 1 -type f -name "*.schema.json" | wc -l)" -eq 2 ] \
+   && jq -e . "$LCLI299_TYPE_OUT/arc.schema.json" >/dev/null 2>&1 \
+   && jq -e . "$LCLI299_TYPE_OUT/story.schema.json" >/dev/null 2>&1 \
+   && diff -q "$LCLI299_TYPE_OUT/arc.schema.json" "$LCLI299_TYPE_OUT/story.schema.json" >/dev/null 2>&1'
 
 LCLI299_CUSTOM_OUT=".lore/lcli-299-custom-schemas"
 check "LCLI-299 AC3: custom-output schema probe starts from an absent directory" \
@@ -1397,10 +1416,11 @@ check "LCLI-299 AC3: custom-output schema probe starts from an absent directory"
 step_json "LCLI-299 AC3: schema export --out writes the full profile outside the default directory" \
   '.kind == "schema.result"
    and .data.out == "'"$LCLI299_CUSTOM_OUT"'"
-   and .data.count == 7
+   and .data.count == 8
    and (.data.removed | length) == 0
    and (([.data.files[].path] | sort) == [
      "'"$LCLI299_CUSTOM_OUT"'/adr.schema.json",
+     "'"$LCLI299_CUSTOM_OUT"'/arc.schema.json",
      "'"$LCLI299_CUSTOM_OUT"'/attested-computation.schema.json",
      "'"$LCLI299_CUSTOM_OUT"'/epic.schema.json",
      "'"$LCLI299_CUSTOM_OUT"'/reference.schema.json",
@@ -1410,14 +1430,14 @@ step_json "LCLI-299 AC3: schema export --out writes the full profile outside the
    ])
    and all(.data.files[]; (.path | startswith(".lore/schemas/") | not))' \
   -- lore schema export --out "$LCLI299_CUSTOM_OUT" --json
-for T in epic story spec adr runbook reference attested-computation; do
+for T in epic arc story spec adr runbook reference attested-computation; do
   check "LCLI-299 AC3: custom output produced valid JSON for $T" \
     "jq -e . '$LCLI299_CUSTOM_OUT/${T}.schema.json' >/dev/null 2>&1"
 done
 
-rm -f "$LCLI299_TYPE_OUT/story.schema.json"
+rm -f "$LCLI299_TYPE_OUT/arc.schema.json" "$LCLI299_TYPE_OUT/story.schema.json"
 rmdir "$LCLI299_TYPE_OUT"
-for T in epic story spec adr runbook reference attested-computation; do
+for T in epic arc story spec adr runbook reference attested-computation; do
   rm -f "$LCLI299_CUSTOM_OUT/${T}.schema.json"
 done
 rmdir "$LCLI299_CUSTOM_OUT"
@@ -1580,7 +1600,7 @@ step_json "profile removed: lore schema export regenerates the seven default sch
   '.kind == "schema.result"' -- lore schema export --json
 check "the orphaned custom schema was pruned on the default-profile re-export" \
   '[ ! -f .lore/schemas/e2e-custom-type.schema.json ]'
-for T in epic story spec adr runbook reference attested-computation; do
+for T in epic arc story spec adr runbook reference attested-computation; do
   check "default schema for $T restored after the profile subsystem probe" \
     "jq -e . .lore/schemas/${T}.schema.json >/dev/null 2>&1"
 done

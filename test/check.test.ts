@@ -1191,7 +1191,7 @@ describe("runCheck — exit codes and discovery", () => {
       rule: "unknown-type",
       file: "badtype/x.md",
       message:
-        'unknown type "badtype" in badtype/x.md; validated on `type` only (known types: Epic, Story, Spec, ADR, Runbook, Reference)',
+        'unknown type "badtype" in badtype/x.md; validated on `type` only (known types: Epic, Arc, Spec, ADR, Runbook, Reference)',
     });
 
     const strict = opts(["--strict"]);

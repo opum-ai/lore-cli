@@ -36,6 +36,7 @@ describe("scaffold — the empty-bundle plan", () => {
       ".lore/profile.toml",
       ".lore/.gitignore",
       ".lore/schemas/epic.schema.json",
+      ".lore/schemas/arc.schema.json",
       ".lore/schemas/story.schema.json",
       ".lore/schemas/spec.schema.json",
       ".lore/schemas/adr.schema.json",
@@ -81,20 +82,24 @@ describe("scaffold — .lore/.gitignore", () => {
 
 describe("scaffold — exported JSON Schemas", () => {
   const cases = [
-    { path: ".lore/schemas/epic.schema.json", type: "Epic", required: ["type"] },
-    { path: ".lore/schemas/story.schema.json", type: "Story", required: ["type"] },
-    { path: ".lore/schemas/spec.schema.json", type: "Spec", required: ["type"] },
-    { path: ".lore/schemas/adr.schema.json", type: "ADR", required: ["type"] },
-    { path: ".lore/schemas/runbook.schema.json", type: "Runbook", required: ["type"] },
-    { path: ".lore/schemas/reference.schema.json", type: "Reference", required: ["type"] },
+    { path: ".lore/schemas/epic.schema.json", type: "Epic", spellings: ["Epic"], required: ["type"] },
+    { path: ".lore/schemas/arc.schema.json", type: "Arc", spellings: ["Arc", "Story"], required: ["type"] },
+    // Arc's deprecated `Story` alias owns a byte-identical schema file of its own (LCLI-553),
+    // so the old path keeps resolving for a consumer that references it directly.
+    { path: ".lore/schemas/story.schema.json", type: "Arc", spellings: ["Arc", "Story"], required: ["type"] },
+    { path: ".lore/schemas/spec.schema.json", type: "Spec", spellings: ["Spec"], required: ["type"] },
+    { path: ".lore/schemas/adr.schema.json", type: "ADR", spellings: ["ADR"], required: ["type"] },
+    { path: ".lore/schemas/runbook.schema.json", type: "Runbook", spellings: ["Runbook"], required: ["type"] },
+    { path: ".lore/schemas/reference.schema.json", type: "Reference", spellings: ["Reference"], required: ["type"] },
     {
       path: ".lore/schemas/attested-computation.schema.json",
       type: "Attested Computation",
+      spellings: ["Attested Computation"],
       required: ["type", "runtime"],
     },
   ] as const;
 
-  for (const { path, type, required } of cases) {
+  for (const { path, type, spellings, required } of cases) {
     test(`${path} is a valid Draft-7 schema for ${type}`, () => {
       const file = fileNamed(path);
       expect(file.contents.endsWith("\n")).toBe(true);
@@ -104,13 +109,19 @@ describe("scaffold — exported JSON Schemas", () => {
       // The editor schema is the lenient tier: extra keys are allowed (open
       // additionalProperties), so an author's custom frontmatter never errors mid-edit.
       expect(schema.additionalProperties).toEqual({});
-      const properties = schema.properties as Record<string, { const?: string }>;
-      expect(properties.type?.const).toBe(type);
+      // A type with no aliases pins `type` with a `const`; an ALIASED type widens it to an
+      // `enum` of the canonical name plus each alias (LCLI-558), which is what lets an
+      // un-migrated `type: Story` document still satisfy the schema. Assert the accepted SET
+      // either way, so the two shapes are compared on what they permit rather than on which
+      // JSON Schema keyword expresses it.
+      const properties = schema.properties as Record<string, { const?: string; enum?: string[] }>;
+      const accepted = properties.type?.enum ?? [properties.type?.const];
+      expect(accepted).toEqual([...spellings]);
     });
   }
 
-  test("Story's schema carries its per-type coupling fields", () => {
-    const schema = JSON.parse(fileNamed(".lore/schemas/story.schema.json").contents) as {
+  test("Arc's schema carries its per-type coupling fields", () => {
+    const schema = JSON.parse(fileNamed(".lore/schemas/arc.schema.json").contents) as {
       properties: Record<string, unknown>;
     };
     expect(Object.keys(schema.properties)).toContain("tasks");

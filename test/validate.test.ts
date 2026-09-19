@@ -253,7 +253,37 @@ summary: A short summary.
     expect(report.findings.filter((f) => f.rule === "required-section")).toEqual([]);
   });
 
-  test("a Story needs an Acceptance criteria section (ADR-0007)", () => {
+  test("an Arc needs an Acceptance criteria section (ADR-0007)", () => {
+    const without = `---
+type: Arc
+summary: A short summary.
+---
+
+# S
+
+## Goal
+`;
+    expect(validateConceptText("docs/arcs/s.md", without).ok).toBe(false);
+
+    const withIt = `---
+type: Arc
+summary: A short summary.
+---
+
+# S
+
+## Acceptance criteria
+`;
+    expect(validateConceptText("docs/arcs/s.md", withIt).findings.filter((f) => f.rule === "required-section")).toEqual(
+      [],
+    );
+  });
+
+  test("a DEPRECATED ALIAS carries its canonical type's required sections (LCLI-554 regression)", () => {
+    // The rename shipped this broken once: requiredSectionsFor looked the document's own `type:`
+    // spelling up RAW, so `type: Story` missed the map, yielded [], and every un-migrated
+    // document was silently EXEMPT from the section contract while passing every other tier.
+    // An alias must be neither stricter nor looser than the canonical name.
     const without = `---
 type: Story
 summary: A short summary.
@@ -263,7 +293,9 @@ summary: A short summary.
 
 ## Goal
 `;
-    expect(validateConceptText("docs/stories/s.md", without).ok).toBe(false);
+    const report = validateConceptText("docs/stories/s.md", without);
+    expect(report.ok).toBe(false);
+    expect(report.findings.filter((f) => f.rule === "required-section")).toHaveLength(1);
 
     const withIt = `---
 type: Story
@@ -276,6 +308,21 @@ summary: A short summary.
 `;
     expect(
       validateConceptText("docs/stories/s.md", withIt).findings.filter((f) => f.rule === "required-section"),
+    ).toEqual([]);
+
+    // The OKF tolerance boundary is unmoved: an genuinely unknown type still imposes no
+    // section shape, so the fix resolves aliases rather than tightening unknown types.
+    const unknown = `---
+type: Bogus
+summary: A short summary.
+---
+
+# S
+
+## Goal
+`;
+    expect(
+      validateConceptText("docs/misc/s.md", unknown).findings.filter((f) => f.rule === "required-section"),
     ).toEqual([]);
   });
 
