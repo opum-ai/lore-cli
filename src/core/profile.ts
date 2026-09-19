@@ -125,6 +125,18 @@ export interface FieldSpec {
 export interface ParsedType {
   /** The OKF `type` value (canonical spelling). */
   readonly name: string;
+  /**
+   * Deprecated former spellings that still RESOLVE to {@link name} (LCLI-553). An alias is a full
+   * peer of the canonical name for resolution AND for schema-file identity: it seeds both
+   * `byLowerName` and `bySlug`, and {@link import("./schema").emitSchemaFiles} writes a
+   * `<aliasSlug>.schema.json` beside the canonical one. That second half is what lets a rename
+   * ship without breaking a consumer who references the old schema path directly, and it is why
+   * the retained file is OWNED rather than orphaned by the committed-schema drift gate.
+   *
+   * Optional here and CONCRETE on {@link CompiledType}: the built-in profile's type literals omit
+   * it, the same way they omit `template`, so a consumer of a compiled profile never branches.
+   */
+  readonly aliases?: readonly string[];
   /** Fields ADDED to the base, or a base field OVERRIDDEN by re-declaring its name (full replace). */
   readonly fields: Readonly<Record<string, FieldSpec>>;
   /** Required body section headings (matched by text, depth ≤2, order not enforced — ADR-0007 Tier 2). */
@@ -157,6 +169,11 @@ export interface CompiledType {
   readonly name: string;
   /** The LOWER-KEBAB slug — the stem of its schema file and conventional template (`QA Plan` → `qa-plan`). */
   readonly slug: string;
+  /**
+   * Deprecated former spellings that resolve to {@link name} (LCLI-553), in declaration order.
+   * Each also owns a `<slug>.schema.json` of its own — see {@link ParsedType.aliases}.
+   */
+  readonly aliases: readonly string[];
   /** The generated loose Zod object (extra keys pass; warned separately, OKF tolerance). */
   readonly schema: z.ZodType;
   /**
@@ -419,7 +436,7 @@ export function parseProfile(doc: Record<string, unknown>, source: string): Pars
 }
 
 /** The keys a `[[types]]` table may declare. */
-const TYPE_TABLE_KEYS = ["name", "fields", "sections", "template"] as const;
+const TYPE_TABLE_KEYS = ["name", "aliases", "fields", "sections", "template"] as const;
 
 /** Parse the `[[types]]` array-of-tables into {@link ParsedType}s, rejecting a duplicate type name. */
 function parseTypes(value: unknown, source: string): ParsedType[] {
@@ -480,9 +497,73 @@ function parseTypes(value: unknown, source: string): ParsedType[] {
     if (template !== undefined) {
       assertTemplateConfined(template, `types[${i}].template`, source);
     }
-    types.push(template === undefined ? { name, fields, sections } : { name, fields, sections, template });
+    const aliases = (asStringArray(table.aliases, `types[${i}].aliases`, source) ?? []).map((a) => a.trim());
+    types.push(
+      template === undefined ? { name, aliases, fields, sections } : { name, aliases, fields, sections, template },
+    );
   }
+  assertAliasesAreUnique(types, seen, seenSlugs, source);
   return types;
+}
+
+/**
+ * Reject an alias that collides with any canonical type name, any other alias, or any type's
+ * schema/template SLUG — checked after the main parse loop, because an alias on the first
+ * `[[types]]` table may collide with a type declared further down and a single forward pass
+ * cannot see it.
+ *
+ * The slug half is not belt-and-braces. A slug is FILE IDENTITY: two tokens sharing a lower-kebab
+ * slug key the same `.lore/schemas/<slug>.schema.json`, so the second silently overwrites the
+ * first — the same count-lying data loss the canonical-name `seenSlugs` check above exists to
+ * prevent, reached through an alias instead. Now that an alias emits a schema file of its own
+ * ({@link import("./schema").emitSchemaFiles}), it can collide exactly as a name can.
+ */
+function assertAliasesAreUnique(
+  types: readonly ParsedType[],
+  takenNames: ReadonlySet<string>,
+  takenSlugs: ReadonlySet<string>,
+  source: string,
+): void {
+  const seenAliases = new Set<string>();
+  const seenAliasSlugs = new Set<string>();
+  for (const [i, type] of types.entries()) {
+    for (const alias of type.aliases ?? []) {
+      const lower = alias.toLowerCase();
+      const slug = slugForTypeName(alias);
+      if (slug === "") {
+        fail(
+          `${source}: types[${i}].aliases entry "${alias}" has no slug-able characters`,
+          "give the alias at least one letter or digit, or remove it",
+          { key: `types[${i}].aliases` },
+        );
+      }
+      if (takenNames.has(lower)) {
+        fail(
+          `${source}: types[${i}].aliases entry "${alias}" is already a declared type name`,
+          "an alias must name a type that no longer exists; remove the alias or rename the type",
+          { key: `types[${i}].aliases` },
+        );
+      }
+      if (seenAliases.has(lower)) {
+        fail(
+          `${source}: duplicate alias "${alias}"`,
+          "each alias must be unique (case-insensitively) across all types",
+          {
+            key: `types[${i}].aliases`,
+          },
+        );
+      }
+      if (takenSlugs.has(slug) || seenAliasSlugs.has(slug)) {
+        fail(
+          `${source}: types[${i}].aliases entry "${alias}" reduces to the schema/template slug "${slug}", already in use`,
+          "an alias names its own .lore/schemas/<slug>.schema.json, so its slug must not collide; rename it",
+          { key: `types[${i}].aliases` },
+        );
+      }
+      seenAliases.add(lower);
+      seenAliasSlugs.add(slug);
+    }
+  }
 }
 
 /**
@@ -743,6 +824,7 @@ export function compileProfile(parsed: ParsedProfile): Profile {
       schema,
       jsonSchema: buildJsonSchema(schema, merged, fieldOrder),
       requiredSections: type.sections,
+      aliases: type.aliases ?? [],
       declaredFields: new Set(fieldOrder),
       acceptsStampedResource: acceptsStampedResource(merged.resource),
       ...(type.template === undefined ? {} : { template: type.template }),
@@ -750,6 +832,15 @@ export function compileProfile(parsed: ParsedProfile): Profile {
     types.set(type.name, compiled);
     byLowerName.set(type.name.toLowerCase(), type.name);
     bySlug.set(compiled.slug, type.name);
+    // An alias is seeded into the SAME two maps as the canonical name rather than a third map of
+    // its own. That is deliberate: `canonicalType` (schema.ts) and `canonicalProfileType` (below)
+    // are byte-identical mirrors by design, and seeding here means both learn aliases without
+    // either being edited — so they cannot drift apart over this. Nothing iterates either map
+    // (both are read only through `.get`), so an alias cannot leak into a type listing.
+    for (const alias of type.aliases ?? []) {
+      byLowerName.set(alias.toLowerCase(), type.name);
+      bySlug.set(slugForTypeName(alias), type.name);
+    }
   }
   // Reserved coupling fields trail every authored/known key in the global canonical order.
   canonicalKeyOrder.push(...reservedBase);
