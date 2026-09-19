@@ -46,9 +46,13 @@ could not resolve.
 - **`lore check` now detects committed-schema drift** (LCLI-539). A `.lore/schemas/*.json` that no
   longer matches what the profile would generate is reported rather than silently trusted.
   - **This can turn a previously-green `lore check` red on content you did not touch**, which is
-    the intended behaviour: the drift was already there and unreported. Regenerate the schemas to
-    clear it. Consuming repositories that run `lore check` as a required CI context pin lore by
-    hand, so this reaches them only when they bump that pin deliberately.
+    the intended behaviour: the drift was already there and unreported. **Clear it with
+    `lore schema export`**, then commit the regenerated `.lore/schemas/*.json`. Consuming
+    repositories that run `lore check` as a required CI context pin lore by hand, so this reaches
+    them only when they bump that pin deliberately — and it fires on the FIRST such bump past
+    0.8.0, against schemas committed under an older lore, for every type at once (exit 6).
+    Measured by opum-marketplace on 2026-09-19: all 7 of its profile schemas failed on its first
+    0.8.0 CI run, and `lore schema export` cleared it.
 
 ### Fixed
 
