@@ -19,7 +19,7 @@ describe("schema — the default (story-convention) profile", () => {
   test("the built-in profile includes the additive OKF 0.2 computation type", () => {
     expect([...defaultProfile().types.keys()]).toEqual([
       "Epic",
-      "Story",
+      "Arc",
       "Spec",
       "ADR",
       "Runbook",
@@ -29,8 +29,13 @@ describe("schema — the default (story-convention) profile", () => {
   });
 
   test("isKnownType narrows known vs unknown types against the default profile", () => {
-    expect(isKnownType("Story")).toBe(true);
+    expect(isKnownType("Arc")).toBe(true);
     expect(isKnownType("Glossary")).toBe(false);
+    // isKnownType is a RAW canonical-name predicate -- it never resolves case or aliases, and
+    // every caller (new.ts) runs canonicalType first. Pinned because after the Story -> Arc
+    // rename a deprecated alias reads like it ought to be "known" (LCLI-554).
+    expect(isKnownType("Story")).toBe(false);
+    expect(isKnownType("arc")).toBe(false);
   });
 
   test("canonicalType resolves a multi-word type from its lower-kebab slug (LCLI-534)", () => {
@@ -74,7 +79,7 @@ name = "Rollout Checklist"
   test("canonicalType still folds case on a single-word name (LCLI-534 regression guard)", () => {
     // Asserted separately from the slug case so a change that fixes slugs by BREAKING name
     // resolution reddens this test and not that one.
-    expect(canonicalType("story")).toBe("Story");
+    expect(canonicalType("arc")).toBe("Arc");
     expect(canonicalType("ADR")).toBe("ADR");
     expect(canonicalType("  Reference  ")).toBe("Reference");
   });
@@ -227,7 +232,7 @@ describe("schema — the error tier (throws, exit 6)", () => {
     ).not.toThrow();
     expect(warnings.list()).toEqual([
       'unknown type "Attested Computation" in docs/computations/legacy.md; validated on `type` only ' +
-        "(known types: Epic, Story, Spec, ADR, Runbook, Reference)",
+        "(known types: Epic, Arc, Spec, ADR, Runbook, Reference)",
     ]);
   });
 
@@ -553,8 +558,8 @@ name = "Attested Computation"
     });
 
     test("a close typo gets a did-you-mean suggestion", () => {
-      const hint = unknownTypeHint("Stroy", defaultProfile());
-      expect(hint).toContain('did you mean "Story"?');
+      const hint = unknownTypeHint("Arcc", defaultProfile());
+      expect(hint).toContain('did you mean "Arc"?');
       expect(hint).toContain("known types:");
     });
 
@@ -565,7 +570,11 @@ name = "Attested Computation"
     });
 
     test("the suggestion is case-insensitive", () => {
-      expect(unknownTypeHint("story ", defaultProfile())).toContain('did you mean "Story"?');
+      expect(unknownTypeHint("arc ", defaultProfile())).toContain('did you mean "Arc"?');
+      // A DEPRECATED ALIAS is deliberately absent from the did-you-mean corpus, which offers
+      // canonical spellings only -- suggesting a spelling slated for removal at 1.0.0 would
+      // point a caller at the wrong one (LCLI-554).
+      expect(unknownTypeHint("Stroy", defaultProfile())).not.toContain("did you mean");
     });
   });
 

@@ -14,7 +14,7 @@ describe("buildTypeVocabulary — the default (story-convention) profile", () =>
     expect(report.profile).toEqual({ name: "story-convention", okfVersion: "0.2", case: "Title" });
     expect(report.types.map((t) => t.name)).toEqual([
       "Epic",
-      "Story",
+      "Arc",
       "Spec",
       "ADR",
       "Runbook",
@@ -23,16 +23,22 @@ describe("buildTypeVocabulary — the default (story-convention) profile", () =>
     ]);
   });
 
-  test("Story carries its own fields (tasks/specs) as NOT common, and the shared base fields AS common", () => {
-    const story = report.types.find((t) => t.name === "Story");
-    expect(story?.slug).toBe("story");
+  test("Arc carries its own fields (tasks/specs) as NOT common, and the shared base fields AS common", () => {
+    const story = report.types.find((t) => t.name === "Arc");
+    expect(story?.slug).toBe("arc");
     expect(story?.requiredSections).toEqual(["Acceptance criteria"]);
     const tasks = story?.fields.find((f) => f.name === "tasks");
     expect(tasks).toMatchObject({ required: false, common: false, kind: "list", itemKind: "string" });
     const title = story?.fields.find((f) => f.name === "title");
     expect(title).toMatchObject({ required: false, common: true, kind: "string" });
+    // Arc's `type` is an enum of the canonical name plus every deprecated alias (LCLI-558), so
+    // an un-migrated `type: Story` document still satisfies the schema's own literal check.
     const type = story?.fields.find((f) => f.name === "type");
-    expect(type).toMatchObject({ required: true, common: true, kind: "string" });
+    expect(type).toMatchObject({ required: true, common: true, kind: "enum", enum: ["Arc", "Story"] });
+    // A type with no aliases keeps the plain string shape, so the enum above is the alias's
+    // doing and not a change to every type.
+    const epicType = report.types.find((t) => t.name === "Epic")?.fields.find((f) => f.name === "type");
+    expect(epicType).toMatchObject({ required: true, common: true, kind: "string" });
   });
 
   test("Epic (declares no own fields) carries no fields marked non-common", () => {
@@ -44,8 +50,12 @@ describe("buildTypeVocabulary — the default (story-convention) profile", () =>
   });
 
   test("--type-equivalent `only` scopes the report to exactly one type", () => {
-    const scoped = buildTypeVocabulary(defaultProfile(), { only: "Story" });
-    expect(scoped.types.map((t) => t.name)).toEqual(["Story"]);
+    const scoped = buildTypeVocabulary(defaultProfile(), { only: "Arc" });
+    expect(scoped.types.map((t) => t.name)).toEqual(["Arc"]);
+    // `only` takes the CANONICAL spelling by contract (this module never re-implements type
+    // resolution), so a deprecated alias matches nothing HERE and is resolved by the caller --
+    // `lore types --type Story` is covered end-to-end in types.test.ts.
+    expect(buildTypeVocabulary(defaultProfile(), { only: "Story" }).types).toEqual([]);
   });
 
   test("the reserved supersedes/superseded_by fields render as a readable string-or-list union", () => {
@@ -73,7 +83,7 @@ describe("buildTypeVocabulary — the default (story-convention) profile", () =>
     // The OKF 0.2 shared families (status/generated/sources/…) ARE common: every type gets them
     // under a 0.2 profile, so they must not be misclassified as this one type's own fields.
     expect(computation?.fields.find((f) => f.name === "status")?.common).toBe(true);
-    const story = report.types.find((t) => t.name === "Story");
+    const story = report.types.find((t) => t.name === "Arc");
     expect(story?.fields.some((f) => f.name === "runtime")).toBe(false);
     expect(story?.fields.find((f) => f.name === "status")?.common).toBe(true);
   });

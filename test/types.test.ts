@@ -63,7 +63,7 @@ describe("lore types — default (story-convention) profile", () => {
     expect(code).toBe(0);
     expect(report.types.map((t) => t.name)).toEqual([
       "Epic",
-      "Story",
+      "Arc",
       "Spec",
       "ADR",
       "Runbook",
@@ -74,16 +74,27 @@ describe("lore types — default (story-convention) profile", () => {
   });
 
   test("--type <T> scopes the report to exactly one type, resolved case-insensitively", () => {
-    const { code, report } = types(["--type", "story"]);
+    const { code, report } = types(["--type", "arc"]);
     expect(code).toBe(0);
-    expect(report.types.map((t) => t.name)).toEqual(["Story"]);
+    expect(report.types.map((t) => t.name)).toEqual(["Arc"]);
     expect(report.types[0]?.requiredSections).toEqual(["Acceptance criteria"]);
+  });
+
+  test("--type resolves a DEPRECATED ALIAS to its canonical type (LCLI-554)", () => {
+    // The published surface this guards: `lore types --type Story` is a documented example, so
+    // the rename must not turn it into a usage error for an existing caller. Both spellings of
+    // the alias resolve, and both report the CANONICAL name.
+    for (const spelling of ["Story", "story"]) {
+      const { code, report } = types(["--type", spelling]);
+      expect(code).toBe(0);
+      expect(report.types.map((t) => t.name)).toEqual(["Arc"]);
+    }
   });
 
   test("an unknown --type is a usage error naming the valid set (mirrors `schema export --type`)", () => {
     const err = expectUsage(() => runTypes({ root, output: JSON_CTX, args: ["--type", "Nope"] }));
     expect(err.message).toContain('no type "Nope"');
-    expect(err.hint).toContain("Story");
+    expect(err.hint).toContain("Arc");
   });
 
   test("a value-less --type is a usage error", () => {
@@ -120,7 +131,7 @@ describe("runTypes — text rendering", () => {
     expect(code).toBe(0);
     const text = stdout.text();
     expect(text).not.toContain("\x1b[");
-    expect(text).toContain("Story (slug: story)");
+    expect(text).toContain("Arc (slug: arc)");
     expect(text).toContain("required sections: Acceptance criteria");
     expect(text).toContain("fields:");
     expect(text).toContain("tasks");
@@ -128,9 +139,9 @@ describe("runTypes — text rendering", () => {
 
   test("--type <T> --plain renders only that type's block", () => {
     const stdout = capture();
-    runTypes({ root, output: PLAIN_CTX, args: ["--type", "Story"], stdout });
+    runTypes({ root, output: PLAIN_CTX, args: ["--type", "Arc"], stdout });
     const text = stdout.text();
-    expect(text).toContain("Story (slug: story)");
+    expect(text).toContain("Arc (slug: arc)");
     expect(text).not.toContain("Epic (slug: epic)");
   });
 });
@@ -145,7 +156,7 @@ describe("cli — types wiring", () => {
     const stderr = capture();
     const code = run(argv("types"), { stdout, stderr, cwd: root, isTTY: false, env: {} });
     expect(code).toBe(0);
-    expect(stdout.text()).toContain("Story");
+    expect(stdout.text()).toContain("Arc");
   });
 
   test("`lore types --json` emits the types.report envelope through the router", () => {

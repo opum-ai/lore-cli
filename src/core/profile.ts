@@ -1065,7 +1065,14 @@ function storyConventionProfile(okfVersion: OkfVersion = CURRENT_OKF_VERSION): P
     types: [
       { name: "Epic", fields: {}, sections: [] },
       {
-        name: "Story",
+        // Renamed from Story (OPAG-255, executed under LCLI-554) so `story` is free for quest's
+        // Scrum issue type. `Story` is retained as a deprecated alias — removal at 1.0.0 — because
+        // @opum-ai/lore is public on npm: without it, every existing `type: Story` document in
+        // every consumer would be refused by `lore link`'s coupling gate on its next new task
+        // link, with no deprecation window. The alias owns its slug, so `story.schema.json` is
+        // still emitted beside `arc.schema.json` and stays OWNED rather than orphaned.
+        name: "Arc",
+        aliases: ["Story"],
         fields: { tasks: optionalStringList, specs: optionalStringList },
         sections: ["Acceptance criteria"],
       },

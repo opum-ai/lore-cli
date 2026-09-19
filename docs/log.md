@@ -262,6 +262,8 @@
 - 2026-09-15T16:14:45-05:00 bc4d58a0812cc8d7c4cb100c2d2339f685ba5da2 fix(LCLI-510): generate the README's version lines, and refuse a release whose packed README disagrees (#118)
 - 2026-09-16T18:55:31-05:00 758ea94ef73f572b798c1d24c03cca7f2db20946 docs(LCLI-506): ADR-0009's status vocabulary claim is Backlog-only and stale — supersede it on that point (#128)
 - 2026-09-16T19:22:53-05:00 3ccb3489b3b8d750bca23822cf1923a72ebd2461 fix(LCLI-502): gate the root launcher on registry visibility, not publish order (#131)
+- 2026-09-18T12:54:32Z 75a783a91ac345508d951b8979dec87580d5988f chore(OPAG-176): tracker dedupe pass, plus file LCLI-534/535/536 (#151)
+- 2026-09-18T09:32:33-05:00 1308fadf6659a006b12ec032b1adca6e560e64d6 feat(LCLI-538): add profile.strict_types so an unknown type can be an unconditional error (#157)
 
 ## docs/adr
 
@@ -343,6 +345,8 @@
 - 2026-09-16T20:54:49-05:00 0035f43eeb2084bf4f82c9a26975d3f7b3ee4461 feat(LCLI-467): offer to delete backlog/ after a plain --migrate-backlog (#140)
 - 2026-09-16T23:02:45-05:00 6d654342624ca7725f9e342231eec85291bffda1 docs(LCLI-531): flag stale release-run citation after a workflow re-run (#145)
 - 2026-09-16T23:15:21-05:00 73780d3a491f31c9a4c85edbf6670a889e77c39e fix(LCLI-521): warn before a --preserve-source-ids retry leaves a family behind (#146)
+- 2026-09-18T08:51:52-05:00 32993cc8eb793aca10c2e347e01b84d99ed9d257 feat(LCLI-537): add lore types (type-vocabulary discovery) and name the valid set in the unknown-type warning (#155)
+- 2026-09-18T18:54:08-05:00 c6f03ac0c01c8fc01aaeb0b6d4f50e8c96e8b8c1 fix(LCLI-512): derive the advertised projection schema version (#177)
 
 ## docs/runbooks
 

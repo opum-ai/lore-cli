@@ -25,6 +25,8 @@ import { singleLine } from "../errors";
 import { type BundleGraph, conceptNotInBundle, type Edge, frontmatterScalar } from "./bundle";
 import type { Concept } from "./concept";
 import { compareCodeUnits } from "./order";
+import { defaultProfile, type Profile } from "./profile";
+import { canonicalType } from "./schema";
 import type { WorkspaceRecordProvenance, WorkspaceResultScope } from "./workspace-contract";
 
 /**
@@ -137,7 +139,11 @@ export interface QueryOptions {
    * terms are returned.
    */
   readonly text?: string;
-  /** `--type`: keep only concepts whose `type` equals this (case-insensitively). */
+  /**
+   * `--type`: keep only concepts whose `type` equals this. Compared through
+   * {@link import("./schema").canonicalType} on BOTH sides, so a deprecated alias and its
+   * canonical name select the same set in either direction (LCLI-554).
+   */
   readonly type?: string;
   /** `--tag` (repeatable): keep only concepts whose `tags` contain **every** listed tag (case-insensitively). */
   readonly tags?: readonly string[];
@@ -147,6 +153,11 @@ export interface QueryOptions {
   readonly fields?: readonly FieldFilter[];
   /** `--limit`: the maximum number of hits to return. Defaults to {@link DEFAULT_QUERY_LIMIT}. */
   readonly limit?: number;
+  /**
+   * The active profile, used ONLY to resolve `--type` through its deprecated aliases. Defaults
+   * to the built-in profile, which is correct for every bundle that declares no `.lore/profile.toml`.
+   */
+  readonly profile?: Profile;
 }
 
 /** One ranked search hit (cli-surface §query `query.results`). */
@@ -295,7 +306,7 @@ function toHit(concept: Concept, score: number): QueryHit {
  * `--field`). All comparisons fold case.
  */
 function matchesFilters(concept: Concept, options: QueryOptions): boolean {
-  if (options.type !== undefined && !equalsFold(concept.type, options.type)) {
+  if (options.type !== undefined && !sameType(concept.type, options.type, options.profile)) {
     return false;
   }
   if (options.status !== undefined && !matchesField(concept, { key: "status", value: options.status })) {
@@ -368,6 +379,18 @@ function tagsOf(concept: Concept): string[] {
 /** Case-insensitive string equality — the single rule for every `lore query` filter comparison. */
 function equalsFold(a: string, b: string): boolean {
   return a.toLowerCase() === b.toLowerCase();
+}
+
+/**
+ * Whether a concept's `type` and a `--type` filter name the same type, resolving each through
+ * the profile first so a DEPRECATED ALIAS and its canonical name are interchangeable in BOTH
+ * directions (LCLI-554). Canonicalizing only the filter would be worse than doing nothing: after
+ * the Story -> Arc rename it would turn `--type Story` into `Arc` and stop matching the
+ * un-migrated `type: Story` documents that are exactly the population the alias exists to serve.
+ * An unknown type resolves to itself, so the case-folded comparison below is unchanged for it.
+ */
+function sameType(conceptType: string, filter: string, profile: Profile = defaultProfile()): boolean {
+  return equalsFold(canonicalType(conceptType, profile), canonicalType(filter, profile));
 }
 
 /**

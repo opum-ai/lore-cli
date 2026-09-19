@@ -46,7 +46,7 @@ import { type Concept, idFromPath, serializeConcept, serializeConceptWithModelin
 import { encodePathSegments } from "./links";
 import type { BundleState, OkfVersion } from "./okf-version";
 import { ATTESTED_COMPUTATION_TYPE, defaultProfile, type Profile, profileForBundle, slugForTypeName } from "./profile";
-import { validateFrontmatter } from "./schema";
+import { canonicalType, validateFrontmatter } from "./schema";
 
 /**
  * Derive a filename slug from a concept title — the LOWER-KEBAB transform {@link slugForTypeName}
@@ -284,7 +284,12 @@ export function expectedResource(type: string, docPath: string, profile: Profile
   if (profile.resourceBase === "" || posix.basename(docPath) === "index.md") {
     return undefined;
   }
-  if (profile.types.get(type)?.acceptsStampedResource === false) {
+  // Canonicalized for the same reason as {@link import("./schema").requiredSectionsFor}: a raw
+  // lookup misses a deprecated alias and falls through to the stamping default, so an aliased
+  // type would be stamped where its canonical type opts out. Unreachable under the built-in
+  // profile (empty `resourceBase` short-circuits above), fixed here because it is the identical
+  // defect rather than a second one (LCLI-554).
+  if (profile.types.get(canonicalType(type, profile))?.acceptsStampedResource === false) {
     return undefined;
   }
   return resourceFor(profile.resourceBase, docPath);
@@ -451,13 +456,14 @@ const EPIC_TEMPLATE = `
 `;
 
 /**
- * Story: a unit of deliverable work with acceptance criteria. Ships the empty
+ * Arc: a unit of deliverable work with acceptance criteria (renamed from Story, LCLI-554;
+ * `Story` still resolves to it as a deprecated alias). Ships the empty
  * `<!-- lore:tasks:begin -->`/`<!-- lore:tasks:end -->` managed block (LORE-59) so a
- * freshly-created Story is immediately `lore sync`-able once linked to a task, with no
+ * freshly-created Arc is immediately `lore sync`-able once linked to a task, with no
  * hand-authored markup step — `lore sync`/`managed-block.ts` still fail loud (exit `6`) for
  * any doc whose block is totally absent, e.g. one where the markers were hand-deleted.
  */
-const STORY_TEMPLATE = `
+const ARC_TEMPLATE = `
 # {{title}}
 
 ## Goal
@@ -498,7 +504,7 @@ const BUILTIN_TEMPLATES: Readonly<Record<string, string>> = Object.freeze({
   ADR: ADR_TEMPLATE,
   Runbook: RUNBOOK_TEMPLATE,
   Epic: EPIC_TEMPLATE,
-  Story: STORY_TEMPLATE,
+  Arc: ARC_TEMPLATE,
   [ATTESTED_COMPUTATION_TYPE]: ATTESTED_COMPUTATION_TEMPLATE,
 });
 

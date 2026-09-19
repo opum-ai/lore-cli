@@ -232,8 +232,8 @@ export function isKnownType(type: string, profile: Profile = defaultProfile()): 
 
 /**
  * Resolve a user-supplied `<type>` token to its canonical spelling in `profile`. `lore new`
- * accepts a type case-insensitively (`story`, `ADR`, `reference`), so a token whose lower-case
- * form names a profile type returns that type's canonical casing (`Story`, `ADR`, `Reference`) —
+ * accepts a type case-insensitively (`arc`, `ADR`, `reference`), so a token whose lower-case
+ * form names a profile type returns that type's canonical casing (`Arc`, `ADR`, `Reference`) —
  * the value lore writes to `type:` and keys its schema by. A token that names a type's LOWER-KEBAB
  * slug resolves too (`attested-computation` → `Attested Computation`), which is the only way a
  * multi-word type is reachable from a command line: its `byLowerName` key contains a SPACE
@@ -317,7 +317,12 @@ function levenshteinDistance(a: string, b: string): number {
  * on a type it does not own). The single source the validator reads.
  */
 export function requiredSectionsFor(type: string, profile: Profile = defaultProfile()): readonly string[] {
-  return profile.types.get(type)?.requiredSections ?? [];
+  // Resolved through {@link canonicalType}, NOT looked up raw: the validator hands this the
+  // document's own `type:` spelling, so a deprecated alias (`type: Story` after the Arc rename,
+  // LCLI-554) missed the map and yielded `[]` — silently EXEMPTING every un-migrated document
+  // from the section contract its canonical type declares, while the same document validated
+  // fine on every other tier. An unknown type still resolves to itself and still yields `[]`.
+  return profile.types.get(canonicalType(type, profile))?.requiredSections ?? [];
 }
 
 /**
@@ -330,7 +335,7 @@ export function requiredSectionsFor(type: string, profile: Profile = defaultProf
  */
 const TYPE_DIRECTORIES: Readonly<Record<string, string>> = Object.freeze({
   Epic: "epics",
-  Story: "stories",
+  Arc: "arcs",
   Spec: "specs",
   ADR: "adr",
   Runbook: "runbooks",
@@ -363,7 +368,7 @@ export function typeDirectory(type: string): string {
  *   consulted here; escalation happens at the three call sites {@link Profile.strictTypes} names.
  * - Known `type` with a mistyped field → throw (`validation`) citing the field(s). A `type`
  *   carrying surrounding whitespace, or spelled in a different casing than the profile's
- *   canonical form (`story` for `Story`), classifies via {@link canonicalType} — so it is
+ *   canonical form (`arc` for `Arc`), classifies via {@link canonicalType} — so it is
  *   looked up and validated against that type's *real* schema — and then fails the schema's
  *   `type` literal check loudly here, rather than being silently demoted to an unvalidated
  *   unknown type. Only the lookup key is folded; `fm` itself is never rewritten (ADR-0011).

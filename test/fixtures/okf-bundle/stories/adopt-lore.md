@@ -1,5 +1,5 @@
 ---
-type: Story
+type: Arc
 title: Author a conformant sample bundle
 summary: A story with the required acceptance-criteria section.
 timestamp: 2026-06-21T00:00:00Z
