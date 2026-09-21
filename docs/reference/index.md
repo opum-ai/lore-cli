@@ -25,4 +25,5 @@
 - [Portable Markdown — the subset lore guarantees](portable-markdown.md)
 - [Shipped-README version assertions in lore-cli](shipped-readme-version-record.md)
 - [Tech Stack](tech-stack.md)
+- [Upgrade note: retained snapshots written by lore 0.8.0](upgrade-note-0-8-0-retained-snapshots.md)
 <!-- lore:index:end -->
