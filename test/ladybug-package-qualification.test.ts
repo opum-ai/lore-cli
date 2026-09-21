@@ -82,8 +82,11 @@ function needs(job: WorkflowJob): string[] {
 describe("matching-host Ladybug package qualification", () => {
   test.skipIf(process.platform !== "win32")(
     "the published launcher reports the real compiled Lore version through synchronous redirected output",
-    () => {
-      const root = mkdtempSync(join(tmpdir(), "lore-windows-launcher-test-"));
+    async () => {
+      // The prefix is `lore-ladybug-package-` because `removeQualificationScratch`
+      // refuses any path outside that convention — the guard is the reason it is
+      // safe to hand a recursive delete a path computed at runtime.
+      const root = mkdtempSync(join(tmpdir(), "lore-ladybug-package-windows-launcher-"));
       try {
         const node = Bun.which("node");
         if (node === null) throw new Error("test requires Node on PATH");
@@ -118,7 +121,15 @@ describe("matching-host Ladybug package qualification", () => {
         expect(result.stdout.toString()).toBe(`${RELEASE_VERSION}\n`);
         expect(result.stderr.toString()).toBe("");
       } finally {
-        rmSync(root, { recursive: true, force: true });
+        // LCLI-564: a bare `rmSync` here threw `EBUSY: resource busy or locked` on
+        // windows-latest while every assertion above had already passed, failing a
+        // required context on a tree that was never at fault. Windows retains a
+        // handle on the scratch tree briefly after the compiled launcher exits, so
+        // the remove is what races, not the test. `removeQualificationScratch` is
+        // the bounded linear-backoff remover this file already unit-tests directly
+        // below, and it treats EBUSY as retryable; it also makes the tree writable
+        // first, which a bare `rmSync` does not.
+        await removeQualificationScratch(root);
       }
     },
   );
@@ -145,6 +156,28 @@ describe("matching-host Ladybug package qualification", () => {
     expect(attempts).toBe(3);
     expect(delays).toEqual([250, 500]);
     expect(existsSync(root)).toBe(false);
+  });
+
+  test("the windows launcher scratch prefix is one removeQualificationScratch will accept", async () => {
+    // LCLI-564's fix has a silent failure mode: `removeQualificationScratch` refuses
+    // any path outside the `lore-ladybug-package-` convention, so renaming the
+    // launcher test's scratch prefix back would turn its cleanup into an
+    // unconditional throw rather than a retrying remove. Assert the two halves
+    // together — the prefix in use is accepted, and a prefix outside the
+    // convention is refused — so the pair fails loudly instead of drifting apart.
+    const accepted = mkdtempSync(join(tmpdir(), "lore-ladybug-package-windows-launcher-"));
+    await removeQualificationScratch(accepted);
+    expect(existsSync(accepted)).toBe(false);
+
+    const refused = mkdtempSync(join(tmpdir(), "lore-windows-launcher-test-"));
+    try {
+      await expect(removeQualificationScratch(refused)).rejects.toThrow(
+        /refusing to remove an unexpected package-qualification scratch path/u,
+      );
+      expect(existsSync(refused)).toBe(true);
+    } finally {
+      rmSync(refused, { recursive: true, force: true });
+    }
   });
 
   test("builds from same-drive scratch with an absolute repository entrypoint", () => {
