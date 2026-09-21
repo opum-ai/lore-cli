@@ -20,6 +20,39 @@ own validator rejects.** Three of the fixes below are cases where the tool contr
 scaffold its validator refused, a documented example its parser rejected, a type it suggested but
 could not resolve.
 
+### Known incompatibility — added 2026-09-20, after release (LCLI-561)
+
+**This section was not in the original 0.8.0 notes. It is added here because the
+incompatibility is real, already published, and a reader who hits it will look
+at this release's entry first.**
+
+0.8.0 is the first version that writes the ADR-0021 relation qualifiers
+(`statement`, `version`, `relationOrdinal`) into retained snapshot edges, in
+commit `dd0876dc` (LCLI-540, #170). The schema they join is `.strict()`, so an
+**older** `lore` rejects any snapshot file 0.8.0 wrote, with:
+
+```
+retained snapshot is malformed or unsupported
+```
+
+**The failure is scope-wide, not per-file.** One 0.8.0-written file makes
+`list`, `retain`, load *and* `delete` all throw for the older binary in that
+scope — including the drain path you would reach for to clear it.
+
+The reverse direction is deliberately handled (ADR-0021 ruling 13,
+`isRetainedQualifierBackfill`), so this is **not** a symmetric break. Upgrading
+`lore` is the only complete remedy: the binary that rejects the file has already
+shipped and cannot be patched retroactively.
+
+**The exposed configuration is narrower than it sounds.** The store is
+`.lore/cache/snapshots/1`, which is gitignored, so this does not travel through
+your repository — it needs a store that outlives a version downgrade on one
+filesystem, or a CI cache of `.lore/` restored into a job with an older pin.
+
+Full note, with the measurements and the containment steps:
+[Upgrade note: retained snapshots written by lore 0.8.0](docs/reference/upgrade-note-0-8-0-retained-snapshots.md).
+
+
 ### Provenance — read this before checking the packument
 
 - **0.8.0 ships with NO provenance attestation, and neither did 0.7.0, 0.6.2 or 0.6.1.** Expected,
