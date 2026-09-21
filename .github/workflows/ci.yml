@@ -136,6 +136,31 @@ jobs:
       # Re-running the failed job is the correct response to a flake; raising
       # a timeout or "fixing" the named test is not, because neither addresses
       # a tree that was never at fault.
+      #
+      # LCLI-564: READ THE FAILING LOG BEFORE YOU DECIDE, AND IT SURVIVES A
+      # RE-RUN. An earlier reading of this held that re-running destroys the
+      # evidence, so a flake could only be judged by tree identity. That is
+      # true of run ARTIFACTS and false of job LOGS: a re-run creates a NEW
+      # job id per attempt, and the old attempt's job keeps serving its own
+      # log forever. So the assertion text is recoverable after the fact --
+      # recovered that way for this very task, four hours and one green
+      # re-run later.
+      #
+      #   gh api "repos/opum-ai/lore-cli/actions/runs/<run_id>/attempts/1/jobs" \
+      #     -q '.jobs[] | "\(.id) \(.name) \(.conclusion)"'
+      #   gh api "repos/opum-ai/lore-cli/actions/jobs/<that_id>/logs" \
+      #     --allow-escape-sequences > failing.log
+      #
+      # `--allow-escape-sequences` is not optional: without it `gh` writes
+      # NOTHING and exits 1 with a message about terminal escape sequences,
+      # which reads exactly like the log being gone.
+      #
+      # This matters because tree identity proves a flake WITHOUT saying what
+      # broke, and the two questions above both need to know what broke. It
+      # cost this repository a wrong hypothesis: LCLI-564 was recorded as
+      # "probably a fast compile failure at the exitCode assertion", and the
+      # recovered log showed every assertion PASSING and the scratch-tree
+      # `rmSync` in the `finally` throwing EBUSY instead.
       - name: Test
         shell: bash
         run: |
