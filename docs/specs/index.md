@@ -4,6 +4,7 @@
 - [Agent profile context retrieval](agent-profile-context-retrieval.md)
 - [Backlog knowledge adoption contract](backlog-knowledge-adoption-contract.md)
 - [Bounded path and impact](bounded-path-and-impact.md)
+- [Committed-schema generator stamp](committed-schema-generator-stamp.md)
 - [Graph explorer data and interaction contract](graph-explorer-data-and-interaction-contract.md)
 - [Local graph platform roadmap](local-graph-platform-roadmap.md)
 - [Local workspace identity contract](local-workspace-identity-contract.md)
