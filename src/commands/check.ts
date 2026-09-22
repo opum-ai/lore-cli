@@ -203,8 +203,9 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
  * A thrown 6-class failure (`validation`/`drift`) from a run that ALSO found an unattributable
  * schema, re-typed as `indeterminate` (exit `7`) so the run never exits with the code unattended
  * repair acts on (OPAG-373: any run with an unattributable finding exits 7). The message keeps the
- * original failure's and names the unattributable schema path(s); the original hint is preserved,
- * and the original `error_type`/`input` are echoed under `input`. Every other throw — usage,
+ * original failure's and names the unattributable schema path(s); the original `hint` and `input`
+ * are preserved EXACTLY, so a caller reading `input.<key>` sees the same shape it would have seen at
+ * exit 6 (LCLI-565 re-review). Every other throw — usage,
  * not_found, denied, conflict, a non-{@link LoreError} crash — and any throw from a run with no
  * unattributable finding pass through unchanged.
  */
@@ -216,7 +217,7 @@ export function escalateToIndeterminate(err: unknown, unattributable: readonly s
     "indeterminate",
     `${err.message} — and lore cannot judge ${unattributable.join(", ")} (an unattributable committed schema, exit 7): do NOT run \`lore schema export\` or \`lore sync\` as a repair; read \`git log\` on it`,
     err.hint,
-    { error_type: err.type, input: err.input, unattributableSchemas: [...unattributable] },
+    err.input,
   );
 }
 

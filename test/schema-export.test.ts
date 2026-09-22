@@ -594,7 +594,7 @@ describe("lore schema export — the prune decision on case-insensitive filesyst
     // Exactly what APFS showed the reviewer AFTER the write: the listing still says `ADR.schema.json`,
     // and its bytes are the stamped ones just written. The old logic deleted it.
     const plan = planOrphanPrune([{ name: "ADR.schema.json", stamp: DIGEST }], new Set(["adr.schema.json"]), DIGEST);
-    expect(plan).toEqual({ remove: [], kept: [] });
+    expect(plan).toEqual({ remove: [], kept: [], caseVariants: ["ADR.schema.json"] });
   });
 
   test("planOrphanPrune deletes only a matching pre-write stamp; absent or foreign stamps are kept", () => {
@@ -608,7 +608,11 @@ describe("lore schema export — the prune decision on case-insensitive filesyst
       new Set(["adr.schema.json"]),
       DIGEST,
     );
-    expect(plan).toEqual({ remove: ["mine.schema.json"], kept: ["unstamped.schema.json", "foreign.schema.json"] });
+    expect(plan).toEqual({
+      remove: ["mine.schema.json"],
+      kept: ["unstamped.schema.json", "foreign.schema.json"],
+      caseVariants: [],
+    });
   });
 
   /**
@@ -628,18 +632,69 @@ describe("lore schema export — the prune decision on case-insensitive filesyst
     };
   };
 
-  test("a committed, unstamped ADR.schema.json aliasing adr.schema.json survives a full export (the reproduced bypass)", () => {
+  /**
+   * A CASE-INSENSITIVE directory (APFS/NTFS) modelled on any host: the real `adr.schema.json` is
+   * listed under its original case, `ADR.schema.json`, and that name reads/writes the same file —
+   * one entry, both before and after the write.
+   */
+  const caseInsensitiveIO = (): SchemaDirIO & { removed: string[] } => {
+    const removed: string[] = [];
+    const real = (absPath: string) => absPath.replace(/ADR\.schema\.json$/, "adr.schema.json");
+    return {
+      removed,
+      list: (absDir) => readdirSync(absDir).map((name) => (name === "adr.schema.json" ? "ADR.schema.json" : name)),
+      read: (absPath) => readFileSync(real(absPath), "utf8"),
+      remove: (absPath) => {
+        removed.push(absPath);
+      },
+    };
+  };
+
+  /** A CASE-SENSITIVE directory holding a separate, unstamped `ADR.schema.json` beside `adr.schema.json`. */
+  const caseSensitiveIO = (): SchemaDirIO & { removed: string[] } => {
+    const removed: string[] = [];
+    return {
+      removed,
+      list: (absDir) => [...readdirSync(absDir), "ADR.schema.json"],
+      read: (absPath) => (absPath.endsWith("ADR.schema.json") ? "{}\n" : readFileSync(absPath, "utf8")),
+      remove: (absPath) => {
+        removed.push(absPath);
+      },
+    };
+  };
+
+  test("case-insensitive: a committed, unstamped ADR.schema.json is NOT deleted — the export overwrites its bytes in place, recoverable from git like a stale owned file", () => {
+    // The reproduced bypass deleted this entry. It must now survive; its bytes are rewritten with
+    // this binary's stamp (APFS writes `adr.schema.json` into the existing entry), which is the same
+    // recoverable-from-git treatment a stale owned schema gets. It is the written file, not a
+    // second one, so it is not reported as kept.
     exportSchemas(["export"]);
     writeFileSync(join(root, ".lore/schemas/adr.schema.json"), "{}\n"); // the committed, unstamped file
-    const io = aliasingIO("ADR.schema.json", "adr.schema.json");
+    const io = caseInsensitiveIO();
     const stdout = capture();
     runSchema({ root, output: JSON_CTX, stdout, args: ["export"], schemaDirIO: io });
     const result = (JSON.parse(stdout.text()) as { data: SchemaExportResult }).data;
     expect(io.removed).toEqual([]);
     expect(result.removed).toEqual([]);
+    expect(result.keptUnattributable).toEqual([]);
     expect(readGeneratorStamp(readFileSync(join(root, ".lore/schemas/adr.schema.json"), "utf8"))).toBe(
       profileDigest(defaultProfile()),
     );
+  });
+
+  test("case-sensitive: a separate ADR.schema.json beside adr.schema.json is kept AND reported, so the warning names it", () => {
+    exportSchemas(["export"]);
+    const io = caseSensitiveIO();
+    const stdout = capture();
+    const stderr = capture();
+    runSchema({ root, output: PLAIN_CTX, stdout, stderr, args: ["export"], schemaDirIO: io });
+    expect(io.removed).toEqual([]);
+    expect(stderr.text()).toMatch(/warning: kept \.lore\/schemas\/ADR\.schema\.json/);
+    const jsonOut = capture();
+    runSchema({ root, output: JSON_CTX, stdout: jsonOut, args: ["export"], schemaDirIO: caseSensitiveIO() });
+    const result = (JSON.parse(jsonOut.text()) as { data: SchemaExportResult }).data;
+    expect(result.removed).toEqual([]);
+    expect(result.keptUnattributable.map((f) => f.path)).toEqual([".lore/schemas/ADR.schema.json"]);
   });
 
   test("prune decisions use the PRE-write stamp, not the bytes the export just wrote", () => {

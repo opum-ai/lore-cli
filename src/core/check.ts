@@ -839,8 +839,12 @@ export function schemaDriftFindings(input: SchemaDriftInput): CheckFinding[] {
   const findings: CheckFinding[] = [];
   const committed = input.committed;
   // A committed name that differs from an owned one only in letter case may BE that file on a
-  // case-insensitive filesystem (LCLI-565 review), so when the exact owned name is absent the case
-  // variant stands in for it; when both exist, the variant is reported below as unattributable.
+  // case-insensitive filesystem (LCLI-565 review). It stands in for the owned schema ONLY when the
+  // exact owned name is absent AND the variant carries this binary's own stamp — the APFS state an
+  // export leaves behind. An unstamped or foreign-stamped variant may be a separate, hand-written
+  // file (it is, on a case-sensitive filesystem), so it is never compared as the owned schema: it is
+  // reported below as unattributable under its own path, and the owned name as missing (LCLI-565
+  // re-review).
   const committedByFold = new Map<string, string>();
   for (const path of committed.keys()) {
     if (!committedByFold.has(foldSchemaName(path))) {
@@ -852,7 +856,12 @@ export function schemaDriftFindings(input: SchemaDriftInput): CheckFinding[] {
   for (const [path, regenerated] of input.regenerated) {
     let current = committed.get(path);
     const variant = committedByFold.get(foldSchemaName(path));
-    if (current === undefined && variant !== undefined && !input.regenerated.has(variant)) {
+    if (
+      current === undefined &&
+      variant !== undefined &&
+      !input.regenerated.has(variant) &&
+      readGeneratorStamp(committed.get(variant) as string) === input.profileDigest
+    ) {
       current = committed.get(variant);
       standIns.add(variant);
     }
@@ -885,7 +894,7 @@ export function schemaDriftFindings(input: SchemaDriftInput): CheckFinding[] {
         rule: "schema-unattributable",
         schemaClass: "unattributable",
         file: path,
-        message: `this schema's name differs only in letter case from ${owner}, which the active profile owns, and on a case-insensitive filesystem the two are one file — do NOT prune it: read \`git log\` on both names, then rename or delete it by hand`,
+        message: `this schema's name differs only in letter case from ${owner}, which the active profile owns, and on a case-insensitive filesystem the two may be one file — do NOT prune it: read \`git log\` on both names, then rename or delete it by hand`,
       });
       continue;
     }

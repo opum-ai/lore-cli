@@ -101,6 +101,34 @@ export interface OrphanPrunePlan {
   readonly remove: readonly string[];
   /** Entry names kept because their pre-write stamp was absent or another profile's. */
   readonly kept: readonly string[];
+  /**
+   * Entry names never deleted because they case-fold to a written name but are not that exact name.
+   * Whether each is a SEPARATE file (case-sensitive filesystem) or the written file itself
+   * (case-insensitive) is only knowable after the write — see {@link caseVariantsBesideOwned}.
+   */
+  readonly caseVariants: readonly string[];
+}
+
+/**
+ * The {@link OrphanPrunePlan.caseVariants} that turned out, AFTER the write, to be distinct entries
+ * beside their exact owned name — i.e. a case-sensitive filesystem holding two files. Those are kept
+ * and must be reported, so the export's warning names them. On a case-insensitive filesystem the
+ * post-write listing holds only one of the two names, so the variant is the written file and is
+ * not reported. Pure: the caller supplies the post-write listing.
+ */
+export function caseVariantsBesideOwned(
+  caseVariants: readonly string[],
+  keep: ReadonlySet<string>,
+  afterWrite: readonly string[],
+): string[] {
+  const listed = new Set(afterWrite);
+  return caseVariants.filter(
+    (variant) =>
+      listed.has(variant) &&
+      [...keep].some(
+        (name) => name !== variant && listed.has(name) && foldSchemaName(name) === foldSchemaName(variant),
+      ),
+  );
 }
 
 /** The parsed form of `lore schema`'s arguments. */
@@ -192,9 +220,13 @@ export function runSchema(options: SchemaOptions): number {
     writeFileNoFollow(join(options.root, file.path), file.contents, file.path);
   }
   const keep = new Set(files.map((file) => posix.basename(file.path)));
-  const { removed, kept } = managed
-    ? pruneOrphans(absOutDir, outArg, planOrphanPrune(before, keep, profileDigest(profile)), io)
-    : { removed: [], kept: [] };
+  const plan = managed ? planOrphanPrune(before, keep, profileDigest(profile)) : undefined;
+  const { removed, kept } = plan ? pruneOrphans(absOutDir, outArg, plan, io) : { removed: [], kept: [] };
+  if (plan && plan.caseVariants.length > 0) {
+    for (const name of caseVariantsBesideOwned(plan.caseVariants, keep, listAfterWrite(absOutDir, outArg, io))) {
+      kept.push({ path: posix.join(outArg, name) });
+    }
+  }
 
   const result: SchemaExportResult = {
     out: outArg,
@@ -332,13 +364,27 @@ export function planOrphanPrune(
   const owned = new Set([...keep].map(foldSchemaName));
   const remove: string[] = [];
   const kept: string[] = [];
+  const caseVariants: string[] = [];
   for (const entry of before) {
-    if (keep.has(entry.name) || owned.has(foldSchemaName(entry.name))) {
+    if (keep.has(entry.name)) {
+      continue;
+    }
+    if (owned.has(foldSchemaName(entry.name))) {
+      caseVariants.push(entry.name);
       continue;
     }
     (entry.stamp === digest ? remove : kept).push(entry.name);
   }
-  return { remove, kept };
+  return { remove, kept, caseVariants };
+}
+
+/** The managed directory's entry names after the export's writes, mapped through {@link ioError}. */
+function listAfterWrite(absDir: string, displayDir: string, io: SchemaDirIO): string[] {
+  try {
+    return io.list(absDir);
+  } catch (cause) {
+    throw ioError(cause, displayDir, "read directory");
+  }
 }
 
 /**
