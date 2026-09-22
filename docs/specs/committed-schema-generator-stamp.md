@@ -207,6 +207,11 @@ first — which is exactly what LCLI-546 came within one `git add -A` of losing.
   set (`0` ok, `2` usage, `3` not_found, `4` denied, `5` conflict, `6`
   validation/drift) has no spare slot with the right meaning. Adding one is a
   CLI-contract change (ADR-0005) and is decided in implementation, not here.
+  **Resolved 2026-09-22 (LCLI-565):** exit `7`, `error_type` `indeterminate`,
+  ruled in opum-doc's ADR (ODOC-259) and recorded as
+  [ADR-0005's amendment](../adr/0005-cli-contract.md); a run with both `6`- and
+  `7`-class findings exits `7` (OPAG-373). The digest's stability contract is
+  stated beside `profileDigest` in `src/core/schema.ts`.
 - **Not a substitute for LCLI-545.** That task improves the wording of advice
   that is still undecidable underneath; this makes it decidable. Neither closes
   the other. OPAG-353 remains the operating rule for binaries already on disk

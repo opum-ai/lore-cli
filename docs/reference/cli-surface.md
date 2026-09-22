@@ -341,6 +341,16 @@ The **drift gate** — read-only, never writes. Aggregates:
   form (leading-slash, missing `.md`, unencoded, accidental-colon filenames,
   trailing-slash directory links); and MDX hazards (raw `<`/`{` in prose, raw
   HTML, leading-underscore and `.mdx` file names).
+- **Committed-schema drift** (LCLI-539, LCLI-565) — compares each committed
+  `.lore/schemas/*.schema.json` with what the active profile generates now.
+  Every finding carries a `schemaClass`: `missing` or `stale` (`lore schema
+  export` writes or rewrites it) and `orphaned` (no type owns it, but its
+  `x-lore-generator.profileDigest` stamp is this binary's own, so export may
+  prune it) are rule `schema-drift`, exit `6`. An orphan whose stamp is absent
+  or is another profile's is `unattributable`, rule `schema-unattributable`,
+  exit `7`: lore cannot tell a removed type from a binary older than the tree,
+  so it never advises a prune and points at `git log` instead. See
+  [Committed-schema generator stamp](../specs/committed-schema-generator-stamp.md).
 - **Date-sensitive lifecycle checks** — currently only OKF 0.2 `stale_after`.
   Every such rule receives one pinned evaluation date: `--as-of YYYY-MM-DD`
   when supplied, otherwise HEAD's recorded committer calendar date. `check`
@@ -352,7 +362,7 @@ The **drift gate** — read-only, never writes. Aggregates:
 | **Args** | optional `[paths…]` (default: whole bundle) |
 | **Key flags** | `--strict` (treat deterministic warnings as failures for the exit code) · `--as-of YYYY-MM-DD` (pin date-sensitive rules; default HEAD commit date) · `--external` (also probe external-URL liveness — advisory, never gates) |
 | **Output** | `kind: check.report` — `findings`, `errorCount`, `warningCount`, `fileCount`, `skippedOutOfBundleLinkCount`, `complete`; plus optional `externalFindings` when `--external` ran. The skipped count is informational and never affects severity counts or exit status. |
-| **Exit** | `0` no broken bundle-scoped links/anchors and no status/managed-block drift · `2` invalid/non-calendar `--as-of` · `3` a linked task id no longer exists, or a date-sensitive rule needs the absent HEAD commit date · `6` any broken bundle-scoped link/anchor, any status/managed-block drift (or any deterministic warning under `--strict`, or an unknown type under `strict_types`). Skipped out-of-bundle links and external-liveness results never affect the exit. |
+| **Exit** | `0` no broken bundle-scoped links/anchors and no status/managed-block drift · `2` invalid/non-calendar `--as-of` · `3` a linked task id no longer exists, or a date-sensitive rule needs the absent HEAD commit date · `6` any broken bundle-scoped link/anchor, any status/managed-block drift (or any deterministic warning under `--strict`, or an unknown type under `strict_types`), or any `missing`/`stale`/`orphaned` committed schema · `7` an `unattributable` committed schema (indeterminate — never auto-repair); a run with both `6`- and `7`-class findings exits `7` and still reports every finding. Skipped out-of-bundle links and external-liveness results never affect the exit. |
 
 ---
 
@@ -1004,7 +1014,7 @@ lore schema export
 |---|---|
 | **Args** | `export` (subcommand) |
 | **Key flags** | `--out <dir>` (default `.lore/schemas/`) · `--type <T>` (one type) |
-| **Output** | `kind: schema.result` — schema files written |
+| **Output** | `kind: schema.result` — `files` written, `removed` (orphans whose generator stamp is this binary's own, pruned on a full export to `.lore/schemas/`), `keptUnattributable` (orphans with an absent or foreign stamp, never pruned; a stderr warning names each outside `--json`), `count`. Every written file carries `x-lore-generator.profileDigest` (LCLI-565). |
 | **Exit** | `0` ok · `4` `--out` not writable |
 
 ---
