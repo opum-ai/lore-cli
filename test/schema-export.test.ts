@@ -12,7 +12,15 @@ import {
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import { runInit } from "../src/commands/init";
-import { confineOutDir, runSchema, type SchemaExportResult } from "../src/commands/schema";
+import {
+  confineOutDir,
+  planOrphanPrune,
+  runSchema,
+  type SchemaDirIO,
+  type SchemaExportResult,
+} from "../src/commands/schema";
+import { defaultProfile } from "../src/core/profile";
+import { profileDigest, readGeneratorStamp } from "../src/core/schema";
 import { LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
@@ -576,5 +584,74 @@ describe("lore schema export — plain rendering", () => {
     const text = stdout.text();
     expect(text).toContain("wrote .lore/schemas/adr.schema.json");
     expect(text).toContain("1 schema exported to .lore/schemas");
+  });
+});
+
+describe("lore schema export — the prune decision on case-insensitive filesystems (LCLI-565 review)", () => {
+  const DIGEST = `sha256:${"a".repeat(64)}`;
+
+  test("planOrphanPrune never deletes an entry that case-folds to a name the export writes, even with a matching stamp", () => {
+    // Exactly what APFS showed the reviewer AFTER the write: the listing still says `ADR.schema.json`,
+    // and its bytes are the stamped ones just written. The old logic deleted it.
+    const plan = planOrphanPrune([{ name: "ADR.schema.json", stamp: DIGEST }], new Set(["adr.schema.json"]), DIGEST);
+    expect(plan).toEqual({ remove: [], kept: [] });
+  });
+
+  test("planOrphanPrune deletes only a matching pre-write stamp; absent or foreign stamps are kept", () => {
+    const plan = planOrphanPrune(
+      [
+        { name: "adr.schema.json", stamp: null }, // owned by name: never touched
+        { name: "mine.schema.json", stamp: DIGEST },
+        { name: "unstamped.schema.json", stamp: null },
+        { name: "foreign.schema.json", stamp: `sha256:${"b".repeat(64)}` },
+      ],
+      new Set(["adr.schema.json"]),
+      DIGEST,
+    );
+    expect(plan).toEqual({ remove: ["mine.schema.json"], kept: ["unstamped.schema.json", "foreign.schema.json"] });
+  });
+
+  /**
+   * A {@link SchemaDirIO} over the real directory that ALSO lists `alias`, whose bytes are read
+   * through to `target` at call time: a model of a filesystem where writing `target` changes what
+   * `alias` reads, runnable on case-sensitive Linux CI. Records every removal.
+   */
+  const aliasingIO = (alias: string, target: string): SchemaDirIO & { removed: string[] } => {
+    const removed: string[] = [];
+    return {
+      removed,
+      list: (absDir) => [...readdirSync(absDir), alias],
+      read: (absPath) => readFileSync(absPath.endsWith(alias) ? join(root, ".lore/schemas", target) : absPath, "utf8"),
+      remove: (absPath) => {
+        removed.push(absPath);
+      },
+    };
+  };
+
+  test("a committed, unstamped ADR.schema.json aliasing adr.schema.json survives a full export (the reproduced bypass)", () => {
+    exportSchemas(["export"]);
+    writeFileSync(join(root, ".lore/schemas/adr.schema.json"), "{}\n"); // the committed, unstamped file
+    const io = aliasingIO("ADR.schema.json", "adr.schema.json");
+    const stdout = capture();
+    runSchema({ root, output: JSON_CTX, stdout, args: ["export"], schemaDirIO: io });
+    const result = (JSON.parse(stdout.text()) as { data: SchemaExportResult }).data;
+    expect(io.removed).toEqual([]);
+    expect(result.removed).toEqual([]);
+    expect(readGeneratorStamp(readFileSync(join(root, ".lore/schemas/adr.schema.json"), "utf8"))).toBe(
+      profileDigest(defaultProfile()),
+    );
+  });
+
+  test("prune decisions use the PRE-write stamp, not the bytes the export just wrote", () => {
+    // Isolates the snapshot rule from the case-fold rule: `ghost` folds to no written name, so only
+    // the timing of the stamp read decides. Pre-write it was unstamped, so it must be kept.
+    exportSchemas(["export"]);
+    writeFileSync(join(root, ".lore/schemas/adr.schema.json"), "{}\n");
+    const io = aliasingIO("ghost.schema.json", "adr.schema.json");
+    const stdout = capture();
+    runSchema({ root, output: JSON_CTX, stdout, args: ["export"], schemaDirIO: io });
+    const result = (JSON.parse(stdout.text()) as { data: SchemaExportResult }).data;
+    expect(io.removed).toEqual([]);
+    expect(result.keptUnattributable.map((f) => f.path)).toEqual([".lore/schemas/ghost.schema.json"]);
   });
 });

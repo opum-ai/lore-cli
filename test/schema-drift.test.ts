@@ -125,6 +125,30 @@ describe("schemaDriftFindings — the pure comparison (LCLI-539, LCLI-565)", () 
     expect(stale?.message).not.toBe(orphaned?.message);
   });
 
+  test("a case variant standing in for an owned schema (APFS after export) is that schema, not missing + prunable", () => {
+    // On a case-insensitive filesystem an export writes `story.schema.json` INTO the existing
+    // `STORY.schema.json` entry, so the listing keeps the old case. The old logic reported the owned
+    // file missing AND advised pruning the variant — a hand `rm` of which deletes the owned schema.
+    const committed = new Map([
+      [`${SCHEMAS}/STORY.schema.json`, '{"a":1}\n'],
+      [`${SCHEMAS}/spec.schema.json`, '{"b":2}\n'],
+    ]);
+    expect(findingsFor(committed)).toEqual([]);
+    committed.set(`${SCHEMAS}/STORY.schema.json`, '{"a":999}\n');
+    const findings = findingsFor(committed);
+    expect(findings.map((f) => [f.file, f.schemaClass])).toEqual([[`${SCHEMAS}/story.schema.json`, "stale"]]);
+  });
+
+  test("a case variant BESIDE its owned schema is unattributable and never advised for pruning", () => {
+    const committed = new Map(regenerated);
+    committed.set(`${SCHEMAS}/Story.schema.json`, stamped(DIGEST)); // matching stamp: still never a prune
+    const findings = findingsFor(committed);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ file: `${SCHEMAS}/Story.schema.json`, rule: "schema-unattributable" });
+    expect(findings[0]?.message).toMatch(/differs only in letter case from \.lore\/schemas\/story\.schema\.json/);
+    expect(findings[0]?.message).not.toMatch(/to prune it|run `lore schema export`/);
+  });
+
   test("the four conditions are reported independently rather than collapsing into one finding", () => {
     const committed = new Map([
       [`${SCHEMAS}/story.schema.json`, '{"a":999}\n'], // stale

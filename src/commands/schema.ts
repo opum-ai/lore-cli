@@ -39,10 +39,10 @@ import { type CompiledType, loadProfile } from "../core/profile";
 import {
   canonicalType,
   emitSchemaFiles,
+  foldSchemaName,
   profileDigest,
   readGeneratorStamp,
   SCHEMAS_DIR,
-  type SchemaFile,
 } from "../core/schema";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
@@ -61,6 +61,46 @@ export interface SchemaOptions {
   stdout?: Writer;
   /** stderr sink for the kept-unattributable warning (non-`--json` only); defaults to `process.stderr`. */
   stderr?: Writer;
+  /** The prune pass's directory IO; defaults to the real filesystem. A test seam (see {@link SchemaDirIO}). */
+  schemaDirIO?: SchemaDirIO;
+}
+
+/**
+ * The three filesystem operations the prune pass performs on the managed schema directory, injectable
+ * so a test can model a filesystem where writing one name changes what another name reads — the
+ * case-insensitive APFS/NTFS aliasing behind the LCLI-565 review finding — on any host, including
+ * case-sensitive Linux CI.
+ */
+export interface SchemaDirIO {
+  /** Entry names in `absDir`; throws `ENOENT` when it does not exist. */
+  list(absDir: string): string[];
+  /** A file's UTF-8 bytes. */
+  read(absPath: string): string;
+  /** Delete one file. */
+  remove(absPath: string): void;
+}
+
+/** The real filesystem, {@link runSchema}'s default {@link SchemaDirIO}. */
+const FS_SCHEMA_DIR_IO: SchemaDirIO = {
+  list: (absDir) => readdirSync(absDir),
+  read: (absPath) => readFileSync(absPath, "utf8"),
+  remove: (absPath) => rmSync(absPath),
+};
+
+/** One `*.schema.json` entry in the managed directory as it stood BEFORE the export wrote anything. */
+export interface SchemaDirEntry {
+  /** The directory entry's own name, exactly as listed (case preserved). */
+  readonly name: string;
+  /** Its generator stamp at snapshot time, or `null` when it carried none. */
+  readonly stamp: string | null;
+}
+
+/** Which pre-write entries a full export deletes, and which unattributable ones it keeps. */
+export interface OrphanPrunePlan {
+  /** Entry names to delete: orphans whose PRE-WRITE stamp is this binary's own digest. */
+  readonly remove: readonly string[];
+  /** Entry names kept because their pre-write stamp was absent or another profile's. */
+  readonly kept: readonly string[];
 }
 
 /** The parsed form of `lore schema`'s arguments. */
@@ -126,6 +166,16 @@ export function runSchema(options: SchemaOptions): number {
   }
 
   const files = emitSchemaFiles(profile, { dir: outArg, only });
+  // A full export to the managed default directory owns its schema set, so a type dropped from the
+  // profile leaves a stale schema behind; prune it there. A single-`--type` export is surgical and
+  // never prunes its siblings, and a non-default `--out` is never lore-owned, so it is never pruned
+  // either — see `isManagedSchemasDir`. The directory is SNAPSHOTTED here, before any write
+  // (LCLI-565 review): on a case-insensitive filesystem an existing `ADR.schema.json` IS the
+  // `adr.schema.json` the export is about to write, so judging an entry by its post-write bytes
+  // would read this binary's own fresh stamp and delete the file just written.
+  const io = options.schemaDirIO ?? FS_SCHEMA_DIR_IO;
+  const managed = only === undefined && isManagedSchemasDir(absOutDir, options.root);
+  const before = managed ? snapshotSchemaDir(absOutDir, outArg, io) : [];
   ensureDir(options.root, outArg);
   for (const file of files) {
     // `outArg` is confined to the repo, so `file.path` (`<outArg>/<slug>.schema.json`) is repo-relative
@@ -141,14 +191,10 @@ export function runSchema(options: SchemaOptions): number {
     // the ancestor-symlink guard (LORE-93) already throws.
     writeFileNoFollow(join(options.root, file.path), file.contents, file.path);
   }
-  // A full export to the managed default directory owns its schema set, so a type dropped from the
-  // profile leaves a stale schema behind; prune it there. A single-`--type` export is surgical and
-  // never prunes its siblings, and a non-default `--out` is never lore-owned, so it is never pruned
-  // either — see `isManagedSchemasDir`.
-  const { removed, kept } =
-    only === undefined && isManagedSchemasDir(absOutDir, options.root)
-      ? pruneOrphans(absOutDir, outArg, files, profileDigest(profile))
-      : { removed: [], kept: [] };
+  const keep = new Set(files.map((file) => posix.basename(file.path)));
+  const { removed, kept } = managed
+    ? pruneOrphans(absOutDir, outArg, planOrphanPrune(before, keep, profileDigest(profile)), io)
+    : { removed: [], kept: [] };
 
   const result: SchemaExportResult = {
     out: outArg,
@@ -238,55 +284,86 @@ function isManagedSchemasDir(absOutDir: string, root: string): boolean {
 }
 
 /**
- * Delete every `<name>.schema.json` in `absDir` that the just-written `files` set does not contain
- * AND whose generator stamp equals `digest` — the orphans this binary can affirm it generated — and
- * return them as `removed`. Every other orphan (stamp from another profile, or no stamp at all) is
- * returned as `kept` and left on disk (LCLI-565): a binary older than the tree cannot tell a removed
- * type from a type it has never heard of, and before this guard it deleted the latter (LCLI-546).
- * This is the only schema delete in lore's source, so it is the one place the guard can live.
+ * Every `*.schema.json` entry in the managed directory and its generator stamp, read BEFORE the
+ * export writes anything — the only bytes a prune decision may be taken on. A directory that does
+ * not exist yet has no entries; any other read failure is a genuine IO fault, mapped via
+ * {@link ioError}.
+ */
+function snapshotSchemaDir(absDir: string, displayDir: string, io: SchemaDirIO): SchemaDirEntry[] {
+  let entries: string[];
+  try {
+    entries = io.list(absDir);
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw ioError(cause, displayDir, "read directory");
+  }
+  return entries
+    .filter((name) => name.endsWith(".schema.json"))
+    .sort()
+    .map((name) => {
+      try {
+        return { name, stamp: readGeneratorStamp(io.read(join(absDir, name))) };
+      } catch (cause) {
+        throw ioError(cause, posix.join(displayDir, name), "read file");
+      }
+    });
+}
+
+/**
+ * The prune decision, pure (LCLI-565): given the managed directory's PRE-WRITE entries and their
+ * stamps, the names the export writes (`keep`), and this binary's profile digest, which entries are
+ * deleted and which unattributable ones are kept. Two rules, each sufficient alone against the
+ * case-insensitive-filesystem bypass the review reproduced:
  *
- * Only `*.schema.json` is touched, and only ever called for the managed default directory (see
- * {@link isManagedSchemasDir}), so every file this walks is lore-owned; other files are never removed.
- * The directory was just `ensureDir`'d, so a read failure here is a genuine IO fault, mapped via the
- * shared {@link ioError}.
+ * - an entry whose name, case- and normalization-folded, matches a `keep` name is NEVER deleted
+ *   and not reported: on a case-insensitive filesystem it is the file just written, and on a
+ *   case-sensitive one deleting a file that differs from an owned one only by case is not a call
+ *   this pass can make safely;
+ * - every other entry is deleted only if its PRE-WRITE stamp equals `digest`; otherwise it is kept
+ *   and reported, whether its stamp was absent or another profile's.
+ */
+export function planOrphanPrune(
+  before: readonly SchemaDirEntry[],
+  keep: ReadonlySet<string>,
+  digest: string,
+): OrphanPrunePlan {
+  const owned = new Set([...keep].map(foldSchemaName));
+  const remove: string[] = [];
+  const kept: string[] = [];
+  for (const entry of before) {
+    if (keep.has(entry.name) || owned.has(foldSchemaName(entry.name))) {
+      continue;
+    }
+    (entry.stamp === digest ? remove : kept).push(entry.name);
+  }
+  return { remove, kept };
+}
+
+/**
+ * Carry out an {@link OrphanPrunePlan} against the managed directory (only ever called for it — see
+ * {@link isManagedSchemasDir}), returning the report's `removed` and `kept` files. Deletes exactly
+ * the planned names and nothing it re-reads or re-judges, so the decision stays the pre-write one.
+ * This is the only schema delete in lore's source (LCLI-546 came through it).
  */
 function pruneOrphans(
   absDir: string,
   displayDir: string,
-  files: readonly SchemaFile[],
-  digest: string,
+  plan: OrphanPrunePlan,
+  io: SchemaDirIO,
 ): { removed: ReportFile[]; kept: ReportFile[] } {
-  const keep = new Set(files.map((file) => posix.basename(file.path)));
-  let entries: string[];
-  try {
-    entries = readdirSync(absDir);
-  } catch (cause) {
-    throw ioError(cause, displayDir, "read directory");
-  }
   const removed: ReportFile[] = [];
-  const kept: ReportFile[] = [];
-  for (const entry of entries.sort()) {
-    if (entry.endsWith(".schema.json") && !keep.has(entry)) {
-      const rel = posix.join(displayDir, entry);
-      let contents: string;
-      try {
-        contents = readFileSync(join(absDir, entry), "utf8");
-      } catch (cause) {
-        throw ioError(cause, rel, "read file");
-      }
-      if (readGeneratorStamp(contents) !== digest) {
-        kept.push({ path: rel });
-        continue;
-      }
-      try {
-        rmSync(join(absDir, entry));
-      } catch (cause) {
-        throw ioError(cause, rel, "remove file");
-      }
-      removed.push({ path: rel });
+  for (const name of plan.remove) {
+    const rel = posix.join(displayDir, name);
+    try {
+      io.remove(join(absDir, name));
+    } catch (cause) {
+      throw ioError(cause, rel, "remove file");
     }
+    removed.push({ path: rel });
   }
-  return { removed, kept };
+  return { removed, kept: plan.kept.map((name) => ({ path: posix.join(displayDir, name) })) };
 }
 
 // ── Argument parsing ───────────────────────────────────────────────────────────

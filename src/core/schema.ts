@@ -769,6 +769,16 @@ function stampSchema(schema: Record<string, unknown>, digest: string): Record<st
 }
 
 /**
+ * A schema file name (or path) as a case-insensitive, normalization-insensitive filesystem — APFS,
+ * NTFS — compares it. Two names with the same fold may be ONE file on disk, so neither the drift
+ * gate nor the export's prune pass may treat a case variant of an owned schema as an orphan
+ * (LCLI-565 review).
+ */
+export function foldSchemaName(name: string): string {
+  return name.normalize("NFC").toLowerCase();
+}
+
+/**
  * The `profileDigest` a committed schema file's bytes carry, or `null` when it carries none: not
  * JSON, not an object, no {@link GENERATOR_STAMP_KEY}, or a digest that is not a string. Every one
  * of those means "this binary cannot attribute the file", which is exactly how the caller treats

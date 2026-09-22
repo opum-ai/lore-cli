@@ -66,7 +66,7 @@ import { type BundleState, CURRENT_OKF_VERSION, type TaskRollupField } from "./o
 import { ATTESTED_COMPUTATION_TYPE } from "./profile";
 import type { ReconciledStatus } from "./reconcile";
 import { claimVersion, RELATION_KINDS, readRelations, relationVersionState } from "./relations";
-import { readGeneratorStamp } from "./schema";
+import { foldSchemaName, readGeneratorStamp } from "./schema";
 
 /** `error` fails the gate (exit `6`); `warning` is advisory (fails only under `--strict`). The shared {@link Severity}. */
 export type CheckSeverity = Severity;
@@ -837,8 +837,25 @@ export function schemaDriftFindings(input: SchemaDriftInput): CheckFinding[] {
     return [];
   }
   const findings: CheckFinding[] = [];
+  const committed = input.committed;
+  // A committed name that differs from an owned one only in letter case may BE that file on a
+  // case-insensitive filesystem (LCLI-565 review), so when the exact owned name is absent the case
+  // variant stands in for it; when both exist, the variant is reported below as unattributable.
+  const committedByFold = new Map<string, string>();
+  for (const path of committed.keys()) {
+    if (!committedByFold.has(foldSchemaName(path))) {
+      committedByFold.set(foldSchemaName(path), path);
+    }
+  }
+  const ownedByFold = new Map([...input.regenerated.keys()].map((path) => [foldSchemaName(path), path] as const));
+  const standIns = new Set<string>();
   for (const [path, regenerated] of input.regenerated) {
-    const current = input.committed.get(path);
+    let current = committed.get(path);
+    const variant = committedByFold.get(foldSchemaName(path));
+    if (current === undefined && variant !== undefined && !input.regenerated.has(variant)) {
+      current = committed.get(variant);
+      standIns.add(variant);
+    }
     if (current === undefined) {
       findings.push({
         severity: "error",
@@ -857,8 +874,19 @@ export function schemaDriftFindings(input: SchemaDriftInput): CheckFinding[] {
       });
     }
   }
-  for (const [path, contents] of input.committed) {
-    if (input.regenerated.has(path)) {
+  for (const [path, contents] of committed) {
+    if (input.regenerated.has(path) || standIns.has(path)) {
+      continue;
+    }
+    const owner = ownedByFold.get(foldSchemaName(path));
+    if (owner !== undefined) {
+      findings.push({
+        severity: "error",
+        rule: "schema-unattributable",
+        schemaClass: "unattributable",
+        file: path,
+        message: `this schema's name differs only in letter case from ${owner}, which the active profile owns, and on a case-insensitive filesystem the two are one file — do NOT prune it: read \`git log\` on both names, then rename or delete it by hand`,
+      });
       continue;
     }
     const stamp = readGeneratorStamp(contents);
