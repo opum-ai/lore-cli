@@ -30,17 +30,20 @@ semantic exit codes, machine-readable `--json`).
 
 - Built on **Bun + TypeScript** with an exact-pinned **Commander** parser fed by
   Lore's capability manifest; Lore still owns output, errors, and process lifecycle.
-- Published on npm as<!--lore-version:published-bullet:begin--> **`@opum-ai/lore@0.8.0`** (bin `lore`) with six
+- Published on npm as<!--lore-version:published-bullet:begin--> **`@opum-ai/lore@0.9.0`** (bin `lore`) with six
   exact-pinned platform packages, including Windows ARM64.<!--lore-version:published-bullet:end-->
 - The agent bridge is a generated **`.claude/skills/lore/SKILL.md`** plus a tiny
   CLAUDE.md nudge and `lore instructions`. An **MCP server is secondary and
   deferred to v2**.
 
-> **Status:<!--lore-version:status:begin--> 0.8.0 released.** Tag `v0.8.0`, the qualified workflow artifacts,
+> **Status:<!--lore-version:status:begin--> 0.9.0 released.** Tag `v0.9.0`, the qualified workflow artifacts,
 > all seven public `@opum-ai/lore*` npm packages with `latest` moved on each,
-> and a clean-registry install agree on `0.8.0`.<!--lore-version:status:end-->
-> Released as a **pair with `quest` 0.9.0** — deliberately NOT the same number.
-> "The pair" means the two CLIs are released and qualified TOGETHER, not that
+> and a clean-registry install agree on `0.9.0`.<!--lore-version:status:end-->
+> **No `quest` pairing is claimed for this version by its number.** `0.8.0`
+> was released as a pair with `quest` 0.9.0 — deliberately NOT the same number;
+> whether any lore version and any quest version form a qualified pair is
+> measured by `opum-cli-e2e`, not implied by either version string. "The pair"
+> means the two CLIs are released and qualified TOGETHER, not that
 > they carry matching version strings. Exact-version lockstep was the earlier
 > convention and it was retired by decision, not by drift: lore and quest have
 > independent change sets, and a matched version string that is not a matched
@@ -54,8 +57,8 @@ semantic exit codes, machine-readable `--json`).
 > publishing is configured on every package but cannot authenticate: GitHub
 > issues immutable-format OIDC subject claims for this repository and npm
 > matches the classic form, so `publish: true` fails with `E404` (LCLI-482).
-> `0.8.0` is therefore published with `scripts/publish-release.sh` and, like
-> `0.7.0`, `0.6.2` and `0.6.1` but unlike `0.6.0`, **carries no provenance attestation** —
+> `0.8.0`, `0.7.0`, `0.6.2` and `0.6.1` were therefore published with
+> `scripts/publish-release.sh` and, unlike `0.6.0`, **carry no provenance attestation** —
 > a manual publish cannot mint one, and provenance requires the CI OIDC path.
 > An absent attestation here is expected and is not evidence of tampering. See
 > [Lore CLI release truth](docs/reference/lore-cli-release-truth.md).
