@@ -12,7 +12,15 @@ import {
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import { runInit } from "../src/commands/init";
-import { confineOutDir, runSchema, type SchemaExportResult } from "../src/commands/schema";
+import {
+  confineOutDir,
+  planOrphanPrune,
+  runSchema,
+  type SchemaDirIO,
+  type SchemaExportResult,
+} from "../src/commands/schema";
+import { defaultProfile } from "../src/core/profile";
+import { profileDigest, readGeneratorStamp } from "../src/core/schema";
 import { LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
@@ -248,15 +256,51 @@ describe("lore schema export — custom profile (AC#2)", () => {
 });
 
 describe("lore schema export — pruning stale schemas (full export)", () => {
-  test("a full export removes an orphaned <slug>.schema.json no profile type owns", () => {
+  test("a full export removes an orphan whose generator stamp is this binary's own (LCLI-565)", () => {
     exportSchemas(["export"]);
     const ghost = join(root, ".lore/schemas/ghost.schema.json");
-    writeFileSync(ghost, "{}\n");
+    // A copy of a file this binary just wrote, so it carries this binary's profile digest: the one
+    // orphan the export can affirm it generated. (Before LCLI-565 this fixture was `{}` — an
+    // unstamped file, which is now kept; see the next test.)
+    writeFileSync(ghost, readFileSync(join(root, ".lore/schemas/epic.schema.json"), "utf8"));
     const { result } = exportSchemas(["export"]);
     expect(result.removed.map((f) => f.path)).toEqual([".lore/schemas/ghost.schema.json"]);
+    expect(result.keptUnattributable).toEqual([]);
     expect(existsSync(ghost)).toBe(false);
     // The real schemas survive.
     expect(existsSync(join(root, ".lore/schemas/story.schema.json"))).toBe(true);
+  });
+
+  test("a full export KEEPS an unattributable orphan — no stamp, or another profile's — and reports it (LCLI-565)", () => {
+    // LCLI-546's shape: a binary older than the tree meets a newer type's schema. Before this guard
+    // the export deleted it. It must now stay on disk, in `keptUnattributable`, not `removed`.
+    exportSchemas(["export"]);
+    const unstamped = join(root, ".lore/schemas/newer-type.schema.json");
+    const foreign = join(root, ".lore/schemas/other-type.schema.json");
+    writeFileSync(unstamped, '{\n  "type": "object"\n}\n');
+    writeFileSync(
+      foreign,
+      `${JSON.stringify({ "x-lore-generator": { profileDigest: `sha256:${"0".repeat(64)}` } })}\n`,
+    );
+    const { result } = exportSchemas(["export"]);
+    expect(result.removed).toEqual([]);
+    expect(result.keptUnattributable.map((f) => f.path)).toEqual([
+      ".lore/schemas/newer-type.schema.json",
+      ".lore/schemas/other-type.schema.json",
+    ]);
+    expect(existsSync(unstamped)).toBe(true);
+    expect(existsSync(foreign)).toBe(true);
+  });
+
+  test("a kept unattributable orphan is warned about on stderr outside --json, and not inside it", () => {
+    exportSchemas(["export"]);
+    writeFileSync(join(root, ".lore/schemas/newer-type.schema.json"), "{}\n");
+    const plainErr = capture();
+    runSchema({ root, output: PLAIN_CTX, stdout: capture(), stderr: plainErr, args: ["export"] });
+    expect(plainErr.text()).toMatch(/warning: kept \.lore\/schemas\/newer-type\.schema\.json: .*NOT pruned/);
+    const jsonErr = capture();
+    runSchema({ root, output: JSON_CTX, stdout: capture(), stderr: jsonErr, args: ["export"] });
+    expect(jsonErr.text()).toBe("");
   });
 
   test("a full export leaves non-schema files in the directory untouched", () => {
@@ -540,5 +584,129 @@ describe("lore schema export — plain rendering", () => {
     const text = stdout.text();
     expect(text).toContain("wrote .lore/schemas/adr.schema.json");
     expect(text).toContain("1 schema exported to .lore/schemas");
+  });
+});
+
+describe("lore schema export — the prune decision on case-insensitive filesystems (LCLI-565 review)", () => {
+  const DIGEST = `sha256:${"a".repeat(64)}`;
+
+  test("planOrphanPrune never deletes an entry that case-folds to a name the export writes, even with a matching stamp", () => {
+    // Exactly what APFS showed the reviewer AFTER the write: the listing still says `ADR.schema.json`,
+    // and its bytes are the stamped ones just written. The old logic deleted it.
+    const plan = planOrphanPrune([{ name: "ADR.schema.json", stamp: DIGEST }], new Set(["adr.schema.json"]), DIGEST);
+    expect(plan).toEqual({ remove: [], kept: [], caseVariants: ["ADR.schema.json"] });
+  });
+
+  test("planOrphanPrune deletes only a matching pre-write stamp; absent or foreign stamps are kept", () => {
+    const plan = planOrphanPrune(
+      [
+        { name: "adr.schema.json", stamp: null }, // owned by name: never touched
+        { name: "mine.schema.json", stamp: DIGEST },
+        { name: "unstamped.schema.json", stamp: null },
+        { name: "foreign.schema.json", stamp: `sha256:${"b".repeat(64)}` },
+      ],
+      new Set(["adr.schema.json"]),
+      DIGEST,
+    );
+    expect(plan).toEqual({
+      remove: ["mine.schema.json"],
+      kept: ["unstamped.schema.json", "foreign.schema.json"],
+      caseVariants: [],
+    });
+  });
+
+  /**
+   * A {@link SchemaDirIO} over the real directory that ALSO lists `alias`, whose bytes are read
+   * through to `target` at call time: a model of a filesystem where writing `target` changes what
+   * `alias` reads, runnable on case-sensitive Linux CI. Records every removal.
+   */
+  const aliasingIO = (alias: string, target: string): SchemaDirIO & { removed: string[] } => {
+    const removed: string[] = [];
+    return {
+      removed,
+      list: (absDir) => [...readdirSync(absDir), alias],
+      read: (absPath) => readFileSync(absPath.endsWith(alias) ? join(root, ".lore/schemas", target) : absPath, "utf8"),
+      remove: (absPath) => {
+        removed.push(absPath);
+      },
+    };
+  };
+
+  /**
+   * A CASE-INSENSITIVE directory (APFS/NTFS) modelled on any host: the real `adr.schema.json` is
+   * listed under its original case, `ADR.schema.json`, and that name reads/writes the same file —
+   * one entry, both before and after the write.
+   */
+  const caseInsensitiveIO = (): SchemaDirIO & { removed: string[] } => {
+    const removed: string[] = [];
+    const real = (absPath: string) => absPath.replace(/ADR\.schema\.json$/, "adr.schema.json");
+    return {
+      removed,
+      list: (absDir) => readdirSync(absDir).map((name) => (name === "adr.schema.json" ? "ADR.schema.json" : name)),
+      read: (absPath) => readFileSync(real(absPath), "utf8"),
+      remove: (absPath) => {
+        removed.push(absPath);
+      },
+    };
+  };
+
+  /** A CASE-SENSITIVE directory holding a separate, unstamped `ADR.schema.json` beside `adr.schema.json`. */
+  const caseSensitiveIO = (): SchemaDirIO & { removed: string[] } => {
+    const removed: string[] = [];
+    return {
+      removed,
+      list: (absDir) => [...readdirSync(absDir), "ADR.schema.json"],
+      read: (absPath) => (absPath.endsWith("ADR.schema.json") ? "{}\n" : readFileSync(absPath, "utf8")),
+      remove: (absPath) => {
+        removed.push(absPath);
+      },
+    };
+  };
+
+  test("case-insensitive: a committed, unstamped ADR.schema.json is NOT deleted — the export overwrites its bytes in place, recoverable from git like a stale owned file", () => {
+    // The reproduced bypass deleted this entry. It must now survive; its bytes are rewritten with
+    // this binary's stamp (APFS writes `adr.schema.json` into the existing entry), which is the same
+    // recoverable-from-git treatment a stale owned schema gets. It is the written file, not a
+    // second one, so it is not reported as kept.
+    exportSchemas(["export"]);
+    writeFileSync(join(root, ".lore/schemas/adr.schema.json"), "{}\n"); // the committed, unstamped file
+    const io = caseInsensitiveIO();
+    const stdout = capture();
+    runSchema({ root, output: JSON_CTX, stdout, args: ["export"], schemaDirIO: io });
+    const result = (JSON.parse(stdout.text()) as { data: SchemaExportResult }).data;
+    expect(io.removed).toEqual([]);
+    expect(result.removed).toEqual([]);
+    expect(result.keptUnattributable).toEqual([]);
+    expect(readGeneratorStamp(readFileSync(join(root, ".lore/schemas/adr.schema.json"), "utf8"))).toBe(
+      profileDigest(defaultProfile()),
+    );
+  });
+
+  test("case-sensitive: a separate ADR.schema.json beside adr.schema.json is kept AND reported, so the warning names it", () => {
+    exportSchemas(["export"]);
+    const io = caseSensitiveIO();
+    const stdout = capture();
+    const stderr = capture();
+    runSchema({ root, output: PLAIN_CTX, stdout, stderr, args: ["export"], schemaDirIO: io });
+    expect(io.removed).toEqual([]);
+    expect(stderr.text()).toMatch(/warning: kept \.lore\/schemas\/ADR\.schema\.json/);
+    const jsonOut = capture();
+    runSchema({ root, output: JSON_CTX, stdout: jsonOut, args: ["export"], schemaDirIO: caseSensitiveIO() });
+    const result = (JSON.parse(jsonOut.text()) as { data: SchemaExportResult }).data;
+    expect(result.removed).toEqual([]);
+    expect(result.keptUnattributable.map((f) => f.path)).toEqual([".lore/schemas/ADR.schema.json"]);
+  });
+
+  test("prune decisions use the PRE-write stamp, not the bytes the export just wrote", () => {
+    // Isolates the snapshot rule from the case-fold rule: `ghost` folds to no written name, so only
+    // the timing of the stamp read decides. Pre-write it was unstamped, so it must be kept.
+    exportSchemas(["export"]);
+    writeFileSync(join(root, ".lore/schemas/adr.schema.json"), "{}\n");
+    const io = aliasingIO("ghost.schema.json", "adr.schema.json");
+    const stdout = capture();
+    runSchema({ root, output: JSON_CTX, stdout, args: ["export"], schemaDirIO: io });
+    const result = (JSON.parse(stdout.text()) as { data: SchemaExportResult }).data;
+    expect(io.removed).toEqual([]);
+    expect(result.keptUnattributable.map((f) => f.path)).toEqual([".lore/schemas/ghost.schema.json"]);
   });
 });

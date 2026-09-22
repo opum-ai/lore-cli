@@ -66,6 +66,7 @@ import { type BundleState, CURRENT_OKF_VERSION, type TaskRollupField } from "./o
 import { ATTESTED_COMPUTATION_TYPE } from "./profile";
 import type { ReconciledStatus } from "./reconcile";
 import { claimVersion, RELATION_KINDS, readRelations, relationVersionState } from "./relations";
+import { foldSchemaName, readGeneratorStamp } from "./schema";
 
 /** `error` fails the gate (exit `6`); `warning` is advisory (fails only under `--strict`). The shared {@link Severity}. */
 export type CheckSeverity = Severity;
@@ -99,6 +100,7 @@ export type CheckRule =
   | "unsupported-task-coupling"
   | "index-drift"
   | "schema-drift"
+  | "schema-unattributable"
   | "okf-version"
   | "unknown-type"
   | "portability"
@@ -115,7 +117,29 @@ export type CheckRule =
 export type CheckFinding = Finding<CheckRule> & {
   /** The bundle-root-relative POSIX path of the file the finding is in. */
   readonly file: string;
+  /**
+   * Present on every `schema-drift` / `schema-unattributable` finding and nowhere else: which of the
+   * four committed-schema conditions it is (LCLI-565). Carried per finding so a run that exits `7`
+   * still shows every `6`-class schema finding with its own class (OPAG-373).
+   */
+  readonly schemaClass?: SchemaDriftClass;
 };
+
+/**
+ * The committed-schema conditions (docs/specs/committed-schema-generator-stamp.md, decision table).
+ * `missing`/`stale`/`orphaned` are drift (exit `6`) with a remedy `lore schema export` applies;
+ * `unattributable` is indeterminate (exit `7`) and has no automatic remedy by design.
+ */
+export type SchemaDriftClass = "missing" | "stale" | "orphaned" | "unattributable";
+
+/**
+ * Whether a finding is an INDETERMINATE one — the gate looked and cannot judge from here, so it
+ * must neither pass nor be reported as a repairable failure (exit `7`, LCLI-565). The one predicate
+ * the command layer's exit code keys on.
+ */
+export function isIndeterminateFinding(finding: CheckFinding): boolean {
+  return finding.rule === "schema-unattributable";
+}
 
 /** One bundle file handed to {@link checkBundle}: its **bundle-root-relative** path and raw bytes. */
 export interface CheckInputFile {
@@ -760,10 +784,18 @@ export interface SchemaDriftInput {
    * agree by construction rather than by a recorded expectation.
    */
   readonly regenerated: ReadonlyMap<string, string>;
+  /**
+   * The running binary's own {@link import("./schema").profileDigest} — the only key an orphan's
+   * prune decision is taken on. An orphan whose stamp equals it is this binary's own artifact.
+   */
+  readonly profileDigest: string;
+  /** The running lore's version, for the unattributable message only. It never decides anything. */
+  readonly loreVersion: string;
 }
 
 /**
- * The **schema-drift** findings: the assertion that `lore schema export` would be a **no-op**.
+ * The **schema-drift** findings: the assertion that `lore schema export` would be a **no-op**, plus
+ * the one case where it cannot be judged at all.
  *
  * `.lore/schemas/*.json` is a COMMITTED artifact that looks authoritative — an agent, a human, or
  * an editor's YAML language server following the `$schema` modeline `lore new`/`lore init` stamps
@@ -779,12 +811,21 @@ export interface SchemaDriftInput {
  * can say nothing about whether they still are, which is the same failure this check exists to
  * catch, one level up.
  *
- * Three conditions, each mapping to something `lore schema export` would do:
+ * Four conditions (the spec's decision table), each with its own {@link SchemaDriftClass}:
  *
- * - **stale** — a committed file whose bytes differ from the regenerated ones (export overwrites).
+ * - **stale** — a committed file whose bytes differ from the regenerated ones (export overwrites;
+ *   recoverable from git).
  * - **missing** — a profile type with no committed schema at all (export writes it).
- * - **orphaned** — a committed `<slug>.schema.json` no profile type owns (a full export to the
- *   managed directory prunes it).
+ * - **orphaned** — a committed `<slug>.schema.json` no profile type owns, whose generator stamp
+ *   EQUALS this binary's profile digest: the binary affirms the file is its own, so a full export
+ *   prunes it (destructive, and affirmed).
+ * - **unattributable** — the same orphan, but its stamp differs or is ABSENT. This binary cannot
+ *   tell "the type was removed" from "I am older than this tree", so it reports the indeterminate
+ *   `schema-unattributable` rule (exit `7`) and NEVER advises a prune. An absent stamp is the
+ *   common case on the release that introduces the stamp, not an edge case.
+ *
+ * Stale and orphaned keep distinct messages on purpose (OPAG-354 item 5): one rewrites a file, the
+ * other deletes one, and they must not converge as this grows.
  *
  * A `committed` of `null` — no `.lore/schemas/` directory — yields NO findings. A bundle that has
  * never exported its schemas is not drifted, it simply has none, and failing that would turn this
@@ -796,12 +837,39 @@ export function schemaDriftFindings(input: SchemaDriftInput): CheckFinding[] {
     return [];
   }
   const findings: CheckFinding[] = [];
+  const committed = input.committed;
+  // A committed name that differs from an owned one only in letter case may BE that file on a
+  // case-insensitive filesystem (LCLI-565 review). It stands in for the owned schema ONLY when the
+  // exact owned name is absent AND the variant carries this binary's own stamp — the APFS state an
+  // export leaves behind. An unstamped or foreign-stamped variant may be a separate, hand-written
+  // file (it is, on a case-sensitive filesystem), so it is never compared as the owned schema: it is
+  // reported below as unattributable under its own path, and the owned name as missing (LCLI-565
+  // re-review).
+  const committedByFold = new Map<string, string>();
+  for (const path of committed.keys()) {
+    if (!committedByFold.has(foldSchemaName(path))) {
+      committedByFold.set(foldSchemaName(path), path);
+    }
+  }
+  const ownedByFold = new Map([...input.regenerated.keys()].map((path) => [foldSchemaName(path), path] as const));
+  const standIns = new Set<string>();
   for (const [path, regenerated] of input.regenerated) {
-    const current = input.committed.get(path);
+    let current = committed.get(path);
+    const variant = committedByFold.get(foldSchemaName(path));
+    if (
+      current === undefined &&
+      variant !== undefined &&
+      !input.regenerated.has(variant) &&
+      readGeneratorStamp(committed.get(variant) as string) === input.profileDigest
+    ) {
+      current = committed.get(variant);
+      standIns.add(variant);
+    }
     if (current === undefined) {
       findings.push({
         severity: "error",
         rule: "schema-drift",
+        schemaClass: "missing",
         file: path,
         message: "the active profile declares this type but no schema is committed for it — run `lore schema export`",
       });
@@ -809,22 +877,64 @@ export function schemaDriftFindings(input: SchemaDriftInput): CheckFinding[] {
       findings.push({
         severity: "error",
         rule: "schema-drift",
+        schemaClass: "stale",
         file: path,
         message: "the committed schema no longer matches what this profile generates — run `lore schema export`",
       });
     }
   }
-  for (const path of input.committed.keys()) {
-    if (!input.regenerated.has(path)) {
+  for (const [path, contents] of committed) {
+    if (input.regenerated.has(path) || standIns.has(path)) {
+      continue;
+    }
+    const owner = ownedByFold.get(foldSchemaName(path));
+    if (owner !== undefined) {
+      findings.push({
+        severity: "error",
+        rule: "schema-unattributable",
+        schemaClass: "unattributable",
+        file: path,
+        message: `this schema's name differs only in letter case from ${owner}, which the active profile owns, and on a case-insensitive filesystem the two may be one file — do NOT prune it: read \`git log\` on both names, then rename or delete it by hand`,
+      });
+      continue;
+    }
+    const stamp = readGeneratorStamp(contents);
+    if (stamp === input.profileDigest) {
       findings.push({
         severity: "error",
         rule: "schema-drift",
+        schemaClass: "orphaned",
         file: path,
         message: "no type in the active profile owns this schema — run `lore schema export` to prune it",
+      });
+    } else {
+      findings.push({
+        severity: "error",
+        rule: "schema-unattributable",
+        schemaClass: "unattributable",
+        file: path,
+        message: unattributableMessage(stamp, input.loreVersion),
       });
     }
   }
   return findings;
+}
+
+/**
+ * The unattributable message. It names the running version for CONTEXT only (the decision was
+ * taken on the digest), says what the reader cannot be told, and routes them to `git log` rather
+ * than to any command, because there is no command whose effect here is known to be safe.
+ */
+function unattributableMessage(stamp: string | null, loreVersion: string): string {
+  const provenance =
+    stamp === null
+      ? "it carries no generator stamp (it predates stamping, or was written by hand)"
+      : `its generator stamp (${stamp.slice(0, 19)}…) is from a profile this lore does not generate`;
+  return (
+    `no type in the active profile owns this schema, and ${provenance}; this is lore ${loreVersion}, ` +
+    "which cannot tell a removed type from a lore older than this tree — do NOT prune it: read " +
+    "`git log` on this file and on the profile (`.lore/profile.toml`, or the lore release supplying the built-in profile) and delete it by hand only if the type was removed"
+  );
 }
 
 // ── Link / anchor resolution (the gate) ──────────────────────────────────────────

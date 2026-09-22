@@ -234,7 +234,8 @@ $ lore validate --json && echo "conformant"   # exit 6 on validation/drift
 ```
 
 Semantic exit codes (uniform across commands): `0` ok, `2` usage, `3`
-not-found, `4` denied, `5` conflict/exists, `6` validation-or-drift. See the
+not-found, `4` denied, `5` conflict/exists, `6` validation-or-drift, `7`
+indeterminate (a gate cannot judge from here — never auto-repair). See the
 [CLI contract](docs/reference/cli-contract.md) for the full output and exit-code
 spec, and the [CLI surface](docs/reference/cli-surface.md) for every command and
 flag.

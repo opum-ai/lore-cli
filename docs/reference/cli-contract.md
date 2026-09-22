@@ -309,11 +309,12 @@ unrelated condition.
 | `4` | denied | The operation is refused: e.g. an edit targeting a lore-managed region, or a guarded destructive op without the required confirmation. |
 | `5` | conflict | Already-exists / write-race: id collision on `new`, supersede target already superseded, concurrent-write conflict. |
 | `6` | `validation` / `drift` | A gate failed: `lore validate` non-conformance (`validation`), or `lore check` drift / bundle-scoped broken-link / heading-anchor / portability failure (`drift`). Relative `.md` links that resolve above the selected bundle root are counted in `skippedOutOfBundleLinkCount`, not resolved or failed. Two distinct `error_type` strings sharing exit `6` (§5.3). |
+| `7` | `indeterminate` | A gate looked and **cannot judge from here**, so it neither passes nor reports a repairable failure. Today: `lore check` on a committed `.lore/schemas/*.schema.json` no profile type owns whose generator stamp is absent or is not this binary's (`schema-unattributable`); it never advises a prune. When one run has both a `6`-class failure and an indeterminate finding it exits `7`, and the `check.report` still lists every finding with its own class. Added 2026-09-22 (§5.5). |
 
 **Code `1` is intentionally NOT used for any expected, classifiable
 condition.** It is reserved to mean "unexpected / uncaught" — a crash or bug.
 An agent should treat exit `1` as *report this*, not *handle this*. This lets a
-caller distinguish "lore told me my input was wrong" (2/3/4/5/6) from "lore
+caller distinguish "lore told me my input was wrong" (2/3/4/5/6/7) from "lore
 itself broke" (1).
 
 Even an uncaught failure stays on-contract. In `--json` mode it is reported as a
@@ -331,6 +332,7 @@ if lore check --plain; then
 else
   case $? in
     6) echo "drift or broken links — run lore sync" >&2 ;;
+    7) echo "lore cannot judge something here — read the report; do not auto-repair" >&2 ;;
     3) echo "a referenced id is missing" >&2 ;;
     *) echo "lore failed unexpectedly" >&2 ;;
   esac
@@ -382,6 +384,12 @@ either signal:
 | `conflict` | `5` |
 | `validation` | `6` |
 | `drift` | `6` |
+| `indeterminate` | `7` |
+
+`indeterminate` is carried by a gate's own report today (`lore check` emits its
+`check.report` on stdout and returns `7`, exactly as it returns `6`), not by a
+thrown error envelope; the string is reserved in the taxonomy so a future
+cannot-judge failure outside a gate (LCLI-548) uses the same spelling.
 
 `validation` and `drift` both map to exit `6` but are distinguished in
 `error_type` (and in the `check.report`/`validate.report` `data`) so an agent
@@ -392,6 +400,25 @@ can tell "my frontmatter is malformed" from "my managed block is stale".
 In pretty and `--plain` modes a failure prints a human-readable diagnostic to
 **stderr** and exits with the same semantic code. The structured envelope is a
 `--json`-mode feature; the exit code is the contract that holds in all modes.
+
+### 5.5 Amendment: exit `7`, `indeterminate` (2026-09-22)
+
+Recorded as an amendment rather than folded silently into the tables above,
+because adding a code is a contract change (§7.2). Exit `7` is the third leg of
+a gate's verified / failed / cannot-judge trichotomy. It exists so that
+"cannot judge" never collapses into a pass (`0`) or into a repairable failure
+(`6`) whose automatic remedy could be destructive: before it, `lore check`
+advised pruning a committed schema that a binary older than the tree merely did
+not recognise, and an unattended hook repairing exit `6` deleted it. The
+mechanism is specified in
+[Committed-schema generator stamp](../specs/committed-schema-generator-stamp.md);
+the rationale is in [ADR-0005](../adr/0005-cli-contract.md)'s 2026-09-22
+amendment; the binding decision is opum-doc's
+`docs/adr/require-generator-provenance-in-committed-lore-schemas-and-a-third-lore-check-outcome.md`,
+and the 7-over-6 precedence is opum-agent's ruling OPAG-373. The
+`lore help --json` manifest's `exitCodes` taxonomy carries it as
+`indeterminate: 7` (nine keys). Callers that branch only on zero versus
+non-zero need no change; callers that branch on `6` must not fold `7` into it.
 
 ---
 
@@ -456,7 +483,7 @@ discipline.
 | Success payload | `{ schemaVersion, kind, data, principal }` on stdout, exit `0` (`principal` reserved, always `null`; §2) |
 | Failure (`--json`) | `{ error_type, message, hint, input }` on **stderr**, stdout empty, exit ≠ 0 |
 | Streams | stdout = data only; stderr = diagnostics only |
-| Exit codes | 0 ok · 2 usage · 3 not-found · 4 denied · 5 conflict · 6 validation/drift · (1 = uncaught bug) |
+| Exit codes | 0 ok · 2 usage · 3 not-found · 4 denied · 5 conflict · 6 validation/drift · 7 indeterminate · (1 = uncaught bug) |
 | Truncation | `total`/`shown`/`truncated`/`hint` in JSON; "showing N of M" line otherwise |
 | Token counts | labeled estimate, `chars/4` heuristic, never exact |
 | Color | pretty + TTY + `NO_COLOR` unset only; never load-bearing |

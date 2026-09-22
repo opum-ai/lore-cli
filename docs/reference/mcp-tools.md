@@ -184,7 +184,7 @@ On failure a tool returns an MCP error result with `isError: true`. Its
 error envelope** the CLI writes to stderr ([CLI contract §3](cli-contract.md)),
 and the human-readable `content` carries the message. The CLI's semantic exit
 codes (`0` ok, `2` usage, `3` not-found, `4` denied, `5` conflict/exists, `6`
-validation-or-drift) are surfaced as an `exit_code` field inside the error
+validation-or-drift, `7` indeterminate) are surfaced as an `exit_code` field inside the error
 envelope so an MCP client can classify failures with the same taxonomy a shell
 caller uses. As with the CLI, success ⇒ envelope, failure ⇒ error object — never
 mixed.

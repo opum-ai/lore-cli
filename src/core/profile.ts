@@ -189,6 +189,12 @@ export interface CompiledType {
   /** The field names this type declares (base ∪ own ∪ reserved), for the extra-key warning. */
   readonly declaredFields: ReadonlySet<string>;
   /**
+   * The subset of {@link declaredFields} whose spec is `required = true`, in the same order. Kept
+   * because {@link jsonSchema} is the LENIENT tier (`required: ["type"]`) and so cannot answer it;
+   * read by {@link import("./schema").profileDigest}'s projection (LCLI-565).
+   */
+  readonly requiredFields: ReadonlySet<string>;
+  /**
    * Whether `lore new` may auto-stamp a `resource` URL string onto a concept of **this** type
    * (LORE-47 / AC#4). `true` unless the type **owns** a `resource` field whose shape a URL string
    * cannot satisfy — i.e. a declared `resource` field with a non-`string` `kind` (a `datetime`,
@@ -826,6 +832,7 @@ export function compileProfile(parsed: ParsedProfile): Profile {
       requiredSections: type.sections,
       aliases: type.aliases ?? [],
       declaredFields: new Set(fieldOrder),
+      requiredFields: new Set(fieldOrder.filter((field) => merged[field]?.required === true)),
       acceptsStampedResource: acceptsStampedResource(merged.resource),
       ...(type.template === undefined ? {} : { template: type.template }),
     };

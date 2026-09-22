@@ -48,6 +48,21 @@ describe("core/manifest — shape and invariants", () => {
     }
   });
 
+  test("the taxonomy has exactly nine keys, with indeterminate at 7 (LCLI-565)", () => {
+    // opum-cli-e2e freezes this object; a ninth key is the announced ADR-0005 amendment, not drift.
+    expect(buildManifest().exitCodes).toEqual({
+      ok: 0,
+      uncaught: 1,
+      usage: 2,
+      not_found: 3,
+      denied: 4,
+      conflict: 5,
+      validation: 6,
+      drift: 6,
+      indeterminate: 7,
+    });
+  });
+
   test("every command name is unique", () => {
     const names = manifestCommandNames();
     expect(new Set(names).size).toBe(names.length);
@@ -100,7 +115,7 @@ describe("core/manifest — shape and invariants", () => {
   });
 
   test("every per-command exit code is one of the taxonomy's codes", () => {
-    const valid = new Set(Object.values(buildManifest().exitCodes)); // {0,1,2,3,4,5,6}
+    const valid = new Set(Object.values(buildManifest().exitCodes)); // {0,1,2,3,4,5,6,7}
     for (const command of buildManifest().commands) {
       for (const code of command.exitCodes) {
         expect(valid.has(code)).toBe(true);
@@ -118,7 +133,7 @@ describe("core/manifest — shape and invariants", () => {
       backlog: [0, 2, 3, 4, 5, 6],
       new: [0, 2, 3, 4, 5, 6],
       validate: [0, 2, 3, 4, 6],
-      check: [0, 2, 3, 4, 6],
+      check: [0, 2, 3, 4, 6, 7], // 7 = indeterminate: an unattributable committed schema (LCLI-565)
       replace: [0, 2, 3, 4, 5], // no 6: rewrites raw bytes, never parses frontmatter
       rename: [0, 2, 3, 4, 5, 6],
       supersede: [0, 2, 3, 4, 5, 6],

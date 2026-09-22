@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { schemaDriftFindings } from "../src/core/check";
 import { compileProfile, parseProfile, profileTypeDeclaresField } from "../src/core/profile";
-import { canonicalType, emitSchemaFiles } from "../src/core/schema";
+import { canonicalType, emitSchemaFiles, profileDigest, readGeneratorStamp } from "../src/core/schema";
 import { LoreError } from "../src/errors";
 
 /**
@@ -115,7 +115,22 @@ describe("alias SLUG ownership (depends on the bySlug seeding and the emitter)",
     committed.set(".lore/schemas/story.schema.json", arcBytes);
 
     const regenerated = new Map(emitted.map((f) => [f.path, f.contents] as const));
-    expect(schemaDriftFindings({ committed, regenerated })).toEqual([]);
+    expect(
+      schemaDriftFindings({
+        committed,
+        regenerated,
+        profileDigest: profileDigest(compiled()),
+        loreVersion: "0.0.0-test",
+      }),
+    ).toEqual([]);
+  });
+
+  test("the alias file carries the generator stamp, and it is this profile's digest (LCLI-565)", () => {
+    // Asserted on the ALIAS path specifically: byte-identity with the canonical file (above) would
+    // hold just as well if neither carried a stamp.
+    const alias = emitSchemaFiles(compiled()).find((f) => f.path.endsWith("story.schema.json"));
+    expect(alias).toBeDefined();
+    expect(readGeneratorStamp(alias?.contents as string)).toBe(profileDigest(compiled()));
   });
 });
 

@@ -520,7 +520,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
       adapter: context.adapter,
     }),
   schema: (args, context, output) =>
-    runSchema({ root: context.cwd || process.cwd(), output, args, stdout: context.stdout }),
+    runSchema({ root: context.cwd || process.cwd(), output, args, stdout: context.stdout, stderr: context.stderr }),
   types: (args, context, output) =>
     runTypes({ root: context.cwd || process.cwd(), output, args, stdout: context.stdout }),
   scaffold: (args, context, output) =>

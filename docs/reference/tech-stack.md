@@ -151,7 +151,7 @@ writers and centralized error/output seams. The entrypoint preserves:
 - **Output-mode precedence** `--json > --plain > pretty`, with `--plain` forced
   automatically when stdout is non-TTY. Defined in [cli-contract.md](cli-contract.md).
 - **Semantic exit codes** (`0` ok, `2` usage, `3` not-found, `4` denied,
-  `5` conflict/exists, `6` validation-or-drift), mapped centrally in `errors.ts`
+  `5` conflict/exists, `6` validation-or-drift, `7` indeterminate), mapped centrally in `errors.ts`
   so no command hand-rolls its own `process.exit`.
 - **`NO_COLOR`** honoring and TTY detection for color.
 

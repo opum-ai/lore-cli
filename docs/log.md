@@ -267,6 +267,7 @@
 - 2026-09-19T16:26:58-05:00 58c3c0023f761ba0f6123019e89e1ebf05073a6e feat(LCLI-554): rename Story to Arc, keeping Story as a resolving alias (#200)
 - 2026-09-19T16:32:57-05:00 4c225010f4e9da327dadf95d8f3b7fe490c8dc03 chore(LCLI-554): close the task its delivering PR should have closed (#202)
 - 2026-09-20T23:15:37-05:00 c3be779f5acd5433254fa821dfee6faacd9414af docs(LCLI-561): publish the 0.8.0 retained-snapshot upgrade note (#218)
+- 2026-09-20T23:27:18-05:00 90abf91826a84a2739977f0b3268c0e01fbecfba docs(LCLI-563): specify the committed-schema generator stamp (#219)
 
 ## docs/adr
 

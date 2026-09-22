@@ -13,6 +13,21 @@ timestamp: 2026-06-21T00:00:00Z
 
 Accepted — 2026-06-21
 
+Amended — 2026-09-22 (LCLI-565): a seventh code, **`7` — indeterminate**, with `error_type`
+`indeterminate`. It is the third leg of a gate's verified / failed / cannot-judge trichotomy: the
+gate looked and **cannot judge the artifact from here**, so it must neither pass (`0`) nor report a
+repairable failure (`6`) whose automatic remedy could be destructive. First use: `lore check` on a
+committed schema no profile type owns whose generator stamp this binary does not recognise, or
+that carries none (see [Committed-schema generator stamp](../specs/committed-schema-generator-stamp.md));
+that outcome must never advise a prune. LCLI-548's cannot-check citation outcome reuses the same
+code. When one `lore check` run holds both a `6`-class failure and an indeterminate finding it
+exits `7`, and still reports every finding with its own class (opum-agent ruling, OPAG-373). The
+binding decision is recorded outside this repository, in opum-doc at
+`docs/adr/require-generator-provenance-in-committed-lore-schemas-and-a-third-lore-check-outcome.md`
+(ODOC-259); this amendment is lore-cli's implementation of it. Adding a code is a contract change:
+consumers that branch only on zero versus non-zero already treat `7` as a failure, and consumers
+that branch on `6` must not fold `7` into it.
+
 ## Context
 
 lore is **CLI-primary** (see [ADR-0009: CLI-primary, MCP deferred](0004-cli-first-skill-bridge-mcp-deferred.md)): the same command surface serves humans at a terminal, Claude Code via the generated agent bridge, and CI gates. These three audiences have incompatible default expectations, and the CLI must satisfy all of them from one binary without per-caller configuration.
@@ -41,7 +56,7 @@ lore renders every command in exactly one of three modes:
 
 ### Semantic exit codes
 
-Every invocation exits with one of six codes. These are a contract: callers branch on them, and we do not reuse a code for an unrelated condition.
+Every invocation exits with one of seven codes. These are a contract: callers branch on them, and we do not reuse a code for an unrelated condition.
 
 | Code | Meaning |
 |---|---|
@@ -51,6 +66,7 @@ Every invocation exits with one of six codes. These are a contract: callers bran
 | `4` | Denied (operation refused — e.g. writing inside a lore-managed region, or a guarded destructive op without confirmation) |
 | `5` | Conflict / already exists (id collision on `new`, supersede target already superseded, write race) |
 | `6` | Validation or drift failure (`lore validate` non-conformance, `lore check` drift/broken-link/portability failure) |
+| `7` | Indeterminate — a gate cannot judge from here (`lore check` on an unattributable committed schema); never a pass, never auto-repaired (amended 2026-09-22) |
 
 Code `1` is intentionally avoided for expected, classifiable conditions; it is left to mean "unexpected/uncaught" so an agent treats it as a bug to report rather than a state to handle. The mapping is centralized so the same logical failure yields the same code from every command and every output mode.
 
@@ -73,7 +89,7 @@ When a command fails **in `--json` mode**, lore writes a structured error object
 }
 ```
 
-- `error_type` — a stable string aligned with the exit-code family (`usage`, `not_found`, `denied`, `conflict`, `validation`, `drift`).
+- `error_type` — a stable string aligned with the exit-code family (`usage`, `not_found`, `denied`, `conflict`, `validation`, `drift`, `indeterminate`).
 - `message` — human-readable, single line.
 - `hint` — an actionable next step, written so an agent can often self-correct in one turn.
 - `input` — the offending input echoed back, for diagnosis without re-deriving it.
@@ -103,7 +119,7 @@ Read-heavy commands cap their output and emit an explicit truncation hint rather
 
 - **Discipline cost.** Every command must route output through the central mode resolver and map failures to the correct semantic code and `error_type`; ad-hoc `print`/`process.exit(1)` is forbidden and must be enforced in review and tests.
 - **A second contract to maintain.** The `--json` envelope (and the set of `kind` values and `schemaVersion`) is a public contract requiring its own tests and changelog discipline; mistakes here break downstream consumers silently.
-- **Exit-code taxonomy is a commitment.** Mapping six codes onto real failures occasionally forces a judgment call (e.g. is a re-supersede a `conflict` or `validation`?); these mappings are documented in [CLI contract reference](../reference/cli-contract.md) and changing one is a breaking change.
+- **Exit-code taxonomy is a commitment.** Mapping seven codes onto real failures occasionally forces a judgment call (e.g. is a re-supersede a `conflict` or `validation`?); these mappings are documented in [CLI contract reference](../reference/cli-contract.md) and changing one is a breaking change.
 - **`--plain` stability constrains UX.** We cannot freely reformat plain output, because pipelines may parse it; substantial plain-format changes are treated as contract changes.
 
 ## Alternatives considered

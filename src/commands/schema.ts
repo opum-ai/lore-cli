@@ -10,7 +10,9 @@
  * A **full** export (no `--type`) to the **default** `.lore/schemas/` directory also **prunes** any
  * orphaned `<slug>.schema.json` left there by a type that the profile no longer declares, so
  * `.lore/schemas/` always mirrors the active profile rather than drifting (a stale schema would
- * otherwise keep driving editor validation from a removed type's rules). Pruning never runs against a
+ * otherwise keep driving editor validation from a removed type's rules) — but ONLY an orphan whose
+ * generator stamp matches this binary's profile digest (LCLI-565); an unattributable orphan (stamp from
+ * another profile, or none) is kept and reported as `keptUnattributable`. Pruning never runs against a
  * non-default `--out`: that directory isn't lore-owned, so a pre-existing `*.schema.json` sitting
  * there — including one placed by an unrelated tool — must never be silently deleted. A single-`--type`
  * export touches only that type's own files and prunes nothing — "files" plural since LCLI-553,
@@ -31,11 +33,18 @@
  * the byte computation stays pure in `core/schema.ts`.
  */
 
-import { readdirSync, rmSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { type CompiledType, loadProfile } from "../core/profile";
-import { canonicalType, emitSchemaFiles, SCHEMAS_DIR, type SchemaFile } from "../core/schema";
-import { EXIT_OK, LoreError, type Writer } from "../errors";
+import {
+  canonicalType,
+  emitSchemaFiles,
+  foldSchemaName,
+  profileDigest,
+  readGeneratorStamp,
+  SCHEMAS_DIR,
+} from "../core/schema";
+import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { parseCommandArgs, singleOptionValue } from "./args";
 import { ensureDir, findSymlinkSegment, ioError, writeFileNoFollow } from "./fswrite";
@@ -50,6 +59,76 @@ export interface SchemaOptions {
   args: readonly string[];
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
+  /** stderr sink for the kept-unattributable warning (non-`--json` only); defaults to `process.stderr`. */
+  stderr?: Writer;
+  /** The prune pass's directory IO; defaults to the real filesystem. A test seam (see {@link SchemaDirIO}). */
+  schemaDirIO?: SchemaDirIO;
+}
+
+/**
+ * The three filesystem operations the prune pass performs on the managed schema directory, injectable
+ * so a test can model a filesystem where writing one name changes what another name reads — the
+ * case-insensitive APFS/NTFS aliasing behind the LCLI-565 review finding — on any host, including
+ * case-sensitive Linux CI.
+ */
+export interface SchemaDirIO {
+  /** Entry names in `absDir`; throws `ENOENT` when it does not exist. */
+  list(absDir: string): string[];
+  /** A file's UTF-8 bytes. */
+  read(absPath: string): string;
+  /** Delete one file. */
+  remove(absPath: string): void;
+}
+
+/** The real filesystem, {@link runSchema}'s default {@link SchemaDirIO}. */
+const FS_SCHEMA_DIR_IO: SchemaDirIO = {
+  list: (absDir) => readdirSync(absDir),
+  read: (absPath) => readFileSync(absPath, "utf8"),
+  remove: (absPath) => rmSync(absPath),
+};
+
+/** One `*.schema.json` entry in the managed directory as it stood BEFORE the export wrote anything. */
+export interface SchemaDirEntry {
+  /** The directory entry's own name, exactly as listed (case preserved). */
+  readonly name: string;
+  /** Its generator stamp at snapshot time, or `null` when it carried none. */
+  readonly stamp: string | null;
+}
+
+/** Which pre-write entries a full export deletes, and which unattributable ones it keeps. */
+export interface OrphanPrunePlan {
+  /** Entry names to delete: orphans whose PRE-WRITE stamp is this binary's own digest. */
+  readonly remove: readonly string[];
+  /** Entry names kept because their pre-write stamp was absent or another profile's. */
+  readonly kept: readonly string[];
+  /**
+   * Entry names never deleted because they case-fold to a written name but are not that exact name.
+   * Whether each is a SEPARATE file (case-sensitive filesystem) or the written file itself
+   * (case-insensitive) is only knowable after the write — see {@link caseVariantsBesideOwned}.
+   */
+  readonly caseVariants: readonly string[];
+}
+
+/**
+ * The {@link OrphanPrunePlan.caseVariants} that turned out, AFTER the write, to be distinct entries
+ * beside their exact owned name — i.e. a case-sensitive filesystem holding two files. Those are kept
+ * and must be reported, so the export's warning names them. On a case-insensitive filesystem the
+ * post-write listing holds only one of the two names, so the variant is the written file and is
+ * not reported. Pure: the caller supplies the post-write listing.
+ */
+export function caseVariantsBesideOwned(
+  caseVariants: readonly string[],
+  keep: ReadonlySet<string>,
+  afterWrite: readonly string[],
+): string[] {
+  const listed = new Set(afterWrite);
+  return caseVariants.filter(
+    (variant) =>
+      listed.has(variant) &&
+      [...keep].some(
+        (name) => name !== variant && listed.has(name) && foldSchemaName(name) === foldSchemaName(variant),
+      ),
+  );
 }
 
 /** The parsed form of `lore schema`'s arguments. */
@@ -72,8 +151,17 @@ export interface SchemaExportResult {
   readonly out: string;
   /** Every schema file written, in profile-declaration order. */
   readonly files: readonly ReportFile[];
-  /** Orphaned `<slug>.schema.json` files removed because no profile type owns them (full export only). */
+  /**
+   * Orphaned `<slug>.schema.json` files removed because no profile type owns them AND their generator
+   * stamp matches this binary's profile digest, so the binary affirms they are its own (full export only).
+   */
   readonly removed: readonly ReportFile[];
+  /**
+   * Orphaned `<slug>.schema.json` files KEPT because this binary cannot attribute them: their stamp
+   * is from another profile, or absent (LCLI-565). Never deleted — a lore older than the tree would
+   * otherwise delete a newer type's schema. `lore check` reports each as `schema-unattributable`.
+   */
+  readonly keptUnattributable: readonly ReportFile[];
   /** How many schema files were written (== `files.length`). */
   readonly count: number;
 }
@@ -106,6 +194,16 @@ export function runSchema(options: SchemaOptions): number {
   }
 
   const files = emitSchemaFiles(profile, { dir: outArg, only });
+  // A full export to the managed default directory owns its schema set, so a type dropped from the
+  // profile leaves a stale schema behind; prune it there. A single-`--type` export is surgical and
+  // never prunes its siblings, and a non-default `--out` is never lore-owned, so it is never pruned
+  // either — see `isManagedSchemasDir`. The directory is SNAPSHOTTED here, before any write
+  // (LCLI-565 review): on a case-insensitive filesystem an existing `ADR.schema.json` IS the
+  // `adr.schema.json` the export is about to write, so judging an entry by its post-write bytes
+  // would read this binary's own fresh stamp and delete the file just written.
+  const io = options.schemaDirIO ?? FS_SCHEMA_DIR_IO;
+  const managed = only === undefined && isManagedSchemasDir(absOutDir, options.root);
+  const before = managed ? snapshotSchemaDir(absOutDir, outArg, io) : [];
   ensureDir(options.root, outArg);
   for (const file of files) {
     // `outArg` is confined to the repo, so `file.path` (`<outArg>/<slug>.schema.json`) is repo-relative
@@ -121,19 +219,31 @@ export function runSchema(options: SchemaOptions): number {
     // the ancestor-symlink guard (LORE-93) already throws.
     writeFileNoFollow(join(options.root, file.path), file.contents, file.path);
   }
-  // A full export to the managed default directory owns its schema set, so a type dropped from the
-  // profile leaves a stale schema behind; prune it there. A single-`--type` export is surgical and
-  // never prunes its siblings, and a non-default `--out` is never lore-owned, so it is never pruned
-  // either — see `isManagedSchemasDir`.
-  const removed =
-    only === undefined && isManagedSchemasDir(absOutDir, options.root) ? pruneOrphans(absOutDir, outArg, files) : [];
+  const keep = new Set(files.map((file) => posix.basename(file.path)));
+  const plan = managed ? planOrphanPrune(before, keep, profileDigest(profile)) : undefined;
+  const { removed, kept } = plan ? pruneOrphans(absOutDir, outArg, plan, io) : { removed: [], kept: [] };
+  if (plan && plan.caseVariants.length > 0) {
+    for (const name of caseVariantsBesideOwned(plan.caseVariants, keep, listAfterWrite(absOutDir, outArg, io))) {
+      kept.push({ path: posix.join(outArg, name) });
+    }
+  }
 
   const result: SchemaExportResult = {
     out: outArg,
     files: files.map((file) => ({ path: file.path })),
     removed,
+    keptUnattributable: kept,
     count: files.length,
   };
+  if (kept.length > 0 && options.output.mode !== "json") {
+    const warnings = new WarningCollector();
+    for (const file of kept) {
+      warnings.add(
+        `kept ${file.path}: no type in the active profile owns it and its generator stamp is not this lore's, so it was NOT pruned — read \`git log\` on it and on the profile, and delete it by hand only if the type was removed`,
+      );
+    }
+    warnings.flush({ color: options.output.color, stderr: options.stderr });
+  }
   emit(schemaRenderable(result), options.output, options.stdout);
   return EXIT_OK;
 }
@@ -206,34 +316,100 @@ function isManagedSchemasDir(absOutDir: string, root: string): boolean {
 }
 
 /**
- * Delete every `<name>.schema.json` in `absDir` that the just-written `files` set does not contain —
- * the orphans a removed/renamed profile type left behind — and return them for the report. Only
- * `*.schema.json` is touched, and only ever called for the managed default directory (see
- * {@link isManagedSchemasDir}), so every file this walks is lore-owned; other files are never removed.
- * The directory was just `ensureDir`'d, so a read failure here is a genuine IO fault, mapped via the
- * shared {@link ioError}.
+ * Every `*.schema.json` entry in the managed directory and its generator stamp, read BEFORE the
+ * export writes anything — the only bytes a prune decision may be taken on. A directory that does
+ * not exist yet has no entries; any other read failure is a genuine IO fault, mapped via
+ * {@link ioError}.
  */
-function pruneOrphans(absDir: string, displayDir: string, files: readonly SchemaFile[]): ReportFile[] {
-  const keep = new Set(files.map((file) => posix.basename(file.path)));
+function snapshotSchemaDir(absDir: string, displayDir: string, io: SchemaDirIO): SchemaDirEntry[] {
   let entries: string[];
   try {
-    entries = readdirSync(absDir);
+    entries = io.list(absDir);
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw ioError(cause, displayDir, "read directory");
+  }
+  return entries
+    .filter((name) => name.endsWith(".schema.json"))
+    .sort()
+    .map((name) => {
+      try {
+        return { name, stamp: readGeneratorStamp(io.read(join(absDir, name))) };
+      } catch (cause) {
+        throw ioError(cause, posix.join(displayDir, name), "read file");
+      }
+    });
+}
+
+/**
+ * The prune decision, pure (LCLI-565): given the managed directory's PRE-WRITE entries and their
+ * stamps, the names the export writes (`keep`), and this binary's profile digest, which entries are
+ * deleted and which unattributable ones are kept. Two rules, each sufficient alone against the
+ * case-insensitive-filesystem bypass the review reproduced:
+ *
+ * - an entry whose name, case- and normalization-folded, matches a `keep` name is NEVER deleted
+ *   and not reported: on a case-insensitive filesystem it is the file just written, and on a
+ *   case-sensitive one deleting a file that differs from an owned one only by case is not a call
+ *   this pass can make safely;
+ * - every other entry is deleted only if its PRE-WRITE stamp equals `digest`; otherwise it is kept
+ *   and reported, whether its stamp was absent or another profile's.
+ */
+export function planOrphanPrune(
+  before: readonly SchemaDirEntry[],
+  keep: ReadonlySet<string>,
+  digest: string,
+): OrphanPrunePlan {
+  const owned = new Set([...keep].map(foldSchemaName));
+  const remove: string[] = [];
+  const kept: string[] = [];
+  const caseVariants: string[] = [];
+  for (const entry of before) {
+    if (keep.has(entry.name)) {
+      continue;
+    }
+    if (owned.has(foldSchemaName(entry.name))) {
+      caseVariants.push(entry.name);
+      continue;
+    }
+    (entry.stamp === digest ? remove : kept).push(entry.name);
+  }
+  return { remove, kept, caseVariants };
+}
+
+/** The managed directory's entry names after the export's writes, mapped through {@link ioError}. */
+function listAfterWrite(absDir: string, displayDir: string, io: SchemaDirIO): string[] {
+  try {
+    return io.list(absDir);
   } catch (cause) {
     throw ioError(cause, displayDir, "read directory");
   }
+}
+
+/**
+ * Carry out an {@link OrphanPrunePlan} against the managed directory (only ever called for it — see
+ * {@link isManagedSchemasDir}), returning the report's `removed` and `kept` files. Deletes exactly
+ * the planned names and nothing it re-reads or re-judges, so the decision stays the pre-write one.
+ * This is the only schema delete in lore's source (LCLI-546 came through it).
+ */
+function pruneOrphans(
+  absDir: string,
+  displayDir: string,
+  plan: OrphanPrunePlan,
+  io: SchemaDirIO,
+): { removed: ReportFile[]; kept: ReportFile[] } {
   const removed: ReportFile[] = [];
-  for (const entry of entries.sort()) {
-    if (entry.endsWith(".schema.json") && !keep.has(entry)) {
-      const rel = posix.join(displayDir, entry);
-      try {
-        rmSync(join(absDir, entry));
-      } catch (cause) {
-        throw ioError(cause, rel, "remove file");
-      }
-      removed.push({ path: rel });
+  for (const name of plan.remove) {
+    const rel = posix.join(displayDir, name);
+    try {
+      io.remove(join(absDir, name));
+    } catch (cause) {
+      throw ioError(cause, rel, "remove file");
     }
+    removed.push({ path: rel });
   }
-  return removed;
+  return { removed, kept: plan.kept.map((name) => ({ path: posix.join(displayDir, name) })) };
 }
 
 // ── Argument parsing ───────────────────────────────────────────────────────────

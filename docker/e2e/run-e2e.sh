@@ -1589,17 +1589,29 @@ step_json "profile restored: lore schema export succeeds again (loadProfile reco
   '.kind == "schema.result"' -- lore schema export --json
 
 # Leave no induced state behind (LORE-63's convention): a custom profile.toml REPLACES the
-# default seven-type vocabulary wholesale, and a full `lore schema export` PRUNES any
-# *.schema.json whose type the active profile no longer declares -- so both schema exports
-# above already pruned Phase 17's seven default schema files. Deleting the custom profile and
-# re-exporting once more (now back on the zero-config default) regenerates the seven defaults
-# AND prunes the orphaned custom one in the same step, leaving Phase 18+ the bundle state they
-# already expect.
+# default seven-type vocabulary wholesale, and a full `lore schema export` prunes a
+# *.schema.json whose type the active profile no longer declares ONLY when its generator stamp
+# matches the active profile's digest (LCLI-565). So the two custom-profile exports above no
+# longer prune Phase 17's default schema files: those carry the DEFAULT profile's stamp, foreign
+# to the custom profile, and are kept (measured replaying this phase from source, 2026-09-22).
+# Deleting the custom profile and re-exporting once more (now back on the zero-config default)
+# re-owns and regenerates the defaults, but the custom type's schema carries the CUSTOM profile's
+# stamp: to the default-profile binary it is unattributable, so export KEEPS it and says so,
+# and `lore check` exits 7 on it rather than advising a prune. That is the spec's "legitimate
+# removal costs a deliberate rm" (docs/specs/committed-schema-generator-stamp.md), exercised
+# end to end; the hand rm below is that deliberate step, which leaves Phase 18+ the bundle
+# state they already expect.
 rm -f .lore/profile.toml .lore/templates/e2e-custom-type.md
-step_json "profile removed: lore schema export regenerates the seven default schemas" \
-  '.kind == "schema.result"' -- lore schema export --json
-check "the orphaned custom schema was pruned on the default-profile re-export" \
-  '[ ! -f .lore/schemas/e2e-custom-type.schema.json ]'
+step_json "profile removed: lore schema export regenerates the seven default schemas and KEEPS the foreign-stamped custom schema (LCLI-565)" \
+  '.kind == "schema.result" and ((.data.keptUnattributable // []) | map(.path) | any(endswith("e2e-custom-type.schema.json")))' \
+  -- lore schema export --json
+check "the orphaned custom schema, stamped by another profile, was NOT pruned by export (LCLI-565)" \
+  '[ -f .lore/schemas/e2e-custom-type.schema.json ]'
+step "lore check exits 7 (indeterminate) on the kept foreign-stamped schema, never 6 (LCLI-565)" 7 \
+  -- lore check --json
+rm -f .lore/schemas/e2e-custom-type.schema.json
+step "after the deliberate hand rm, lore check no longer exits 7" 0 \
+  -- bash -c 'lore check --json >/dev/null 2>&1; [ $? -ne 7 ]'
 for T in epic arc story spec adr runbook reference attested-computation; do
   check "default schema for $T restored after the profile subsystem probe" \
     "jq -e . .lore/schemas/${T}.schema.json >/dev/null 2>&1"
