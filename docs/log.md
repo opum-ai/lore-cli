@@ -270,6 +270,7 @@
 - 2026-09-20T23:27:18-05:00 90abf91826a84a2739977f0b3268c0e01fbecfba docs(LCLI-563): specify the committed-schema generator stamp (#219)
 - 2026-09-22T21:43:51Z 87a970a2fcc27017b0f388a48dc8c4ded1420b15 feat(LCLI-565): committed-schema generator stamp and lore check exit 7 (indeterminate) (#224)
 - 2026-09-22T17:23:00-05:00 3df7997eab3d34511ded356c0f4e7b5e66555910 chore(LCLI-566): open the 0.9.0 release preparation
+- 2026-09-22T22:39:44Z fd712748176b59175eaf40ec10eceb5ba6ac3bdd chore(LCLI-566): bump to 0.9.0 with the LCLI-565 rollout note (#227)
 
 ## docs/adr
 
