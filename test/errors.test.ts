@@ -16,7 +16,7 @@ import {
 } from "../src/errors";
 import { capture } from "./helpers";
 
-const ALL_TYPES: ErrorType[] = ["usage", "not_found", "denied", "conflict", "validation", "drift"];
+const ALL_TYPES: ErrorType[] = ["usage", "not_found", "denied", "conflict", "validation", "drift", "indeterminate"];
 
 describe("exit codes", () => {
   test("success and uncaught codes are 0 and 1", () => {
@@ -24,7 +24,8 @@ describe("exit codes", () => {
     expect(EXIT_UNCAUGHT).toBe(1);
   });
 
-  test("the semantic exit-code contract is exactly 2/3/4/5/6/6", () => {
+  test("the semantic exit-code contract is exactly 2/3/4/5/6/6/7", () => {
+    // `indeterminate: 7` is the LCLI-565 ADR-0005 amendment (cannot judge from here).
     expect(EXIT_CODES).toEqual({
       usage: 2,
       not_found: 3,
@@ -32,6 +33,7 @@ describe("exit codes", () => {
       conflict: 5,
       validation: 6,
       drift: 6,
+      indeterminate: 7,
     });
   });
 

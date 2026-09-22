@@ -26,8 +26,17 @@ import { readFileSync } from "node:fs";
  * `error_type` strings that intentionally share exit `6`, so an agent can tell
  * "my frontmatter is malformed" from "my managed block is stale"
  * (cli-contract §5.3) while shell/CI branching on the code stays simple.
+ *
+ * `indeterminate` (exit `7`, LCLI-565) is the third leg of a gate's
+ * verified / failed / cannot-judge trichotomy: the gate looked and CANNOT JUDGE
+ * the artifact from here, so it must neither pass (0) nor report a repairable
+ * failure (6) whose automatic remedy could be destructive. First used by
+ * `lore check` for a committed schema no type owns whose generator stamp this
+ * binary does not recognise; LCLI-548's cannot-check citation outcome reuses the
+ * same code. Binding record: opum-doc
+ * `docs/adr/require-generator-provenance-in-committed-lore-schemas-and-a-third-lore-check-outcome.md`.
  */
-export type ErrorType = "usage" | "not_found" | "denied" | "conflict" | "validation" | "drift";
+export type ErrorType = "usage" | "not_found" | "denied" | "conflict" | "validation" | "drift" | "indeterminate";
 
 /** Success. */
 export const EXIT_OK = 0;
@@ -51,6 +60,7 @@ export const EXIT_CODES: Readonly<Record<ErrorType, number>> = Object.freeze({
   conflict: 5,
   validation: 6,
   drift: 6,
+  indeterminate: 7,
 });
 
 /**

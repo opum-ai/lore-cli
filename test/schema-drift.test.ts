@@ -23,6 +23,8 @@ import { join } from "node:path";
 import { runCheck } from "../src/commands/check";
 import { runInit } from "../src/commands/init";
 import { schemaDriftFindings } from "../src/core/check";
+import { defaultProfile } from "../src/core/profile";
+import { profileDigest, readGeneratorStamp } from "../src/core/schema";
 import { EXIT_CODES, EXIT_OK } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
@@ -30,62 +32,113 @@ import { capture } from "./helpers";
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 const SCHEMAS = ".lore/schemas";
 
-describe("schemaDriftFindings — the pure comparison (LCLI-539)", () => {
+const DIGEST = `sha256:${"a".repeat(64)}`;
+const OTHER_DIGEST = `sha256:${"b".repeat(64)}`;
+const stamped = (digest: string): string => `${JSON.stringify({ "x-lore-generator": { profileDigest: digest } })}\n`;
+
+describe("schemaDriftFindings — the pure comparison (LCLI-539, LCLI-565)", () => {
   const regenerated = new Map([
     [`${SCHEMAS}/story.schema.json`, '{"a":1}\n'],
     [`${SCHEMAS}/spec.schema.json`, '{"b":2}\n'],
   ]);
+  const findingsFor = (committed: Map<string, string> | null) =>
+    schemaDriftFindings({ committed, regenerated, profileDigest: DIGEST, loreVersion: "9.9.9-test" });
 
   test("an exactly-matching committed set is not drift", () => {
-    expect(schemaDriftFindings({ committed: new Map(regenerated), regenerated })).toEqual([]);
+    expect(findingsFor(new Map(regenerated))).toEqual([]);
   });
 
   test("an absent .lore/schemas/ is not drift — absence and disagreement are different facts", () => {
     // A bundle that never exported its schemas has none to be stale. Failing here would turn the
     // gate into a demand that every repository adopt an optional feature.
-    expect(schemaDriftFindings({ committed: null, regenerated })).toEqual([]);
+    expect(findingsFor(null)).toEqual([]);
   });
 
-  test("a committed schema whose bytes differ from the generator's is an error naming that file", () => {
+  test("a committed schema whose bytes differ from the generator's is STALE, naming that file", () => {
     const committed = new Map(regenerated);
     committed.set(`${SCHEMAS}/story.schema.json`, '{"a":999}\n');
-    const findings = schemaDriftFindings({ committed, regenerated });
+    const findings = findingsFor(committed);
     expect(findings).toHaveLength(1);
     expect(findings[0]?.severity).toBe("error");
     expect(findings[0]?.rule).toBe("schema-drift");
+    expect(findings[0]?.schemaClass).toBe("stale");
     expect(findings[0]?.file).toBe(`${SCHEMAS}/story.schema.json`);
     expect(findings[0]?.message).toMatch(/no longer matches/);
   });
 
-  test("a profile type with no committed schema at all is an error", () => {
+  test("a profile type with no committed schema at all is MISSING", () => {
     const committed = new Map(regenerated);
     committed.delete(`${SCHEMAS}/spec.schema.json`);
-    const findings = schemaDriftFindings({ committed, regenerated });
+    const findings = findingsFor(committed);
     expect(findings).toHaveLength(1);
+    expect(findings[0]?.schemaClass).toBe("missing");
     expect(findings[0]?.file).toBe(`${SCHEMAS}/spec.schema.json`);
     expect(findings[0]?.message).toMatch(/no schema is committed/);
   });
 
-  test("a committed schema no profile type owns is an error — the case `schema export` prunes", () => {
+  test("an orphan whose stamp EQUALS this binary's digest is ORPHANED — drift, prune advised", () => {
     const committed = new Map(regenerated);
-    committed.set(`${SCHEMAS}/removed-type.schema.json`, "{}\n");
-    const findings = schemaDriftFindings({ committed, regenerated });
+    committed.set(`${SCHEMAS}/removed-type.schema.json`, stamped(DIGEST));
+    const findings = findingsFor(committed);
     expect(findings).toHaveLength(1);
+    expect(findings[0]?.rule).toBe("schema-drift");
+    expect(findings[0]?.schemaClass).toBe("orphaned");
     expect(findings[0]?.file).toBe(`${SCHEMAS}/removed-type.schema.json`);
-    expect(findings[0]?.message).toMatch(/no type in the active profile owns/);
+    expect(findings[0]?.message).toMatch(/no type in the active profile owns.*to prune it/);
   });
 
-  test("the three conditions are reported independently rather than collapsing into one finding", () => {
+  test("an orphan whose stamp DIFFERS is UNATTRIBUTABLE — indeterminate, never a prune", () => {
+    const committed = new Map(regenerated);
+    committed.set(`${SCHEMAS}/newer-type.schema.json`, stamped(OTHER_DIGEST));
+    const findings = findingsFor(committed);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.rule).toBe("schema-unattributable");
+    expect(findings[0]?.schemaClass).toBe("unattributable");
+    expect(findings[0]?.message).not.toMatch(/to prune it|run `lore schema export`/);
+    expect(findings[0]?.message).toMatch(/do NOT prune/);
+    expect(findings[0]?.message).toMatch(/`git log`/);
+    expect(findings[0]?.message).toMatch(/lore 9\.9\.9-test/);
+    expect(findings[0]?.message).toMatch(/from a profile this lore does not generate/);
+  });
+
+  test("an orphan with NO stamp at all is UNATTRIBUTABLE — the common case on the introducing release", () => {
+    const committed = new Map(regenerated);
+    committed.set(`${SCHEMAS}/removed-type.schema.json`, "{}\n");
+    const findings = findingsFor(committed);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.rule).toBe("schema-unattributable");
+    expect(findings[0]?.schemaClass).toBe("unattributable");
+    expect(findings[0]?.message).not.toMatch(/to prune it|run `lore schema export`/);
+    expect(findings[0]?.message).toMatch(/carries no generator stamp/);
+  });
+
+  test("stale (rewrite) and orphaned (delete) never share a message (OPAG-354 item 5)", () => {
+    const committed = new Map([
+      [`${SCHEMAS}/story.schema.json`, '{"a":999}\n'],
+      [`${SCHEMAS}/spec.schema.json`, '{"b":2}\n'],
+      [`${SCHEMAS}/gone.schema.json`, stamped(DIGEST)],
+    ]);
+    const [stale, orphaned] = findingsFor(committed);
+    expect(stale?.schemaClass).toBe("stale");
+    expect(orphaned?.schemaClass).toBe("orphaned");
+    expect(stale?.message).not.toBe(orphaned?.message);
+  });
+
+  test("the four conditions are reported independently rather than collapsing into one finding", () => {
     const committed = new Map([
       [`${SCHEMAS}/story.schema.json`, '{"a":999}\n'], // stale
-      [`${SCHEMAS}/removed-type.schema.json`, "{}\n"], // orphaned
+      [`${SCHEMAS}/removed-type.schema.json`, stamped(DIGEST)], // orphaned
+      [`${SCHEMAS}/unknown-type.schema.json`, "{}\n"], // unattributable
       // spec.schema.json absent                        // missing
     ]);
-    const findings = schemaDriftFindings({ committed, regenerated });
-    expect(findings).toHaveLength(3);
-    expect(new Set(findings.map((f) => f.file))).toEqual(
-      new Set([`${SCHEMAS}/story.schema.json`, `${SCHEMAS}/spec.schema.json`, `${SCHEMAS}/removed-type.schema.json`]),
-    );
+    const findings = findingsFor(committed);
+    expect(findings).toHaveLength(4);
+    expect(Object.fromEntries(findings.map((f) => [f.file, f.schemaClass]))).toEqual({
+      [`${SCHEMAS}/story.schema.json`]: "stale",
+      [`${SCHEMAS}/spec.schema.json`]: "missing",
+      [`${SCHEMAS}/removed-type.schema.json`]: "orphaned",
+      [`${SCHEMAS}/unknown-type.schema.json`]: "unattributable",
+    });
   });
 });
 
@@ -93,9 +146,10 @@ describe("runCheck — committed-schema drift gates the bundle (LCLI-539)", () =
   let root: string;
   const FIXED_CLOCK = (): Date => new Date("2026-06-25T12:00:00Z");
 
+  type SchemaFinding = { rule: string; file: string; message: string; schemaClass?: string };
   const check = async (): Promise<{
     code: number;
-    findings: Array<{ rule: string; file: string; message: string }>;
+    findings: SchemaFinding[];
   }> => {
     const stdout = capture();
     const code = await runCheck({
@@ -106,10 +160,8 @@ describe("runCheck — committed-schema drift gates the bundle (LCLI-539)", () =
       stderr: capture(),
       headCommitDate: () => "2026-06-25",
     });
-    const envelope = JSON.parse(stdout.text()) as {
-      data: { findings: Array<{ rule: string; file: string; message: string }> };
-    };
-    return { code, findings: envelope.data.findings.filter((f) => f.rule === "schema-drift") };
+    const envelope = JSON.parse(stdout.text()) as { data: { findings: SchemaFinding[] } };
+    return { code, findings: envelope.data.findings.filter((f) => f.schemaClass !== undefined) };
   };
 
   beforeEach(() => {
@@ -128,6 +180,10 @@ describe("runCheck — committed-schema drift gates the bundle (LCLI-539)", () =
     const { code, findings } = await check();
     expect(findings).toEqual([]);
     expect(code).toBe(EXIT_OK);
+    // ...and it is a STAMPED bundle: the clean result is not an artifact of there being no stamps.
+    for (const file of readdirSync(join(root, SCHEMAS))) {
+      expect(readGeneratorStamp(readFileSync(join(root, SCHEMAS, file), "utf8"))).toBe(profileDigest(defaultProfile()));
+    }
   });
 
   test("LCLI-539's regression case: a profile-visible field missing from a committed schema fails the gate", async () => {
@@ -162,12 +218,59 @@ describe("runCheck — committed-schema drift gates the bundle (LCLI-539)", () =
     );
   });
 
-  test("an orphaned schema file no profile type owns fails the gate", async () => {
-    writeFileSync(join(root, SCHEMAS, "retired-type.schema.json"), "{}\n");
+  test("an orphan carrying THIS binary's stamp is orphaned: exit 6, prune advised", async () => {
+    // A copy of a file this binary wrote, under a name no type owns: the binary can affirm it.
+    writeFileSync(
+      join(root, SCHEMAS, "retired-type.schema.json"),
+      readFileSync(join(root, SCHEMAS, "epic.schema.json")),
+    );
 
     const { code, findings } = await check();
     expect(code).toBe(EXIT_CODES.validation);
-    expect(findings.some((f) => f.file === `${SCHEMAS}/retired-type.schema.json`)).toBe(true);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ rule: "schema-drift", schemaClass: "orphaned" });
+    expect(findings[0]?.message).toMatch(/run `lore schema export` to prune it/);
+  });
+
+  test("an orphan with NO stamp is unattributable: exit 7, and no prune is advised", async () => {
+    // Every committed schema in the fleet is in this state on the release that introduces stamping.
+    writeFileSync(join(root, SCHEMAS, "retired-type.schema.json"), "{}\n");
+
+    const { code, findings } = await check();
+    expect(code).toBe(EXIT_CODES.indeterminate);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ rule: "schema-unattributable", schemaClass: "unattributable" });
+    expect(findings[0]?.message).not.toMatch(/to prune it|run `lore schema export`/);
+  });
+
+  test("an orphan whose stamp is from ANOTHER profile is unattributable: exit 7, and no prune is advised", async () => {
+    // LCLI-546's shape: a newer type's schema, read by a binary that has never heard of it.
+    const foreign = JSON.parse(readFileSync(join(root, SCHEMAS, "epic.schema.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
+    foreign["x-lore-generator"] = { profileDigest: `sha256:${"f".repeat(64)}` };
+    writeFileSync(join(root, SCHEMAS, "arc-v2.schema.json"), `${JSON.stringify(foreign, null, 2)}\n`);
+
+    const { code, findings } = await check();
+    expect(code).toBe(EXIT_CODES.indeterminate);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ rule: "schema-unattributable", schemaClass: "unattributable" });
+    expect(findings[0]?.message).not.toMatch(/to prune it|run `lore schema export`/);
+  });
+
+  test("a run with BOTH a stale and an unattributable schema exits 7 and still reports each with its own class (OPAG-373)", async () => {
+    // 7 outranks 6 in the exit code only; the 6-class finding must stay visible in the report.
+    const storyPath = join(root, SCHEMAS, "story.schema.json");
+    writeFileSync(storyPath, readFileSync(storyPath, "utf8").replace('"type": "object"', '"type": "object", "x": 1'));
+    writeFileSync(join(root, SCHEMAS, "retired-type.schema.json"), "{}\n");
+
+    const { code, findings } = await check();
+    expect(code).toBe(EXIT_CODES.indeterminate);
+    expect(findings.map((f) => [f.file, f.rule, f.schemaClass]).sort()).toEqual([
+      [`${SCHEMAS}/retired-type.schema.json`, "schema-unattributable", "unattributable"],
+      [`${SCHEMAS}/story.schema.json`, "schema-drift", "stale"],
+    ]);
   });
 
   test("a non-schema file parked in .lore/schemas/ is neither compared nor reported", async () => {

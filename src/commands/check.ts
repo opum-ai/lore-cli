@@ -49,6 +49,7 @@ import {
   hasDateSensitiveCheckRules,
   indexDriftFindings,
   isAddressLiteral,
+  isIndeterminateFinding,
   isIsoCalendarDate,
   reconcileDriftFindings,
   schemaDriftFindings,
@@ -59,7 +60,7 @@ import { generateIndexes } from "../core/indexes";
 import { type BundleState, type BundleVersionIssue, resolveBundleState, taskRollupFieldFor } from "../core/okf-version";
 import { loadProfile, type Profile, profileForBundle, profileTypeDeclaresField } from "../core/profile";
 import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
-import { canonicalType, emitSchemaFiles, SCHEMAS_DIR, unknownTypeHint } from "../core/schema";
+import { canonicalType, emitSchemaFiles, profileDigest, SCHEMAS_DIR, unknownTypeHint } from "../core/schema";
 import {
   ANSI,
   EXIT_CODES,
@@ -71,6 +72,7 @@ import {
   WarningCollector,
   type Writer,
 } from "../errors";
+import { VERSION } from "../meta";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { parseCommandArgs, singleOptionValue } from "./args";
 import { canonicalIdentity, readIndexBytes, readSource } from "./discover";
@@ -476,7 +478,12 @@ function tryIndexDriftForBundle(root: string, bundle: Bundle, profile: Profile, 
  */
 function schemaDriftForRoot(root: string, profile: Profile): CheckFinding[] {
   const regenerated = new Map(emitSchemaFiles(profile, { dir: SCHEMAS_DIR }).map((file) => [file.path, file.contents]));
-  return schemaDriftFindings({ committed: readCommittedSchemas(root), regenerated });
+  return schemaDriftFindings({
+    committed: readCommittedSchemas(root),
+    regenerated,
+    profileDigest: profileDigest(profile),
+    loreVersion: VERSION,
+  });
 }
 
 /**
@@ -507,9 +514,33 @@ function readCommittedSchemas(root: string): Map<string, string> | null {
   return committed;
 }
 
-/** The gate's exit code from a {@link CheckReport}: `6` on any error, or any warning under `--strict`. */
+/**
+ * Which exit code wins when ONE `lore check` run has both a failure (exit `6`) and an indeterminate
+ * finding (exit `7`). RULED 7-over-6 by opum-agent, OPAG-373 (final, not provisional): a run holding
+ * something it cannot judge must not exit with the code an unattended repair (e.g. opum-fleet's
+ * sync hook) acts on, because that repair could be the destructive one. Only the exit code — and so
+ * any automatic repair — is affected: the report still lists every `6`-class finding with its own
+ * class. Kept as this ONE named function so the precedence can be changed in one edit.
+ */
+function mixedGateExitCode(): number {
+  return EXIT_CODES.indeterminate;
+}
+
+/**
+ * The gate's exit code from a {@link CheckReport}: `0` when clean; `6` on any failing error, or any
+ * warning under `--strict`; `7` when a finding is indeterminate ({@link isIndeterminateFinding}),
+ * and {@link mixedGateExitCode} when both.
+ */
 function exitFor(report: CheckReport, strict: boolean): number {
-  return report.errorCount > 0 || (strict && report.warningCount > 0) ? EXIT_CODES.validation : EXIT_OK;
+  const indeterminate = report.findings.filter(isIndeterminateFinding).length;
+  const failed = report.errorCount - indeterminate > 0 || (strict && report.warningCount > 0);
+  if (indeterminate > 0 && failed) {
+    return mixedGateExitCode();
+  }
+  if (indeterminate > 0) {
+    return EXIT_CODES.indeterminate;
+  }
+  return failed ? EXIT_CODES.validation : EXIT_OK;
 }
 
 /** Append findings (bundle-label-prefixed by the caller already) into a {@link CheckReport}'s counts. */

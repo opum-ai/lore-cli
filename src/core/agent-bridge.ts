@@ -182,7 +182,7 @@ ${commandList}
 
 Every command supports \`--json\` (the \`{schemaVersion, kind, data}\` envelope) and \`--plain\`
 (ANSI-free, auto-selected off a TTY). Branch on the semantic exit code, never on prose:
-\`0\` ok · \`2\` usage · \`3\` not_found · \`4\` denied · \`5\` conflict · \`6\` validation/drift.
+\`0\` ok · \`2\` usage · \`3\` not_found · \`4\` denied · \`5\` conflict · \`6\` validation/drift · \`7\` indeterminate (cannot judge from here; never auto-repair).
 
 ## Optional task-scoped context
 

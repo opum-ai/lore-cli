@@ -248,15 +248,51 @@ describe("lore schema export — custom profile (AC#2)", () => {
 });
 
 describe("lore schema export — pruning stale schemas (full export)", () => {
-  test("a full export removes an orphaned <slug>.schema.json no profile type owns", () => {
+  test("a full export removes an orphan whose generator stamp is this binary's own (LCLI-565)", () => {
     exportSchemas(["export"]);
     const ghost = join(root, ".lore/schemas/ghost.schema.json");
-    writeFileSync(ghost, "{}\n");
+    // A copy of a file this binary just wrote, so it carries this binary's profile digest: the one
+    // orphan the export can affirm it generated. (Before LCLI-565 this fixture was `{}` — an
+    // unstamped file, which is now kept; see the next test.)
+    writeFileSync(ghost, readFileSync(join(root, ".lore/schemas/epic.schema.json"), "utf8"));
     const { result } = exportSchemas(["export"]);
     expect(result.removed.map((f) => f.path)).toEqual([".lore/schemas/ghost.schema.json"]);
+    expect(result.keptUnattributable).toEqual([]);
     expect(existsSync(ghost)).toBe(false);
     // The real schemas survive.
     expect(existsSync(join(root, ".lore/schemas/story.schema.json"))).toBe(true);
+  });
+
+  test("a full export KEEPS an unattributable orphan — no stamp, or another profile's — and reports it (LCLI-565)", () => {
+    // LCLI-546's shape: a binary older than the tree meets a newer type's schema. Before this guard
+    // the export deleted it. It must now stay on disk, in `keptUnattributable`, not `removed`.
+    exportSchemas(["export"]);
+    const unstamped = join(root, ".lore/schemas/newer-type.schema.json");
+    const foreign = join(root, ".lore/schemas/other-type.schema.json");
+    writeFileSync(unstamped, '{\n  "type": "object"\n}\n');
+    writeFileSync(
+      foreign,
+      `${JSON.stringify({ "x-lore-generator": { profileDigest: `sha256:${"0".repeat(64)}` } })}\n`,
+    );
+    const { result } = exportSchemas(["export"]);
+    expect(result.removed).toEqual([]);
+    expect(result.keptUnattributable.map((f) => f.path)).toEqual([
+      ".lore/schemas/newer-type.schema.json",
+      ".lore/schemas/other-type.schema.json",
+    ]);
+    expect(existsSync(unstamped)).toBe(true);
+    expect(existsSync(foreign)).toBe(true);
+  });
+
+  test("a kept unattributable orphan is warned about on stderr outside --json, and not inside it", () => {
+    exportSchemas(["export"]);
+    writeFileSync(join(root, ".lore/schemas/newer-type.schema.json"), "{}\n");
+    const plainErr = capture();
+    runSchema({ root, output: PLAIN_CTX, stdout: capture(), stderr: plainErr, args: ["export"] });
+    expect(plainErr.text()).toMatch(/warning: kept \.lore\/schemas\/newer-type\.schema\.json: .*NOT pruned/);
+    const jsonErr = capture();
+    runSchema({ root, output: JSON_CTX, stdout: capture(), stderr: jsonErr, args: ["export"] });
+    expect(jsonErr.text()).toBe("");
   });
 
   test("a full export leaves non-schema files in the directory untouched", () => {

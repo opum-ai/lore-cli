@@ -421,9 +421,10 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     ],
     json: true,
     kind: "check.report",
-    // extra 6 = the drift/link gate RETURN (check.ts:258) — check's principal failure, modeled
-    // explicitly rather than left to the coincidental adapter 6.
-    exitCodes: exitCodesFor(["read", "backlog"], [6]),
+    // extra 6 = the drift/link gate RETURN (`exitFor` in commands/check.ts) — check's principal
+    // failure, modeled explicitly rather than left to the coincidental adapter 6. extra 7 = the
+    // indeterminate gate return (LCLI-565): an unattributable committed schema, never a prune.
+    exitCodes: exitCodesFor(["read", "backlog"], [6, 7]),
     examples: ["lore check", "lore check --as-of 2026-08-13", "lore check --external"],
   },
   {
@@ -934,7 +935,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
 /**
  * The semantic exit-code taxonomy, name → code, built from the `errors.ts`
  * constants so it can never drift from the real mapping (`validation` and `drift`
- * intentionally share `6`; cli-contract §5.1/§5.3).
+ * intentionally share `6`; `indeterminate` is `7`, LCLI-565; cli-contract §5.1/§5.3).
  */
 export function exitCodeTaxonomy(): Record<string, number> {
   return { ok: EXIT_OK, uncaught: EXIT_UNCAUGHT, ...EXIT_CODES };

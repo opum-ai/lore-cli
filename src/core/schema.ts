@@ -33,6 +33,7 @@
  * coerced to `Date` (ADR-0006 §2).
  */
 
+import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import { z } from "zod";
 import { LoreError, type WarningCollector } from "../errors";
@@ -676,8 +677,11 @@ export interface EmitSchemaFilesOptions {
 export function emitSchemaFiles(profile: Profile, options: EmitSchemaFilesOptions = {}): SchemaFile[] {
   const dir = options.dir ?? SCHEMAS_DIR;
   const types = options.only ? [options.only] : [...profile.types.values()];
+  // Computed over the WHOLE profile even under `only`: the stamp names the profile a file came
+  // from, not the one type in it, so a `--type` export and a full export stamp identically.
+  const digest = profileDigest(profile);
   return types.flatMap((type) => {
-    const contents = `${JSON.stringify(schemaForVersion(type, profile), null, 2)}\n`;
+    const contents = `${JSON.stringify(stampSchema(schemaForVersion(type, profile), digest), null, 2)}\n`;
     // A type's DEPRECATED ALIASES each get a byte-identical file of their own (LCLI-553), so a
     // consumer who references `.lore/schemas/<oldSlug>.schema.json` by path keeps resolving across
     // a type rename. Emitting them HERE rather than special-casing the drift gate is what makes
@@ -692,6 +696,101 @@ export function emitSchemaFiles(profile: Profile, options: EmitSchemaFilesOption
       contents,
     }));
   });
+}
+
+// ── Generator stamp (LCLI-565; spec: docs/specs/committed-schema-generator-stamp.md) ─────────────
+
+/**
+ * The top-level key every emitted schema file carries its provenance under. `x-`-prefixed so JSON
+ * Schema validators and the editor language servers reading these files through the `$schema`
+ * modeline treat it as an inert unknown keyword.
+ */
+export const GENERATOR_STAMP_KEY = "x-lore-generator";
+
+/**
+ * The domain tag hashed ahead of the projection. It is the projection's VERSION: bump it only
+ * together with a deliberate change to what {@link profileDigest} projects, and ship a rollout
+ * note with that release, because every committed stamp in every repository then stops matching.
+ */
+const PROFILE_DIGEST_PROJECTION = "lore-profile-digest/1";
+
+/**
+ * The profile digest stamped into every emitted schema as `x-lore-generator.profileDigest`:
+ * `sha256:<64 hex>` over a canonical projection of the compiled profile's TYPE DEFINITIONS. It is
+ * the ONLY key `lore check` and `lore schema export` use to decide whether an orphaned schema is
+ * this binary's own (prune affirmed) or unattributable (never pruned). No lore version is part of
+ * it, by ruling: a version would change every release whether or not the profile did.
+ *
+ * STABILITY CONTRACT — the digest is taken over exactly this, and nothing else:
+ *
+ *   - the tag {@link PROFILE_DIGEST_PROJECTION};
+ *   - every declared type, in profile declaration order, as `[name, slug, aliases, fields]`:
+ *     - `name`: the canonical OKF `type` spelling;
+ *     - `slug`: its LOWER-KEBAB slug (the schema file stem);
+ *     - `aliases`: its deprecated alias spellings, in declaration order (LCLI-553);
+ *     - `fields`: every declared field name (base, then own, then lore's reserved coupling fields)
+ *       in declaration order, each as `[name, required]`.
+ *
+ * Serialized with `JSON.stringify` of nested ARRAYS only — never objects — so no key order, and no
+ * serializer default, can enter the bytes. Deliberately EXCLUDED, so they can change without
+ * moving any repository's digest: field kinds, enums, list item shapes and editor defaults; the
+ * OKF-version-conditional families {@link schemaForVersion} adds; required body sections;
+ * templates; and every `[profile]` scalar (`name`, `case`, `resource_base`, `strict_types`,
+ * `okf_version`). A change to one of those alters a schema's BYTES and so still surfaces as
+ * `stale` (rewrite), which is recoverable from git; it just does not alter attribution.
+ *
+ * INCLUDED, and therefore a fleet-wide rollout event when a built-in changes: adding, removing or
+ * renaming a type or alias; adding or removing a field, INCLUDING a reserved coupling field every
+ * type carries; flipping a field's requiredness. Any change to this list or to the serialization
+ * is a projection change and must bump {@link PROFILE_DIGEST_PROJECTION}.
+ */
+export function profileDigest(profile: Profile): string {
+  const projection = [...profile.types.values()].map((type) => [
+    type.name,
+    type.slug,
+    [...type.aliases],
+    [...type.declaredFields].map((field) => [field, type.requiredFields.has(field)]),
+  ]);
+  const bytes = JSON.stringify([PROFILE_DIGEST_PROJECTION, projection]);
+  return `sha256:${createHash("sha256").update(bytes, "utf8").digest("hex")}`;
+}
+
+/**
+ * `schema` with the generator stamp inserted directly after `$schema` (or first, if a schema has
+ * no `$schema`), so every emitted file reads `$schema`, then its provenance, then its shape.
+ */
+function stampSchema(schema: Record<string, unknown>, digest: string): Record<string, unknown> {
+  const stamp = { [GENERATOR_STAMP_KEY]: { profileDigest: digest } };
+  if (!("$schema" in schema)) {
+    return { ...stamp, ...schema };
+  }
+  const { $schema, ...rest } = schema;
+  return { $schema, ...stamp, ...rest };
+}
+
+/**
+ * The `profileDigest` a committed schema file's bytes carry, or `null` when it carries none: not
+ * JSON, not an object, no {@link GENERATOR_STAMP_KEY}, or a digest that is not a string. Every one
+ * of those means "this binary cannot attribute the file", which is exactly how the caller treats
+ * `null` — there is deliberately no distinction between "unstamped" and "unreadable" here, because
+ * neither may ever lead to a prune.
+ */
+export function readGeneratorStamp(contents: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(contents);
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+  const stamp = (parsed as Record<string, unknown>)[GENERATOR_STAMP_KEY];
+  if (stamp === null || typeof stamp !== "object" || Array.isArray(stamp)) {
+    return null;
+  }
+  const digest = (stamp as Record<string, unknown>).profileDigest;
+  return typeof digest === "string" ? digest : null;
 }
 
 /**
