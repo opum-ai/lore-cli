@@ -7,6 +7,114 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-22
+
+The headline is LCLI-565: **committed schemas now say which lore profile generated them, and
+`lore check` gains a seventh exit code, `7` (`indeterminate`), for a schema it cannot attribute.**
+Before this release, `lore check` could not tell an orphaned schema it had written itself from one
+it had never seen, so it advised the same prune for both. That advice is destructive, and
+LCLI-546 came one `git add -A` away from committing its result. This release makes the difference
+decidable, and it never advises deleting a file it cannot attribute.
+
+The version is `0.9.0` rather than a patch because exit `7` is a breaking CLI-contract change under
+ADR-0005. It is **not** chosen to match `quest`'s number. Whether this lore and any quest release
+form a qualified pair is for `opum-cli-e2e` to measure, and nothing here claims one. **Detect a
+capability by presence, never by comparing versions.**
+
+### Rollout — read this before bumping your lore pin (LCLI-565)
+
+- **Exit `7` / `error_type` `indeterminate` is a new `lore check` outcome, and it is a breaking
+  CLI-contract change.** A consumer that freezes the exit-code taxonomy (`0` `2` `3` `4` `5` `6`),
+  or that branches only on `6`, will misread it. Exit `7` means "cannot judge this from here":
+  do not auto-repair it, and do not run `lore schema export` or `lore sync` as a fix. Read
+  `git log` on the named file. A run with both `6`-class and `7`-class findings exits `7`
+  (OPAG-373). The capability manifest's error taxonomy gains `indeterminate: 7` (nine keys), and
+  ADR-0005 and the CLI contract carry a dated amendment.
+- **The first stamping release makes EVERY committed schema STALE (exit `6`), NOT
+  unattributable.** No committed schema in any repository carries the stamp yet. An unstamped
+  schema whose type still exists is reported `stale`, and **one `lore schema export` re-stamps all
+  of them**. Only an unstamped schema that is *also* an orphan (no type owns it) reports exit `7`.
+  The Story -> Arc rename below adds `arc.schema.json`, which a pre-0.9.0 bundle lacks and which
+  reports `missing` (exit `6`). The same export writes it.
+- **Fleet consumers skip 0.8.0. Move the lore pin to `0.9.0` AND run `lore schema export` in the
+  SAME pull request.** A pin-only PR goes red on the docs gate, because the new binary finds every
+  committed schema stale. Commit the regenerated `.lore/schemas/*.schema.json` with the pin change
+  (opum-agent OPAG-326).
+- **After a legitimate type removal, the removed type's schema reports unattributable (exit `7`)
+  until a human deletes it.** Removing a type changes the profile digest, so the leftover file
+  carries a stamp the running binary does not recognise. **`lore schema export` will no longer
+  prune it.** It is kept and reported instead. A legitimate removal now costs one deliberate `rm`.
+  That is the design: a leftover file needing a deliberate `rm` is a much cheaper failure than
+  deleting a file the tool could not attribute.
+- **A future lore release that changes the digest projection or the reserved coupling fields
+  moves every repository at once.** The digest covers each type's name, slug, aliases, and
+  declared fields with their requiredness, reserved coupling fields included. It covers no lore
+  version, so an ordinary release does not move it. A release that adds or removes a type, alias,
+  or field, or changes the projection itself (`lore-profile-digest/1`), takes every committed
+  schema in every consuming repository stale at once. Such a release will ship its own rollout
+  note. The stability contract is stated beside `profileDigest` in `src/core/schema.ts`.
+- **`lore schema export --json` gains `keptUnattributable`.** It lists the orphans that were kept
+  because their stamp is absent or foreign. `removed` now lists only orphans whose stamp matches
+  the running binary's own profile. Outside `--json`, a stderr warning names each kept file.
+
+### Provenance — read this before checking the packument
+
+- **LCLI-482 is still open.** OIDC trusted publishing still cannot authenticate for this
+  repository. If 0.9.0 goes out through the manual `scripts/publish-release.sh` path, as 0.8.0,
+  0.7.0, 0.6.2 and 0.6.1 did, it carries no provenance attestation. That is expected and is not
+  evidence of tampering.
+
+### Added
+
+- **Committed-schema generator stamp** (LCLI-565, spec LCLI-563). `lore schema export`, and
+  `lore init` through the same emitter, writes `x-lore-generator.profileDigest` into every emitted
+  schema, alias files included. The value is `sha256` over a documented, versioned projection of
+  the compiled profile's type definitions. Editors and validators treat the key as an inert unknown
+  keyword.
+- **`lore check` exit `7`, rule `schema-unattributable`** (LCLI-565). An orphaned schema with a
+  matching stamp is still `orphaned` (exit `6`, prune advised). An orphan with a differing or absent
+  stamp is `unattributable` (exit `7`), and no prune is advised. Every schema finding now carries a
+  `schemaClass` (`missing` / `stale` / `orphaned` / `unattributable`). The schema pass runs first,
+  so a later validation throw cannot hide an unattributable schema: that throw is escalated to
+  `indeterminate`, and the original message and `error_type` are kept.
+- **Deprecated type aliases in profiles** (LCLI-553). A `[[types]]` table may declare `aliases`. An
+  alias resolves to its canonical type everywhere a type name or slug is read, and `lore schema
+  export` emits a byte-identical schema file for each alias spelling. Name and slug collisions are
+  rejected.
+
+### Changed
+
+- **The built-in `Story` type is now `Arc`, and `Story` stays as a deprecated alias until 1.0.0**
+  (LCLI-554, OPAG-255). Existing `type: Story` documents keep working. `lore new Story` writes
+  `type: Arc`, and both spellings scaffold into `docs/arcs/`. `lore query --type Story` matches
+  documents of either spelling, and required-section enforcement applies to aliased documents.
+  Consumers gain `arc.schema.json` beside a byte-identical `story.schema.json`.
+
+### Fixed
+
+- **`lore schema export` no longer deletes a case-variant schema on a case-insensitive filesystem**
+  (LCLI-565). This defect predates this release. It was reproduced on APFS, and NTFS has the same
+  case-insensitivity. A committed `ADR.schema.json` and the `adr.schema.json` that export writes
+  are one directory entry there. Export's prune then read back the bytes it had just written,
+  found them owned, and deleted the only `adr` schema. Prune decisions now come from a snapshot of
+  the directory taken before any write. An entry whose case- and normalization-folded name matches
+  a written name is never deleted. `lore check` had the same defect on the reporting side. It
+  called the owned schema missing and advised pruning its variant. A stamped variant now stands in
+  for the owned schema when the exact name is absent, and an unstamped or foreign one reports
+  unattributable.
+- **The generated type schema accepts alias spellings** (LCLI-558). Alias *resolution* shipped
+  without alias *acceptance*: a `type: Story` document resolved to `Arc` and was then rejected by
+  the schema's single-value `type` literal, so `lore link` still refused it. `type` now accepts the
+  canonical name and every alias. An aliasless type keeps its `const` form byte-for-byte.
+
+### Internal
+
+- **The Windows launcher-qualification test no longer flakes on `EBUSY`** (LCLI-564). Every
+  assertion passed. The scratch-tree removal threw because Windows briefly holds a handle after
+  the launcher exits. It now uses the bounded retrying remover the same file already tests.
+- **Documentation:** the 0.8.0 retained-snapshot upgrade note (LCLI-561), and the schema-drift
+  remedy named in it (LCLI-545). See the 0.8.0 entry's "Known incompatibility" section.
+
 ## [0.8.0] - 2026-09-18
 
 Released as a **pair with `quest` 0.9.0**, and the mismatched numbers are the point. "The pair"
