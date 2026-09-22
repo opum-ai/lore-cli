@@ -164,11 +164,24 @@ to the built-in `defaultProfile()`, and this repository has neither
 break the tie. Set containment buys nothing the digest does not, and costs a
 larger committed field.
 
-**A repository that commits a profile is not exposed to this failure at all**,
-and the same mechanism covers it without a special case: its digest derives from
-a file in the tree, so every binary computes the same value, every artifact is
-always attributable, and prune stays decidable. The mechanism needs no field
+**A repository that commits a profile is not exposed to the older-binary
+ambiguity**, and the same mechanism covers it without a special case: its digest
+derives from a file in the tree, so binaries that share a digest projection
+compute the same value whatever their age. The mechanism needs no field
 recording which kind of repository it is in.
+
+*Corrected 2026-09-22 (LCLI-565).* This paragraph first went on to say every
+artifact in such a repository is "always attributable, and prune stays
+decidable". Implementation showed that to be too strong, twice over. Removing a
+type from the committed profile changes the digest, so that type's file is
+unattributable exactly as in the next section. And the digest also covers bytes
+that come from the binary, not the tree: the projection's version tag and the
+reserved coupling fields (see the stability contract beside `profileDigest` in
+`src/core/schema.ts`), so a release that changes either moves every repository
+at once. In practice the affirmed **orphaned** row fires for a file carrying the
+current digest under a name no type owns (a hand copy or rename); a legitimate
+removal always costs a deliberate `rm`. It got in because the paragraph reasoned
+about where the profile comes from and not about what the digest hashes.
 
 ### What happens after a legitimate removal
 
