@@ -548,20 +548,51 @@ publish is explicitly marked public. Root `package.json` and all six
    the subject of a past release, it is a record and is fine.
 
    The sweep is not expected to come back empty. Its exemptions are pinned here
-   individually, so a third hit appearing is a visible failure rather than a
-   silent one:
+   hit by hit, so a twelfth hit appearing is a visible failure rather than a
+   silent one. **Count the output lines and compare them with this list.
+   Eleven lines, in these four files, is the passing answer**:
 
-   - `docs/runbooks/release-publishing.md` — the `0.1.0` post-publish smoke
-     evidence. A dated checklist result about one specific past release.
-   - `docs/adr/0020-tracker-version-gates-are-minimum-floors.md` — the
+   - `docs/runbooks/release-publishing.md`, 3 hits:
+     - the `0.1.0` post-publish smoke evidence. A checked checklist result
+       about one specific past release.
+     - step 3's LCLI-510 narrative, where npm's `0.7.0` read served a README
+       asserting `0.6.2`. Past tense, about a past release's defect.
+     - step 3's read-back note, the `0.7.0`/`0.6.2`/`0.6.1` `readme` reads.
+       Prefixed "Measured 2026-09-15", so it is a dated measurement.
+   - `docs/adr/0020-tracker-version-gates-are-minimum-floors.md`, 1 hit: the
      `0.3.4`/`0.2.9` pairing that motivated the floor decision, written "as
      observed on 2026-08-28". A dated observation, not a current-state claim.
+   - `docs/reference/shipped-readme-version-record.md`, 7 hits:
+     - "On 2026-09-15", the `0.7.0` README defect. A dated measurement.
+     - the byte-wise masking section's stale `0.6.2` example. A hypothetical
+       the gate must catch, not a claim about what is published.
+     - the clause-3 section's planted `0.6.2`. A hypothetical proof input, as
+       above.
+     - the allow-span example sentence, that `0.6.0` was the last release
+       carrying a provenance attestation. It is quoted as history, but **its
+       truth depends on the present**. It was re-verified on 2026-09-22:
+       `0.6.1`, `0.6.2`, `0.7.0`, `0.8.0` and `0.9.0` have no `dist.attestations`
+       key. It becomes false the first time LCLI-482's fix ships an attested
+       release, so re-read it then.
+     - three lines of the "Measured 2026-09-15" `npm view ... readme` block.
+       A dated measurement.
 
-   Any hit that is not one of those two is a defect to fix before releasing.
-   This sweep was proven by a negative control on 2026-08-29: a planted
+   Any hit that is not one of those eleven is a defect to fix before
+   releasing. This sweep was proven by a negative control on 2026-08-29: a planted
    `@opum-ai/lore@<a-version-that-does-not-exist>` line in
    `docs/reference/cli-surface.md` was reported by
-   path and line, and the sweep returned to its two pinned rows once removed.
+   path and line, and the sweep returned to its pinned rows once removed.
+
+   **Re-pinned 2026-09-22 (LCLI-567), after the list had silently stopped
+   matching.** Until then this list pinned two rows while the sweep returned
+   eleven. The nine unpinned hits all arrived with LCLI-510 (#118) on
+   2026-09-15, and every one of them is a record rather than a defect. But
+   `0.8.0` and `0.9.0` both shipped with a sweep whose output no longer matched
+   its own exemption list. That is the silent failure pinning exists to
+   prevent, and it went unseen because nobody compared the count. Run the
+   sweep with `/usr/bin/grep`, not a shell `grep` that may be a shim skipping
+   gitignored files. Both returned 11 on 2026-09-22, but a shim is not the
+   command this list was measured with.
 4. Merge to `dev`, promote to `main`, and wait for the full `main` CI matrix.
    Tag that verified commit and push the tag — nothing triggers automatically
    from the tag.

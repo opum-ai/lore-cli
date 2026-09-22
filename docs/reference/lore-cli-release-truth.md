@@ -21,6 +21,158 @@ availability claim.
 
 ### Current state
 
+`0.9.0` is **RELEASED**. Published 2026-09-22 from tag `v0.9.0` (annotated tag
+object `48840cb3bc4dd9c6ea16651f8851d56b6a6a6030`, tagger date 22:48:39Z,
+peeling to `fd712748176b59175eaf40ec10eceb5ba6ac3bdd`, the commit `origin/main`
+named when read on 2026-09-22), **manually via
+`scripts/publish-release.sh 0.9.0 35794336818`** against Release run
+`35794336818`'s own `npm-packages` artifact. The registry's packument `time`
+field records the six platform packages at 22:57:55Z–22:59:41Z and the root
+launcher at 23:01:53Z. Read package by package with `npm view` on 2026-09-22,
+all seven packages are present at `0.9.0` with `dist-tags.latest` = `0.9.0` on
+each. The script's clean-registry `npx` smoke returned `0.9.0`. A separate clean
+install into an empty directory, with its own npm cache, on 2026-09-22
+(darwin-arm64) also returned `0.9.0`. That installed binary's `lore --json help`
+reports `exitCodes.indeterminate: 7`, and `lore check` on a fresh bundle holding
+one unstamped orphan schema exits `7` with rule `schema-unattributable`. That is
+the LCLI-565 behaviour this release exists to ship, measured on the published
+bytes rather than on source.
+
+**`0.9.0` claims NO pairing with any `quest` release.** Its tag message says so
+in those words: "Claims no pairing with any quest release; that is
+opum-cli-e2e's to qualify." Do not infer a pair from `0.8.0`'s (below), from
+version numbers, or from timing. Whether a lore version and a quest version form
+a qualified pair is measured by opum-cli-e2e, not asserted by this record.
+
+**The tag was qualified before the publish.** Release run `35794336818`
+(attempt 1, `workflow_dispatch` on ref `v0.9.0`, head `fd712748…`) finished
+`success`, with all six matching-host package qualifications green —
+`linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`, `win32-x64`,
+`win32-arm64` — and `publish (npm, OIDC trusted publishing)` `skipped`, which
+is what the operator's `publish: false` dispatch produces. Read from
+`.../actions/runs/35794336818/attempts/1/jobs`, which a later re-run cannot
+change (see the LCLI-531 addendum under `0.7.0` below for why the bare run id
+is not enough). The `main` push CI run on the same commit, `35793992928`,
+finished `success`: 14 jobs green and `promotion is manual` skipped. That is
+evidence, not a gate, because `main` has no required checks configured. It is
+also not evidence about the platform packages; only the Release run is.
+
+**6 independently verified, 1 locally sealed — do not round this up to seven**
+(LCLI-489). Before any registry write, the script matched all six platform
+tarballs against `package.platformTarballSha256` in each
+`ladybug-package-qualification-<name>-35794336818` report, every report carrying
+`repository.commit = fd712748…`, the commit the tag peels to. The root launcher
+was self-sealed only (`532839c1…`). **After** the publish, on 2026-09-22, the six
+platform tarballs the registry serves were downloaded by their `dist.tarball`
+URLs and hashed. All six equal those same report digests, so the registry serves
+the bytes that were qualified, not merely the bytes that were downloaded.
+
+**One observation about the root launcher is recorded here and is not yet
+explained.** Each qualification report also carries a
+`package.rootTarballSha256`. The registry's `@opum-ai/lore@0.9.0` tarball hashes
+to the value in the `linux-arm64`, `linux-x64`, `win32-arm64` and `win32-x64`
+reports (`532839c1…`, the same digest the script self-sealed). Both `darwin`
+reports record a different one (`d0eaa3d3…`). `0.8.0` shows the identical 4/2
+split (below). What that field measures on each host has not been established,
+so this record does **not** reclassify the root launcher as independently
+verified. It stays locally sealed until someone reads the producing code.
+
+**`0.9.0` carries NO provenance attestation (LCLI-482, open).**
+`npm view @opum-ai/lore@0.9.0 dist --json` has no `attestations` key at all.
+That is a check for the key's presence, not for a null value. `0.6.0`'s `dist`
+carries one, a SLSA provenance link, and `0.6.1`, `0.6.2`, `0.7.0` and `0.8.0`
+have none (all read 2026-09-22). This is not tampering: OIDC trusted publishing
+still cannot authenticate for this repository, and a manual publish cannot mint
+an attestation. The credential was the Keychain granular token
+(`keychain:npm-opum-ai-publish`), with `~/.npmrc` left untouched, per the
+script's own output.
+
+**npm propagation was per-package and bimodal again, and the LCLI-502 gate
+held.** After the last platform publish, the script's visibility gate saw
+`darwin-arm64` and `darwin-x64` at 81s, `linux-x64` at 143s, `linux-arm64` and
+`win32-arm64` at 204s, and `win32-x64` at 205s. It then waited its 20s cushion,
+and only then published the root launcher. So the launcher could not resolve
+before any binary it execs. The root itself then read ABSENT for 138s after its
+own successful publish. The rule in `0.7.0`'s entry below still applies: never
+re-publish or unpublish on a transient 404.
+
+**Rollout cost, from the CHANGELOG's `[0.9.0]` entry:** the first stamping
+release makes every committed schema stale (exit 6). Move a repository's lore
+pin to `0.9.0` and run `lore schema export` in the **same** pull request.
+
+**Shipped README, GitHub Release and plugin content.** npm's package-level
+`readme` field was read at 2026-09-22T23:09Z (15,810 bytes). It passes
+`scripts/shipped-readme-version.mjs --check` against `v0.9.0:package.json`
+(exit 0). GitHub Release `v0.9.0` was published 2026-09-22T23:03:38Z,
+non-draft and non-prerelease. `v0.8.0` has none. `skills/` at `v0.9.0` is tree
+`38683e1075994603b7f000517b9e8fc700b7ac21`, which differs from the
+`2998f74d077845f8ad73f83aa296e37e034378a4` that `v0.7.0` and `v0.8.0` both
+shipped. So opum-marketplace's federated baseline changes when it moves its pin
+to this tag, unlike its move to `v0.8.0`.
+
+### Previous state
+
+`0.8.0` was **RELEASED**, and **this entry was written after the fact, on
+2026-09-22, from what could still be read then**. No release-truth update was
+made at `0.8.0`'s own publish, so there is no contemporaneous record in this
+file. Every clause below names its source, and where no source survives the
+entry says so rather than filling the gap.
+
+- **Tag.** `v0.8.0` is annotated tag object
+  `cfd84892a21d4ccebdeb347dc533bc208a82e818`, tagger date
+  2026-09-19T00:26:31Z, peeling to `4d4a1bfba1a1e46d362f0ab2370e250e47c8253c`
+  (`git cat-file -p v0.8.0`).
+- **Registry.** Read on 2026-09-22, all seven packages are present at `0.8.0`
+  (`latest` has since moved to `0.9.0`). The packument `time` field records five
+  platform packages at 00:35:39Z–00:36:38Z on 2026-09-19, `linux-x64` at
+  00:59:57Z and the root launcher at 01:02:44Z. The late `linux-x64` matches
+  LCLI-543's record that its publish needed a retry after an E409, which read
+  like a 2FA hold and was npm's validation holding area. LCLI-543 records
+  `latest` moving to `0.8.0` on all seven at release time. Its closing summary
+  says that was confirmed by `npm view` reads, not by the publisher's exit code.
+- **Qualification.** Release run `35409381009` (attempt 1, `workflow_dispatch`,
+  created 2026-09-19T00:26:50Z) finished `success`, with all six matching-host
+  package qualifications green and `publish (npm, OIDC trusted publishing)`
+  `skipped` (read from `.../attempts/1/jobs`). **Unlike `0.9.0`'s run, it was
+  dispatched on ref `main`, not on the tag.** Its head SHA is `4d4a1bfb…`, the
+  commit the tag peels to, so the qualified source is the tagged source. But
+  the run is not bound to the tag ref.
+- **Publish path and digests.** Published manually with
+  `scripts/publish-release.sh` (LCLI-543; the CHANGELOG's `[0.8.0]` entry). The
+  script's output is **not** on record, so neither its pre-publish digest check
+  nor the exact invocation can be quoted. Measured instead, on 2026-09-22: the
+  six platform tarballs the registry serves for `0.8.0` hash to
+  `package.platformTarballSha256` in the six
+  `ladybug-package-qualification-<name>-35409381009` reports, 6/6, every report
+  carrying `repository.commit = 4d4a1bfb…`. That proves the published bytes are
+  the qualified bytes. It does not reconstruct what the operator checked before
+  publishing. The root launcher tarball (`596237e3…`) equals
+  `rootTarballSha256` in the four `linux`/`win32` reports and not in the two
+  `darwin` reports (`56c45af9…`), the same unexplained split `0.9.0` shows.
+- **Clean install.** An install into an empty directory, with its own npm
+  cache, on 2026-09-22 (darwin-arm64) returned `0.8.0` from `lore --version`.
+  That is a present-day read of an immutable version, not the release-time
+  smoke, which is not on record.
+- **Provenance.** NO attestation. `0.8.0`'s `dist` has no `attestations` key
+  (read 2026-09-22), and the tag message says so too. The cause is the same
+  LCLI-482 one.
+- **Pairing.** The tag message: "Released as a pair with quest 0.9.0 —
+  deliberately not the same number." This was the first release after
+  exact-version lockstep was retired. LCLI-543 records opum-cli-e2e's pair
+  qualification (460 rows, 459 PASS, 0 FAIL, 1 BLOCKED;
+  `baselines/v0.9.0-lore0.8.0-pair`). That number is relayed through LCLI-543
+  and was not re-resolved against opum-cli-e2e for this entry.
+- **Known incompatibility, found after release.** An older `lore` rejects the
+  retained snapshots `0.8.0` writes, across the whole scope (LCLI-561). See
+  [Upgrade note: retained snapshots written by lore 0.8.0](upgrade-note-0-8-0-retained-snapshots.md).
+- **Where the record is thin.** There is no publish log and no per-package
+  propagation timings, so the late `linux-x64` is explained only by LCLI-543's
+  prose. The run was dispatched on `main` rather than the tag. There is no
+  GitHub Release for `v0.8.0` (`gh release view v0.8.0`: not found). And no
+  release-truth update was made at the time. A reader needing more than the
+  above should read LCLI-543's notes, which were written during the publish.
+  They should not expect this file to hold it.
+
 **Addendum 2026-09-17 (LCLI-531): read every bare `34968280818` citation below
 as attempt 1, not as a live link.** Release run `34968280818` was dispatched a
 second time on 2026-09-16T23:42Z (`jeremy-newhouse`, confirmed via
@@ -57,7 +209,7 @@ already set in [Release publishing](../runbooks/release-publishing.md) for
 wrong-but-live answer from a re-run — different mechanism, same conclusion:
 trust the digests in this record, not the CI link).
 
-`0.7.0` is **RELEASED**. Published 2026-09-15 from tag `v0.7.0` (annotated tag
+`0.7.0` was **RELEASED**. Published 2026-09-15 from tag `v0.7.0` (annotated tag
 object `9208d9c51dfcb2e0e75b086ac9a3b5fc9ca7618c`, peeling to
 `5c437eb5137c19f4fd87c445ba88068671b993cc`), **manually via
 `scripts/publish-release.sh 0.7.0 34968280818`** against Release run
@@ -67,8 +219,9 @@ before any registry write. All seven packages are present at `0.7.0` with
 clean-registry install — a fresh temp dir, nothing from local caches — returned
 `0.7.0` from the launcher's own `--version`.
 
-`0.7.0` is a **pair release with `quest` 0.7.0**; the two version numbers move in
-lockstep and matched before either repository tagged. Cross-read the pair by
+`0.7.0` was a **pair release with `quest` 0.7.0**; under the exact-version
+lockstep convention then in force (retired at `0.8.0`, above) the two version
+numbers moved together and matched before either repository tagged. Cross-read the pair by
 **version**, never by tip SHA — both repositories routinely carry a `dev` ahead
 of `main` by tracker-only commits, so a SHA comparison shows mismatches that are
 not real.
@@ -168,14 +321,13 @@ type — also verified against npm's docs, not assumed) and npmjs.com directly,
 rather than presenting a stall as ordinary propagation lag.
 
 **The npm token used for this publish was exposed in a transcript on 2026-09-14
-and had NOT been rotated at publish time.** The owner was asked directly before
+and had NOT been rotated at publish time.** (It has been since: LCLI-500 is
+Done.) The owner was asked directly before
 the publish, with rotate-first offered as the recommended option, and chose to
 publish on the existing credential and rotate after. That is a recorded decision
 rather than an oversight, and the rotation is tracked as **LCLI-500** — which
 also notes that the same credential path publishes `@opum-ai/quest`, so a
 rotation proving only lore's old token is dead may leave quest's path untested.
-
-### Previous state
 
 `0.6.2` was **RELEASED**. Published 2026-09-14 from tag `v0.6.2` at
 `ea3813ae39fd9c9bba1e5e24e32a4c73e1611480`, **manually via
@@ -1102,5 +1254,8 @@ public availability.
   install, and GitHub Release evidence.
 - LCLI-332 owns the `0.3.0` knowledge-adoption workflow, seven-package
   registry, install, and GitHub Release evidence.
+- LCLI-543 owns the `0.8.0` release record, including the handoff notes
+  written while its publish was in flight.
+- LCLI-567 owns the `0.9.0` post-publish record.
 - The [Lore CLI handover](../runbooks/lore-cli-handover.md) routes a fresh
   session to these live sources without copying a task cursor.

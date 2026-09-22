@@ -57,8 +57,8 @@ semantic exit codes, machine-readable `--json`).
 > publishing is configured on every package but cannot authenticate: GitHub
 > issues immutable-format OIDC subject claims for this repository and npm
 > matches the classic form, so `publish: true` fails with `E404` (LCLI-482).
-> `0.8.0`, `0.7.0`, `0.6.2` and `0.6.1` were therefore published with
-> `scripts/publish-release.sh` and, unlike `0.6.0`, **carry no provenance attestation** —
+> Every release after `0.6.0` has therefore been published with
+> `scripts/publish-release.sh` and, unlike `0.6.0`, **carries no provenance attestation** —
 > a manual publish cannot mint one, and provenance requires the CI OIDC path.
 > An absent attestation here is expected and is not evidence of tampering. See
 > [Lore CLI release truth](docs/reference/lore-cli-release-truth.md).

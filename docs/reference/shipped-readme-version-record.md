@@ -370,10 +370,15 @@ it is a dry-run artifact until publication — and the alternative is prose that
 never states a release at all, which is a separate editorial decision. A2 asks
 that the **number** not be hand-maintained, and it is not.
 
-The README's "pair with `quest` 0.7.0" sentence remains hand-maintained and sits
-outside both regions. It is out of scope here twice over: it asserts another
-package's version rather than this one's, and reconciling the lockstep claim
-with the exception is LCLI-511's work.
+As of this record's writing (2026-09-15), the README's "pair with `quest` 0.7.0"
+sentence was hand-maintained and sat outside both regions. It was out of scope
+here twice over: it asserted another package's version rather than this one's,
+and reconciling the lockstep claim with the exception was LCLI-511's work. That
+sentence has since been replaced. The `0.8.0` bump (#180) swapped it for a
+pairing paragraph, and the `0.9.0` bump (#227) opened that paragraph with "No
+`quest` pairing is claimed for this version by its number". The replacement is
+still hand-maintained and still sits outside both regions, so the out-of-scope
+reasoning carries over unchanged (read 2026-09-22).
 
 **Say what the gate does not cover, because its success message sounds wider
 than it is.** A green run prints "no name/version pair outside any of them",
