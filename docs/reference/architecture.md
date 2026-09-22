@@ -115,7 +115,7 @@ The command result is rendered in one of three output modes with strict preceden
 - **--json** — a versioned `{schemaVersion, kind, data}` envelope.
 
 Semantic exit codes (`0` ok, `2` usage, `3` not-found, `4` denied, `5`
-conflict/exists, `6` validation-or-drift) and the `--json` error envelope
+conflict/exists, `6` validation-or-drift, `7` indeterminate) and the `--json` error envelope
 (`{error_type, message, hint, input}` on stderr; stdout carries data only) are
 the machine contract — see [CLI contract](cli-contract.md) and
 [ADR-0005](../adr/0005-cli-contract.md). The full command list is the

@@ -120,7 +120,7 @@ do the work            4. write code; edit docs OUTSIDE managed regions
 lore sync              5. reconcile status + rewrite managed blocks + regen index
    │
    ▼
-lore check             6. CI gate — exit 6 on drift/broken-link/anchor/portability
+lore check             6. CI gate — exit 6 on drift/broken-link/anchor/portability, 7 if it cannot judge
 ```
 
 Starting from scratch instead of an existing Story? `lore new Story "<title>"`
@@ -222,7 +222,9 @@ lore check          # plain auto-selected when non-TTY (e.g. in CI)
 written status no longer matches its tasks, or a stale managed block), broken
 internal links, missing heading anchors, and portability-lint findings, and it
 surfaces per-doc/bundle token **estimates**. On any failing condition it exits
-**`6`** (`error_type` `drift`); the fix is to run `lore sync` and commit. Because
+**`6`** (`error_type` `drift`); the fix is to run `lore sync` and commit. When it
+finds a committed schema it cannot attribute it exits **`7`** instead, which is
+never fixed by a sync or an export. Because
 `check` writes nothing, it is safe to run in CI on every merge — and because the
 core is deterministic, a green `check` locally means a green `check` in CI for
 the same HEAD and explicit inputs. Pin `--as-of YYYY-MM-DD` when a workflow
@@ -368,6 +370,7 @@ per-task detail moves into the error envelope's `input` on stderr instead.
 | `4` | denied | you targeted a managed region or a guarded op — back off |
 | `5` | conflict | id collision / already-exists / write-race — reconcile, then retry |
 | `6` | `validation` / `drift` | run `lore sync` (drift) or fix the flagged non-conformance (validation), then re-run the gate |
+| `7` | `indeterminate` | lore cannot judge something from here (today: an unattributable committed schema). Do **not** run `lore schema export` or `lore sync` as a fix; read `git log` on the named file and on the profile, and decide by hand |
 
 Exit **`1` is reserved for an uncaught bug** — treat it as *report this*, not
 *handle this*. The exit code carries the same meaning in every mode, so
@@ -424,7 +427,8 @@ non-destructive.
   ([ADR-0012](../adr/0012-backlog-coexistence-git-ownership.md)).
 
 - **Treat `lore check` as the gate.** Don't consider work done until `lore check`
-  exits `0`. If it exits `6`, run `lore sync`, commit the result, and re-run.
+  exits `0`. If it exits `6`, run `lore sync`, commit the result, and re-run. If
+  it exits `7`, stop: read `git log` on the file it names and decide by hand.
   Because lore is deterministic, a clean local `check` is a clean CI `check`
   for the same HEAD and explicit inputs. Date-sensitive rules default to HEAD's
   commit date; pass `--as-of YYYY-MM-DD` to pin another date.
@@ -444,7 +448,7 @@ non-destructive.
 | See a Story's live tasks | `lore tasks <story> --json` | `kind: tasks.rollup`; drives Backlog `--json` |
 | Couple a task to a Story | `lore link <story> <task-id>` | sets frontmatter + `doc:` label; lore commits |
 | Make the bundle coherent | `lore sync --json` | recompute status, rewrite managed blocks, regen index |
-| Gate the bundle | `lore check` | read-only; exit `6` on drift/broken-link/anchor/portability |
+| Gate the bundle | `lore check` | read-only; exit `6` on drift/broken-link/anchor/portability, `7` when it cannot judge a committed schema |
 | Pull guidance on demand | `lore instructions [<topic>]` | just-in-time, mirrors `backlog instructions` |
 | Discover the surface | `lore help --json` | capability manifest in the canonical envelope |
 | Refactor across docs | `lore replace` / `lore rename` / `lore supersede` | graph-aware; skips managed regions |

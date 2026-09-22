@@ -55,7 +55,7 @@ repository's Lore sole-committer contract.
   depth, result, edge, and token filters.
 - Prefer \`--json\` for machine-stable output and \`--plain\` for readable output. Branch on exit
   codes: \`0\` success, \`2\` usage, \`3\` not found, \`4\` denied, \`5\` conflict, \`6\`
-  validation/drift.
+  validation/drift, \`7\` indeterminate (cannot judge from here; never auto-repair).
 
 ## Command map
 

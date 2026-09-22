@@ -56,7 +56,8 @@ Every command obeys the same contract; read it in full in the
   parseable envelope; a failure leaves stdout empty and writes the
   `{ error_type, message, hint, input }` error envelope to stderr.
 - **Exit codes.** `0` ok · `2` usage · `3` not-found · `4` denied · `5`
-  conflict/exists · `6` validation-or-drift. Code `1` is reserved for
+  conflict/exists · `6` validation-or-drift · `7` indeterminate (a gate
+  cannot judge from here; ADR-0005's 2026-09-22 amendment). Code `1` is reserved for
   unexpected/uncaught errors. Each command's *typical* non-zero codes are
   listed in its entry; any command can return `2` for a usage error.
 - **Non-interactive & idempotent.** No prompts; safe to run in agent loops and

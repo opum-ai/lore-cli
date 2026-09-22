@@ -105,7 +105,10 @@ profile types, and portability-lint warnings. Relative \`.md\` links that normal
 above the selected bundle root are not resolved; the report exposes them through
 \`skippedOutOfBundleLinkCount\`, which is informational and never changes the exit.
 The command *returns* exit 6 when any finding is error-tier (or any warning exists
-under \`--strict\`) -- a plain
+under \`--strict\`), and exit 7 when a committed schema is unattributable (rule
+\`schema-unattributable\`: an orphaned \`.lore/schemas/*.schema.json\` whose generator
+stamp is absent or not this lore's -- lore cannot judge it from here; 7 takes
+precedence over 6 in the same run, and every finding is still reported) -- a plain
 exit code, not a thrown error: nothing throws on this path, so there is no
 \`--json\` error envelope for a failing report (the report itself, already on
 stdout, is the payload). cli-contract.md's exit table labels this condition
@@ -177,8 +180,10 @@ deterministic: a clean \`lore check\` locally means a clean \`lore check\` in
 CI for the same repo state and explicit inputs, with no flakiness to chase. A
 typical loop: run check; exit 0 means done; exit 6 means read the report and run
 \`lore sync\` for any drift
-finding, then re-check; exit 3 means fix the path argument; an uncaught 1
-needs investigation, not a blind sync.
+finding, then re-check; exit 7 means something cannot be judged from here -- do
+NOT run \`lore schema export\` or \`lore sync\` as a fix; read \`git log\` on the
+named file (and on the profile) and decide by hand; exit 3 means fix the path
+argument; an uncaught 1 needs investigation, not a blind sync.
 
 Treat \`lore check\` exiting 0 as the actual definition of "done" for any
 docs-touching change -- not typecheck or lint alone.`,
@@ -361,8 +366,8 @@ questions (see the \`workspace\` topic). Then follow lore's canonical agent
 loop: read docs/index.md (the bundle's entry point) -> follow a Story concept -> check its coupled tasks' live status (see the
 \`linking\` topic) -> do the work (author prose outside lore-managed regions)
 -> \`lore sync\` to reconcile status and regenerate managed blocks -> \`lore
-check\` as the CI gate (exit 6 on a failing report -- see the \`check\`
-topic).
+check\` as the CI gate (exit 6 on a failing report, 7 when it cannot judge a
+committed schema -- see the \`check\` topic).
 
 lore is CLI-first and deterministic: no LLM dependency, so the same explicit
 inputs against unchanged repository state always produce the same output and
@@ -371,7 +376,7 @@ and otherwise pin to HEAD's commit date; they never read the machine clock.
 Every command supports \`--json\` (the \`{schemaVersion, kind, data}\`
 envelope) and \`--plain\` (ANSI-free text, auto-selected when stdout isn't a
 TTY); branch on the semantic exit code (0 ok, 2 usage, 3 not_found, 4 denied,
-5 conflict, 6 validation/drift) rather than parsing prose.
+5 conflict, 6 validation/drift, 7 indeterminate) rather than parsing prose.
 
 Topics:
 ${topicIndexLines(DETAIL_TOPICS)}

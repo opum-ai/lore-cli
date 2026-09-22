@@ -143,7 +143,8 @@ Two weaker claims, correctly labelled:
   only two surveyed tools touch it and both are read-side. Genuinely unique —
   but unique-and-unconsumed is not yet valuable, and Lore explicitly does not
   import, bind, evaluate, or attest computation assets.
-- **Six-way differentiated exit codes** (0/2/3/4/5/6). The finest granularity
+- **Seven-way differentiated exit codes** (0/2/3/4/5/6/7; `7`, indeterminate,
+  added 2026-09-22 — six-way when this comparison was made). The finest granularity
   observed — okfcli uses 0–4, Foam 0/1/2, Backlog.md and OpenSpec 0/1, and
   task-master is broken as a gate (exit 0 on error). Real but modest, and most
   tools' exit codes were never probed.
