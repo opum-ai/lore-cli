@@ -146,9 +146,11 @@ interface CheckArgs {
 /**
  * Run `lore check`: parse the arguments, discover and read the bundle's markdown, check it,
  * emit the `check.report`, and return the exit code — `0` when coherent (warnings alone are
- * advisory), `6` when any broken bundle-scoped link/anchor exists (or any warning under `--strict`).
- * A bad flag throws a `usage` {@link LoreError} (exit `2`); an unreadable bundle
- * root a `not_found`/`denied`.
+ * advisory), `6` when any broken bundle-scoped link/anchor exists (or any warning under `--strict`),
+ * `7` when a committed schema is unattributable (see {@link exitFor}). A bad flag throws a `usage`
+ * {@link LoreError} (exit `2`); an unreadable bundle root a `not_found`/`denied`. A thrown
+ * `validation`/`drift` failure from a run that found an unattributable schema is re-typed
+ * `indeterminate` by {@link escalateToIndeterminate}.
  *
  * **Return type.** The local gate is synchronous: when nothing discovered links a Backlog
  * task and `--external` is absent, `runCheck` returns a `number` directly (the contract every
@@ -178,6 +180,53 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
   // (`--external`/multi-path), never several separate repos with their own profiles, so one load
   // covers every root this command can ever scan (LORE-89).
   const profile = loadProfile({ root: options.root });
+  // The schema pass runs FIRST (LCLI-565 review): it depends only on the profile and
+  // `.lore/schemas/`, and everything after it can throw. If it found an unattributable schema, a
+  // later 6-class throw must not reach the caller as exit 6 — the code unattended repair acts on —
+  // so it is escalated to `indeterminate` (exit 7). The profile load above is the one step that
+  // cannot be moved behind it: without a profile there is nothing to regenerate or compare.
+  const schemaFindings = schemaDriftForRoot(options.root, profile);
+  const unattributable = schemaFindings.filter(isIndeterminateFinding).map((finding) => finding.file);
+  const escalate = (err: unknown): never => {
+    throw escalateToIndeterminate(err, unattributable);
+  };
+  let result: number | Promise<number>;
+  try {
+    result = checkAfterSchemaPass(options, parsed, profile, schemaFindings);
+  } catch (err) {
+    return escalate(err);
+  }
+  return typeof result === "number" ? result : result.catch(escalate);
+}
+
+/**
+ * A thrown 6-class failure (`validation`/`drift`) from a run that ALSO found an unattributable
+ * schema, re-typed as `indeterminate` (exit `7`) so the run never exits with the code unattended
+ * repair acts on (OPAG-373: any run with an unattributable finding exits 7). The message keeps the
+ * original failure's and names the unattributable schema path(s); the original hint is preserved,
+ * and the original `error_type`/`input` are echoed under `input`. Every other throw — usage,
+ * not_found, denied, conflict, a non-{@link LoreError} crash — and any throw from a run with no
+ * unattributable finding pass through unchanged.
+ */
+export function escalateToIndeterminate(err: unknown, unattributable: readonly string[]): unknown {
+  if (unattributable.length === 0 || !(err instanceof LoreError) || EXIT_CODES[err.type] !== EXIT_CODES.validation) {
+    return err;
+  }
+  return new LoreError(
+    "indeterminate",
+    `${err.message} — and lore cannot judge ${unattributable.join(", ")} (an unattributable committed schema, exit 7): do NOT run \`lore schema export\` or \`lore sync\` as a repair; read \`git log\` on it`,
+    err.hint,
+    { error_type: err.type, input: err.input, unattributableSchemas: [...unattributable] },
+  );
+}
+
+/** Everything `lore check` does after the schema pass; see {@link runCheck}. */
+function checkAfterSchemaPass(
+  options: CheckOptions,
+  parsed: CheckArgs,
+  profile: Profile,
+  schemaFindings: readonly CheckFinding[],
+): number | Promise<number> {
   const agentProfiles = loadAgentProfiles(options.root);
   if (agentProfiles.profiles.size > 0) {
     validateAgentProfileReferences(agentProfiles, loadBundle(join(options.root, DOCS_DIR), { profile }));
@@ -237,8 +286,9 @@ export function runCheck(options: CheckOptions): number | Promise<number> {
       result.findings.map((finding) => prefixFinding(finding, result.bundle.label, multi)),
     ),
     ...bundles.flatMap((bundle) => tryIndexDriftForBundle(options.root, bundle, profile, multi)),
-    // Repo-scoped, so it is called once rather than per bundle — see `schemaDriftForRoot`.
-    ...schemaDriftForRoot(options.root, profile),
+    // Repo-scoped, so it is computed once (first, in `runCheck`) rather than per bundle — see
+    // `schemaDriftForRoot`.
+    ...schemaFindings,
   ];
   const baseReport = mergeFindings(linkReport, scanFindings);
   const needsReconciliation = conceptBundleResults.some(

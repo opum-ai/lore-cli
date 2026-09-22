@@ -17,15 +17,16 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runCheck } from "../src/commands/check";
+import type { BacklogAdapter } from "../src/adapters/backlog";
+import { escalateToIndeterminate, runCheck } from "../src/commands/check";
 import { runInit } from "../src/commands/init";
 import { schemaDriftFindings } from "../src/core/check";
 import { defaultProfile } from "../src/core/profile";
 import { profileDigest, readGeneratorStamp } from "../src/core/schema";
-import { EXIT_CODES, EXIT_OK } from "../src/errors";
+import { EXIT_CODES, EXIT_OK, exitCodeFor, LoreError, toErrorEnvelope } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
 
@@ -287,5 +288,106 @@ describe("runCheck — committed-schema drift gates the bundle (LCLI-539)", () =
     const { code, findings } = await check();
     expect(findings).toEqual([]);
     expect(code).toBe(EXIT_OK);
+  });
+});
+
+describe("runCheck — a thrown 6-class failure cannot hide an unattributable schema (LCLI-565 review, OPAG-373)", () => {
+  let root: string;
+  const FIXED_CLOCK = (): Date => new Date("2026-06-25T12:00:00Z");
+  const poison = new Proxy(
+    {},
+    {
+      get: (): never => {
+        throw new Error("unreachable");
+      },
+    },
+  ) as BacklogAdapter;
+  const opts = () => ({
+    root,
+    output: JSON_CTX,
+    args: [],
+    stdout: capture(),
+    stderr: capture(),
+    adapter: poison,
+    headCommitDate: () => "2026-06-25",
+  });
+  /** The thrown value of a runCheck that must fail, sync throw or async rejection alike. */
+  const thrownBy = async (): Promise<unknown> => {
+    try {
+      await runCheck(opts());
+    } catch (err) {
+      return err;
+    }
+    throw new Error("expected runCheck to throw");
+  };
+  const ORPHAN = `${SCHEMAS}/retired-type.schema.json`;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "lore-cli-schema-escalate-"));
+    runInit({ root, args: ["--allow-no-git"], output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  /** Assert the escalated envelope: exit 7, `indeterminate`, both failures named, hint preserved. */
+  const expectEscalated = (err: unknown, original: RegExp, hint: RegExp): void => {
+    expect(exitCodeFor(err)).toBe(EXIT_CODES.indeterminate);
+    const envelope = toErrorEnvelope(err as LoreError);
+    expect(envelope.error_type).toBe("indeterminate");
+    expect(envelope.message).toMatch(original);
+    expect(envelope.message).toContain(ORPHAN);
+    expect(envelope.hint).toMatch(hint);
+    expect((envelope.input as { error_type: string }).error_type).toBe("validation");
+  };
+
+  test("malformed frontmatter + an unstamped orphan exits 7, naming both", async () => {
+    writeFileSync(join(root, ORPHAN), "{}\n");
+    writeFileSync(join(root, "docs/bad.md"), "---\ntype: [unclosed\n---\n# x\n");
+    expectEscalated(await thrownBy(), /not valid YAML/, /fix the YAML syntax/);
+  });
+
+  test("a broken .lore/agents/*.toml reference + an unstamped orphan exits 7, naming both", async () => {
+    writeFileSync(join(root, ORPHAN), "{}\n");
+    mkdirSync(join(root, ".lore/agents"), { recursive: true });
+    writeFileSync(
+      join(root, ".lore/agents/x.toml"),
+      'schema_version = 1\nname = "x"\ndescription = "d"\nkind = "specialist"\nmax_tokens = 1000\npinned = ["nope/missing"]\nsources = []\n',
+    );
+    expectEscalated(await thrownBy(), /references missing concept "nope\/missing"/, /fix the profile reference/);
+  });
+
+  test("a reconciliation failure rejected AFTER the report is emitted is escalated too", async () => {
+    // The async path: a schema-invalid `tasks:`-linked concept rejects out of reconciliation.
+    writeFileSync(join(root, ORPHAN), "{}\n");
+    mkdirSync(join(root, "docs/stories"), { recursive: true });
+    writeFileSync(
+      join(root, "docs/stories/bad.md"),
+      "---\ntype: Story\nstatus: 12345\ntasks:\n  - lore-1\n---\n# Bad\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n",
+    );
+    const result = runCheck(opts());
+    expect(result).toBeInstanceOf(Promise);
+    const err = await (result as Promise<number>).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expectEscalated(err, /invalid OKF lifecycle status in stories\/bad.md/, /./);
+  });
+
+  test("without an unattributable schema the same failure still exits 6 — the escalation is conditional", async () => {
+    writeFileSync(join(root, "docs/bad.md"), "---\ntype: [unclosed\n---\n# x\n");
+    const err = await thrownBy();
+    expect(exitCodeFor(err)).toBe(EXIT_CODES.validation);
+    expect((err as LoreError).type).toBe("validation");
+  });
+
+  test("non-6 throws pass through unchanged even with an unattributable schema", () => {
+    const paths = [ORPHAN];
+    for (const type of ["usage", "not_found", "denied", "conflict"] as const) {
+      const original = new LoreError(type, "m", "h");
+      expect(escalateToIndeterminate(original, paths)).toBe(original);
+    }
+    const crash = new Error("boom");
+    expect(escalateToIndeterminate(crash, paths)).toBe(crash);
   });
 });
