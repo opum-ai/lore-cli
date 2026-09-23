@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`lore new story` scaffolds into `docs/stories/` again, and still writes `type: Arc`**
+  (LCLI-570; ruling OPAG-376, recorded as opum-doc ODOC-262). 0.9.0 put both spellings in
+  `docs/arcs/`. That broke lore's own README quickstart, which runs `lore new story` and then
+  addresses `stories/<slug>`, and it broke a consumer that asserts the folder. Until 1.0.0 the
+  output directory follows the spelling you typed: the `Story` spelling, in any case, scaffolds into
+  `docs/stories/`, and `lore new arc` keeps `docs/arcs/`. The written `type:` is always the
+  canonical `Arc`, so no new document carries the deprecated spelling. Documents 0.9.0 already wrote
+  under `docs/arcs/` stay where they are and keep working. Nothing migrates them, and an Arc
+  validates, links and checks the same way in either directory. A custom profile whose canonical
+  type is itself named `Story` also scaffolds into `docs/stories/` again, as it did before 0.9.0.
+
+### Deprecated
+
+- **What 1.0.0 removes with the `Story` alias:** the `Story` input spelling (`lore new story`,
+  `type: Story` documents, `lore query --type Story`), `story.schema.json`, and the `docs/stories/`
+  output path that `lore new story` uses. From 1.0.0, `lore new arc` is the only spelling and
+  `docs/arcs/` is the only scaffold directory. Documents already under `docs/stories/` are not
+  moved by lore; move them with `lore rename` before upgrading if you want them in `docs/arcs/`.
+
 ## [0.9.0] - 2026-09-22
 
 The headline is LCLI-565: **committed schemas now say which lore profile generated them, and
@@ -86,7 +107,9 @@ capability by presence, never by comparing versions.**
 
 - **The built-in `Story` type is now `Arc`, and `Story` stays as a deprecated alias until 1.0.0**
   (LCLI-554, OPAG-255). Existing `type: Story` documents keep working. `lore new Story` writes
-  `type: Arc`, and both spellings scaffold into `docs/arcs/`. `lore query --type Story` matches
+  `type: Arc`, and both spellings scaffold into `docs/arcs/`. *(Corrected in 0.9.1: `lore new
+  story` scaffolds into `docs/stories/` until 1.0.0, ODOC-262. Only `lore new arc` uses
+  `docs/arcs/`.)* `lore query --type Story` matches
   documents of either spelling, and required-section enforcement applies to aliased documents.
   Consumers gain `arc.schema.json` beside a byte-identical `story.schema.json`.
 

@@ -63,17 +63,30 @@ describe("lore new — scaffolding a known type", () => {
     expect(readFileSync(join(root, result.path), "utf8")).toContain("type: Arc");
   });
 
-  test("a DEPRECATED ALIAS token scaffolds the canonical type, and MIGRATES it (LCLI-554)", () => {
+  test("a DEPRECATED ALIAS token writes the canonical type into the ALIAS's directory (LCLI-554, ODOC-262)", () => {
     // `lore new Story` must keep working for an existing caller, and the document it writes is
-    // an Arc: the canonical `type:`, the canonical docs/arcs/ directory, and Arc's own body
-    // template (managed block included). The alias is an input spelling, never an output one.
+    // an Arc: the canonical `type:` and Arc's own body template (managed block included). The
+    // DIRECTORY follows the matched spelling until 1.0.0 (ODOC-262, LCLI-570): 0.9.0 wrote
+    // docs/arcs/ here, which broke lore's own README quickstart and a consumer asserting the folder.
     const { result } = newCmd(["Story", "Retire the old spelling"]);
     expect(result.type).toBe("Arc");
-    expect(result.path).toBe("docs/arcs/retire-the-old-spelling.md");
+    expect(result.path).toBe("docs/stories/retire-the-old-spelling.md");
+    expect(result.id).toBe("stories/retire-the-old-spelling");
     const written = readFileSync(join(root, result.path), "utf8");
     expect(written).toContain("type: Arc");
     expect(written).not.toContain("type: Story");
     expect(written).toContain("<!-- lore:tasks:begin -->");
+  });
+
+  test("the Story spelling picks docs/stories/ in ANY case, and arc keeps docs/arcs/ (ODOC-262)", () => {
+    for (const [i, token] of ["story", "STORY", "sToRy"].entries()) {
+      const { result } = newCmd([token, `Case probe ${i}`]);
+      expect(result.type).toBe("Arc");
+      expect(result.path).toBe(`docs/stories/case-probe-${i}.md`);
+    }
+    const { result } = newCmd(["arc", "Canonical probe"]);
+    expect(result.type).toBe("Arc");
+    expect(result.path).toBe("docs/arcs/canonical-probe.md");
   });
 
   test("scaffolds Attested Computation under its slug with its schema and conventional heading", () => {

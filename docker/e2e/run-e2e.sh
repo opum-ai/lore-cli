@@ -342,11 +342,11 @@ done
 STORY_PATH="${DOC_PATH[Story]}"
 STORY_ID="${DOC_ID[Story]}"
 # The directory `lore new Story` actually lands in, DERIVED rather than hardcoded. The Story ->
-# Arc rename (LCLI-554) moved it from docs/stories/ to docs/arcs/: `Story` is now a deprecated
-# alias that canonicalizes to Arc, so it scaffolds under Arc's own conventional directory. Three
-# scoped `lore check` phases below used the literal `docs/stories` and silently began checking a
-# directory that no longer exists. Deriving it means a future directory change cannot do that
-# again. The loops above deliberately keep saying `Story`, which makes this harness an end-to-end
+# Arc rename (LCLI-554) moved it from docs/stories/ to docs/arcs/ in 0.9.0, and 0.9.1 moved it back
+# (ODOC-262, LCLI-570): `Story` is a deprecated alias that writes `type: Arc`, but until 1.0.0 it
+# scaffolds into docs/stories/. Three scoped `lore check` phases below once used a literal path
+# and silently checked a directory that no longer existed. Deriving it means a future directory
+# change cannot do that again. The loops above deliberately keep saying `Story`, which makes this harness an end-to-end
 # regression test that the deprecated spelling still works against real binaries.
 STORY_DIR="$(dirname "$STORY_PATH")"
 check "lore new Story resolved to a real directory via its deprecated alias" '[ -d "$STORY_DIR" ]'

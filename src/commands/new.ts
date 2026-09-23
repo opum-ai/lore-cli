@@ -24,6 +24,7 @@ import { DOCS_DIR } from "../core/scaffold";
 import {
   canonicalType,
   isKnownType,
+  matchedAlias,
   SCHEMAS_DIR,
   schemaFileName,
   schemaModeline,
@@ -133,7 +134,10 @@ export function runNew(options: NewOptions): number {
     );
   }
 
-  const docPath = resolveDocPath(parsed, type, options.root);
+  // ODOC-262: the output DIRECTORY follows the spelling the input matched (`story` -> docs/stories/
+  // until 1.0.0), while the written `type:` stays canonical. So the matched alias is kept past
+  // canonicalType() for the directory lookup alone.
+  const docPath = resolveDocPath(parsed, type, matchedAlias(parsed.type, profile), options.root);
   const bodyTemplate = resolveTemplate(parsed, type, options.root, profile);
 
   const build = buildNewConcept({
@@ -268,7 +272,8 @@ function parseTags(tags: string | undefined): string[] | undefined {
 /**
  * Compute the new doc's repo-relative POSIX path. With `--out` the caller's path wins
  * (resolved and confined to the repo by {@link resolveOutPath}); otherwise it is the
- * conventional `docs/<typeDirectory>/<slug-of-title>.md`. A title with no slug-able content
+ * conventional `docs/<typeDirectory>/<slug-of-title>.md`, where the directory is looked up by the
+ * alias `spelling` the input matched before the canonical `type` (ODOC-262). A title with no slug-able content
  * and no `--out` is a `usage` error rather than a `-.md` file.
  *
  * The default path is checked against the same {@link assertNotReservedStem} guard
@@ -280,7 +285,7 @@ function parseTags(tags: string | undefined): string[] | undefined {
  * since `VALID_TYPE` requires a leading letter), so it can never collide with the bundle-root
  * index `resolveOutPath` guards separately — no `RESERVED_ROOT_INDEX` check is needed here.
  */
-function resolveDocPath(parsed: NewArgs, type: string, root: string): string {
+function resolveDocPath(parsed: NewArgs, type: string, spelling: string | undefined, root: string): string {
   if (parsed.out !== undefined) {
     return resolveOutPath(parsed.out, root);
   }
@@ -291,7 +296,7 @@ function resolveDocPath(parsed: NewArgs, type: string, root: string): string {
   // LCLI-373: ADR is the one type this repo (and every OKF-native ADR set) numbers by convention
   // — 0001-, 0002-, ... — rather than by slug alone. `--out` above already lets a caller opt out.
   const filename = type === "ADR" ? `${nextAdrNumber(root)}-${slug}.md` : `${slug}.md`;
-  const docPath = posix.join(DOCS_DIR, typeDirectory(type), filename);
+  const docPath = posix.join(DOCS_DIR, typeDirectory(type, spelling), filename);
   assertNotReservedStem(idFromPath(docPath), "create");
   return docPath;
 }

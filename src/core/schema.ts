@@ -337,6 +337,11 @@ export function requiredSectionsFor(type: string, profile: Profile = defaultProf
 const TYPE_DIRECTORIES: Readonly<Record<string, string>> = Object.freeze({
   Epic: "epics",
   Arc: "arcs",
+  // The deprecated `Story` SPELLING keeps its pre-rename directory until 1.0.0 (ODOC-262,
+  // LCLI-570): `lore new story` writes `type: Arc` into docs/stories/, so lore's own README
+  // quickstart and consumers asserting the folder keep working. Keyed on the spelling the input
+  // matched, not the canonical type -- see {@link typeDirectory}. Removed with the alias at 1.0.0.
+  Story: "stories",
   Spec: "specs",
   ADR: "adr",
   Runbook: "runbooks",
@@ -350,9 +355,29 @@ const TYPE_DIRECTORIES: Readonly<Record<string, string>> = Object.freeze({
  * not a bare lower-case — keeps a multi-word/space-containing profile type from yielding an invalid
  * path segment. Returns a path segment relative to the bundle root, never including `docs/` itself.
  * A caller may always override the computed path (`lore new … --out`).
+ *
+ * `spelling`, when given, is the alias the caller's input actually matched ({@link matchedAlias});
+ * a map entry keyed on it wins over the canonical type's own. That is how `lore new story` lands in
+ * `docs/stories/` while writing `type: Arc` (ODOC-262). Omitted, the lookup is by `type` alone.
  */
-export function typeDirectory(type: string): string {
-  return TYPE_DIRECTORIES[type] ?? slugForTypeName(type);
+export function typeDirectory(type: string, spelling?: string): string {
+  const bySpelling = spelling === undefined ? undefined : TYPE_DIRECTORIES[spelling];
+  return bySpelling ?? TYPE_DIRECTORIES[type] ?? slugForTypeName(type);
+}
+
+/**
+ * The declared alias `input` resolved through (in the alias's own declared casing), or `undefined`
+ * when `input` named a canonical type, an unknown type, or nothing. Matched the same two ways
+ * {@link canonicalType} matches -- lower-cased name, then slug -- so `STORY`, `story` and `Story`
+ * all return `"Story"`. `lore new` passes it to {@link typeDirectory} as the `spelling` that picks
+ * the output directory (ODOC-262); the written `type:` stays canonical regardless.
+ */
+export function matchedAlias(input: string, profile: Profile = defaultProfile()): string | undefined {
+  const lower = input.trim().toLowerCase();
+  const aliases = profile.types.get(canonicalType(input, profile))?.aliases ?? [];
+  return (
+    aliases.find((alias) => alias.toLowerCase() === lower) ?? aliases.find((alias) => slugForTypeName(alias) === lower)
+  );
 }
 
 /**
