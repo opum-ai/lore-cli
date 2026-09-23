@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-23
+
+A patch release with one fix: `lore new story` scaffolds into `docs/stories/` again (ODOC-262).
+The rollout notes under 0.9.0 still apply unchanged. This release adds no exit code, type, alias
+or field, so the profile digest does not move and committed schemas stay current.
+
 ### Fixed
 
 - **`lore new story` scaffolds into `docs/stories/` again, and still writes `type: Arc`**
