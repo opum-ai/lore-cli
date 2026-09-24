@@ -21,7 +21,95 @@ availability claim.
 
 ### Current state
 
-`0.9.0` is **RELEASED**. Published 2026-09-22 from tag `v0.9.0` (annotated tag
+`0.9.1` is **RELEASED**. It is a patch whose only change is ODOC-262: `lore new story`
+scaffolds into `docs/stories/` again, writing `type: Arc` (LCLI-570). Published
+2026-09-24 from tag `v0.9.1` (annotated tag object
+`a14f0c54deb91291e7bf5e55f5f26e2c4266f7a9`, tagger date 04:00:30Z, peeling to
+`1ef146b4c7a5b9f113c5dac962bb0bf765c8cbfb`, which `origin/main` named when read
+on 2026-09-24). It was published **manually via
+`scripts/publish-release.sh 0.9.1 35953824422`**, against Release run
+`35953824422`'s own `npm-packages` artifact, on the user's direct approval.
+The registry's packument `time` field records the six platform packages at
+04:11:13Z–04:16:05Z and the root launcher at 04:18:29Z. Read package by package
+with `npm view` on 2026-09-24, all seven packages are present at `0.9.1`, with
+`dist-tags.latest` = `0.9.1` on each. The script's clean-registry `npx` smoke
+returned `0.9.1`.
+
+**The first publish attempt stopped before any registry write, and that is why
+there were two attempts.** Its download of the qualification reports failed, and
+the script discards that command's stderr, so the cause is not recorded. The same
+`gh run download` run by hand moments later exited 0 with 18 files, and the retry
+published cleanly. It is recorded here so that "attempt 2" in any log is not read
+as a partial publish.
+
+**`0.9.1` claims NO pairing with any `quest` release.** Its tag message says so
+in the same words as `0.9.0`'s. opum-cli-e2e was told on publication so it could
+re-qualify `consumer-condorcet` (TASK-103). That re-qualification, not this
+record, is what decides whether the ODOC-262 regression is closed for that
+consumer.
+
+**The tag was qualified before the publish.** Release run `35953824422`
+(attempt 1, `workflow_dispatch` on ref `v0.9.1`, head `1ef146b4…`) finished
+`success`. All six matching-host package qualifications were green, and
+`publish (npm, OIDC trusted publishing)` was `skipped`, as a `publish: false`
+dispatch produces. The `main` push CI run on the same commit, `35919409441`,
+finished `success`: 14 jobs green, including `main is fast-forward of dev` and
+`lint · typecheck · test (macos-latest)`, with `promotion is manual` skipped.
+That is evidence, not a gate, because `main` has no required checks configured.
+
+**6 independently verified, 1 locally sealed — do not round this up to seven**
+(LCLI-489). Before any registry write, the script matched all six platform
+tarballs against `package.platformTarballSha256` in each
+`ladybug-package-qualification-<name>-35953824422` report. Every report carries
+`repository.commit = 1ef146b4…`. The root launcher was self-sealed only
+(`45f7c5f3…`). **After** the publish, on 2026-09-24, the six platform tarballs
+the registry serves were downloaded by their `dist.tarball` URLs and hashed, and
+all six equal those report digests.
+
+**The unexplained root-launcher split repeats for a third release** (LCLI-568).
+The registry's `@opum-ai/lore@0.9.1` tarball hashes to the `rootTarballSha256` in
+the `linux-arm64`, `linux-x64`, `win32-arm64` and `win32-x64` reports
+(`45f7c5f3…`, the same value the script self-sealed). Both `darwin` reports record
+`b1361383…`. The root launcher stays locally sealed until the mechanism is
+established.
+
+**`0.9.1` carries NO provenance attestation (LCLI-482, open).**
+`npm view @opum-ai/lore@0.9.1 dist --json` has no `attestations` key; its keys
+are `fileCount`, `integrity`, `shasum`, `signatures`, `tarball` and
+`unpackedSize`. That is a check for the key's presence. A manual publish cannot
+mint an attestation. The credential was the Keychain granular token
+(`keychain:npm-opum-ai-publish`), with `~/.npmrc` left untouched, per the
+script's own output.
+
+**npm propagation was per-package again, and the LCLI-502 gate held.** The
+script's visibility gate saw `darwin-arm64` at 80s, `darwin-x64` at 81s,
+`win32-x64` at 142s, `linux-arm64` at 203s, `win32-arm64` at 325s and `linux-x64`
+at 385s. It waited its 20s cushion before publishing the root launcher, and the
+root then became visible to the script after 138s.
+
+**No rollout cost.** `0.9.1` adds no exit code, type, alias or field, so the
+profile digest does not move and schemas committed under `0.9.0` stay current.
+Documents `0.9.0` wrote under `docs/arcs/` are not migrated and keep working.
+
+**Shipped README, GitHub Release and plugin content.** npm's package-level
+`readme` field was read on 2026-09-24 (15,806 bytes). It passes
+`scripts/shipped-readme-version.mjs --check` against `package.json` at `0.9.1`
+(exit 0). GitHub Release `v0.9.1` reports `publishedAt` 2026-09-24T04:21:05Z,
+non-draft and non-prerelease, with the CHANGELOG's `[0.9.1]` section as its body.
+`skills/` at `v0.9.1` is tree `38683e1075994603b7f000517b9e8fc700b7ac21`, the
+same tree as `v0.9.0`, so opum-marketplace's federated baseline does not change
+when it moves its pin to this tag. They were sent the values at tag time and
+again on publication.
+
+**The README quickstart does not run unedited on `0.9.1`**, and it did not on
+`0.9.0` either. `lore new spec --story` has never existed, and `lore init`
+defaults to a Quest tracker while the quickstart links Backlog tasks. Both are
+tracked as LCLI-571. What `0.9.1` restores is narrower: every quickstart command
+that addresses `stories/bulk-archive-completed-orders` resolves.
+
+### Previous state
+
+`0.9.0` was **RELEASED**. Published 2026-09-22 from tag `v0.9.0` (annotated tag
 object `48840cb3bc4dd9c6ea16651f8851d56b6a6a6030`, tagger date 22:48:39Z,
 peeling to `fd712748176b59175eaf40ec10eceb5ba6ac3bdd`, the commit `origin/main`
 named when read on 2026-09-22), **manually via
@@ -109,8 +197,6 @@ non-draft and non-prerelease. `v0.8.0` has none. `skills/` at `v0.9.0` is tree
 `2998f74d077845f8ad73f83aa296e37e034378a4` that `v0.7.0` and `v0.8.0` both
 shipped. So opum-marketplace's federated baseline changes when it moves its pin
 to this tag, unlike its move to `v0.8.0`.
-
-### Previous state
 
 `0.8.0` was **RELEASED**, and **this entry was written after the fact, on
 2026-09-22, from what could still be read then**. No release-truth update was
