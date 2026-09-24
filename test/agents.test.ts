@@ -89,16 +89,18 @@ describe("generated content (AC#2) — small, grounded, points at `lore instruct
     expect(skill).toContain("source of truth");
   });
 
-  test("SKILL.md surfaces self-committing commands before canonical workflow steps", () => {
+  test("SKILL.md surfaces self-committing commands before canonical workflow steps, scoped to Backlog (LCLI-573)", () => {
+    // Flipped deliberately by LCLI-573: this used to require a "Commit-side-effect preflight"
+    // section that routed through a retired `.codex/skills/backlog-handover` gate. The facts it
+    // carried survive, now accurate: only the Backlog backend makes lore commit anything.
     const skill = buildSkillDoc();
-    const preflight = skill.indexOf("## Commit-side-effect preflight");
     const start = skill.indexOf("## Start here");
-    expect(preflight).toBeGreaterThan(0);
-    expect(preflight).toBeLessThan(start);
+    const before = skill.slice(0, start);
     for (const command of ["link", "unlink", "rename", "sync"]) {
-      expect(skill.slice(preflight, start)).toContain(`\`lore ${command}\``);
+      expect(before).toContain(`\`lore ${command}\``);
     }
-    expect(skill.slice(preflight, start)).toContain("explicit commit authority");
+    expect(before).toContain("only when the\nconfigured tracker is Backlog");
+    expect(skill).not.toContain("Commit-side-effect preflight");
   });
 
   test("the CLAUDE.md nudge points at both the skill and `lore instructions`", () => {

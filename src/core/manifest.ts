@@ -242,7 +242,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
   },
   {
     name: "init",
-    summary: "Scaffold an OKF bundle; a bare TTY run also wizards the agent bridge/scaffolds/backlog check",
+    summary: "Scaffold an OKF bundle; a bare TTY run also wizards the agent bridge/scaffolds/tracker setup",
     args: "",
     flags: [
       {
@@ -493,7 +493,8 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
   },
   {
     name: "sync",
-    summary: "Reconcile status + managed task blocks, regen index/log, commit backlog/",
+    summary:
+      "Reconcile status + managed task blocks, regen index/log; commits tracker files on the Backlog backend only",
     args: "[paths…]",
     flags: [
       { name: "dry-run", takesValue: false, summary: "Report what would change, write nothing (docs/ or backlog/)" },

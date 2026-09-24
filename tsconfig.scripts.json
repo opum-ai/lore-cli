@@ -14,6 +14,7 @@
 //
 // COVERAGE OF EVERY TOP-LEVEL DIRECTORY, so the answer is recorded rather than rediscovered:
 //   src/, test/, benchmark/   .ts        — tsconfig.json + biome.json (unchanged)
+//   scripts/                  .ts        — tsconfig.json + biome.json (plugin-skill.ts, LCLI-573)
 //   scripts/                  .mjs       — HERE + biome.json
 //   bin/                      .cjs       — HERE + biome.json  (this file SHIPS to users)
 //   playwright.config.ts      root .ts   — tsconfig.json already; biome.json now too

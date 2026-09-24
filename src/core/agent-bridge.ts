@@ -23,6 +23,7 @@
  */
 
 import type { SkillSource } from "../config";
+import { DETAIL_TOPICS } from "./instructions";
 import { upsertManagedBlock } from "./managed-block";
 
 /** The repo-relative path of the generated skill bridge (pinned by ADR-0004 §3 and cli-surface §agents). */
@@ -57,7 +58,7 @@ export const LORE_COMMANDS: readonly CommandSummary[] = [
   { name: "backlog", summary: "Adopt Backlog knowledge records through a digest-guarded migration lifecycle" },
   {
     name: "init",
-    summary: "Scaffold an OKF bundle; a bare TTY run also wizards the agent bridge/scaffolds/backlog check",
+    summary: "Scaffold an OKF bundle; a bare TTY run also wizards the agent bridge/scaffolds/tracker setup",
   },
   { name: "new", summary: "Scaffold a typed concept from a template (rejects an unknown type under strict_types)" },
   {
@@ -74,7 +75,11 @@ export const LORE_COMMANDS: readonly CommandSummary[] = [
   { name: "supersede", summary: "Mark a concept superseded by another, wiring both ways" },
   { name: "link", summary: "Add task ids to a concept's tasks: + the doc: back-ref" },
   { name: "unlink", summary: "Remove task ids from a concept's tasks: + the doc: back-ref" },
-  { name: "sync", summary: "Reconcile status + managed task blocks, regen index/log, commit backlog/" },
+  {
+    name: "sync",
+    summary:
+      "Reconcile status + managed task blocks, regen index/log; commits tracker files on the Backlog backend only",
+  },
   { name: "tasks", summary: "Show the live status rollup for a concept's linked tasks" },
   { name: "orphans", summary: "Report tasks with no owning doc + docs whose linked task vanished" },
   {
@@ -103,14 +108,21 @@ export const LORE_COMMANDS: readonly CommandSummary[] = [
   { name: "help", summary: "Show help, or the machine-readable command manifest under --json" },
 ];
 
-/** The detail topics `lore instructions <topic>` serves, mirrored (not restated) by the bridge. */
-const INSTRUCTION_DETAIL_TOPICS: ReadonlyArray<{ key: string; blurb: string }> = [
-  { key: "linking", blurb: "Story <-> Task coupling (`lore link` / `lore unlink`)" },
-  { key: "sync", blurb: "reconcile status + managed blocks (`lore sync`)" },
-  { key: "check", blurb: "the CI gate: drift, links, anchors, portability (`lore check`)" },
-  { key: "validation", blurb: "per-file OKF/schema conformance (`lore validate`)" },
-  { key: "workspace", blurb: "multi-repository projection and bounded retrieval (`--workspace`)" },
-];
+/**
+ * The detail topics `lore instructions <topic>` serves, DERIVED from the instructions module rather
+ * than restated (OPAG-378, LCLI-573): a hand-kept copy listed 5 of 7 topics for months after `types`
+ * and `agents` shipped, so every bridge taught an incomplete index. A new topic now reaches the
+ * skill, the plugin skill, and both nudges with no edit here.
+ */
+const INSTRUCTION_DETAIL_TOPICS: ReadonlyArray<{ key: string; blurb: string }> = DETAIL_TOPICS.map((topic) => ({
+  key: topic.key,
+  blurb: topic.title,
+}));
+
+/** The detail-topic keys as inline code spans (`` `retrieval`, `linking`, … ``), for the one-line nudges. */
+export function instructionTopicKeys(): string {
+  return INSTRUCTION_DETAIL_TOPICS.map((topic) => `\`${topic.key}\``).join(", ");
+}
 
 /**
  * Render a left-aligned two-column list: a tight `` `left` `` code span, then padding *after* the
@@ -123,12 +135,25 @@ function twoColumn(rows: ReadonlyArray<{ left: string; right: string }>): string
 }
 
 /**
+ * Which copy of the skill is being built. `"repo"` is the per-repository
+ * `.claude/skills/lore/SKILL.md` that `lore agents` writes; `"plugin"` is the committed
+ * `skills/lore/SKILL.md` the `opum-lore` marketplace plugin federates from this repository by tag.
+ * They differ only in the opening sentence and the regeneration footer. Before LCLI-573 the plugin
+ * copy was hand-maintained, drifted (5 of 7 topics, no `read`/`types`/`backlog`, and a
+ * `--max-tokens` sentence stating the pre-LCLI-478 behaviour), and nothing noticed.
+ */
+export type SkillVariant = "repo" | "plugin";
+
+/** The committed plugin-skill path, relative to this repository's root. */
+export const PLUGIN_SKILL_REL_PATH = "skills/lore/SKILL.md";
+
+/**
  * Build the full `SKILL.md` bytes: YAML frontmatter (the `name` + when-to-use `description` Claude
  * Code loads the skill by) followed by a small, live-source-grounded teacher body. Deterministic and
  * timestamp-free, so regenerating with no change is byte-identical (AC#1). Kept a thin pointer:
  * `lore instructions` is the source of truth, and this file directs the agent there (AC#2).
  */
-export function buildSkillDoc(): string {
+export function buildSkillDoc(variant: SkillVariant = "repo"): string {
   const description =
     "Author, retrieve, and maintain OKF documentation with the lore CLI, including explicit " +
     "multi-repository workspaces. Use whenever reading, writing, linking, moving, querying, or " +
@@ -138,6 +163,18 @@ export function buildSkillDoc(): string {
 
   const topicList = twoColumn(INSTRUCTION_DETAIL_TOPICS.map((t) => ({ left: t.key, right: t.blurb })));
   const commandList = twoColumn(LORE_COMMANDS.map((c) => ({ left: c.name, right: c.summary })));
+  const intro =
+    variant === "plugin"
+      ? `\`lore\` is a deterministic, CLI-first documentation engine (no LLM dependency) for authoring,
+retrieving, and maintaining an OKF bundle, typically under \`docs/\`. This skill is a thin pointer —
+**\`lore instructions\` is the source of truth for how to drive lore in the repository you're in.**`
+      : `\`lore\` is this repo's documentation engine: a deterministic, CLI-first tool (no LLM dependency)
+for authoring, retrieving, and maintaining the OKF bundle under \`docs/\`. This skill is a thin pointer —
+**\`lore instructions\` is the source of truth for how to drive lore.**`;
+  const footer =
+    variant === "plugin"
+      ? "<!-- Generated from src/core/agent-bridge.ts by `bun run scripts/plugin-skill.ts --write`; do not hand-edit. -->"
+      : "<!-- Generated by `lore agents`; do not hand-edit. Re-run `lore agents --force` to refresh. -->";
 
   return `---
 name: lore
@@ -146,26 +183,30 @@ description: "${description}"
 
 # lore — OKF documentation CLI
 
-\`lore\` is this repo's documentation engine: a deterministic, CLI-first tool (no LLM dependency)
-for authoring and maintaining the OKF bundle under \`docs/\`. This skill is a thin pointer —
-**\`lore instructions\` is the source of truth for how to drive lore.**
+${intro}
 
 ## When to use it
 
-Reach for \`lore\` — not a plain editor — whenever you read, write, link, move, retrieve, or verify
-docs in this repo or an explicitly selected workspace, so Story <-> Task coupling, managed blocks,
-provenance, and cross-links stay coherent.
+Reach for \`lore\` — not a plain editor or \`grep\` — whenever you read, write, link, move, retrieve,
+or verify docs in a lore-managed bundle or an explicitly selected workspace, so Story <-> Task
+coupling, managed blocks, provenance, and cross-links stay coherent.
 
-## Commit-side-effect preflight
+\`lore link\`, \`lore unlink\`, \`lore rename\`, and \`lore sync\` commit tracker files only when the
+configured tracker is Backlog; Quest and Jira keep their own storage. Check the repository's own
+instructions (its CLAUDE.md or AGENTS.md) for any commit-authority rule before running them.
 
-Before the canonical workflow below, treat \`lore link\`, \`lore unlink\`, \`lore rename\`, and
-\`lore sync\` as self-committing commands: they can create commits under \`backlog/\`. Read the
-applicable repository instructions and verify explicit commit authority before invoking them. When
-the repository supplies
-\`.codex/skills/backlog-handover/scripts/lore-authority-preflight.mjs\`, dispatch those commands only
-through that gate with the exact Git worktree and in-repository scope. Without applicable authority,
-stop before Lore runs and request permission or record a deferred stage. This preserves the
-repository's Lore sole-committer contract.
+## Find and read docs: query, then read
+
+To answer a question from the docs, search before you browse — do not start from
+\`docs/index.md\` or \`grep\`:
+
+1. \`lore query "<a few words from the question>" --limit 5\` — full-text search over every concept.
+2. \`lore read <id>\` — the best hit exactly as authored, with no budget.
+3. \`lore context <id> --max-tokens <n>\` — only when you need the neighbors too. \`--max-tokens\` is a
+   hard ceiling: if the concept's own body does not fit, the body is dropped rather than exceeding
+   the budget, so use \`lore read\` for the body.
+
+\`lore instructions retrieval\` has the detail.
 
 ## Start here
 
@@ -184,6 +225,13 @@ Every command supports \`--json\` (the \`{schemaVersion, kind, data}\` envelope)
 (ANSI-free, auto-selected off a TTY). Branch on the semantic exit code, never on prose:
 \`0\` ok · \`2\` usage · \`3\` not_found · \`4\` denied · \`5\` conflict · \`6\` validation/drift · \`7\` indeterminate (cannot judge from here; never auto-repair).
 
+## Read the evidence, not the status label
+
+A document's \`status: stable\`, a \`verified\` attribution, or a Done task record what
+happened to the record — not whether what it asserts is still true. \`status\` names a
+lifecycle stage; an attribution names who touched it. Neither substitutes for checking
+the claim's own evidence before relying on it.
+
 ## Optional task-scoped context
 
 When native Claude Code instructions name a committed Lore profile, use this stable opt-in line:
@@ -191,10 +239,11 @@ When native Claude Code instructions name a committed Lore profile, use this sta
 > Lore profile: \`<name>\`. Before working, run \`lore agent context <name> --task "<assigned task>"\`
 > and ground decisions in the returned source IDs.
 
-Lore supplies evidence only. It does not create or patch native agents, prompts, tools, models,
-permissions, or execution settings.
+A profile pack selects only among the sources its profile lists, so a question outside the profile
+still needs \`lore query\`. Lore supplies evidence only. It does not create or patch native agents,
+prompts, tools, models, permissions, or execution settings.
 
-<!-- Generated by \`lore agents\`; do not hand-edit. Re-run \`lore agents --force\` to refresh. -->
+${footer}
 `;
 }
 
@@ -217,12 +266,13 @@ export function buildNudgeBody(skillSource: SkillSource): string {
       ? "- **Skill:** installed from the `opum-lore` Claude Code plugin, not this repository — how to drive lore."
       : `- **Skill:** \`${SKILL_REL_PATH}\` — how to drive lore.`;
   return `This repo uses **lore** — an OKF-native documentation CLI — for the docs bundle under \`docs/\`.
-When working on documentation, drive it through \`lore\` (not a plain editor) so Story <-> Task
-coupling, managed blocks, and cross-links stay coherent.
+Drive docs work through \`lore\` (not a plain editor or \`grep\`) so Story <-> Task coupling, managed
+blocks, and cross-links stay coherent.
 
+- **Find and read docs:** \`lore query "<words>" --limit 5\`, then \`lore read <id>\` for the best hit.
 ${skillLine}
 - **Just-in-time detail:** run \`lore instructions\` for the canonical agent loop, then
-  \`lore instructions <topic>\` (\`linking\`, \`sync\`, \`check\`, \`validation\`, \`workspace\`).`;
+  \`lore instructions <topic>\` (${instructionTopicKeys()}).`;
 }
 
 /** What {@link planBridge} decided a single bridge file's next state should be. */

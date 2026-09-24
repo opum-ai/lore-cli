@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Agent guidance now starts with retrieval: `lore query` then `lore read`, not browsing
+  `docs/index.md`** (LCLI-573, OPAG-378). A new `lore instructions retrieval` topic teaches
+  single-repository search. The overview loop and every generated bridge (the Claude and Codex
+  skills and the `CLAUDE.md`/`AGENTS.md` nudges) lead with it. On one fleet repository, measured
+  across 69 of its own tracker records, a query plus one read found the documented answer in the
+  top five for 51 to 68 of them, depending on how the question was worded, at a median of about
+  5 KB. A cat of the whole docs tree is hundreds of KB.
+- **Every bridge's topic list is derived from `lore instructions`**, so none can fall behind
+  again. The hand-kept copies listed 5 of the 7 topics.
+- **The committed plugin skill (`skills/lore/SKILL.md`) is now generated** from the same builder
+  as the per-repository skill, and a test fails when it drifts. It now lists `read`, `types` and
+  `backlog`. It also states `--max-tokens` as the hard ceiling LCLI-478 made it: the old text
+  called it advisory. Regenerate it with `bun run scripts/plugin-skill.ts --write`. This file
+  reaches `opum-lore` plugin users at the next tag.
+- **The generated skills drop the Backlog/`.codex` "commit-side-effect preflight".** It routed
+  commands through a retired `backlog-handover` gate. What remains is accurate: `lore link`,
+  `unlink`, `rename` and `sync` commit tracker files only on the Backlog backend. The `sync` and
+  `init` summaries in `lore help` no longer say "commit backlog/" or "backlog check".
+- **The overview no longer ends by pointing at `docs/runbooks/agent-onboarding.md`,** a file most
+  repositories do not have.
+- **Regenerating a repository's bridges picks these up, and a repo-mode skill needs `--force`.**
+  Measured on bridges written by 0.9.0: `lore agents --check` exits 6. The `CLAUDE.md` block
+  reports `updated`, and `lore agents` rewrites it. The repo-mode `.claude/skills/lore/SKILL.md`
+  reports `protected`, because its bytes differ from what this release generates, so only
+  `lore agents --force` rewrites it. Repositories on `skill_source = "plugin"` have no such file.
+
 ## [0.9.1] - 2026-09-23
 
 A patch release with one fix: `lore new story` scaffolds into `docs/stories/` again (ODOC-262).
