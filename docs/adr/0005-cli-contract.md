@@ -28,6 +28,20 @@ binding decision is recorded outside this repository, in opum-doc at
 consumers that branch only on zero versus non-zero already treat `7` as a failure, and consumers
 that branch on `6` must not fold `7` into it.
 
+Amended — 2026-09-24 (LCLI-575): **`schemaVersion` is now scoped per result kind.** It used to be
+one number for the whole contract. The envelope's `schemaVersion` still defaults to `1` for every
+kind, but a breaking change to one kind bumps that kind alone. `lore help --json` advertises the
+exceptions in an additive `kindSchemaVersions` map, and the manifest's own top-level
+`schemaVersion` stays at `1`. The first exception is `agent.context.export` at `2`, because
+`agent context <unknown profile>` now exits `0` with a degraded pack instead of exiting `3`. That
+remaps an existing exit code, which [the CLI contract](../reference/cli-contract.md) §7.1 counts as
+breaking. The ruling is recorded outside this repository, in opum-doc
+`docs/adr/make-lore-agent-context-always-query-augmented.md`, Amendment 1 (main `a8bb596`). That
+record left "how the bump is expressed" to lore-cli, and the per-kind scope is lore-cli's answer.
+It avoids breaking every consumer of every kind to signal a change in one. A consumer that
+pins `schemaVersion` must read it per kind, from the envelope it received or from
+`kindSchemaVersions`, not from the manifest's top-level value.
+
 ## Context
 
 lore is **CLI-primary** (see [ADR-0009: CLI-primary, MCP deferred](0004-cli-first-skill-bridge-mcp-deferred.md)): the same command surface serves humans at a terminal, Claude Code via the generated agent bridge, and CI gates. These three audiences have incompatible default expectations, and the CLI must satisfy all of them from one binary without per-caller configuration.

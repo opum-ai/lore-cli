@@ -38,6 +38,10 @@ describe("core/manifest — shape and invariants", () => {
     // A breaking change scoped to one kind is advertised here, not by bumping every kind (LCLI-575).
     expect(m.kindSchemaVersions).toEqual({ "agent.context.export": 2 });
     expect(Object.isFrozen(m.kindSchemaVersions)).toBe(true);
+    // Every override must name a kind some command emits: a typo would advertise a bump that the
+    // intended envelope never carries.
+    const emitted = new Set(m.commands.flatMap((c) => [c.kind, ...(c.resultKinds ?? [])]));
+    for (const kind of Object.keys(m.kindSchemaVersions)) expect(emitted.has(kind)).toBe(true);
     expect(m.commands.length).toBeGreaterThan(0);
     expect(m.globalFlags.map((f) => f.name)).toEqual(["json", "plain", "version", "help"]);
   });
