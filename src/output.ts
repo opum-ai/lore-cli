@@ -68,8 +68,31 @@ export type { Writer };
  */
 export type OutputMode = "json" | "plain" | "pretty";
 
-/** The version of the `--json` success-envelope contract (cli-contract §2/§7). */
+/**
+ * The version of the `--json` success-envelope contract (cli-contract §2/§7): the version every
+ * `kind` carries unless {@link KIND_SCHEMA_VERSIONS} scopes a breaking change to one `kind`.
+ */
 export const SCHEMA_VERSION = 1;
+
+/**
+ * Per-`kind` `schemaVersion` overrides (cli-contract §7.1). A breaking change to ONE `kind`
+ * bumps that kind alone, so a consumer pinned to `schemaVersion: 1` for every other kind is
+ * not broken by a change it never reads. Kinds absent here carry {@link SCHEMA_VERSION}.
+ *
+ * - `agent.context.export` → `2` (LCLI-575): `lore agent context <unknown profile>` exits `0`
+ *   with a degraded pack instead of `not_found` exit `3` — remapping an existing exit code, which
+ *   §7.1 lists as requiring a bump. Ruled by opum-doc ADR "Make lore agent context always
+ *   query-augmented", Amendment 1 (opum-doc `main` a8bb596). `queryHits`, `queryHitsOmitted` and
+ *   `queryHitsSectionOmitted` are additive and would not have needed a bump on their own.
+ */
+export const KIND_SCHEMA_VERSIONS: Readonly<Record<string, number>> = Object.freeze({
+  "agent.context.export": 2,
+});
+
+/** The `schemaVersion` a success envelope of `kind` carries. */
+export function schemaVersionFor(kind: string): number {
+  return Object.hasOwn(KIND_SCHEMA_VERSIONS, kind) ? (KIND_SCHEMA_VERSIONS[kind] as number) : SCHEMA_VERSION;
+}
 
 /**
  * The two flags and the TTY state that select the mode. `isTTY` is
@@ -269,12 +292,12 @@ export interface SuccessEnvelope<T> {
 }
 
 /**
- * Wrap a command's typed result in the {@link SuccessEnvelope} at the current
- * {@link SCHEMA_VERSION}. The single constructor for the envelope, so the
- * version and field order are fixed in one place.
+ * Wrap a command's typed result in the {@link SuccessEnvelope} at the kind's
+ * current version ({@link schemaVersionFor}). The single constructor for the
+ * envelope, so the version and field order are fixed in one place.
  */
 export function successEnvelope<T>(kind: string, data: T): SuccessEnvelope<T> {
-  return { schemaVersion: SCHEMA_VERSION, kind, data, principal: null };
+  return { schemaVersion: schemaVersionFor(kind), kind, data, principal: null };
 }
 
 /**

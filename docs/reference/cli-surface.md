@@ -856,7 +856,7 @@ atomically and require
 `3` unknown profile (`show`/`project`) or source, `4` denied I/O, `5` output conflict, and `6`
 profile/reference validation or mandatory-budget failure.
 
-**Every `context` pack is query-augmented (LCLI-575).** Besides its
+**Every plain `context` pack is query-augmented (LCLI-575).** Besides its
 profile-bounded evidence, a pack carries a `## Bundle-wide query hits` section
 (`queryHits` in `--json`): up to three `lore query` hits for the task, from the
 whole bundle, whose concept the pack does not already quote, each as id, title
@@ -872,10 +872,15 @@ pack._`. At the floor itself the section is dropped whole,
 With `--workspace --repository`, hits come from the selected members only, as
 `lore query --workspace` narrows. A `context` call naming a profile that
 does not exist no longer exits `3`: it degrades to that section plus a warning
-(in the pack and on stderr) and `profileMissing: true`, exit `0`. The decision
-record is opum-doc's ADR "Make lore agent context always query-augmented"
-(ODOC-265), grounded in LCLI-573's measurement that the profile pack alone
-selected the answer for 8 of 69 real questions.
+(in the pack and on stderr) and `profileMissing: true`, exit `0`; because that
+remaps an exit code, the `agent.context.export` envelope carries
+`schemaVersion` `2` (cli-contract §5.6, §7.1). The section is for the plain pack
+only: `project` and `context --contract` embed a hit-free pack whose bytes,
+`packDigest` and `inputRevisions` are the pre-LCLI-575 ones, so no document
+outside the profile's catalog can move a pinned digest. The decision record is
+opum-doc's ADR "Make lore agent context always query-augmented" (ODOC-265) and
+its Amendment 1 (opum-doc `main` a8bb596), grounded in LCLI-573's measurement
+that the profile pack alone selected the answer for 8 of 69 real questions.
 
 **`context --workspace <manifest> --repository <member-id>` (repeatable; LCLI-432) compiles the
 same profile-bounded pack across an explicit workspace manifest instead of this repository alone**

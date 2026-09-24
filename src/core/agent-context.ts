@@ -143,8 +143,9 @@ export interface AgentContextExport {
   readonly catalog: readonly AgentContextCatalogEntry[];
   /**
    * Up to {@link AGENT_CONTEXT_QUERY_HIT_LIMIT} bundle-wide `lore query` hits for the task whose
-   * concept is not already pinned or selected in this pack, best first (LCLI-575). Always present;
-   * empty when the task has no searchable term, nothing outside the pack matches, or the budget
+   * concept is not already pinned or selected in this pack, best first (LCLI-575). Always present
+   * on this plain `lore agent context` pack; the workflow projection embeds the hit-free
+   * {@link AgentContextPack} instead (opum-doc ADR ODOC-265, Amendment 1). Empty when the task has no searchable term, nothing outside the pack matches, or the budget
    * left after the mandatory pins has no room for a hit.
    */
   readonly queryHits: readonly AgentContextQueryHit[];
@@ -179,6 +180,21 @@ export interface AgentContextExport {
   };
 }
 
+/**
+ * The pack the `opum-agent-workflow/v1` projection (`lore agent project`, `lore agent context
+ * --contract`) embeds: an {@link AgentContextExport} with NO query-hit section (opum-doc ADR
+ * "Make lore agent context always query-augmented", Amendment 1, opum-doc `main` a8bb596). The
+ * projection's `inputRevisions` list only the profile's catalog sources, so a bundle-wide hit —
+ * drawn from documents that list never names — would let an unlisted document change a pinned
+ * `packDigest` with nothing in `inputRevisions` to explain it. Its fields, bytes and digest are
+ * exactly the pre-LCLI-575 pack's.
+ */
+export type AgentContextPack = Omit<
+  AgentContextExport,
+  "queryHits" | "queryHitsOmitted" | "queryHitsSectionOmitted" | "profileMissing"
+> &
+  Partial<Pick<AgentContextExport, "queryHits" | "queryHitsOmitted" | "queryHitsSectionOmitted" | "profileMissing">>;
+
 interface RankedCandidate extends AgentContextItem {
   readonly key: string;
   readonly sourceIndex: number;
@@ -203,6 +219,23 @@ export function compileAgentContext(
   validateAgentProfileReferences(snapshot, graph);
   const profile = findAgentProfile(snapshot, profileName);
   return compileAgentContextForProfile(profile, graph, task, maxTokens, snapshot);
+}
+
+/**
+ * Compile the hit-free {@link AgentContextPack} the workflow projection embeds (Amendment 1): the
+ * same validation, ranking and budgeting as {@link compileAgentContext}, with no bundle-wide query
+ * at all, so its bytes and `packDigest` depend only on the profile's own sources.
+ */
+export function compileAgentContextWithoutQueryHits(
+  snapshot: AgentProfileSnapshot,
+  graph: BundleGraph,
+  profileName: string,
+  task: string,
+  maxTokens?: number,
+): AgentContextPack {
+  validateAgentProfileReferences(snapshot, graph);
+  const profile = findAgentProfile(snapshot, profileName);
+  return compilePack(profile, graph, task, maxTokens, snapshot, undefined, false);
 }
 
 /**
@@ -235,6 +268,23 @@ export function compileAgentContextForProfile(
   snapshot: AgentProfileSnapshot,
   workspace?: WorkspaceCompileExtras,
 ): AgentContextExport {
+  return compilePack(profile, graph, task, maxTokens, snapshot, workspace, true) as AgentContextExport;
+}
+
+/**
+ * The shared compiler. `withQueryHits` false is the hit-free {@link AgentContextPack}: no query is
+ * run, no section is reserved or rendered, and no hit field is emitted — so every budgeting and
+ * rendering decision below reduces to the pre-LCLI-575 pins-then-ranked-evidence loop.
+ */
+function compilePack(
+  profile: AgentProfile,
+  graph: BundleGraph,
+  task: string,
+  maxTokens: number | undefined,
+  snapshot: AgentProfileSnapshot,
+  workspace: WorkspaceCompileExtras | undefined,
+  withQueryHits: boolean,
+): AgentContextPack {
   const effectiveBudget = maxTokens ?? profile.maxTokens;
   if (!Number.isSafeInteger(effectiveBudget) || effectiveBudget < 1) {
     throw new LoreError("usage", `invalid --max-tokens "${effectiveBudget}"`, "pass a positive safe integer");
@@ -275,8 +325,8 @@ export function compileAgentContextForProfile(
     );
   });
   const delegates = delegateSummaries(profile, snapshot);
-  const rankedQueryHits = bundleQueryHits(workspace?.queryGraph ?? graph, task, provenanceById);
-  const build = (selection: readonly RankedCandidate[], queryHitLimit: number, querySection = true) =>
+  const rankedQueryHits = withQueryHits ? bundleQueryHits(workspace?.queryGraph ?? graph, task, provenanceById) : [];
+  const build = (selection: readonly RankedCandidate[], queryHitLimit: number, querySection = withQueryHits) =>
     assemble(
       profile,
       task,
@@ -290,6 +340,7 @@ export function compileAgentContextForProfile(
       rankedQueryHits,
       queryHitLimit,
       querySection,
+      withQueryHits,
     );
 
   // The mandatory-budget failure is judged on pins alone, exactly as before LCLI-575: the query
@@ -309,12 +360,12 @@ export function compileAgentContextForProfile(
   // The query section is reserved BEFORE ranked evidence fills the rest (it is small and, per the
   // ADR's measurement, answers far more questions than the profile's ranked sections do), shrinking
   // only when the pins leave no room for all three hits.
-  let queryHitLimit = AGENT_CONTEXT_QUERY_HIT_LIMIT;
+  let queryHitLimit = withQueryHits ? AGENT_CONTEXT_QUERY_HIT_LIMIT : 0;
   while (queryHitLimit > 0 && build([], queryHitLimit).tokenEstimate > effectiveBudget) queryHitLimit--;
   // With no room for a single hit the section still says why (the budget, or an empty corpus) when
   // that line fits; when even that does not, the section is dropped, which is the floor's own shape
   // and so always fits. `queryHitsOmitted` carries the count either way.
-  const querySection = queryHitLimit > 0 || build([], 0).tokenEstimate <= effectiveBudget;
+  const querySection = withQueryHits && (queryHitLimit > 0 || build([], 0).tokenEstimate <= effectiveBudget);
 
   // Every tentative pack is rendered with its own deduplicated query section, so a candidate whose
   // selection swaps a longer hit into the section is admitted only if that whole pack still fits.
@@ -351,7 +402,7 @@ function bundleQueryHits(
 }
 
 /** Canonical pasteable Markdown. The digest is computed over these exact bytes. */
-export function renderAgentContextMarkdown(data: AgentContextExport): string {
+export function renderAgentContextMarkdown(data: AgentContextPack): string {
   const lines = [
     `# Lore agent context — ${data.profile.name}`,
     "",
@@ -372,7 +423,9 @@ export function renderAgentContextMarkdown(data: AgentContextExport): string {
     }
   }
   lines.push("", "## Allowed source catalog", "");
-  if (data.catalog.length === 0) lines.push("_None._");
+  // Only a hit-bearing pack can have an empty catalog worth naming (a degraded, profile-less one);
+  // the hit-free pack keeps the pre-LCLI-575 bytes exactly (Amendment 1).
+  if (data.catalog.length === 0 && data.queryHits !== undefined) lines.push("_None._");
   for (const entry of data.catalog) {
     const title = entry.title === undefined ? "" : ` — ${oneLine(entry.title)}`;
     const score = entry.topScore > 0 ? `; top score ${formatScore(entry.topScore)}` : "";
@@ -387,7 +440,9 @@ export function renderAgentContextMarkdown(data: AgentContextExport): string {
       lines.push(`- ${delegate.name} [${delegate.kind}] — ${oneLine(delegate.description)}`);
     }
   }
-  if (data.queryHitsSectionOmitted !== true) lines.push(...renderQueryHitsSection(data));
+  if (data.queryHits !== undefined && data.queryHitsSectionOmitted !== true) {
+    lines.push(...renderQueryHitsSection(data.queryHits, data.queryHitsOmitted ?? 0));
+  }
   lines.push("", "## Pinned evidence", "");
   if (data.pinned.length === 0) lines.push("_None._");
   for (const item of data.pinned) lines.push(renderItem(item));
@@ -405,7 +460,7 @@ export function renderAgentContextMarkdown(data: AgentContextExport): string {
  * The query section. Three empty-or-short states stay distinguishable (cli-contract §3): the corpus
  * had nothing outside the pack; the budget cut every hit; the budget cut some of them.
  */
-function renderQueryHitsSection(data: AgentContextExport): string[] {
+function renderQueryHitsSection(queryHits: readonly AgentContextQueryHit[], omitted: number): string[] {
   const lines = [
     "",
     "## Bundle-wide query hits",
@@ -413,15 +468,14 @@ function renderQueryHitsSection(data: AgentContextExport): string[] {
     "Top `lore query` hits for the task that this pack does not already include. Read one with `lore read <id>`.",
     "",
   ];
-  const shown = data.queryHits.length;
-  const omitted = data.queryHitsOmitted;
+  const shown = queryHits.length;
   if (shown === 0 && omitted === 0) lines.push("_No bundle-wide hit outside this pack._");
   if (shown === 0 && omitted > 0) {
     lines.push(
       `_Omitted by budget: ${omitted} bundle-wide ${omitted === 1 ? "hit" : "hits"} outside this pack did not fit; raise --max-tokens to see them._`,
     );
   }
-  for (const hit of data.queryHits) lines.push(renderQueryHit(hit));
+  for (const hit of queryHits) lines.push(renderQueryHit(hit));
   if (shown > 0 && omitted > 0) {
     lines.push(
       "",
@@ -444,7 +498,8 @@ function assemble(
   rankedQueryHits: readonly AgentContextQueryHit[],
   queryHitLimit: number,
   querySection: boolean,
-): AgentContextExport {
+  withQueryHits: boolean,
+): AgentContextPack {
   const selectedKeys = new Set(selected.map((item) => item.key));
   // "Not already selected" is by concept: a document the pack already quotes any part of is not
   // re-advertised as a hit, whether it arrived pinned or ranked.
@@ -497,7 +552,7 @@ function assemble(
   }
   catalog.push(...(workspace?.extraCatalogEntries ?? []));
 
-  const provisional: AgentContextExport = {
+  const provisional: AgentContextPack = {
     profile: {
       name: profile.name,
       description: profile.description,
@@ -511,9 +566,9 @@ function assemble(
     pinned,
     sections: selected.map(stripCandidate),
     catalog,
-    queryHits,
-    queryHitsOmitted,
-    ...(querySection ? {} : { queryHitsSectionOmitted: true as const }),
+    ...(withQueryHits
+      ? { queryHits, queryHitsOmitted, ...(querySection ? {} : { queryHitsSectionOmitted: true as const }) }
+      : {}),
     ...(isMissingAgentProfile(profile) ? { profileMissing: true as const } : {}),
     ...(workspace === undefined || workspace.skippedWorkspaceMembers.length === 0
       ? {}

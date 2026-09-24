@@ -4,8 +4,8 @@ import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
 import { LoreError } from "../errors";
-import type { AgentContextExport } from "./agent-context";
-import { compileAgentContext } from "./agent-context";
+import type { AgentContextPack } from "./agent-context";
+import { compileAgentContextWithoutQueryHits } from "./agent-context";
 import { type AgentProfileSnapshot, findAgentProfile } from "./agent-profile";
 import type { BundleGraph } from "./bundle";
 
@@ -133,7 +133,7 @@ export interface AgentWorkflowProjection {
   readonly sources: readonly string[];
   readonly profileRevision: WorkflowRevision;
   readonly inputRevisions: readonly WorkflowRevision[];
-  readonly context: AgentContextExport;
+  readonly context: AgentContextPack;
 }
 
 /** The stable public failure markers served by the workflow binding seam. */
@@ -237,7 +237,15 @@ export function parseWorkflowBinding(raw: string): WorkflowBinding {
  * Compile the deterministic agent-context export and wrap it in the public
  * workflow projection. Read-only: stats/hashes inputs, never writes. When the
  * caller pins `context.expect.digest`, it must equal the freshly compiled
- * `packDigest` (the same evidence `lore agent context` already emits).
+ * `packDigest`.
+ *
+ * The embedded pack is HIT-FREE (opum-doc ADR "Make lore agent context always
+ * query-augmented", Amendment 1, opum-doc `main` a8bb596): the bundle-wide
+ * query section `lore agent context` carries since LCLI-575 ranks the whole
+ * bundle, while `inputRevisions` below lists only the catalog's source files —
+ * so a hit would let a document `inputRevisions` never names change a pinned
+ * `packDigest`. Without it, the pack's bytes and digest are exactly the
+ * pre-LCLI-575 ones, and every input that can move the digest is listed.
  */
 export function compileAgentWorkflowProjection(
   snapshot: AgentProfileSnapshot,
@@ -246,7 +254,13 @@ export function compileAgentWorkflowProjection(
   request: WorkflowRequest,
   options: { root: string; maxTokens?: number },
 ): AgentWorkflowProjection {
-  const context = compileAgentContext(snapshot, graph, profileName, request.task.text, options.maxTokens);
+  const context = compileAgentContextWithoutQueryHits(
+    snapshot,
+    graph,
+    profileName,
+    request.task.text,
+    options.maxTokens,
+  );
   const pinned = request.expect?.contextDigest;
   if (pinned !== undefined && pinned !== context.packDigest) {
     throw new LoreError(

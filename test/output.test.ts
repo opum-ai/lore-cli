@@ -9,6 +9,7 @@ import {
   displayWidth,
   emit,
   errorRenderOpts,
+  KIND_SCHEMA_VERSIONS,
   maxLen,
   type OutputContext,
   type Renderable,
@@ -17,6 +18,7 @@ import {
   resolveMode,
   resolveOutput,
   SCHEMA_VERSION,
+  schemaVersionFor,
   successEnvelope,
   type TaskSummaryRow,
   type Truncation,
@@ -250,6 +252,16 @@ describe("success envelope (cli-contract §2)", () => {
       data: { hits: [] },
       principal: null,
     });
+  });
+
+  test("a per-kind override bumps only its own kind (cli-contract §7.1, LCLI-575)", () => {
+    expect(KIND_SCHEMA_VERSIONS).toEqual({ "agent.context.export": 2 });
+    expect(schemaVersionFor("agent.context.export")).toBe(2);
+    expect(successEnvelope("agent.context.export", {}).schemaVersion).toBe(2);
+    // Every other kind, including the workflow projection that embeds a (hit-free) pack, stays 1.
+    for (const kind of ["agent.workflow.projection", "agent.profile", "query.results", "toString", "unknown.kind"]) {
+      expect(schemaVersionFor(kind)).toBe(SCHEMA_VERSION);
+    }
   });
 
   test("data may be an array and is preserved by identity", () => {

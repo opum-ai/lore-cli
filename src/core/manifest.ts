@@ -46,7 +46,7 @@
  */
 
 import { EXIT_CODES, EXIT_OK, EXIT_UNCAUGHT } from "../errors";
-import { SCHEMA_VERSION } from "../output";
+import { KIND_SCHEMA_VERSIONS, SCHEMA_VERSION } from "../output";
 import { PROJECTION_SCHEMA_VERSION } from "./projection";
 
 /** One flag in the manifest: the bare name (no leading `--`), whether it takes a value, and a one-liner. */
@@ -133,8 +133,16 @@ export interface ManifestCommand {
 
 /** The whole capability manifest: the contract version, the global exit-code taxonomy, the global flags, and every command. */
 export interface Manifest {
-  /** The `--json` envelope/contract version (cli-contract §7); shared with every success envelope. */
+  /**
+   * The `--json` envelope/contract version (cli-contract §7): the version every success envelope
+   * carries unless {@link kindSchemaVersions} names its `kind`.
+   */
   readonly schemaVersion: number;
+  /**
+   * Per-`kind` `schemaVersion` overrides — a breaking change scoped to one `kind` (cli-contract
+   * §7.1). A `kind` absent here carries {@link schemaVersion}. Added LCLI-575 (additive).
+   */
+  readonly kindSchemaVersions: Readonly<Record<string, number>>;
   /** The semantic exit-code taxonomy: name → code, sourced from `errors.ts` so it cannot drift. */
   readonly exitCodes: Readonly<Record<string, number>>;
   /** The flags accepted in supported positions on every command (resolved by Commander, not the handler). */
@@ -953,6 +961,7 @@ export function exitCodeTaxonomy(): Record<string, number> {
 export function buildManifest(): Manifest {
   return deepFreeze({
     schemaVersion: SCHEMA_VERSION,
+    kindSchemaVersions: { ...KIND_SCHEMA_VERSIONS },
     exitCodes: exitCodeTaxonomy(),
     globalFlags: GLOBAL_FLAGS,
     commands: LORE_MANIFEST,
