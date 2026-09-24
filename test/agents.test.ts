@@ -95,6 +95,7 @@ describe("generated content (AC#2) — small, grounded, points at `lore instruct
     // carried survive, now accurate: only the Backlog backend makes lore commit anything.
     const skill = buildSkillDoc();
     const start = skill.indexOf("## Start here");
+    expect(start).toBeGreaterThan(0);
     const before = skill.slice(0, start);
     for (const command of ["link", "unlink", "rename", "sync"]) {
       expect(before).toContain(`\`lore ${command}\``);

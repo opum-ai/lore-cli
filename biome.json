@@ -11,6 +11,7 @@
       "src/**/*.ts",
       "test/**/*.ts",
       "benchmark/**/*.ts",
+      "scripts/**/*.ts",
       "scripts/**/*.mjs",
       "bin/**/*.cjs",
       "*.ts",

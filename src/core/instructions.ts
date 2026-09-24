@@ -33,7 +33,8 @@ Do not start by reading docs/index.md or grepping docs/:
 1. \`lore query "<a few words from the question>" --limit 5\` -- full-text search
    across every concept's title, summary and body, printing each hit's id,
    type, title and a snippet. Narrow it with \`--type\`, \`--tag\`, \`--status\`
-   or \`--field k=v\`. Text that begins with \`-\` goes after \`--\`.
+   or \`--field k=v\`. Text that begins with \`-\` goes last, after every flag
+   and a \`--\`: \`lore query --limit 5 -- "-text"\`.
 2. \`lore read <id>\` -- the best hit exactly as authored, with no budget and
    no assembly. Read the next hit if the first does not answer the question.
 3. Only when you need the surrounding concepts: \`lore context <id>
@@ -47,7 +48,7 @@ or catting docs/ usually costs tens to hundreds of KB.
 
 For how concepts connect, use \`lore path\` or \`lore impact\` (both take
 required kind and direction flags; see their \`--help\`). \`lore graph\`
-emits the whole bundle, so it is not a retrieval step.
+emits a link graph, not document text, so it is not a retrieval step.
 \`lore agent context <profile> --task "<text>"\` compiles a task pack, but it
 selects only among the sources that profile lists, so a question outside the
 profile still needs a query. For questions that span repositories, see the

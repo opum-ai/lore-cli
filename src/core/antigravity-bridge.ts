@@ -19,7 +19,7 @@ This project uses **lore** for the OKF documentation bundle under \`docs/\`.
 
 - Run \`lore instructions\` before documentation work and pull the needed topic instructions.
 - Use Lore commands for managed links, moves, and synchronization; do not hand-edit managed blocks.
-- Follow the repository's Backlog workflow independently.
+- Follow the repository's tracker workflow independently.
 - This is project-local Antigravity/Gemini CLI context only. It does not configure either tool
   globally or contain credentials.
 
