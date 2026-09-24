@@ -3,7 +3,14 @@
 import { readFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
-import { type AgentContextExport, compileAgentContext, renderAgentContextMarkdown } from "../core/agent-context";
+import {
+  type AgentContextExport,
+  compileAgentContext,
+  missingAgentProfile,
+  missingAgentProfileWarning,
+  queryHitsSectionOmittedWarning,
+  renderAgentContextMarkdown,
+} from "../core/agent-context";
 import {
   type AgentProfile,
   findAgentProfile,
@@ -137,11 +144,20 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
     }
 
     const task = resolveTask(action, options);
-    const profile = findAgentProfile(snapshot, action.name);
+    // A missing profile degrades to the bundle-wide query section plus a warning instead of the
+    // `not_found` exit 3 it used to be (LCLI-575; opum-doc ADR ODOC-265, decision 2). The
+    // placeholder is injected into the snapshot so the bare and `--workspace` compilers take it
+    // through the same path as a real profile. Contract mode is untouched: it returned above and
+    // still fails closed with OPUM_WORKFLOW_LORE_ABSENT.
+    const profileMissing = !snapshot.profiles.has(action.name);
+    const compileSnapshot = profileMissing
+      ? { profiles: new Map([...snapshot.profiles, [action.name, missingAgentProfile(action.name)]]) }
+      : snapshot;
+    const profile = findAgentProfile(compileSnapshot, action.name);
     let data =
       action.workspace === undefined
-        ? compileAgentContext(snapshot, retrieval.graph, profile.name, task, action.maxTokens)
-        : await compileWorkspaceAgentContext(options.root, snapshot, profile.name, task, action.maxTokens, {
+        ? compileAgentContext(compileSnapshot, retrieval.graph, profile.name, task, action.maxTokens)
+        : await compileWorkspaceAgentContext(options.root, compileSnapshot, profile.name, task, action.maxTokens, {
             manifestPath: action.workspace.manifestPath,
             memberIds: action.workspace.memberIds,
             ...(options.loadWorkspaceProjection === undefined
@@ -168,6 +184,14 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
       }
       data = { ...data, write: { path: target.relPath, action: writeAction } };
     }
+    // Emitted only once the pack compiled, so a later failure never leaves a stray warning.
+    const degraded = new WarningCollector();
+    if (profileMissing) degraded.add(missingAgentProfileWarning(action.name), "agent-profile-missing");
+    if (data.queryHitsSectionOmitted === true && data.queryHitsOmitted > 0) {
+      // The one state where the pack itself cannot say it: no room even for the section's heading.
+      degraded.add(queryHitsSectionOmittedWarning(data.queryHitsOmitted), "agent-query-hits-omitted");
+    }
+    degraded.flush({ color: options.output.color, stderr: options.stderr });
     emit(contextRenderable(data), options.output, options.stdout);
     return EXIT_OK;
   } finally {

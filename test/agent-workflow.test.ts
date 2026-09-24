@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runAgent } from "../src/commands/agent";
+import { compileAgentContext, renderAgentContextMarkdown } from "../src/core/agent-context";
 import { loadAgentProfiles } from "../src/core/agent-profile";
 import {
   compileAgentWorkflowProjection,
@@ -225,5 +226,101 @@ describe("agent workflow projection (opum-agent-workflow/v1)", () => {
     ).toBe(0);
     expect(stdout.text()).toContain("opum-agent-workflow/v1 — task T-1");
     expect(stdout.text()).not.toContain("\u001b[");
+  });
+});
+
+/**
+ * opum-doc ADR "Make lore agent context always query-augmented", Amendment 1 (opum-doc `main`
+ * a8bb596): the bundle-wide query section is for the plain `lore agent context` pack only. The
+ * workflow projection embeds a HIT-FREE pack, because `inputRevisions` lists only the catalog's
+ * sources and a whole-bundle hit would let a document it never names move a pinned digest.
+ */
+describe("agent workflow projection — hit-free pack (LCLI-575, ADR Amendment 1)", () => {
+  const UNLISTED = "guides/checkout-errors.md";
+
+  /** An unlisted doc that ranks for the task, so a hit-bearing pack WOULD advertise it. */
+  function unlistedDoc(body = "Checkout form errors are announced inline.\n"): void {
+    doc(UNLISTED, `# Checkout form errors\n\n${body}`, "Checkout form errors");
+  }
+
+  function project() {
+    return compileAgentWorkflowProjection(
+      loadAgentProfiles(root),
+      loadBundle(join(root, "docs")),
+      "frontend-dev",
+      parseWorkflowRequest(requestEnvelope()),
+      { root },
+    );
+  }
+
+  function plainPack() {
+    return compileAgentContext(
+      loadAgentProfiles(root),
+      loadBundle(join(root, "docs")),
+      "frontend-dev",
+      "checkout form errors",
+    );
+  }
+
+  test("S1: editing an unlisted bundle doc leaves packDigest and inputRevisions unchanged", () => {
+    fixture();
+    specialist();
+    unlistedDoc();
+    const before = project();
+    const plainBefore = plainPack();
+    unlistedDoc("Checkout form errors are announced inline, then focused, then logged for audit.\n");
+    const after = project();
+    const plainAfter = plainPack();
+
+    // Positive control: the same edit DOES reach a hit-bearing pack, so the fixture exercises the
+    // path the narrowing closes — a green below is not merely an edit nothing could see.
+    expect(plainBefore.queryHits.map((hit) => hit.id)).toContain("guides/checkout-errors");
+    expect(plainAfter.packDigest).not.toBe(plainBefore.packDigest);
+
+    expect(after.packDigest).toBe(before.packDigest);
+    expect(after.contextDigest).toBe(before.contextDigest);
+    expect(after.contextId).toBe(before.contextId);
+    expect(after.inputRevisions.map(({ path, sha256 }) => ({ path, sha256 }))).toEqual(
+      before.inputRevisions.map(({ path, sha256 }) => ({ path, sha256 })),
+    );
+    expect(before.inputRevisions.map((revision) => revision.path)).not.toContain(`docs/${UNLISTED}`);
+  });
+
+  test("the embedded pack carries no query-hit field and renders no query section", () => {
+    fixture();
+    specialist();
+    unlistedDoc();
+    const { context } = project();
+    for (const field of ["queryHits", "queryHitsOmitted", "queryHitsSectionOmitted", "profileMissing"]) {
+      expect(Object.hasOwn(context, field)).toBe(false);
+    }
+    expect(renderAgentContextMarkdown(context)).not.toContain("## Bundle-wide query hits");
+  });
+
+  test("the embedded pack is byte-identical to origin/dev's pre-LCLI-575 compiler on the same fixture", () => {
+    fixture();
+    specialist();
+    unlistedDoc();
+    const projection = project();
+    // Golden values produced by origin/dev 5e165d2a (whose src/ is identical to 71f2c1e4, the PR's
+    // base) compiling this exact fixture through its own compileAgentWorkflowProjection. The
+    // pre-amendment PR head e8773fb4 produced packDigest sha256:114286c3… on the same fixture.
+    expect(projection.packDigest).toBe("sha256:a5faa0459c4333329c1c7adf00a9237f28bd79ccd698e9b27de25bd754441e53");
+    expect(createHash("sha256").update(JSON.stringify(projection.context)).digest("hex")).toBe(
+      "f13f0ac68a946516b78ad816649dac69d6ef05af7b850930caebf0102876cead",
+    );
+  });
+
+  test("cli: `agent project` stays schemaVersion 1 with a hit-free context", async () => {
+    fixture();
+    specialist();
+    unlistedDoc();
+    writeFileSync(join(root, "request.json"), requestEnvelope());
+    const stdout = capture();
+    const args = ["project", "frontend-dev", "--request", "request.json"];
+    expect(await runAgent({ root, output: JSON_OUTPUT, args, stdout, retrieval: retrieval() })).toBe(0);
+    const envelope = JSON.parse(stdout.text()) as { schemaVersion: number; data: { context: object } };
+    expect(envelope.schemaVersion).toBe(1);
+    expect(Object.hasOwn(envelope.data.context, "queryHits")).toBe(false);
   });
 });

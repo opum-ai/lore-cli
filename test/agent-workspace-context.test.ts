@@ -203,6 +203,27 @@ describe("agent context --workspace — reference expansion", () => {
   });
 });
 
+describe("agent context --workspace — bundle-wide query hits follow --repository (LCLI-575 review S2)", () => {
+  const glossaryOnly =
+    'schema_version = 1\nname = "glossary-only"\ndescription = "Glossary."\nkind = "specialist"\nmax_tokens = 4000\npinned = ["alpha::glossary"]\n';
+
+  test("--repository alpha: no hit names an unselected member", async () => {
+    profile("glossary-only", glossaryOnly);
+    const data = await compile("glossary-only", ["alpha"]);
+    const ids = data.queryHits.map((hit) => hit.id);
+    // Precondition: the selected member's matching document IS a hit, so the section is not empty.
+    expect(ids).toContain("alpha::design");
+    expect(ids.filter((id) => !id.startsWith("alpha::"))).toEqual([]);
+    for (const hit of data.queryHits) expect(hit.provenance?.memberId).toBe("alpha");
+  });
+
+  test("positive control: with both members selected, beta's matching document is a hit", async () => {
+    profile("glossary-only", glossaryOnly);
+    const data = await compile("glossary-only", ["alpha", "beta"]);
+    expect(data.queryHits.map((hit) => hit.id)).toContain("beta::design");
+  });
+});
+
 describe("agent context --workspace — tolerant loading (OPAG-33)", () => {
   test("a member that fails to load is skipped, named once, and its sources are reported member-skipped", async () => {
     profile(

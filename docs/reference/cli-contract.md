@@ -141,7 +141,7 @@ Every `--json` success response on stdout is a single JSON object:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `schemaVersion` | integer | Version of the envelope contract (§7). Bumped only on a breaking change to the JSON shape. |
+| `schemaVersion` | integer | Version of the envelope contract (§7) for this envelope's `kind`. Bumped only on a breaking change, and scoped to the `kind` it breaks: `1` for every `kind` except those the `lore help --json` manifest lists under `kindSchemaVersions` — today only `agent.context.export`, at `2` (§5.6). |
 | `kind` | string | Names the payload shape so a caller can switch on it without inferring structure. Dotted `command.payload` form. |
 | `data` | object \| array | The typed body for that `kind`. Its internal shape is governed per-`kind`. |
 | `principal` | `null` | Reserved for a future ratified principal reference. Always `null` today — no command sets it to anything else. It is present on every envelope so its position is stable once it is ratified, but it is **not yet part of the stable contract**: consumers must not depend on its value, and must not treat its mere presence as meaningful beyond "reserved, unset." |
@@ -181,7 +181,10 @@ the [CLI surface](cli-surface.md):
 | `context.export` | `lore context` | concept body + neighbor summaries; token budget accounting |
 | `instructions.text` | `lore instructions` | guidance body + the full topic index |
 | `agents.result` | `lore agents` | bridge files written/updated |
-| `help.manifest` | `lore help` | the capability manifest — every command's flags, `kind`, exit codes |
+| `agent.profiles` / `agent.profile` | `lore agent list` / `show` | profile summaries / one normalized profile |
+| `agent.context.export` | `lore agent context` | a profile-bounded evidence pack (pins, ranked sections, catalog, budget accounting) plus `queryHits` — up to three bundle-wide `lore query` hits not already in the pack, as `id`/`title`/`snippet`/`score` (added LCLI-575, additive under §7.1); `queryHitsOmitted`, the count of those hits the token budget cut (always present, `0` when none; §3); `queryHitsSectionOmitted: true` when the budget left no room for the section at all; and `profileMissing: true` when the named profile did not exist and the pack degraded to those hits. Envelope `schemaVersion` `2` since LCLI-575, for that exit-code remap alone (§5.6) |
+| `agent.workflow.projection` | `lore agent project`, `lore agent context --contract` | the read-only opum-agent-workflow/v1 projection wrapping the same evidence pack **without** the query-hit fields — no `queryHits`, `queryHitsOmitted` or `queryHitsSectionOmitted` and no query section in its Markdown, so its bytes, `packDigest` and `inputRevisions` are exactly the pre-LCLI-575 ones (§5.6). `schemaVersion` `1` |
+| `help.manifest` | `lore help` | the capability manifest — every command's flags, `kind`, exit codes, plus `kindSchemaVersions`, the per-`kind` `schemaVersion` overrides (§7.1) |
 | `scaffold.result` | `lore scaffold` | files written (`mkdocs`, `docusaurus`, `obsidian` all shipped — see [CLI surface](cli-surface.md)) |
 
 A caller should branch on `kind` and tolerate **unknown** `kind` values
@@ -420,6 +423,45 @@ and the 7-over-6 precedence is opum-agent's ruling OPAG-373. The
 `indeterminate: 7` (nine keys). Callers that branch only on zero versus
 non-zero need no change; callers that branch on `6` must not fold `7` into it.
 
+### 5.6 Amendment: `agent context <unknown profile>` exits `0`, not `3` (2026-09-24)
+
+Recorded as an amendment for the same reason as §5.5: it changes what an
+existing invocation exits with, which §7.2 names a contract-level change and
+§7.1 lists as "remapping an existing exit code". Before LCLI-575, `lore agent
+context <name>` naming a profile with no `.lore/agents/<name>.toml` was
+`not_found`, exit `3`. It now exits `0` with a degraded pack: the bundle-wide
+query section only, `profileMissing: true` in `--json`, a `> Warning:` line in
+the pack, and the same warning on stderr. Nothing else moves: `agent show` and
+`agent project` on an unknown profile still exit `3`, and `agent context
+--contract` still fails closed with `OPUM_WORKFLOW_LORE_ABSENT`.
+
+The binding decision is opum-doc's
+`docs/adr/make-lore-agent-context-always-query-augmented.md` (ODOC-265, at
+opum-doc `main` 9222079), decision 2: "When a profile is missing, the command
+degrades to that query section plus a warning, instead of exiting 3."
+
+**Settled: the remap bumps `schemaVersion` for `agent.context.export` to `2`.**
+The ADR's decision 4 called the whole change additive and reversible; its
+**Amendment 1** (ODOC-266, opum-doc `main` a8bb596) corrects that: the exit
+`3` → `0` remap is contract-level under §7.2, the §7.1 bump rule applies, and
+the bump is for the `agent.context` kind. `queryHits`, `queryHitsOmitted` and
+`queryHitsSectionOmitted` stay additive and would not have bumped it on their
+own. The bump is scoped to that one `kind` (§7.1): every other envelope,
+`agent.workflow.projection` included, stays `schemaVersion` `1`, and `lore help
+--json` advertises the override as `kindSchemaVersions: {"agent.context.export":
+2}`. A caller pinned to `schemaVersion` `1` for `agent.context.export` should
+read `profileMissing` where it treated exit `3` as "no such profile", then
+accept `2`.
+
+The same amendment narrows where the query section appears: **only the plain
+`lore agent context` pack carries it.** The opum-agent-workflow/v1 projection
+(`agent project`, `agent context --contract`) stays hit-free, because its
+`inputRevisions` lists only the profile's catalog sources while the section
+ranks the whole bundle — so a hit would let a document `inputRevisions` never
+names change a pinned `packDigest`. Its pack, `packDigest` and `inputRevisions`
+are therefore byte-identical to the pre-LCLI-575 ones. Extending hits to
+workflow packs is a separate, undecided design question.
+
 ---
 
 ## 6. Color and `NO_COLOR`
@@ -448,6 +490,12 @@ The `--json` envelope is a **public, additive-only versioned contract**:
 - **Requires a `schemaVersion` bump (breaking):** renaming, removing, or
   repurposing an existing field; changing a field's type; changing the meaning
   of an existing `kind`; remapping an existing exit code or `error_type`.
+- **A bump is scoped to the `kind` it breaks.** The envelope carries its own
+  kind's version; a `kind` with no override carries the base version (`1`).
+  The overrides are listed in the `lore help --json` manifest as
+  `kindSchemaVersions`. The first is `agent.context.export` → `2` (LCLI-575,
+  §5.6), so a consumer of every other `kind` is untouched by a break it never
+  reads.
 
 This lets downstream consumers pin a `schemaVersion` and rely on stability
 while lore evolves payloads safely.
@@ -487,7 +535,7 @@ discipline.
 | Truncation | `total`/`shown`/`truncated`/`hint` in JSON; "showing N of M" line otherwise |
 | Token counts | labeled estimate, `chars/4` heuristic, never exact |
 | Color | pretty + TTY + `NO_COLOR` unset only; never load-bearing |
-| Versioning | `--json` additive-only; existing fields/codes never repurposed without a `schemaVersion` bump |
+| Versioning | `--json` additive-only; existing fields/codes never repurposed without a `schemaVersion` bump, scoped per `kind` (`kindSchemaVersions`) |
 
 ---
 

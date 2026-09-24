@@ -32,10 +32,11 @@ import {
   findAgentProfile,
   headingSlugs,
 } from "./agent-profile";
-import type { BundleGraph } from "./bundle";
+import { type BundleGraph, buildGraph } from "./bundle";
 import type { Concept } from "./concept";
 import { compareCodeUnits } from "./order";
 import { parseQualifiedWorkspaceId, qualifyWorkspaceId } from "./workspace-contract";
+import { selectWorkspaceProjection } from "./workspace-projection";
 import {
   type LoadedWorkspaceProjection,
   type LoadWorkspaceProjectionOptions,
@@ -92,8 +93,27 @@ export async function compileWorkspaceAgentContext(
     skippedWorkspaceMembers: loaded.skippedMembers
       .filter((skipped) => consideredMemberIds.has(skipped.memberId))
       .map((skipped) => ({ memberId: skipped.memberId, reason: skipped.error.message })),
+    queryGraph: queryGraphFor(loaded, workspace.memberIds, skippedMemberIds),
   };
   return compileAgentContextForProfile(expandedProfile, graph, task, maxTokens, snapshot, extras);
+}
+
+/**
+ * The graph the pack's bundle-wide query section searches (LCLI-575): narrowed to `--repository`
+ * exactly as `lore query --workspace` narrows it ({@link selectWorkspaceProjection}), so corpus
+ * statistics and hits both come from the selected members only. A selected member that failed to
+ * load is absent from the projection and so is left out of the selection rather than rejected; if
+ * every selected member failed, there is nothing to search.
+ */
+function queryGraphFor(
+  loaded: LoadedWorkspaceProjection,
+  memberIds: readonly string[],
+  skippedMemberIds: ReadonlySet<string>,
+): BundleGraph {
+  if (memberIds.length === 0) return loaded.projection.graph;
+  const loadedSelection = memberIds.filter((memberId) => !skippedMemberIds.has(memberId));
+  if (loadedSelection.length === 0) return buildGraph([]);
+  return selectWorkspaceProjection(loaded.projection, loadedSelection).graph;
 }
 
 interface ExpandedProfileReferences {

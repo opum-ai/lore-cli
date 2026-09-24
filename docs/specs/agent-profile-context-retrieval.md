@@ -134,7 +134,16 @@ JSON uses Lore's standard envelope with these kinds:
 - `agent.profile`; and
 - `agent.context.export`.
 
-An unknown profile is `not_found` exit `3`. Invalid arguments are usage exit
+An unknown profile is `not_found` exit `3` for `show`. For `context` it is not
+a failure (LCLI-575, opum-doc ADR "Make lore agent context always
+query-augmented", ODOC-265): the pack degrades to the bundle-wide query hits
+alone, carries `profileMissing: true` and a `> Warning:` line naming the absent
+`.lore/agents/<name>.toml`, writes the same warning to stderr, and exits `0`.
+That exit-code remap bumps the `agent.context.export` envelope to
+`schemaVersion` `2` (the ADR's Amendment 1, opum-doc `main` a8bb596;
+[CLI contract](../reference/cli-contract.md) §5.6). Contract mode
+(`--contract`) is unchanged and still fails closed with
+`OPUM_WORKFLOW_LORE_ABSENT`. Invalid arguments are usage exit
 `2`; output permission failures are `4`; a differing output collision is `5`;
 and malformed profiles, references, cycles, or impossible pinned budgets are
 validation exit `6`. The command decides validation, retrieval, and write
@@ -156,6 +165,18 @@ The structured `AgentContextExport` contains:
 - `sections`: ranked selected items in emission order;
 - `catalog`: every allowed source with resolved id/path/title, candidate and
   selected counts, top score, token estimates, and included/omitted reason;
+- `queryHits`: up to three bundle-wide `lore query` hits for the task whose
+  concept is not already pinned or selected in the pack, best first, each as
+  `id`, optional `title` and `snippet`, `score`, and workspace `provenance`
+  when compiled with `--workspace` (LCLI-575; always present on a plain
+  `lore agent context` pack, possibly empty; absent from the pack the workflow
+  projection embeds — see step 8);
+- `queryHitsOmitted`: how many of those hits the token budget cut, so an empty
+  or short `queryHits` is never ambiguous between an empty corpus (`0`) and the
+  budget (`> 0`); always present alongside `queryHits`;
+- optional `queryHitsSectionOmitted: true` when the budget left no room for
+  even the section's heading and omission line, so the pack has no section;
+- optional `profileMissing: true` when the named profile did not exist;
 - optional `delegates`: direct name, kind, and description entries;
 - `total`, `shown`, and `truncated` over ranked candidates; and
 - optional `write`: repo-relative path plus `created`, `updated`, or
@@ -195,10 +216,34 @@ detail enters the pack.
 7. Sort score descending, then declared source order, document section order,
    and normalized reference. If tokenization yields no task term or every
    candidate scores zero, fall back to declaration and section order.
-8. Fill the residual budget with deterministic first-fit. Scan ordered
+8. Reserve the bundle-wide query section (LCLI-575) — for the plain
+   `lore agent context` pack only. The pack the opum-agent-workflow/v1
+   projection embeds (`agent project`, `agent context --contract`) skips this
+   step entirely and carries no query-hit field (the ADR's Amendment 1, opum-doc
+   `main` a8bb596): its `inputRevisions` lists only the catalog's sources, so a
+   whole-bundle hit would let an unlisted document change a pinned
+   `packDigest`. That pack is byte-identical to the pre-LCLI-575 one. For the
+   plain pack, run the task through the
+   exact `lore query` ranking over the whole bundle, not just the profile, and
+   keep hits whose concept is not already pinned or selected, up to three. The
+   section is body-free (id, title, snippet), so the profile allowlist still
+   governs every byte of quoted evidence. It is reserved before ranked
+   evidence, and shrinks below three only when the pins leave no room. The
+   mandatory-pin budget failure in step 3 is judged without it — not even its
+   heading — so the floor is byte-for-byte the pre-LCLI-575 one and the section
+   never turns a pack that compiles into one that fails. When the budget cuts
+   hits, the section says so (`showing N of M`, or an `_Omitted by budget_`
+   line when it cuts all of them); when not even that line fits, the section is
+   dropped and `queryHitsSectionOmitted` plus a stderr warning carry it. With
+   `--workspace --repository`, the query runs over the selected members only,
+   exactly as `lore query --workspace` does. A task with no searchable term
+   yields no hits rather than an unranked listing.
+9. Fill the residual budget with deterministic first-fit. Scan ordered
    candidates, include one when the complete rerendered pack fits, otherwise
-   mark it omitted and continue to smaller candidates.
-9. Render canonical Markdown, compute the chars-per-four estimate, and hash the
+   mark it omitted and continue to smaller candidates. Each tentative pack is
+   rendered with its own deduplicated query section, so a selection that swaps
+   a longer hit into the section is admitted only if the whole pack still fits.
+10. Render canonical Markdown, compute the chars-per-four estimate, and hash the
    exact bytes. Every successful pack is at or below `maxTokens`; `truncated` is
    true whenever any ranked candidate was omitted.
 
