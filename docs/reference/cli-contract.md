@@ -182,7 +182,7 @@ the [CLI surface](cli-surface.md):
 | `instructions.text` | `lore instructions` | guidance body + the full topic index |
 | `agents.result` | `lore agents` | bridge files written/updated |
 | `agent.profiles` / `agent.profile` | `lore agent list` / `show` | profile summaries / one normalized profile |
-| `agent.context.export` | `lore agent context` | a profile-bounded evidence pack (pins, ranked sections, catalog, budget accounting) plus `queryHits` — up to three bundle-wide `lore query` hits not already in the pack, as `id`/`title`/`snippet`/`score` (added LCLI-575 under §7.1, no `schemaVersion` bump) — and `profileMissing: true` when the named profile did not exist and the pack degraded to those hits |
+| `agent.context.export` | `lore agent context` | a profile-bounded evidence pack (pins, ranked sections, catalog, budget accounting) plus `queryHits` — up to three bundle-wide `lore query` hits not already in the pack, as `id`/`title`/`snippet`/`score` (added LCLI-575 under §7.1, no `schemaVersion` bump); `queryHitsOmitted`, the count of those hits the token budget cut (always present, `0` when none; §3); `queryHitsSectionOmitted: true` when the budget left no room for the section at all; and `profileMissing: true` when the named profile did not exist and the pack degraded to those hits (an exit-code change, §5.6) |
 | `agent.workflow.projection` | `lore agent project`, `lore agent context --contract` | the read-only opum-agent-workflow/v1 projection wrapping an `agent.context.export` |
 | `help.manifest` | `lore help` | the capability manifest — every command's flags, `kind`, exit codes |
 | `scaffold.result` | `lore scaffold` | files written (`mkdocs`, `docusaurus`, `obsidian` all shipped — see [CLI surface](cli-surface.md)) |
@@ -422,6 +422,28 @@ and the 7-over-6 precedence is opum-agent's ruling OPAG-373. The
 `lore help --json` manifest's `exitCodes` taxonomy carries it as
 `indeterminate: 7` (nine keys). Callers that branch only on zero versus
 non-zero need no change; callers that branch on `6` must not fold `7` into it.
+
+### 5.6 Amendment: `agent context <unknown profile>` exits `0`, not `3` (2026-09-24)
+
+Recorded as an amendment for the same reason as §5.5: it changes what an
+existing invocation exits with, which §7.2 names a contract-level change and
+§7.1 lists as "remapping an existing exit code". Before LCLI-575, `lore agent
+context <name>` naming a profile with no `.lore/agents/<name>.toml` was
+`not_found`, exit `3`. It now exits `0` with a degraded pack: the bundle-wide
+query section only, `profileMissing: true` in `--json`, a `> Warning:` line in
+the pack, and the same warning on stderr. Nothing else moves: `agent show` and
+`agent project` on an unknown profile still exit `3`, and `agent context
+--contract` still fails closed with `OPUM_WORKFLOW_LORE_ABSENT`.
+
+The binding decision is opum-doc's
+`docs/adr/make-lore-agent-context-always-query-augmented.md` (ODOC-265, at
+opum-doc `main` 9222079), decision 2: "When a profile is missing, the command
+degrades to that query section plus a warning, instead of exiting 3."
+`schemaVersion` stays `1`. The ADR calls the change additive and reversible
+(decision 4) and does not address the §7.1 bump rule, so whether this remap
+warrants a bump is recorded here as an open question for the orchestrator,
+not as settled. A caller that treated exit `3` from `agent context` as "no
+such profile" should read `profileMissing` instead.
 
 ---
 

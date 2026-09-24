@@ -116,6 +116,11 @@ export function missingAgentProfileWarning(name: string): string {
   return `agent profile "${name}" was not found (${AGENT_PROFILES_DIR}/${name}.toml); this pack carries only the bundle-wide query hits — add the profile or run \`lore agent list\``;
 }
 
+/** Stderr warning for a pack whose budget had no room even for the query section's omission line. */
+export function queryHitsSectionOmittedWarning(omitted: number): string {
+  return `the token budget left no room for the bundle-wide query section; ${omitted} ${omitted === 1 ? "hit" : "hits"} outside this pack omitted — raise --max-tokens to see them`;
+}
+
 export interface AgentDelegateSummary {
   readonly name: string;
   readonly kind: AgentProfile["kind"];
@@ -143,6 +148,19 @@ export interface AgentContextExport {
    * left after the mandatory pins has no room for a hit.
    */
   readonly queryHits: readonly AgentContextQueryHit[];
+  /**
+   * How many hits outside this pack the token budget cut from the section: the section would have
+   * carried `min(3, hits available)` and carries `queryHits.length`. Always present, `0` when the
+   * budget cut nothing, so an empty `queryHits` is never ambiguous between "the corpus had nothing"
+   * (`0`) and "the budget had no room" (`> 0`) — cli-contract §3, truncation is always explicit.
+   */
+  readonly queryHitsOmitted: number;
+  /**
+   * Present (and `true`) only when the budget left no room even for the section's heading and its
+   * omission line, so the pack carries no query section at all. `queryHitsOmitted` still counts
+   * what was cut, and the command also names the omission on stderr.
+   */
+  readonly queryHitsSectionOmitted?: true;
   /** Present (and `true`) only when the named profile did not exist and the pack degraded (LCLI-575). */
   readonly profileMissing?: true;
   /**
@@ -201,6 +219,12 @@ export interface WorkspaceCompileExtras {
   readonly extraCatalogEntries: readonly AgentContextCatalogEntry[];
   /** Manifest members `loadWorkspaceProjection`'s `tolerateMemberFailures` skipped, if any. */
   readonly skippedWorkspaceMembers: readonly { readonly memberId: string; readonly reason: string }[];
+  /**
+   * The graph the bundle-wide query section searches (LCLI-575): the `--repository` selection only,
+   * the same narrowing `lore query --workspace` applies, so a hit never names an unselected member.
+   * `graph` itself still holds every loaded member, because qualified pins may name one.
+   */
+  readonly queryGraph: BundleGraph;
 }
 
 export function compileAgentContextForProfile(
@@ -251,8 +275,8 @@ export function compileAgentContextForProfile(
     );
   });
   const delegates = delegateSummaries(profile, snapshot);
-  const rankedQueryHits = bundleQueryHits(graph, task, provenanceById);
-  const build = (selection: readonly RankedCandidate[], queryHitLimit: number) =>
+  const rankedQueryHits = bundleQueryHits(workspace?.queryGraph ?? graph, task, provenanceById);
+  const build = (selection: readonly RankedCandidate[], queryHitLimit: number, querySection = true) =>
     assemble(
       profile,
       task,
@@ -265,11 +289,14 @@ export function compileAgentContextForProfile(
       workspace,
       rankedQueryHits,
       queryHitLimit,
+      querySection,
     );
 
   // The mandatory-budget failure is judged on pins alone, exactly as before LCLI-575: the query
-  // section is a supplement, so it must never turn a pack that used to compile into a failure.
-  const pinnedOnly = build([], 0);
+  // section is a supplement, so it must never turn a pack that used to compile into a failure. The
+  // floor is therefore rendered with NO query section — not even its heading — so it is the same
+  // bytes, and the same token estimate, a pre-LCLI-575 pack had.
+  const pinnedOnly = build([], 0, false);
   if (pinnedOnly.tokenEstimate > effectiveBudget) {
     throw new LoreError(
       "validation",
@@ -284,15 +311,19 @@ export function compileAgentContextForProfile(
   // only when the pins leave no room for all three hits.
   let queryHitLimit = AGENT_CONTEXT_QUERY_HIT_LIMIT;
   while (queryHitLimit > 0 && build([], queryHitLimit).tokenEstimate > effectiveBudget) queryHitLimit--;
+  // With no room for a single hit the section still says why (the budget, or an empty corpus) when
+  // that line fits; when even that does not, the section is dropped, which is the floor's own shape
+  // and so always fits. `queryHitsOmitted` carries the count either way.
+  const querySection = queryHitLimit > 0 || build([], 0).tokenEstimate <= effectiveBudget;
 
   // Every tentative pack is rendered with its own deduplicated query section, so a candidate whose
   // selection swaps a longer hit into the section is admitted only if that whole pack still fits.
   const selected: RankedCandidate[] = [];
   for (const candidate of ordered) {
-    const tentative = build([...selected, candidate], queryHitLimit);
+    const tentative = build([...selected, candidate], queryHitLimit, querySection);
     if (tentative.tokenEstimate <= effectiveBudget) selected.push(candidate);
   }
-  return build(selected, queryHitLimit);
+  return build(selected, queryHitLimit, querySection);
 }
 
 /**
@@ -341,6 +372,7 @@ export function renderAgentContextMarkdown(data: AgentContextExport): string {
     }
   }
   lines.push("", "## Allowed source catalog", "");
+  if (data.catalog.length === 0) lines.push("_None._");
   for (const entry of data.catalog) {
     const title = entry.title === undefined ? "" : ` — ${oneLine(entry.title)}`;
     const score = entry.topScore > 0 ? `; top score ${formatScore(entry.topScore)}` : "";
@@ -355,15 +387,7 @@ export function renderAgentContextMarkdown(data: AgentContextExport): string {
       lines.push(`- ${delegate.name} [${delegate.kind}] — ${oneLine(delegate.description)}`);
     }
   }
-  lines.push(
-    "",
-    "## Bundle-wide query hits",
-    "",
-    "Top `lore query` hits for the task that this pack does not already include. Read one with `lore read <id>`.",
-    "",
-  );
-  if (data.queryHits.length === 0) lines.push("_No bundle-wide hit outside this pack._");
-  for (const hit of data.queryHits) lines.push(renderQueryHit(hit));
+  if (data.queryHitsSectionOmitted !== true) lines.push(...renderQueryHitsSection(data));
   lines.push("", "## Pinned evidence", "");
   if (data.pinned.length === 0) lines.push("_None._");
   for (const item of data.pinned) lines.push(renderItem(item));
@@ -375,6 +399,36 @@ export function renderAgentContextMarkdown(data: AgentContextExport): string {
     `Ranked evidence: ${data.shown} of ${data.total} selected; truncated: ${data.truncated ? "yes" : "no"}.`,
   );
   return `${lines.join("\n").replace(/\n{3,}/g, "\n\n")}\n`;
+}
+
+/**
+ * The query section. Three empty-or-short states stay distinguishable (cli-contract §3): the corpus
+ * had nothing outside the pack; the budget cut every hit; the budget cut some of them.
+ */
+function renderQueryHitsSection(data: AgentContextExport): string[] {
+  const lines = [
+    "",
+    "## Bundle-wide query hits",
+    "",
+    "Top `lore query` hits for the task that this pack does not already include. Read one with `lore read <id>`.",
+    "",
+  ];
+  const shown = data.queryHits.length;
+  const omitted = data.queryHitsOmitted;
+  if (shown === 0 && omitted === 0) lines.push("_No bundle-wide hit outside this pack._");
+  if (shown === 0 && omitted > 0) {
+    lines.push(
+      `_Omitted by budget: ${omitted} bundle-wide ${omitted === 1 ? "hit" : "hits"} outside this pack did not fit; raise --max-tokens to see them._`,
+    );
+  }
+  for (const hit of data.queryHits) lines.push(renderQueryHit(hit));
+  if (shown > 0 && omitted > 0) {
+    lines.push(
+      "",
+      `showing ${shown} of ${shown + omitted} bundle-wide hits — the budget omitted ${omitted}; raise --max-tokens to see them`,
+    );
+  }
+  return lines;
 }
 
 function assemble(
@@ -389,12 +443,15 @@ function assemble(
   workspace: WorkspaceCompileExtras | undefined,
   rankedQueryHits: readonly AgentContextQueryHit[],
   queryHitLimit: number,
+  querySection: boolean,
 ): AgentContextExport {
   const selectedKeys = new Set(selected.map((item) => item.key));
   // "Not already selected" is by concept: a document the pack already quotes any part of is not
   // re-advertised as a hit, whether it arrived pinned or ranked.
   const packedConceptIds = new Set([...pinned, ...selected].map((item) => item.conceptId));
-  const queryHits = rankedQueryHits.filter((hit) => !packedConceptIds.has(hit.id)).slice(0, queryHitLimit);
+  const available = rankedQueryHits.filter((hit) => !packedConceptIds.has(hit.id));
+  const queryHits = querySection ? available.slice(0, queryHitLimit) : [];
+  const queryHitsOmitted = Math.min(AGENT_CONTEXT_QUERY_HIT_LIMIT, available.length) - queryHits.length;
   const catalog: AgentContextCatalogEntry[] = [];
   for (const reference of profile.pinned) {
     const concept = sourcesConcept(reference, pinned);
@@ -455,6 +512,8 @@ function assemble(
     sections: selected.map(stripCandidate),
     catalog,
     queryHits,
+    queryHitsOmitted,
+    ...(querySection ? {} : { queryHitsSectionOmitted: true as const }),
     ...(isMissingAgentProfile(profile) ? { profileMissing: true as const } : {}),
     ...(workspace === undefined || workspace.skippedWorkspaceMembers.length === 0
       ? {}

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Every `lore agent context` pack is query-augmented** (LCLI-575; opum-doc ADR "Make lore agent
+  context always query-augmented", ODOC-265). A `## Bundle-wide query hits` section lists up to
+  three `lore query` hits for the task that the pack does not already quote, as id, title and
+  snippet, with no bodies. In `--json` these are three additive fields on `agent.context.export`:
+  `queryHits`, `queryHitsOmitted` (how many hits the token budget cut, so an empty section is never
+  ambiguous between an empty corpus and a tight budget), and `queryHitsSectionOmitted` (set when
+  the budget left no room for the section at all, a case also named on stderr). The section never
+  raises the mandatory-pin floor: a `--max-tokens` that compiled before still compiles. With
+  `--workspace --repository`, hits come from the selected members only.
+
+### Changed
+
+- **`lore agent context <unknown profile>` exits `0`, not `3`.** It degrades to the query section
+  plus a warning, in the pack and on stderr, and sets `profileMissing: true`. This remaps an
+  existing exit code, which the CLI contract treats as a contract-level change; it is recorded as
+  amendment §5.6 there, citing ODOC-265 decision 2. `schemaVersion` is not bumped, and §5.6
+  records that as an open question. `agent show`, `agent project` and `agent context --contract`
+  are unchanged on an unknown profile.
+
 ## [0.9.2] - 2026-09-24
 
 ### Changed

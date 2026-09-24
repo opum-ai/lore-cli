@@ -166,6 +166,11 @@ The structured `AgentContextExport` contains:
   concept is not already pinned or selected in the pack, best first, each as
   `id`, optional `title` and `snippet`, `score`, and workspace `provenance`
   when compiled with `--workspace` (LCLI-575; always present, possibly empty);
+- `queryHitsOmitted`: how many of those hits the token budget cut, so an empty
+  or short `queryHits` is never ambiguous between an empty corpus (`0`) and the
+  budget (`> 0`); always present;
+- optional `queryHitsSectionOmitted: true` when the budget left no room for
+  even the section's heading and omission line, so the pack has no section;
 - optional `profileMissing: true` when the named profile did not exist;
 - optional `delegates`: direct name, kind, and description entries;
 - `total`, `shown`, and `truncated` over ranked candidates; and
@@ -212,9 +217,15 @@ detail enters the pack.
    section is body-free (id, title, snippet), so the profile allowlist still
    governs every byte of quoted evidence. It is reserved before ranked
    evidence, and shrinks below three only when the pins leave no room. The
-   mandatory-pin budget failure in step 3 is judged without it, so the section
-   never turns a pack that compiles into one that fails. A task with no
-   searchable term yields no hits rather than an unranked listing.
+   mandatory-pin budget failure in step 3 is judged without it — not even its
+   heading — so the floor is byte-for-byte the pre-LCLI-575 one and the section
+   never turns a pack that compiles into one that fails. When the budget cuts
+   hits, the section says so (`showing N of M`, or an `_Omitted by budget_`
+   line when it cuts all of them); when not even that line fits, the section is
+   dropped and `queryHitsSectionOmitted` plus a stderr warning carry it. With
+   `--workspace --repository`, the query runs over the selected members only,
+   exactly as `lore query --workspace` does. A task with no searchable term
+   yields no hits rather than an unranked listing.
 9. Fill the residual budget with deterministic first-fit. Scan ordered
    candidates, include one when the complete rerendered pack fits, otherwise
    mark it omitted and continue to smaller candidates. Each tentative pack is

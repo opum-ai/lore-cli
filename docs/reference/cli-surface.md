@@ -853,7 +853,7 @@ heading/top-level-block records from `sources`. Task-file and output paths are
 confined to the repository and reject symlink traversal. Outputs write
 atomically and require
 `--force` to replace different bytes. Common exits are `0` success, `2` usage,
-`3` unknown profile (`show`) or source, `4` denied I/O, `5` output conflict, and `6`
+`3` unknown profile (`show`/`project`) or source, `4` denied I/O, `5` output conflict, and `6`
 profile/reference validation or mandatory-budget failure.
 
 **Every `context` pack is query-augmented (LCLI-575).** Besides its
@@ -862,7 +862,15 @@ profile-bounded evidence, a pack carries a `## Bundle-wide query hits` section
 whole bundle, whose concept the pack does not already quote, each as id, title
 and snippet — no bodies, so the profile still governs quoted evidence; use
 `lore read <id>` to open one. The section is reserved ahead of ranked evidence
-and never pushes a pack over its budget. A `context` call naming a profile that
+and never pushes a pack over its budget, nor raises the mandatory-pin floor: a
+budget that compiled before LCLI-575 still compiles. When the budget, not the
+corpus, shortens or empties the section, the pack says so: `queryHitsOmitted`
+counts the hits the budget cut, and `--plain` prints a `showing N of M` line or
+an `_Omitted by budget_` line in place of `_No bundle-wide hit outside this
+pack._`. At the floor itself the section is dropped whole,
+`queryHitsSectionOmitted: true` is set, and the omission is named on stderr.
+With `--workspace --repository`, hits come from the selected members only, as
+`lore query --workspace` narrows. A `context` call naming a profile that
 does not exist no longer exits `3`: it degrades to that section plus a warning
 (in the pack and on stderr) and `profileMissing: true`, exit `0`. The decision
 record is opum-doc's ADR "Make lore agent context always query-augmented"

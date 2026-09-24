@@ -8,6 +8,7 @@ import {
   compileAgentContext,
   missingAgentProfile,
   missingAgentProfileWarning,
+  queryHitsSectionOmittedWarning,
   renderAgentContextMarkdown,
 } from "../core/agent-context";
 import {
@@ -183,12 +184,14 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
       }
       data = { ...data, write: { path: target.relPath, action: writeAction } };
     }
-    if (profileMissing) {
-      // Emitted only once the pack compiled, so a later failure never leaves a stray warning.
-      const degraded = new WarningCollector();
-      degraded.add(missingAgentProfileWarning(action.name), "agent-profile-missing");
-      degraded.flush({ color: options.output.color, stderr: options.stderr });
+    // Emitted only once the pack compiled, so a later failure never leaves a stray warning.
+    const degraded = new WarningCollector();
+    if (profileMissing) degraded.add(missingAgentProfileWarning(action.name), "agent-profile-missing");
+    if (data.queryHitsSectionOmitted === true && data.queryHitsOmitted > 0) {
+      // The one state where the pack itself cannot say it: no room even for the section's heading.
+      degraded.add(queryHitsSectionOmittedWarning(data.queryHitsOmitted), "agent-query-hits-omitted");
     }
+    degraded.flush({ color: options.output.color, stderr: options.stderr });
     emit(contextRenderable(data), options.output, options.stdout);
     return EXIT_OK;
   } finally {

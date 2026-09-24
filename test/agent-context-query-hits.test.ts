@@ -9,21 +9,36 @@
  * - "budget" — the section never pushes a pack over budget, nor turns a compilable pack into a failure.
  * - "plain" / "json" — the section appears in both output modes (AC2).
  * - "missing profile" — degrades to the section plus a warning, exit 0, not exit 3 (AC3).
+ * - "floor" — the mandatory-pin floor is the pre-LCLI-575 one, pinned as a measured number (review B1).
+ * - "explicit truncation" — a budget-emptied or budget-shortened section says so in --json and
+ *   --plain, distinctly from a corpus with nothing to offer (review B2; cli-contract §3).
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runAgent } from "../src/commands/agent";
-import { AGENT_CONTEXT_QUERY_HIT_LIMIT, compileAgentContext } from "../src/core/agent-context";
+import {
+  AGENT_CONTEXT_QUERY_HIT_LIMIT,
+  compileAgentContext,
+  renderAgentContextMarkdown,
+} from "../src/core/agent-context";
 import { loadAgentProfiles } from "../src/core/agent-profile";
 import { loadBundle } from "../src/core/bundle";
+import { LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
 
 const JSON_OUTPUT: OutputContext = { mode: "json", color: false };
 const PLAIN_OUTPUT: OutputContext = { mode: "plain", color: false };
 const TASK = "checkout validation";
+/**
+ * The mandatory-pin floor of {@link fixture} + {@link specialist} for {@link TASK}, MEASURED on the
+ * pre-LCLI-575 compiler (lore-cli origin/dev 71f2c1e4): the smallest `--max-tokens` that compiled.
+ * A literal, not a value derived from this compiler, because deriving it would move with the defect
+ * it guards (review finding B1: the query section's heading once raised this floor to 263).
+ */
+const PRE_CHANGE_PIN_FLOOR = 219;
 
 let root: string;
 
@@ -252,5 +267,145 @@ describe("lore agent context — a missing profile degrades (LCLI-575, AC3)", ()
     await runAgent({ root, output: PLAIN_OUTPUT, args: ["context", "frontend-dev", "--task", TASK], stdout, stderr });
     expect(stdout.text()).not.toContain("> Warning:");
     expect(stderr.text()).not.toContain("was not found");
+  });
+});
+
+function isValidationError(cause: unknown): cause is LoreError {
+  return cause instanceof LoreError && cause.type === "validation";
+}
+
+/** The smallest budget at which `predicate` holds for the compiled pack, scanning up from the floor. */
+function firstBudget(predicate: (pack: ReturnType<typeof compile>) => boolean): {
+  budget: number;
+  pack: ReturnType<typeof compile>;
+} {
+  for (let budget = PRE_CHANGE_PIN_FLOOR; budget < 4000; budget++) {
+    let pack: ReturnType<typeof compile>;
+    try {
+      pack = compile(TASK, budget);
+    } catch (cause) {
+      // Below the floor: keep climbing, so these tests measure truncation, not the floor (B1's tests).
+      if (isValidationError(cause)) continue;
+      throw cause;
+    }
+    if (predicate(pack)) return { budget, pack };
+  }
+  throw new Error("no budget below 4000 satisfied the predicate");
+}
+
+describe("agent context — the mandatory-pin floor is unchanged (LCLI-575 review B1)", () => {
+  test("floor: a budget that compiled before LCLI-575 still compiles", () => {
+    fixture();
+    specialist();
+    const pack = compile(TASK, PRE_CHANGE_PIN_FLOOR);
+    expect(pack.tokenEstimate).toBeLessThanOrEqual(PRE_CHANGE_PIN_FLOOR);
+  });
+
+  test("floor: one token below it still fails, naming the pre-LCLI-575 requirement", () => {
+    fixture();
+    specialist();
+    let thrown: unknown;
+    try {
+      compile(TASK, PRE_CHANGE_PIN_FLOOR - 1);
+    } catch (cause) {
+      thrown = cause;
+    }
+    expect(isValidationError(thrown)).toBe(true);
+    expect((thrown as LoreError).input).toMatchObject({ requiredTokens: PRE_CHANGE_PIN_FLOOR });
+  });
+});
+
+describe("agent context — budget truncation of the query section is explicit (LCLI-575 review B2)", () => {
+  test("explicit truncation, json: at the floor the section is dropped and the omission is counted", () => {
+    fixture();
+    specialist();
+    const pack = compile(TASK, PRE_CHANGE_PIN_FLOOR);
+    expect(pack.queryHits).toEqual([]);
+    expect(pack.queryHitsSectionOmitted).toBe(true);
+    expect(pack.queryHitsOmitted).toBe(AGENT_CONTEXT_QUERY_HIT_LIMIT);
+    expect(renderAgentContextMarkdown(pack)).not.toContain("## Bundle-wide query hits");
+  });
+
+  test("explicit truncation, json: a budget-emptied section counts what it cut", () => {
+    fixture();
+    specialist();
+    const { pack } = firstBudget((candidate) => candidate.queryHitsSectionOmitted !== true);
+    expect(pack.queryHits).toEqual([]);
+    expect(pack.queryHitsOmitted).toBe(AGENT_CONTEXT_QUERY_HIT_LIMIT);
+  });
+
+  test("explicit truncation, plain: a budget-emptied section says the budget emptied it", () => {
+    fixture();
+    specialist();
+    const { pack } = firstBudget((candidate) => candidate.queryHitsSectionOmitted !== true);
+    const text = renderAgentContextMarkdown(pack);
+    expect(text).toContain("## Bundle-wide query hits");
+    expect(text).toContain("_Omitted by budget: 3 bundle-wide hits outside this pack did not fit;");
+    expect(text).not.toContain("_No bundle-wide hit outside this pack._");
+  });
+
+  test("explicit truncation: a budget-shortened section says how many it showed of how many", () => {
+    fixture();
+    specialist();
+    const { pack } = firstBudget((candidate) => candidate.queryHits.length > 0);
+    expect(pack.queryHits.length).toBeLessThan(AGENT_CONTEXT_QUERY_HIT_LIMIT);
+    expect(pack.queryHitsOmitted).toBe(AGENT_CONTEXT_QUERY_HIT_LIMIT - pack.queryHits.length);
+    expect(renderAgentContextMarkdown(pack)).toContain(
+      `showing ${pack.queryHits.length} of 3 bundle-wide hits — the budget omitted ${pack.queryHitsOmitted};`,
+    );
+  });
+
+  test("explicit truncation: an empty corpus is not reported as a budget cut", () => {
+    fixture();
+    specialist();
+    const pack = compile("%%% ---");
+    expect(pack.queryHitsOmitted).toBe(0);
+    expect(renderAgentContextMarkdown(pack)).toContain("_No bundle-wide hit outside this pack._");
+  });
+
+  test("explicit truncation: an untruncated pack reports queryHitsOmitted 0 in --json", async () => {
+    fixture();
+    specialist();
+    const stdout = capture();
+    await runAgent({ root, output: JSON_OUTPUT, args: ["context", "frontend-dev", "--task", TASK], stdout });
+    const data = JSON.parse(stdout.text()).data;
+    expect(data.queryHits).toHaveLength(3);
+    expect(data.queryHitsOmitted).toBe(0);
+    expect(data.queryHitsSectionOmitted).toBeUndefined();
+  });
+
+  test("explicit truncation, cli: a dropped section is named on stderr and counted in --json", async () => {
+    fixture();
+    specialist();
+    const stdout = capture();
+    const stderr = capture();
+    const code = await runAgent({
+      root,
+      output: JSON_OUTPUT,
+      args: ["context", "frontend-dev", "--task", TASK, "--max-tokens", String(PRE_CHANGE_PIN_FLOOR)],
+      stdout,
+      stderr,
+    });
+    expect(code).toBe(0);
+    const data = JSON.parse(stdout.text()).data;
+    expect(data.queryHits).toEqual([]);
+    expect(data.queryHitsOmitted).toBe(3);
+    expect(data.queryHitsSectionOmitted).toBe(true);
+    expect(stderr.text()).toContain("the token budget left no room for the bundle-wide query section; 3 hits");
+  });
+});
+
+describe("agent context — a missing profile's pack (LCLI-575 review L3)", () => {
+  test("the empty source catalog renders _None._", async () => {
+    fixture();
+    const stdout = capture();
+    await runAgent({
+      root,
+      output: PLAIN_OUTPUT,
+      args: ["context", "no-such-profile", "--task", TASK],
+      stdout,
+      stderr: capture(),
+    });
+    expect(stdout.text()).toContain("## Allowed source catalog\n\n_None._\n");
   });
 });
