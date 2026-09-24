@@ -21,7 +21,86 @@ availability claim.
 
 ### Current state
 
-`0.9.1` is **RELEASED**. It is a patch whose only change is ODOC-262: `lore new story`
+`0.9.2` is **RELEASED**. It is a patch whose only shipped change is LCLI-573
+(opum-ai/lore-cli#237): agent guidance starts with retrieval (`lore query` then
+`lore read`), the plugin skill `skills/lore/SKILL.md` is generated, and the retired
+Backlog preflight is dropped. Published 2026-09-24 from tag `v0.9.2` (annotated tag
+object `ed4153bee35db7c0ee3b910a97d79d9f0ce7f12e`, tagger date 13:44:08Z, peeling to
+`71f2c1e470aac36465871652ddf5347d5b0382c0`, which `origin/main` named when read on
+2026-09-24). It was published **manually via
+`scripts/publish-release.sh 0.9.2 35961511364`**, against Release run
+`35961511364`'s own `npm-packages` artifact, on the user's direct approval
+(LCLI-577). The registry's packument `time` field records the six platform packages
+at 13:39:37Z–13:40:54Z and the root launcher at 13:43:11Z. Read by
+`publish-release.sh --verify-only` and `npm view` on 2026-09-24, all seven packages
+are present at `0.9.2`, with `dist-tags.latest` = `0.9.2` on each.
+
+**This is the first release qualified BEFORE publication, on the exact bytes that
+shipped** (OPAG-378 ruling; LCLI-578 will make it mechanical). The sequence was:
+bump (#242), promote `main` to `71f2c1e4` (#244), dispatch `release.yml` with
+`publish: false`, have opum-cli-e2e qualify that run's tarballs, then publish those
+same tarballs. opum-cli-e2e's receipt reads QUALIFIED FOR PUBLICATION, paired with
+`quest` 0.9.0: 463 rows, 461 PASS / 0 FAIL / 2 BLOCKED. Both BLOCKED rows need the
+version on npm by construction. #237 moved zero rows against the
+`v0.9.0-lore0.9.1-pair` baseline. After the publish, all seven tarballs were fetched
+back from the registry with `npm pack` and hashed, and **all seven equal the receipt's
+digests** (root `f45bac6c…`, darwin-arm64 `9ed2f118…`, darwin-x64 `cff7722d…`,
+linux-arm64 `981903b1…`, linux-x64 `cd97641f…`, win32-arm64 `a3919688…`, win32-x64
+`54a3ee19…`). Registry, CI artifact and e2e's own download are three reads of the
+same bytes. That is corroboration of identity, not of provenance.
+
+**The tag was qualified before the publish.** Release run `35961511364` (attempt 1,
+`workflow_dispatch` on `main`, head `71f2c1e4…`) finished `success`. All six
+matching-host package qualifications were green, and `publish (npm, OIDC trusted
+publishing)` was `skipped`. The `main` push CI run on the same commit,
+`35961504630`, shows every job green, including `main is fast-forward of dev`. Its
+aggregate reads `cancelled` only because `lint · typecheck · test (macos-latest)`,
+which is not a required context, was cancelled. That is evidence, not a gate,
+because `main` has no required checks configured.
+
+**6 independently verified, 1 locally sealed, and here e2e's receipt independently
+matches the seal** (LCLI-489). Before any registry write, the script matched all six
+platform tarballs against the `ladybug-package-qualification-<name>-35961511364`
+reports. Every report carries `repository.commit = 71f2c1e4…`. The root launcher was
+self-sealed (`f45bac6c…`).
+
+**The unexplained root-launcher split repeats for a fourth release** (LCLI-568).
+The published root tarball `f45bac6c…` equals `rootTarballSha256` in the
+`linux-arm64`, `linux-x64`, `win32-arm64` and `win32-x64` reports. Both `darwin`
+reports record `4ce297d2…`.
+
+**`0.9.2` carries NO provenance attestation (LCLI-482, open).** `npm view
+@opum-ai/<pkg>@0.9.2 dist --json` has no `attestations` key on any of the seven
+packages (checked for the key's presence). A manual publish cannot mint an
+attestation. The credential was the Keychain granular token
+(`keychain:npm-opum-ai-publish`), with `~/.npmrc` left untouched, per the script's
+own output. The per-package visibility-gate timings were not captured this time,
+because the operator's terminal read kept only the tail of the script output.
+
+**Rollout cost: bridges need regenerating, and repo-mode skills need `--force`.**
+`0.9.2` adds no exit code, type, alias or field, so the profile digest does not move.
+Bridges written by `0.9.0`/`0.9.1` report out of date under `lore agents --check`
+(exit 6). `lore agents` rewrites the `CLAUDE.md`/`AGENTS.md` block, and a repo-mode
+`.claude/skills/lore/SKILL.md` needs `lore agents --force`. Regenerating the
+managed block is a routine write under the fleet operating model's carve-out
+(opum-doc `b1a3dfb`).
+
+**Shipped README, GitHub Release and plugin content.** npm's package-level `readme`
+field was read on 2026-09-24 (15,806 bytes). It passes
+`scripts/shipped-readme-version.mjs --check` against `package.json` at `0.9.2`.
+GitHub Release `v0.9.2` reports `publishedAt` 2026-09-24T13:44:12Z, non-draft and
+non-prerelease, with the CHANGELOG's `[0.9.2]` section as its body. **`skills/` at
+`v0.9.2` is tree `ce580cd17d1da6a61ddb53f649398719b9262f96`, which differs from
+`v0.9.1`'s `38683e10…`**, because LCLI-573 regenerated the plugin skill. So
+opum-marketplace's federated baseline does change when it moves its pin. They were
+sent the tag name, tag object, peeled commit and tree on publication (LCLI-469).
+opum-cli-e2e and quest-cli were told on publication.
+
+**The README quickstart still does not run unedited** (LCLI-571, open).
+
+### Previous state
+
+`0.9.1` was **RELEASED**. It is a patch whose only change is ODOC-262: `lore new story`
 scaffolds into `docs/stories/` again, writing `type: Arc` (LCLI-570). Published
 2026-09-24 from tag `v0.9.1` (annotated tag object
 `a14f0c54deb91291e7bf5e55f5f26e2c4266f7a9`, tagger date 04:00:30Z, peeling to
@@ -106,8 +185,6 @@ again on publication.
 defaults to a Quest tracker while the quickstart links Backlog tasks. Both are
 tracked as LCLI-571. What `0.9.1` restores is narrower: every quickstart command
 that addresses `stories/bulk-archive-completed-orders` resolves.
-
-### Previous state
 
 `0.9.0` was **RELEASED**. Published 2026-09-22 from tag `v0.9.0` (annotated tag
 object `48840cb3bc4dd9c6ea16651f8851d56b6a6a6030`, tagger date 22:48:39Z,
