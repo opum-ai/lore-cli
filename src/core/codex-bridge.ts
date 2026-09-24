@@ -1,4 +1,4 @@
-import type { BridgeAction, BridgeFilePlan, BridgePlan } from "./agent-bridge";
+import { type BridgeAction, type BridgeFilePlan, type BridgePlan, instructionTopicKeys } from "./agent-bridge";
 import { upsertManagedBlock } from "./managed-block";
 
 export const CODEX_SKILL_REL_PATH = ".codex/skills/lore/SKILL.md";
@@ -16,27 +16,18 @@ description: Author, retrieve, and maintain OKF documentation with the Lore CLI,
 Use \`lore\` as this repository's deterministic, CLI-first documentation engine. Treat
 \`lore instructions\` as the source of truth; this skill is the Codex discovery bridge.
 
-## Commit-side-effect preflight
-
-Before the canonical workflow below, treat \`lore link\`, \`lore unlink\`, \`lore rename\`, and
-\`lore sync\` as self-committing commands: they can create commits under \`backlog/\`. Read the
-applicable repository instructions and verify explicit commit authority before invoking them. When
-the repository supplies
-\`.codex/skills/backlog-handover/scripts/lore-authority-preflight.mjs\`, dispatch those commands only
-through that gate with the exact Git worktree and in-repository scope. For \`sync\`, exactly allowlist
-each campaign-owned dirty Backlog path as required by that gate; it must refuse unrelated dirty
-Backlog state. Without applicable authority,
-stop before Lore runs and request permission or record a deferred stage. This preserves the
-repository's Lore sole-committer contract.
+\`lore link\`, \`lore unlink\`, \`lore rename\`, and \`lore sync\` commit tracker files only when the
+configured tracker is Backlog; Quest and Jira keep their own storage. Check the repository's own
+instructions for any commit-authority rule before running them.
 
 ## Start
 
 1. Run \`lore instructions\`.
 2. Choose owner-local scope or an explicit workspace; pull \`lore instructions workspace\` for
    cross-repository questions.
-3. Read \`docs/index.md\`, follow the relevant Story, and inspect its coupled task status.
-4. Pull only the needed topic instructions: \`linking\`, \`sync\`, \`check\`, \`validation\`, or
-   \`workspace\`.
+3. Find what you need with \`lore query "<words>" --limit 5\`, then \`lore read <id>\` for the best
+   hit; do not browse \`docs/index.md\` or grep \`docs/\` first. Inspect the coupled task status.
+4. Pull only the needed topic instructions: ${instructionTopicKeys()}.
 5. Author prose only outside Lore-managed regions.
 6. After documentation changes, run \`lore sync\`, \`lore validate --strict\`,
    \`lore check --strict\`, and \`git diff --check\`.
@@ -48,8 +39,8 @@ repository's Lore sole-committer contract.
 - Use \`lore rename\`, \`lore replace\`, and \`lore supersede\` instead of manually rewriting
   managed references.
 - Do not hand-edit Lore-managed blocks, generated indexes, or generated logs.
-- Follow the repository's Backlog workflow independently; Lore does not replace Backlog task
-  lifecycle commands.
+- Follow the repository's tracker workflow independently; Lore does not replace the tracker's own
+  task lifecycle commands.
 - Use \`--workspace <manifest>\` only for explicit cross-repository reads. Qualify workspace IDs as
   \`<member-id>::<source-id>\`, preserve returned provenance, and bound retrieval with repository,
   depth, result, edge, and token filters.
@@ -62,9 +53,9 @@ repository's Lore sole-committer contract.
 - Authoring: \`new\`, \`replace\`, \`rename\`, \`supersede\`
 - Coupling and reconciliation: \`link\`, \`unlink\`, \`sync\`, \`tasks\`, \`orphans\`
 - Verification: \`validate\`, \`check\`
-- Discovery and context: \`query\`, \`context\`, \`agent\`, \`graph\`, \`path\`, \`impact\`,
+- Discovery and context: \`query\`, \`read\`, \`context\`, \`agent\`, \`graph\`, \`path\`, \`impact\`,
   \`snapshot\`, \`changed\`, \`provenance\`, \`explorer\`, \`instructions\`
-- Interchange and setup: \`export\`, \`schema\`, \`scaffold\`, \`agents\`
+- Interchange and setup: \`export\`, \`schema\`, \`types\`, \`scaffold\`, \`backlog\`, \`agents\`
 
 ## Optional task-scoped context
 
@@ -85,9 +76,10 @@ export function buildCodexNudgeBody(): string {
 When working on documentation, drive it through \`lore\` (not a plain editor) so Story <-> Task
 coupling, managed blocks, and cross-links stay coherent.
 
+- **Find and read docs:** \`lore query "<words>" --limit 5\`, then \`lore read <id>\` for the best hit.
 - **Skill:** \`${CODEX_SKILL_REL_PATH}\` — how to drive lore.
 - **Just-in-time detail:** run \`lore instructions\` for the canonical agent loop, then
-  \`lore instructions <topic>\` (\`linking\`, \`sync\`, \`check\`, \`validation\`, \`workspace\`).`;
+  \`lore instructions <topic>\` (${instructionTopicKeys()}).`;
 }
 
 export interface PlanCodexBridgeInput {

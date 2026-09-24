@@ -316,8 +316,10 @@ describe("lore agent command", () => {
       expect(guidance).toContain("Lore profile:");
       expect(guidance).toContain("lore agent context <name> --task");
       expect(guidance).toContain("does not create or patch native agents");
-      expect(guidance).toContain("## Commit-side-effect preflight");
-      expect(guidance).toContain("explicit commit authority");
+      // LCLI-573 retired the Backlog/.codex preflight section; what survives is the accurate fact
+      // that only the Backlog backend makes these commands commit.
+      expect(guidance).not.toContain("Commit-side-effect preflight");
+      expect(guidance).toContain("commit tracker files only when the");
       expect(guidance).toContain("workspace");
       expect(guidance).toContain("provenance");
     }

@@ -24,6 +24,37 @@ export interface InstructionTopic {
   readonly body: string;
 }
 
+const RETRIEVAL: InstructionTopic = {
+  key: "retrieval",
+  title: "Find and read docs in one repository (`lore query` -> `lore read`)",
+  body: `To answer a question from this repository's docs, search before you browse.
+Do not start by reading docs/index.md or grepping docs/:
+
+1. \`lore query "<a few words from the question>" --limit 5\` -- full-text search
+   across every concept's title, summary and body, printing each hit's id,
+   type, title and a snippet. Narrow it with \`--type\`, \`--tag\`, \`--status\`
+   or \`--field k=v\`. Text that begins with \`-\` goes last, after every flag
+   and a \`--\`: \`lore query --limit 5 -- "-text"\`.
+2. \`lore read <id>\` -- the best hit exactly as authored, with no budget and
+   no assembly. Read the next hit if the first does not answer the question.
+3. Only when you need the surrounding concepts: \`lore context <id>
+   --max-tokens <n>\` returns the concept plus neighbor summaries, bounded by
+   \`--depth\` hops. \`--max-tokens\` is a HARD ceiling: when the concept's own
+   body does not fit, the body is dropped and only its identity and neighbors
+   come back. Raise the budget, or use \`lore read\` for the body.
+
+A query and one read usually cost a few KB. Browsing the index and grepping
+or catting docs/ usually costs tens to hundreds of KB.
+
+For how concepts connect, use \`lore path\` or \`lore impact\` (both take
+required kind and direction flags; see their \`--help\`). \`lore graph\`
+emits a link graph, not document text, so it is not a retrieval step.
+\`lore agent context <profile> --task "<text>"\` compiles a task pack, but it
+selects only among the sources that profile lists, so a question outside the
+profile still needs a query. For questions that span repositories, see the
+\`workspace\` topic.`,
+};
+
 const LINKING: InstructionTopic = {
   key: "linking",
   title: "Story <-> Task coupling (`lore link` / `lore unlink`)",
@@ -349,7 +380,16 @@ in scope for this run, not that it silently passed.`,
 };
 
 /** The detailed, task-scoped topics (everything except `overview`). */
-const DETAIL_TOPICS: readonly InstructionTopic[] = [LINKING, SYNC, CHECK, VALIDATION, TYPES, WORKSPACE, AGENTS];
+export const DETAIL_TOPICS: readonly InstructionTopic[] = [
+  RETRIEVAL,
+  LINKING,
+  SYNC,
+  CHECK,
+  VALIDATION,
+  TYPES,
+  WORKSPACE,
+  AGENTS,
+];
 
 /** Render the `key   title` topic-index lines shared by the overview body and (indirectly) its JSON `topics` field. */
 function topicIndexLines(topics: readonly InstructionTopic[]): string {
@@ -363,7 +403,9 @@ const OVERVIEW: InstructionTopic = {
   body: `First choose scope: stay in the current repository for owner-local work;
 select an explicit \`--workspace <manifest>\` only for cross-repository
 questions (see the \`workspace\` topic). Then follow lore's canonical agent
-loop: read docs/index.md (the bundle's entry point) -> follow a Story concept -> check its coupled tasks' live status (see the
+loop: find what you need with \`lore query "<words>" --limit 5\` -> \`lore read
+<id>\` for the hit (see the \`retrieval\` topic; do not browse docs/index.md or
+grep docs/ first) -> check the coupled tasks' live status (see the
 \`linking\` topic) -> do the work (author prose outside lore-managed regions)
 -> \`lore sync\` to reconcile status and regenerate managed blocks -> \`lore
 check\` as the CI gate (exit 6 on a failing report, 7 when it cannot judge a
@@ -381,8 +423,7 @@ TTY); branch on the semantic exit code (0 ok, 2 usage, 3 not_found, 4 denied,
 Topics:
 ${topicIndexLines(DETAIL_TOPICS)}
 
-Run \`lore instructions <topic>\` for detail on any of these. Full reference:
-docs/runbooks/agent-onboarding.md.`,
+Run \`lore instructions <topic>\` for detail on any of these.`,
 };
 
 /** Every topic `lore instructions` can serve, `overview` first — the order the topic index/JSON `topics` field lists them in. */
