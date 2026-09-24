@@ -181,6 +181,9 @@ the [CLI surface](cli-surface.md):
 | `context.export` | `lore context` | concept body + neighbor summaries; token budget accounting |
 | `instructions.text` | `lore instructions` | guidance body + the full topic index |
 | `agents.result` | `lore agents` | bridge files written/updated |
+| `agent.profiles` / `agent.profile` | `lore agent list` / `show` | profile summaries / one normalized profile |
+| `agent.context.export` | `lore agent context` | a profile-bounded evidence pack (pins, ranked sections, catalog, budget accounting) plus `queryHits` — up to three bundle-wide `lore query` hits not already in the pack, as `id`/`title`/`snippet`/`score` (added LCLI-575 under §7.1, no `schemaVersion` bump) — and `profileMissing: true` when the named profile did not exist and the pack degraded to those hits |
+| `agent.workflow.projection` | `lore agent project`, `lore agent context --contract` | the read-only opum-agent-workflow/v1 projection wrapping an `agent.context.export` |
 | `help.manifest` | `lore help` | the capability manifest — every command's flags, `kind`, exit codes |
 | `scaffold.result` | `lore scaffold` | files written (`mkdocs`, `docusaurus`, `obsidian` all shipped — see [CLI surface](cli-surface.md)) |
 

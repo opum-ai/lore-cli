@@ -853,8 +853,21 @@ heading/top-level-block records from `sources`. Task-file and output paths are
 confined to the repository and reject symlink traversal. Outputs write
 atomically and require
 `--force` to replace different bytes. Common exits are `0` success, `2` usage,
-`3` unknown profile/source, `4` denied I/O, `5` output conflict, and `6`
+`3` unknown profile (`show`) or source, `4` denied I/O, `5` output conflict, and `6`
 profile/reference validation or mandatory-budget failure.
+
+**Every `context` pack is query-augmented (LCLI-575).** Besides its
+profile-bounded evidence, a pack carries a `## Bundle-wide query hits` section
+(`queryHits` in `--json`): up to three `lore query` hits for the task, from the
+whole bundle, whose concept the pack does not already quote, each as id, title
+and snippet — no bodies, so the profile still governs quoted evidence; use
+`lore read <id>` to open one. The section is reserved ahead of ranked evidence
+and never pushes a pack over its budget. A `context` call naming a profile that
+does not exist no longer exits `3`: it degrades to that section plus a warning
+(in the pack and on stderr) and `profileMissing: true`, exit `0`. The decision
+record is opum-doc's ADR "Make lore agent context always query-augmented"
+(ODOC-265), grounded in LCLI-573's measurement that the profile pack alone
+selected the answer for 8 of 69 real questions.
 
 **`context --workspace <manifest> --repository <member-id>` (repeatable; LCLI-432) compiles the
 same profile-bounded pack across an explicit workspace manifest instead of this repository alone**
