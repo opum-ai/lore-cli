@@ -30,15 +30,15 @@ semantic exit codes, machine-readable `--json`).
 
 - Built on **Bun + TypeScript** with an exact-pinned **Commander** parser fed by
   Lore's capability manifest; Lore still owns output, errors, and process lifecycle.
-- Published on npm as<!--lore-version:published-bullet:begin--> **`@opum-ai/lore@0.9.1`** (bin `lore`) with six
+- Published on npm as<!--lore-version:published-bullet:begin--> **`@opum-ai/lore@0.9.2`** (bin `lore`) with six
   exact-pinned platform packages, including Windows ARM64.<!--lore-version:published-bullet:end-->
 - The agent bridge is a generated **`.claude/skills/lore/SKILL.md`** plus a tiny
   CLAUDE.md nudge and `lore instructions`. An **MCP server is secondary and
   deferred to v2**.
 
-> **Status:<!--lore-version:status:begin--> 0.9.1 released.** Tag `v0.9.1`, the qualified workflow artifacts,
+> **Status:<!--lore-version:status:begin--> 0.9.2 released.** Tag `v0.9.2`, the qualified workflow artifacts,
 > all seven public `@opum-ai/lore*` npm packages with `latest` moved on each,
-> and a clean-registry install agree on `0.9.1`.<!--lore-version:status:end-->
+> and a clean-registry install agree on `0.9.2`.<!--lore-version:status:end-->
 > **No `quest` pairing is claimed for this version by its number.** `0.8.0`
 > was released as a pair with `quest` 0.9.0 — deliberately NOT the same number;
 > whether any lore version and any quest version form a qualified pair is

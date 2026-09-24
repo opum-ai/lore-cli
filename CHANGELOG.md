@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-09-24
+
 ### Changed
 
 - **Agent guidance now starts with retrieval: `lore query` then `lore read`, not browsing
