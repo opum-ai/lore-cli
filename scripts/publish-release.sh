@@ -56,6 +56,9 @@
 #     packages are optionalDependencies, an install in that window SUCCEEDED WITH THE BINARY
 #     SILENTLY MISSING rather than failing loudly. Ordering the WRITES cannot produce the
 #     guarantee; only gating on READS can. See "REGISTRY GATE BEFORE THE ROOT LAUNCHER" below.
+#   - HARD-REFUSES without a qualification receipt from opum-cli-e2e that names this version,
+#     this run id and every tarball's sha256, with verdict QUALIFIED or a complete override
+#     written into the receipt itself (LCLI-578). Nothing on the command line bypasses it.
 #   - Resumable: a version already on the registry is skipped, not re-attempted. This is
 #     what made five failed 0.6.2 attempts cost nothing.
 #   - --dry-run does everything except the two mutating calls.
@@ -92,6 +95,11 @@
 #   scripts/publish-release.sh <version> <run-id> --dry-run   # rehearse; touches nothing
 #   scripts/publish-release.sh <version> <run-id>             # publish + move latest dist-tags
 #   scripts/publish-release.sh <version> <run-id> --verify-only   # registry state only
+#
+# Refuses to publish without receipts/lore/<version>.json on opum-ai/opum-cli-e2e main (read with
+# your gh login) matching this version, run id and all seven tarball sha256s, with verdict
+# QUALIFIED or a complete override {by, reason, task, adr} in that file. No flag or env var
+# bypasses it. --dry-run reports the receipt verdict, and stops non-zero if it would refuse.
 #
 # --verify-only reads the REGISTRY and nothing else: no artifacts, no gh, no network beyond
 # npm. It is what the propagation-timeout message tells you to run, so it must stay reachable
@@ -326,13 +334,33 @@ verify_platform_digests() {
   # a release can legitimately be published from an older run whose artifacts are still inside
   # their 90-day retention. Matching both costs one character and avoids a script that cannot
   # read its own project's recent history.
-  if ! gh run download -R "$REPO_SLUG" "$RUN_ID" -D "$dir" \
-        -p "ladybug-package-qualification-*-${RUN_ID}*" >/dev/null 2>&1; then
+  # gh's STDERR IS CAPTURED, NOT DISCARDED, and the read is retried ONCE (LCLI-572). On the 0.9.1
+  # publish this download failed with its stderr sent to /dev/null, so the die could not say why;
+  # the identical command by hand moments later succeeded. A redirected stderr cannot report its
+  # own breakage. One bounded retry is safe because this is a READ before any write, and the
+  # directory is emptied between attempts so a partial first attempt cannot mix into the second.
+  local gh_err attempt downloaded=0
+  gh_err="$(mktemp)"
+  for attempt in 1 2; do
+    if gh run download -R "$REPO_SLUG" "$RUN_ID" -D "$dir" \
+          -p "ladybug-package-qualification-*-${RUN_ID}*" >/dev/null 2>"$gh_err"; then
+      downloaded=1; break
+    fi
+    [ "$attempt" -eq 2 ] && break
+    say "  qualification-report download failed (attempt 1 of 2). gh said:"
+    sed 's#^#      #' "$gh_err"
+    say "  retrying once in ${REPORT_RETRY_DELAY_SECONDS:-5}s"
+    rm -rf "$dir"; mkdir -p "$dir"
+    sleep "${REPORT_RETRY_DELAY_SECONDS:-5}"
+  done
+  if [ "$downloaded" -ne 1 ]; then
     rm -rf "$dir"
-    die "could not download the qualification reports for run $RUN_ID.
+    die "could not download the qualification reports for run $RUN_ID (2 attempts). gh said:
+$(sed 's#^#    #' "$gh_err"; rm -f "$gh_err")
 These carry the only independently recorded digests for the platform tarballs; without them
 the digest check would be a local self-seal only, which is not what this script claims."
   fi
+  rm -f "$gh_err"
   for entry in "${PLATFORM_PKGS[@]}"; do
     pkg="${entry%%:*}"; tarball="${entry#*:}"
     name="${pkg#@opum-ai/lore-}"
@@ -461,6 +489,129 @@ regenerating it -- refusing to report a seal that did not happen."
   say "    one tarball is not independently verified."
 }
 
+# ── Qualification receipt (LCLI-578) ─────────────────────────────────────────
+# HARD REFUSAL, per opum-doc ADR harden-fleet-ci-against-a-single-runner-outage-and-unqualified-
+# publication, ruling 3 (read at opum-doc 9222079): no publish without a qualification receipt
+# from opum-cli-e2e, unless an override is written INTO that receipt. Warning-only was rejected
+# because lore 0.9.0 shipped over a recorded NOT QUALIFIED result. The contract is
+# receipts/README.md on opum-ai/opum-cli-e2e main; this reader was built against it and against
+# receipts/lore/0.9.2.json and 0.9.3.json there (main d49ab79d, 2026-09-25).
+#
+# The repository and ref are CONSTANTS, not env vars: pointing the reader at a fork or a branch
+# would be a bypass. There is no flag or env var that skips this gate; the only way past a
+# non-QUALIFIED verdict is an override {by, reason, task, adr} landed in the receipt by PR.
+#
+# Deliberately NOT bound: harness.commit (it is the commit that LANDED the baseline, not the one
+# that ran it -- see commitMeaning in the file), and the receipt's own commit and runAttempt,
+# which the contract does not ask a reader to bind. The run id plus every tarball sha256 already
+# pins the bytes; adding bindings the contract does not name buys false refusals, not safety.
+#
+# BYTES: the digests compared are of $ARTIFACTS/<name>, the exact paths publish_one hands to
+# `npm publish`, with no repack in between. npm 12's publish of a FILE spec streams that file's
+# bytes (libnpmpack -> pacote.tarball); only a DIRECTORY spec is packed afresh.
+RECEIPT_REPO="opum-ai/opum-cli-e2e"
+RECEIPT_PATH="receipts/lore/${VERSION}.json"
+
+receipt_check_js() {
+  cat <<'JS'
+const fs = require("fs"), path = require("path"), crypto = require("crypto");
+const [file, version, runId, artifacts, ...publishNames] = process.argv.slice(1);
+const show = (v) => JSON.stringify(v);
+const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+let r;
+try { r = JSON.parse(fs.readFileSync(file, "utf8")); } catch (e) { console.error("  - receipt is not parseable JSON: " + e.message); process.exit(1); }
+if (!isObj(r)) { console.error("  - receipt is not a JSON object"); process.exit(1); }
+const p = [];
+if (r.kind !== "opum.qualification-receipt.v1") p.push(`kind is ${show(r.kind)}, not "opum.qualification-receipt.v1" (an unknown kind is refused, never guessed at)`);
+if (r.schemaVersion !== 1) p.push(`schemaVersion is ${show(r.schemaVersion)}, not 1`);
+if (r.product !== "lore") p.push(`product is ${show(r.product)}, not "lore"`);
+if (r.version !== version) p.push(`version is ${show(r.version)}, not "${version}"`);
+// Run ids compared as normalised DIGIT STRINGS: a number must be a safe integer (a larger one has
+// already lost precision in JSON.parse), a string must be all digits; leading zeros are dropped.
+const norm = (s) => s.replace(/^0+(?=\d)/, "");
+const rid = r.releaseRunId;
+const ridStr = typeof rid === "number" && Number.isSafeInteger(rid) && rid > 0 ? String(rid)
+  : typeof rid === "string" && /^[0-9]+$/.test(rid) ? norm(rid) : null;
+if (ridStr === null || ridStr !== norm(runId)) p.push(`releaseRunId is ${show(rid)}, not ${runId} (the run these tarballs were downloaded from)`);
+// Tarballs: own-property lookup AND set equality, so a receipt omitting a platform, or naming one
+// this release does not publish, refuses. Each digest is recomputed here from the exact file.
+const expected = [...publishNames].sort();
+const onDisk = fs.readdirSync(artifacts).filter((n) => n.endsWith(".tgz")).sort();
+if (show(onDisk) !== show(expected)) p.push(`${artifacts} holds ${show(onDisk)}, not exactly the tarballs this script publishes`);
+const t = r.tarballs;
+if (!isObj(t)) p.push(`tarballs is ${show(t)}, not an object of {filename: sha256}`);
+else {
+  for (const name of expected) {
+    if (!own(t, name)) { p.push(`tarballs has no entry for ${name}`); continue; }
+    const actual = crypto.createHash("sha256").update(fs.readFileSync(path.join(artifacts, name))).digest("hex");
+    if (typeof t[name] !== "string" || t[name].toLowerCase() !== actual) p.push(`sha256 MISMATCH for ${name}: receipt says ${show(t[name])}, the file to be published is ${actual}`);
+  }
+  for (const key of Object.keys(t)) if (!expected.includes(key)) p.push(`tarballs names ${show(key)}, which this release does not publish`);
+}
+// Override: waives nothing unless by, reason, task and adr are ALL non-empty strings. A partial
+// override is refused outright -- even beside a QUALIFIED verdict, because it is a malformed
+// record. `null` is treated as absent (it waives nothing either way).
+const F = ["by", "reason", "task", "adr"];
+let override = null;
+if (own(r, "override") && r.override !== null) {
+  const o = r.override;
+  if (isObj(o) && F.every((f) => own(o, f) && typeof o[f] === "string" && o[f].trim() !== "")) override = o;
+  else p.push(`override is present but INCOMPLETE: ${F.join(", ")} must all be non-empty strings, and a partial override waives nothing. Found: ${show(o)}`);
+}
+if (r.verdict !== "QUALIFIED" && override === null) p.push(`verdict is ${show(r.verdict)}, not "QUALIFIED", and the receipt carries no complete override`);
+if (p.length) { for (const m of p) console.error("  - " + m); process.exit(1); }
+if (r.verdict === "QUALIFIED") { console.log("QUALIFIED"); process.exit(0); }
+console.log("OVERRIDE " + show(r.verdict));
+console.log(JSON.stringify(override, null, 2));
+JS
+}
+
+verify_qualification_receipt() {
+  local receipt err rc out entry names=() mode
+  need_gh
+  receipt="$(mktemp)"; err="$(mktemp)"
+  say "reading the qualification receipt: $RECEIPT_REPO $RECEIPT_PATH @ main"
+  # Raw media type, so the body IS the file. ANY failure is NO RECEIPT and is never retried: the
+  # contract says 404 and 403 mean exactly that (the repository is private), and anything else is
+  # a receipt this script could not read, which is not a receipt it can honour.
+  gh api -H "Accept: application/vnd.github.raw+json" \
+    "repos/$RECEIPT_REPO/contents/$RECEIPT_PATH?ref=main" >"$receipt" 2>"$err"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    out="$(sed 's#^#    #' "$err")"; rm -f "$receipt" "$err"
+    die "NO QUALIFICATION RECEIPT for lore $VERSION -- refusing to publish (LCLI-578).
+gh could not read $RECEIPT_PATH from $RECEIPT_REPO@main (exit $rc). gh said:
+$out
+A 404 or 403 means no receipt this login can see ($RECEIPT_REPO is private). It is not retried.
+Wait for opum-cli-e2e to land the receipt on main (it appears minutes after its PR merges), or
+land an override in it by PR. No flag or environment variable bypasses this gate."
+  fi
+  for entry in "${PLATFORM_PKGS[@]}" "$ROOT_PKG"; do names+=("${entry#*:}"); done
+  out="$(node -e "$(receipt_check_js)" "$receipt" "$VERSION" "$RUN_ID" "$ARTIFACTS" "${names[@]}" 2>&1)"
+  rc=$?
+  rm -f "$receipt" "$err"
+  # A refusal STOPS a --dry-run too, rather than rehearsing on past it. The real run would stop
+  # here, and a rehearsal that goes on to print credential and publish steps the real run can
+  # never reach reads like a green light. It exits non-zero so a scripted rehearsal cannot pass.
+  [ "$rc" -eq 0 ] || die "the qualification receipt does NOT qualify these bytes -- refusing to publish (LCLI-578).
+Receipt: $RECEIPT_REPO $RECEIPT_PATH @ main. Refused because:
+$out
+The only way past this is a receipt on $RECEIPT_REPO main that matches, or a complete override
+(by, reason, task, adr) written into it by PR. No flag or environment variable bypasses it."
+  mode="$(printf '%s\n' "$out" | head -1)"
+  if [ "$mode" = "QUALIFIED" ]; then
+    say "receipt: QUALIFIED -- version $VERSION, run $RUN_ID and all ${#names[@]} tarball sha256 match"
+    [ "$DRY_RUN" -eq 1 ] && say "receipt: QUALIFIED (would proceed)"
+    return 0
+  fi
+  hr
+  say "!!! receipt verdict is ${mode#OVERRIDE } -- proceeding ONLY on the override written in the receipt:"
+  printf '%s\n' "$out" | tail -n +2
+  [ "$DRY_RUN" -eq 1 ] && say "!!! receipt: OVERRIDE (would proceed on the override above)"
+  hr
+}
+
 # SKIPPED ENTIRELY FOR --verify-only, which reads the registry and nothing else. The
 # propagation-timeout message tells an operator who has JUST completed the irreversible step
 # to "re-check with --verify-only", so that path has to work when the artifact directory has
@@ -477,6 +628,8 @@ $(list_tarballs)"
   verify_platform_digests
   seal_locally
   say "all $count artifacts accounted for: 6 independently verified, 1 locally sealed"
+  # After the bytes are verified, BEFORE any credential handling or registry write.
+  verify_qualification_receipt
 fi
 
 
