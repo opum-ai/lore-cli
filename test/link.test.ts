@@ -1587,12 +1587,50 @@ describe("lore link/unlink under a non-backlog tracker: a reported file never tr
 
   test("a missing Quest actor declaration on lore link surfaces as validation, not folded into drift (LCLI-459)", async () => {
     writeDoc("stories/quest-actor-link.md", "---\ntype: Story\ntitle: Quest actor link\n---\nBody.\n");
+    const before = readDoc("stories/quest-actor-link.md");
     const adapter = fakeAdapter([questTask("Q-1")], { editTaskThrows: actorContextError });
 
     const err = await expectLinkError(["stories/quest-actor-link", "q-1"], adapter, undefined, "quest");
 
     expect(err.type).toBe("validation");
     expect(err).toBe(actorContextError);
+    // LCLI-582: refused BEFORE any write. The concept file is byte-identical and no tracker edit
+    // was attempted, so the refusal leaves neither side of the coupling half-applied.
+    expect(readDoc("stories/quest-actor-link.md")).toBe(before);
+    expect(adapter.calls).toEqual([]);
+  });
+
+  test("lore link with no Quest actor still succeeds when no back-reference edit is needed (LCLI-582)", async () => {
+    // The tracker already carries the label and --doc, so no edit runs and no actor is needed;
+    // only the doc-side tasks: is missing. The pre-write check must not turn this into a refusal.
+    writeDoc("stories/quest-actor-present.md", "---\ntype: Story\ntitle: Quest actor present\n---\nBody.\n");
+    const adapter = fakeAdapter(
+      [
+        questTask("Q-1", {
+          labels: ["doc:stories/quest-actor-present"],
+          documentation: ["docs/stories/quest-actor-present.md"],
+        }),
+      ],
+      { editTaskThrows: actorContextError },
+    );
+
+    const { code, report } = await linkCmd(["stories/quest-actor-present", "q-1"], adapter, undefined, "quest");
+
+    expect(code).toBe(0);
+    expect(report.tasks).toEqual([{ task: "q-1", status: "added", backRef: "already-present" }]);
+    expect(readDoc("stories/quest-actor-present.md")).toContain("tasks:\n  - q-1");
+    expect(adapter.calls).toEqual([]);
+  });
+
+  test("lore link --no-back-ref with no Quest actor writes the doc side and never checks the tracker (LCLI-582)", async () => {
+    writeDoc("stories/quest-actor-noref.md", "---\ntype: Story\ntitle: Quest actor noref\n---\nBody.\n");
+    const adapter = fakeAdapter([questTask("Q-1")], { editTaskThrows: actorContextError });
+
+    const { code } = await linkCmd(["stories/quest-actor-noref", "q-1", "--no-back-ref"], adapter, undefined, "quest");
+
+    expect(code).toBe(0);
+    expect(readDoc("stories/quest-actor-noref.md")).toContain("tasks:\n  - q-1");
+    expect(adapter.calls).toEqual([]);
   });
 
   test("a missing Quest actor declaration on lore unlink surfaces as validation, not folded into drift (LCLI-459)", async () => {
@@ -1613,9 +1651,15 @@ describe("lore link/unlink under a non-backlog tracker: a reported file never tr
       { editTaskThrows: actorContextError },
     );
 
+    const before = readDoc("stories/quest-actor-unlink.md");
+
     const err = await expectUnlinkError(["stories/quest-actor-unlink", "q-1"], adapter, undefined, "quest");
 
     expect(err.type).toBe("validation");
     expect(err).toBe(actorContextError);
+    // LCLI-582: the doc-side removal is refused too, not written ahead of a tracker edit that
+    // cannot land.
+    expect(readDoc("stories/quest-actor-unlink.md")).toBe(before);
+    expect(adapter.calls).toEqual([]);
   });
 });

@@ -470,6 +470,11 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
       if (!record(value)) throw new LoreError("drift", "Quest returned invalid created task", QUEST_VERSION_SET_HINT);
       return string(value.id, "created task id");
     },
+    // The same resolveActor editTask and createTask call, run before a command writes anything of
+    // its own (LCLI-582). It throws exactly the error the first write would, with the same code.
+    assertWriteReady() {
+      resolveActor(options);
+    },
     async editTask(id, patch) {
       const args = ["task", "edit", safe(id), ...actorFlags(resolveActor(options))];
       if (patch.status) args.push("--status", safe(patch.status));

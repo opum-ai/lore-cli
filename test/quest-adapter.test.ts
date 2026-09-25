@@ -569,6 +569,39 @@ describe("Quest 0.2 tracker adapter", () => {
       expect(calls.find((args) => args[1] === "edit")).toBeUndefined();
     });
 
+    test("assertWriteReady throws the actor error a write would, and passes once an actor is declared (LCLI-582)", () => {
+      const calls: string[][] = [];
+      const bare = createQuestAdapter("/repo", { spawn: writeSpawn(calls), workspaceInitialized: () => true });
+      const saved = [QUEST_ACTOR_ENV_VAR, QUEST_ACTOR_KIND_ENV_VAR, QUEST_ACCOUNTABLE_HUMAN_ENV_VAR].map(
+        (key) => [key, process.env[key]] as const,
+      );
+      for (const [key] of saved) delete process.env[key];
+      try {
+        expect(() => bare.assertWriteReady?.()).toThrow("Quest write requires an explicit actor declaration");
+        const error = (() => {
+          try {
+            bare.assertWriteReady?.();
+          } catch (e) {
+            return e;
+          }
+        })();
+        expect(error).toMatchObject({ type: "validation", input: { code: "quest.actor-context-required" } });
+      } finally {
+        for (const [key, value] of saved) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      }
+      const declared = createQuestAdapter("/repo", {
+        spawn: writeSpawn(calls),
+        workspaceInitialized: () => true,
+        actor: { id: "jdoe", kind: "human" },
+      });
+      expect(() => declared.assertWriteReady?.()).not.toThrow();
+      // I/O-free: the check never spawns quest.
+      expect(calls).toEqual([]);
+    });
+
     test("a delegated-agent actor with no accountable human fails before any write is attempted", async () => {
       const calls: string[][] = [];
       const tracker = createQuestAdapter("/repo", {

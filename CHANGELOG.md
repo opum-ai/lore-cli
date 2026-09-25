@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`lore link` no longer half-applies when Quest has no actor declared** (LCLI-582). With
+  `LORE_QUEST_ACTOR` unset, it used to write the concept's `tasks:` frontmatter, then fail the
+  back-reference edit with exit `6`, leaving a one-sided link. It now refuses before any write, so
+  the exit `6` leaves the concept file byte-identical. A run that needs no back-reference edit
+  (label and documentation entry already present) still succeeds without an actor. `lore unlink`
+  applies the same check before removing tasks with back-references on. **Behaviour change:**
+  unlinking a task whose label is already gone now needs an actor too, where before it succeeded;
+  `--no-back-ref` skips the check.
+
 ## [0.9.3] - 2026-09-25
 
 ### Added
