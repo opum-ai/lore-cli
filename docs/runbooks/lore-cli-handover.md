@@ -15,7 +15,7 @@ timestamp: 2026-08-03T16:05:16.512Z
 
 ## Purpose
 
-This document routes a fresh Lore CLI session to live evidence. It carries no
+Start a Lore CLI session from live owner evidence. This document carries no
 task cursor, branch claim, runnable queue, or release assertion. The procedure
 lives in the `opum-handoff` skill from the `opum-workflow` plugin. Historical
 handovers are provenance records and must not be executed.
@@ -33,14 +33,17 @@ handovers are provenance records and must not be executed.
    record, and `.quest/` is committed. Handoff reasoning lands as notes on the
    Quest task, not in the cursor. Run `quest instructions overview` before the
    first tracker write.
-3. Find documentation with `lore query "<words>" --limit 5`, then
+3. Ground the canonical `opum-ai/lore-cli` repository: the current branch,
+   exact HEAD, status, ahead/behind state against `origin`, remote URL, and
+   registered worktrees. Preserve unrelated changes.
+4. Find documentation with `lore query "<words>" --limit 5`, then
    `lore read <id>`. The [Lore CLI documentation ownership](../reference/lore-cli-documentation-ownership.md)
    record says what this repository owns.
-4. For Lore-wide strategy or cross-component contracts, open the consolidated
+5. For Lore-wide strategy or cross-component contracts, open the consolidated
    [Lore documentation namespace](https://github.com/opum-ai/opum-doc/tree/dev/docs/lore).
    For portfolio or product-family questions, open the
    [Opum documentation hub](https://github.com/opum-ai/opum-doc/tree/dev/docs).
-5. For release work, read [Lore CLI release truth](../reference/lore-cli-release-truth.md)
+6. For release work, read [Lore CLI release truth](../reference/lore-cli-release-truth.md)
    before the [Release publishing](release-publishing.md) procedure. Reverify
    package versions, immutable tags and artifacts, and registry availability.
 
@@ -58,9 +61,9 @@ To hand over, run `opum-handoff` in `write` mode. Do not hand-write the cursor.
   [external routing and provenance record](https://github.com/opum-ai/opum-doc/blob/dev/docs/quest/quest-external-routing-and-provenance.md).
 - A plan, a passing test, a dry-run package, or a workflow procedure is not
   evidence of a public release.
-- This handover grants no authority. Commit, push, pull-request, merge,
-  publication, cleanup, and remote-policy actions need the authority that
-  `CLAUDE.md` records for the action.
+- Commit, push, pull-request, merge, publication, cleanup, and remote-policy
+  actions need the authority that `CLAUDE.md` records for the action. This
+  handover grants none of them.
 
 ## Recovery
 
