@@ -71,9 +71,10 @@ run unattended.
 Everything below assumes a bundle already exists. Bringing lore into a repo
 that has none is **one command**: `lore init`. On a real (interactive)
 terminal it detects installed Claude Code and Codex executables, then offers each
-available agent as an independent bridge choice. It also offers a downstream
-doc-site scaffold (mkdocs/docusaurus), an Obsidian vault config, and a backlog
-`--json`-capability check — replacing the older
+available agent as an independent bridge choice. It also offers a tracker
+choice (Quest, Backlog.md, or Jira; a new bundle defaults to Quest), a
+capability check of the tracker it selects, a downstream doc-site scaffold
+(mkdocs/docusaurus), and an Obsidian vault config. This replaces the older
 `init` → `agents` → external `lore-setup.sh` → manual-Obsidian sequence
 ([ADR-0017](../adr/0017-interactive-init-wizard-tty-gated.md)).
 
@@ -111,7 +112,7 @@ lore query → lore read 1. find the doc you need: query, then read the best hit
 a Story concept        2. follow a link to the Story you'll work on
    │
    ▼
-lore tasks <story>     3. pull LIVE task status (drives backlog --json)
+lore tasks <story>     3. pull LIVE task status from the configured tracker
    │
    ▼
 do the work            4. write code; edit docs OUTSIDE managed regions
@@ -169,10 +170,22 @@ lore tasks stories/bulk-archive-orders --json
 ```
 
 `lore tasks` returns the **live** task rollup for a Story through the configured
-tracker adapter. Backlog's implementation remains the JSON-only integration in
-[ADR-0002](../adr/0002-backlog-integration-json-only.md), specified in the
-[Backlog CLI contract](../reference/backlog-cli-contract.md) and
-[Backlog JSON schema](../reference/backlog-json-schema.md). The `--json`
+tracker adapter. It probes that tracker, then reads each linked task through
+the tracker's own CLI:
+
+- **Quest** (the default for a new bundle, and this repository's backend):
+  `quest task view <id> --json`, after a version-floor and
+  `quest manifest --json` probe.
+- **Backlog.md:** `backlog task view <id> --json`. This is the JSON-only
+  integration in [ADR-0002](../adr/0002-backlog-integration-json-only.md),
+  specified in the [Backlog CLI contract](../reference/backlog-cli-contract.md)
+  and [Backlog JSON schema](../reference/backlog-json-schema.md).
+- **Jira:** `jira issue get <id>` through `jira-cli`.
+
+A bundle with a Backlog.md project but no explicit `tracker.backend` fails
+with a `validation` error until you choose a backend. Each backend reports its
+own statuses ([ADR-0022](../adr/0022-tracker-status-flow-is-backend-polymorphic-not-backlog-config.md)).
+The `--json`
 payload carries `kind: "tasks.rollup"`; branch on it and read each task's id,
 title, and status. This is your authoritative view of what is To Do / In
 Progress / Done — never re-derive task state from the Story markdown, which is
@@ -181,10 +194,19 @@ only refreshed when `lore sync` runs.
 Use this status to decide what to do next: pick an open task, or, if you need a
 new one, create it through the configured tracker and then couple it to the
 Story with `lore link` so the frontmatter `tasks:` list and the task's
-`doc:<conceptId>` label both reflect the relationship. lore is the **sole
-committer** of `backlog/`; let lore commit task-file changes rather than staging
-them yourself (see
-[ADR-0012: Backlog coexistence & git ownership](../adr/0012-backlog-coexistence-git-ownership.md)).
+`doc:<conceptId>` label both reflect the relationship. What happens next
+depends on the backend:
+
+- **Quest:** set `LORE_QUEST_ACTOR` and `LORE_QUEST_ACTOR_KIND` (`human` or
+  `delegated-agent`) before `lore link` or `lore unlink`, plus
+  `LORE_QUEST_ACCOUNTABLE_HUMAN` for a `delegated-agent`. Without them the
+  command fails closed with exit `6`. Quest writes its own records under
+  `.quest/`, and lore commits nothing. Commit the resulting changes with the
+  rest of your work.
+- **Jira:** Jira keeps its own storage, and lore commits nothing.
+- **Backlog.md:** lore is the **sole committer** of `backlog/`. Let lore
+  commit task-file changes rather than staging them yourself (see
+  [ADR-0012: Backlog coexistence & git ownership](../adr/0012-backlog-coexistence-git-ownership.md)).
 
 ### Step 4 — Do the work
 
@@ -299,7 +321,8 @@ lore instructions <topic>         # task-scoped guidance on demand
 ```
 
 `lore instructions` prints task-scoped guidance on demand, mirroring the
-Backlog.md `backlog instructions <topic>` pattern that this very project uses.
+Backlog.md `backlog instructions <topic>` pattern it was modelled on; Quest's
+`quest instructions <topic>` follows the same shape.
 This is the **just-in-time** channel: instead of carrying full lore guidance
 resident, an agent pulls exactly the topic it needs (e.g. the sync/check loop,
 linking tasks, the managed-block rules, or multi-repository workspace retrieval)
@@ -316,10 +339,13 @@ For programmatic discovery, `lore help --json` returns a machine-readable
 their flags, and their `kind`/exit-code mappings, all inside the canonical
 `{schemaVersion, kind, data}` envelope. An agent (or a generator) can read this
 to discover the surface without scraping human-formatted `--help` text, and to
-confirm a command exists before invoking it. Combined with the version/capability
-probe lore runs against Backlog.md (it fails loud below the minimum `--json`
-version; see [Backlog CLI contract](../reference/backlog-cli-contract.md)), an
-agent can verify its whole toolchain is capable before starting work.
+confirm a command exists before invoking it. Combined with the capability probe
+lore runs against the configured tracker, an agent can verify its whole
+toolchain is capable before starting work. The Quest and Backlog.md adapters
+fail loud below a minimum version
+([ADR-0020](../adr/0020-tracker-version-gates-are-minimum-floors.md)); for
+Backlog.md that is the minimum `--json` version in the
+[Backlog CLI contract](../reference/backlog-cli-contract.md).
 
 ### 2.5 Opt in to a task-scoped Lore profile
 
@@ -418,8 +444,9 @@ non-destructive.
   human's); lore only keeps the mechanical parts coherent. Do not expect `lore
   new` or `lore sync` to fill in meaning.
 
-- **CLI is primary; do not reach around it.** Drive Backlog.md only through its
-  CLI/`--json` boundary, never by importing internals or hand-editing
+- **CLI is primary; do not reach around it.** Drive the tracker only through
+  its own CLI. On Quest, never hand-edit `.quest/` JSON. On Backlog.md, use
+  only the CLI/`--json` boundary, never importing internals or hand-editing
   `backlog/tasks/*.md` (Backlog drops unknown frontmatter on edit, so lore
   metadata never lives on tasks — see
   [ADR-0002](../adr/0002-backlog-integration-json-only.md) and
@@ -431,9 +458,10 @@ non-destructive.
   `<!-- lore:tasks:end -->`; those edits are overwritten and a targeted write is
   denied (exit `4`). Use `lore sync` to refresh them.
 
-- **Let lore own `backlog/` commits.** lore is the sole committer of the
-  `backlog/` tree; don't `git add`/commit task files yourself
-  ([ADR-0012](../adr/0012-backlog-coexistence-git-ownership.md)).
+- **On Backlog.md, let lore own `backlog/` commits.** lore is the sole
+  committer of the `backlog/` tree; don't `git add`/commit task files yourself
+  ([ADR-0012](../adr/0012-backlog-coexistence-git-ownership.md)). On Quest and
+  Jira, lore commits nothing, and tracker changes land with your own commit.
 
 - **Treat `lore check` as the gate.** Don't consider work done until `lore check`
   exits `0`. If it exits `6`, run `lore sync`, commit the result, and re-run. If
@@ -454,8 +482,8 @@ non-destructive.
 | You want to… | Command | Notes |
 |---|---|---|
 | Find a doc | `lore query "<words>" --limit 5`, then `lore read <id>` | search before browsing; don't start from docs/index.md or grep `docs/` |
-| See a Story's live tasks | `lore tasks <story> --json` | `kind: tasks.rollup`; drives Backlog `--json` |
-| Couple a task to a Story | `lore link <story> <task-id>` | sets frontmatter + `doc:` label; lore commits |
+| See a Story's live tasks | `lore tasks <story> --json` | `kind: tasks.rollup`; reads each task through the configured tracker's CLI (Quest by default) |
+| Couple a task to a Story | `lore link <story> <task-id>` | sets frontmatter + `doc:` label; lore commits only on Backlog.md; Quest needs `LORE_QUEST_ACTOR*` set |
 | Make the bundle coherent | `lore sync --json` | recompute status, rewrite managed blocks, regen index |
 | Gate the bundle | `lore check` | read-only; exit `6` on drift/broken-link/anchor/portability, `7` when it cannot judge a committed schema |
 | Pull guidance on demand | `lore instructions [<topic>]` | just-in-time, mirrors `backlog instructions` |
@@ -475,7 +503,7 @@ non-destructive.
 - [ADR-0004: CLI-first; SKILL.md bridge; MCP deferred](../adr/0004-cli-first-skill-bridge-mcp-deferred.md) — why the bridge is a skill, not a server.
 - [ADR-0014: core has no LLM dependency](../adr/0014-core-has-no-llm-dependency.md) — why lore never auto-authors prose.
 - [ADR-0009: Story ↔ Task coupling & reconciliation](../adr/0009-story-task-coupling-reconciliation.md) — the `tasks:` coupling and status rules behind `lore tasks`/`sync`.
-- [ADR-0012: Backlog coexistence & git ownership](../adr/0012-backlog-coexistence-git-ownership.md) — lore as the sole committer of `backlog/`.
-- [Backlog CLI contract](../reference/backlog-cli-contract.md) — the inbound Backlog.md `--json` contract `lore tasks` drives.
+- [ADR-0012: Backlog coexistence & git ownership](../adr/0012-backlog-coexistence-git-ownership.md) — lore as the sole committer of `backlog/` on the Backlog.md backend.
+- [Backlog CLI contract](../reference/backlog-cli-contract.md) — the inbound Backlog.md `--json` contract `lore tasks` drives on the Backlog.md backend.
 - [MCP tools (deferred)](../reference/mcp-tools.md) — the v2 transport that will re-expose these same core functions.
 - [lore design](../specs/lore-design.md) — the overall design this loop serves.
