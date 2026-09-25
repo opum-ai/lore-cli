@@ -1,7 +1,7 @@
 ---
 type: Runbook
 title: "Agent onboarding: how a coding agent uses lore"
-description: The canonical agent loop for working with lore — choose owner-local or explicit workspace scope, read the bundle index, follow a Story, check live task status with `lore tasks`, do the work, `lore sync`, then `lore check` as the CI gate. Covers how Claude Code and Codex learn lore, the generated skills and nudges, `lore instructions`, the `lore help --json` capability manifest, the machine contract agents depend on, and the guardrails around local authority and bounded cross-repository retrieval.
+description: The canonical agent loop for working with lore — choose owner-local or explicit workspace scope, find docs with `lore query` then `lore read`, follow a Story, check live task status with `lore tasks`, do the work, `lore sync`, then `lore check` as the CI gate. Covers how Claude Code and Codex learn lore, the generated skills and nudges, `lore instructions`, the `lore help --json` capability manifest, the machine contract agents depend on, and the guardrails around local authority and bounded cross-repository retrieval.
 tags:
   - runbook
   - agents
@@ -105,7 +105,7 @@ This is the owner-local authoring loop after the scope decision above. SKILL.md 
 explains each step on demand, and CI runs its final gate. Follow it in order.
 
 ```
-docs/index.md          1. read the bundle entry point
+lore query → lore read 1. find the doc you need: query, then read the best hit
    │
    ▼
 a Story concept        2. follow a link to the Story you'll work on
@@ -130,18 +130,27 @@ no hand-authored markup.
 
 Each step in detail:
 
-### Step 1 — Read `docs/index.md`
+### Step 1 — Find the doc: `lore query`, then `lore read`
 
-Start at the bundle's reserved OKF root index,
-[docs/index.md](../index.md). It is the progressive-disclosure map of the whole
-bundle: skim the sections (Architecture & design, References, ADRs, Runbooks),
-then follow a link. The index is the only file carrying `okf_version`; treat it
-as "table of contents," not "everything." Do **not** slurp the entire `docs/`
-tree into context — let the index and cross-links route you to exactly the
-concept you need.
+Search before you browse. Do not start by reading
+[docs/index.md](../index.md) or grepping `docs/`:
 
-For a single document covering the whole design, follow the index to the
-[lore design spec](../specs/lore-design.md).
+```sh
+lore query "<a few words from the question>" --limit 5
+lore read <id>
+```
+
+`lore query` searches every concept's title, summary and body and prints each
+hit's id, type, title and a snippet; narrow it with `--type`, `--tag`,
+`--status` or `--field k=v`. `lore read <id>` returns the best hit exactly as
+authored. Read the next hit if the first does not answer the question. Reach
+for `lore context <id> --max-tokens <n>` only when you need the surrounding
+concepts; `--max-tokens` is a hard ceiling. A query and one read usually cost a
+few KB, where browsing the index and grepping `docs/` usually costs tens to
+hundreds of KB. `lore instructions retrieval` carries the full recipe.
+
+For a single document covering the whole design, `lore read specs/lore-design`
+returns the [lore design spec](../specs/lore-design.md).
 
 ### Step 2 — Follow a Story
 
@@ -444,7 +453,7 @@ non-destructive.
 
 | You want to… | Command | Notes |
 |---|---|---|
-| Find the entry point | read [docs/index.md](../index.md) | OKF root index; don't slurp the tree |
+| Find a doc | `lore query "<words>" --limit 5`, then `lore read <id>` | search before browsing; don't start from docs/index.md or grep `docs/` |
 | See a Story's live tasks | `lore tasks <story> --json` | `kind: tasks.rollup`; drives Backlog `--json` |
 | Couple a task to a Story | `lore link <story> <task-id>` | sets frontmatter + `doc:` label; lore commits |
 | Make the bundle coherent | `lore sync --json` | recompute status, rewrite managed blocks, regen index |
