@@ -323,6 +323,13 @@ jobs:
       - name: lore check
         run: bun run lore check
 
+      # Bridge currency (OPAG-378 AC4, LCLI-579). This runs from source, not from a pinned
+      # published binary: this repository owns the generator, so a PR that changes generated
+      # bridge text must regenerate CLAUDE.md's lore:agents block (`bun run lore agents`) in the
+      # same PR. Exit 6 means the block is stale.
+      - name: lore agents --check (bridge currency)
+        run: bun run lore agents --check
+
   package-set:
     # LCLI-513. The platform package SET on disk (the directories under npm/) must equal the
     # set root package.json declares in optionalDependencies, and each must carry an explicit
