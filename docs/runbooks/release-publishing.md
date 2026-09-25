@@ -659,9 +659,13 @@ publish is explicitly marked public. Root `package.json` and all six
 
    **There is no longer a `gh run download` step to run first.** The script
    downloads the `npm-packages` artifact itself when the directory is absent or
-   short of the seven tarballs, and resolves the run **attempt** rather than
-   assuming `1` — artifact names embed it, so assuming `1` makes a download
-   "correctly" fail to find artifacts that exist (LCLI-487). During the `0.6.2`
+   short of the seven tarballs. It does **not** resolve a run attempt: since
+   LCLI-487, `release.yml` names artifacts by run id alone, with
+   `overwrite: true`, so a run has exactly one set. The per-platform
+   qualification reports are matched by `ladybug-package-qualification-*-<run-id>*`,
+   which also finds the `-<run-id>-<attempt>` names of runs qualified before
+   2026-09-14. If such a run had more than one attempt, two reports match one
+   platform, and the script refuses to guess and names both. During the `0.6.2`
    release the operator was stopped three separate times by prerequisites the
    script had already diagnosed precisely and then declined to perform; it now
    performs them (LCLI-489).
