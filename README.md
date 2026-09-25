@@ -262,6 +262,7 @@ makes the command exit `6`:
   "message": "link \"../nope/missing.md\" points at \"nope/missing.md\", which is not in the bundle" }
 ```
 
+<!-- quickstart:example-skip -->
 ```bash
 $ lore validate --json && echo "conformant"   # exit 6 on validation/drift
 ```

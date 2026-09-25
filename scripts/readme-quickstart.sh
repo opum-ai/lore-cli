@@ -42,21 +42,37 @@ mkdir -p "$work/bin" "$work/repo"
 ln -s "$lore_bin" "$work/bin/lore"
 
 # Split each marked example block into its own file: line 1 is `$ <command>`, the rest
-# is the expected output. A marker not followed by a fence is a README error, not a skip.
+# is the expected output. Scope fails CLOSED: every fence whose first line is `$ ...` must
+# carry either the example marker or `<!-- quickstart:example-skip -->`, so a new or
+# unmarked transcript, or a marker lost in an edit, stops the run rather than going
+# unchecked. A marker not followed by a fence, or left dangling at end of file, is an error.
 mkdir -p "$work/examples"
 examples=$(awk -v dir="$work/examples" '
-  /<!-- quickstart:example -->/ { armed = 1; next }
-  armed && !inblock && /^```/ { inblock = 1; n++; f = dir "/" n; next }
-  armed && !inblock && !/^[[:space:]]*$/ { print "marker on line " NR - 1 " is not followed by a fenced block" > "/dev/stderr"; bad = 1; exit }
-  inblock && /^```/ { close(f); inblock = 0; armed = 0; next }
-  inblock { print > f }
-  END { if (bad || inblock) exit 1; print n + 0 }
-' "$repo/README.md") || { echo "readme-quickstart: malformed quickstart:example block in README.md" >&2; exit 2; }
-# Same floor logic as the quickstart: losing a marker must not read as a clean run.
+  function fail(msg) { print "README.md line " NR ": " msg > "/dev/stderr"; bad = 1; exit 1 }
+  /^```/ && !infence { infence = 1; first = 1; marked = armed || skip; capture = armed
+                       armed = 0; skip = 0; if (capture) { n++; f = dir "/" n }; next }
+  /^```/ && infence  { infence = 0; if (capture) close(f); capture = 0; next }
+  infence && first   { first = 0
+                       if (/^\$ / && !marked) fail("a `$ <command>` transcript with neither quickstart:example nor quickstart:example-skip before it")
+                       if (capture && !/^\$ /) fail("a quickstart:example block whose first line is not `$ <command>`") }
+  infence            { if (capture) print > f; next }
+  /^<!-- quickstart:example(-skip)? -->$/ { if (armed || skip) fail("two quickstart:example markers in a row")
+                       if (/-skip/) skip = 1; else armed = 1; next }
+  (armed || skip) && !/^[[:space:]]*$/ { fail("a quickstart:example marker not followed by a fenced block") }
+  END { if (bad) exit 1
+        if (infence || armed || skip) { print "README.md: unterminated fence or a trailing quickstart:example marker" > "/dev/stderr"; exit 1 }
+        print n + 0 }
+' "$repo/README.md") || { echo "readme-quickstart: malformed or unmarked example transcript in README.md" >&2; exit 2; }
+# Same floor logic as the quickstart: an extraction that finds nothing must not read as clean.
 [ "$examples" -ge 2 ] || { echo "readme-quickstart: found only $examples marked examples in README.md (expected >= 2)" >&2; exit 2; }
+# The examples run with stdout redirected to a file, which lore treats as plain mode. A
+# command without an explicit output mode would be compared against output a reader at a
+# terminal never sees, so require the mode to be named.
 for i in $(seq 1 "$examples"); do
-  head -1 "$work/examples/$i" | grep -q '^\$ ' \
-    || { echo "readme-quickstart: example $i does not start with a '\$ <command>' line" >&2; exit 2; }
+  case " $(head -1 "$work/examples/$i") " in
+    *" --plain "*|*" --json "*) ;;
+    *) echo "readme-quickstart: example $i names neither --plain nor --json: $(head -1 "$work/examples/$i")" >&2; exit 2 ;;
+  esac
 done
 
 # Unset the actor variables so the README's own `export` line is what supplies them:
