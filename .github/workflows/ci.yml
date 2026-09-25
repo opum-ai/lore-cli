@@ -302,7 +302,7 @@ jobs:
       # Version DERIVED from the managed block in CLAUDE.md for the reasons the tracker
       # job states at length: a second pin drifts from the block that already declares
       # the version, and a float turns an unrelated upstream publish into a red build on
-      # somebody's unrelated PR. Keep the two copies in step.
+      # somebody's unrelated PR. Keep every copy in step (tracker, docs gate, compile smoke).
       - name: Resolve the Quest version CLAUDE.md declares
         id: quest
         run: |
@@ -532,6 +532,29 @@ jobs:
           fi
           # --help exercises the other output path; assert it emits the banner too.
           ./dist/lore --help | grep -q "OKF-native documentation CLI"
+      # README quickstart, run verbatim against the binary just compiled (LCLI-571). The README
+      # ships in the npm tarball, and its quickstart sat broken through three releases because
+      # nothing ran it: `lore new spec --story` never existed, and step 3 coupled Backlog.md
+      # task ids that no fresh repository has. The script reads the commands from README.md
+      # itself, so this fails when the README drifts from the CLI, not when a copy does.
+      # Quest version derived from CLAUDE.md, as in the docs gate above; keep the copies in step.
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+      - name: Resolve the Quest version CLAUDE.md declares
+        id: quest
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/.*Quest CLI \([0-9][0-9.]*\).*/\1/p' CLAUDE.md | head -1)"
+          if [ -z "$version" ]; then
+            echo "::error file=CLAUDE.md::No 'Quest CLI <version>' line found in the managed block. The README quickstart assumes Quest."
+            exit 1
+          fi
+          echo "Declared Quest version: $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - run: npm install -g "@opum-ai/quest@${{ steps.quest.outputs.version }}"
+      - name: README quickstart runs verbatim
+        run: scripts/readme-quickstart.sh dist/lore
 
   explorer-browser-qualification:
     name: explorer browser qualification (chromium · firefox · webkit)
