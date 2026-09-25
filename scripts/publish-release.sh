@@ -60,6 +60,10 @@
 #     this run id and every tarball's sha256, with verdict QUALIFIED or a complete override
 #     written into the receipt itself (LCLI-578). No flag or env var this script reads bypasses
 #     it, and the receipt's host (GH_HOST is overridden), repository and ref are pinned.
+#   - Re-hashes each tarball against that receipt IMMEDIATELY before its own `npm publish`
+#     (and before a --dry-run's "would npm publish" line), and refuses if the bytes changed
+#     after the gate. The root launcher is published up to ~30 minutes after the gate ran,
+#     behind the registry wait below (LCLI-586).
 #   - Resumable: a version already on the registry is skipped, not re-attempted. This is
 #     what made five failed 0.6.2 attempts cost nothing.
 #   - --dry-run does everything except the two mutating calls.
@@ -74,15 +78,30 @@
 # being verified. That is a genuinely independent check: two artifacts from the same run
 # would have to agree for a substitution to pass.
 #
-# The ROOT LAUNCHER has NO such digest. It is `npm pack`'d inside that same job ("npm pack
-# every package") and its sha256 is recorded nowhere, so a locally computed digest for it is
-# irreducibly a LOCAL SELF-SEAL: tamper-evidence on one download, not provenance.
+# The ROOT LAUNCHER has no digest from lore-cli's own CI: it is `npm pack`'d inside that same
+# job ("npm pack every package") and this repository records its sha256 nowhere. What binds it
+# instead is the QUALIFICATION RECEIPT (LCLI-578, below). opum-cli-e2e's receipt records a
+# sha256 for all seven tarballs, root included, and this script refuses unless every one
+# matches the file it will publish. It then re-hashes each tarball IMMEDIATELY before that
+# tarball's own `npm publish` and refuses if the bytes changed after the gate (LCLI-586). So the
+# root launcher, published up to ~30 minutes after the gate, is re-checked against the receipt
+# just before its own publish, leaving only the milliseconds between that re-hash and npm's
+# own read of the file unchecked.
+# Be exact about what the receipt's root digest is. opum-cli-e2e re-hashes it at write time
+# from THIS SAME Release run's npm-packages artifact (its receipts/README.md: "re-hashed at
+# write time from the bound artifacts"). So it is recorded by ANOTHER REPOSITORY, from bytes
+# that repository qualified, but it is NOT produced by a second, independent build: it binds
+# "the root launcher we publish is the one opum-cli-e2e qualified", not "two builds agree".
+# The ladybug reports' own `package.rootTarballSha256` is not used here, deliberately: each
+# qualification host packs the root itself, and the darwin runners' zlib compresses the same
+# tar stream to different bytes, so that field disagrees by host (LCLI-568).
 #
-# SHA256SUMS.txt is likewise a local seal. CI does not emit it -- this script generates it
-# from the same tarballs it then verifies, so on its own it proves only that the download has
-# not changed since sealing. It is kept for that narrow purpose and is NOT the independent
-# check. Until CI records the root tarball's digest too, do not round any of this up to
-# "all seven independently verified" (LCLI-489 AC#4, option (a)).
+# SHA256SUMS.txt is a LOCAL seal. CI does not emit it -- this script generates it from the
+# same tarballs it then verifies, so on its own it proves only that the download has not
+# changed since sealing. It is kept for that narrow purpose and is NOT the independent check.
+# Do not round any of this up to "all seven independently verified": six are checked against
+# a separate artifact of the build, and all seven against a receipt whose root digest comes
+# from the same build's artifact (LCLI-489 AC#4, option (a)).
 #
 # Encodes runbook section 3 step 5's sequence so it cannot be misremembered under pressure.
 # See docs/runbooks/release-publishing.md.
@@ -572,19 +591,115 @@ console.log(JSON.stringify(override, null, 2));
 JS
 }
 
+# THE RECEIPT THE GATE READ IS KEPT, not deleted after the check (LCLI-586), because
+# recheck_against_receipt below compares each tarball with it again immediately before that
+# tarball's `npm publish`. It is the receipt's value that is compared, never a digest this
+# script computed at gate time: the receipt is the authority, and a digest recomputed here would
+# only prove the file agrees with an earlier reading of itself.
+#
+# ONE cleanup, installed once and re-installed by the npmrc section below. `trap` REPLACES a
+# signal's handler rather than adding to it, so two sections each installing their own `rm -f`
+# would leave whichever ran first uncleaned.
+#
+# INT AND TERM MUST EXIT, NOT JUST CLEAN UP. A handler for a signal REPLACES the default action,
+# which was to kill the script, so a handler that only cleans up lets bash carry on at the next
+# command once the interrupted one returns. That was a live defect: `trap 'rm -f ...' EXIT INT
+# TERM` on the token path meant Ctrl-C during the registry wait deleted the private npmrc and
+# then PUBLISHED THE ROOT LAUNCHER anyway, falling back to ~/.npmrc (the LCLI-586 review measured
+# it under bash 3.2 and 5.2). An operator pressing Ctrl-C there means stop. 130 and 143 are the
+# conventional 128+SIGINT and 128+SIGTERM. EXIT also fires on the way out, which runs cleanup a
+# second time. That is harmless, because cleanup only removes files.
+RECEIPT_FILE=""
+TMP_NPMRC=""
+cleanup_private_files() {
+  if [ -n "$TMP_NPMRC" ]; then rm -f "$TMP_NPMRC"; fi
+  if [ -n "$RECEIPT_FILE" ]; then rm -f "$RECEIPT_FILE"; fi
+  return 0
+}
+install_cleanup_traps() {
+  trap cleanup_private_files EXIT
+  trap 'cleanup_private_files; exit 130' INT
+  trap 'cleanup_private_files; exit 143' TERM
+}
+install_cleanup_traps
+
+# THE CHECK-TO-PUBLISH WINDOW (LCLI-586). verify_qualification_receipt hashes every tarball ONCE,
+# before any publish. The root launcher is published LAST, behind the registry-visibility wait
+# (REGISTRY_WINDOW_SECONDS, 1800s by default) and the propagation cushion, so up to ~30 minutes
+# after the gate. Nothing in this script writes to $ARTIFACTS in that window, so only an outside
+# process could swap a file, but one swapped then would otherwise be published unchecked. So each
+# tarball is re-hashed with `shasum -a 256` (the tool verify_platform_digests uses; the gate
+# itself hashes in node's crypto, and both are plain sha256 of the file's bytes) IMMEDIATELY
+# before its own `npm publish` (and before a --dry-run's "would npm publish", so a rehearsal
+# exercises it), and compared with the receipt's value for that exact filename. Any mismatch, or
+# a value that cannot be read, dies before the publish.
+#
+# THIS NARROWS THE WINDOW; IT DOES NOT CLOSE IT. shasum reads the path, then npm reads the same
+# path again, so a swap in the milliseconds between the two still goes unchecked. Closing it would
+# mean publishing from a private copy made at check time, which was deliberately not done here.
+receipt_digest_for() {
+  # Own-property lookup, as receipt_check_js does: an inherited key such as `constructor` must
+  # not resolve to a value. Prints nothing and exits non-zero unless the entry is 64 hex digits.
+  node -e '
+const fs = require("fs");
+const [file, name] = process.argv.slice(1);
+const r = JSON.parse(fs.readFileSync(file, "utf8"));
+const t = r !== null && typeof r === "object" ? r.tarballs : undefined;
+if (t === null || typeof t !== "object" || Array.isArray(t)) { console.error("receipt has no tarballs object"); process.exit(1); }
+if (!Object.prototype.hasOwnProperty.call(t, name)) { console.error("receipt tarballs has no entry for " + name); process.exit(1); }
+if (typeof t[name] !== "string" || !/^[0-9a-fA-F]{64}$/.test(t[name])) { console.error("receipt entry for " + name + " is " + JSON.stringify(t[name]) + ", not 64 hex digits"); process.exit(1); }
+process.stdout.write(t[name].toLowerCase());
+' "$1" "$2"
+}
+
+recheck_against_receipt() {
+  local tarball="$1" name recorded actual rerr why
+  name="$(basename "$tarball")"
+  if [ -z "$RECEIPT_FILE" ] || [ ! -s "$RECEIPT_FILE" ]; then
+    die "cannot re-check $name against the qualification receipt: the receipt the gate read is
+not available (${RECEIPT_FILE:-never kept}). Refusing to publish bytes that cannot be re-checked (LCLI-586)."
+  fi
+  # The reader's stderr is CAPTURED and quoted in the refusal, never discarded: a reader that
+  # failed silently would look exactly like one that found nothing.
+  rerr="$(mktemp)" || die "mktemp failed; cannot re-check $name against the receipt"
+  recorded="$(receipt_digest_for "$RECEIPT_FILE" "$name" 2>"$rerr")" || recorded=""
+  why="$(sed 's#^#    #' "$rerr")"; rm -f "$rerr"
+  # Checked here as well as in node: an exit-0 reader that printed nothing must still refuse.
+  case "$recorded" in
+    ""|*[!0-9a-f]*) recorded="" ;;
+  esac
+  [ "${#recorded}" -eq 64 ] || die "cannot read the qualification receipt's sha256 for $name
+from $RECEIPT_FILE. Refusing to publish it without re-checking its bytes (LCLI-586). The reader said:
+${why:-    (nothing)}"
+  actual="$(shasum -a 256 "$tarball" | awk '{print $1}')"
+  if [ "$actual" != "$recorded" ]; then
+    die "$name CHANGED AFTER THE QUALIFICATION GATE -- refusing to publish it (LCLI-586).
+  receipt sha256        : $recorded
+  sha256 before publish : ${actual:-(could not hash $tarball)}
+  file                  : $tarball
+The gate matched this file against the receipt earlier in this run. The bytes changed after the
+gate and before npm publish. Something outside this script wrote to $ARTIFACTS. Find out what
+before doing anything else. Then discard $ARTIFACTS and re-run: the script re-downloads the
+artifacts and re-runs the gate, and it skips any package that is already published."
+  fi
+  say "  rehash   $name matches the receipt ($recorded)"
+}
+
 verify_qualification_receipt() {
-  local receipt err rc out nerr entry names=() mode
+  local err rc out nerr entry names=() mode
   need_gh
-  receipt="$(mktemp)"; err="$(mktemp)"
+  RECEIPT_FILE="$(mktemp)" || die "mktemp failed; cannot keep the receipt for the pre-publish re-check"
+  [ -n "$RECEIPT_FILE" ] || die "mktemp returned an empty path for the receipt"
+  err="$(mktemp)"
   say "reading the qualification receipt: $RECEIPT_REPO $RECEIPT_PATH @ main on github.com"
   # Raw media type, so the body IS the file. ANY failure is NO RECEIPT and is never retried: the
   # contract says 404 and 403 mean exactly that (the repository is private), and anything else is
   # a receipt this script could not read, which is not a receipt it can honour.
   gh api --hostname github.com -H "Accept: application/vnd.github.raw+json" \
-    "repos/$RECEIPT_REPO/contents/$RECEIPT_PATH?ref=main" >"$receipt" 2>"$err"
+    "repos/$RECEIPT_REPO/contents/$RECEIPT_PATH?ref=main" >"$RECEIPT_FILE" 2>"$err"
   rc=$?
   if [ "$rc" -ne 0 ]; then
-    out="$(sed 's#^#    #' "$err")"; rm -f "$receipt" "$err"
+    out="$(sed 's#^#    #' "$err")"; rm -f "$err"
     die "NO QUALIFICATION RECEIPT for lore $VERSION -- refusing to publish (LCLI-578).
 gh could not read $RECEIPT_PATH from $RECEIPT_REPO@main (exit $rc). gh said:
 $out
@@ -596,10 +711,11 @@ land an override in it by PR. No flag or environment variable this script reads 
   # STDOUT AND STDERR ARE KEPT APART. The verdict is read from stdout only; the reasons for a
   # refusal, and anything node itself prints (a deprecation warning, say), go to stderr and are
   # only ever quoted in a die message -- so a stray line can never be read as the verdict.
-  out="$(node -e "$(receipt_check_js)" "$receipt" "$VERSION" "$RUN_ID" "$ARTIFACTS" "${names[@]}" 2>"$err")"
+  out="$(node -e "$(receipt_check_js)" "$RECEIPT_FILE" "$VERSION" "$RUN_ID" "$ARTIFACTS" "${names[@]}" 2>"$err")"
   rc=$?
   nerr="$(cat "$err")"
-  rm -f "$receipt" "$err"
+  # $RECEIPT_FILE is KEPT for recheck_against_receipt; cleanup_private_files removes it on exit.
+  rm -f "$err"
   # A refusal STOPS a --dry-run too, rather than rehearsing on past it. The real run would stop
   # here, and a rehearsal that goes on to print credential and publish steps the real run can
   # never reach reads like a green light. It exits non-zero so a scripted rehearsal cannot pass.
@@ -731,7 +847,11 @@ if [ -n "$TOKEN" ]; then
   # suffices depends on bash version and how the signal is delivered, and the two moments an
   # operator is most likely to press Ctrl-C (the 30-minute propagation wait, the npx smoke)
   # are both after it exists. Naming all three costs nothing and removes the question.
-  trap 'rm -f "$TMP_NPMRC"' EXIT INT TERM
+  # The handlers are the shared install_cleanup_traps (cleanup also removes the kept receipt, and
+  # INT/TERM EXIT rather than resume: see the comment there, LCLI-586). A second `trap 'rm -f ...'`
+  # here would REPLACE those, not add to them. Installed already above; re-installed here so this
+  # section does not depend on that line surviving an edit.
+  install_cleanup_traps
   printf '%s\n' "$NPMRC_LINE" > "$TMP_NPMRC" \
     || die "could not write the private npmrc; refusing to fall back to ~/.npmrc silently"
   export npm_config_userconfig="$TMP_NPMRC"
@@ -1007,6 +1127,10 @@ publish_one() {
     return 0
   fi
   [ -f "$tarball" ] || { say "  MISSING  $tarball"; return 1; }
+  # LAST THING BEFORE THE PUBLISH, on both paths (LCLI-586). Dies on drift, so a tarball swapped
+  # after the gate is never handed to npm. Nothing may be inserted between this and `npm publish`
+  # that waits, or the window it closes reopens.
+  recheck_against_receipt "$tarball"
   if [ "$DRY_RUN" -eq 1 ]; then
     say "  would    npm publish $tarball"
     return 0

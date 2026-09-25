@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, resolve } from "node:path";
+import { gunzipSync, gzipSync } from "node:zlib";
 
 // Exercises scripts/publish-release.sh end to end with `gh` and `npm` stubbed, so the
 // prerequisite automation, the digest provenance split and the cwd-independence claim
@@ -1116,6 +1117,336 @@ exec "${realNode}" "$@"
       ws.cleanup();
     }
   });
+});
+
+// ── Re-hash immediately before each publish (LCLI-586) ─────────────────────────────────────────
+//
+// The receipt gate hashes every tarball ONCE, before any publish. The root launcher is published
+// last, behind the registry-visibility wait, so up to ~30 minutes later. These tests swap a
+// tarball in $ARTIFACTS AFTER the gate and assert the script refuses before handing it to npm.
+//
+// The swap is done BY THE NPM STUB, which is what places it after the gate: the stub only runs
+// once the receipt gate, the README gate and every earlier re-hash have passed. On the real path it
+// fires inside the FIRST platform package's `npm publish`. On --dry-run no publish is ever called,
+// so it fires inside the `npm view` that publish_one's own resumability check makes, which is the
+// last external call before the re-hash.
+//
+// The default npm stub's `view` always misses, so on the real path the registry wait would time
+// out and die BEFORE the root publish, and "the root was never published" would hold whether or
+// not the re-hash exists. So this stub makes a package visible once its publish has run, the root
+// genuinely reaches its pre-publish point, and the positive control below proves it publishes all
+// seven when nothing is swapped.
+describeOnPosix("scripts/publish-release.sh re-hash before publish (LCLI-586)", () => {
+  const platformFile = (name: string) => `opum-ai-lore-${name}-${VERSION}.tgz`;
+
+  function swapStubNpm(ws: ReturnType<typeof makeWorkspace>, swap: { target: string; bytes: Buffer; on: string }) {
+    const log = resolve(ws.root, "npm-calls.log");
+    const state = resolve(ws.root, "npm-state");
+    const replacement = resolve(ws.root, "replacement.bin");
+    writeFileSync(log, "");
+    mkdirSync(state, { recursive: true });
+    writeFileSync(replacement, swap.bytes);
+    // `on` is "publish:<basename>" (swap while that tarball is being published) or
+    // "view-root-2" (swap on the second `npm view @opum-ai/lore@<v> version`: the first is
+    // report_state's, the second is publish_one's resumability check for the root).
+    writeFileSync(
+      resolve(ws.bin, "npm"),
+      `#!/usr/bin/env bash
+set -uo pipefail
+LOG="${log}"; STATE="${state}"; ON="${swap.on}"
+safe() { printf '%s' "\${1//\\//_}"; }
+do_swap() {
+  [ -f "$STATE/swapped" ] && return 0
+  cp "${replacement}" "${resolve(ws.artifacts, swap.target)}"
+  touch "$STATE/swapped"
+  echo "SWAPPED ${swap.target}" >> "$LOG"
+}
+case "\${1:-}" in
+  ping) exit 0 ;;
+  view)
+    spec="$2"; field="\${3:-}"
+    if [ "$field" = "dist-tags.latest" ]; then name="$spec"; else name="\${spec%@*}"; fi
+    if [ "$ON" = "view-root-2" ] && [ "$name" = "@opum-ai/lore" ] && [ "$field" = "version" ]; then
+      n=$(( $(cat "$STATE/root-views" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$STATE/root-views"
+      [ "$n" -eq 2 ] && do_swap
+    fi
+    [ -f "$STATE/published-$(safe "$name")" ] || exit 1
+    echo "${VERSION}"; exit 0 ;;
+  publish)
+    tarball="$2"; base="$(basename "$tarball")"
+    [ "$ON" = "publish:$base" ] && do_swap
+    stripped="\${base%-${VERSION}.tgz}"; name="@opum-ai/\${stripped#opum-ai-}"
+    echo "PUBLISH $base" >> "$LOG"
+    touch "$STATE/published-$(safe "$name")"
+    echo "STUB PUBLISH $tarball"; exit 0 ;;
+  *) exit 0 ;;
+esac
+`,
+    );
+    chmodSync(resolve(ws.bin, "npm"), 0o755);
+    // The real path ends with an npx install smoke; it must never reach the network.
+    writeFileSync(resolve(ws.bin, "npx"), "#!/usr/bin/env bash\nexit 0\n");
+    chmodSync(resolve(ws.bin, "npx"), 0o755);
+    return { published: () => readFileSync(log, "utf8").split("\n").filter(Boolean) };
+  }
+
+  // Different BYTES, same tar stream: re-gzip at another level. Still a valid tgz, so nothing
+  // that reads it with tar can tell, which is the case the re-hash exists for.
+  function regzippedRoot(ws: ReturnType<typeof makeWorkspace>) {
+    const original = readFileSync(resolve(ws.root, "npm-packages", ws.rootTarball));
+    const swapped = gzipSync(gunzipSync(original), { level: 1 });
+    return { original, swapped };
+  }
+
+  test("positive control: with nothing swapped the real path re-hashes and publishes all seven", () => {
+    const ws = makeWorkspace();
+    try {
+      const npm = swapStubNpm(ws, { target: ws.rootTarball, bytes: Buffer.from("unused"), on: "never" });
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(0);
+      expect(npm.published()).toEqual([
+        ...PLATFORMS.map((p) => `PUBLISH ${platformFile(p)}`),
+        `PUBLISH ${ws.rootTarball}`,
+      ]);
+      expect(r.out.match(/^ {2}rehash {3}\S+ matches the receipt \([0-9a-f]{64}\)$/gm)?.length).toBe(7);
+      expect(r.out).toContain(`rehash   ${ws.rootTarball} matches the receipt`);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("ROOT SWAP: a root launcher swapped after the gate is refused and never published", () => {
+    const ws = makeWorkspace();
+    try {
+      const { original, swapped } = regzippedRoot(ws);
+      expect(sha256(swapped)).not.toBe(sha256(original));
+      // The replacement is a valid gzip of the identical tar stream.
+      expect(gunzipSync(swapped).equals(gunzipSync(original))).toBe(true);
+      const npm = swapStubNpm(ws, {
+        target: ws.rootTarball,
+        bytes: swapped,
+        on: `publish:${platformFile("darwin-arm64")}`,
+      });
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+
+      expect(r.code).toBe(1);
+      // The swap happened after BOTH earlier gates had passed on the original bytes...
+      const qualified = r.out.indexOf("receipt: QUALIFIED");
+      const readmeGate = r.out.indexOf("checking the packed README's version assertions");
+      const firstPublish = r.out.indexOf("STUB PUBLISH");
+      expect(qualified).toBeGreaterThanOrEqual(0);
+      expect(readmeGate).toBeGreaterThan(qualified);
+      expect(firstPublish).toBeGreaterThan(readmeGate);
+      expect(npm.published()[0]).toBe(`SWAPPED ${ws.rootTarball}`);
+      // ...every platform package was published, the registry gate was passed, so the root
+      // really reached its pre-publish point...
+      expect(npm.published().slice(1)).toEqual(PLATFORMS.map((p) => `PUBLISH ${platformFile(p)}`));
+      expect(r.out).toContain("gating the root launcher on registry visibility");
+      // ...and it was refused there, not published.
+      expect(r.out).not.toContain(`STUB PUBLISH ${resolve(ws.artifacts, ws.rootTarball)}`);
+      expect(npm.published()).not.toContain(`PUBLISH ${ws.rootTarball}`);
+      expect(r.stderr).toContain(
+        `${ws.rootTarball} CHANGED AFTER THE QUALIFICATION GATE -- refusing to publish it (LCLI-586)`,
+      );
+      expect(r.stderr).toContain(`receipt sha256        : ${sha256(original)}`);
+      expect(r.stderr).toContain(`sha256 before publish : ${sha256(swapped)}`);
+      expect(r.stderr).toContain("The bytes changed after the\ngate and before npm publish");
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("PLATFORM SWAP: a later platform tarball swapped while an earlier one publishes is refused", () => {
+    const ws = makeWorkspace();
+    try {
+      const target = platformFile("linux-arm64");
+      const original = readFileSync(resolve(ws.root, "npm-packages", target));
+      const swapped = Buffer.from("a different linux-arm64 tarball\n");
+      const npm = swapStubNpm(ws, { target, bytes: swapped, on: `publish:${platformFile("darwin-arm64")}` });
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+
+      expect(r.code).toBe(1);
+      // The two before it went out; it and everything after it did not.
+      expect(npm.published()).toEqual([
+        `SWAPPED ${target}`,
+        `PUBLISH ${platformFile("darwin-arm64")}`,
+        `PUBLISH ${platformFile("darwin-x64")}`,
+      ]);
+      expect(r.out).not.toContain(`STUB PUBLISH ${resolve(ws.artifacts, target)}`);
+      expect(r.stderr).toContain(`${target} CHANGED AFTER THE QUALIFICATION GATE`);
+      expect(r.stderr).toContain(`receipt sha256        : ${sha256(original)}`);
+      expect(r.stderr).toContain(`sha256 before publish : ${sha256(swapped)}`);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("DRY-RUN: the rehearsal runs the same re-hash and refuses a swapped root before 'would npm publish'", () => {
+    const ws = makeWorkspace();
+    try {
+      const { original, swapped } = regzippedRoot(ws);
+      const npm = swapStubNpm(ws, { target: ws.rootTarball, bytes: swapped, on: "view-root-2" });
+      const r = runScript(ws, ws.root, ws.artifacts);
+
+      expect(r.code).toBe(1);
+      expect(npm.published()).toEqual([`SWAPPED ${ws.rootTarball}`]);
+      // All six platform rehearsals re-hashed and passed; the root's did not.
+      for (const p of PLATFORMS) {
+        expect(r.out).toContain(`rehash   ${platformFile(p)} matches the receipt`);
+        expect(r.out).toContain(`would    npm publish ${resolve(ws.artifacts, platformFile(p))}`);
+      }
+      expect(r.out).not.toContain(`would    npm publish ${resolve(ws.artifacts, ws.rootTarball)}`);
+      expect(r.out).not.toContain("DRY RUN complete");
+      expect(r.stderr).toContain(`${ws.rootTarball} CHANGED AFTER THE QUALIFICATION GATE`);
+      expect(r.stderr).toContain(`receipt sha256        : ${sha256(original)}`);
+      expect(r.stderr).toContain(`sha256 before publish : ${sha256(swapped)}`);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  // Ctrl-C / TERM MUST STOP THE SCRIPT (LCLI-586 review). A trap on INT or TERM replaces the
+  // default kill, so a handler that only cleans up let bash carry on. On the token path that was
+  // already true on dev: Ctrl-C during the registry wait deleted the private npmrc and then
+  // published the root launcher through ~/.npmrc. This PR installed the same trap on the ~/.npmrc
+  // path too. The stub `sleep` is the propagation cushion, the last wait before the root's publish.
+  // It signals the script ($PPID), then itself, the way Ctrl-C reaches the whole foreground process
+  // group. Every platform package is already published by then, so "root never published" is
+  // measured at the one point where it could still go wrong.
+  const TOKEN = `npm_${"a".repeat(36)}`;
+  for (const [signal, code, auth] of [
+    ["INT", 130, "~/.npmrc fallback"],
+    ["INT", 130, "NPM_TOKEN"],
+    ["TERM", 143, "~/.npmrc fallback"],
+  ] as const) {
+    test(`SIG${signal} during the propagation cushion exits ${code} and never publishes the root (${auth})`, () => {
+      const ws = makeWorkspace();
+      try {
+        const npm = swapStubNpm(ws, { target: ws.rootTarball, bytes: Buffer.from("unused"), on: "never" });
+        const signalled = resolve(ws.root, "signalled");
+        writeFileSync(
+          resolve(ws.bin, "sleep"),
+          `#!/usr/bin/env bash\necho "$PPID" > "${signalled}"\nkill -${signal} "$PPID"\nkill -${signal} $$\nexit 0\n`,
+        );
+        chmodSync(resolve(ws.bin, "sleep"), 0o755);
+        const env: Record<string, string> = { ...REAL_RUN };
+        if (auth === "NPM_TOKEN") env.NPM_TOKEN = TOKEN;
+        const r = runScript(ws, ws.root, ws.artifacts, env, []);
+
+        // The stub really fired, inside the cushion, after every platform package went out.
+        expect(existsSync(signalled)).toBe(true);
+        expect(r.out).toContain("propagation cushion: waiting");
+        expect(r.out).toContain(auth === "NPM_TOKEN" ? "source: NPM_TOKEN" : "falling back to ~/.npmrc");
+        expect(npm.published()).toEqual(PLATFORMS.map((p) => `PUBLISH ${platformFile(p)}`));
+        // And the script stopped there.
+        expect(r.code).toBe(code);
+        expect(r.out).not.toContain(`rehash   ${ws.rootTarball}`);
+        expect(r.out).not.toContain(`STUB PUBLISH ${resolve(ws.artifacts, ws.rootTarball)}`);
+      } finally {
+        ws.cleanup();
+      }
+    });
+  }
+
+  // THE CASE THE REVIEW MEASURED PUBLISHING. A signal in the cushion (above) is already stopped
+  // under the old trap, but only by luck: cleanup deletes the kept receipt, so the root's re-check
+  // then fails closed with exit 1. A signal landing AFTER the re-check has read the receipt value
+  // is different. The old handler ran, deleted the files, returned, and the compare and
+  // `npm publish` went ahead. Here a stub `shasum` fires on the root's re-hash, and only after the
+  // last platform package is published. It sends INT to the SCRIPT alone, as `kill -INT <pid>` from
+  // another terminal would. shasum runs inside `$(shasum | awk)`, so the script is its parent's
+  // parent.
+  for (const auth of ["~/.npmrc fallback", "NPM_TOKEN"] as const) {
+    test(`SIGINT during the root's own re-hash exits 130 and never publishes the root (${auth})`, () => {
+      const ws = makeWorkspace();
+      try {
+        const npm = swapStubNpm(ws, { target: ws.rootTarball, bytes: Buffer.from("unused"), on: "never" });
+        const realShasum = execFileSync("bash", ["-c", "command -v shasum"], { encoding: "utf8" }).trim();
+        const state = resolve(ws.root, "npm-state");
+        const signalled = resolve(ws.root, "signalled");
+        writeFileSync(
+          resolve(ws.bin, "shasum"),
+          `#!/usr/bin/env bash
+if [ -f "${state}/published-@opum-ai_lore-win32-x64" ] && [ "\${@: -1}" = "${resolve(ws.artifacts, ws.rootTarball)}" ] \\
+   && [ ! -f "${signalled}" ]; then
+  script="$(ps -o ppid= -p "$PPID" | tr -d ' ')"
+  ps -o command= -p "$script" > "${signalled}"
+  kill -INT "$script"
+fi
+exec "${realShasum}" "$@"
+`,
+        );
+        chmodSync(resolve(ws.bin, "shasum"), 0o755);
+        const env: Record<string, string> = { ...REAL_RUN };
+        if (auth === "NPM_TOKEN") env.NPM_TOKEN = TOKEN;
+        const r = runScript(ws, ws.root, ws.artifacts, env, []);
+
+        // The signal really went to the script, during the root's re-check.
+        expect(readFileSync(signalled, "utf8")).toContain("publish-release.sh");
+        expect(npm.published()).toEqual(PLATFORMS.map((p) => `PUBLISH ${platformFile(p)}`));
+        expect(r.code).toBe(130);
+        expect(r.out).not.toContain(`STUB PUBLISH ${resolve(ws.artifacts, ws.rootTarball)}`);
+      } finally {
+        ws.cleanup();
+      }
+    });
+  }
+
+  // The re-check's reader is `node -e <script>` with the kept receipt's path and the tarball name
+  // as its last two arguments. This shim passes every other node call straight through. For the
+  // ROOT's re-check it either deletes the root's entry from the kept receipt and then runs the
+  // REAL reader, so the reader's own refusal text is what the script quotes ("strip"), or
+  // simulates a reader that exits 0 having printed nothing ("silent"). It logs the receipt path so
+  // the test can confirm the EXIT trap removed the kept file.
+  function shimRecheckNode(ws: ReturnType<typeof makeWorkspace>) {
+    const realNode = execFileSync("bash", ["-c", "command -v node"], { encoding: "utf8" }).trim();
+    const seen = resolve(ws.root, "receipt-paths.log");
+    writeFileSync(seen, "");
+    writeFileSync(
+      resolve(ws.bin, "node"),
+      `#!/usr/bin/env bash
+case "$*" in
+  *"receipt tarballs has no entry for"*)
+    file="\${@: -2:1}"; name="\${@: -1}"
+    echo "$file" >> "${seen}"
+    if [ "$name" = "${ws.rootTarball}" ]; then
+      [ "\${RECHECK_SHIM:-}" = silent ] && exit 0
+      if [ "\${RECHECK_SHIM:-}" = strip ]; then
+        "${realNode}" -e 'const fs=require("fs");const [f,n]=process.argv.slice(1);const r=JSON.parse(fs.readFileSync(f,"utf8"));delete r.tarballs[n];fs.writeFileSync(f,JSON.stringify(r))' "$file" "$name"
+      fi
+    fi ;;
+esac
+exec "${realNode}" "$@"
+`,
+    );
+    chmodSync(resolve(ws.bin, "node"), 0o755);
+    return { receiptPaths: () => [...new Set(readFileSync(seen, "utf8").split("\n").filter(Boolean))] };
+  }
+
+  for (const [mode, reason] of [
+    ["strip", `receipt tarballs has no entry for opum-ai-lore-${VERSION}.tgz`],
+    ["silent", "The reader said:\n    (nothing)"],
+  ] as const) {
+    test(`a receipt value that cannot be read (${mode}) refuses before the root publish, and the kept receipt is removed on exit`, () => {
+      const ws = makeWorkspace();
+      try {
+        const npm = swapStubNpm(ws, { target: ws.rootTarball, bytes: Buffer.from("unused"), on: "never" });
+        const shim = shimRecheckNode(ws);
+        const r = runScript(ws, ws.root, ws.artifacts, { ...REAL_RUN, RECHECK_SHIM: mode }, []);
+
+        expect(r.code).toBe(1);
+        expect(npm.published()).toEqual(PLATFORMS.map((p) => `PUBLISH ${platformFile(p)}`));
+        expect(r.stderr).toContain(`cannot read the qualification receipt's sha256 for ${ws.rootTarball}`);
+        expect(r.stderr).toContain(reason);
+        // One kept receipt, read by all seven re-checks, and gone once the script exited.
+        const paths = shim.receiptPaths();
+        expect(paths.length).toBe(1);
+        expect(existsSync(paths[0] as string)).toBe(false);
+      } finally {
+        ws.cleanup();
+      }
+    });
+  }
 });
 
 describeOnPosix("scripts/publish-release.sh qualification-report download (LCLI-572)", () => {
