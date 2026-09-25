@@ -30,17 +30,17 @@ campaign-created artifacts proved merged. It does not authorize a second reposit
 `main`, package publication, credentials, repository administration, security or product choices,
 or deletion of pre-existing/unmerged work.
 
-Lore commands require a separate executable preflight: `lore link`, `lore unlink`, `lore rename`,
-and `lore sync` can commit Backlog files. The coordinator runs
-`backlog-handover`'s `lore-authority-preflight.mjs` script with the command, exact
-worktree, and repository-root scope before dispatch. The repository root is the honest affected
-scope because these commands can update both `docs/` and `backlog/`; narrower and symlinked scopes
-are rejected. Before `sync`, the coordinator exactly allowlists every campaign-owned dirty Backlog
-path. The gate discovers tracked, staged, and untracked Backlog changes and refuses dispatch if any
-dirty path falls outside that allowlist, so unrelated task state cannot be swept into Lore's
-catch-all commit. The gate permits dispatch only when explicit commit
-authority or scoped standing delivery authority covers that work; otherwise it denies before Lore or
-Git can mutate state. This keeps ADR-0012's sole-committer contract intact.
+`lore link`, `lore unlink`, `lore rename`, and `lore sync` commit tracker files only when the
+configured tracker backend is Backlog; Quest and Jira keep their own storage (LCLI-573). This
+repository's backend is Quest (`.lore/config.toml`), so here those commands write `docs/` and Quest
+records and commit nothing themselves. Their changes land through the campaign's ordinary commit and
+pull-request delivery like any other edit. Against Quest, `lore link` and `lore unlink` refuse to
+write until `LORE_QUEST_ACTOR` and `LORE_QUEST_ACTOR_KIND` are set, plus
+`LORE_QUEST_ACCOUNTABLE_HUMAN` for a `delegated-agent` actor (`lore instructions linking`). There is
+no separate Lore preflight gate to run before dispatching these commands: the `backlog-handover`
+`lore-authority-preflight.mjs` gate is retired with the Backlog handover workflow, and nothing in
+this repository provides or invokes it. On a Backlog-backed repository, ADR-0012's sole-committer
+contract still describes what Lore commits.
 
 ### Fast lane
 
