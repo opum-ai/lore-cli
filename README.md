@@ -244,7 +244,7 @@ $ lore check --json
     "findings": [],
     "errorCount": 0,
     "warningCount": 0,
-    "fileCount": 8,
+    "fileCount": 9,
     "skippedOutOfBundleLinkCount": 0,
     "complete": true
   },
