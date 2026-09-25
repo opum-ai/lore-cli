@@ -537,6 +537,9 @@ jobs:
       # nothing ran it: `lore new spec --story` never existed, and step 3 coupled Backlog.md
       # task ids that no fresh repository has. The script reads the commands from README.md
       # itself, so this fails when the README drifts from the CLI, not when a copy does.
+      # It also compares each `<!-- quickstart:example -->` transcript with real output from the
+      # same repository (LCLI-588): LCLI-583 found a `lore check --json` example showing a shape
+      # that never existed, with every gate green. jq comes from the runner image.
       # Quest version derived from CLAUDE.md, as in the docs gate above; keep the copies in step.
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
@@ -553,7 +556,7 @@ jobs:
           echo "Declared Quest version: $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - run: npm install -g "@opum-ai/quest@${{ steps.quest.outputs.version }}"
-      - name: README quickstart runs verbatim
+      - name: README quickstart runs verbatim and its examples match real output
         run: scripts/readme-quickstart.sh dist/lore
 
   explorer-browser-qualification:

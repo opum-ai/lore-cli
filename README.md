@@ -224,6 +224,7 @@ lore context stories/bulk-archive-completed-orders --max-tokens 4000
 
 `--plain` is stable, line-oriented text — ideal for pipes and grep:
 
+<!-- quickstart:example -->
 ```bash
 $ lore tasks stories/bulk-archive-completed-orders --plain
 tasks: stories/bulk-archive-completed-orders — 2 tasks
@@ -233,6 +234,7 @@ tasks: stories/bulk-archive-completed-orders — 2 tasks
 
 `--json` is the additive-only machine contract:
 
+<!-- quickstart:example -->
 ```bash
 $ lore check --json
 {
