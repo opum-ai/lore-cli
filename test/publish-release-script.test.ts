@@ -1305,6 +1305,93 @@ esac
     }
   });
 
+  // Ctrl-C / TERM MUST STOP THE SCRIPT (LCLI-586 review). A trap on INT or TERM replaces the
+  // default kill, so a handler that only cleans up let bash carry on. On the token path that was
+  // already true on dev: Ctrl-C during the registry wait deleted the private npmrc and then
+  // published the root launcher through ~/.npmrc. This PR installed the same trap on the ~/.npmrc
+  // path too. The stub `sleep` is the propagation cushion, the last wait before the root's publish.
+  // It signals the script ($PPID), then itself, the way Ctrl-C reaches the whole foreground process
+  // group. Every platform package is already published by then, so "root never published" is
+  // measured at the one point where it could still go wrong.
+  const TOKEN = `npm_${"a".repeat(36)}`;
+  for (const [signal, code, auth] of [
+    ["INT", 130, "~/.npmrc fallback"],
+    ["INT", 130, "NPM_TOKEN"],
+    ["TERM", 143, "~/.npmrc fallback"],
+  ] as const) {
+    test(`SIG${signal} during the propagation cushion exits ${code} and never publishes the root (${auth})`, () => {
+      const ws = makeWorkspace();
+      try {
+        const npm = swapStubNpm(ws, { target: ws.rootTarball, bytes: Buffer.from("unused"), on: "never" });
+        const signalled = resolve(ws.root, "signalled");
+        writeFileSync(
+          resolve(ws.bin, "sleep"),
+          `#!/usr/bin/env bash\necho "$PPID" > "${signalled}"\nkill -${signal} "$PPID"\nkill -${signal} $$\nexit 0\n`,
+        );
+        chmodSync(resolve(ws.bin, "sleep"), 0o755);
+        const env: Record<string, string> = { ...REAL_RUN };
+        if (auth === "NPM_TOKEN") env.NPM_TOKEN = TOKEN;
+        const r = runScript(ws, ws.root, ws.artifacts, env, []);
+
+        // The stub really fired, inside the cushion, after every platform package went out.
+        expect(existsSync(signalled)).toBe(true);
+        expect(r.out).toContain("propagation cushion: waiting");
+        expect(r.out).toContain(auth === "NPM_TOKEN" ? "source: NPM_TOKEN" : "falling back to ~/.npmrc");
+        expect(npm.published()).toEqual(PLATFORMS.map((p) => `PUBLISH ${platformFile(p)}`));
+        // And the script stopped there.
+        expect(r.code).toBe(code);
+        expect(r.out).not.toContain(`rehash   ${ws.rootTarball}`);
+        expect(r.out).not.toContain(`STUB PUBLISH ${resolve(ws.artifacts, ws.rootTarball)}`);
+      } finally {
+        ws.cleanup();
+      }
+    });
+  }
+
+  // THE CASE THE REVIEW MEASURED PUBLISHING. A signal in the cushion (above) is already stopped
+  // under the old trap, but only by luck: cleanup deletes the kept receipt, so the root's re-check
+  // then fails closed with exit 1. A signal landing AFTER the re-check has read the receipt value
+  // is different. The old handler ran, deleted the files, returned, and the compare and
+  // `npm publish` went ahead. Here a stub `shasum` fires on the root's re-hash, and only after the
+  // last platform package is published. It sends INT to the SCRIPT alone, as `kill -INT <pid>` from
+  // another terminal would. shasum runs inside `$(shasum | awk)`, so the script is its parent's
+  // parent.
+  for (const auth of ["~/.npmrc fallback", "NPM_TOKEN"] as const) {
+    test(`SIGINT during the root's own re-hash exits 130 and never publishes the root (${auth})`, () => {
+      const ws = makeWorkspace();
+      try {
+        const npm = swapStubNpm(ws, { target: ws.rootTarball, bytes: Buffer.from("unused"), on: "never" });
+        const realShasum = execFileSync("bash", ["-c", "command -v shasum"], { encoding: "utf8" }).trim();
+        const state = resolve(ws.root, "npm-state");
+        const signalled = resolve(ws.root, "signalled");
+        writeFileSync(
+          resolve(ws.bin, "shasum"),
+          `#!/usr/bin/env bash
+if [ -f "${state}/published-@opum-ai_lore-win32-x64" ] && [ "\${@: -1}" = "${resolve(ws.artifacts, ws.rootTarball)}" ] \\
+   && [ ! -f "${signalled}" ]; then
+  script="$(ps -o ppid= -p "$PPID" | tr -d ' ')"
+  ps -o command= -p "$script" > "${signalled}"
+  kill -INT "$script"
+fi
+exec "${realShasum}" "$@"
+`,
+        );
+        chmodSync(resolve(ws.bin, "shasum"), 0o755);
+        const env: Record<string, string> = { ...REAL_RUN };
+        if (auth === "NPM_TOKEN") env.NPM_TOKEN = TOKEN;
+        const r = runScript(ws, ws.root, ws.artifacts, env, []);
+
+        // The signal really went to the script, during the root's re-check.
+        expect(readFileSync(signalled, "utf8")).toContain("publish-release.sh");
+        expect(npm.published()).toEqual(PLATFORMS.map((p) => `PUBLISH ${platformFile(p)}`));
+        expect(r.code).toBe(130);
+        expect(r.out).not.toContain(`STUB PUBLISH ${resolve(ws.artifacts, ws.rootTarball)}`);
+      } finally {
+        ws.cleanup();
+      }
+    });
+  }
+
   // The re-check's reader is `node -e <script>` with the kept receipt's path and the tarball name
   // as its last two arguments. This shim passes every other node call straight through. For the
   // ROOT's re-check it either deletes the root's entry from the kept receipt and then runs the

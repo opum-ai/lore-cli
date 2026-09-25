@@ -83,8 +83,10 @@
 # instead is the QUALIFICATION RECEIPT (LCLI-578, below). opum-cli-e2e's receipt records a
 # sha256 for all seven tarballs, root included, and this script refuses unless every one
 # matches the file it will publish. It then re-hashes each tarball IMMEDIATELY before that
-# tarball's own `npm publish` and refuses if the bytes changed after the gate (LCLI-586), so
-# the root launcher published ~30 minutes after the gate is still the one the receipt names.
+# tarball's own `npm publish` and refuses if the bytes changed after the gate (LCLI-586). So the
+# root launcher, published up to ~30 minutes after the gate, is re-checked against the receipt
+# just before its own publish, leaving only the milliseconds between that re-hash and npm's
+# own read of the file unchecked.
 # Be exact about what the receipt's root digest is. opum-cli-e2e re-hashes it at write time
 # from THIS SAME Release run's npm-packages artifact (its receipts/README.md: "re-hashed at
 # write time from the bound artifacts"). So it is recorded by ANOTHER REPOSITORY, from bytes
@@ -597,8 +599,16 @@ JS
 #
 # ONE cleanup, installed once and re-installed by the npmrc section below. `trap` REPLACES a
 # signal's handler rather than adding to it, so two sections each installing their own `rm -f`
-# would leave whichever ran first uncleaned. EXIT INT TERM is the set the npmrc section already
-# names, and its comment says why.
+# would leave whichever ran first uncleaned.
+#
+# INT AND TERM MUST EXIT, NOT JUST CLEAN UP. A handler for a signal REPLACES the default action,
+# which was to kill the script, so a handler that only cleans up lets bash carry on at the next
+# command once the interrupted one returns. That was a live defect: `trap 'rm -f ...' EXIT INT
+# TERM` on the token path meant Ctrl-C during the registry wait deleted the private npmrc and
+# then PUBLISHED THE ROOT LAUNCHER anyway, falling back to ~/.npmrc (the LCLI-586 review measured
+# it under bash 3.2 and 5.2). An operator pressing Ctrl-C there means stop. 130 and 143 are the
+# conventional 128+SIGINT and 128+SIGTERM. EXIT also fires on the way out, which runs cleanup a
+# second time. That is harmless, because cleanup only removes files.
 RECEIPT_FILE=""
 TMP_NPMRC=""
 cleanup_private_files() {
@@ -606,17 +616,27 @@ cleanup_private_files() {
   if [ -n "$RECEIPT_FILE" ]; then rm -f "$RECEIPT_FILE"; fi
   return 0
 }
-trap cleanup_private_files EXIT INT TERM
+install_cleanup_traps() {
+  trap cleanup_private_files EXIT
+  trap 'cleanup_private_files; exit 130' INT
+  trap 'cleanup_private_files; exit 143' TERM
+}
+install_cleanup_traps
 
 # THE CHECK-TO-PUBLISH WINDOW (LCLI-586). verify_qualification_receipt hashes every tarball ONCE,
 # before any publish. The root launcher is published LAST, behind the registry-visibility wait
 # (REGISTRY_WINDOW_SECONDS, 1800s by default) and the propagation cushion, so up to ~30 minutes
 # after the gate. Nothing in this script writes to $ARTIFACTS in that window, so only an outside
 # process could swap a file, but one swapped then would otherwise be published unchecked. So each
-# tarball is re-hashed with the same `shasum -a 256` IMMEDIATELY before its own `npm publish` (and
-# before a --dry-run's "would npm publish", so a rehearsal exercises it), and compared with the
-# receipt's value for that exact filename. Any mismatch, or a value that cannot be read, dies
-# before the publish.
+# tarball is re-hashed with `shasum -a 256` (the tool verify_platform_digests uses; the gate
+# itself hashes in node's crypto, and both are plain sha256 of the file's bytes) IMMEDIATELY
+# before its own `npm publish` (and before a --dry-run's "would npm publish", so a rehearsal
+# exercises it), and compared with the receipt's value for that exact filename. Any mismatch, or
+# a value that cannot be read, dies before the publish.
+#
+# THIS NARROWS THE WINDOW; IT DOES NOT CLOSE IT. shasum reads the path, then npm reads the same
+# path again, so a swap in the milliseconds between the two still goes unchecked. Closing it would
+# mean publishing from a private copy made at check time, which was deliberately not done here.
 receipt_digest_for() {
   # Own-property lookup, as receipt_check_js does: an inherited key such as `constructor` must
   # not resolve to a value. Prints nothing and exits non-zero unless the entry is 64 hex digits.
@@ -827,10 +847,11 @@ if [ -n "$TOKEN" ]; then
   # suffices depends on bash version and how the signal is delivered, and the two moments an
   # operator is most likely to press Ctrl-C (the 30-minute propagation wait, the npx smoke)
   # are both after it exists. Naming all three costs nothing and removes the question.
-  # The handler is the shared cleanup_private_files (it also removes the kept receipt, LCLI-586):
-  # a second `trap 'rm -f ...'` here would REPLACE that one, not add to it. Installed already
-  # above; re-installed here so this section does not depend on that line surviving an edit.
-  trap cleanup_private_files EXIT INT TERM
+  # The handlers are the shared install_cleanup_traps (cleanup also removes the kept receipt, and
+  # INT/TERM EXIT rather than resume: see the comment there, LCLI-586). A second `trap 'rm -f ...'`
+  # here would REPLACE those, not add to them. Installed already above; re-installed here so this
+  # section does not depend on that line surviving an edit.
+  install_cleanup_traps
   printf '%s\n' "$NPMRC_LINE" > "$TMP_NPMRC" \
     || die "could not write the private npmrc; refusing to fall back to ~/.npmrc silently"
   export npm_config_userconfig="$TMP_NPMRC"

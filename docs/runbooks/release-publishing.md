@@ -698,7 +698,10 @@ publish is explicitly marked public. Root `package.json` and all six
    mismatch. Since LCLI-586, it also re-hashes each tarball immediately before
    that tarball's own `npm publish`, including on `--dry-run`, and refuses if
    the bytes changed after the gate. So the root launcher, which is published up
-   to about 30 minutes after the gate, is still the one the receipt names. Be
+   to about 30 minutes after the gate, is re-checked against the receipt just
+   before its own publish. That narrows the window rather than closing it: npm
+   reads the file again milliseconds after the re-hash, and that gap is
+   unchecked. Be
    exact about what the receipt's root digest is. opum-cli-e2e re-hashes it from
    this same Release run's `npm-packages` artifact (its `receipts/README.md`:
    "re-hashed at write time from the bound artifacts"). It is recorded by
