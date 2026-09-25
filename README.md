@@ -224,6 +224,7 @@ lore context stories/bulk-archive-completed-orders --max-tokens 4000
 
 `--plain` is stable, line-oriented text — ideal for pipes and grep:
 
+<!-- quickstart:example -->
 ```bash
 $ lore tasks stories/bulk-archive-completed-orders --plain
 tasks: stories/bulk-archive-completed-orders — 2 tasks
@@ -233,6 +234,7 @@ tasks: stories/bulk-archive-completed-orders — 2 tasks
 
 `--json` is the additive-only machine contract:
 
+<!-- quickstart:example -->
 ```bash
 $ lore check --json
 {
@@ -260,6 +262,7 @@ makes the command exit `6`:
   "message": "link \"../nope/missing.md\" points at \"nope/missing.md\", which is not in the bundle" }
 ```
 
+<!-- quickstart:example-skip -->
 ```bash
 $ lore validate --json && echo "conformant"   # exit 6 on validation/drift
 ```
