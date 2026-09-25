@@ -58,7 +58,8 @@
 #     guarantee; only gating on READS can. See "REGISTRY GATE BEFORE THE ROOT LAUNCHER" below.
 #   - HARD-REFUSES without a qualification receipt from opum-cli-e2e that names this version,
 #     this run id and every tarball's sha256, with verdict QUALIFIED or a complete override
-#     written into the receipt itself (LCLI-578). Nothing on the command line bypasses it.
+#     written into the receipt itself (LCLI-578). No flag or env var this script reads bypasses
+#     it, and the receipt's host (GH_HOST is overridden), repository and ref are pinned.
 #   - Resumable: a version already on the registry is skipped, not re-attempted. This is
 #     what made five failed 0.6.2 attempts cost nothing.
 #   - --dry-run does everything except the two mutating calls.
@@ -98,8 +99,9 @@
 #
 # Refuses to publish without receipts/lore/<version>.json on opum-ai/opum-cli-e2e main (read with
 # your gh login) matching this version, run id and all seven tarball sha256s, with verdict
-# QUALIFIED or a complete override {by, reason, task, adr} in that file. No flag or env var
-# bypasses it. --dry-run reports the receipt verdict, and stops non-zero if it would refuse.
+# QUALIFIED or a complete override {by, reason, task, adr} in that file. No flag or env var this
+# script reads bypasses it; the host is pinned to github.com even if GH_HOST is set. --dry-run
+# reports the receipt verdict, and stops non-zero if it would refuse.
 #
 # --verify-only reads the REGISTRY and nothing else: no artifacts, no gh, no network beyond
 # npm. It is what the propagation-timeout message tells you to run, so it must stay reachable
@@ -497,9 +499,12 @@ regenerating it -- refusing to report a seal that did not happen."
 # receipts/README.md on opum-ai/opum-cli-e2e main; this reader was built against it and against
 # receipts/lore/0.9.2.json and 0.9.3.json there (main d49ab79d, 2026-09-25).
 #
-# The repository and ref are CONSTANTS, not env vars: pointing the reader at a fork or a branch
-# would be a bypass. There is no flag or env var that skips this gate; the only way past a
-# non-QUALIFIED verdict is an override {by, reason, task, adr} landed in the receipt by PR.
+# The HOST, repository and ref are CONSTANTS, not env vars: pointing the reader at a fork, a
+# branch or another GitHub host would be a bypass. `--hostname github.com` is passed explicitly
+# because gh otherwise honours GH_HOST, which would let the environment redirect the read. No
+# flag or env var THIS SCRIPT READS skips the gate -- a claim about its own inputs, not about
+# everything gh or node might consult. The only way past a non-QUALIFIED verdict is an override
+# {by, reason, task, adr} landed in the receipt by PR.
 #
 # Deliberately NOT bound: harness.commit (it is the commit that LANDED the baseline, not the one
 # that ran it -- see commitMeaning in the file), and the receipt's own commit and runAttempt,
@@ -568,14 +573,14 @@ JS
 }
 
 verify_qualification_receipt() {
-  local receipt err rc out entry names=() mode
+  local receipt err rc out nerr entry names=() mode
   need_gh
   receipt="$(mktemp)"; err="$(mktemp)"
-  say "reading the qualification receipt: $RECEIPT_REPO $RECEIPT_PATH @ main"
+  say "reading the qualification receipt: $RECEIPT_REPO $RECEIPT_PATH @ main on github.com"
   # Raw media type, so the body IS the file. ANY failure is NO RECEIPT and is never retried: the
   # contract says 404 and 403 mean exactly that (the repository is private), and anything else is
   # a receipt this script could not read, which is not a receipt it can honour.
-  gh api -H "Accept: application/vnd.github.raw+json" \
+  gh api --hostname github.com -H "Accept: application/vnd.github.raw+json" \
     "repos/$RECEIPT_REPO/contents/$RECEIPT_PATH?ref=main" >"$receipt" 2>"$err"
   rc=$?
   if [ "$rc" -ne 0 ]; then
@@ -585,31 +590,48 @@ gh could not read $RECEIPT_PATH from $RECEIPT_REPO@main (exit $rc). gh said:
 $out
 A 404 or 403 means no receipt this login can see ($RECEIPT_REPO is private). It is not retried.
 Wait for opum-cli-e2e to land the receipt on main (it appears minutes after its PR merges), or
-land an override in it by PR. No flag or environment variable bypasses this gate."
+land an override in it by PR. No flag or environment variable this script reads bypasses it."
   fi
   for entry in "${PLATFORM_PKGS[@]}" "$ROOT_PKG"; do names+=("${entry#*:}"); done
-  out="$(node -e "$(receipt_check_js)" "$receipt" "$VERSION" "$RUN_ID" "$ARTIFACTS" "${names[@]}" 2>&1)"
+  # STDOUT AND STDERR ARE KEPT APART. The verdict is read from stdout only; the reasons for a
+  # refusal, and anything node itself prints (a deprecation warning, say), go to stderr and are
+  # only ever quoted in a die message -- so a stray line can never be read as the verdict.
+  out="$(node -e "$(receipt_check_js)" "$receipt" "$VERSION" "$RUN_ID" "$ARTIFACTS" "${names[@]}" 2>"$err")"
   rc=$?
+  nerr="$(cat "$err")"
   rm -f "$receipt" "$err"
   # A refusal STOPS a --dry-run too, rather than rehearsing on past it. The real run would stop
   # here, and a rehearsal that goes on to print credential and publish steps the real run can
   # never reach reads like a green light. It exits non-zero so a scripted rehearsal cannot pass.
   [ "$rc" -eq 0 ] || die "the qualification receipt does NOT qualify these bytes -- refusing to publish (LCLI-578).
 Receipt: $RECEIPT_REPO $RECEIPT_PATH @ main. Refused because:
-$out
+$nerr
 The only way past this is a receipt on $RECEIPT_REPO main that matches, or a complete override
-(by, reason, task, adr) written into it by PR. No flag or environment variable bypasses it."
+(by, reason, task, adr) written into it by PR. No flag or env var this script reads bypasses it."
+  # A POSITIVE TOKEN IS REQUIRED TO PROCEED, and the default is refusal. An exit-0 checker that
+  # printed nothing -- an empty heredoc makes `node -e ""` exit 0 -- used to leave $mode empty
+  # and fall through into the override branch, i.e. publish. Anything but the two tokens dies.
   mode="$(printf '%s\n' "$out" | head -1)"
-  if [ "$mode" = "QUALIFIED" ]; then
-    say "receipt: QUALIFIED -- version $VERSION, run $RUN_ID and all ${#names[@]} tarball sha256 match"
-    [ "$DRY_RUN" -eq 1 ] && say "receipt: QUALIFIED (would proceed)"
-    return 0
-  fi
-  hr
-  say "!!! receipt verdict is ${mode#OVERRIDE } -- proceeding ONLY on the override written in the receipt:"
-  printf '%s\n' "$out" | tail -n +2
-  [ "$DRY_RUN" -eq 1 ] && say "!!! receipt: OVERRIDE (would proceed on the override above)"
-  hr
+  case "$mode" in
+    QUALIFIED)
+      say "receipt: QUALIFIED -- version $VERSION, run $RUN_ID and all ${#names[@]} tarball sha256 match"
+      [ "$DRY_RUN" -eq 1 ] && say "receipt: QUALIFIED (would proceed)"
+      ;;
+    "OVERRIDE "?*)
+      hr
+      say "!!! receipt verdict is ${mode#OVERRIDE } -- proceeding ONLY on the override written in the receipt:"
+      printf '%s\n' "$out" | tail -n +2
+      [ "$DRY_RUN" -eq 1 ] && say "!!! receipt: OVERRIDE (would proceed on the override above)"
+      hr
+      ;;
+    *)
+      die "unrecognised output from the receipt checker -- refusing to publish (LCLI-578).
+It exited 0 but its first stdout line was $(printf '%q' "$mode"), not QUALIFIED or OVERRIDE.
+A checker that did not say yes is treated as no. Its stderr:
+${nerr:-    (empty)}"
+      ;;
+  esac
+  return 0
 }
 
 # SKIPPED ENTIRELY FOR --verify-only, which reads the registry and nothing else. The

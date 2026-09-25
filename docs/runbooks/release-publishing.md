@@ -676,7 +676,10 @@ publish is explicitly marked public. Root `package.json` and all six
    verdict must be `QUALIFIED`, or the receipt must carry a complete `override`
    (`by`, `reason`, `task`, `adr`), which is printed verbatim. A 404 or 403
    means no receipt, and the script refuses without retrying. No flag or
-   environment variable bypasses the gate. The only way past a non-qualifying
+   environment variable the script reads bypasses the gate. The host, repository
+   and ref are pinned: the read passes `--hostname github.com`, so `GH_HOST`
+   cannot redirect it. If the checker's output is anything other than a
+   recognised verdict, the script refuses. The only way past a non-qualifying
    verdict is an override landed in the receipt by pull request. `--dry-run`
    prints the receipt verdict. If the receipt would be refused, the dry-run
    stops there and exits non-zero. So, before publishing, wait for

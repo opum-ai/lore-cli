@@ -165,8 +165,25 @@ set -uo pipefail
 if [ "\${1:-}" = "api" ]; then
   [ -n "\${GH_FAIL_API:-}" ] && exit 1
   case "$*" in
-    *contents/receipts/lore/${VERSION}.json*)
-      [ -f "${receiptFile}" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+    *contents/receipts/*)
+      # PINNED, not pattern-matched: the receipt is served ONLY for the exact request the script
+      # must make -- github.com host (so GH_HOST cannot redirect it), the raw media type, and the
+      # exact repository, path and ref=main. Anything else answers as gh does for a missing file.
+      # A stub that accepted any ref left a ref=dev mutation green.
+      shift
+      host=""; accept=""; path=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --hostname) host="$2"; shift 2 ;;
+          -H) accept="$2"; shift 2 ;;
+          *) path="$1"; shift ;;
+        esac
+      done
+      if [ "$host" != "github.com" ] || [ "$accept" != "Accept: application/vnd.github.raw+json" ] \
+         || [ "$path" != "repos/opum-ai/opum-cli-e2e/contents/receipts/lore/${VERSION}.json?ref=main" ] \
+         || [ ! -f "${receiptFile}" ]; then
+        echo "gh: Not Found (HTTP 404)" >&2; exit 1
+      fi
       cat "${receiptFile}"; exit 0 ;;
   esac
   echo "${ATTEMPT}"; exit 0
@@ -187,6 +204,15 @@ if [ "\${1:-}" = "run" ] && [ "\${2:-}" = "download" ]; then
   if [ -n "$name" ]; then cp "${source}"/*.tgz "$dest"/; exit 0; fi
   if [ -n "$pattern" ]; then
     n=$(( $(cat "${patternAttempts}" 2>/dev/null || echo 0) + 1 )); echo "$n" > "${patternAttempts}"
+    if [ -n "\${GH_FAIL_PATTERN_ONCE:-}" ] && [ "$n" -eq 1 ]; then
+      # A FAILED ATTEMPT THAT STILL LEFT FILES BEHIND: a stale report with a wrong digest, under a
+      # differently named artifact directory so it is found as a SECOND match. Only the script
+      # emptying the directory between attempts keeps it out of attempt 2's result.
+      stale="$dest/ladybug-package-qualification-linux-x64-${RUN_ID}-partial"
+      mkdir -p "$stale"
+      printf '%s' '{"repository":{"commit":"${COMMIT}"},"package":{"platformTarballSha256":"sha256:${"0".repeat(64)}"}}' \
+        > "$stale/ladybug-package-qualification-linux-x64.json"
+    fi
     if [ -n "\${GH_FAIL_PATTERN:-}" ] || { [ -n "\${GH_FAIL_PATTERN_ONCE:-}" ] && [ "$n" -eq 1 ]; }; then
       echo "stub gh: error downloading ladybug-package-qualification artifacts: HTTP 502 Bad Gateway (attempt $n)" >&2
       exit 1
@@ -1002,12 +1028,62 @@ describeOnPosix("scripts/publish-release.sh qualification receipt (LCLI-578)", (
         RECEIPT_OVERRIDE: "1",
         SKIP_QUALIFICATION: "1",
         SKIP_TOKEN_SHAPE_CHECK: "1",
+        GH_HOST: "ghe.example.invalid",
         FORCE: "1",
       };
       const r = runScript(ws, ws.root, ws.artifacts, { ...REAL_RUN, ...bypasses }, []);
       expect(r.stderr).toContain("NO QUALIFICATION RECEIPT");
       expect(r.out).not.toContain("STUB PUBLISH");
       expect(r.code).toBe(1);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  // The checker is `node -e <heredoc>`. These two replace `node` on PATH with a shim that passes
+  // every call through to the real node EXCEPT the receipt check (recognised by the receipt kind
+  // in its script text), where it simulates a checker that exits 0 having said nothing -- what an
+  // emptied heredoc produces -- or one that emits a warning on stderr before answering.
+  function shimNode(ws: ReturnType<typeof makeWorkspace>) {
+    const realNode = execFileSync("bash", ["-c", "command -v node"], { encoding: "utf8" }).trim();
+    writeFileSync(
+      resolve(ws.bin, "node"),
+      `#!/usr/bin/env bash
+case "$*" in
+  *opum.qualification-receipt.v1*)
+    [ "\${NODE_SHIM:-}" = silent ] && exit 0
+    [ "\${NODE_SHIM:-}" = warn ] && echo "(node:4242) ExperimentalWarning: a stray line on stderr" >&2 ;;
+esac
+exec "${realNode}" "$@"
+`,
+    );
+    chmodSync(resolve(ws.bin, "node"), 0o755);
+  }
+
+  test("a checker that exits 0 but says nothing REFUSES rather than falling through to publish", () => {
+    const ws = makeWorkspace();
+    try {
+      shimNode(ws);
+      ws.writeReceipt((r) => {
+        r.verdict = "NOT QUALIFIED";
+      });
+      const r = runScript(ws, ws.root, ws.artifacts, { ...REAL_RUN, NODE_SHIM: "silent" }, []);
+      expect(r.stderr).toContain("unrecognised output from the receipt checker -- refusing to publish");
+      expect(r.out).not.toContain("proceeding ONLY on the override");
+      expect(r.out).not.toContain("STUB PUBLISH");
+      expect(r.code).toBe(1);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("a line on the checker's stderr never becomes the verdict", () => {
+    const ws = makeWorkspace();
+    try {
+      shimNode(ws);
+      const r = runScript(ws, ws.root, ws.artifacts, { NODE_SHIM: "warn" });
+      expect(r.out).toContain("receipt: QUALIFIED (would proceed)");
+      expect(r.code).toBe(0);
     } finally {
       ws.cleanup();
     }
@@ -1068,6 +1144,9 @@ describeOnPosix("scripts/publish-release.sh qualification-report download (LCLI-
       expect(r.out).toContain("HTTP 502 Bad Gateway (attempt 1)");
       expect(r.out).toContain("retrying once");
       expect(r.out).toContain("6/6 platform tarballs match the digests CI recorded");
+      // Attempt 1 left a stale report behind; the retry must not have seen it.
+      expect(r.out).not.toContain("AMBIGUOUS");
+      expect(r.out).not.toContain("DIGEST MISMATCH");
       expect(ws.patternAttempts()).toBe(2);
       expect(r.code).toBe(0);
     } finally {
