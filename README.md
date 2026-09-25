@@ -236,18 +236,28 @@ tasks: stories/bulk-archive-completed-orders — 2 tasks
 ```bash
 $ lore check --json
 {
-  "schemaVersion": "1",
+  "schemaVersion": 1,
   "kind": "check.report",
   "data": {
-    "ok": false,
-    "drift": [
-      { "concept": "stories/bulk-archive-completed-orders",
-        "field": "status", "have": "todo", "want": "in-progress" }
-    ],
-    "brokenLinks": [],
-    "portability": []
-  }
+    "findings": [],
+    "errorCount": 0,
+    "warningCount": 0,
+    "fileCount": 8,
+    "skippedOutOfBundleLinkCount": 0,
+    "complete": true
+  },
+  "principal": null
 }
+```
+
+That is the quickstart repository above, checked clean. A problem appears as an
+entry in `findings`, is counted in `errorCount` or `warningCount`, and an error
+makes the command exit `6`:
+
+```json
+{ "severity": "error", "rule": "broken-link",
+  "file": "stories/bulk-archive-completed-orders.md",
+  "message": "link \"../nope/missing.md\" points at \"nope/missing.md\", which is not in the bundle" }
 ```
 
 ```bash
