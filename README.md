@@ -136,8 +136,9 @@ The npm package is a dual artifact: a Node `.cjs` launcher plus a
 per-platform compiled binary delivered as `optionalDependencies` (built with
 `bun build --compile`, `-baseline` x64 targets). In `0.2.0`, all JavaScript
 libraries became build-only and are not installed transitively with the
-launcher. You also need a
-`--json`-capable Backlog.md (>=1.49.0) on `PATH` — e.g. `npm install -g
+launcher. You also need the CLI of the tracker you couple to on `PATH`: Quest
+for the default backend (`npm install -g @opum-ai/quest`, which the quickstart
+below uses), or a `--json`-capable Backlog.md (>=1.49.0) — e.g. `npm install -g
 backlog.md`; see the [runbook](docs/runbooks/backlog-json-patch.md).
 
 ### Private-repository CI
@@ -183,21 +184,23 @@ three modes with precedence `--json` > `--plain` > pretty:
 #    path that is not a worktree.
 git init
 
-# 1. Scaffold the OKF bundle (docs/, .lore/). On a bare TTY invocation the
-#    wizard offers `git init` for you, then covers the rest of onboarding
-#    (agent bridge, doc-site scaffolds, tracker check); off a TTY (CI, this
-#    snippet) it's exactly this — the bundle only, non-interactively.
-#    Add `--allow-no-git` for a docs-only bundle outside a repository.
-lore init
-
-# 2. Create the tasks to couple to. This quickstart assumes Quest, the tracker
-#    `lore init` selects by default (`[tracker] backend = "quest"` in
-#    .lore/config.toml; Backlog.md and Jira are the alternatives). Quest writes,
-#    including the ones lore makes for you, need an explicit actor.
+# 1. Initialize the tracker lore couples to, BEFORE `lore init`: this
+#    quickstart assumes Quest, which `lore init` selects by default
+#    (`[tracker] backend = "quest"` in .lore/config.toml; Backlog.md and Jira
+#    are the alternatives), and the interactive wizard refuses a Quest backend
+#    whose workspace is not initialized yet. Quest writes, including the ones
+#    lore makes for you, need an explicit actor.
 quest init --name "Orders" --task-id-prefix task --skill-source none
 export LORE_QUEST_ACTOR=jdoe LORE_QUEST_ACTOR_KIND=human
 quest task create "Bulk archive" --actor jdoe --actor-kind human   # -> task-1
 quest task create "Archive UI"   --actor jdoe --actor-kind human   # -> task-2
+
+# 2. Scaffold the OKF bundle (docs/, .lore/). On a bare TTY invocation this
+#    runs a guided wizard (agent bridge, doc-site scaffolds, tracker check);
+#    off a TTY (CI, this snippet) it's exactly this — the bundle only,
+#    non-interactively. Add `--allow-no-git` for a docs-only bundle outside a
+#    repository.
+lore init
 
 # 3. Create typed concepts from frontmatter templates.
 lore new story "Bulk archive completed orders"

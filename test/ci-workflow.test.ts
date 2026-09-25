@@ -216,6 +216,14 @@ describe("ci.yml docs gate (LCLI-504)", () => {
     expect(steps.some((step) => (step.run ?? "").includes("Quest CLI \\([0-9][0-9.]*\\)"))).toBe(true);
   });
 
+  test("compile smoke runs the README quickstart against the binary it just built", () => {
+    // LCLI-571: the quickstart ships in the npm tarball and sat broken through three
+    // releases because nothing ran it. The script needs the quest binary, so assert both.
+    const steps = loadWorkflow().jobs["build"]?.steps ?? [];
+    expect(steps.some((step) => step.run === "scripts/readme-quickstart.sh dist/lore")).toBe(true);
+    expect(steps.some((step) => (step.run ?? "").includes('npm install -g "@opum-ai/quest@'))).toBe(true);
+  });
+
   test("the docs gate never depends on another job, so a required context cannot go absent", () => {
     // A `needs:` would make this context SKIP when its dependency fails, and a skipped
     // context is absent rather than green — which blocks dev until an admin notices.

@@ -302,7 +302,7 @@ jobs:
       # Version DERIVED from the managed block in CLAUDE.md for the reasons the tracker
       # job states at length: a second pin drifts from the block that already declares
       # the version, and a float turns an unrelated upstream publish into a red build on
-      # somebody's unrelated PR. Keep the two copies in step.
+      # somebody's unrelated PR. Keep every copy in step (tracker, docs gate, compile smoke).
       - name: Resolve the Quest version CLAUDE.md declares
         id: quest
         run: |

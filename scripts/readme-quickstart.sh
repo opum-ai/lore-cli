@@ -18,8 +18,15 @@ command -v quest >/dev/null || { echo "readme-quickstart: quest is not on PATH" 
 snippet=$(awk '/<!-- quickstart:start -->/{on=1; next} /<!-- quickstart:end -->/{on=0} on' "$repo/README.md" \
   | sed -e '/^```/d')
 # Fail rather than pass on an empty extraction: a moved marker must not read as a clean run.
+# The floor is the current count: dropping a command from the quickstart should be a
+# deliberate edit here too, not something the gate absorbs.
 count=$(printf '%s\n' "$snippet" | grep -cE '^(lore|quest|git|export) ' || true)
-[ "$count" -ge 10 ] || { echo "readme-quickstart: extracted only $count commands from README.md" >&2; exit 2; }
+[ "$count" -ge 14 ] || { echo "readme-quickstart: extracted only $count commands from README.md (expected >= 14)" >&2; exit 2; }
+# `set -e` does not stop on a failure inside an && / || list, so a README line using one
+# could fail and still pass here. Refuse the construct rather than trust it.
+if printf '%s\n' "$snippet" | grep -v '^[[:space:]]*#' | grep -qE '&&|\|\|'; then
+  echo "readme-quickstart: the quickstart uses && or ||, which hides failures from set -e" >&2; exit 2
+fi
 
 work=$(mktemp -d)
 trap 'chmod -R u+w "$work" 2>/dev/null; rm -rf "$work" || true' EXIT
@@ -28,7 +35,10 @@ ln -s "$lore_bin" "$work/bin/lore"
 
 echo "readme-quickstart: $count commands, lore $("$lore_bin" --version), quest $(quest --version)"
 cd "$work/repo"
-PATH="$work/bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null \
+# Unset the actor variables so the README's own `export` line is what supplies them:
+# a developer with them already exported must not pass where a reader would fail.
+env -u LORE_QUEST_ACTOR -u LORE_QUEST_ACTOR_KIND -u LORE_QUEST_ACCOUNTABLE_HUMAN \
+  PATH="$work/bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null \
   GIT_AUTHOR_NAME=quickstart GIT_AUTHOR_EMAIL=quickstart@example.invalid \
   GIT_COMMITTER_NAME=quickstart GIT_COMMITTER_EMAIL=quickstart@example.invalid \
   bash -euxo pipefail -c "$snippet"
