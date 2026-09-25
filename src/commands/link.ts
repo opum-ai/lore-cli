@@ -247,6 +247,20 @@ export async function runLink(options: LinkOptions): Promise<number> {
   });
   const nextTasks = [...existingTasks, ...tasks.filter((t) => t.status === "added").map((t) => t.task.toLowerCase())];
 
+  // Refuse before the doc-side write when a back-reference edit will be needed and the tracker
+  // cannot accept one (LCLI-582): a missing Quest actor fails every edit identically, so writing
+  // `tasks:` first left the link half-applied behind an exit 6. Decided from the validation
+  // snapshot above, so a run that needs no edit (label and --doc already present) still succeeds
+  // without an actor exactly as before. The per-task loop re-reads fresh, so a task that changes in
+  // between can still reach the old late failure; that race is the residue, not the common case.
+  if (!noBackRef) {
+    const needsEdit = detailResults.some((result) => {
+      const detail = result.status === "fulfilled" ? result.value : null;
+      return detail !== null && (!hasLabel(detail, label) || !containsCaseInsensitive(detail.documentation, docPath));
+    });
+    if (needsEdit) adapter.assertWriteReady?.();
+  }
+
   const changed = writeTasksIfChanged(docsRoot, concept, existingTasks, nextTasks, profile);
 
   let anyBackRefFailed = false;
@@ -366,6 +380,12 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
     });
     const removedLower = new Set(tasks.filter((t) => t.status === "removed").map((t) => t.task.toLowerCase()));
     const nextTasks = existingTasks.filter((t) => !removedLower.has(t.toLowerCase()));
+    // Refuse before writing when the tracker cannot accept the back-reference removal that follows
+    // (LCLI-582, runLink's check). unlink reads no task up front, so it cannot tell whether an edit
+    // will be needed: it refuses whenever it would change the doc and back-refs are on. A concept
+    // listing a task whose label is already gone therefore now needs an actor too; before, it
+    // succeeded. `--no-back-ref` skips the check entirely.
+    if (!noBackRef && removedLower.size > 0) adapter.assertWriteReady?.();
     // Write the doc-side removal FIRST — mirrors runLink's order. The doc write needs no Backlog
     // round-trip and never depends on any back-reference edit's outcome, so committing it before
     // the per-task Backlog edits means a failure on the Backlog side can never strand it (the

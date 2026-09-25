@@ -77,6 +77,15 @@ export interface TrackerAdapter {
    * entirely rather than implementing it as an always-`undefined` no-op.
    */
   pausedStatus?(): Promise<string | undefined>;
+  /**
+   * Throw the error a write would throw when that error is caller configuration rather than a
+   * per-task failure, so a command can refuse BEFORE it writes anything of its own (LCLI-582).
+   * Quest implements it as its actor-declaration check: a missing `LORE_QUEST_ACTOR` fails every
+   * write identically, so `lore link` used to write the concept's `tasks:` and only then learn that
+   * no back-reference edit could land. Synchronous and I/O-free on purpose — it asks only what the
+   * adapter already knows. Optional: a backend whose writes need no such declaration omits it.
+   */
+  assertWriteReady?(): void;
   listTasks(opts?: ListTasksOptions): Promise<BacklogTask[]>;
   viewTask(id: string): Promise<BacklogTaskDetail | null>;
   searchByLabel(label: string): Promise<BacklogTask[]>;

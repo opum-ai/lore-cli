@@ -8,6 +8,7 @@ import type {
   ListTasksOptions,
 } from "../src/adapters/backlog";
 import { BACKLOG_SOURCE_ADAPTER_VERSION, DEFAULT_STATUS_FLOW } from "../src/adapters/backlog";
+import { isQuestActorContextFailure } from "../src/adapters/quest";
 import { type Concept, idFromPath } from "../src/core/concept";
 import { BACKLOG_STATUS_FLOW_HINTS } from "../src/core/reconcile";
 import type { Writer } from "../src/errors";
@@ -305,6 +306,16 @@ export function fakeAdapter(
     searchByLabel: notImplemented("searchByLabel"),
     searchTasks: notImplemented("searchTasks"),
     createTask: notImplemented("createTask"),
+    // A Quest actor-context failure is global, so the real adapter's assertWriteReady throws it
+    // before any write (LCLI-582). Only that kind of injected error is mirrored here; a per-task
+    // failure is not something a pre-write check could know.
+    ...(opts.editTaskThrows !== undefined && isQuestActorContextFailure(opts.editTaskThrows)
+      ? {
+          assertWriteReady: (): void => {
+            throw opts.editTaskThrows;
+          },
+        }
+      : {}),
     calls,
     async viewTask(id: string): Promise<BacklogTaskDetail | null> {
       if (poisonViews.has(id.toLowerCase())) {
