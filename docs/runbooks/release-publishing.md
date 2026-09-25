@@ -666,6 +666,23 @@ publish is explicitly marked public. Root `package.json` and all six
    script had already diagnosed precisely and then declined to perform; it now
    performs them (LCLI-489).
 
+   **It hard-refuses to publish without a qualification receipt (LCLI-578).**
+   After the digest checks and before any credential or registry step, it reads
+   `receipts/lore/<version>.json` from `opum-ai/opum-cli-e2e` `main` with your
+   `gh` login. The contract for that file is `receipts/README.md` in the same
+   repository. It refuses unless the receipt's `kind`, `product`, `version` and
+   `releaseRunId` match, its `tarballs` name exactly the seven files being
+   published, and each sha256 matches the file handed to `npm publish`. The
+   verdict must be `QUALIFIED`, or the receipt must carry a complete `override`
+   (`by`, `reason`, `task`, `adr`), which is printed verbatim. A 404 or 403
+   means no receipt, and the script refuses without retrying. No flag or
+   environment variable bypasses the gate. The only way past a non-qualifying
+   verdict is an override landed in the receipt by pull request. `--dry-run`
+   prints the receipt verdict. If the receipt would be refused, the dry-run
+   stops there and exits non-zero. So, before publishing, wait for
+   opum-cli-e2e to land the receipt on its `main`. It appears minutes after the
+   pull request merges.
+
    **What the digest check proves, stated precisely, because it is easy to
    overstate.** The six **platform** tarballs are verified against
    `package.platformTarballSha256` in their `ladybug-package-qualification`
