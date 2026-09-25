@@ -691,12 +691,27 @@ publish is explicitly marked public. Root `package.json` and all six
    `package.platformTarballSha256` in their `ladybug-package-qualification`
    reports, which `release.yml` asserts in CI against the bytes it built and
    which the script fetches **separately** from the `npm-packages` artifact it
-   is checking. That is independent. The **root launcher** has no such record —
-   it is `npm pack`'d inside that same job and its digest is stored nowhere — so
-   for that one tarball a locally computed digest is irreducibly a **self-seal**.
-   `SHA256SUMS.txt` is a local seal too: CI does not emit it, the script
-   generates it, and it therefore proves only that the download has not changed
-   since sealing. Six of seven are independently verified; do not round that up.
+   is checking. That is independent. The **root launcher** has no digest from
+   lore-cli's own CI, because it is `npm pack`'d inside that same job. What binds
+   it is the qualification receipt above. Since LCLI-578, the receipt records a
+   sha256 for all seven tarballs, root included, and the script refuses on any
+   mismatch. Since LCLI-586, it also re-hashes each tarball immediately before
+   that tarball's own `npm publish`, including on `--dry-run`, and refuses if
+   the bytes changed after the gate. So the root launcher, which is published up
+   to about 30 minutes after the gate, is still the one the receipt names. Be
+   exact about what the receipt's root digest is. opum-cli-e2e re-hashes it from
+   this same Release run's `npm-packages` artifact (its `receipts/README.md`:
+   "re-hashed at write time from the bound artifacts"). It is recorded by
+   another repository, from bytes that repository qualified. It is **not** the
+   product of a second, independent build. The script does not use the
+   qualification reports' own `rootTarballSha256`: each host packs the root
+   itself, and the darwin runners' zlib compresses the identical tar stream to
+   different bytes, so that field disagrees by host (LCLI-568).
+   `SHA256SUMS.txt` is a local seal: CI does not emit it, the script generates
+   it, and it therefore proves only that the download has not changed since
+   sealing. Six of seven are verified against a separate artifact of the build,
+   and all seven against the receipt; do not round that up to "all seven
+   independently verified".
 
    It publishes platform packages first and stops **before** the root
    launcher if any of them fails — but publish ORDER alone does not make the
