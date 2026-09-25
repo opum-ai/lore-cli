@@ -123,14 +123,69 @@ function makeWorkspace(
     );
   }
 
-  // `gh` stub: resolves the run attempt, serves npm-packages, and serves the
-  // attempt-suffixed qualification artifacts by pattern.
+  // The qualification receipt (LCLI-578) the gh stub serves for receipts/lore/<version>.json.
+  // The DEFAULT matches these exact bytes, so every test not about the receipt still passes the
+  // gate; a test about it rewrites or deletes this file. Deleting it is "no receipt": the stub
+  // answers as gh does for a missing file, a 404 on stderr and a non-zero exit.
+  const tarballs: Record<string, string> = {
+    [rootTarball]: sha256(readFileSync(resolve(source, rootTarball))),
+  };
+  for (const name of PLATFORMS) tarballs[`opum-ai-lore-${name}-${VERSION}.tgz`] = digests.get(name) as string;
+  const receiptFile = resolve(root, "receipt.json");
+  const baseReceipt = (): Record<string, unknown> => ({
+    schemaVersion: 1,
+    kind: "opum.qualification-receipt.v1",
+    product: "lore",
+    version: VERSION,
+    commit: COMMIT,
+    releaseRunId: Number(RUN_ID),
+    runAttempt: 1,
+    tarballs: { ...tarballs },
+    verdict: "QUALIFIED",
+    counts: { pass: 461, fail: 0, blocked: 2 },
+    blocked: [],
+    harness: { commit: "f".repeat(40), commitMeaning: "landed the baseline, not the run", baseline: "baselines/x" },
+    qualifiedAt: "2026-09-25T03:11:41.334Z",
+  });
+  const writeReceipt = (mutate: (r: Record<string, unknown>) => void = () => {}) => {
+    const r = baseReceipt();
+    mutate(r);
+    writeFileSync(receiptFile, JSON.stringify(r, null, 2));
+  };
+  writeReceipt();
+
+  // `gh` stub: resolves the run attempt, serves the receipt, serves npm-packages, and serves the
+  // attempt-suffixed qualification artifacts by pattern. Every report download is counted, so the
+  // LCLI-572 retry is asserted as exactly two attempts rather than inferred from the output.
+  const patternAttempts = resolve(root, "pattern-attempts");
   writeFileSync(
     resolve(bin, "gh"),
     `#!/usr/bin/env bash
 set -uo pipefail
 if [ "\${1:-}" = "api" ]; then
   [ -n "\${GH_FAIL_API:-}" ] && exit 1
+  case "$*" in
+    *contents/receipts/*)
+      # PINNED, not pattern-matched: the receipt is served ONLY for the exact request the script
+      # must make -- github.com host (so GH_HOST cannot redirect it), the raw media type, and the
+      # exact repository, path and ref=main. Anything else answers as gh does for a missing file.
+      # A stub that accepted any ref left a ref=dev mutation green.
+      shift
+      host=""; accept=""; path=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --hostname) host="$2"; shift 2 ;;
+          -H) accept="$2"; shift 2 ;;
+          *) path="$1"; shift ;;
+        esac
+      done
+      if [ "$host" != "github.com" ] || [ "$accept" != "Accept: application/vnd.github.raw+json" ] \
+         || [ "$path" != "repos/opum-ai/opum-cli-e2e/contents/receipts/lore/${VERSION}.json?ref=main" ] \
+         || [ ! -f "${receiptFile}" ]; then
+        echo "gh: Not Found (HTTP 404)" >&2; exit 1
+      fi
+      cat "${receiptFile}"; exit 0 ;;
+  esac
   echo "${ATTEMPT}"; exit 0
 fi
 [ -n "\${GH_FAIL_ALL:-}" ] && exit 1
@@ -148,7 +203,20 @@ if [ "\${1:-}" = "run" ] && [ "\${2:-}" = "download" ]; then
   mkdir -p "$dest"
   if [ -n "$name" ]; then cp "${source}"/*.tgz "$dest"/; exit 0; fi
   if [ -n "$pattern" ]; then
-    [ -n "\${GH_FAIL_PATTERN:-}" ] && exit 1
+    n=$(( $(cat "${patternAttempts}" 2>/dev/null || echo 0) + 1 )); echo "$n" > "${patternAttempts}"
+    if [ -n "\${GH_FAIL_PATTERN_ONCE:-}" ] && [ "$n" -eq 1 ]; then
+      # A FAILED ATTEMPT THAT STILL LEFT FILES BEHIND: a stale report with a wrong digest, under a
+      # differently named artifact directory so it is found as a SECOND match. Only the script
+      # emptying the directory between attempts keeps it out of attempt 2's result.
+      stale="$dest/ladybug-package-qualification-linux-x64-${RUN_ID}-partial"
+      mkdir -p "$stale"
+      printf '%s' '{"repository":{"commit":"${COMMIT}"},"package":{"platformTarballSha256":"sha256:${"0".repeat(64)}"}}' \
+        > "$stale/ladybug-package-qualification-linux-x64.json"
+    fi
+    if [ -n "\${GH_FAIL_PATTERN:-}" ] || { [ -n "\${GH_FAIL_PATTERN_ONCE:-}" ] && [ "$n" -eq 1 ]; }; then
+      echo "stub gh: error downloading ladybug-package-qualification artifacts: HTTP 502 Bad Gateway (attempt $n)" >&2
+      exit 1
+    fi
     # HONOUR the pattern rather than copying everything: a stub that ignores -p makes a wrong
     # or attempt-less pattern invisible to the suite, which is most of what these tests exist
     # to catch.
@@ -190,19 +258,35 @@ esac
     artifacts: resolve(root, "artifacts"),
     digests,
     rootTarball,
+    receiptFile,
+    writeReceipt,
+    patternAttempts: () => Number(readFileSync(patternAttempts, "utf8").trim()),
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
 }
 
-function runScript(ws: ReturnType<typeof makeWorkspace>, cwd: string, artifacts: string) {
+function runScript(
+  ws: ReturnType<typeof makeWorkspace>,
+  cwd: string,
+  artifacts: string,
+  extraEnv: Record<string, string> = {},
+  flags: string[] = ["--dry-run"],
+) {
   const result = Bun.spawnSync({
-    cmd: ["bash", SCRIPT, VERSION, RUN_ID, "--dry-run"],
+    cmd: ["bash", SCRIPT, VERSION, RUN_ID, ...flags],
     cwd,
-    env: { ...process.env, PATH: `${ws.bin}${delimiter}${process.env.PATH}`, ARTIFACTS: artifacts, NPM_TOKEN: "" },
+    env: {
+      ...process.env,
+      PATH: `${ws.bin}${delimiter}${process.env.PATH}`,
+      ARTIFACTS: artifacts,
+      NPM_TOKEN: "",
+      ...extraEnv,
+    },
   });
   return {
     code: result.exitCode,
     out: result.stdout.toString() + result.stderr.toString(),
+    stderr: result.stderr.toString(),
   };
 }
 
@@ -468,6 +552,7 @@ describeOnPosix("scripts/publish-release.sh", () => {
           ARTIFACTS: ws.artifacts,
           NPM_TOKEN: "",
           GH_FAIL_PATTERN: "1",
+          REPORT_RETRY_DELAY_SECONDS: "0",
         },
       });
       const out = result.stdout.toString() + result.stderr.toString();
@@ -780,6 +865,294 @@ esac
       ws.cleanup();
     }
   }, 20_000);
+});
+
+// ── Qualification receipt gate (LCLI-578) and the report-download retry (LCLI-572) ────────────
+//
+// Every refusal below runs the REAL publish path, not --dry-run. --dry-run never calls
+// `npm publish`, so "STUB PUBLISH is absent" would hold in a dry run whether or not the gate
+// refused -- the assertion would be vacuous. On the real path a gate that failed to refuse reaches
+// the stub publish, and the zeroed registry window makes that fail fast rather than hang.
+// Each test also asserts the SPECIFIC reason, so that breaking one clause of the reader turns
+// exactly its own tests red (mutation-tested in the LCLI-578 PR).
+const REAL_RUN = { REGISTRY_WINDOW_SECONDS: "0", PROPAGATION_CUSHION_SECONDS: "0" };
+const REFUSED = "refusing to publish (LCLI-578)";
+
+describeOnPosix("scripts/publish-release.sh qualification receipt (LCLI-578)", () => {
+  function refuses(mutate: ((r: Record<string, unknown>) => void) | null, reason: string | RegExp) {
+    const ws = makeWorkspace();
+    try {
+      if (mutate === null) rmSync(ws.receiptFile);
+      else ws.writeReceipt(mutate);
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.stderr).toContain(REFUSED);
+      if (typeof reason === "string") expect(r.stderr).toContain(reason);
+      else expect(r.stderr).toMatch(reason);
+      // Before any credential handling and before any registry write.
+      expect(r.out).not.toContain("auth:");
+      expect(r.out).not.toContain("STUB PUBLISH");
+      expect(r.code).toBe(1);
+      return r;
+    } finally {
+      ws.cleanup();
+    }
+  }
+
+  test("the matching default receipt passes on the real path, so the refusals below are the gate's", () => {
+    // The positive control for every refusal in this block: identical workspace, real path, and
+    // it DOES reach the (stubbed) publish.
+    const ws = makeWorkspace();
+    try {
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.out).toContain(`receipt: QUALIFIED -- version ${VERSION}, run ${RUN_ID} and all 7 tarball sha256 match`);
+      expect(r.out).toContain("STUB PUBLISH");
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("no receipt: refuses, and the message carries gh's own error text", () => {
+    const r = refuses(null, "NO QUALIFICATION RECEIPT");
+    expect(r.stderr).toContain("gh: Not Found (HTTP 404)");
+  });
+
+  test("an unknown kind refuses", () => {
+    refuses((r) => {
+      r.kind = "opum.qualification-receipt.v2";
+    }, 'kind is "opum.qualification-receipt.v2"');
+  });
+
+  test("a verdict other than QUALIFIED with no override refuses", () => {
+    refuses((r) => {
+      r.verdict = "NOT QUALIFIED";
+    }, 'verdict is "NOT QUALIFIED", not "QUALIFIED"');
+  });
+
+  test("a version mismatch refuses", () => {
+    refuses((r) => {
+      r.version = "9.9.8";
+    }, `version is "9.9.8", not "${VERSION}"`);
+  });
+
+  test("a releaseRunId mismatch refuses, whether written as a number or a string", () => {
+    refuses(
+      (r) => {
+        r.releaseRunId = Number(RUN_ID) + 1;
+      },
+      `releaseRunId is ${Number(RUN_ID) + 1}, not ${RUN_ID}`,
+    );
+    refuses((r) => {
+      r.releaseRunId = "4242424243";
+    }, `releaseRunId is "4242424243", not ${RUN_ID}`);
+  });
+
+  test("the run id matches when written as a string, so the comparison is by value", () => {
+    const ws = makeWorkspace();
+    try {
+      ws.writeReceipt((r) => {
+        r.releaseRunId = RUN_ID;
+      });
+      const r = runScript(ws, ws.root, ws.artifacts);
+      expect(r.out).toContain("receipt: QUALIFIED (would proceed)");
+      expect(r.code).toBe(0);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("one tarball's sha256 wrong refuses, naming the tarball and both digests", () => {
+    const bad = `opum-ai-lore-linux-arm64-${VERSION}.tgz`;
+    refuses(
+      (r) => {
+        (r.tarballs as Record<string, string>)[bad] = "0".repeat(64);
+      },
+      new RegExp(`sha256 MISMATCH for ${bad}: receipt says "0{64}", the file to be published is [0-9a-f]{64}`),
+    );
+  });
+
+  test("a tarball key missing refuses (own-property lookup)", () => {
+    const gone = `opum-ai-lore-win32-x64-${VERSION}.tgz`;
+    refuses((r) => {
+      delete (r.tarballs as Record<string, string>)[gone];
+    }, `tarballs has no entry for ${gone}`);
+  });
+
+  test("an extra tarball key refuses (set equality)", () => {
+    const extra = `opum-ai-lore-freebsd-x64-${VERSION}.tgz`;
+    refuses((r) => {
+      (r.tarballs as Record<string, string>)[extra] = "a".repeat(64);
+    }, `tarballs names "${extra}", which this release does not publish`);
+  });
+
+  test("a partial override refuses: each of by, reason, task and adr is required", () => {
+    for (const blank of ["by", "reason", "task", "adr"]) {
+      refuses((r) => {
+        r.verdict = "NOT QUALIFIED";
+        r.override = { by: "jdnewhouse", reason: "scale row unbound", task: "LCLI-999", adr: "docs/adr/x.md@abc1234" };
+        (r.override as Record<string, string>)[blank] = "";
+      }, "override is present but INCOMPLETE");
+    }
+  });
+
+  test("a complete override on a NOT QUALIFIED receipt proceeds and is printed verbatim", () => {
+    const ws = makeWorkspace();
+    try {
+      const override = {
+        by: "jdnewhouse",
+        reason: "scale row structurally unbound (TASK-107); 0 FAIL",
+        task: "LCLI-999",
+        adr: "docs/adr/harden-fleet-ci.md@9222079",
+      };
+      ws.writeReceipt((r) => {
+        r.verdict = "NOT QUALIFIED";
+        r.override = override;
+      });
+      const r = runScript(ws, ws.root, ws.artifacts);
+      expect(r.out).toContain('!!! receipt verdict is "NOT QUALIFIED" -- proceeding ONLY on the override');
+      expect(r.out).toContain(JSON.stringify(override, null, 2));
+      expect(r.out).toContain("!!! receipt: OVERRIDE (would proceed on the override above)");
+      expect(r.out).toContain("would    npm publish");
+      expect(r.code).toBe(0);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("no environment variable bypasses a missing receipt", () => {
+    const ws = makeWorkspace();
+    try {
+      rmSync(ws.receiptFile);
+      const bypasses = {
+        SKIP_RECEIPT: "1",
+        LORE_RECEIPT_OVERRIDE: "1",
+        RECEIPT_OVERRIDE: "1",
+        SKIP_QUALIFICATION: "1",
+        SKIP_TOKEN_SHAPE_CHECK: "1",
+        GH_HOST: "ghe.example.invalid",
+        FORCE: "1",
+      };
+      const r = runScript(ws, ws.root, ws.artifacts, { ...REAL_RUN, ...bypasses }, []);
+      expect(r.stderr).toContain("NO QUALIFICATION RECEIPT");
+      expect(r.out).not.toContain("STUB PUBLISH");
+      expect(r.code).toBe(1);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  // The checker is `node -e <heredoc>`. These two replace `node` on PATH with a shim that passes
+  // every call through to the real node EXCEPT the receipt check (recognised by the receipt kind
+  // in its script text), where it simulates a checker that exits 0 having said nothing -- what an
+  // emptied heredoc produces -- or one that emits a warning on stderr before answering.
+  function shimNode(ws: ReturnType<typeof makeWorkspace>) {
+    const realNode = execFileSync("bash", ["-c", "command -v node"], { encoding: "utf8" }).trim();
+    writeFileSync(
+      resolve(ws.bin, "node"),
+      `#!/usr/bin/env bash
+case "$*" in
+  *opum.qualification-receipt.v1*)
+    [ "\${NODE_SHIM:-}" = silent ] && exit 0
+    [ "\${NODE_SHIM:-}" = warn ] && echo "(node:4242) ExperimentalWarning: a stray line on stderr" >&2 ;;
+esac
+exec "${realNode}" "$@"
+`,
+    );
+    chmodSync(resolve(ws.bin, "node"), 0o755);
+  }
+
+  test("a checker that exits 0 but says nothing REFUSES rather than falling through to publish", () => {
+    const ws = makeWorkspace();
+    try {
+      shimNode(ws);
+      ws.writeReceipt((r) => {
+        r.verdict = "NOT QUALIFIED";
+      });
+      const r = runScript(ws, ws.root, ws.artifacts, { ...REAL_RUN, NODE_SHIM: "silent" }, []);
+      expect(r.stderr).toContain("unrecognised output from the receipt checker -- refusing to publish");
+      expect(r.out).not.toContain("proceeding ONLY on the override");
+      expect(r.out).not.toContain("STUB PUBLISH");
+      expect(r.code).toBe(1);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("a line on the checker's stderr never becomes the verdict", () => {
+    const ws = makeWorkspace();
+    try {
+      shimNode(ws);
+      const r = runScript(ws, ws.root, ws.artifacts, { NODE_SHIM: "warn" });
+      expect(r.out).toContain("receipt: QUALIFIED (would proceed)");
+      expect(r.code).toBe(0);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("--dry-run reports QUALIFIED for a matching receipt", () => {
+    const ws = makeWorkspace();
+    try {
+      const r = runScript(ws, ws.root, ws.artifacts);
+      expect(r.out).toContain("receipt: QUALIFIED (would proceed)");
+      expect(r.out).toContain("DRY RUN complete");
+      expect(r.code).toBe(0);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("--dry-run reports a refusing receipt's reason and exits non-zero", () => {
+    const ws = makeWorkspace();
+    try {
+      ws.writeReceipt((r) => {
+        r.verdict = "NOT QUALIFIED";
+      });
+      const r = runScript(ws, ws.root, ws.artifacts);
+      expect(r.stderr).toContain(REFUSED);
+      expect(r.stderr).toContain('verdict is "NOT QUALIFIED"');
+      expect(r.out).not.toContain("would    npm publish");
+      expect(r.code).toBe(1);
+    } finally {
+      ws.cleanup();
+    }
+  });
+});
+
+describeOnPosix("scripts/publish-release.sh qualification-report download (LCLI-572)", () => {
+  test("a download failing on both attempts puts gh's own error text in the die message", () => {
+    const ws = makeWorkspace();
+    try {
+      const r = runScript(ws, ws.root, ws.artifacts, { GH_FAIL_PATTERN: "1", REPORT_RETRY_DELAY_SECONDS: "0" });
+      // In the ERROR itself, after its first line -- not merely somewhere in the output.
+      expect(r.stderr).toMatch(
+        /ERROR: could not download the qualification reports for run \d+ \(2 attempts\)\. gh said:\n\s+stub gh: error downloading ladybug-package-qualification artifacts: HTTP 502 Bad Gateway \(attempt 2\)/,
+      );
+      expect(r.out).toContain("attempt 1 of 2");
+      // Bounded: exactly one retry.
+      expect(ws.patternAttempts()).toBe(2);
+      expect(r.out).not.toContain("independently verified");
+      expect(r.code).toBe(1);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("a download that fails once and then succeeds proceeds", () => {
+    const ws = makeWorkspace();
+    try {
+      const r = runScript(ws, ws.root, ws.artifacts, { GH_FAIL_PATTERN_ONCE: "1", REPORT_RETRY_DELAY_SECONDS: "0" });
+      expect(r.out).toContain("HTTP 502 Bad Gateway (attempt 1)");
+      expect(r.out).toContain("retrying once");
+      expect(r.out).toContain("6/6 platform tarballs match the digests CI recorded");
+      // Attempt 1 left a stale report behind; the retry must not have seen it.
+      expect(r.out).not.toContain("AMBIGUOUS");
+      expect(r.out).not.toContain("DIGEST MISMATCH");
+      expect(ws.patternAttempts()).toBe(2);
+      expect(r.code).toBe(0);
+    } finally {
+      ws.cleanup();
+    }
+  });
 });
 
 // ── The closing checklist is operator-facing REPORTING, and reporting is the half that lies ────
