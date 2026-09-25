@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-09-25
+
 ### Added
 
 - **Every plain `lore agent context` pack is query-augmented** (LCLI-575; opum-doc ADR "Make lore
@@ -38,6 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `agent.workflow.projection` included, stays `schemaVersion` `1`. A consumer pinned to `1` for
   `lore agent context --json` should read `profileMissing` where it relied on exit `3`, then
   accept `2`.
+
+### Fixed
+
+- **The README quickstart runs** (LCLI-571). It named a `lore new spec --story` option that never
+  existed, and it coupled Backlog.md task ids that no fresh repository has, while `lore init`
+  defaults the tracker to Quest. It now initializes Quest first, declares the actor Quest writes
+  need, and links two tasks it creates. The install section names Quest. CI runs the quickstart
+  verbatim from README.md against each freshly compiled binary, so it cannot silently break again.
 
 ## [0.9.2] - 2026-09-24
 
