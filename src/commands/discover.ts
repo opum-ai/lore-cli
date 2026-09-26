@@ -51,13 +51,16 @@ export function walkUnignoredMarkdown(absRoot: string): string[] {
 }
 
 /**
- * The git-ignored entries under `root`, keyed the way `walkFiles` keys its results: a wholly ignored
- * directory as `<relDir>/`, an individually ignored file as its bare relative path. `null` when
- * `root` is not in a git repository or `git` is unavailable.
+ * The git-ignored entries under `root` (LCLI-379), keyed exactly the way `walkFiles` keys its own
+ * results: a wholly-ignored directory as `<relDir>/` (so a walk can prune it before reading its
+ * contents, the `.herdr/`-shaped case a large vendored toolchain reported), an individually-ignored
+ * file inside an otherwise-tracked directory as its bare relative path (this repo's own
+ * `docs/.obsidian/*.json`). `null` when `root` is not inside a git repository or `git` itself is
+ * unavailable: gitignore-awareness is advisory, never a hard requirement, so callers fall back to an
+ * unfiltered walk rather than failing outside a git repository.
  *
- * The same query as `commands/check.ts`'s private `gitIgnoredEntries`, which `expandRoot` uses; that
- * file is owned by other in-flight work, so it has not yet been switched to this copy, and until it is
- * the two must be changed together.
+ * The ONE copy (LCLI-610): `lore check`'s `expandRoot` and {@link walkUnignoredMarkdown} (`lore
+ * agents` discovery, LCLI-597) both use it, so the two can never disagree about which files exist.
  */
 export function gitIgnoredEntries(root: string): ReadonlySet<string> | null {
   let proc: ReturnType<typeof Bun.spawnSync>;
