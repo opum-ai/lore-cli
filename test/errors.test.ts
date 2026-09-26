@@ -11,6 +11,7 @@ import {
   LoreError,
   reportError,
   stderrHint,
+  stripAnsiAndControls,
   toErrorEnvelope,
   WarningCollector,
 } from "../src/errors";
@@ -617,6 +618,55 @@ describe("stderrHint — ANSI/control-byte stripping and length cap (LORE-249)",
     const short = "fatal: something went wrong";
     expect(stderrHint(short)).toBe(short);
     expect((stderrHint(short) as string).endsWith("…")).toBe(false);
+  });
+});
+
+describe("stripAnsiAndControls — Unicode format characters (LCLI-607, OPAG-453 F5)", () => {
+  const STRIPPED = [0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069, 0x200b, 0x2060, 0xfeff];
+  const KEPT = [0x200c, 0x200d, 0x200e, 0x200f, 0x061c];
+  const hex = (cp: number) => `U+${cp.toString(16).toUpperCase().padStart(4, "0")}`;
+
+  test("an RLO that would reverse the rest of a printed line is removed, and the text around it survives", () => {
+    // On a bidi-aware terminal the RLO makes "run: lore check" read backwards after it.
+    expect(stripAnsiAndControls("run: \u202Ekcehc erol\u202C done")).toBe("run: kcehc erol done");
+  });
+
+  test.each(STRIPPED.map((cp) => [hex(cp), cp] as const))("strips %s, keeping its neighbours", (_label, cp) => {
+    expect(stripAnsiAndControls(`a${String.fromCodePoint(cp)}b`)).toBe("ab");
+  });
+
+  test.each(KEPT.map((cp) => [hex(cp), cp] as const))("keeps %s (positive control)", (_label, cp) => {
+    const text = `a${String.fromCodePoint(cp)}b`;
+    expect(stripAnsiAndControls(text)).toBe(text);
+  });
+
+  test("a ZWJ emoji sequence and a ZWNJ Persian word survive intact", () => {
+    const technologist = "\u{1F469}\u200D\u{1F4BB}";
+    const persian = "\u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645";
+    expect(stripAnsiAndControls(`${technologist} ${persian}`)).toBe(`${technologist} ${persian}`);
+  });
+
+  test("strips exactly the ruled set across the neighbouring format-character blocks, and nothing else", () => {
+    // Sweeps General Punctuation, Arabic, and the FExx block, so a widened or narrowed class shows
+    // up as a named code point rather than as a passing test.
+    const swept: number[] = [];
+    for (const [from, to] of [
+      [0x0600, 0x06ff],
+      [0x2000, 0x206f],
+      [0xfe00, 0xfeff],
+    ] as const) {
+      for (let cp = from; cp <= to; cp += 1) swept.push(cp);
+    }
+    const removed = swept.filter((cp) => stripAnsiAndControls(String.fromCodePoint(cp)) === "").map(hex);
+    expect(removed).toEqual(
+      STRIPPED.slice()
+        .sort((x, y) => x - y)
+        .map(hex),
+    );
+  });
+
+  test("a caller inherits it: stderrHint drops an RLO from a subprocess's stderr", () => {
+    expect(stderrHint("error: \u202Egnorw\n")).not.toContain("\u202E");
   });
 });
 
