@@ -33,8 +33,29 @@ on:
     # applied to `push` ONLY — `pull_request` is intentionally left unfiltered
   # below (see its comment) so the required status check can never be skipped
     # into a permanent "pending" that deadlocks a PR.
+    #
+    # Root Markdown is ignored by NAME, not by `**/*.md` (LCLI-602). CLAUDE.md and
+    # README.md are deliberately absent: Tracker integrity, the docs gate and
+    # compile smoke read CLAUDE.md's declared Quest version, compile smoke runs
+    # README.md's quickstart, and the test suite reads both. A CLAUDE.md-only
+    # push to main used to run none of that. Per GitHub's filter-pattern cheat
+    # sheet, `*` never matches `/` and `docs/**/*.md` matches `docs/README.md`,
+    # so `*/**/*.md` matches Markdown at any depth below a directory and never
+    # a root file. A root .md added later is NOT ignored until listed here:
+    # every ambiguity in this list errs toward running more, not less. A `!`
+    # re-include was rejected because the docs define ordered negation for
+    # `paths` only; were it unsupported under `paths-ignore`, CLAUDE.md would
+    # silently stay ignored -- the failure this entry exists to remove.
+    # test/ci-workflow.test.ts pins this list.
     paths-ignore:
-      - "**/*.md"
+      - "*/**/*.md"
+      - "CHANGELOG.md"
+      - "CODE_OF_CONDUCT.md"
+      - "CONTRIBUTING.md"
+      - "DEVELOPMENT.md"
+      - "ECK-ALIGNMENT.md"
+      - "SECURITY.md"
+      - "lore-spec.md"
       - "docs/**"
       - "backlog/**"
       - ".claude/**"
