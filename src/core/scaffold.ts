@@ -134,9 +134,8 @@ function schemaFiles(profile: Profile): ScaffoldFile[] {
  * placement that both (a) lets lore read the file back as a concept — `parseConcept`
  * needs `---` at byte 0, so an above-fence comment would make `loadBundle` skip the
  * index as a non-concept — and (b) matches every modeline-bearing doc already in this
- * bundle. (Trade-off: js-yaml drops the in-fence comment if the file is ever
- * re-serialized — a documented round-trip limitation in concept.ts that applies to all
- * such docs equally; `init` writes the index once and never rewrites it.)
+ * bundle. (It also survives a later rewrite: concept.ts captures the comment block that
+ * opens the fence and re-emits it on every serialize, LCLI-601.)
  */
 function rootIndexDocument(timestamp: string, profile: Profile): string {
   const concept: Concept = {

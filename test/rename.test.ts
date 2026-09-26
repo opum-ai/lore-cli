@@ -930,6 +930,49 @@ describe("lore rename — end to end", () => {
   });
 });
 
+// ── command: frontmatter comments survive the rewrite (LCLI-601) ───────────────────
+
+describe("lore rename — keeps the in-fence yaml-language-server modeline (LCLI-601)", () => {
+  const ADR_MODELINE = "# yaml-language-server: $schema=../../.lore/schemas/adr.schema.json";
+  const EPIC_MODELINE = "# yaml-language-server: $schema=../../.lore/schemas/epic.schema.json";
+
+  /** Count the lines of `bytes` equal to `line` — the OPAG-438 repro's own measurement (1 before, 0 after). */
+  function lineCount(bytes: string, line: string): number {
+    return bytes.split("\n").filter((l) => l === line).length;
+  }
+
+  test("the renamed file and every rewritten inbound file keep their modeline as line 2", async () => {
+    // Mirrors OPAG-438's repro on proof-skills: the renamed ADR, an ADR linking to it in the body,
+    // and an epic referencing it from frontmatter (`specs:`), each carrying exactly one modeline.
+    writeDoc("adr/0006-old.md", `---\n${ADR_MODELINE}\ntype: ADR\ntitle: Six\n---\nSix.\n`);
+    writeDoc("adr/0005-prior.md", `---\n${ADR_MODELINE}\ntype: ADR\ntitle: Five\n---\nSee [six](0006-old.md).\n`);
+    writeDoc("epics/formal.md", `---\n${EPIC_MODELINE}\ntype: Epic\nspecs:\n  - adr/0006-old\n---\nEpic.\n`);
+    expect(lineCount(readDoc("adr/0006-old.md"), ADR_MODELINE)).toBe(1); // positive control: present before
+
+    const { code, report } = await renameCmd(["adr/0006-old", "adr/0006-new"]);
+    expect(code).toBe(EXIT_OK);
+    expect(report.filesChanged).toBeGreaterThanOrEqual(3);
+
+    const renamed = readDoc("adr/0006-new.md");
+    const prior = readDoc("adr/0005-prior.md");
+    const epic = readDoc("epics/formal.md");
+    // The rewrites actually ran (so the modeline assertions below are about rewritten files).
+    expect(prior).toContain("[six](0006-new.md)");
+    expect(epic).toContain("adr/0006-new");
+    // Each keeps exactly one modeline, still the first line inside the fence.
+    for (const [bytes, modeline] of [
+      [renamed, ADR_MODELINE],
+      [prior, ADR_MODELINE],
+      [epic, EPIC_MODELINE],
+    ] as const) {
+      expect(lineCount(bytes, modeline)).toBe(1);
+      expect(bytes.split("\n").slice(0, 2)).toEqual(["---", modeline]);
+    }
+    // Byte-exact for the renamed file: nothing but the move happened to it.
+    expect(renamed).toBe(`---\n${ADR_MODELINE}\ntype: ADR\ntitle: Six\n---\nSix.\n`);
+  });
+});
+
 // ── command: link text still names the old id (LORE-262) ───────────────────────────
 
 describe("lore rename — link text still names the old id (LORE-262)", () => {

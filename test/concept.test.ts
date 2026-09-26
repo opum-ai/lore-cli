@@ -381,6 +381,12 @@ describe("serializeConceptWithModeline — modeline spliced inside the opening f
     expect(out.endsWith("a thematic break in the body\n")).toBe(true);
   });
 
+  test("replaces a modeline the parsed concept already carries instead of duplicating it (LCLI-601)", () => {
+    const withOld = `---\n# yaml-language-server: $schema=old.json\n# keep me\n${MINIMAL_GOLDEN.slice("---\n".length)}`;
+    const out = serializeConceptWithModeline(parseConcept("reference/x.md", withOld), MODELINE);
+    expect(out).toBe(`---\n${MODELINE}\n# keep me\n${MINIMAL_GOLDEN.slice("---\n".length)}`);
+  });
+
   test("rejects a multi-line modeline instead of splicing it verbatim", () => {
     // A modeline containing a newline would inject arbitrary extra lines inside/after
     // the opening fence if spliced verbatim — reject it before splicing (LORE-219).
@@ -388,6 +394,49 @@ describe("serializeConceptWithModeline — modeline spliced inside the opening f
     const evilModeline = `${MODELINE}\ntype: Injected`;
     const err = expectValidation(() => serializeConceptWithModeline(concept, evilModeline));
     expect(err.message).toContain("single line");
+  });
+});
+
+describe("frontmatter leading comments — the modeline survives a rewrite (LCLI-601)", () => {
+  const MODELINE = "# yaml-language-server: $schema=../.lore/schemas/reference.schema.json";
+  const WITH_MODELINE = `---\n${MODELINE}\ntype: Reference\ntitle: T\n---\nBody.\n`;
+
+  test("a modeline-bearing doc round-trips byte-identically", () => {
+    const concept = parseConcept("reference/x.md", WITH_MODELINE);
+    expect(concept.leadingComments).toBe(`${MODELINE}\n`);
+    expect(serializeConcept(concept)).toBe(WITH_MODELINE);
+  });
+
+  test("a frontmatter mutation keeps the modeline as the first line inside the fence", () => {
+    const concept = parseConcept("reference/x.md", WITH_MODELINE);
+    const out = serializeConcept({ ...concept, frontmatter: { ...concept.frontmatter, title: "U" } });
+    expect(out).toBe(`---\n${MODELINE}\ntype: Reference\ntitle: U\n---\nBody.\n`);
+  });
+
+  test("several opening comment lines are kept in order; blank padding around them is normalized once", () => {
+    const raw = `---\n\n${MODELINE}\n# second\n\n  # indented\n\ntype: Reference\n---\nB\n`;
+    const once = serializeConcept(parseConcept("reference/x.md", raw));
+    expect(once).toBe(`---\n${MODELINE}\n# second\n\n  # indented\ntype: Reference\n---\nB\n`);
+    expect(serializeConcept(parseConcept("reference/x.md", once))).toBe(once); // fixpoint
+  });
+
+  test("a comment after the first key is still dropped (the documented ADR-0011 limitation)", () => {
+    const raw = "---\ntype: Reference\n# trailing\ntitle: T\n---\nB\n";
+    const concept = parseConcept("reference/x.md", raw);
+    expect(concept.leadingComments).toBeUndefined();
+    expect(serializeConcept(concept)).toBe("---\ntype: Reference\ntitle: T\n---\nB\n");
+  });
+
+  test("a comment-free doc has no leadingComments key at all", () => {
+    expect(Object.hasOwn(parseConcept("reference/x.md", MINIMAL_GOLDEN), "leadingComments")).toBe(false);
+  });
+
+  test("refuses to serialize leadingComments that are not pure comment lines", () => {
+    const base = parseConcept("reference/x.md", MINIMAL_GOLDEN);
+    for (const bad of ["type: Injected\n", "# ok\ntitle: Injected\n", "# no trailing newline"]) {
+      const err = expectValidation(() => serializeConcept({ ...base, leadingComments: bad }));
+      expect(err.message).toContain("leading frontmatter comments");
+    }
   });
 });
 

@@ -111,6 +111,37 @@ describe("lore supersede — frontmatter wiring (AC#1)", () => {
   });
 });
 
+describe("lore supersede — keeps the in-fence yaml-language-server modeline (LCLI-601)", () => {
+  const ADR_MODELINE = "# yaml-language-server: $schema=../../.lore/schemas/adr.schema.json";
+  const STORY_MODELINE = "# yaml-language-server: $schema=../../.lore/schemas/story.schema.json";
+
+  test("both principals and a --rewrite-links inbound file keep their modeline as line 2", () => {
+    writeDoc("adr/0007-old.md", `---\n${ADR_MODELINE}\ntype: ADR\ntitle: Old\n---\nOld.\n`);
+    writeDoc("adr/0012-new.md", `---\n${ADR_MODELINE}\ntype: ADR\ntitle: New\n---\nNew.\n`);
+    writeDoc("stories/use.md", `---\n${STORY_MODELINE}\ntype: Story\n---\nPer [it](../adr/0007-old.md).\n`);
+
+    const { code, report } = supersedeCmd(["adr/0007-old", "adr/0012-new", "--rewrite-links"]);
+    expect(code).toBe(EXIT_OK);
+    // All three were actually rewritten, so the assertions below are about re-serialized bytes.
+    expect(report.files.map((f) => f.path).sort()).toEqual([
+      "docs/adr/0007-old.md",
+      "docs/adr/0012-new.md",
+      "docs/stories/use.md",
+    ]);
+    expect(parseLegacyDoc("adr/0007-old.md").frontmatter.superseded_by).toBe("adr/0012-new");
+    expect(readDoc("stories/use.md")).toContain("[it](../adr/0012-new.md)");
+    for (const [rel, modeline] of [
+      ["adr/0007-old.md", ADR_MODELINE],
+      ["adr/0012-new.md", ADR_MODELINE],
+      ["stories/use.md", STORY_MODELINE],
+    ] as const) {
+      const lines = readDoc(rel).split("\n");
+      expect(lines.slice(0, 2)).toEqual(["---", modeline]);
+      expect(lines.filter((l) => l === modeline)).toHaveLength(1);
+    }
+  });
+});
+
 // ── supersedes append semantics ────────────────────────────────────────────────
 
 describe("lore supersede — supersedes append (don't clobber)", () => {
