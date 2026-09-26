@@ -217,13 +217,16 @@ The two promotion guards (`promotion is manual`, `main is fast-forward of dev`) 
 deliberately NOT required contexts, for two different reasons that an earlier
 revision of this paragraph collapsed into one. `promotion is manual` runs only on
 PRs into `main`, so requiring it would leave the direct push with no run to
-satisfy. `main is fast-forward of dev` runs only on the PUSH to `main` (it is
-`skipped` on every PR, so a green promotion-PR rollup says nothing about it), and
+satisfy. `main is fast-forward of dev` runs only on the PUSH to `main` (its
+workflow has no `pull_request` trigger, so it does not appear in a promotion-PR
+rollup at all, and a green rollup says nothing about it), and
 fires from the very push it would gate, so it can only go red after the fact.
 It asserts both that the new tip already sits on `dev` and that the old tip is an
 ancestor of the new one (LCLI-514: before that it measured containment alone, and
-a rewind of `main` to an older `dev` commit stayed green). It runs on EVERY push
-to `main`, docs-only included: it lives in its own workflow,
+a rewind of `main` to an older `dev` commit stayed green). It runs on every push
+to `main`, docs-only included -- except a head commit carrying a `[skip ci]`-style
+token, and a push whose tip predates LCLI-605, which runs that older tree's
+workflows instead: it lives in its own workflow,
 `main-fast-forward-guard.yml`, with no path filter (LCLI-605). Until then it sat in
 `ci.yml`, whose `push` path filter applies to the whole file, so a
 Markdown-only push (a rewind included) skipped the one guard `main` has.

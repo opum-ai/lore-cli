@@ -357,7 +357,7 @@ describe("ci.yml push paths-ignore keeps CLAUDE.md and README.md in scope (LCLI-
   test("the push filter's pattern list is exactly the reviewed one", () => {
     // Pinned whole, so a widened list is a visible diff here. Root Markdown is listed by name: a
     // NEW root .md is deliberately not ignored until someone adds it, which errs toward running CI
-    // rather than toward skipping it. `docs/**` is unchanged; its future is OPAG-444's call.
+    // rather than toward skipping it. `docs/**` stays: OPAG-444 ruled it cost control (LCLI-605).
     expect(pushPathsIgnore()).toEqual([
       "*/**/*.md",
       "CHANGELOG.md",
@@ -415,6 +415,11 @@ describe("the main fast-forward guard has its own unfiltered workflow (LCLI-605)
     expect(job?.name).toBe("main is fast-forward of dev");
     expect(job?.if).toBeUndefined();
     expect(job?.needs).toBeUndefined();
+    // A guard that cannot fail the run, or that a later push can cancel, guards nothing.
+    expect((job as { "continue-on-error"?: unknown })["continue-on-error"]).toBeUndefined();
+    const concurrency = (loadWorkflow(GUARD_WORKFLOW_PATH) as { concurrency?: Record<string, unknown> }).concurrency;
+    expect(concurrency?.["cancel-in-progress"]).toBe(false);
+    expect(String(concurrency?.group)).toContain("github.run_id");
   });
 
   test("ci.yml no longer carries the guard, while its own push filter still ignores docs and skills Markdown", () => {

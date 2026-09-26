@@ -124,8 +124,8 @@ describeOnPosix("main-fast-forward guard", () => {
     expect(r.out).not.toContain("both assertions hold");
   });
 
-  // WIRING. Every test above proves the LOGIC. None of them proves the workflow calls it, and on a
-  // pull request this job is `skipped` — so a green PR rollup says nothing about whether the job
+  // WIRING. Every test above proves the LOGIC. None of them proves the workflow calls it, and its
+  // workflow has no pull_request trigger — so a green PR rollup says nothing about whether the job
   // is wired correctly. quest-cli made this point about these exact two jobs. Reading the workflow is
   // the cheapest thing that fails when the wiring breaks.
   test("the guard workflow calls the script and passes BOTH pushed SHAs, not just the new one", () => {
