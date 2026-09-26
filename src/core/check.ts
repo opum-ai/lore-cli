@@ -67,6 +67,7 @@ import { ATTESTED_COMPUTATION_TYPE } from "./profile";
 import type { ReconciledStatus } from "./reconcile";
 import { claimVersion, RELATION_KINDS, readRelations, relationVersionState } from "./relations";
 import { foldSchemaName, readGeneratorStamp } from "./schema";
+import { strayFenceMessage } from "./validate";
 
 /** `error` fails the gate (exit `6`); `warning` is advisory (fails only under `--strict`). The shared {@link Severity}. */
 export type CheckSeverity = Severity;
@@ -489,7 +490,7 @@ export function checkBundle(
         severity: "error",
         rule: "double-frontmatter",
         file: file.path,
-        message: `${file.path} contains a second frontmatter fence in its body (LCLI-372) -- likely a template that embedded its own frontmatter; remove the stray '---' block so only one frontmatter fence remains`,
+        message: strayFenceMessage(file.path),
       });
     }
   }

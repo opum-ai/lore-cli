@@ -442,6 +442,25 @@ describe("runCheck — a thrown 6-class failure cannot hide an unattributable sc
     expectEscalated(err, /managed task region is missing/, /./);
   });
 
+  test("a concept-SCAN error carried out of reconciliation is escalated too (LCLI-606 review S3)", async () => {
+    // The scan-error carry, reached by a bundle-root index.md carrying `tasks:` that the bundle's own
+    // profile rejects (no `owner`) and the built-in profile validate judges it by accepts: no finding
+    // names the defect, so it is carried as the run's error, and must still escalate to exit 7.
+    writeFileSync(join(root, ORPHAN), "{}\n");
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      '[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "Reference"\nfields = { owner = { required = true }, tasks = { kind = "list" } }\n',
+    );
+    writeFileSync(join(root, "docs/index.md"), "---\ntype: Reference\ntitle: Docs\ntasks: []\n---\n# Docs\n");
+    const result = runCheck(opts());
+    expect(result).toBeInstanceOf(Promise);
+    const err = await (result as Promise<number>).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expectEscalated(err, /invalid Reference frontmatter in index\.md: owner/, /./);
+  });
+
   test("without an unattributable schema the same failure still exits 6 — the escalation is conditional", async () => {
     writeFileSync(join(root, "docs/bad.md"), "---\ntype: [unclosed\n---\n# x\n");
     const err = await thrownBy();

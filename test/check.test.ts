@@ -2708,6 +2708,125 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
       ),
     ).toBe(true);
   });
+
+  // ── The concept-scan error path, reached since LCLI-606 by a file judged in two contexts ──────
+  //
+  // Since LCLI-606 a malformed linked concept is an ordinary finding, so the scan-error carry needs
+  // a file whose reconciliation parse throws a defect NO finding names. The bundle-root `index.md`
+  // is one: `lore validate` (and so check's per-file rules) judge it by the BUILT-IN profile, while
+  // check's reconciliation parse uses the bundle's own profile. Under a profile requiring `owner`
+  // on a Reference, a root index carrying `tasks:` is clean for validate and throws for the parse.
+
+  /** A profile requiring `owner` on a Reference; Story keeps `tasks` for reconciliation. */
+  const OWNER_PROFILE =
+    '[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "Reference"\nfields = { owner = { required = true }, tasks = { kind = "list" } }\n\n[[types]]\nname = "Story"\nfields = { tasks = { kind = "list" } }\n';
+  /** A bundle-root index with `tasks:` and no `owner`: validate-clean, parse-rejected under OWNER_PROFILE. */
+  const TRAP_INDEX = "---\ntype: Reference\ntitle: Docs\ntasks: []\n---\n# Docs\n";
+
+  function plantTrap(indexDir = "docs"): void {
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(join(root, ".lore", "profile.toml"), OWNER_PROFILE);
+    writeFileSync(join(root, indexDir, "index.md"), TRAP_INDEX);
+  }
+
+  const POISON = new Proxy(
+    {},
+    {
+      get(): never {
+        throw new Error("no adapter method should be called: the scan error precedes any Backlog IO");
+      },
+    },
+  ) as BacklogAdapter;
+
+  test("[scan-error] a root index the bundle profile rejects and validate accepts is carried as the run's error", async () => {
+    plantTrap();
+    const o = opts([], POISON);
+    const result = runCheck(o);
+    expect(result).toBeInstanceOf(Promise);
+    await expect(result).rejects.toThrow(/invalid Reference frontmatter in index\.md: owner/);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(parsed.data.complete).toBe(false);
+    // validate judges this file clean, so check's per-file rules report nothing for it either.
+    expect(parsed.data.findings.filter((f: { file: string }) => f.file === "index.md")).toEqual([]);
+  });
+
+  test("[scan-error] the already-computed report is emitted before the rejection (LORE-27)", async () => {
+    plantTrap();
+    writeDoc("adr/x.md", ref("X", "[ghost](../reference/ghost.md)."));
+    const o = opts([], POISON);
+    await expect(runCheck(o)).rejects.toThrow(/owner/);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(parsed.kind).toBe("check.report");
+    expect(parsed.data.findings.some((f: { rule: string }) => f.rule === "broken-link")).toBe(true);
+  });
+
+  test("[scan-error] advisories flush before the report, even when the scan error rejects (LORE-27)", async () => {
+    plantTrap();
+    writeFileSync(join(root, "docs", "real.md"), ref("R", "Body."));
+    symlinkSync(join(root, "docs", "real.md"), join(root, "docs", "link.md"));
+    const order: string[] = [];
+    const stdout = { write: (): void => void order.push("stdout") };
+    const stderr = { write: (): void => void order.push("stderr") };
+    await expect(runCheck({ root, output: JSON_CTX, args: [], adapter: POISON, stdout, stderr })).rejects.toThrow(
+      /owner/,
+    );
+    expect(order[0]).toBe("stderr");
+  });
+
+  test("[scan-error] a scan error does not discard another file's concept in the SAME root (LORE-27 round 10)", async () => {
+    plantTrap();
+    writeDoc("stories/a.md", storyDoc("A", ["lore-1"], "done")); // stale (empty) block -- real drift
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+    const o = opts([], adapter);
+    await expect(runCheck(o)).rejects.toThrow(/owner/);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(
+      parsed.data.findings.some(
+        (f: { rule: string; file: string }) => f.rule === "managed-block-drift" && f.file === "stories/a.md",
+      ),
+    ).toBe(true);
+  });
+
+  test("[scan-error] one root's scan error does not discard another root's drift findings (LORE-27 round 9)", async () => {
+    plantTrap();
+    mkdirSync(join(root, "a"), { recursive: true });
+    writeFileSync(join(root, "a", "x.md"), storyDoc("A", ["lore-1"], "done")); // stale (empty) block
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+    const o = { root, output: JSON_CTX, args: ["docs", "a"], adapter, stdout: capture(), stderr: capture() };
+    await expect(runCheck(o)).rejects.toThrow(/owner/);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(
+      parsed.data.findings.some(
+        (f: { rule: string; file: string }) => f.rule === "managed-block-drift" && f.file === "a/x.md",
+      ),
+    ).toBe(true);
+  });
+
+  test("[scan-error] a root's own scan error wins over a later root's shared config failure, in argument order (LORE-50)", async () => {
+    plantTrap();
+    writeFileSync(join(root, ".lore", "config.toml"), '[reconcile.overrides]\nCancelled = "bogus"\n');
+    mkdirSync(join(root, "a"), { recursive: true });
+    writeFileSync(join(root, "a", "x.md"), storyDoc("A", ["lore-1"], "done")); // eligible: fails only on the config
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+    const o = { root, output: JSON_CTX, args: ["docs", "a"], adapter, stdout: capture(), stderr: capture() };
+    await expect(runCheck(o)).rejects.toThrow(/owner/);
+  });
+
+  test("[scan-error] a parse throw is NOT suppressed when the file's finding names a different defect", async () => {
+    // validate (built-in profile) sees a mistyped `title`; the bundle-profile parse ALSO sees the
+    // missing `owner`. Suppressing on "the file has some frontmatter finding" would drop the owner
+    // defect silently; the exact-message guard keeps it as the run's error.
+    plantTrap();
+    writeFileSync(join(root, "docs", "index.md"), TRAP_INDEX.replace("title: Docs", "title: 123"));
+    const o = opts([], POISON);
+    await expect(runCheck(o)).rejects.toThrow(/owner/);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    const mine = parsed.data.findings.filter((f: { file: string }) => f.file === "index.md");
+    expect(mine).toHaveLength(1);
+    expect(mine[0]).toMatchObject({ severity: "error", rule: "frontmatter" });
+    expect(mine[0].message).toMatch(/title/);
+    expect(mine[0].message).not.toMatch(/owner/);
+  });
 });
 
 describe("runCheck — index-drift (LCLI-377)", () => {

@@ -39,7 +39,7 @@ import { isAbsolute, join, posix, relative, sep } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { gitTrackedState, resolveHeadCommitDate } from "../adapters/git";
 import { loadAgentProfiles, validateAgentProfileReferences } from "../core/agent-profile";
-import { effectiveProfileFor, loadBundle, walkFiles } from "../core/bundle";
+import { effectiveProfileFor, loadBundle, loadBundleState, walkFiles } from "../core/bundle";
 import {
   bodyText,
   type CheckFinding,
@@ -59,7 +59,7 @@ import {
   schemaDriftFindings,
   tallySeverity,
 } from "../core/check";
-import { type Concept, parseConcept, tryReadFrontmatter } from "../core/concept";
+import { type Concept, hasStrayFrontmatterFence, parseConcept, tryReadFrontmatter } from "../core/concept";
 import { generateIndexes } from "../core/indexes";
 import { type BundleState, type BundleVersionIssue, resolveBundleState, taskRollupFieldFor } from "../core/okf-version";
 import { loadProfile, type Profile, profileForBundle, profileTypeDeclaresField } from "../core/profile";
@@ -73,7 +73,7 @@ import {
   type TypeRule,
   typeRuleFor,
 } from "../core/type-rules";
-import { validateConceptText } from "../core/validate";
+import { strayFenceMessage, validateConceptText } from "../core/validate";
 import {
   ANSI,
   EXIT_CODES,
@@ -89,7 +89,7 @@ import {
 import { VERSION } from "../meta";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { parseCommandArgs, singleOptionValue } from "./args";
-import { canonicalIdentity, readIndexBytes, readSource } from "./discover";
+import { canonicalIdentity, readIndexBytes, readSource, toRepoRelative } from "./discover";
 import { dedupeTaskIds, defaultAdapter } from "./link";
 import {
   gatherReconciliation,
@@ -294,7 +294,8 @@ function checkAfterSchemaPass(
   // let one root's throw abort every other root's scan too, discarding drift that was never even
   // computed — LORE-27 round 9). This same scan classifies a `tasks:` field whose active-profile
   // type does not declare it as an explicit gate finding before any Backlog IO.
-  const conceptBundleResults = bundles.map((bundle) => tryConceptsForBundle(bundle, profile));
+  const judge = validateJudgeFor(options.root, profile);
+  const conceptBundleResults = bundles.map((bundle) => tryConceptsForBundle(bundle, profile, judge));
   const multi = bundles.length > 1;
   const typeBundle = typeBundleRules(options.root, conceptBundleResults);
   const scanFindings = [
@@ -451,8 +452,10 @@ interface BundleRuleDoc {
  * `check` silently while `validate`/`query`/`sync` correctly rejected the identical file, the exact
  * three-way disagreement ADR-0007 designed `check` to never have with the rest of the toolchain.
  */
-function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleResult {
+function tryConceptsForBundle(bundle: Bundle, profile: Profile, judge: ValidateJudge): ConceptBundleResult {
   const bundleProfile = profileForBundle(profile, bundle.state);
+  const judgeState = judge.state ?? bundle.state;
+  const judgeProfile = profileForBundle(judge.profile, judgeState);
   const concepts: Concept[] = [];
   const findings: CheckFinding[] = [];
   const singletons: SingletonCandidate[] = [];
@@ -485,7 +488,10 @@ function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleRe
       // because most documents carry no `tasks:` and would otherwise never be fully parsed by
       // `check` at all. This is the call site LCLI-595 added for registered types only (R3),
       // widened to every type rather than joined by a second mechanism.
-      const perFile = validateRuleCheckFindings(file, judgingProfile, bundle.state);
+      // Judged exactly as `lore validate` judges it: by its REPO-relative path, against the docs-root
+      // bundle state and profile — never this (possibly scoped) root's own, which can disagree.
+      const repoPath = toRepoRelative(judge.root, join(judge.root, bundle.label, file.path));
+      const perFile = validateRuleCheckFindings(file, repoPath, judgeProfile, judgeState);
       findings.push(...perFile);
       // Keyed by type through the registry, so this site names no type.
       const rule =
@@ -511,7 +517,7 @@ function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleRe
         // a second time, as a run-aborting error, so the file is simply left out of reconciliation —
         // which `lore sync` refuses to touch too. Anything the findings do not already name still
         // throws, exactly as before.
-        if (err instanceof LoreError && reportsSameDefect(perFile, err)) {
+        if (err instanceof LoreError && reportsSameDefect(perFile, err, file.path, repoPath)) {
           continue;
         }
         throw err;
@@ -638,24 +644,67 @@ function sourceReader(root: string): (path: string) => SourceRead {
 }
 
 /**
+ * The context `lore validate` judges every file in, whatever path it is given: the docs-root
+ * bundle state (`docs/index.md`'s `okf_version`) and the configured profile resolved for it
+ * (`runValidate`). `check` judges its per-file rules in this same context rather than in each
+ * checked root's own, because a scoped `lore check docs/adr` reads no `okf_version` from
+ * `docs/adr/` and would judge an OKF 0.2 bundle by 0.1's rules (LCLI-606). `state` is `undefined`
+ * only when `docs/index.md` itself cannot yield a usable state — where `lore validate` refuses to
+ * judge at all — and then each root keeps its own state, as before LCLI-606.
+ */
+interface ValidateJudge {
+  /** The repository root, which every judged path is made relative to. */
+  readonly root: string;
+  /** The configured profile, before it is resolved for a bundle state. */
+  readonly profile: Profile;
+  /** The docs-root bundle state, or `undefined` when it is unusable. */
+  readonly state: BundleState | undefined;
+}
+
+/** Resolve {@link ValidateJudge} once per run. Never throws: an unusable docs-root state is `undefined`. */
+function validateJudgeFor(root: string, profile: Profile): ValidateJudge {
+  let state: BundleState | undefined;
+  try {
+    state = loadBundleState(join(root, DOCS_DIR));
+  } catch {
+    state = undefined;
+  }
+  return { root, profile, state };
+}
+
+/**
  * `lore validate`'s per-file judgement of one document, as `check` findings. Reusing
- * {@link validateConceptText} rather than re-deriving it is what keeps the two gates from
- * disagreeing about the same file (ADR-0007). Kept, each under validate's OWN rule name so a
- * consumer can tell them apart: the error-tier `frontmatter` findings (a missing `type`, a missing
- * or mistyped required field, a second frontmatter fence) and `required-section`, for EVERY type
- * (LCLI-606, OPAG-425 R11), and every `type-shape` finding from a registered type's own content
- * rules (LCLI-595, R3). Not kept: quote-safety, resource drift, the unknown-type advisory (the
- * per-file peek reports that itself) and Tier-3 frontmatter warnings, which `check` does not
- * report for any type.
+ * {@link validateConceptText} — given the document's REPO-relative `repoPath` and the
+ * {@link ValidateJudge} context, exactly the inputs `lore validate` gives it — is what keeps the two
+ * gates from disagreeing about the same file (ADR-0007). A bundle-relative path would not do: it
+ * decides which file is the bundle-root index (judged by the built-in profile) and it is spelled
+ * into the messages. Kept, each under validate's OWN rule name so a consumer can tell them apart:
+ * every error-tier `frontmatter` finding (a missing `type`, a missing or mistyped field, an invalid
+ * enum value) and `required-section`, for EVERY type (LCLI-606, OPAG-425 R11), and every
+ * `type-shape` finding from a registered type's own content rules (LCLI-595, R3). Not kept:
+ * quote-safety, resource drift, the unknown-type advisory (the per-file peek reports that itself)
+ * and Tier-3 frontmatter warnings, which `check` does not report for any type; and validate's copy
+ * of a second frontmatter fence, which `check` already reports under its own `double-frontmatter`
+ * rule (LCLI-372) — one defect, one finding.
  *
  * A file `validate` skips — no frontmatter, an empty fence — yields nothing here either, so the two
- * gates judge the same file set.
+ * gates judge the same file set. `file` on each finding stays bundle-relative, like every other
+ * `check` finding.
  */
-function validateRuleCheckFindings(file: CheckInputFile, profile: Profile, state: BundleState): CheckFinding[] {
+function validateRuleCheckFindings(
+  file: CheckInputFile,
+  repoPath: string,
+  profile: Profile,
+  state: BundleState,
+): CheckFinding[] {
   const findings: CheckFinding[] = [];
-  for (const finding of validateConceptText(file.path, file.raw, profile, state).findings) {
+  const strayFence = hasStrayFrontmatterFence(bodyText(file.raw)) ? strayFenceMessage(repoPath) : undefined;
+  for (const finding of validateConceptText(repoPath, file.raw, profile, state).findings) {
     const rule = finding.rule;
     const profileShapeError = finding.severity === "error" && (rule === "frontmatter" || rule === "required-section");
+    if (rule === "frontmatter" && finding.message === strayFence) {
+      continue; // reported once, as `double-frontmatter`, by the link pass
+    }
     if (rule === TYPE_SHAPE_RULE || profileShapeError) {
       findings.push({ severity: finding.severity, rule, file: file.path, message: finding.message });
     }
@@ -666,13 +715,21 @@ function validateRuleCheckFindings(file: CheckInputFile, profile: Profile, state
 /**
  * Whether `err`, thrown by `parseConcept` on a `tasks:` document, is the defect one of that
  * document's {@link validateRuleCheckFindings} already reports: an error-tier `frontmatter` finding
- * carrying the identical message. Exact-message equality rather than "the file has some frontmatter
+ * carrying the identical message once the path the throw names (`bundlePath`, what `parseConcept`
+ * was given) is re-spelled as the `repoPath` the finding names. Every frontmatter throw spells its
+ * path as ` in <path>`, once. Exact-message equality rather than "the file has some frontmatter
  * error" keeps the suppression to the one defect both paths saw — a throw the findings do not name
- * (a different profile judging the file, a different failure) still aborts the run as before.
+ * (the file judged in two contexts that disagree, a different failure) still aborts the run.
  */
-function reportsSameDefect(findings: readonly CheckFinding[], err: LoreError): boolean {
+function reportsSameDefect(
+  findings: readonly CheckFinding[],
+  err: LoreError,
+  bundlePath: string,
+  repoPath: string,
+): boolean {
+  const message = err.message.replace(` in ${bundlePath}`, ` in ${repoPath}`);
   return findings.some(
-    (finding) => finding.severity === "error" && finding.rule === "frontmatter" && finding.message === err.message,
+    (finding) => finding.severity === "error" && finding.rule === "frontmatter" && finding.message === message,
   );
 }
 

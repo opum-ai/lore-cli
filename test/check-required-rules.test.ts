@@ -81,9 +81,9 @@ describe("lore check enforces validate's required sections and fields for every 
   }
 
   /** `lore check --json`: exit code and findings. Synchronous, since no fixture here links a task. */
-  function check(): { code: number; findings: FindingJson[] } {
+  function check(args: string[] = []): { code: number; findings: FindingJson[] } {
     const stdout = capture();
-    const code = runCheck({ root, output: JSON_CTX, args: [], stdout, stderr: capture() });
+    const code = runCheck({ root, output: JSON_CTX, args, stdout, stderr: capture() });
     if (typeof code !== "number") {
       throw new Error("expected a synchronous check: no fixture in this file links a task");
     }
@@ -108,14 +108,10 @@ describe("lore check enforces validate's required sections and fields for every 
     const mine = findings.filter((f) => f.file === rel);
     const validates = validateErrors(`docs/${rel}`).filter((f) => f.rule === rule);
     expect(validates.length).toBeGreaterThan(0); // positive control on the instrument: validate saw it
-    // Each gate names a file by its own convention -- check bundle-relative, validate repo-relative --
-    // and a frontmatter message embeds that name, so validate's is re-spelled in check's form.
+    // Byte-identical messages: check judges the file by the same repo-relative path validate does
+    // (only its `file` field stays bundle-relative, like every check finding).
     expect(mine.map(({ severity, rule: r, message }) => ({ severity, rule: r, message }))).toEqual(
-      validates.map(({ severity, rule: r, message }) => ({
-        severity,
-        rule: r,
-        message: message.replaceAll(`docs/${rel}`, rel),
-      })),
+      validates.map(({ severity, rule: r, message }) => ({ severity, rule: r, message })),
     );
     return mine;
   }
@@ -166,5 +162,62 @@ describe("lore check enforces validate's required sections and fields for every 
     writeDoc("notes/plain.md", NO_FRONTMATTER);
     expect(validateErrors("docs/notes/plain.md")).toEqual([]);
     expect(check()).toEqual({ code: EXIT_OK, findings: [] });
+  });
+
+  /**
+   * The two gates agree on `repoPath`: check (run with `args`) and validate both fail it, with the
+   * same error-tier findings under `rule`, byte for byte. Each case below is one the LCLI-606
+   * review reproduced with check exiting 0 while validate exited 6.
+   */
+  function expectGatesAgree(args: string[], repoPath: string, rule: string): void {
+    const validates = validateErrors(repoPath).filter((f) => f.rule === rule);
+    expect(validates.length).toBeGreaterThan(0); // the instrument sees the defect
+    const { code, findings } = check(args);
+    expect(code).toBe(EXIT_CODES.validation);
+    const mine = findings.filter((f) => f.rule === rule).map(({ severity, message }) => ({ severity, message }));
+    expect(mine).toEqual(validates.map(({ severity, message }) => ({ severity, message })));
+  }
+
+  test("[agree a] a scoped check judges by the docs-root OKF version, not the scoped directory's", () => {
+    // `docs/stories/` has no index.md, so it declares no okf_version; validate judges with the
+    // docs root's 0.2, where `status: todo` is not a lifecycle status.
+    writeFileSync(join(root, "docs", "index.md"), '---\ntype: Reference\nokf_version: "0.2"\n---\n# Docs\n');
+    writeDoc(
+      "stories/archive.md",
+      STORY_OK.replace("title: Archive orders\n", "title: Archive orders\nstatus: todo\n"),
+    );
+    expectGatesAgree(["docs/stories"], "docs/stories/archive.md", "frontmatter");
+  });
+
+  test("[agree b] a scoped check does not judge a sub-directory's index.md as the bundle-root index", () => {
+    // Only `docs/index.md` is judged by the built-in profile; `docs/reference/index.md` answers to
+    // the bundle's own profile, which requires `owner` on a Reference.
+    useOwnerProfile();
+    writeDoc("reference/index.md", REFERENCE_NO_OWNER);
+    expectGatesAgree(["docs/reference"], "docs/reference/index.md", "frontmatter");
+  });
+
+  test("a stray second frontmatter fence is ONE finding, under check's documented `double-frontmatter` rule", () => {
+    // validate reports it as `frontmatter`; check has reported it as `double-frontmatter` since 0.4.0
+    // (LCLI-372, a released rule name), so check keeps its own and drops validate's copy.
+    writeDoc(
+      "reference/orders.md",
+      "---\ntype: Reference\ntitle: Orders table\n---\n---\ntype: Reference\ntitle: PLACEHOLDER\n---\n# Orders table\n\nbody\n",
+    );
+    const validates = validateErrors("docs/reference/orders.md");
+    expect(validates.map((f) => f.rule)).toEqual(["frontmatter"]); // the instrument sees it
+    expect(validates[0]?.message).toContain("second frontmatter fence");
+    const { code, findings } = check();
+    expect(code).toBe(EXIT_CODES.validation);
+    const mine = findings.filter((f) => f.file === "reference/orders.md");
+    expect(mine.map(({ severity, rule }) => ({ severity, rule }))).toEqual([
+      { severity: "error", rule: "double-frontmatter" },
+    ]);
+  });
+
+  test("[agree c] an unscoped check does not mistake docs/docs/index.md for the bundle-root index", () => {
+    useOwnerProfile();
+    writeDoc("docs/index.md", REFERENCE_NO_OWNER);
+    expectGatesAgree([], "docs/docs/index.md", "frontmatter");
   });
 });

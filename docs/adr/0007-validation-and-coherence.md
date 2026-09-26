@@ -90,21 +90,28 @@ silently." A closed vocabulary of per-type exemptions (rather than one bundle-wi
 considered and left for a later task if ever needed — see `src/core/profile.ts`'s
 `Profile.strictTypes` for the full mechanism.
 
-Amended — 2026-09-26 (LCLI-606): **`lore check` now also enforces `lore validate`'s required sections
-and required fields, for every type.** The decision below lists four passes for `check` and gives
-per-file correctness to `validate` alone. That is no longer the whole of `check`. Every document with
-frontmatter now also gets `validate`'s own per-file judgement inside `check`: a missing required
-section, a missing `type`, or a missing or mistyped required field is an error under `validate`'s
-rule names (`required-section`, `frontmatter`). The two gates therefore cannot disagree on those
-rules. `validate`'s quote-safety, resource-drift and Tier-3 warnings stay `validate`-only. The binding
-decision is opum-doc's `docs/adr/add-constitution-and-constants-document-types-to-lore.md`, Amendment
-1, R11 (OPAG-425). Its reason is the one the LCLI-538 amendment above already gave: a bare `lore check`
-exiting 0 is the gate a repository actually runs, so a rule only `validate` runs is a rule no gate
-runs. The separation of concerns below still holds for everything else: `validate` stays offline and
-per-file, and `check` stays the whole-bundle gate. What changed is that the gate now includes the
-per-file errors. A `tasks:`-linked document failing its frontmatter is now an ordinary `frontmatter`
-finding, left out of reconciliation, rather than a run-aborting error (`complete: false`, first
-error only). This ADR's original text is not rewritten.
+Amended — 2026-09-26 (LCLI-606): **`lore check` now also fails on `lore validate`'s error-tier
+`frontmatter` and `required-section` findings, for every type.** The decision below lists four
+passes for `check` and gives per-file correctness to `validate` alone. That is no longer the whole of
+`check`. Every document with frontmatter now also gets `validate`'s own per-file judgement inside
+`check`. A missing required section, a missing `type`, a missing or mistyped field, or an invalid
+enum value is an error under `validate`'s rule names and messages. `check` judges each file exactly
+as `validate` does: by its repository-relative path, against the `docs/` root's OKF version and
+profile, even in a scoped `lore check <dir>`. So the two gates cannot disagree on those rules. One
+defect keeps one finding: a stray second frontmatter fence stays under `check`'s own
+`double-frontmatter` rule (LCLI-372). `validate`'s error-tier `quote-safety`, resource-drift and
+Tier-3 findings stay `validate`-only. The binding decision is opum-doc's
+`docs/adr/add-constitution-and-constants-document-types-to-lore.md`, Amendment 1, R11 (OPAG-425).
+Its reason is the one the LCLI-538 amendment above already gave: a bare `lore check` exiting 0 is
+the gate a repository actually runs, so a rule only `validate` runs is a rule no gate runs. The
+separation of concerns below still holds for everything else: `validate` stays offline and per-file,
+and `check` stays the whole-bundle gate. What changed is that the gate now includes the per-file
+errors. A `tasks:`-linked document failing its frontmatter is now an ordinary `frontmatter` finding,
+left out of reconciliation, rather than a run-aborting error (`complete: false`, first error only).
+One asymmetry remains outside those rules: `check`'s reconciliation parse of a `tasks:`-carrying
+document uses the bundle's own profile, while `validate` judges the bundle-root `index.md` by the
+built-in profile. So `check` can still abort on a root index that `validate` accepts. This ADR's
+original text is not rewritten.
 
 ## Context
 

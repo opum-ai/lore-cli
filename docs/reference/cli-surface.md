@@ -323,15 +323,19 @@ The **drift gate** — read-only, never writes. Aggregates:
   `validate`'s own unknown-type finding) — **unless** the active profile sets
   `[profile] strict_types = true`, in which case → **error**, independent of
   `--strict` (LCLI-538; see [ADR-0007's amendment](../adr/0007-validation-and-coherence.md)).
-- **Required sections and fields** (LCLI-606) — for **every** type, any
-  document with frontmatter that is missing a required section, is missing
-  its `type`, or has a missing or mistyped required field → **error**,
-  reported under [`validate`](#validate)'s own rule names
-  (`required-section`, `frontmatter`) and exactly as `validate` judges the file.
-  A file without frontmatter is skipped here, as `validate` skips it. Run
-  `lore validate` to see these findings on their own. `validate`'s other
-  per-file findings (quote-safety, resource drift, extra-key and summary
-  warnings) stay `validate`-only.
+- **Required sections and fields** (LCLI-606) — for **every** type, every
+  error-tier `frontmatter` and `required-section` finding [`validate`](#validate)
+  reports → **error**, under `validate`'s own rule names and messages: missing
+  required sections, a missing `type`, missing or mistyped fields, and invalid
+  enum values (e.g. OKF 0.2 lifecycle `status`). Each file is judged exactly as
+  `validate` judges it: by its repository-relative path, against the `docs/`
+  root's OKF version and profile, even in a scoped `lore check <dir>`. A stray
+  second frontmatter fence is reported once, under `check`'s own
+  `double-frontmatter` rule (LCLI-372), not also as `frontmatter`. A file
+  without frontmatter is skipped here, as `validate` skips it. Run
+  `lore validate` to preview these findings. `validate`'s error-tier `quote-safety`
+  findings, resource drift, and extra-key and summary warnings stay
+  `validate`-only.
 - **Bundle-scoped link + heading-anchor validation** — whole-bundle pure-JS
   pass: every `.md` cross-link whose resolved target stays inside the selected
   bundle root must resolve, and every such `#anchor` must hit a real heading.
@@ -372,7 +376,7 @@ The **drift gate** — read-only, never writes. Aggregates:
 | **Args** | optional `[paths…]` (default: whole bundle) |
 | **Key flags** | `--strict` (treat deterministic warnings as failures for the exit code) · `--as-of YYYY-MM-DD` (pin date-sensitive rules; default HEAD commit date) · `--external` (also probe external-URL liveness — advisory, never gates) |
 | **Output** | `kind: check.report` — `findings`, `errorCount`, `warningCount`, `fileCount`, `skippedOutOfBundleLinkCount`, `complete`; plus optional `externalFindings` when `--external` ran, and optional `readCounts` when the bundle holds a Constants document (per type: `entries`, `comparableSources`, `notComparableSources`, `references`; LCLI-596). The skipped and read counts are informational and never affect severity counts or exit status. |
-| **Exit** | `0` no broken bundle-scoped links/anchors, no status/managed-block drift, and no missing required section or field · `2` invalid/non-calendar `--as-of` · `3` a linked task id no longer exists, or a date-sensitive rule needs the absent HEAD commit date · `6` any broken bundle-scoped link/anchor, any status/managed-block drift, any `required-section` or error-tier `frontmatter` finding (or any deterministic warning under `--strict`, or an unknown type under `strict_types`), or any `missing`/`stale`/`orphaned` committed schema · `7` an `unattributable` committed schema (indeterminate — never auto-repair); a run with both `6`- and `7`-class findings exits `7` and still reports every finding. Skipped out-of-bundle links and external-liveness results never affect the exit. |
+| **Exit** | `0` no broken bundle-scoped links/anchors, no status/managed-block drift, and no error-tier `required-section` or `frontmatter` finding · `2` invalid/non-calendar `--as-of` · `3` a linked task id no longer exists, or a date-sensitive rule needs the absent HEAD commit date · `6` any broken bundle-scoped link/anchor, any status/managed-block drift, any `required-section` or error-tier `frontmatter` finding (or any deterministic warning under `--strict`, or an unknown type under `strict_types`), or any `missing`/`stale`/`orphaned` committed schema · `7` an `unattributable` committed schema (indeterminate — never auto-repair); a run with both `6`- and `7`-class findings exits `7` and still reports every finding. Skipped out-of-bundle links and external-liveness results never affect the exit. |
 
 ---
 
