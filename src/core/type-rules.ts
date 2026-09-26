@@ -40,6 +40,7 @@ import GithubSlugger, { slug as githubSlug } from "github-slugger";
 import * as yaml from "js-yaml";
 import type { Heading, Nodes, Root, RootContent } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
+import { stripAnsiAndControls } from "../errors";
 import { printable } from "./agent-plugins";
 import { nodeText, walkMdast } from "./bundle";
 import type { Finding } from "./finding";
@@ -76,8 +77,8 @@ export interface TypeRule {
   /**
    * The lines `lore agents` renders into its managed block for the bundle's one document of this type
    * (LCLI-597, OPAG-425 R8), in the managed block's own bullet-list form. Every piece of document
-   * text in them has passed {@link agentText} or {@link agentCode}, because the block is read by
-   * agents as always-loaded context.
+   * text in them has passed {@link escapeProse} (prose) or {@link agentCode} (literals), because the
+   * block is read by agents as always-loaded context.
    */
   readonly agentBlock?: (doc: AgentBlockDoc) => readonly string[];
 }
@@ -291,11 +292,10 @@ function findSection(root: Root, name: string): Section | null {
 }
 
 /**
- * How {@link paragraphLines} renders the two inline kinds it keeps. Neither may return a line ending
+ * How {@link paragraphTexts} renders the two inline kinds it keeps. Neither may return a line ending
  * for a value that has none: the split into lines happens after rendering. mdast KEEPS a line ending
  * inside a code span's value, so a `code` renderer that preserved one would add a line; both
- * renderers here drop it (the placeholder has none, and {@link agentCode} collapses whitespace), so
- * two calls over the same nodes return lines that correspond index for index.
+ * renderers here drop it (the placeholder has none, and {@link agentCode} collapses whitespace).
  */
 interface LineRender {
   readonly text: (value: string) => string;
@@ -306,15 +306,16 @@ interface LineRender {
 const PROBE_RENDER: LineRender = { text: (value) => value, code: () => CODE_SPAN };
 
 /**
- * Every paragraph's text within `nodes`, split into lines, at any nesting depth (list items,
- * quotes), with an explicit stack throughout. A soft line break (a newline inside a `text` node)
- * and a hard one (an mdast `break`: a trailing `\` or two spaces) both end a line. By default a code
+ * Every paragraph's text within `nodes`, one string per paragraph, at any nesting depth (list items,
+ * quotes), with an explicit stack throughout. A soft line break (a newline inside a `text` node) and
+ * a hard one (an mdast `break`: a trailing `\` or two spaces) both appear as `\n`. By default a code
  * span becomes {@link CODE_SPAN}, so `Check: \`ci.yml\`` still has content after its label while
  * `` `Rationale:` `` quoted in code is not a label; `lore agents` passes {@link AGENT_RENDER} instead
- * (LCLI-597). Raw inline HTML contributes nothing.
+ * (LCLI-597). Raw inline HTML contributes nothing. The number of paragraphs never depends on
+ * `render`, so two calls over the same nodes return paragraphs that correspond index for index.
  */
-function paragraphLines(nodes: readonly Nodes[], render: LineRender = PROBE_RENDER): string[] {
-  const lines: string[] = [];
+function paragraphTexts(nodes: readonly Nodes[], render: LineRender = PROBE_RENDER): string[] {
+  const paragraphs: string[] = [];
   walkSkipping(nodes, isNotProse, (node) => {
     if (node.type !== "paragraph") {
       return;
@@ -333,51 +334,72 @@ function paragraphLines(nodes: readonly Nodes[], render: LineRender = PROBE_REND
         }
       },
     );
-    lines.push(...text.split("\n").map((line) => line.trim()));
+    paragraphs.push(text);
   });
-  return lines;
+  return paragraphs;
+}
+
+/** {@link paragraphTexts} split into trimmed lines: what the Constitution gate reads a label from. */
+function paragraphLines(nodes: readonly Nodes[]): string[] {
+  return paragraphTexts(nodes).flatMap((text) => text.split("\n").map((line) => line.trim()));
 }
 
 // ── lore agents rendering (LCLI-597, OPAG-425 R8) ─────────────────────────────—
 
 /*
  * `lore agents` copies document text into a managed block that agents read as always-loaded context,
- * so every piece of it passes one of these two before it is placed there:
+ * so every piece of it passes one of these before it is placed there:
  *
- * - {@link agentText} for prose: the same one-printable-line reduction `lore agents` already applies
- *   to runtime-supplied text ({@link printable}: whitespace collapsed, ANSI and control bytes
- *   stripped), after {@link escapeProse} has backslash-escaped every `\` and `<`. Escaping `<` means
- *   document text can never open raw HTML in the block, an HTML comment included, so it can never
- *   spell a marker; escaping `\` too means an authored backslash cannot cancel that escape. Both
- *   escapes render as the literal character.
+ * - {@link escapeProse} for prose, applied to each text node: whitespace is collapsed and ANSI
+ *   escapes and control bytes are removed FIRST (`stripAnsiAndControls`, the strip {@link printable}
+ *   applies to runtime-supplied text), then EVERY ASCII punctuation character is backslash-escaped:
+ *   the whole set CommonMark lets a backslash escape. Nothing in document prose can then act as
+ *   markdown in the block: no raw HTML or comment (so no marker), no code span, emphasis, link,
+ *   heading, quote or list, no entity. Each escape renders as its literal character. Stripping comes
+ *   first because escaping would otherwise split an ANSI sequence (`ESC [31m` into `ESC \[31m`) into
+ *   pieces the strip no longer recognises. {@link agentText} is the same for a whole string.
  * - {@link agentCode} for a literal (a path, a version, an `id = value` line): one printable line in
- *   a code span whose fence is longer than any backtick run inside it, so nothing in it is markdown.
+ *   a code span whose fence is longer than any backtick run inside it, so nothing in it is markdown,
+ *   with the HTML comment delimiters additionally turned into entities as defence in depth (as the
+ *   task table's `cell()` does in managed-block.ts). Inside a code span an entity is shown as
+ *   written, so a literal holding `<!--` or `-->` displays `&lt;!--` / `--&gt;`: the one place
+ *   the block does not reproduce a value byte for byte.
  *
  * Every rendered line is also a nested item of the block's own bullet list, so no text reaches the
  * block's top level; `upsertManagedBlock` re-locates its markers after every write regardless, and
  * refuses a body that disturbs them.
  */
 
-/** Backslash-escape `\` and `<` in prose (see above). Keeps line endings, which {@link paragraphLines} splits on. */
+/** Every ASCII punctuation character: exactly the set a CommonMark backslash escape applies to. */
+const ASCII_PUNCTUATION = /[!-/:-@[-`{-~]/g;
+
+/**
+ * Prose with, on each line, whitespace collapsed and control bytes stripped, then all ASCII
+ * punctuation escaped (see above). Line endings are KEPT, so a rendered paragraph's lines still
+ * correspond to its {@link PROBE_RENDER} lines and can be cut at the same label line.
+ */
 function escapeProse(value: string): string {
-  return value.replace(/[\\<]/g, (char) => `\\${char}`);
+  return value
+    .split("\n")
+    .map((line) => stripAnsiAndControls(line.replace(/\s+/g, " ")).replace(ASCII_PUNCTUATION, (char) => `\\${char}`))
+    .join("\n");
 }
 
-/** Document prose as one printable, HTML-free markdown line (see above). */
+/** Document prose as one trimmed line of inert markdown (see above). */
 function agentText(value: string): string {
-  return printable(escapeProse(value));
+  return escapeProse(value).replace(/\s+/g, " ").trim();
 }
 
 /** A literal as a one-line code span that nothing inside it can close early (see above). */
 function agentCode(value: string): string {
-  const text = printable(value);
+  const text = printable(value).replace(/<!--/g, "&lt;!--").replace(/-->/g, "--&gt;");
   const longestRun = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
   const fence = "`".repeat(longestRun + 1);
   const pad = text === "" || text.startsWith("`") || text.endsWith("`") ? " " : "";
   return `${fence}${pad}${text}${pad}${fence}`;
 }
 
-/** The display render for a principle's lines: escaped prose, code spans kept as code spans. */
+/** The display render for a principle's paragraphs: inert prose, code spans kept as code spans. */
 const AGENT_RENDER: LineRender = { text: escapeProse, code: agentCode };
 
 // ── Constitution (OPAG-425 R4, R9) ─────────────────────────────────────────────—
@@ -533,28 +555,43 @@ function scalarText(value: unknown): string | undefined {
   return typeof value === "number" ? String(value) : undefined;
 }
 
+/** A line that opens a principle's `Rationale:` or `Check:` (bold or not: emphasis adds no text). */
+const LABEL_LINE = /^(?:Rationale|Check)\s*:/;
+
 /**
- * A MUST / MUST NOT line (R8): a principle line holding the uppercase keyword `MUST` in its prose,
- * read on the {@link PROBE_RENDER} text so a `MUST` quoted in a code span does not count. A
- * `Rationale:` or `Check:` line never is one, whatever it says: R8 renders the rule, not its reasons
- * or its verification.
+ * The normative part of one principle paragraph (R8), judged on its {@link PROBE_RENDER} lines and
+ * cut from its display lines at the same place: every line before the first one that opens a
+ * `Rationale:` or `Check:` label. A paragraph that opens with a label therefore contributes
+ * nothing, however far its text wraps; and a label line written with no blank line before it
+ * still ends the rule, the same line the gate reads as the principle's rationale. The rule counts
+ * only when that part holds the uppercase keyword `MUST` in prose (not in a code span), and it is
+ * rendered WHOLE, its lines joined with a space, so a condition wrapped onto the next line is never
+ * dropped (LCLI-597 review B1). `undefined` when the paragraph states no MUST rule.
  */
-function isMustLine(probe: string): boolean {
-  return /\bMUST\b/.test(probe) && !/^(?:Rationale|Check):/.test(probe);
+function mustRule(probe: string, shown: string): string | undefined {
+  const probeLines = probe.split("\n").map((line) => line.trim());
+  const labelAt = probeLines.findIndex((line) => LABEL_LINE.test(line));
+  const cut = labelAt === -1 ? probeLines.length : labelAt;
+  if (!/\bMUST\b/.test(probeLines.slice(0, cut).join(" "))) {
+    return undefined;
+  }
+  return shown.split("\n").slice(0, cut).join(" ").replace(/\s+/g, " ").trim();
 }
 
 /**
  * What `lore agents` renders for the Constitution (LCLI-597, OPAG-425 R8): its path, its `version`,
- * and each principle's id with its MUST / MUST NOT lines, "nothing more". The principle id is the
- * heading as written (`P1. <Name>`), since the name is what makes the id legible in a list; a
- * heading not of that form is skipped, because it is no principle (`lore check` names it). A
- * principle with no MUST line still lists its id, so the block never implies a principle is absent.
- * No rationale, no `Check:` line, no SHOULD or MAY line, no governance text.
+ * and each principle's id with its MUST / MUST NOT rules, "nothing more". The principle id is the
+ * heading as written (`P1. <Name>`, ruled by opum-agent 2026-09-26), since the name is what makes
+ * the id legible in a list; its validated `P<n>.` prefix is kept verbatim and only the name is
+ * escaped. A heading not of that form is skipped, because it is no principle (`lore check` names
+ * it). A principle with no MUST rule still lists its id, so the block never implies a principle is
+ * absent. Each rule is one whole paragraph ({@link mustRule}). No rationale, no `Check:` text, no
+ * SHOULD or MAY paragraph, no governance text.
  *
  * ```
  * - **Constitution:** `docs/constitution.md`, version `1.2.0`
  *   - P1. Deterministic output
- *     - Lore MUST produce identical output for identical input.
+ *     - Lore MUST produce identical output for identical input\.
  * ```
  */
 function constitutionAgentBlock(doc: AgentBlockDoc): string[] {
@@ -564,15 +601,17 @@ function constitutionAgentBlock(doc: AgentBlockDoc): string[] {
   ];
   const section = findSection(fromMarkdown(doc.body), "principles");
   for (const principle of section === null ? [] : splitPrinciples(section)) {
-    if (!PRINCIPLE_HEADING.test(principle.heading)) {
+    const heading = PRINCIPLE_HEADING.exec(principle.heading);
+    if (heading === null) {
       continue;
     }
-    lines.push(`  - ${agentText(principle.heading)}`);
-    const probes = paragraphLines(principle.nodes);
-    const shown = paragraphLines(principle.nodes, AGENT_RENDER);
+    lines.push(`  - P${heading[1]}. ${agentText(heading[2] as string)}`);
+    const probes = paragraphTexts(principle.nodes);
+    const shown = paragraphTexts(principle.nodes, AGENT_RENDER);
     probes.forEach((probe, index) => {
-      if (isMustLine(probe)) {
-        lines.push(`    - ${printable(shown[index] ?? "")}`);
+      const rule = mustRule(probe, shown[index] ?? "");
+      if (rule !== undefined) {
+        lines.push(`    - ${rule}`);
       }
     });
   }

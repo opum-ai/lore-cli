@@ -12,7 +12,7 @@
 
 import { readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, posix, relative, sep } from "node:path";
-import { walkMarkdown } from "../core/bundle";
+import { walkFiles, walkMarkdown } from "../core/bundle";
 import { DOCS_DIR } from "../core/scaffold";
 import { ioError } from "../errors";
 
@@ -27,6 +27,59 @@ export function readSource(abs: string, display: string): string {
       input: { path: display },
     });
   }
+}
+
+/**
+ * The bundle's markdown files as {@link walkMarkdown} finds them, minus every git-ignored file and
+ * directory: the file set `lore check` judges (its `expandRoot`, LCLI-379), so a command that reads
+ * the bundle for committed output never includes a local, ignored draft a clean clone does not have
+ * (LCLI-597 review S2: an ignored `docs/a-drafts/constitution.md` was rendered into `CLAUDE.md`, and
+ * CI's `lore agents --check` then failed on a clone without it). Outside a git repository, or
+ * without `git`, nothing is ignored, exactly as in `expandRoot`.
+ */
+export function walkUnignoredMarkdown(absRoot: string): string[] {
+  const ignored = gitIgnoredEntries(absRoot);
+  if (ignored === null) {
+    return walkMarkdown(absRoot, undefined);
+  }
+  return walkFiles(
+    absRoot,
+    undefined,
+    (name) => /\.md$/.test(name),
+    (relDir) => ignored.has(`${relDir}/`),
+  ).filter((rel) => !ignored.has(rel));
+}
+
+/**
+ * The git-ignored entries under `root`, keyed the way `walkFiles` keys its results: a wholly ignored
+ * directory as `<relDir>/`, an individually ignored file as its bare relative path. `null` when
+ * `root` is not in a git repository or `git` is unavailable.
+ *
+ * The same query as `commands/check.ts`'s private `gitIgnoredEntries`, which `expandRoot` uses; that
+ * file is owned by other in-flight work, so it has not yet been switched to this copy, and until it is
+ * the two must be changed together.
+ */
+export function gitIgnoredEntries(root: string): ReadonlySet<string> | null {
+  let proc: ReturnType<typeof Bun.spawnSync>;
+  try {
+    proc = Bun.spawnSync(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], {
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  } catch {
+    return null;
+  }
+  if (proc.exitCode !== 0) {
+    return null;
+  }
+  return new Set(
+    (proc.stdout ?? "")
+      .toString()
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0),
+  );
 }
 
 /** The reserved index file name (mirrors `core/indexes.ts`'s own private constant of the same name). */

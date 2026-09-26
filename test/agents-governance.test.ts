@@ -12,30 +12,43 @@
  * byte-identical to the pre-R8 block, pinned against LITERAL pre-R8 text rather than the code under
  * test.
  *
- * Mutation map (which case each deliberate break should redden, readable from this file alone):
- *   - renderer also emits `Rationale:` lines -> every case that compares against CONSTITUTION_LINES
- *     as a whole (toEqual, toBe, or a contiguous toContain) plus the absence case: 9 of 21 — the
- *     Constitution exact-lines, absence, CLAUDE.md and AGENTS.md exact-block, Constitution-before-
- *     Constants, `lore init --claude`, absent-documents positive control, other-case type, and
- *     unparseable-sibling cases. The drift cases stay green: a rendered rationale still drifts.
+ * Mutation map (which case each deliberate break should redden, readable from this file alone; 43
+ * cases). Each prediction was written here before the mutation was run.
  *   - discovery ignores the Constants document -> only "Constants drift" goes red: it is the one case
  *     that renders Constants through `lore agents`; the pure Constants cases never touch discovery.
+ *   - B1 reverted (rules judged and rendered line by line, as first built) -> 3 of 43: the wrapped
+ *     exact-bytes case, the review's-example case, and the unlabelled positive control. Every other
+ *     Constitution fixture writes one rule per single-line paragraph, which both forms render alike;
+ *     and the "Rationale: / **Check:** line" case stays green, because the line-based form also
+ *     dropped a line that STARTS with a label.
+ *   - S1 reverted (escape only `\` and `<`) -> 22 of 43: every case pinning escaped punctuation from
+ *     CONSTITUTION_LINES (Constitution exact-lines, CLAUDE.md and AGENTS.md blocks, Constitution-
+ *     before-Constants, `lore init --claude`, absent-documents positive control, other-case type,
+ *     unparseable sibling, S2 tracked-over-ignored, S5 unreadable), the wrapped exact-bytes case, 7 of
+ *     the 9 inert classes (heading, blockquote, list item, fence, link, emphasis, entity; the HTML
+ *     comment and tag stay inert because `<` is still escaped), the stray backtick, the principle-name
+ *     case, the hostile block, and the S3 rule case (its `.`). Constants cases stay green: their text is
+ *     lore's own or inside code spans.
+ *   - S3: the ANSI/control strip removed from prose -> 2 of 43: the two S3 cases, the only fixtures
+ *     carrying those bytes in prose.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fromMarkdown } from "mdast-util-from-markdown";
 import { readAgentGovernance } from "../src/commands/agent-governance";
 import { type AgentsResult, applyAgentsBridge, runAgents } from "../src/commands/agents";
 import { applyCodexBridge } from "../src/commands/codex-bridge";
 import { AGENT_BLOCK_LABEL, CLAUDE_MD_REL_PATH, instructionTopicKeys } from "../src/core/agent-bridge";
+import { nodeText, walkMdast } from "../src/core/bundle";
 import { AGENTS_MD_REL_PATH, CODEX_AGENT_BLOCK_LABEL } from "../src/core/codex-bridge";
 import { upsertManagedBlock } from "../src/core/managed-block";
 import { type AgentBlockDoc, agentBlockLines } from "../src/core/type-rules";
-import { EXIT_CODES, EXIT_OK } from "../src/errors";
+import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
-import { capture } from "./helpers";
+import { capture, gitRun } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 
@@ -121,7 +134,9 @@ The preamble MUST NOT be rendered.
 ### P1. Deterministic output
 
 Lore MUST produce identical output for identical input.
+
 It MUST NOT call a network service, per \`ADR-0014\`.
+
 Output SHOULD stay small.
 
 Plain prose with no keyword at all.
@@ -155,12 +170,17 @@ Amendments MUST go through review.
 | 1.2.0 | 2026-02-01 | Opened contributions. | |
 `;
 
-/** Exactly what R8 renders for {@link CONSTITUTION} at `docs/constitution.md`. */
+/**
+ * Exactly what R8 renders for {@link CONSTITUTION} at `docs/constitution.md`. Every ASCII punctuation
+ * character in document prose is backslash-escaped (review S1), so `.` reads `\.` in the raw block
+ * and renders as `.`; lore's own text (the label, the path and version code spans, the `P<n>.` id)
+ * is not.
+ */
 const CONSTITUTION_LINES = [
   "- **Constitution:** `docs/constitution.md`, version `1.2.0`",
   "  - P1. Deterministic output",
-  "    - Lore MUST produce identical output for identical input.",
-  "    - It MUST NOT call a network service, per `ADR-0014`.",
+  "    - Lore MUST produce identical output for identical input\\.",
+  "    - It MUST NOT call a network service\\, per `ADR-0014`\\.",
   "  - P2. Contributions are open",
 ];
 
@@ -461,30 +481,214 @@ describe("discovery resolves types the way `lore check` does", () => {
   });
 });
 
-// ── Untrusted text ────────────────────────────────────────────────────────────—
+// ── B1: a rule is a whole paragraph ───────────────────────────────────────────—
 
-describe("document text is sanitised before it reaches the block", () => {
-  const HOSTILE = CONSTITUTION.replace(
-    "### P2. Contributions are open",
-    "### P2. Close \\<!-- lore:agents:end --> early\n\nIt MUST NOT \\<script>run\\</script>, \u001b[31mred\u001b[0m and C:\\\\path.",
-  );
+/** A Constitution whose `## Principles` section is exactly `principles`; valid apart from what a case puts there. */
+function constitutionWith(principles: string): string {
+  return `---
+type: Constitution
+title: Constitution
+summary: A fixture constitution.
+version: 1.0.0
+ratified: "2026-01-01"
+last_amended: "2026-01-01"
+amendment_authority: project maintainers
+---
 
-  test("an HTML comment, a marker, ANSI and control bytes cannot survive into the block", () => {
-    const text = agentBlockLines(new Map([["Constitution", docOf("docs/constitution.md", HOSTILE)]])).join("\n");
-    expect(text).toContain("  - P2. Close \\<!-- lore:agents:end --> early");
-    expect(text).toContain("    - It MUST NOT \\<script>run\\</script>, red and C:\\\\path.");
-    expect(text).not.toContain("\u001b");
-    expect(text).not.toMatch(/(^|[^\\])<!--/);
+# Constitution
+
+## Principles
+
+${principles}
+
+## Governance
+
+Amendments are made by pull request.
+
+## Amendment log
+
+| Version | Date | Change | ADR |
+|---|---|---|---|
+| 1.0.0 | 2026-01-01 | Initial ratification. | |
+`;
+}
+
+/** Render a Constitution through the facet, as `lore agents` does. */
+function renderConstitution(text: string): string[] {
+  return agentBlockLines(new Map([["Constitution", docOf("docs/constitution.md", text)]]));
+}
+
+/**
+ * Principles written the way this fleet writes markdown, hard-wrapped at 100 columns. P3's first
+ * paragraph is the review's own example: its condition is on the line after its MUST, and its
+ * Rationale continuation line ("agent that MUST act fast still waits") says MUST too.
+ */
+const WRAPPED = constitutionWith(`### P3. Destructive git operations
+
+An agent MUST force-push, rewrite history, or delete a remote branch only after the user has
+approved that exact operation in the current session.
+
+Rationale: the cost of a wrong destructive operation is unbounded, and even an
+agent that MUST act fast still waits.
+
+Check: review only; for the session under review, the reviewer confirms each rule
+that MUST hold did.
+
+### P4. Provenance
+
+Every commit MUST carry a sign-off trailer naming the human accountable for it, and the trailer
+MUST NOT be added by the agent on its own.
+Rationale: provenance survives only if a human asserts it.
+**Check:** CI MUST reject an unsigned commit on a protected branch.
+
+A MUST rule broken by a hard line break\\
+still renders as one rule.`);
+
+/** Exactly what R8 renders for {@link WRAPPED}. */
+const WRAPPED_LINES = [
+  "- **Constitution:** `docs/constitution.md`, version `1.0.0`",
+  "  - P3. Destructive git operations",
+  "    - An agent MUST force\\-push\\, rewrite history\\, or delete a remote branch only after the user has approved that exact operation in the current session\\.",
+  "  - P4. Provenance",
+  "    - Every commit MUST carry a sign\\-off trailer naming the human accountable for it\\, and the trailer MUST NOT be added by the agent on its own\\.",
+  "    - A MUST rule broken by a hard line break still renders as one rule\\.",
+];
+
+describe("B1 — a MUST rule is its whole paragraph, and rationale and checks never render", () => {
+  test("a 100-column hard-wrapped Constitution renders each rule whole, byte for byte", () => {
+    expect(renderConstitution(WRAPPED)).toEqual(WRAPPED_LINES);
   });
 
-  test("the hostile document still yields one well-formed, idempotent managed block", () => {
-    writeDoc("docs/constitution.md", HOSTILE);
+  test("the review's example: the wrapped condition is kept, the wrapped Rationale is not a rule", () => {
+    const text = renderConstitution(WRAPPED).join("\n");
+    expect(text).toContain("only after the user has approved that exact operation in the current session");
+    // Each of these continuation lines says MUST, which is what made a line-based render list it.
+    expect(text).not.toContain("act fast");
+    expect(text).not.toContain("still waits");
+    expect(text).not.toContain("reviewer confirms");
+    expect(text).not.toContain("hold did");
+  });
+
+  test("a Rationale: or bold **Check:** line with no blank line before it still ends the rule", () => {
+    const text = renderConstitution(WRAPPED).join("\n");
+    expect(text).not.toContain("provenance survives");
+    expect(text).not.toContain("reject an unsigned commit");
+  });
+
+  test("positive control: without its Rationale: label, the same text would have been part of the rule", () => {
+    // Positive control for the cut: the same paragraph WITHOUT its label line renders the text that
+    // follows, so the absence above is the label's doing and not a lost paragraph.
+    const unlabelled = WRAPPED.replace("Rationale: provenance survives", "Provenance survives");
+    expect(renderConstitution(unlabelled).join("\n")).toContain("Provenance survives only if a human asserts it");
+  });
+});
+
+// ── S1, S3: document text is inert in the block ───────────────────────────────—
+
+/** Node types that would make document text act as markdown in the block. */
+const LIVE_MARKDOWN = new Set([
+  "html",
+  "heading",
+  "blockquote",
+  "code",
+  "link",
+  "linkReference",
+  "image",
+  "imageReference",
+  "definition",
+  "emphasis",
+  "thematicBreak",
+]);
+
+/** The block's lines parsed as markdown: every live node type found, every code span, and each list item's text. */
+function parsed(lines: readonly string[]): { live: string[]; code: string[]; items: string[] } {
+  const live: string[] = [];
+  const code: string[] = [];
+  const items: string[] = [];
+  walkMdast(fromMarkdown(lines.join("\n")), (node) => {
+    if (LIVE_MARKDOWN.has(node.type)) live.push(node.type);
+    if (node.type === "inlineCode") code.push(node.value);
+    if (node.type === "listItem") {
+      const paragraph = node.children[0];
+      if (paragraph?.type === "paragraph") items.push(nodeText(paragraph));
+    }
+  });
+  return { live, code, items };
+}
+
+/**
+ * One case per class of markdown a review found live in the block: each principle paragraph below is
+ * written with source escapes, so its TEXT is the literal in `shows`, and that literal must come back
+ * out of the rendered block as plain text, not as markup.
+ */
+const INERT_CASES: ReadonlyArray<{ readonly name: string; readonly source: string; readonly shows: string }> = [
+  {
+    name: "an HTML comment",
+    source: "A \\<!-- hidden --\\> comment MUST stay visible.",
+    shows: "A <!-- hidden --> comment MUST stay visible.",
+  },
+  {
+    name: "an inline HTML tag",
+    source: "A \\<b>bold\\</b> tag MUST stay literal.",
+    shows: "A <b>bold</b> tag MUST stay literal.",
+  },
+  { name: "a heading", source: "\\# A heading MUST stay a sentence.", shows: "# A heading MUST stay a sentence." },
+  { name: "a blockquote", source: "\\> A quote MUST stay a sentence.", shows: "> A quote MUST stay a sentence." },
+  { name: "a list item", source: "\\- A dash MUST stay a sentence.", shows: "- A dash MUST stay a sentence." },
+  {
+    name: "a code fence opener",
+    source: "\\`\\`\\` A fence MUST stay a sentence.",
+    shows: "``` A fence MUST stay a sentence.",
+  },
+  {
+    name: "a link",
+    source: "A \\[link](https://example.com) MUST stay text.",
+    shows: "A [link](https://example.com) MUST stay text.",
+  },
+  { name: "emphasis", source: "A \\*star\\* MUST stay literal.", shows: "A *star* MUST stay literal." },
+  { name: "an entity", source: "An &amp;amp; MUST stay literal.", shows: "An &amp; MUST stay literal." },
+];
+
+describe("S1 — every class of markdown in document prose renders as literal text", () => {
+  for (const { name, source, shows } of INERT_CASES) {
+    test(`${name} in a rule renders inert`, () => {
+      const lines = renderConstitution(constitutionWith(`### P1. Inert text\n\n${source}`));
+      const block = parsed(lines);
+      expect(block.live).toEqual([]);
+      expect(block.items).toEqual(["Constitution: docs/constitution.md, version 1.0.0", "P1. Inert text", shows]);
+    });
+  }
+
+  test("a stray backtick cannot pair with a later code span and make its content live", () => {
+    const lines = renderConstitution(
+      constitutionWith("### P1. Inert text\n\nA stray \\` tick MUST NOT pair with `code` later."),
+    );
+    const block = parsed(lines);
+    expect(block.code).toEqual(["docs/constitution.md", "1.0.0", "code"]);
+    expect(block.items[2]).toBe("A stray ` tick MUST NOT pair with code later.");
+  });
+
+  test("a principle NAME is escaped the same way; its validated P<n>. id is kept verbatim", () => {
+    // Source escapes, so the heading's TEXT carries the literal `*`, `[`, `]`, `(` and `)`.
+    const lines = renderConstitution(constitutionWith("### P7. A \\*starred\\* \\[name](x)\n\nIt MUST hold."));
+    expect(lines[1]).toBe("  - P7. A \\*starred\\* \\[name\\]\\(x\\)");
+    expect(parsed(lines).live).toEqual([]);
+  });
+
+  test("a hostile document still yields one well-formed, idempotent managed block", () => {
+    writeDoc(
+      "docs/constitution.md",
+      constitutionWith(
+        "### P2. Close \\<!-- lore:agents:end --> early\n\nIt MUST NOT \\<script>run\\</script> or C:\\\\path.",
+      ),
+    );
     expect(agents().code).toBe(EXIT_OK);
     const written = read(CLAUDE_MD_REL_PATH);
     expect(written.match(/^<!-- lore:agents:(begin|end) -->$/gm)).toEqual([
       "<!-- lore:agents:begin -->",
       "<!-- lore:agents:end -->",
     ]);
+    expect(written).toContain("    - It MUST NOT \\<script\\>run\\<\\/script\\> or C\\:\\\\path\\.");
     const again = agents(["--check"]);
     expect(again.code).toBe(EXIT_OK);
     expect(actionFor(again.result, CLAUDE_MD_REL_PATH)).toBe("unchanged");
@@ -494,5 +698,90 @@ describe("document text is sanitised before it reaches the block", () => {
     const withTicks = CONSTANTS.replace("- value: 8080", "- value: `` a`b ``");
     const lines = agentBlockLines(new Map([["Constants", docOf("docs/constants.md", withTicks)]]));
     expect(lines).toContain("  - ``service.http-port = a`b``");
+  });
+
+  test("a value holding an HTML comment delimiter is neutralised inside its code span too", () => {
+    const withComment = CONSTANTS.replace("- value: 8080", "- value: `<!-- x -->`");
+    const lines = agentBlockLines(new Map([["Constants", docOf("docs/constants.md", withComment)]]));
+    expect(lines).toContain("  - `service.http-port = &lt;!-- x --&gt;`");
+  });
+});
+
+describe("S3 — ANSI escapes and control bytes are stripped, in a principle name and in a rule", () => {
+  test("a principle heading carrying ANSI and control bytes renders without them", () => {
+    const lines = renderConstitution(
+      constitutionWith("### P1. Colour \u001b[31mred\u001b[0m\u0007 name\n\nIt MUST hold."),
+    );
+    expect(lines[1]).toBe("  - P1. Colour red name");
+  });
+
+  test("a rule carrying ANSI and control bytes renders without them", () => {
+    const lines = renderConstitution(
+      constitutionWith("### P1. Plain\n\nIt MUST \u001b[1mnot\u001b[22m ring\u0007 a bell."),
+    );
+    expect(lines[2]).toBe("    - It MUST not ring a bell\\.");
+  });
+});
+
+// ── S2, S5: what discovery reads ──────────────────────────────────────────────—
+
+describe("S2 — a git-ignored document is never rendered, as `lore check` never judges one", () => {
+  test("an ignored draft Constitution loses to the tracked one; outside git it would have won", () => {
+    writeDoc("docs/constitution.md", CONSTITUTION);
+    writeDoc("docs/a-drafts/constitution.md", CONSTITUTION.replace("version: 1.2.0", "version: 9.9.9"));
+    // Positive control: with no git repository nothing is ignored, and the draft sorts first.
+    expect(readAgentGovernance(root)[0]).toBe("- **Constitution:** `docs/a-drafts/constitution.md`, version `9.9.9`");
+
+    gitRun(root, ["init", "-q"]);
+    writeFileSync(join(root, ".gitignore"), "docs/a-drafts/\n");
+    expect(readAgentGovernance(root)).toEqual(CONSTITUTION_LINES);
+  });
+
+  test("an individually ignored file is skipped too", () => {
+    writeDoc("docs/constants.md", CONSTANTS);
+    gitRun(root, ["init", "-q"]);
+    writeFileSync(join(root, ".gitignore"), "docs/constants.md\n");
+    expect(readAgentGovernance(root)).toEqual([]);
+  });
+});
+
+describe("S5 — a broken document is skipped; a broken bundle index fails naming docs/index.md", () => {
+  test("an unreadable document is skipped, not fatal", () => {
+    writeDoc("docs/a-unreadable.md", CONSTITUTION);
+    writeDoc("docs/constitution.md", CONSTITUTION);
+    chmodSync(join(root, "docs/a-unreadable.md"), 0o000);
+    try {
+      let unreadable = false;
+      try {
+        readFileSync(join(root, "docs/a-unreadable.md"), "utf8");
+      } catch {
+        unreadable = true;
+      }
+      if (!unreadable) {
+        return; // root (or Windows) can still read a 000-mode file, so the case cannot be set up
+      }
+      expect(readAgentGovernance(root)).toEqual(CONSTITUTION_LINES);
+      expect(agents().code).toBe(EXIT_OK);
+    } finally {
+      chmodSync(join(root, "docs/a-unreadable.md"), 0o644);
+    }
+  });
+
+  test("a malformed docs/index.md fails loud, and the error names docs/index.md", () => {
+    writeDoc("docs/index.md", "---\ntype: Reference\ntitle: Index\nokf_version: 5\n---\n\n# Index\n");
+    let error: unknown;
+    try {
+      readAgentGovernance(root);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(LoreError);
+    expect((error as LoreError).type).toBe("validation");
+    expect((error as LoreError).message).toStartWith("docs/index.md: ");
+  });
+
+  test("unparseable YAML in docs/index.md names docs/index.md too", () => {
+    writeDoc("docs/index.md", "---\ntype: [unclosed\n---\n\n# Index\n");
+    expect(() => readAgentGovernance(root)).toThrow("docs/index.md");
   });
 });
