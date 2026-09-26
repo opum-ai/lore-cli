@@ -403,7 +403,8 @@ lore cannot read), with the command to run next in \`remedy\`. Claude rows scope
 to another project are ignored, and the deciding row is chosen by scope in the
 order managed > local > project > user > synced, then, within one scope, by the
 deepest \`projectPath\`. A \`managed\` row is set by a Claude Code administrator:
-it applies to every project and decides over every other scope, and its
+it applies to every project and decides over every other scope (among several
+managed rows, any disabled one makes the state \`disabled\`), and its
 \`remedy\` is prose saying only an administrator can change it, never a command.
 
 Only \`lore agents --target <runtime> --force\` changes the plugin install, and

@@ -409,14 +409,16 @@ describe("ruling 28: a managed row decides over every scope (LCLI-604)", () => {
     expect((await detect("claude", listed([foreignLocal]))).state).toBe("not-installed");
   });
 
-  test("ruling 29 still holds, and a managed row never enters the depth tie-break against local rows", async () => {
+  test("ruling 29 still holds among local rows, and a managed row decides over them whatever projectPath it carries", async () => {
+    // What this does NOT prove: scope rank already separates managed from local, so it cannot see a
+    // managed row's projectPath being fed into a same-scope depth comparison (LCLI-604 review N2).
     const inner = join(root, "inner");
     mkdirSync(inner);
     const outerLocal = claudeRow({ scope: "local", enabled: true, projectPath: root });
     const innerLocal = claudeRow({ scope: "local", enabled: false, projectPath: inner });
-    // A managed row carrying a projectPath DEEPER than either local row, and one shallower than both:
-    // neither depth may matter, because a managed row's projectPath is never compared.
-    for (const managedPath of [join(inner, "deeper", "still"), "/"]) {
+    // A managed row carrying a projectPath DEEPER than either local row, one shallower than both, and
+    // (by `${inner}-x`) one that does not apply here at all: it decides in every case.
+    for (const managedPath of [join(inner, "deeper", "still"), "/", `${inner}-x`]) {
       for (const rows of [
         [outerLocal, innerLocal, managedRow(true, managedPath)],
         [managedRow(true, managedPath), innerLocal, outerLocal],
@@ -435,6 +437,57 @@ describe("ruling 28: a managed row decides over every scope (LCLI-604)", () => {
       [innerLocal, outerLocal],
     ]) {
       expect((await detect("claude", listed(rows), inner)).state).toBe("disabled");
+    }
+  });
+
+  test("disabled wins among managed rows: two applicable managed rows, one disabled, report disabled in either order", async () => {
+    // opum-agent ruling 2026-09-26 (disabled wins among managed rows); opum-doc ruling-28 amendment pending.
+    // The enabled row carries a deep projectPath so that neither depth nor order can rescue it.
+    const enabledManaged = managedRow(true, join(root, "deep", "er"));
+    const disabledManaged = managedRow(false);
+    for (const [order, rows] of [
+      ["enabled-then-disabled", [enabledManaged, disabledManaged]],
+      ["disabled-then-enabled", [disabledManaged, enabledManaged]],
+    ] as const) {
+      const check = await detect("claude", listed([...rows]));
+      expect({ order, state: check.state, scope: check.scope, remedy: check.remedy }).toEqual({
+        order,
+        state: "disabled",
+        scope: "managed",
+        remedy: MANAGED_REMEDY_LITERAL,
+      });
+    }
+  });
+
+  test("disabled wins among managed rows: two ENABLED managed rows report installed, and another plugin's disabled managed row does not count", async () => {
+    const otherPlugin = claudeRow({ id: "frontend-design@claude-plugins-official", scope: "managed", enabled: false });
+    for (const rows of [
+      [managedRow(true), managedRow(true, root)],
+      [managedRow(true), otherPlugin, managedRow(true)],
+      [otherPlugin, managedRow(true), managedRow(true)],
+    ]) {
+      const check = await detect("claude", listed(rows));
+      expect({ state: check.state, scope: check.scope }).toEqual({ state: "installed", scope: "managed" });
+    }
+  });
+
+  test("a padded managed scope (`managed `) is ranked AND treated as managed, so it decides and nothing is offered to run", async () => {
+    // LCLI-604 review N3: the decoder and core read the scope in the same printable form.
+    for (const padded of ["managed ", "\tmanaged\n", " managed"]) {
+      const local = claudeRow({ scope: "local", enabled: true, projectPath: root });
+      const managed = claudeRow({ scope: padded, enabled: false });
+      for (const rows of [
+        [local, managed],
+        [managed, local],
+      ]) {
+        const check = await detect("claude", listed(rows));
+        expect({ padded, state: check.state, scope: check.scope, remedy: check.remedy }).toEqual({
+          padded,
+          state: "disabled",
+          scope: "managed",
+          remedy: MANAGED_REMEDY_LITERAL,
+        });
+      }
     }
   });
 
@@ -1069,6 +1122,27 @@ describe("ruling 28: a managed deciding row is never updated, through lore agent
       const { data } = await agents(["--target", "claude", "--check"], port);
       expect(port.argv).toEqual(["claude plugin list --json"]);
       expect(data.plugin).toMatchObject({ scope: "managed", remedy: MANAGED_REMEDY_LITERAL });
+    }
+  });
+
+  test("a padded managed scope under --target claude --force: only the list runs, and no --scope managed anywhere", async () => {
+    for (const padded of ["managed ", "\tmanaged\n"]) {
+      const port = loggingPort([
+        claudeRow({ scope: "local", enabled: true, projectPath: root }),
+        claudeRow({ scope: padded, enabled: true }),
+      ]);
+      const { code, data } = await agents(["--target", "claude", "--force"], port);
+      expect(code).toBe(EXIT_OK);
+      expect(port.log).toEqual(["list claude"]);
+      expect(port.argv).toEqual(["claude plugin list --json"]);
+      expect(data.plugin).toMatchObject({
+        state: "installed",
+        scope: "managed",
+        update: "not-run",
+        updateDetail: MANAGED_DETAIL_LITERAL,
+        remedy: MANAGED_REMEDY_LITERAL,
+      });
+      expect(JSON.stringify(data)).not.toContain("--scope");
     }
   });
 

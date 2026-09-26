@@ -62,7 +62,9 @@ managed > local > project > user > synced, then, within one scope, by the
 deepest applicable `projectPath`** (LCLI-604; opum-doc ADR Amendment 6, rulings
 28 and 29 — ruling 28 supersedes ruling 26(ii) for `managed` only). A `managed`
 row is administrator policy: it applies to every project, whatever
-`projectPath` it carries, and decides over every other scope. It is never
+`projectPath` it carries, and decides over every other scope; among several
+applicable `managed` rows for the plugin, any disabled one makes the state
+`disabled`, whatever the list order. It is never
 updated — no `--scope managed` command is ever run or printed — so a managed
 deciding row reports `update: not-run` and its `remedy` is prose naming the
 administrator's managed settings, not a command the user can run.

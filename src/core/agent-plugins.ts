@@ -225,8 +225,12 @@ function codexUpdateDetail(detail: string, outcome: AgentPluginUpdateOutcome): s
  * passes through this before it can reach `--plain` or pretty output (LCLI-592 review, finding 2):
  * a newline would forge a standalone plain record (cli-contract §1.3), and an ESC byte would put
  * ANSI on a stream that must carry none (§6).
+ *
+ * Exported so the Claude list decoder ranks a row by the SAME scope text this module later compares
+ * to `managed` (LCLI-604 review N3): a padded `"managed "` must not rank as an unknown scope in the
+ * decoder and then be treated as managed here.
  */
-function printable(text: string): string {
+export function printable(text: string): string {
   return stripAnsiAndControls(text.replace(/\s+/g, " ")).replace(/\s+/g, " ").trim();
 }
 
