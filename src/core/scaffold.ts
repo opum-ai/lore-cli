@@ -233,14 +233,14 @@ const DEFAULT_CONFIG_TOML = `# lore configuration — committed, team-shared kno
 /**
  * The default, fully-commented `.lore/profile.toml`. The profile is the declarative source of
  * truth for the type vocabulary (ADR-0006): with this file absent — or every line below
- * commented — lore uses the built-in profile (Epic/Story/Spec/ADR/Runbook/Reference plus OKF 0.2
- * Attested Computation), so a fresh `init` produces a file that changes nothing until a team defines its own
+ * commented — lore uses the built-in profile (Epic/Story/Spec/ADR/Runbook/Reference/Constitution plus
+ * OKF 0.2 Attested Computation), so a fresh `init` produces a file that changes nothing until a team defines its own
  * types. It is separate from `config.toml`: config carries operational knobs, the profile carries
  * the type system. See docs/adr/0006-schema-types-templates.md.
  */
 const DEFAULT_PROFILE_TOML = `# lore profile — committed, declarative type vocabulary for this bundle.
 # OPTIONAL: with this file absent, or every line below commented, lore uses the built-in
-# built-in profile (Epic/Story/Spec/ADR/Runbook/Reference plus Attested Computation). Define your
+# built-in profile (Epic/Story/Spec/ADR/Runbook/Reference/Constitution plus Attested Computation). Define your
 # own types. lore generates its runtime validators + editor JSON Schemas from this file at load.
 
 # [profile]

@@ -61,6 +61,8 @@ import { type BundleState, type BundleVersionIssue, resolveBundleState, taskRoll
 import { loadProfile, type Profile, profileForBundle, profileTypeDeclaresField } from "../core/profile";
 import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
 import { canonicalType, emitSchemaFiles, profileDigest, SCHEMAS_DIR, unknownTypeHint } from "../core/schema";
+import { type SingletonCandidate, singletonFindings, TYPE_SHAPE_RULE, typeRuleFor } from "../core/type-rules";
+import { validateConceptText } from "../core/validate";
 import {
   ANSI,
   EXIT_CODES,
@@ -420,6 +422,7 @@ function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleRe
   const bundleProfile = profileForBundle(profile, bundle.state);
   const concepts: Concept[] = [];
   const findings: CheckFinding[] = [];
+  const singletons: SingletonCandidate[] = [];
   let error: unknown | null = null;
   for (const file of bundle.files) {
     try {
@@ -442,6 +445,18 @@ function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleRe
           file: file.path,
           message: `unknown type ${JSON.stringify(authoredType)} in ${file.path}; validated on \`type\` only (${unknownTypeHint(authoredType, judgingProfile)})`,
         });
+      }
+      // The second call site for a registered type's rules (LCLI-595, OPAG-425 R2/R3), beside the
+      // peek above rather than inside the `tasks:` parse below, because a Constitution carries no
+      // `tasks:` and would otherwise never be fully parsed by `check` at all. Keyed by type through
+      // the registry, so this site names no type.
+      const rule =
+        authoredType === "" ? undefined : typeRuleFor(canonicalType(authoredType, judgingProfile), judgingProfile);
+      if (rule !== undefined) {
+        findings.push(...typeShapeCheckFindings(file, judgingProfile, bundle.state));
+        if (rule.singleton) {
+          singletons.push({ file: file.path, type: rule.type });
+        }
       }
       if (!Object.hasOwn(raw, "tasks")) {
         continue;
@@ -466,7 +481,33 @@ function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleRe
       }
     }
   }
+  findings.push(...singletonFindings(singletons));
   return { bundle, concepts, findings, error };
+}
+
+/**
+ * `lore validate`'s per-file judgement of one registered-type document, as `check` findings
+ * (LCLI-595, OPAG-425 R3). Reusing {@link validateConceptText} rather than re-deriving it is what
+ * keeps the two gates from disagreeing about the same file. Kept, each under validate's OWN rule
+ * name so a consumer can tell them apart: the profile-shape errors (`frontmatter` — a missing or
+ * mistyped required field — and `required-section`), and every `type-shape` finding from the
+ * type's own content rules. Not kept: quote-safety, resource drift, the unknown-type advisory
+ * and Tier-3 frontmatter warnings, because `check` reports none of those for any other type
+ * either, and a Constitution must not be the one document that draws them.
+ *
+ * Only registered types reach here. Closing the same gap for every OTHER type — `check` enforcing
+ * required sections and fields generally — is deliberately out of scope (OPAG-425 R3).
+ */
+function typeShapeCheckFindings(file: CheckInputFile, profile: Profile, state: BundleState): CheckFinding[] {
+  const findings: CheckFinding[] = [];
+  for (const finding of validateConceptText(file.path, file.raw, profile, state).findings) {
+    const rule = finding.rule;
+    const profileShapeError = finding.severity === "error" && (rule === "frontmatter" || rule === "required-section");
+    if (rule === TYPE_SHAPE_RULE || profileShapeError) {
+      findings.push({ severity: finding.severity, rule, file: file.path, message: finding.message });
+    }
+  }
+  return findings;
 }
 
 /**

@@ -19,6 +19,7 @@ describe("buildTypeVocabulary — the default (story-convention) profile", () =>
       "ADR",
       "Runbook",
       "Reference",
+      "Constitution",
       "Attested Computation",
     ]);
   });

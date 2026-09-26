@@ -47,7 +47,7 @@ describe("slugForTypeName — LOWER-KEBAB slug (AC#7)", () => {
 });
 
 describe("defaultProfile — the built-in story convention (AC#3)", () => {
-  test("compiles the story types followed by OKF 0.2 Attested Computation", () => {
+  test("compiles the story types, then Constitution, then OKF 0.2 Attested Computation", () => {
     expect([...defaultProfile().types.keys()]).toEqual([
       "Epic",
       "Arc",
@@ -55,13 +55,17 @@ describe("defaultProfile — the built-in story convention (AC#3)", () => {
       "ADR",
       "Runbook",
       "Reference",
+      "Constitution",
       "Attested Computation",
     ]);
   });
 
-  test("the built-in OKF 0.1 consumer profile retains only the legacy six types", () => {
+  test("the built-in OKF 0.1 consumer profile omits the OKF 0.2 spec type but keeps lore-only Constitution", () => {
+    // The 0.1 exclusion is for OKF SPEC families (Attested Computation is OKF 0.2 section 10).
+    // Constitution is a lore producer type in no OKF spec, declared on every version (OPAG-425 R1,
+    // LCLI-595) -- otherwise every 0.1 or legacy-missing bundle would leave its shape unenforced.
     const legacy = profileForBundle(defaultProfile(), { okfVersion: "0.1", source: "declared" });
-    expect([...legacy.types.keys()]).toEqual(["Epic", "Arc", "Spec", "ADR", "Runbook", "Reference"]);
+    expect([...legacy.types.keys()]).toEqual(["Epic", "Arc", "Spec", "ADR", "Runbook", "Reference", "Constitution"]);
     expect(legacy.okfVersion).toBe("0.1");
   });
 
@@ -89,6 +93,11 @@ describe("defaultProfile — the built-in story convention (AC#3)", () => {
     // contributes nothing wherever it sits in this list. Asserting the whole list rather than a
     // suffix is deliberate — it fails if a future field is inserted anywhere but the end, which is
     // the only change here that could rewrite every file in a bundle.
+    //
+    // Constitution's four fields (LCLI-595) sit with the other per-type fields, where the compiler
+    // places every type's own fields. A document carrying none of them is byte-identical; one that
+    // already used one of these names as a producer-extension key moves it here on its next
+    // rewrite. Measured when added: 0 of lore-cli's 82 docs carry any of the four.
     expect(defaultProfile().canonicalKeyOrder).toEqual([
       "type",
       "title",
@@ -99,6 +108,10 @@ describe("defaultProfile — the built-in story convention (AC#3)", () => {
       "status",
       "tasks",
       "specs",
+      "version",
+      "ratified",
+      "last_amended",
+      "amendment_authority",
       "supersedes",
       "superseded_by",
       "relations",

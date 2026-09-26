@@ -42,6 +42,7 @@ describe("scaffold — the empty-bundle plan", () => {
       ".lore/schemas/adr.schema.json",
       ".lore/schemas/runbook.schema.json",
       ".lore/schemas/reference.schema.json",
+      ".lore/schemas/constitution.schema.json",
       ".lore/schemas/attested-computation.schema.json",
       ".lore/templates/.gitkeep",
       "docs/index.md",
@@ -91,6 +92,12 @@ describe("scaffold — exported JSON Schemas", () => {
     { path: ".lore/schemas/adr.schema.json", type: "ADR", spellings: ["ADR"], required: ["type"] },
     { path: ".lore/schemas/runbook.schema.json", type: "Runbook", spellings: ["Runbook"], required: ["type"] },
     { path: ".lore/schemas/reference.schema.json", type: "Reference", spellings: ["Reference"], required: ["type"] },
+    {
+      path: ".lore/schemas/constitution.schema.json",
+      type: "Constitution",
+      spellings: ["Constitution"],
+      required: ["type", "version", "ratified", "last_amended", "amendment_authority"],
+    },
     {
       path: ".lore/schemas/attested-computation.schema.json",
       type: "Attested Computation",

@@ -17,9 +17,9 @@
  * Three properties define its behavior, mirroring {@link import("../config")}:
  *
  * - **Zero-config.** A missing `profile.toml` is not an error: {@link loadProfile}
- *   returns the built-in {@link defaultProfile} — the story-convention types plus the
- *   OKF 0.2 Attested Computation type. Consuming an OKF 0.1 bundle selects the legacy six-type
- *   vocabulary so the additive 0.2 type remains a tolerated producer extension there.
+ *   returns the built-in {@link defaultProfile} — the story-convention types, the lore-only
+ *   Constitution type, and the OKF 0.2 Attested Computation type. Consuming an OKF 0.1 bundle
+ *   omits the additive 0.2 spec type so it remains a tolerated producer extension there.
  * - **The declarative language is the boundary.** The grammar expresses field kinds,
  *   enums, list items, required-ness, required sections, and a template ref — and
  *   nothing else (AC#5). There is no code-registration escape hatch and no
@@ -43,7 +43,13 @@ import { readFileSync } from "node:fs";
 import { isAbsolute, join, posix, win32 } from "node:path";
 import { z } from "zod";
 import { errnoCode, LoreError } from "../errors";
-import { type BundleState, CURRENT_OKF_VERSION, type OkfVersion, requireSupportedOkfVersion } from "./okf-version";
+import {
+  type BundleState,
+  CURRENT_OKF_VERSION,
+  LEGACY_OKF_VERSION,
+  type OkfVersion,
+  requireSupportedOkfVersion,
+} from "./okf-version";
 import {
   CLAIM_EVIDENCE_LEVEL_FIELD,
   CLAIM_OUTCOME_FIELD,
@@ -55,6 +61,13 @@ import {
 
 /** The additive concept type introduced by OKF 0.2 section 10. */
 export const ATTESTED_COMPUTATION_TYPE = "Attested Computation";
+
+/**
+ * A project's durable principles, non-negotiables and amendment process (OPAG-425 R1, LCLI-595). A
+ * lore-only built-in, not an OKF spec type, so unlike {@link ATTESTED_COMPUTATION_TYPE} it is
+ * declared on every OKF version lore consumes -- see {@link storyConventionProfile}.
+ */
+export const CONSTITUTION_TYPE = "Constitution";
 
 /** Where the declarative profile lives, relative to the repo root (ADR-0013). `.toml` wins over `.json`. */
 export const PROFILE_REL_PATH = ".lore/profile.toml";
@@ -1029,12 +1042,15 @@ function scalarKindToZod(kind: Exclude<FieldKind, "list">): z.ZodType {
  * An optional string field (`{}`): the common case. Helper so the default profile reads as data.
  */
 const optionalString: FieldSpec = { required: false, kind: "string" };
+/** A required string field (`{ required = true }`). */
+const requiredString: FieldSpec = { required: true, kind: "string" };
 /** An optional list-of-strings field (`{ kind = "list" }`). */
 const optionalStringList: FieldSpec = { required: false, kind: "list", items: { kind: "string" } };
 
 /**
  * The built-in **story-convention** profile (AC#3): the six legacy types lore shipped before the
- * profile existed plus OKF 0.2's additive Attested Computation type, re-expressed as data and run
+ * profile existed, the lore-only Constitution type (LCLI-595, on every OKF version), and OKF 0.2's
+ * additive Attested Computation type (0.2 only), re-expressed as data and run
  * through the same {@link compileProfile} as a loaded profile. Its generated validators are
  * byte-compatible with the old hand-authored Zod, with one documented narrowing: `supersedes` /
  * `superseded_by` are `list` rather than the old `string | list` union, which the declarative
@@ -1087,6 +1103,24 @@ function storyConventionProfile(okfVersion: OkfVersion = CURRENT_OKF_VERSION): P
       { name: "ADR", fields: {}, sections: ["Status", "Context", "Decision", "Consequences"] },
       { name: "Runbook", fields: {}, sections: [] },
       { name: "Reference", fields: {}, sections: [] },
+      // Declared on EVERY OKF version, unlike Attested Computation below (OPAG-425 R1: "available on
+      // every OKF version lore supports"). The 0.1 exclusion exists so an OKF 0.2 SPEC type stays a
+      // tolerated extension under the 0.1 consumer contract (docs/reference/okf-conformance.md);
+      // Constitution is a lore producer type in no OKF spec, so that reason does not reach it, and
+      // exempting 0.1 would leave its shape unenforced in every 0.1 or legacy-missing bundle. The
+      // fields are plain strings because the grammar has no SemVer or calendar-date kind
+      // (`datetime` is an instant): their FORMAT, and the Principles / Amendment log rules, live in
+      // type-rules.ts, which both `lore validate` and `lore check` run (R3).
+      {
+        name: CONSTITUTION_TYPE,
+        fields: {
+          version: requiredString,
+          ratified: requiredString,
+          last_amended: requiredString,
+          amendment_authority: requiredString,
+        },
+        sections: ["Principles", "Governance", "Amendment log"],
+      },
       ...(okfVersion === "0.2" ? [{ name: ATTESTED_COMPUTATION_TYPE, fields: {}, sections: [] }] : []),
     ],
   };
@@ -1108,7 +1142,7 @@ export function defaultProfile(): Profile {
   return DEFAULT_PROFILE;
 }
 
-/** The built-in vocabulary for one consumed bundle version, preserving 0.1's six-type surface. */
+/** The built-in vocabulary for one consumed bundle version, keeping OKF 0.2's spec type out of 0.1. */
 function defaultProfileForVersion(okfVersion: OkfVersion): Profile {
   if (okfVersion === CURRENT_OKF_VERSION) {
     return defaultProfile();
@@ -1120,14 +1154,36 @@ function defaultProfileForVersion(okfVersion: OkfVersion): Profile {
 /**
  * Apply consumed-bundle semantics to a profile without mutating its producer target. Custom
  * profiles retain their explicitly-owned type vocabulary across versions. The built-in profile is
- * versioned: OKF 0.2 includes Attested Computation, while OKF 0.1 keeps the legacy six types so the
- * additive type remains unknown and therefore tolerated under the 0.1 consumer contract.
+ * versioned: OKF 0.2 includes Attested Computation, while OKF 0.1 omits it so that additive OKF spec
+ * type remains unknown and therefore tolerated under the 0.1 consumer contract. The lore-only
+ * Constitution type is declared on both.
  */
 export function profileForBundle(profile: Profile, state: BundleState): Profile {
   if (profile === DEFAULT_PROFILE || profile === LEGACY_DEFAULT_PROFILE) {
     return defaultProfileForVersion(state.okfVersion);
   }
   return profile.okfVersion === state.okfVersion ? profile : { ...profile, okfVersion: state.okfVersion };
+}
+
+/**
+ * Whether `compiled` is lore's OWN built-in declaration of its type — one of the compiled types
+ * of the built-in profile on either OKF version — rather than a same-named type a project declared
+ * in its own `.lore/profile.toml`. Decided by object identity: {@link profileForBundle} hands a
+ * default-profile bundle these very objects, while a loaded profile replaces the built-in
+ * vocabulary wholesale and compiles its own, so it can never share one.
+ *
+ * Built-in-only behaviour (type-rules.ts) keys on this, by orchestrator ruling (OPAG-425, review
+ * finding 2, ruling A): adding a built-in type must never change behaviour for a bundle that already
+ * declared a type of the same name, which keeps its own fields and sections exactly as before.
+ */
+export function isBuiltinTypeDeclaration(compiled: CompiledType | undefined): boolean {
+  if (compiled === undefined) {
+    return false;
+  }
+  return (
+    defaultProfile().types.get(compiled.name) === compiled ||
+    defaultProfileForVersion(LEGACY_OKF_VERSION).types.get(compiled.name) === compiled
+  );
 }
 
 /**
