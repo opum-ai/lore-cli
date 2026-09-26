@@ -161,10 +161,12 @@ The structured `AgentContextExport` contains:
 
 - `profile`: name, description, kind, and effective default;
 - exact `task`, effective `maxTokens`, final `tokenEstimate`, and `packDigest`;
-- `pinned`: every mandatory selected item;
+- `pinned`: every mandatory selected item, the auto-pinned Constitution first
+  when there is one (step 3);
 - `sections`: ranked selected items in emission order;
 - `catalog`: every allowed source with resolved id/path/title, candidate and
-  selected counts, top score, token estimates, and included/omitted reason;
+  selected counts, top score, token estimates, and included/omitted reason —
+  `constitution` for the auto-pin (LCLI-609), `pinned` for a profile's own pin;
 - `queryHits`: up to three bundle-wide `lore query` hits for the task whose
   concept is not already pinned or selected in the pack, best first, each as
   `id`, optional `title` and `snippet`, `score`, and workspace `provenance`
@@ -201,6 +203,19 @@ detail enters the pack.
    never truncated. If fixed overhead plus pins exceeds the effective budget,
    validation fails with a remedy to raise the budget, narrow a pin, split the
    source, or move it to ranked context.
+   Before those pins comes the bundle's built-in Constitution (LCLI-609, from
+   opum-doc's ADR "Add Constitution and Constants document types to lore", R8
+   as clarified by Amendment 4). It is found by the same discovery `lore agents`
+   uses and is pinned whole, with catalog reason `constitution`. It is counted
+   in the same mandatory budget, so an oversized one fails the same way, and
+   the remedy then names it. There is no auto-pin in three cases: the bundle
+   has no built-in Constitution (a profile-declared `Constitution` type is not
+   one, per the ADR's R12); the profile references the Constitution's concept
+   itself in `pinned` or `sources`, whole or by heading (the overlap rule
+   below, applied to the auto-pin); or the pack is a `--workspace` one. The
+   workflow projection pack is auto-pinned too, and its catalog entry puts the
+   file in `inputRevisions`. With no auto-pin the pack is byte-identical to the
+   pre-LCLI-609 one.
 4. Build candidates from `sources`. A source explicitly narrowed to a heading
    produces candidates only within that section. Lore never follows an
    unlisted graph neighbor.

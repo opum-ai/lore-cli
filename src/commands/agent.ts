@@ -8,6 +8,7 @@ import {
   compileAgentContext,
   missingAgentProfile,
   missingAgentProfileWarning,
+  packPinsConstitution,
   queryHitsSectionOmittedWarning,
   renderAgentContextMarkdown,
 } from "../core/agent-context";
@@ -33,10 +34,12 @@ import {
   compileWorkspaceAgentContext,
 } from "../core/agent-workspace-context";
 import { compareCodeUnits } from "../core/order";
+import { CONSTITUTION_TYPE } from "../core/profile";
 import { loadReferenceRetrievalGraph, type RetrievalGraphLoader } from "../core/retrieval";
 import type { WorkspaceRetrievalSelection } from "../core/workspace-retrieval";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { discoverAgentGovernanceDocs } from "./agent-governance";
 import { assertFlagAtMostOnce, parseCommandArgs, singleOptionValue, usage, workspaceSelection } from "./args";
 import { readSource } from "./discover";
 import { assertNoSymlinkInPath, classifyExistingFile, ensureDir, writeFileAtomic } from "./fswrite";
@@ -144,6 +147,12 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
     }
 
     const task = resolveTask(action, options);
+    // The bundle's built-in Constitution is auto-pinned into every bare pack, first among pinned
+    // sources (LCLI-609; opum-doc ADR "Add Constitution and Constants document types to lore", R8
+    // as clarified by Amendment 4). Discovered exactly as `lore agents` discovers it, so a
+    // profile-declared Constitution (R12) is none. A `--workspace` pack spans several bundles, each
+    // possibly with its own Constitution, and is left as it was: which one governs is not decided.
+    const constitutionPath = action.workspace === undefined ? constitutionPathFor(options.root) : undefined;
     // A missing profile degrades to the bundle-wide query section plus a warning instead of the
     // `not_found` exit 3 it used to be (LCLI-575; opum-doc ADR ODOC-265, decision 2). The
     // placeholder is injected into the snapshot so the bare and `--workspace` compilers take it
@@ -151,12 +160,17 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
     // still fails closed with OPUM_WORKFLOW_LORE_ABSENT.
     const profileMissing = !snapshot.profiles.has(action.name);
     const compileSnapshot = profileMissing
-      ? { profiles: new Map([...snapshot.profiles, [action.name, missingAgentProfile(action.name)]]) }
+      ? {
+          profiles: new Map([
+            ...snapshot.profiles,
+            [action.name, missingAgentProfile(action.name, undefined, constitutionPath !== undefined)],
+          ]),
+        }
       : snapshot;
     const profile = findAgentProfile(compileSnapshot, action.name);
     let data =
       action.workspace === undefined
-        ? compileAgentContext(compileSnapshot, retrieval.graph, profile.name, task, action.maxTokens)
+        ? compileAgentContext(compileSnapshot, retrieval.graph, profile.name, task, action.maxTokens, constitutionPath)
         : await compileWorkspaceAgentContext(options.root, compileSnapshot, profile.name, task, action.maxTokens, {
             manifestPath: action.workspace.manifestPath,
             memberIds: action.workspace.memberIds,
@@ -186,7 +200,9 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
     }
     // Emitted only once the pack compiled, so a later failure never leaves a stray warning.
     const degraded = new WarningCollector();
-    if (profileMissing) degraded.add(missingAgentProfileWarning(action.name), "agent-profile-missing");
+    if (profileMissing) {
+      degraded.add(missingAgentProfileWarning(action.name, packPinsConstitution(data)), "agent-profile-missing");
+    }
     if (data.queryHitsSectionOmitted === true && data.queryHitsOmitted > 0) {
       // The one state where the pack itself cannot say it: no room even for the section's heading.
       degraded.add(queryHitsSectionOmittedWarning(data.queryHitsOmitted), "agent-query-hits-omitted");
@@ -252,6 +268,7 @@ async function runWorkflowBinding(action: ContractContextAction, options: AgentC
       const projection = compileAgentWorkflowProjection(snapshot, retrieval.graph, action.name, request, {
         root: options.root,
         maxTokens: action.maxTokens,
+        constitutionPath: constitutionPathFor(options.root),
       });
       const current = projection.profileRevision.sha256.replace(/^sha256:/, "");
       if (binding.profileRevision !== undefined && binding.profileRevision !== current) {
@@ -354,6 +371,7 @@ async function runAgentProject(action: Extract<AgentAction, { kind: "project" }>
       ...facadeFields
     } = compileAgentWorkflowProjection(snapshot, retrieval.graph, action.name, request, {
       root: options.root,
+      constitutionPath: constitutionPathFor(options.root),
     });
     // Byte-compatibility: the facade-only fields are stripped so existing
     // `agent project` consumers see exactly the pre-facade envelope.
@@ -365,6 +383,15 @@ async function runAgentProject(action: Extract<AgentAction, { kind: "project" }>
   } finally {
     await retrieval.dispose?.();
   }
+}
+
+/**
+ * The repo-relative path of the bundle's built-in Constitution, or `undefined` when it has none —
+ * from `lore agents`' own discovery, so the two commands can never disagree about which document it
+ * is (LCLI-609).
+ */
+function constitutionPathFor(root: string): string | undefined {
+  return discoverAgentGovernanceDocs(root).get(CONSTITUTION_TYPE)?.path;
 }
 
 function parseAgentArgs(args: readonly string[]): AgentAction {

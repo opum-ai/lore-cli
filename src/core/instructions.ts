@@ -51,7 +51,8 @@ required kind and direction flags; see their \`--help\`). \`lore graph\`
 emits a link graph, not document text, so it is not a retrieval step.
 \`lore agent context <profile> --task "<text>"\` compiles a task pack, but it
 selects only among the sources that profile lists, so a question outside the
-profile still needs a query. For questions that span repositories, see the
+profile still needs a query. The one addition is the bundle's built-in
+Constitution, which every pack pins first when one exists. For questions that span repositories, see the
 \`workspace\` topic.`,
 };
 
@@ -389,6 +390,17 @@ and a backslash in the raw block marks a character that would otherwise be
 markup. Editing either document
 is drift for \`lore agents --check\` until \`lore agents\` regenerates the
 block; with neither, the block is unchanged.
+
+\`lore agent context\` uses the same Constitution (LCLI-609). Every pack pins
+it first among its pinned sources, with catalog reason \`constitution\`. That
+includes an unknown profile's degraded pack and the workflow projection, but
+not a \`--workspace\` pack. A profile that references the Constitution itself,
+in \`pinned\` or \`sources\`, whole or by heading, keeps its own reference and
+gets no second copy. The auto-pin is a pin, so it is never truncated: if the
+budget cannot hold it the command exits 6, and narrowing it to a heading in
+the profile is the way to take control. A profile-declared \`Constitution\`
+type is never auto-pinned. With no built-in Constitution, every pack is
+byte-identical to what it was before.
 
 To find out which bridge(s) a given repository currently has selected without
 running a write, run \`lore agents --check --json\` and read \`data.files\`:

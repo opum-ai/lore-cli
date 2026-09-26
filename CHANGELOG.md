@@ -46,6 +46,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rules. With a Constants document present, it gains a read-before-you-name trigger line and
   `id = value` for active entries flagged `hot`. `lore agents --check` reports drift when either
   document changes. Document text is rendered inert.
+- **`lore agent context` pins the bundle's built-in Constitution first in every pack** (LCLI-609,
+  OPAG-425 R8 as clarified by Amendment 4). That covers every profile's pack, an unknown profile's
+  degraded pack, and the pack that `lore agent project` and `lore agent context --contract` embed.
+  It carries the catalog reason `constitution`, and in the projection its file is listed in
+  `inputRevisions`.
+  - A profile that already references the Constitution keeps its own reference and gets no second
+    copy.
+  - A profile-declared `Constitution` type is never auto-pinned.
+  - `--workspace` packs are unchanged.
+  - The auto-pin counts toward the budget like any pin, so a Constitution the budget cannot hold
+    exits `6`. Narrow it to a heading in the profile instead.
+  - With no built-in Constitution, every pack is byte-identical to before.
+  - **Additive contract effects:** a new catalog `reason` value, and `packDigest`/`contextDigest`
+    change for any bundle that has a Constitution.
 
 ### Changed
 

@@ -895,6 +895,31 @@ opum-doc's ADR "Make lore agent context always query-augmented" (ODOC-265) and
 its Amendment 1 (opum-doc `main` a8bb596), grounded in LCLI-573's measurement
 that the profile pack alone selected the answer for 8 of 69 real questions.
 
+**Every pack pins the bundle's built-in Constitution first (LCLI-609).** This
+implements opum-doc's ADR "Add Constitution and Constants document types to
+lore", R8 as clarified by Amendment 4. When `docs/` holds a built-in
+`Constitution`, found by the same discovery `lore agents` renders its managed
+block from, `context` adds that whole document to the pack. It goes first
+among the pinned sources and first in the catalog, with catalog `reason`
+`constitution` rather than `pinned`, so a consumer can tell it from a pin the
+profile's author wrote. It is added to every profile's pack, to the degraded
+pack for an unknown profile (whose warning then says it carries the
+Constitution as well), and to the pack `project` and `context --contract`
+embed. There it is a catalog entry like any other, so its file is listed in
+`inputRevisions` and its reference in `sources`. A `--workspace` pack spans
+several bundles and gets no auto-pin. There are two exceptions. A
+`Constitution` type the repository's own `.lore/profile.toml` declares is not
+lore's built-in type and is never auto-pinned (the ADR's R12). A profile that
+references the Constitution itself, in `pinned` or `sources`, whole or by
+heading, keeps its own reference in its own place and gets no second copy;
+this is the profile overlap rule applied to the auto-pin. The auto-pin is
+mandatory evidence, so it is never truncated. A Constitution the budget cannot
+hold fails exit `6` like any over-budget pin, and the hint names the
+Constitution. Narrowing it to a heading in the profile is how a profile takes
+control. With no built-in Constitution, every pack, projection and exit code is
+byte-identical to what it was before. The new `reason` value is additive under
+cli-contract §7.1, as the workspace-only reasons were.
+
 **`context --workspace <manifest> --repository <member-id>` (repeatable; LCLI-432) compiles the
 same profile-bounded pack across an explicit workspace manifest instead of this repository alone**
 — PLAN.md §4.6's cross-repository grounding. A profile's `sources`/`pinned` entries stay
