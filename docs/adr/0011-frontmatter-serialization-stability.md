@@ -35,6 +35,18 @@ and a serialize-parse fixpoint. A future `yaml` or mdast-frontmatter migration
 requires the compatibility proof recorded in the
 [dependency boundary audit](../reference/dependency-boundary-audit.md).
 
+Amended — 2026-09-26 (LCLI-603): the "No round-trip-perfect comment preservation" consequence
+as accepted said the editor modeline escapes comment loss because lore keeps it *above* the `---`
+fence ([ADR-0006](0006-schema-types-templates.md)). That premise was false. Shipped lore writes
+the modeline as the first line *inside* the fence (`serializeConceptWithModeline`,
+`src/core/concept.ts`), because `parseConcept` requires `---` at byte 0. So until LCLI-601 the
+modeline *was* subject to comment loss, and a rewrite dropped it. Since LCLI-601
+(opum-ai/lore-cli#290), parsing captures the comment lines that open the fence, between `---` and
+the first key (`Concept.leadingComments`), and serializing re-emits them ahead of the dumped YAML.
+The modeline is preserved for that reason, not because of where it sits. The consequence is
+corrected in place and marked *Amended (LCLI-603)*. The limitation it states still holds for every
+comment after the first key. ADR-0006 carries the matching correction.
+
 ## Context
 
 Every non-index concept file in the bundle begins with a YAML frontmatter
@@ -210,11 +222,16 @@ Concretely:
   cosmetic frontmatter style. This is intentional — stability beats uniformity —
   but it means lore is *not* a frontmatter formatter, and a separate, opt-in
   normalization pass would be a distinct (non-default) feature.
-- **No round-trip-perfect comment preservation.** YAML comments inside a
-  frontmatter block are not guaranteed to survive serialization (the common YAML
-  emitters drop them). lore's convention keeps the editor modeline *above* the
-  `---` fence ([ADR-0006](0006-schema-types-templates.md)), so it is not subject
-  to this; authors should not rely on in-frontmatter comments.
+- **No round-trip-perfect comment preservation.** *Amended (LCLI-603).* YAML
+  comments inside a frontmatter block are not guaranteed to survive
+  serialization (the common YAML emitters drop them). The one exception is the
+  comment block that *opens* the fence, the lines between `---` and the first key.
+  lore captures it on parse (`Concept.leadingComments`) and re-emits it on every
+  rewrite (LCLI-601), and that is where the editor modeline lives, as the first
+  line inside the fence ([ADR-0006](0006-schema-types-templates.md)). Comments
+  *after* the first key are still dropped on the first rewrite, so authors
+  should not rely on them. (As first written, this bullet said the modeline sat
+  *above* the fence and so escaped comment loss; lore never placed it there.)
 
 ## Alternatives considered
 
