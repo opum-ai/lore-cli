@@ -178,6 +178,15 @@ export function singleLine(text: string): string {
  * `core/`-layer callers (which must stay filesystem/output-layer-free) can import it too. Callers
  * that need `singleLine` composed with the strip do so at the call site — this function is the raw
  * primitive only, so a caller that must NOT single-line first (none currently do) still can.
+ *
+ * A third pass drops the Unicode FORMAT characters that can forge what a printed line shows
+ * (LCLI-607, OPAG-453 F5): the bidi embeddings and overrides U+202A-U+202E (an RLO reverses the
+ * rest of a line on screen), the bidi isolates U+2066-U+2069, and the invisible U+200B (zero-width
+ * space), U+2060 (word joiner) and U+FEFF (BOM / zero-width no-break space). It deliberately KEEPS
+ * U+200C (ZWNJ), U+200D (ZWJ), U+200E (LRM), U+200F (RLM) and U+061C (ALM): this helper also
+ * prints document titles and ids, where ZWJ joins emoji sequences and the others carry meaning in
+ * Persian, Indic and right-to-left text (the narrowed OPAG-453 ruling). The set is byte-identical
+ * in rule to quest-cli's `printable` (QCLI-382); change one only together with the other.
  */
 export function stripAnsiAndControls(text: string): string {
   const withoutAnsi = text.replace(
@@ -186,8 +195,15 @@ export function stripAnsiAndControls(text: string): string {
     "",
   );
   // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control bytes to strip them.
-  return withoutAnsi.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
+  const withoutControls = withoutAnsi.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
+  return withoutControls.replace(UNICODE_FORMAT_FORGERY, "");
 }
+
+/**
+ * The Unicode format characters {@link stripAnsiAndControls} removes (LCLI-607, OPAG-453 F5):
+ * U+202A-U+202E, U+2066-U+2069, U+200B, U+2060 and U+FEFF, and nothing else.
+ */
+const UNICODE_FORMAT_FORGERY = /[\u202A-\u202E\u2066-\u2069\u200B\u2060\uFEFF]/g;
 
 /**
  * The maximum length {@link stderrHint} returns (truncation indicator included). A crashing or
