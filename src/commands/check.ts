@@ -10,7 +10,9 @@
  *
  * `check` is a **gate**, so a coherence failure is not a thrown {@link LoreError}: it emits
  * the full `check.report` on stdout and then *returns* exit `6` when any broken bundle-scoped
- * link or rotted anchor exists (or any warning under `--strict`). Unknown-type and portability
+ * link or rotted anchor exists (or any warning under `--strict`), and likewise when a document is
+ * missing a required section or field `lore validate` reports (LCLI-606, OPAG-425 R11: the same
+ * per-file rules, under validate's rule names, for every type). Unknown-type and portability
  * findings alone are advisory and do not fail the gate by default (ADR-0007) — unless the active
  * profile opts an unknown type out of that tolerance with `[profile] strict_types = true`
  * (LCLI-538), in which case it is an unconditional error regardless of `--strict`; see
@@ -425,13 +427,21 @@ interface BundleRuleDoc {
  *
  * Each file's frontmatter is first PEEKED via the cheap, non-validating {@link tryReadFrontmatter}
  * (no Zod schema check). Its `type` is compared with the effective profile used by validation; the
- * structural root index keeps the built-in profile that wrote it. A file with no `tasks:` link (the
- * vast majority of any bundle: ADRs, specs, index/log) then skips full parse+validation.
+ * structural root index keeps the built-in profile that wrote it. Every file with frontmatter then
+ * gets `lore validate`'s own per-file judgement ({@link validateRuleCheckFindings}, LCLI-606): a
+ * missing `type`, a missing or mistyped required field, or a missing required section is an
+ * ordinary error finding under validate's rule name, for every type. A file with no `tasks:` link
+ * (the vast majority of any bundle: ADRs, specs, index/log) is not parsed for reconciliation.
  *
- * Only a file that DOES declare `tasks:` (including an empty list) is fully parsed+validated ({@link parseConcept}, which
- * throws loud on a malformed mapping) — `lore sync` would refuse to touch that exact file too, so
- * silently treating it as un-linked would be a real false-negative against `check`'s own drift gate,
- * the one case where `check` really would otherwise disagree with what `sync` does. An
+ * Only a file that DOES declare `tasks:` (including an empty list) is parsed for reconciliation
+ * ({@link parseConcept}, which throws loud on a malformed mapping). A malformed linked file must
+ * never pass silently — `lore sync` refuses to touch it, so treating it as un-linked would be a
+ * false negative against `check`'s own drift gate. When the throw is the same defect a
+ * `frontmatter` finding above already reports ({@link reportsSameDefect}), that finding is the
+ * gate failure and the file is left out of reconciliation; any other throw is carried as `error`
+ * as it always was. Before LCLI-606 every such throw was carried, so a `tasks:` file with a
+ * missing required field aborted the run (`complete: false`, the first error only) instead of
+ * drawing a finding. An
  * unparseable-YAML file (`tryReadFrontmatter` itself throws — there is no mapping to peek a `tasks:`
  * field from, so it cannot be assumed innocent) is treated the same as "declares `tasks:`".
  *
@@ -470,14 +480,17 @@ function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleRe
           message: `unknown type ${JSON.stringify(authoredType)} in ${file.path}; validated on \`type\` only (${unknownTypeHint(authoredType, judgingProfile)})`,
         });
       }
-      // The second call site for a registered type's rules (LCLI-595, OPAG-425 R2/R3), beside the
-      // peek above rather than inside the `tasks:` parse below, because a Constitution carries no
-      // `tasks:` and would otherwise never be fully parsed by `check` at all. Keyed by type through
-      // the registry, so this site names no type.
+      // `lore validate`'s per-file rules, run by `check` for EVERY document with frontmatter
+      // (LCLI-606, OPAG-425 R11), beside the peek above rather than inside the `tasks:` parse below,
+      // because most documents carry no `tasks:` and would otherwise never be fully parsed by
+      // `check` at all. This is the call site LCLI-595 added for registered types only (R3),
+      // widened to every type rather than joined by a second mechanism.
+      const perFile = validateRuleCheckFindings(file, judgingProfile, bundle.state);
+      findings.push(...perFile);
+      // Keyed by type through the registry, so this site names no type.
       const rule =
         authoredType === "" ? undefined : typeRuleFor(canonicalType(authoredType, judgingProfile), judgingProfile);
       if (rule !== undefined) {
-        findings.push(...typeShapeCheckFindings(file, judgingProfile, bundle.state));
         if (rule.singleton) {
           singletons.push({ file: file.path, type: rule.type });
         }
@@ -488,7 +501,21 @@ function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleRe
       if (!Object.hasOwn(raw, "tasks")) {
         continue;
       }
-      const concept = parseConcept(file.path, file.raw, { profile: bundleProfile, bundleState: bundle.state });
+      let concept: Concept;
+      try {
+        concept = parseConcept(file.path, file.raw, { profile: bundleProfile, bundleState: bundle.state });
+      } catch (err) {
+        // The same frontmatter defect `perFile` already reported as an ordinary `frontmatter` finding
+        // (LCLI-606): `parseConcept` and `validateConceptText` share one validator, so the throw
+        // carries exactly the message of a finding already in the report. Rethrowing would report it
+        // a second time, as a run-aborting error, so the file is simply left out of reconciliation —
+        // which `lore sync` refuses to touch too. Anything the findings do not already name still
+        // throws, exactly as before.
+        if (err instanceof LoreError && reportsSameDefect(perFile, err)) {
+          continue;
+        }
+        throw err;
+      }
       if (RESERVED_STEMS.has(posix.basename(concept.id))) {
         continue;
       }
@@ -611,19 +638,20 @@ function sourceReader(root: string): (path: string) => SourceRead {
 }
 
 /**
- * `lore validate`'s per-file judgement of one registered-type document, as `check` findings
- * (LCLI-595, OPAG-425 R3). Reusing {@link validateConceptText} rather than re-deriving it is what
- * keeps the two gates from disagreeing about the same file. Kept, each under validate's OWN rule
- * name so a consumer can tell them apart: the profile-shape errors (`frontmatter` — a missing or
- * mistyped required field — and `required-section`), and every `type-shape` finding from the
- * type's own content rules. Not kept: quote-safety, resource drift, the unknown-type advisory
- * and Tier-3 frontmatter warnings, because `check` reports none of those for any other type
- * either, and a Constitution must not be the one document that draws them.
+ * `lore validate`'s per-file judgement of one document, as `check` findings. Reusing
+ * {@link validateConceptText} rather than re-deriving it is what keeps the two gates from
+ * disagreeing about the same file (ADR-0007). Kept, each under validate's OWN rule name so a
+ * consumer can tell them apart: the error-tier `frontmatter` findings (a missing `type`, a missing
+ * or mistyped required field, a second frontmatter fence) and `required-section`, for EVERY type
+ * (LCLI-606, OPAG-425 R11), and every `type-shape` finding from a registered type's own content
+ * rules (LCLI-595, R3). Not kept: quote-safety, resource drift, the unknown-type advisory (the
+ * per-file peek reports that itself) and Tier-3 frontmatter warnings, which `check` does not
+ * report for any type.
  *
- * Only registered types reach here. Closing the same gap for every OTHER type — `check` enforcing
- * required sections and fields generally — is deliberately out of scope (OPAG-425 R3).
+ * A file `validate` skips — no frontmatter, an empty fence — yields nothing here either, so the two
+ * gates judge the same file set.
  */
-function typeShapeCheckFindings(file: CheckInputFile, profile: Profile, state: BundleState): CheckFinding[] {
+function validateRuleCheckFindings(file: CheckInputFile, profile: Profile, state: BundleState): CheckFinding[] {
   const findings: CheckFinding[] = [];
   for (const finding of validateConceptText(file.path, file.raw, profile, state).findings) {
     const rule = finding.rule;
@@ -633,6 +661,19 @@ function typeShapeCheckFindings(file: CheckInputFile, profile: Profile, state: B
     }
   }
   return findings;
+}
+
+/**
+ * Whether `err`, thrown by `parseConcept` on a `tasks:` document, is the defect one of that
+ * document's {@link validateRuleCheckFindings} already reports: an error-tier `frontmatter` finding
+ * carrying the identical message. Exact-message equality rather than "the file has some frontmatter
+ * error" keeps the suppression to the one defect both paths saw — a throw the findings do not name
+ * (a different profile judging the file, a different failure) still aborts the run as before.
+ */
+function reportsSameDefect(findings: readonly CheckFinding[], err: LoreError): boolean {
+  return findings.some(
+    (finding) => finding.severity === "error" && finding.rule === "frontmatter" && finding.message === err.message,
+  );
 }
 
 /**

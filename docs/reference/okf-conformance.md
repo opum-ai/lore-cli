@@ -210,7 +210,11 @@ an unknown, tolerated extension rather than a built-in profile type.
 [`lore check`](./cli-surface.md) is a repository coherence gate, not a second
 OKF conformance validator. It checks links and anchors, Story/task
 reconciliation, managed blocks, portability, provenance paths, computation
-paths, and staleness.
+paths, and staleness. It also enforces `lore validate`'s required sections and
+required fields for every type (LCLI-606), under `validate`'s own
+`required-section` and `frontmatter` rule names. Those are `validate`'s
+judgement of each file, not a second one, because `lore check` exiting 0 is the
+gate a repository actually runs.
 
 The most important distinction is broken links. OKF 0.2 §6 and §11 require a
 consumer to tolerate them, so Lore loads dangling edges without failing. The
@@ -312,7 +316,7 @@ MkDocs, and Docusaurus; its portability warnings remain Lore policy.
 | Command | Question answered | Meaning of exit `6` |
 |---|---|---|
 | `lore validate` | Does each file satisfy the OKF floor and, for a known type, Lore's producer profile? | One or more OKF-floor or Lore-profile errors; under `--strict`, an advisory warning may also gate |
-| `lore check` | Is the whole bundle coherent under this repository's graph, task, and portability policy? | A Lore-specific coherence error; under `--strict`, an advisory warning may also gate |
+| `lore check` | Is the whole bundle coherent under this repository's graph, task, and portability policy? | A Lore-specific coherence error, or a missing required section or field `lore validate` also reports; under `--strict`, an advisory warning may also gate |
 
 Read the finding rule and tier rather than inferring “non-conformant OKF” from
 the shared numeric exit code.

@@ -197,14 +197,16 @@ function toSummary(task: BacklogTaskDetail): BacklogTask {
 
 /**
  * A minimal Story with `tasks:` and an already-present (empty) managed task block — shared by
- * `sync.test.ts` and `check.test.ts`, which both reconcile against the exact same doc shape.
+ * `sync.test.ts` and `check.test.ts`, which both reconcile against the exact same doc shape. It
+ * carries the Story's required `## Acceptance criteria` section, because `lore check` enforces
+ * required sections for every type (LCLI-606) and a drift fixture must fail only for its drift.
  */
 export function storyDoc(title: string, taskIds: readonly string[], status?: string): string {
   const tasksYaml = taskIds.map((t) => `\n  - ${t}`).join("");
   const statusLine = status !== undefined ? `status: ${status}\n` : "";
   return (
     `---\ntype: Story\ntitle: ${title}\n${statusLine}tasks:${tasksYaml}\n---\n` +
-    `# ${title}\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n`
+    `# ${title}\n\n## Acceptance criteria\n\n- It works.\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n`
   );
 }
 

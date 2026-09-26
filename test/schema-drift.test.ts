@@ -424,12 +424,14 @@ describe("runCheck — a thrown 6-class failure cannot hide an unattributable sc
   });
 
   test("a reconciliation failure rejected AFTER the report is emitted is escalated too", async () => {
-    // The async path: a schema-invalid `tasks:`-linked concept rejects out of reconciliation.
+    // The async path: a `tasks:`-linked concept with no managed task region rejects out of
+    // reconciliation, with no Backlog IO for an empty `tasks:` list. (Until LCLI-606 this used a
+    // schema-invalid linked concept, which is now an ordinary `frontmatter` finding, not a rejection.)
     writeFileSync(join(root, ORPHAN), "{}\n");
     mkdirSync(join(root, "docs/stories"), { recursive: true });
     writeFileSync(
       join(root, "docs/stories/bad.md"),
-      "---\ntype: Story\nstatus: 12345\ntasks:\n  - lore-1\n---\n# Bad\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n",
+      "---\ntype: Story\ntasks: []\n---\n# Bad\n\n## Acceptance criteria\n\n- It works.\n",
     );
     const result = runCheck(opts());
     expect(result).toBeInstanceOf(Promise);
@@ -437,7 +439,7 @@ describe("runCheck — a thrown 6-class failure cannot hide an unattributable sc
       () => undefined,
       (e: unknown) => e,
     );
-    expectEscalated(err, /invalid OKF lifecycle status in stories\/bad.md/, /./);
+    expectEscalated(err, /managed task region is missing/, /./);
   });
 
   test("without an unattributable schema the same failure still exits 6 — the escalation is conditional", async () => {

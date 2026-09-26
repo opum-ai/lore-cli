@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BEHAVIOUR CHANGE: `lore check` now enforces the required sections and required fields that
+  `lore validate` reports, for every type** (LCLI-606). Ships in a lore minor release. Until now
+  `lore check` could exit `0` over a document that `lore validate` failed. It now exits `6` on a
+  document with frontmatter that is missing a required section (an ADR without `## Consequences`, a
+  Story without `## Acceptance criteria`), is missing its `type`, or has a missing or mistyped
+  required field, including a field your own `.lore/profile.toml` requires. The findings use
+  `validate`'s own rule names, `required-section` and `frontmatter`. **Before upgrading, run
+  `lore validate`**: its `required-section` findings and error-tier `frontmatter` findings are
+  exactly what `lore check` will now fail on. Files without frontmatter are still skipped, and
+  `validate`'s quote-safety, resource and warning-tier findings stay `validate`-only. A
+  `tasks:`-linked document with invalid frontmatter now draws an ordinary `frontmatter` finding and
+  is left out of reconciliation. Before, it aborted the run with the first such error only (a
+  thrown error on stderr, `complete: false` in `--json`). The exit code is still `6`. The `--json`
+  report's shape is unchanged: the new findings are new values of the existing `rule` field.
+  LCLI-598 measured the ten fleet repositories on 2026-09-26 and found 1 of 384 documents that
+  would newly fail. That document has since been fixed.
 - **Declaring the built-in `Constants` type adds `owner` and `last_reviewed` to the profile-wide
   frontmatter key order** (LCLI-596). A document of any type that already carries `owner:` has it
   reordered on its next lore rewrite. Measured 2026-09-26: 0 fleet documents affected.
