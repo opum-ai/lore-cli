@@ -406,6 +406,8 @@ deepest \`projectPath\`. A \`managed\` row is set by a Claude Code administrator
 it applies to every project and decides over every other scope (among several
 managed rows, any disabled one makes the state \`disabled\`), and its
 \`remedy\` is prose saying only an administrator can change it, never a command.
+It is never updated: installed or disabled, \`--force\` reports \`update:
+not-run\` with a detail saying so, never an instruction to enable it.
 
 Only \`lore agents --target <runtime> --force\` changes the plugin install, and
 only an \`installed\` plugin: \`claude plugin update opum-lore@opum --scope
