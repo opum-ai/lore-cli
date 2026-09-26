@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { BacklogAdapter } from "../src/adapters/backlog";
 import { run } from "../src/cli";
 import { driftFindingsForBundle, type FetchLike, isDocsRoot, type ResolveHost, runCheck } from "../src/commands/check";
+import { walkUnignoredMarkdown } from "../src/commands/discover";
 import { runInit } from "../src/commands/init";
 import { runNew } from "../src/commands/new";
 import { runSync } from "../src/commands/sync";
@@ -1072,6 +1073,35 @@ describe("runCheck — exit codes and discovery", () => {
       errorCount: 0,
       warningCount: 0,
     });
+  });
+
+  test("lore check and lore agents discovery skip the same git-ignored files, from one shared helper (LCLI-610)", () => {
+    // Before LCLI-610 each command carried its own copy of the ignore query; a change to one would
+    // have let `lore agents` render a document `lore check` never judged, or the reverse.
+    Bun.spawnSync(["git", "init", "-q"], { cwd: root });
+    writeFileSync(join(root, "docs", ".gitignore"), "drafts/\nscratch.md\n");
+    mkdirSync(join(root, "docs", "drafts"), { recursive: true });
+    // Each would be a broken-link error if `check` read it.
+    writeFileSync(join(root, "docs", "drafts", "d.md"), ref("Draft", "[ghost](./nope.md)."));
+    writeFileSync(join(root, "docs", "scratch.md"), ref("Scratch", "[ghost](./nope.md)."));
+
+    const discovered = walkUnignoredMarkdown(join(root, "docs"));
+    expect(discovered).not.toContain("drafts/d.md");
+    expect(discovered).not.toContain("scratch.md");
+
+    const o = opts([], JSON_CTX);
+    expect(runCheck(o)).toBe(EXIT_OK);
+    const report = JSON.parse((o.stdout as ReturnType<typeof capture>).text()).data;
+    expect(report).toMatchObject({ errorCount: 0 });
+    // Same file set: check's count is the markdown files discovery found (the bundle has no .mdx).
+    expect(report.fileCount).toBe(discovered.length);
+
+    // Positive control: un-ignore them, and both walks see them, and check fails on them.
+    writeFileSync(join(root, "docs", ".gitignore"), "");
+    const all = walkUnignoredMarkdown(join(root, "docs"));
+    expect(all).toContain("drafts/d.md");
+    expect(all).toContain("scratch.md");
+    expect(runCheck(opts([], JSON_CTX))).toBe(EXIT_CODES.validation);
   });
 
   test("falls back to the original unfiltered walk outside a git repository (never fails `lore check` for lacking one)", () => {

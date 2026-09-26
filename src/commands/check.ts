@@ -89,7 +89,7 @@ import {
 import { VERSION } from "../meta";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { parseCommandArgs, singleOptionValue } from "./args";
-import { canonicalIdentity, readIndexBytes, readSource, toRepoRelative } from "./discover";
+import { canonicalIdentity, gitIgnoredEntries, readIndexBytes, readSource, toRepoRelative } from "./discover";
 import { dedupeTaskIds, defaultAdapter } from "./link";
 import {
   gatherReconciliation,
@@ -1330,44 +1330,6 @@ function expandRoot(absRoot: string, given: string, warnings: WarningCollector):
     (relDir) => ignored.has(`${relDir}/`),
   );
   return files.filter((rel) => !ignored.has(rel));
-}
-
-/**
- * The git-ignored entries under `root` (LCLI-379), keyed exactly the way `walkFiles` keys its own
- * results — a wholly-ignored directory as `<relDir>/` (so {@link expandRoot} can prune the walk
- * before it ever reads that directory's contents, the `.herdr/`-shaped case a large vendored
- * toolchain reported), an individually-ignored file inside an otherwise-tracked directory as its
- * bare relative path (this repo's own `docs/.obsidian/*.json`). `null` when `root` is not inside a
- * git repository or `git` itself is unavailable — gitignore-awareness is advisory, never a hard
- * requirement, so `expandRoot` falls back to its original unfiltered walk rather than failing
- * `lore check` outside a git repository.
- *
- * Applies uniformly whether `root` came from an explicit `lore check <path>` argument or the
- * no-arg default (`docs/`) — both go through this same function, so the two invocations report
- * the same out-of-bundle-link skip count for the same bundle instead of silently diverging on
- * whether the given root happens to contain gitignored content.
- */
-function gitIgnoredEntries(root: string): ReadonlySet<string> | null {
-  const proc = (() => {
-    try {
-      return Bun.spawnSync(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], {
-        cwd: root,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-    } catch {
-      return null;
-    }
-  })();
-  if (proc === null || proc.exitCode !== 0) {
-    return null;
-  }
-  const lines = proc.stdout
-    .toString("utf8")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-  return new Set(lines);
 }
 
 /** Whether a file name is a discoverable doc: a lowercase `.md` (content) or any-case `.mdx` (filename lint only). */
