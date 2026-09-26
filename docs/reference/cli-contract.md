@@ -164,7 +164,7 @@ the [CLI surface](cli-surface.md):
 | `kind` | Emitted by | `data` shape (summary) |
 |---|---|---|
 | `version` / `help` | `lore --version` / `lore --help` (global flags) | the version string / the top-level usage text |
-| `init` | `lore init` | created/skipped paths, bundle root, `interactive`/`scaffolds` always, `tracker` after a wizard or explicit choice, and `agents` (Claude), `codex`, and `backlog` only when those steps ran |
+| `init` | `lore init` | created/skipped paths, bundle root, `interactive`/`scaffolds` always, `tracker` after a wizard or explicit choice, and `agents` (Claude), `codex`, and `backlog` only when those steps ran; `plugins.<runtime>` (the `opum-lore` marketplace plugin state, LCLI-592) only when a Claude or Codex bridge was selected |
 | `new` | `lore new` | new concept id, path, applied template/vars |
 | `validate.report` | `lore validate` | tiered findings (errors/warnings), counts |
 | `check.report` | `lore check` | bundle-scoped drift/link/anchor/portability findings and counts, including informational `skippedOutOfBundleLinkCount` for relative `.md` targets above the selected bundle root |
@@ -180,7 +180,7 @@ the [CLI surface](cli-surface.md):
 | `query.results` | `lore query` | ranked hits with `total`/`shown`/`truncated` (§3) |
 | `context.export` | `lore context` | concept body + neighbor summaries; token budget accounting |
 | `instructions.text` | `lore instructions` | guidance body + the full topic index |
-| `agents.result` | `lore agents` | bridge files written/updated |
+| `agents.result` | `lore agents` | bridge files written/updated; under `--check`, also `plugin`/`plugins`, the `opum-lore` marketplace plugin state per checked runtime (LCLI-592) |
 | `agent.profiles` / `agent.profile` | `lore agent list` / `show` | profile summaries / one normalized profile |
 | `agent.context.export` | `lore agent context` | a profile-bounded evidence pack (pins, ranked sections, catalog, budget accounting) plus `queryHits` — up to three bundle-wide `lore query` hits not already in the pack, as `id`/`title`/`snippet`/`score` (added LCLI-575, additive under §7.1); `queryHitsOmitted`, the count of those hits the token budget cut (always present, `0` when none; §3); `queryHitsSectionOmitted: true` when the budget left no room for the section at all; and `profileMissing: true` when the named profile did not exist and the pack degraded to those hits. Envelope `schemaVersion` `2` since LCLI-575, for that exit-code remap alone (§5.6) |
 | `agent.workflow.projection` | `lore agent project`, `lore agent context --contract` | the read-only opum-agent-workflow/v1 projection wrapping the same evidence pack **without** the query-hit fields — no `queryHits`, `queryHitsOmitted` or `queryHitsSectionOmitted` and no query section in its Markdown, so its bytes, `packDigest` and `inputRevisions` are exactly the pre-LCLI-575 ones (§5.6). `schemaVersion` `1` |

@@ -64,6 +64,9 @@ afterEach(() => {
 function agents(args: string[] = []): { code: number; result: AgentsResult } {
   const stdout = capture();
   const code = runAgents({ root, output: JSON_CTX, args, stdout });
+  // LORE_AGENT_PLUGINS=off (bunfig preload, LCLI-592) keeps `--check` synchronous: the off switch's
+  // plugin port answers without a Promise, so a run with detection off has its pre-LCLI-592 shape.
+  if (code instanceof Promise) throw new Error("runAgents returned a Promise with plugin detection off");
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: AgentsResult };
   expect(envelope.kind).toBe("agents.result");
   return { code, result: envelope.data };

@@ -376,7 +376,21 @@ bare, presence-based \`lore agents\` call -- a scoped \`lore init --claude\`/
 To find out which bridge(s) a given repository currently has selected without
 running a write, run \`lore agents --check --json\` and read \`data.files\`:
 an empty or absent entry for a bridge's own files means that bridge was never
-in scope for this run, not that it silently passed.`,
+in scope for this run, not that it silently passed.
+
+The \`opum-lore\` marketplace plugin is reported alongside the bridges. With a
+Claude or Codex bridge selected, \`lore init\` reports \`data.plugins.<runtime>\`
+and \`lore agents --check\` reports \`data.plugin\` (and \`data.plugins\` for every
+runtime it checked), read through that runtime's own \`claude plugin list
+--json\` or \`codex plugin list --json\`. The state is one of \`installed\`,
+\`disabled\` (installed but switched off, so its skill does not reach the agent),
+\`not-installed\`, or \`not-detectable\` (the runtime CLI is missing, failed, or
+answered in a shape lore cannot read), with the command to run next in
+\`remedy\`. Claude rows scoped to another project are ignored, and the most
+specific applicable scope decides. Neither command installs, enables or
+updates the plugin, and the state never changes an exit code. Set
+\`LORE_AGENT_PLUGINS=off\` to skip detection and start no runtime process, for
+example in a test suite that must not touch the machine's real agent install.`,
 };
 
 /** The detailed, task-scoped topics (everything except `overview`). */
