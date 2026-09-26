@@ -244,6 +244,29 @@ describe("lore sync — AC#1: idempotent", () => {
 
 // ── log.md full-history projection (LCLI-326) ──────────────────────────────────
 
+describe("lore sync — keeps the in-fence yaml-language-server modeline (LCLI-601)", () => {
+  const MODELINE = "# yaml-language-server: $schema=../../.lore/schemas/story.schema.json";
+
+  test("a status rewrite keeps the modeline as line 2, and a second sync is a byte-level no-op", async () => {
+    const raw = storyDoc("X", ["lore-1"], "todo").replace(/^---\n/, `---\n${MODELINE}\n`);
+    writeDoc("stories/x.md", raw);
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done", title: "Ship it" })]);
+
+    const first = await syncCmd(["--no-index"], adapter);
+    expect(first.code).toBe(EXIT_OK);
+    expect(first.report.files.map((f) => f.path)).toContain("docs/stories/x.md");
+    const updated = readDoc("stories/x.md");
+    expect(updated).toContain("status: done"); // the frontmatter really was re-serialized
+    const lines = updated.split("\n");
+    expect(lines.slice(0, 2)).toEqual(["---", MODELINE]);
+    expect(lines.filter((l) => l === MODELINE)).toHaveLength(1);
+
+    const second = await syncCmd(["--no-index"], adapter, { gitSpawn: cleanGitSpawn() });
+    expect(second.report.files).toEqual([]);
+    expect(readDoc("stories/x.md")).toBe(updated);
+  });
+});
+
 describe("lore sync — log.md is a full-history projection", () => {
   const history: readonly GitCommit[] = [
     {
