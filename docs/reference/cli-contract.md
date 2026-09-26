@@ -33,7 +33,7 @@ so callers may treat lore as a pure function of repo state plus command inputs.
 
 **Exception: marketplace-plugin detection reads the host, not the repository**
 (LCLI-592). `lore init --claude`/`--agents`/`--codex` (and the wizard's
-equivalent selections) and `lore agents --check` report the `opum-lore` plugin
+equivalent selections) and every `lore agents` call report the `opum-lore` plugin
 state by running `claude plugin list --json` and `codex plugin list --json`
 from `PATH`. That state depends on which runtimes are installed on this machine,
 which plugins they hold at which scope, and whether they answer at all, so
@@ -42,6 +42,24 @@ It never moves an exit code. Set `LORE_AGENT_PLUGINS=off` to make the output
 deterministic again: every runtime then reports `not-detectable` and no runtime
 process is started. This is not the only host read, and the list here is not
 exhaustive: `lore init`'s `trackerEnvironment` also reports `PATH` state.
+
+**A second exception, and the one place lore changes the host rather than only
+reading it: `lore agents --target <runtime> --force` updates that runtime's
+installed `opum-lore` plugin** (LCLI-593; opum-doc ADR Amendment 5, ruling 27,
+with rulings 19, 21, 25 and 26(iii)). It runs `claude plugin update
+opum-lore@opum --scope <deciding scope>`, or `codex plugin marketplace upgrade
+opum` then `codex plugin add opum-lore@opum`, and reports the outcome in
+`data.plugin.update` (`ran` or `not-run`), `updateOk` and `updateDetail` — the
+field names `quest agents --update-instructions` uses. It runs nothing for a
+disabled, not-installed or not-detectable plugin, nothing under `--check`,
+nothing for a call that names no runtime, and nothing under
+`LORE_AGENT_PLUGINS=off`. A failed update still exits `0`.
+
+**`data.plugin` appears exactly when `--target` names a runtime, and never
+otherwise.** A call with no `--target` reports `data.plugins.<runtime>` instead,
+one entry per runtime whose bridge it covered, so a bare field's meaning never
+depends on which runtime happened to be checked first. The two are never both
+present.
 
 `docs/log.md` is generated output refreshed from git history by `lore sync`.
 It renders each documentation commit once, assigning a multi-folder commit to
@@ -193,7 +211,7 @@ the [CLI surface](cli-surface.md):
 | `query.results` | `lore query` | ranked hits with `total`/`shown`/`truncated` (§3) |
 | `context.export` | `lore context` | concept body + neighbor summaries; token budget accounting |
 | `instructions.text` | `lore instructions` | guidance body + the full topic index |
-| `agents.result` | `lore agents` | bridge files written/updated; under `--check`, also `plugins.<runtime>`, the `opum-lore` marketplace plugin state per checked runtime (LCLI-592; no bare `plugin` without a named target, ADR Amendment 5 ruling 27) |
+| `agents.result` | `lore agents` | bridge files written/updated; the `opum-lore` marketplace plugin state as `plugins.<runtime>`, one per covered runtime, when no `--target` is named (LCLI-592), or as `plugin` plus `target` when `--target <runtime>` is (LCLI-593) — never both, ADR Amendment 5 ruling 27; on a `--force` run (not `--check`) each plugin entry also carries `update` (`ran`\|`not-run`), `updateOk` when it ran, and `updateDetail` |
 | `agent.profiles` / `agent.profile` | `lore agent list` / `show` | profile summaries / one normalized profile |
 | `agent.context.export` | `lore agent context` | a profile-bounded evidence pack (pins, ranked sections, catalog, budget accounting) plus `queryHits` — up to three bundle-wide `lore query` hits not already in the pack, as `id`/`title`/`snippet`/`score` (added LCLI-575, additive under §7.1); `queryHitsOmitted`, the count of those hits the token budget cut (always present, `0` when none; §3); `queryHitsSectionOmitted: true` when the budget left no room for the section at all; and `profileMissing: true` when the named profile did not exist and the pack degraded to those hits. Envelope `schemaVersion` `2` since LCLI-575, for that exit-code remap alone (§5.6) |
 | `agent.workflow.projection` | `lore agent project`, `lore agent context --contract` | the read-only opum-agent-workflow/v1 projection wrapping the same evidence pack **without** the query-hit fields — no `queryHits`, `queryHitsOmitted` or `queryHitsSectionOmitted` and no query section in its Markdown, so its bytes, `packDigest` and `inputRevisions` are exactly the pre-LCLI-575 ones (§5.6). `schemaVersion` `1` |

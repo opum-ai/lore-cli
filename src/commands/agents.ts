@@ -30,11 +30,15 @@ import {
   type AgentPluginCheck,
   type AgentPluginChecks,
   type AgentPluginPort,
+  type AgentPluginUpdateReport,
+  type AgentPluginUpdateReports,
   type AgentRuntime,
   detectLorePlugins,
+  notRunReport,
   renderPluginPlain,
   renderPluginPretty,
   thenMaybe,
+  updateLorePlugin,
 } from "../core/agent-plugins";
 import {
   AGENTS_MD_REL_PATH,
@@ -58,9 +62,10 @@ export interface AgentsOptions {
   /** stdout sink; defaults to `process.stdout`. */
   stdout?: Writer;
   /**
-   * How `--check` reads the opum-lore marketplace plugin (LCLI-592); defaults to each runtime's own
-   * `plugin list --json`, or to nothing at all under `LORE_AGENT_PLUGINS=off`. Injected in tests so
-   * no test reaches the machine's real agent install.
+   * How `lore agents` reads, and under `--target <runtime> --force` updates, the opum-lore
+   * marketplace plugin (LCLI-592, LCLI-593); defaults to each runtime's own CLI, or to nothing at all
+   * under `LORE_AGENT_PLUGINS=off`. Injected in tests so no test reaches the machine's real agent
+   * install.
    */
   agentPlugins?: AgentPluginPort;
 }
@@ -78,17 +83,27 @@ export interface AgentsResult {
   /** Where this run resolved `.claude/skills/lore/SKILL.md` to come from (LCLI-446). */
   skillSource: SkillSource;
   /**
-   * `--check` only (LCLI-592): the opum-lore marketplace plugin for every runtime whose bridge this
-   * run checked, keyed by runtime (`plugins.claude`, `plugins.codex`) exactly like `lore init`'s
-   * `data.plugins`. Each entry has quest-cli's QCLI-371 shape. Reported, never acted on, and never
-   * part of the exit code. Absent on a writing run and when no Claude or Codex bridge was checked.
-   *
-   * There is deliberately NO bare `plugin` field here. opum-doc's ADR Amendment 5, ruling 27 (main
-   * 99e8ce5): `data.plugin` appears exactly when a runtime is named with `--target`, never otherwise,
-   * because a bare field's meaning must not depend on which runtime happens to be checked first.
-   * `lore agents` has no `--target` yet (LCLI-593 adds it), so it reports `plugins.<runtime>` only.
+   * The runtime a `--target` call named (LCLI-593). Absent on a bare call, which covers whatever
+   * bridges the repository has selected.
    */
-  plugins?: AgentPluginChecks;
+  target?: AgentRuntime;
+  /**
+   * A call with NO `--target` (LCLI-592, LCLI-593): the opum-lore marketplace plugin for every
+   * runtime whose bridge this run covered, keyed by runtime (`plugins.claude`, `plugins.codex`)
+   * exactly like `lore init`'s `data.plugins`. Each entry has quest-cli's QCLI-371 shape; on a
+   * `--force` run (not `--check`) each is also an update report whose `update` is always `not-run`,
+   * because a call naming no runtime is consent to updating none (rulings 25, 27). Never part of the
+   * exit code. Absent when no Claude or Codex bridge was covered, and on every `--target` call.
+   */
+  plugins?: AgentPluginChecks | AgentPluginUpdateReports;
+  /**
+   * A `--target <runtime>` call only (LCLI-593): that runtime's opum-lore plugin state, and on a
+   * `--force` run (not `--check`) the outcome of its update. opum-doc's ADR Amendment 5, ruling 27
+   * (main 99e8ce5): `data.plugin` appears exactly when a runtime is named, never otherwise, because a
+   * bare field's meaning must not depend on which runtime happens to be checked first. So `plugin`
+   * and `plugins` are never both present.
+   */
+  plugin?: AgentPluginCheck | AgentPluginUpdateReport;
 }
 
 /** The parsed, validated arguments {@link applyAgentsBridge} needs — `root` plus `--force`/`--check`. */
@@ -111,6 +126,14 @@ export interface ApplyAgentsOptions {
    * current", so it wants both.
    */
   includeCodex?: boolean;
+  /**
+   * `lore agents --target <runtime>` (LCLI-593, ADR ruling 27): plan that runtime's bridge ONLY, and
+   * plan it whether or not its artifacts exist yet, the same way `lore init --claude`/`--codex` is an
+   * explicit ask that always means exactly what it names. The other runtime's bridge is neither
+   * planned, written nor checked. `agents.skill_source` still governs SKILL.md here, because this is
+   * still `lore agents` keeping a selected bridge current rather than `init` setting one up.
+   */
+  target?: AgentRuntime;
 }
 
 /**
@@ -123,7 +146,7 @@ export interface ApplyAgentsOptions {
  * itself, or fold it into a larger structured result for `lore init`).
  */
 export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
-  const { root, force, check, includeCodex = false } = options;
+  const { root, force, check, includeCodex = false, target } = options;
 
   const skillOnDisk = normalizeOnDisk(readFileIfPresent(join(root, SKILL_REL_PATH), SKILL_REL_PATH));
   const claudeRaw = readFileIfPresent(join(root, CLAUDE_MD_REL_PATH), CLAUDE_MD_REL_PATH);
@@ -150,7 +173,15 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
   // by {@link hasClaudeBridge} for the bare `lore agents` call (`includeCodex` true, "keep whatever's
   // selected current"), so a repository that opted into Codex alone is not handed an uninvited Claude
   // bridge it can never clear from its own `--check` gate (LCLI-437).
-  const claudeArmed = !includeCodex || hasClaudeBridge(skillOnDisk, claudeRaw, codexSkillRaw, agentsRaw);
+  //
+  // `--target` (LCLI-593) overrides both presence rules: the named runtime is armed unconditionally
+  // and the other is not armed at all.
+  const claudeArmed =
+    target !== undefined
+      ? target === "claude"
+      : !includeCodex || hasClaudeBridge(skillOnDisk, claudeRaw, codexSkillRaw, agentsRaw);
+  const codexArmed =
+    target !== undefined ? target === "codex" : includeCodex && hasCodexBridge(codexSkillRaw, agentsRaw);
   // Explicit beats config, same rule as claudeArmed above: a SCOPED request (`lore init
   // --claude`/`--agents`) always materializes SKILL.md regardless of `agents.skillSource` — only
   // the bare `lore agents` call ("keep whatever's selected current") is scoped to the persisted
@@ -158,15 +189,14 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
   const skillSource = includeCodex ? loadConfig({ root }).agents.skillSource : "repo";
   const plan = claudeArmed ? planBridge({ skillOnDisk, claudeOnDisk, force, check, skillSource }) : { files: [] };
 
-  const codexPlan =
-    includeCodex && hasCodexBridge(codexSkillRaw, agentsRaw)
-      ? planCodexBridge({
-          skillOnDisk: normalizeOnDisk(codexSkillRaw),
-          agentsOnDisk: normalizeOnDisk(agentsRaw),
-          force,
-          check,
-        })
-      : { files: [] };
+  const codexPlan = codexArmed
+    ? planCodexBridge({
+        skillOnDisk: normalizeOnDisk(codexSkillRaw),
+        agentsOnDisk: normalizeOnDisk(agentsRaw),
+        force,
+        check,
+      })
+    : { files: [] };
   const files = [...plan.files, ...codexPlan.files];
 
   if (!check) {
@@ -214,6 +244,7 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
     force,
     files: files.map((file) => ({ path: file.path, action: file.action })),
     skillSource,
+    ...(target !== undefined ? { target } : {}),
   };
 }
 
@@ -277,28 +308,48 @@ function hasClaudeBridge(
  * SKILL.md left `protected` for lack of `--force` is reported, not an error — `--check` is the gate).
  */
 export function runAgents(options: AgentsOptions): number | Promise<number> {
-  const { force, check } = parseAgentsArgs(options.args);
-  // `lore agents` means "the bridges are current", so it covers Codex too where one exists.
-  const result = applyAgentsBridge({ root: options.root, force, check, includeCodex: true });
+  const { force, check, target } = parseAgentsArgs(options.args);
+  // A bare `lore agents` means "the bridges are current", so it covers Codex too where one exists;
+  // `--target` narrows it to the one runtime named (LCLI-593).
+  const result = applyAgentsBridge({ root: options.root, force, check, includeCodex: true, target });
   const drift = result.files.some((file) => file.action !== "unchanged");
-  const finish = (plugins: AgentPluginChecks | undefined): number => {
-    emit(agentsRenderable(withPlugins(result, plugins)), options.output, options.stdout);
-    // The plugin report never moves the exit code (LCLI-592, ADR ruling 19): only bridge drift does.
+  const finish = (data: AgentsResult): number => {
+    emit(agentsRenderable(data), options.output, options.stdout);
+    // The plugin report, and any update, never moves the exit code (LCLI-592, LCLI-593; ADR ruling
+    // 19): only bridge drift does, so a failed update still exits 0.
     return check && drift ? EXIT_CODES.drift : EXIT_OK;
   };
-  // `--check` also reports the opum-lore marketplace plugin for each runtime whose bridge it checked
-  // (LCLI-592). Detection only: `--check` writes nothing and runs no install, enable or update.
-  // Detected after the bridge plan on purpose — `--check` writes no bridge file, so there is no write
-  // for detection to precede, and the plan is what says which runtimes this run covered. Synchronous
-  // under LORE_AGENT_PLUGINS=off, so the off path returns a plain number exactly as before.
-  const runtimes = check ? checkedRuntimes(result) : [];
-  if (runtimes.length === 0) return finish(undefined);
+  // Every `lore agents` call reports the opum-lore marketplace plugin for each runtime whose bridge it
+  // covered: as `data.plugin` for the runtime a `--target` named, otherwise as `data.plugins.<runtime>`
+  // (ADR ruling 27). Detected after the bridge plan on purpose — the plan is what says which runtimes
+  // this run covered. Synchronous under LORE_AGENT_PLUGINS=off unless an update could run, so the off
+  // path returns a plain number exactly as before.
+  const runtimes = target !== undefined ? [target] : coveredRuntimes(result);
+  if (runtimes.length === 0) return finish(result);
   const port = options.agentPlugins ?? createAgentPluginPort(options.root);
-  return thenMaybe(detectLorePlugins(port, runtimes), finish);
+  // Only the manual update command mutates (ruling 19): `--force`, and never together with `--check`.
+  const updating = force && !check;
+  return thenMaybe(detectLorePlugins(port, runtimes), (checks) => {
+    if (target !== undefined) {
+      const detected = checks[target] as AgentPluginCheck;
+      if (!updating) return finish({ ...result, plugin: detected });
+      // The one place lore mutates a plugin install: an INSTALLED plugin, of the runtime this call
+      // NAMED (rulings 19, 21, 25, 26 iii). updateLorePlugin runs nothing for any other state.
+      return thenMaybe(updateLorePlugin(port, detected), (plugin) => finish({ ...result, plugin }));
+    }
+    if (!updating) return finish({ ...result, plugins: checks });
+    // A bare `--force` names no runtime, so it is consent to updating none (rulings 25, 27): every
+    // entry is reported `not-run` with its remedy, through a function that takes no port at all.
+    const reports: AgentPluginUpdateReports = {};
+    for (const runtime of runtimes) {
+      reports[runtime] = notRunReport(checks[runtime] as AgentPluginCheck, false);
+    }
+    return finish({ ...result, plugins: reports });
+  });
 }
 
 /** The runtimes whose bridge this run planned, Claude first: the files a plan covers say which bridges were armed. */
-function checkedRuntimes(result: AgentsResult): AgentRuntime[] {
+function coveredRuntimes(result: AgentsResult): AgentRuntime[] {
   const paths = new Set(result.files.map((file) => file.path));
   const runtimes: AgentRuntime[] = [];
   if (paths.has(SKILL_REL_PATH) || paths.has(CLAUDE_MD_REL_PATH)) runtimes.push("claude");
@@ -306,29 +357,50 @@ function checkedRuntimes(result: AgentsResult): AgentRuntime[] {
   return runtimes;
 }
 
-/** Attach every checked runtime's plugin state as `plugins.<runtime>` (ruling 27: never a bare `plugin`), or return the result untouched. */
-function withPlugins(result: AgentsResult, plugins: AgentPluginChecks | undefined): AgentsResult {
-  return plugins === undefined ? result : { ...result, plugins };
-}
-
-/** Every plugin check on a result, Claude first. */
-function pluginChecks(data: AgentsResult): AgentPluginCheck[] {
+/** Every plugin entry on a result, Claude first: the targeted `plugin`, or each of `plugins`. */
+function pluginChecks(data: AgentsResult): Array<AgentPluginCheck | AgentPluginUpdateReport> {
+  if (data.plugin !== undefined) return [data.plugin];
   return [data.plugins?.claude, data.plugins?.codex].filter((check) => check !== undefined);
 }
 
-/** Parse `agents`' tokens: no positionals; boolean `--force`/`--check`. A positional or unknown flag is a `usage` error (exit 2). */
-function parseAgentsArgs(args: readonly string[]): { force: boolean; check: boolean } {
-  const { positionals, flags } = parseCommandArgs(args, "agents");
+/** The runtimes `--target` accepts: the two with a lore bridge and an opum-lore marketplace plugin. */
+const AGENT_TARGETS: readonly AgentRuntime[] = ["claude", "codex"];
+
+/**
+ * Parse `agents`' tokens: no positionals; boolean `--force`/`--check`; at most one `--target
+ * claude|codex`. A positional, an unknown flag, a repeated `--target` or an unknown runtime is a
+ * `usage` error (exit 2).
+ */
+function parseAgentsArgs(args: readonly string[]): { force: boolean; check: boolean; target?: AgentRuntime } {
+  const { positionals, flags, values } = parseCommandArgs(args, "agents");
   if (positionals.length > 0) {
     throw usage(
       `\`lore agents\` takes no arguments, got "${positionals[0]}"`,
-      "run `lore agents [--check] [--force]`",
+      "run `lore agents [--check] [--force] [--target claude|codex]`",
       {
         unexpected: [...positionals],
       },
     );
   }
-  return { force: flags.has("force"), check: flags.has("check") };
+  const targets = values.get("target") ?? [];
+  if (targets.length > 1) {
+    throw usage(
+      "`--target` names one runtime, and was given more than once",
+      "pass `--target claude` or `--target codex` once",
+      {
+        target: [...targets],
+      },
+    );
+  }
+  const named = targets[0];
+  if (named !== undefined && !AGENT_TARGETS.includes(named as AgentRuntime)) {
+    throw usage(`unknown --target "${named}"`, "pass `--target claude` or `--target codex`", { target: named });
+  }
+  return {
+    force: flags.has("force"),
+    check: flags.has("check"),
+    ...(named !== undefined ? { target: named as AgentRuntime } : {}),
+  };
 }
 
 /**

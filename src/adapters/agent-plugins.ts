@@ -2,11 +2,14 @@
  * adapters/agent-plugins.ts — reads a runtime's installed plugins through its own public list
  * command, and nothing else (LCLI-592; opum-doc ADR ruling (d): lore and quest detect the same way).
  *
- * `claude plugin list --json` and `codex plugin list --json` are the only commands this starts. It
- * never reads either runtime's internal files, and it never installs, enables or updates a plugin —
- * `init` and `--check` only report (ruling 19). Ported from quest-cli's
- * `src/adapters/agents/cli-agent-plugins.ts` at `30a6846` (QCLI-371), list half only: the update
- * half belongs to `lore agents --force` (LCLI-593).
+ * `claude plugin list --json` and `codex plugin list --json` are what `init` and `--check` start,
+ * and they only report (ruling 19). The one other thing this starts is the update
+ * ({@link CliAgentPluginPort.update}, LCLI-593): `claude plugin update opum-lore@opum --scope
+ * <scope>`, or `codex plugin marketplace upgrade opum` then `codex plugin add opum-lore@opum` —
+ * reached only through core's `updateLorePlugin`, so only for an installed plugin on a `lore agents
+ * --target <runtime> --force` call. It never reads either runtime's internal files, and it never
+ * installs or enables a plugin (ruling 21). Ported from quest-cli's
+ * `src/adapters/agents/cli-agent-plugins.ts` at `30a6846` (QCLI-371).
  *
  * `LORE_AGENT_PLUGINS=off` (ruling 23) swaps in {@link DisabledAgentPluginPort}, which answers every
  * runtime `not-detectable` synchronously and starts no process. The test suite sets it by default
@@ -15,11 +18,25 @@
 
 import { realpathSync } from "node:fs";
 import { sep } from "node:path";
-import type { AgentPluginListing, AgentPluginPort, AgentRuntime, ListedAgentPlugin } from "../core/agent-plugins";
+import {
+  type AgentPluginListing,
+  type AgentPluginPort,
+  type AgentPluginUpdateOutcome,
+  type AgentRuntime,
+  type ListedAgentPlugin,
+  lorePluginUpdateSteps,
+} from "../core/agent-plugins";
 import { stderrHint } from "../errors";
 
 /** Listing is a local read (quest-cli measured 0.14s claude, 0.44s codex); a hung runtime must not hang init or --check. */
 const DEFAULT_LIST_TIMEOUT_MS = 15_000;
+
+/**
+ * Updating fetches the marketplace, which the listing budget cannot cover: quest-cli measured
+ * `codex plugin marketplace upgrade` at over two minutes on a git fetch (QCLI-371). A separate,
+ * explicit budget, applied to each update step, and quest-cli's own value.
+ */
+export const DEFAULT_UPDATE_TIMEOUT_MS = 600_000;
 
 /** The environment variable and value that switch detection off (ruling 23). */
 export const AGENT_PLUGINS_ENV = "LORE_AGENT_PLUGINS";
@@ -244,6 +261,7 @@ export class CliAgentPluginPort implements AgentPluginPort {
     private readonly options: {
       readonly env?: Record<string, string | undefined>;
       readonly listTimeoutMs?: number;
+      readonly updateTimeoutMs?: number;
       readonly runner?: PluginCommandRunner;
     } = {},
   ) {}
@@ -277,6 +295,28 @@ export class CliAgentPluginPort implements AgentPluginPort {
       ? { kind: "unavailable", reason: `${runtime} plugin list --json returned an unrecognised shape.` }
       : { kind: "listed", plugins };
   }
+
+  /**
+   * Run each of {@link lorePluginUpdateSteps} in order on the same runner as the listing (process-group
+   * kill on the deadline, output cap), stopping at the first that fails. The deadline is the update
+   * budget, per step, never the listing's. A failure is an outcome, never a throw: the caller reports
+   * it and keeps exit `0`.
+   */
+  async update(runtime: AgentRuntime, scope: string | undefined): Promise<AgentPluginUpdateOutcome> {
+    const runner = this.options.runner ?? bunPluginCommandRunner;
+    const steps = lorePluginUpdateSteps(runtime, scope);
+    for (const argv of steps) {
+      const result = await runner(argv, this.options.updateTimeoutMs ?? DEFAULT_UPDATE_TIMEOUT_MS, this.options.env);
+      if ("failure" in result) return { ok: false, detail: result.failure };
+      if (result.exitCode !== 0) {
+        return {
+          ok: false,
+          detail: `${argv.join(" ")} exited ${result.exitCode}${stderrSuffix(result.stderr || result.stdout)}`,
+        };
+      }
+    }
+    return { ok: true, detail: steps.map((argv) => argv.join(" ")).join(" && ") };
+  }
 }
 
 /**
@@ -286,6 +326,11 @@ export class CliAgentPluginPort implements AgentPluginPort {
 export class DisabledAgentPluginPort implements AgentPluginPort {
   list(): AgentPluginListing {
     return { kind: "unavailable", reason: OFF_REASON };
+  }
+
+  /** Unreachable through `updateLorePlugin` (nothing here is ever `installed`), and runs nothing if reached. */
+  async update(): Promise<AgentPluginUpdateOutcome> {
+    return { ok: false, detail: OFF_REASON };
   }
 }
 
@@ -301,12 +346,20 @@ export function agentPluginsOff(env: Record<string, string | undefined> = proces
  */
 export const AGENT_PLUGINS_TIMEOUT_ENV = "LORE_AGENT_PLUGINS_TIMEOUT_MS";
 
-function listTimeout(env: Record<string, string | undefined>): number {
-  const value = Number(env[AGENT_PLUGINS_TIMEOUT_ENV]);
-  return Number.isFinite(value) && value > 0 ? value : DEFAULT_LIST_TIMEOUT_MS;
+/**
+ * Override for the UPDATE deadline, in milliseconds, per step (LCLI-593). Separate from
+ * {@link AGENT_PLUGINS_TIMEOUT_ENV} on purpose: the listing budget is seconds and the update budget
+ * is minutes, and one knob for both would either starve the Codex upgrade or let a hung listing hold
+ * `init` for ten minutes.
+ */
+export const AGENT_PLUGINS_UPDATE_TIMEOUT_ENV = "LORE_AGENT_PLUGINS_UPDATE_TIMEOUT_MS";
+
+function timeoutFrom(env: Record<string, string | undefined>, name: string, fallback: number): number {
+  const value = Number(env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
-/** The port `lore init` and `lore agents --check` use unless a caller injects one. */
+/** The port `lore init` and `lore agents` use unless a caller injects one. */
 export function createAgentPluginPort(
   root: string,
   options: { readonly env?: Record<string, string | undefined>; readonly runner?: PluginCommandRunner } = {},
@@ -314,5 +367,10 @@ export function createAgentPluginPort(
   const env = options.env ?? process.env;
   return agentPluginsOff(env)
     ? new DisabledAgentPluginPort()
-    : new CliAgentPluginPort(root, { runner: options.runner, env: options.env, listTimeoutMs: listTimeout(env) });
+    : new CliAgentPluginPort(root, {
+        runner: options.runner,
+        env: options.env,
+        listTimeoutMs: timeoutFrom(env, AGENT_PLUGINS_TIMEOUT_ENV, DEFAULT_LIST_TIMEOUT_MS),
+        updateTimeoutMs: timeoutFrom(env, AGENT_PLUGINS_UPDATE_TIMEOUT_ENV, DEFAULT_UPDATE_TIMEOUT_MS),
+      });
 }

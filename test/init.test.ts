@@ -909,6 +909,10 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
           ? { kind: "listed" as const, plugins: [{ id: "opum-lore@opum", enabled: false, scope: "user" }] }
           : { kind: "listed" as const, plugins: [] };
       },
+      // Ruling 19: init only reports. Reaching this would fail the test.
+      update: async (): Promise<never> => {
+        throw new Error("lore init must never update a plugin");
+      },
     };
     const { code, result } = await init({
       stdinIsTTY: true,
@@ -937,6 +941,9 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
         list: async (runtime) => {
           asked.push(runtime);
           return { kind: "listed", plugins: [] };
+        },
+        update: async (): Promise<never> => {
+          throw new Error("lore init must never update a plugin");
         },
       },
     });
