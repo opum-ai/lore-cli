@@ -227,6 +227,18 @@ vocabulary is enforced at all, since membership is deliberately not a parse
 failure. `relation-version-drift` names a dependent whose recorded `version` no
 longer matches its target's `claim_version`.
 
+Two rules cover the lore-only `Constitution` type (LCLI-595), which is declared
+on every OKF version because it is a Lore producer type in no OKF spec, unlike
+`Attested Computation`. `type-shape` is a Constitution failing its shape: a
+missing required field or section, a malformed `version` or date, a principle
+without its `P<n>. <Name>` heading, uppercase RFC 2119/8174 keyword,
+`Rationale:` or `Check:`, an Amendment log whose top row disagrees with the
+frontmatter, or an unresolved placeholder. It is error-tier, apart from one
+warning when the always-loaded Principles section runs past 150 lines.
+`singleton-type` is a second Constitution in one bundle, error-tier. `lore
+validate` runs the same `type-shape` rules per file; `singleton-type` is
+bundle-scoped, so only `lore check` can judge it.
+
 `relation-version-drift` stays a warning on principle rather than convenience.
 Lore can see that a cited version moved; it cannot see whether the citing
 argument still holds, so it reports possible impact and never a correctness

@@ -68,6 +68,7 @@ describe("lore types — default (story-convention) profile", () => {
       "ADR",
       "Runbook",
       "Reference",
+      "Constitution",
       "Attested Computation",
     ]);
     expect(report.profile).toEqual({ name: "story-convention", okfVersion: "0.2", case: "Title" });

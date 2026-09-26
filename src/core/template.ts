@@ -45,8 +45,16 @@ import { VERSION } from "../meta";
 import { type Concept, idFromPath, serializeConcept, serializeConceptWithModeline } from "./concept";
 import { encodePathSegments } from "./links";
 import type { BundleState, OkfVersion } from "./okf-version";
-import { ATTESTED_COMPUTATION_TYPE, defaultProfile, type Profile, profileForBundle, slugForTypeName } from "./profile";
+import {
+  ATTESTED_COMPUTATION_TYPE,
+  CONSTITUTION_TYPE,
+  defaultProfile,
+  type Profile,
+  profileForBundle,
+  slugForTypeName,
+} from "./profile";
 import { canonicalType, validateFrontmatter } from "./schema";
+import { type TypeSeed, typeRuleFor } from "./type-rules";
 
 /**
  * Derive a filename slug from a concept title — the LOWER-KEBAB transform {@link slugForTypeName}
@@ -207,16 +215,20 @@ export interface BuildNewConceptResult {
  */
 export function buildNewConcept(input: BuildNewConceptInput): BuildNewConceptResult {
   const warnings = new WarningCollector();
-  warnShadowedVars(input.vars, input.docPath, warnings);
-  const body = renderBody(input);
-
   const baseProfile = input.profile ?? defaultProfile();
   const profile = input.bundleState === undefined ? baseProfile : profileForBundle(baseProfile, input.bundleState);
+  // A registered type's seed (type-rules.ts, LCLI-595): the frontmatter values and body vars that
+  // make a fresh document pass that type's own rules. Only for a type the profile declares.
+  const seed = typeRuleFor(canonicalType(input.type, profile), profile)?.seed?.(input.timestamp);
+
+  warnShadowedVars(input.vars, input.docPath, warnings, seed);
+  const body = renderBody(input, seed);
 
   const frontmatter: Record<string, unknown> = {
     type: input.type,
     title: input.title,
     summary: input.summary,
+    ...seed?.frontmatter,
     ...(profile.okfVersion === "0.2" &&
     input.type === ATTESTED_COMPUTATION_TYPE &&
     profile.types.has(ATTESTED_COMPUTATION_TYPE)
@@ -306,20 +318,35 @@ function stampResource(frontmatter: Record<string, unknown>, type: string, docPa
 /** The placeholder names lore fills automatically; a `--var` for one of these is ignored (it would be overridden). */
 const AUTO_TOKENS = ["type", "title", "timestamp", "summary"] as const;
 
-/** Warn for each `--var` whose key shadows an auto token, so a discarded override is visible rather than silent. */
-function warnShadowedVars(vars: Record<string, string>, path: string, warnings: WarningCollector): void {
-  for (const token of AUTO_TOKENS) {
+/**
+ * Warn for each `--var` whose key shadows an auto token — or one of a registered type's seeded vars,
+ * which win for the same reason: they must agree with the frontmatter lore writes — so a discarded
+ * override is visible rather than silent.
+ */
+function warnShadowedVars(
+  vars: Record<string, string>,
+  path: string,
+  warnings: WarningCollector,
+  seed?: TypeSeed,
+): void {
+  for (const token of [...AUTO_TOKENS, ...Object.keys(seed?.vars ?? {})]) {
     if (Object.hasOwn(vars, token)) {
       warnings.add(`ignoring --var ${token} in ${path}; \`${token}\` is set automatically by \`lore new\``);
     }
   }
 }
 
-/** Render the body template with the auto tokens layered over `--var` (autos win), failing loud on any unfilled token. */
-function renderBody(input: BuildNewConceptInput): string {
+/**
+ * Render the body template with the auto tokens (and any seeded vars) layered over `--var` (they
+ * win), failing loud on any unfilled token.
+ */
+function renderBody(input: BuildNewConceptInput, seed?: TypeSeed): string {
   const vars: Record<string, string> = Object.create(null);
   for (const key of Object.keys(input.vars)) {
     vars[key] = input.vars[key] as string;
+  }
+  for (const [key, value] of Object.entries(seed?.vars ?? {})) {
+    vars[key] = value;
   }
   vars.type = input.type;
   vars.title = input.title;
@@ -491,6 +518,62 @@ Replace this placeholder with the sanctioned computation for {{title}}.
 `;
 
 /**
+ * Constitution (OPAG-425 R9, LCLI-595): the RFC 8174 boilerplate, one example principle showing
+ * MUST / Rationale / Check, a Governance section naming agent-drafted, human-ratified amendment by
+ * pull request linked to an ADR, and the Amendment log. `{{version}}`/`{{date}}` come from the
+ * type's seed (type-rules.ts), the same values `lore new` writes to `version`/`last_amended`, so a
+ * fresh document passes `lore check` as written. The CODEOWNERS comment says plainly what lore
+ * cannot do rather than implying it (R9).
+ */
+const CONSTITUTION_TEMPLATE = `
+# {{title}}
+
+<!--
+Protect this file with a CODEOWNERS entry and a required review on its path. lore checks the shape
+of this document; it cannot enforce who edits it, so that control belongs to your repository host.
+-->
+
+The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT",
+"RECOMMENDED", "NOT RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as
+described in BCP 14 ([RFC 2119](https://www.rfc-editor.org/rfc/rfc2119),
+[RFC 8174](https://www.rfc-editor.org/rfc/rfc8174)) when, and only when, they appear in all
+capitals, as shown here.
+
+## Principles
+
+<!--
+Each principle is a "### P<n>. <Name>" heading. Its id is stable and never reused, even after the
+principle is retired. Each holds at least one capitalized keyword above, a "Rationale:" line, and a
+"Check:" line naming how compliance is verified: a CI job, a lint, a review gate, or "review only".
+Keep principles normative; link a Constants entry for a concrete value instead of restating it.
+-->
+
+### P1. Every principle names its check
+
+Every principle in this constitution MUST name how compliance with it is verified.
+
+Rationale: a rule that nothing verifies is context rather than enforcement, and it drifts unnoticed.
+
+Check: \`lore check\` rejects a principle that has no Check line.
+
+## Governance
+
+Amendments are drafted by an agent and ratified by a human. An agent MAY draft an amendment; it
+takes effect only when a human holding this document's \`amendment_authority\` approves its pull
+request. Every amendment is made by pull request, links the ADR that records the decision, bumps
+\`version\`, sets \`last_amended\`, and adds a row to the top of the Amendment log.
+
+Versioning follows SemVer: MAJOR removes or redefines a principle, MINOR adds a principle or
+materially expands one, PATCH clarifies wording without changing meaning.
+
+## Amendment log
+
+| Version | Date | Change | ADR |
+|---|---|---|---|
+| {{version}} | {{date}} | Initial ratification. | |
+`;
+
+/**
  * The built-in body template content lore ships for its story-convention and OKF types — the
  * zero-config fallback when no `.lore/templates/<type>.md` is present. Keyed by canonical type
  * name (a plain string map, **independent of the active profile**): a custom-profile type lore
@@ -505,6 +588,7 @@ const BUILTIN_TEMPLATES: Readonly<Record<string, string>> = Object.freeze({
   Runbook: RUNBOOK_TEMPLATE,
   Epic: EPIC_TEMPLATE,
   Arc: ARC_TEMPLATE,
+  [CONSTITUTION_TYPE]: CONSTITUTION_TEMPLATE,
   [ATTESTED_COMPUTATION_TYPE]: ATTESTED_COMPUTATION_TEMPLATE,
 });
 

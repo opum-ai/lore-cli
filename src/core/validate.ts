@@ -50,13 +50,24 @@ import { decodeTarget } from "./links";
 import type { BundleState } from "./okf-version";
 import { defaultProfile, type Profile } from "./profile";
 import { ROOT_INDEX_PATH } from "./scaffold";
-import { requiredSectionsFor } from "./schema";
+import { canonicalType, requiredSectionsFor } from "./schema";
 import { expectedResource } from "./template";
+import { typeRuleFor } from "./type-rules";
 
 export type { Severity };
 
-/** Which check produced a {@link Finding}, for machine consumers and grouped display. */
-export type FindingRule = "frontmatter" | "required-section" | "quote-safety" | "resource" | "unknown-type";
+/**
+ * Which check produced a {@link Finding}, for machine consumers and grouped display. `type-shape`
+ * (LCLI-595) is a registered type's content rules ({@link import("./type-rules")}) — shared
+ * verbatim with `lore check`, which runs the same rules at its own call site.
+ */
+export type FindingRule =
+  | "frontmatter"
+  | "required-section"
+  | "quote-safety"
+  | "resource"
+  | "unknown-type"
+  | "type-shape";
 
 /** One tiered problem found in a single file — the shared {@link BaseFinding} narrowed to `validate`'s rules. */
 export type Finding = BaseFinding<FindingRule>;
@@ -154,6 +165,7 @@ export function validateConceptText(
     });
   }
   findings.push(...requiredSectionFindings(concept.type, concept.body, effective));
+  findings.push(...typeShapeFindings(concept, effective));
   findings.push(...resourceDriftFindings(path, concept, effective));
   findings.push(...quoteSafetyFindings(raw));
   if (hasStrayFrontmatterFence(concept.body)) {
@@ -302,6 +314,16 @@ function requiredSectionFindings(type: string, body: string, profile: Profile): 
     }
   }
   return findings;
+}
+
+/**
+ * A registered type's content rules (LCLI-595, {@link import("./type-rules")}) — the rules the
+ * declarative profile cannot express, such as a Constitution's principle form. Resolved through
+ * {@link canonicalType} for the same alias/case reason {@link requiredSectionsFor} is, and run only
+ * when the active profile declares the type. `lore check` runs the identical rules itself.
+ */
+function typeShapeFindings(concept: Concept, profile: Profile): Finding[] {
+  return typeRuleFor(canonicalType(concept.type, profile), profile)?.check(concept.frontmatter, concept.body) ?? [];
 }
 
 // ── Cross-cutting: resource drift ──────────────────────────────────────────────—

@@ -88,8 +88,16 @@ export type CheckSeverity = Severity;
  * `relation-version-drift` is the one that must stay a warning on principle: lore can see that a
  * cited `claim_version` moved, and cannot see whether the citing argument still holds. Reporting
  * that as an error would be a correctness verdict lore is not entitled to.
+ *
+ * `type-shape` and `singleton-type` (LCLI-595) come from the per-type rule registry
+ * (`core/type-rules.ts`), run beside `check`'s per-file type peek: `type-shape` is a registered
+ * type's document failing its shape (error), or its one advisory (warning, e.g. an over-long
+ * Constitution Principles section); `singleton-type` is a second document of a type a bundle may
+ * hold only one of (error).
  */
 export type CheckRule =
+  | "type-shape"
+  | "singleton-type"
   | "broken-link"
   | "broken-anchor"
   | "broken-source"

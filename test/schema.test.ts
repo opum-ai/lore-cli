@@ -24,6 +24,7 @@ describe("schema — the default (story-convention) profile", () => {
       "ADR",
       "Runbook",
       "Reference",
+      "Constitution",
       "Attested Computation",
     ]);
   });
@@ -232,7 +233,7 @@ describe("schema — the error tier (throws, exit 6)", () => {
     ).not.toThrow();
     expect(warnings.list()).toEqual([
       'unknown type "Attested Computation" in docs/computations/legacy.md; validated on `type` only ' +
-        "(known types: Epic, Arc, Spec, ADR, Runbook, Reference)",
+        "(known types: Epic, Arc, Spec, ADR, Runbook, Reference, Constitution)",
     ]);
   });
 
