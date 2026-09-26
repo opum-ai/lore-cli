@@ -921,12 +921,18 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     flags: [
       { name: "force", takesValue: false, summary: "Overwrite hand-edited generated files" },
       { name: "check", takesValue: false, summary: "Report drift without writing (CI gate for a stale bridge)" },
+      {
+        name: "target",
+        takesValue: true,
+        summary:
+          "Scope to one runtime (claude|codex): its bridge only; under --check or --force its opum-lore plugin as data.plugin, and with --force the plugin update",
+      },
     ],
     json: true,
     kind: "agents.result",
     // Writes the bridge (fswrite); `extra` 6 is the managed-block validation throw and the --check drift return.
     exitCodes: exitCodesFor(["write"], [6]),
-    examples: ["lore agents", "lore agents --check"],
+    examples: ["lore agents", "lore agents --check", "lore agents --target claude --force"],
   },
   {
     name: "help",

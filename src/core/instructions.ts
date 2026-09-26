@@ -378,22 +378,44 @@ running a write, run \`lore agents --check --json\` and read \`data.files\`:
 an empty or absent entry for a bridge's own files means that bridge was never
 in scope for this run, not that it silently passed.
 
+\`lore agents --target claude\` or \`--target codex\` (LCLI-593) is the explicit,
+scoped form of \`lore agents\` itself: it plans, writes or checks ONLY the
+named runtime's bridge, whether or not that bridge exists yet, and leaves the
+other runtime's bridge alone. Without \`--target\`, everything above holds
+unchanged, exit codes included.
+
 The \`opum-lore\` marketplace plugin is reported alongside the bridges. With a
-Claude or Codex bridge selected, \`lore init\` reports \`data.plugins.<runtime>\`,
-and \`lore agents --check\` reports \`data.plugins.<runtime>\` for every runtime
-whose bridge it checked -- never a bare \`data.plugin\`, which is reserved for a
-call that names one runtime. Each is read through that runtime's own \`claude
-plugin list --json\` or \`codex plugin list --json\`. The state is one of \`installed\`,
-\`disabled\` (installed but switched off, so its skill does not reach the agent),
-\`not-installed\`, or \`not-detectable\` (the runtime CLI is missing, failed, or
-answered in a shape lore cannot read), with the command to run next in
-\`remedy\`. Claude rows scoped to another project are ignored, and the most
-specific applicable scope decides. Neither command installs, enables or
-updates the plugin, and the state never changes an exit code. Because the
-state depends on what is installed on the machine, not on the repository, set
-\`LORE_AGENT_PLUGINS=off\` to skip detection and start no runtime process
-whenever output must be deterministic -- a test suite, a snapshot, or a CI job
-that must not touch the machine's real agent install.`,
+Claude or Codex bridge selected, \`lore init\` reports \`data.plugins.<runtime>\`.
+\`lore agents\` reports plugin state ONLY under \`--check\` or \`--force\`: a plain
+write-mode \`lore agents\`, with or without \`--target\`, starts no runtime and
+reports no plugin state. When it is reported, \`data.plugin\` appears when
+\`--target\` names a runtime, and \`data.plugins.<runtime>\` otherwise -- one entry
+for every runtime whose bridge the call covered; the two are never both
+present. (\`data.target\` names the runtime on every \`--target\` call.) Each is
+read through that runtime's own \`claude plugin list --json\` or \`codex plugin
+list --json\`. The state is one of \`installed\`, \`disabled\` (installed but
+switched off, so its skill does not reach the agent), \`not-installed\`, or
+\`not-detectable\` (the runtime CLI is missing, failed, or answered in a shape
+lore cannot read), with the command to run next in \`remedy\`. Claude rows scoped
+to another project are ignored, and the most specific applicable scope decides.
+
+Only \`lore agents --target <runtime> --force\` changes the plugin install, and
+only an \`installed\` plugin: \`claude plugin update opum-lore@opum --scope
+<scope>\`, or \`codex plugin marketplace upgrade opum\` then \`codex plugin add
+opum-lore@opum\` -- and the Codex upgrade refreshes EVERY opum plugin installed in
+Codex, not only opum-lore, which \`updateDetail\` says once that upgrade has
+succeeded. The outcome is in \`update\` (\`ran\` or \`not-run\`), \`updateOk\` and
+\`updateDetail\`. It never enables a disabled plugin or installs a missing one
+(it prints the command instead), and never updates a Claude plugin whose
+deciding scope cannot be named in a command (it prints prose instead of an
+unscoped command, which would act at Claude's default scope);
+\`lore init\`, \`--check\`, and a bare \`lore agents --force\` that names no runtime
+never update anything. A failed update, like the state itself, never changes an
+exit code. Because the state depends on what is installed on the machine, not
+on the repository, set \`LORE_AGENT_PLUGINS=off\` to skip detection and start no
+runtime process -- no list, and no update -- whenever output must be
+deterministic: a test suite, a snapshot, or a CI job that must not touch the
+machine's real agent install.`,
 };
 
 /** The detailed, task-scoped topics (everything except `overview`). */
