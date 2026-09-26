@@ -373,6 +373,25 @@ describe("lore link — wiring (AC#1)", () => {
 
 // ── AC#2: unlink removes both sides cleanly ───────────────────────────────────────
 
+describe("lore link/unlink — keeps the in-fence yaml-language-server modeline (LCLI-601)", () => {
+  const MODELINE = "# yaml-language-server: $schema=../../.lore/schemas/story.schema.json";
+
+  test("link and then unlink each rewrite tasks: and leave the modeline as line 2", async () => {
+    writeDoc("stories/x.md", `---\n${MODELINE}\ntype: Story\ntitle: X\n---\nBody.\n`);
+    const adapter = fakeAdapter([makeTask("LORE-42")]);
+
+    const linked = await linkCmd(["stories/x", "lore-42"], adapter);
+    expect(linked.report.changed).toBe(true); // the file was re-serialized
+    expect(readDoc("stories/x.md")).toBe(`---\n${MODELINE}\ntype: Story\ntitle: X\ntasks:\n  - lore-42\n---\nBody.\n`);
+
+    const unlinked = await unlinkCmd(["stories/x", "lore-42"], adapter);
+    expect(unlinked.report.changed).toBe(true);
+    const lines = readDoc("stories/x.md").split("\n");
+    expect(lines.slice(0, 2)).toEqual(["---", MODELINE]);
+    expect(lines.filter((l) => l === MODELINE)).toHaveLength(1);
+  });
+});
+
 describe("lore unlink — removal (AC#2)", () => {
   test("removes the task id from tasks: and the doc: label + shrinks --doc on the task", async () => {
     writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n  - lore-2\n---\nBody.\n");

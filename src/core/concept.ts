@@ -52,15 +52,18 @@
  * *inside* the opening fence by {@link serializeConceptWithModeline} — the only
  * placement lore's own parser reads back as a concept (`parseConcept` needs `---` at
  * byte 0, so an above-fence comment makes the file a non-concept). The modeline text
- * itself is `schema.schemaModeline`'s concern (ADR-0006 §3).
+ * itself is `schema.schemaModeline`'s concern (ADR-0006 §3). Parsing captures the comment
+ * lines that open the fence ({@link Concept.leadingComments}) and serializing re-emits them,
+ * so a modeline survives every command that rewrites the file (LCLI-601).
  *
  * Documented limitations, all for inputs no real concept produces (frontmatter keys
  * are field-name identifiers and values are short scalars/dates/lists — never comments,
  * blank-line-terminated values, integer keys, or huge numbers). Each still reaches a
  * stable fixpoint; only the *first* write may normalize:
  *
- * - An in-frontmatter YAML *comment* is not preserved across a round-trip (the YAML
- *   emitter drops comments — an accepted ADR-0011 limitation).
+ * - An in-frontmatter YAML *comment after the first key* is not preserved across a
+ *   round-trip (the YAML emitter drops comments — an accepted ADR-0011 limitation). The
+ *   comment block *opening* the fence, where the editor modeline lives, is preserved.
  * - A frontmatter scalar value ending in two-or-more newlines emits a `|+` keep-chomped
  *   block that abuts the closing fence and loses one trailing newline on the first
  *   re-parse (a value with ≤1 trailing newline round-trips exactly).
@@ -110,6 +113,16 @@ export interface Concept {
   frontmatter: Record<string, unknown>;
   /** The markdown body after the frontmatter fence. */
   body: string;
+  /**
+   * The YAML comment lines that open the frontmatter, verbatim — the block between the opening
+   * `---` and the first key, with surrounding blank lines trimmed, each line ending in `\n` — or
+   * absent when there are none. This is where the editor modeline
+   * (`# yaml-language-server: $schema=…`) lives, and {@link serializeConcept} re-emits it ahead
+   * of the dumped YAML, so every write path that spreads a parsed concept (`rename`, `supersede`,
+   * `link`, `sync`) keeps it rather than letting the YAML emitter drop it (LCLI-601). Comments
+   * *after* the first key are still not preserved (the documented ADR-0011 limitation).
+   */
+  leadingComments?: string;
 }
 
 /** The frontmatter fence delimiter. */
@@ -363,7 +376,9 @@ function conceptFromSplit(path: string, split: PresentSplit, options: ParseConce
     profile: options.profile,
     bundleState: options.bundleState,
   });
-  return { id: idFromPath(path), path, type, frontmatter: split.frontmatter, body: split.body };
+  const concept: Concept = { id: idFromPath(path), path, type, frontmatter: split.frontmatter, body: split.body };
+  // Set only when present, so a comment-free concept keeps exactly its pre-LCLI-601 shape.
+  return split.leadingComments === "" ? concept : { ...concept, leadingComments: split.leadingComments };
 }
 
 /**
@@ -384,8 +399,57 @@ export function serializeConcept(concept: Concept, options: SerializeConceptOpti
   const baseProfile = options.profile ?? defaultProfile();
   const profile = options.bundleState === undefined ? baseProfile : profileForBundle(baseProfile, options.bundleState);
   validateFrontmatter(concept.frontmatter, { path: concept.path, profile, bundleState: options.bundleState });
+  const comments = concept.leadingComments ?? "";
+  assertCommentBlock(concept.path, comments);
   const ordered = canonicalize(concept.frontmatter, profile.canonicalKeyOrder);
-  return `${FENCE}${yaml.dump(ordered, YAML_DUMP_OPTIONS)}${FENCE}${concept.body}`;
+  return `${FENCE}${comments}${yaml.dump(ordered, YAML_DUMP_OPTIONS)}${FENCE}${concept.body}`;
+}
+
+/**
+ * One line of a leading comment block: a YAML comment (optionally indented) or a blank line between
+ * comments — both inert to the YAML parser — with no line terminator.
+ */
+const COMMENT_LINE = /^[ \t]*(?:#[^\r\n\u2028\u2029]*)?$/;
+
+/**
+ * Refuse to emit a {@link Concept.leadingComments} that is not purely comment lines, each ending
+ * in `\n` — a hand-built value such as `"type: Injected\n"` would otherwise be spliced into the
+ * frontmatter verbatim and change what the file parses back to. Throw-before-corrupt, the same
+ * invariant {@link serializeConceptWithModeline} enforces for its modeline.
+ */
+function assertCommentBlock(path: string, comments: string): void {
+  if (comments === "") return;
+  const lines = comments.endsWith("\n") ? comments.slice(0, -1).split("\n") : null;
+  if (lines === null || !lines.every((line) => COMMENT_LINE.test(line))) {
+    throw new LoreError(
+      "validation",
+      `leading frontmatter comments for ${path} must be YAML comment lines each ending in a newline: ${singleLine(comments)}`,
+      "pass only `# …` lines (as parseConcept captures them), or omit leadingComments",
+      { path },
+    );
+  }
+}
+
+/**
+ * The comment block that opens a frontmatter fence's YAML: the run of comment and blank lines
+ * before the first non-comment line, with blank lines trimmed from both ends, re-joined with a
+ * trailing `\n` — or `""` when the run holds no comment. Trimming the blanks keeps the existing
+ * one-time normalization of blank-line padding inside the fence; only the comments are kept.
+ */
+function leadingCommentBlock(yamlText: string): string {
+  const lines = yamlText.split("\n");
+  let end = 0;
+  while (end < lines.length && /^[ \t]*(?:#.*)?$/.test(lines[end] as string)) {
+    end++;
+  }
+  let start = 0;
+  while (start < end && (lines[start] as string).trim() === "") {
+    start++;
+  }
+  while (end > start && (lines[end - 1] as string).trim() === "") {
+    end--;
+  }
+  return start === end ? "" : `${lines.slice(start, end).join("\n")}\n`;
 }
 
 /** Options for {@link serializeConcept}/{@link serializeConceptWithModeline}. */
@@ -414,8 +478,11 @@ export interface SerializeConceptOptions {
  * never a content search, so a `---\n` occurring later in a value or the body can never
  * be targeted.
  *
- * Round-trip caveat (ADR-0011 §2): js-yaml drops the in-fence comment if the file is
- * ever re-serialized, so a doc written this way is emitted once, not rewritten in place.
+ * Round-trip: {@link parseConcept} captures the modeline back as part of
+ * {@link Concept.leadingComments} and {@link serializeConcept} re-emits it, so a doc written this
+ * way keeps its modeline when a later command rewrites it (LCLI-601). A concept that already
+ * carries a `# yaml-language-server:` line in its leading comments has it replaced by `modeline`
+ * rather than duplicated; any other leading comment is kept after it.
  *
  * `modeline` must be a single line: it is spliced in verbatim (never content-searched
  * or escaped), so a `modeline` containing a line break would inject arbitrary extra
@@ -437,9 +504,16 @@ export function serializeConceptWithModeline(
       { modeline },
     );
   }
-  const serialized = serializeConcept(concept, options);
+  const others = (concept.leadingComments ?? "")
+    .split(/(?<=\n)/)
+    .filter((line) => line !== "" && !MODELINE_LINE.test(line))
+    .join("");
+  const serialized = serializeConcept({ ...concept, leadingComments: others }, options);
   return `${FENCE}${modeline}\n${serialized.slice(FENCE.length)}`;
 }
+
+/** An existing editor-modeline comment line, as {@link serializeConceptWithModeline} replaces it. */
+const MODELINE_LINE = /^[ \t]*#[ \t]*yaml-language-server:/;
 
 /**
  * Normalize raw bytes to lore-canonical encoding before parsing: strip leading UTF-8
@@ -467,6 +541,8 @@ interface PresentSplit {
   readonly present: true;
   readonly frontmatter: Record<string, unknown>;
   readonly body: string;
+  /** {@link leadingCommentBlock} of the fence's YAML — `""` when it opens with no comment. */
+  readonly leadingComments: string;
 }
 
 /**
@@ -532,7 +608,12 @@ function splitFrontmatter(path: string, raw: string): FrontmatterSplit {
     return { present: false, reason: "missing" };
   }
   const bodyStart = closeStart < 0 ? raw.length : closeStart + (raw.charAt(closeStart + 4) === "\n" ? 5 : 4);
-  return { present: true, frontmatter: data as Record<string, unknown>, body: raw.slice(bodyStart) };
+  return {
+    present: true,
+    frontmatter: data as Record<string, unknown>,
+    body: raw.slice(bodyStart),
+    leadingComments: leadingCommentBlock(yamlText),
+  };
 }
 
 /**

@@ -446,6 +446,19 @@ describe("lore replace — command-level suites (root fixture)", () => {
       expect(report.files.map((f) => f.path)).toEqual(["docs/a.md", "docs/stories/b.md"]);
     });
 
+    test("a match in frontmatter is a raw-text splice: the in-fence modeline survives (LCLI-601)", () => {
+      // replace never re-serializes frontmatter, so only the matched bytes change — asserted
+      // byte-exactly so a future switch to a parse/serialize write path cannot drop the modeline.
+      const modeline = "# yaml-language-server: $schema=../../.lore/schemas/story.schema.json";
+      writeDoc("docs/stories/x.md", `---\n${modeline}\ntype: Story\ntitle: Orders\n---\nOrders body.\n`);
+      const { code, report } = replaceCmd(["Orders", "Sales"]);
+      expect(code).toBe(EXIT_OK);
+      expect(report.totalMatches).toBe(2);
+      expect(readFileSync(join(root, "docs/stories/x.md"), "utf8")).toBe(
+        `---\n${modeline}\ntype: Story\ntitle: Sales\n---\nSales body.\n`,
+      );
+    });
+
     test("--dry-run reports changes but writes nothing", () => {
       writeDoc("docs/a.md", "keep me");
       const { report } = replaceCmd(["keep", "drop", "--dry-run"]);
