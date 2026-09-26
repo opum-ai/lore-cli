@@ -1141,9 +1141,15 @@ off, so its skill does not reach the agent — never reported as `installed`),
 `not-installed`, or `not-detectable` (the runtime CLI is missing, exited
 non-zero, or answered in a shape lore cannot read — never folded into
 `not-installed`). On the Claude side, a row scoped to another project is
-ignored and the most specific applicable row decides: the scope first (local,
-then project, user, managed, synced), then, between two rows of the same scope,
-the deeper `projectPath`. Each entry is
+ignored, and the deciding row is chosen by scope precedence
+(**managed > local > project > user > synced**), then by `projectPath` depth
+within a scope, the deeper row deciding (opum-doc ADR Amendment 6, rulings 28
+and 29; ruling 28 supersedes ruling 26(ii) for `managed` only). A `managed` row is
+set by a Claude Code administrator in the managed settings: it applies to every
+project, so its `projectPath`, if it carries one, is never compared, and it
+decides over every other scope, a project-matching `local` row included; among
+several applicable `managed` rows, any disabled one makes the state `disabled`,
+whatever the list order. Each entry is
 `{runtime, id, state, version?, scope?, reason?, remedy?}`, the same shape
 `quest agents --check` reports for `opum-quest`.
 
@@ -1156,8 +1162,14 @@ first. A `--target` call reports `data.plugin` for the named runtime and no
 `data.plugins`. The two are never both present. `data.target` names the runtime
 on every `--target` call, a plain write included.
 
-`remedy` is the command to run next — install, enable, or update. One exception
-keeps ruling 26(iii) intact: where the Claude scope that decided the state
+`remedy` is the command to run next — install, enable, or update. Two
+exceptions. Where the deciding Claude row is `managed`, installed or disabled
+alike, the remedy is exactly `managed by your Claude Code administrator:
+opum-lore@opum is set in the managed settings, which only an administrator can
+change` — prose, never a `claude plugin` command and never `--scope managed`,
+because the plugin user cannot change a managed setting (ruling 28; the string
+is quest-cli's with the plugin id swapped). And, keeping ruling 26(iii) intact:
+where the Claude scope that decided the state
 cannot be named safely in a command (it is absent, or not a plain token that
 starts with a letter or digit, so `--help` or `-x` never becomes `--scope`), the
 remedy is prose naming the problem rather than a command, because an unscoped
@@ -1194,11 +1206,19 @@ with the enable command (ruling 21). A `not-installed` or `not-detectable`
 plugin is reported with its remedy and nothing runs, and the repository's own
 bridge files are written exactly as they would be without a plugin. An
 `installed` Claude plugin whose deciding scope cannot be named is `not-run`
-too, with the prose remedy above (ruling 26(iii)). `--check` never updates, with
+too, with the prose remedy above (ruling 26(iii)). **A `managed` deciding row is
+never updated** (ruling 28): `--target claude --force` runs only the list,
+reports `scope: managed` and `update: not-run` with `updateDetail` `the deciding
+row is managed by your Claude Code administrator, so it is never updated`, and
+keeps the managed remedy; a managed `disabled` row takes the ordinary disabled
+`not-run` path, with the managed remedy. `--check` never updates, with
 or without `--force`. **A bare `lore agents --force` names
 no runtime, so it updates none** (ruling 25): each `plugins.<runtime>` entry is
 `not-run`, and its `remedy` is the update command to run by hand or through
-`lore agents --target <runtime> --force`. The plugin report and any update never
+`lore agents --target <runtime> --force` — except where the deciding Claude row
+is `managed`, whose `remedy` is the managed prose above and, when it is
+installed, whose `updateDetail` is the managed detail, because no call ever
+updates it. The plugin report and any update never
 change the exit code.
 
 | | |

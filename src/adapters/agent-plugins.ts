@@ -23,8 +23,11 @@ import {
   type AgentPluginPort,
   type AgentPluginUpdateOutcome,
   type AgentRuntime,
+  CLAUDE_MANAGED_SCOPE,
   type ListedAgentPlugin,
   lorePluginUpdateSteps,
+  MANAGED_SCOPE_UPDATE_DETAIL,
+  printable,
 } from "../core/agent-plugins";
 import { stderrHint } from "../errors";
 
@@ -182,25 +185,58 @@ function canonical(path: string): string {
 }
 
 /**
- * Claude's scope precedence, most specific first (ruling 26 ii): a local or project setting
- * overrides the user's, which overrides a managed default. The ADR names local > project > user;
- * this is quest-cli's five-level form of the same principle, which the ADR records as not a
- * departure from it.
+ * Claude's scope precedence, most deciding first: managed > local > project > user > synced (opum-doc
+ * ADR Amendment 6, ruling 28, which supersedes ruling 26 (ii) for `managed` only). A managed row is
+ * administrator policy the plugin user cannot override, so it decides ahead of every other scope when
+ * present; below it, a local or project setting still overrides the user's (ruling 26 ii, otherwise
+ * unchanged), and `synced` stays last. A scope outside this list ranks after all of them.
  */
-const CLAUDE_SCOPE_PRECEDENCE = ["local", "project", "user", "managed", "synced"];
+const CLAUDE_SCOPE_PRECEDENCE: readonly string[] = [CLAUDE_MANAGED_SCOPE, "local", "project", "user", "synced"];
+
+/**
+ * Whether an applicable row replaces the row currently deciding its plugin id. A more deciding scope
+ * always wins. Within one scope, `managed` is special: its rows carry no usable depth, and a disabled
+ * managed row wins over an enabled one (opum-agent ruling 2026-09-26), so an administrator's
+ * disable is never hidden by row order. Every other scope keeps ruling 29: the deeper `projectPath`.
+ */
+function decidesOver(
+  scope: string,
+  rank: number,
+  depth: number,
+  listed: ListedAgentPlugin,
+  current: { rank: number; depth: number; listed: ListedAgentPlugin } | undefined,
+): boolean {
+  if (!current) return true;
+  if (rank !== current.rank) return rank < current.rank;
+  if (scope === CLAUDE_MANAGED_SCOPE) return listed.enabled === false && current.listed.enabled !== false;
+  return depth > current.depth;
+}
 
 /**
  * `claude plugin list --json`: an array with one row PER SCOPE, each `{id, scope, enabled, version,
  * projectPath?}` (measured on claude 2.1.283). A local or project row carries the `projectPath` it
- * belongs to and applies only there, so a row for another project is dropped (ruling 26 i) and the
- * most specific applicable row decides (ruling 26 ii). `root` is this project; a row applies when it
- * names `root` itself or an ancestor of it, compared after resolving symlinks and on a whole path
- * segment (`/x/foo` is not an ancestor of `/x/foobar`).
+ * belongs to and applies only there, so a row for another project is dropped (ruling 26 i). Among
+ * the rows that apply, the deciding row is chosen by scope precedence, then by `projectPath` depth
+ * within a scope (rulings 28 and 29). `root` is this project; a row applies when it names `root`
+ * itself or an ancestor of it, compared after resolving symlinks and on a whole path segment
+ * (`/x/foo` is not an ancestor of `/x/foobar`).
  *
- * "Most specific" is the scope first, then — between two applicable rows of the SAME scope — the
- * deeper `projectPath` (LCLI-592 review, finding 4): an enabled local row for `/p/outer` and a
- * disabled one for `/p/outer/inner` both apply at `/p/outer/inner`, and the inner one decides there
- * whichever order the runtime lists them in. A row with no `projectPath` is the least specific.
+ * A `managed` row applies to EVERY project (ruling 28: Claude Code's own code treats a managed row as
+ * applicable everywhere), so it is exempt from that filter whether or not it carries a
+ * `projectPath`, and its `projectPath`, if any, is never compared — quest-cli's rule too.
+ *
+ * The scope is read as {@link printable} text, the same form core compares to `managed`, so a padded
+ * `"managed "` ranks and is treated as managed in both places: it decides first, and nothing runs.
+ *
+ * Scope precedence decides first; then, between two applicable rows of the SAME scope, the deeper
+ * `projectPath` decides (ruling 29; LCLI-592 review, finding 4): an enabled local row for `/p/outer`
+ * and a disabled one for `/p/outer/inner` both apply at `/p/outer/inner`, and the inner one decides
+ * there whichever order the runtime lists them in. A row with no `projectPath` has depth zero, and a
+ * managed row is given depth zero whatever it carries.
+ *
+ * Between two applicable MANAGED rows for the same plugin id, depth never decides: if any of them is
+ * disabled (`enabled: false`), a disabled one decides, whatever the list order; with only enabled
+ * ones, the state is installed (opum-agent ruling 2026-09-26, disabled wins among managed rows).
  *
  * Returns `undefined` for a shape it cannot read: not an array, or rows present but none decodable.
  * That is `not-detectable`, never `not-installed` — the list shape moving is not an empty install.
@@ -213,9 +249,9 @@ export function decodeClaudePluginList(parsed: unknown, root: string): readonly 
   for (const row of parsed) {
     if (!isRecord(row) || typeof row.id !== "string") continue;
     decodable += 1;
-    const scope = typeof row.scope === "string" ? row.scope : "user";
+    const scope = typeof row.scope === "string" ? printable(row.scope) : "user";
     let depth = 0;
-    if (typeof row.projectPath === "string") {
+    if (scope !== CLAUDE_MANAGED_SCOPE && typeof row.projectPath === "string") {
       const project = canonical(row.projectPath);
       if (here !== project && !here.startsWith(`${project}${sep}`)) continue;
       depth = project.length;
@@ -224,9 +260,9 @@ export function decodeClaudePluginList(parsed: unknown, root: string): readonly 
     const effectiveRank = rank < 0 ? CLAUDE_SCOPE_PRECEDENCE.length : rank;
     const listed = toListed(row.id, row, scope);
     const current = byId.get(row.id);
-    const moreSpecific =
-      !current || effectiveRank < current.rank || (effectiveRank === current.rank && depth > current.depth);
-    if (listed && moreSpecific) byId.set(row.id, { rank: effectiveRank, depth, listed });
+    if (listed && decidesOver(scope, effectiveRank, depth, listed, current)) {
+      byId.set(row.id, { rank: effectiveRank, depth, listed });
+    }
   }
   if (parsed.length > 0 && decodable === 0) return undefined;
   return [...byId.values()].map((entry) => entry.listed);
@@ -305,6 +341,9 @@ export class CliAgentPluginPort implements AgentPluginPort {
   async update(runtime: AgentRuntime, scope: string | undefined): Promise<AgentPluginUpdateOutcome> {
     const runner = this.options.runner ?? bunPluginCommandRunner;
     const steps = lorePluginUpdateSteps(runtime, scope);
+    // A Claude managed row has no update command at all (ruling 28), so nothing runs even if this
+    // port is reached directly rather than through core's `updateLorePlugin`, which never asks.
+    if (steps.length === 0) return { ok: false, detail: MANAGED_SCOPE_UPDATE_DETAIL, completed: 0 };
     let completed = 0;
     for (const argv of steps) {
       const result = await runner(argv, this.options.updateTimeoutMs ?? DEFAULT_UPDATE_TIMEOUT_MS, this.options.env);
