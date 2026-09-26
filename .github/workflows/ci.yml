@@ -47,6 +47,14 @@ on:
     # `paths` only; were it unsupported under `paths-ignore`, CLAUDE.md would
     # silently stay ignored -- the failure this entry exists to remove.
     # test/ci-workflow.test.ts pins this list.
+    #
+    # This filter is cost control, and it is safe ONLY because every job in this
+    # file already ran on the identical tree through `pull_request`. A job that
+    # runs only on the push to main has no such earlier run, so it must never
+    # live in this file: `main is fast-forward of dev` moved out to its own
+    # unfiltered workflow for exactly that reason (LCLI-605,
+    # main-fast-forward-guard.yml). GitHub applies this list to the whole file,
+    # not per job.
     paths-ignore:
       - "*/**/*.md"
       - "CHANGELOG.md"
@@ -414,50 +422,6 @@ jobs:
         run: |
           echo "::error::Promoting dev to main here is a fast-forward push (git push origin origin/dev:main), never the GitHub merge button — the button staples a merge commit onto main that dev never had, breaking the ancestor relationship the promotion model depends on. Push the REMOTE-TRACKING ref: local dev can be stale in a recycled session, and dev:main then fast-forwards main to the wrong SHA while still reporting success. Close this PR without merging; land the promotion with the exact command instead (CLAUDE.md's repo profile, \"Constraints and couplings to respect\")."
           exit 1
-
-  main-is-fast-forward-of-dev:
-    # Runs on every push to main and fails immediately if the push was not a fast-forward of a dev
-    # that already held it — catching a wrong promotion right away rather than discovering it via a
-    # blocked future promotion. This is the guard that matters most for this repo specifically:
-    # main carries zero branch rules here (dev carries the one ruleset, require-ci-on-dev — see
-    # CLAUDE.md's repo profile), so nothing else stands between a bad push and main.
-    #
-    # TWO ASSERTIONS, AND IT USED TO HAVE ONLY ONE (LCLI-514). It asserted CONTAINMENT — main's new
-    # HEAD is a commit dev already held — while being NAMED for FAST-FORWARDNESS. Those are
-    # different properties, and a REWIND of main to an older commit still on dev satisfies the
-    # first while violating the second: measured 2026-09-15, dev = c1..c4, main rewound c4 -> c2,
-    # guard GREEN while two commits came off main. Both halves of prove-it-rejects-and-accepts were
-    # already satisfied — genuine promotion green, merge button red — so neither half could find
-    # it. The question that does is whether the NAME claims more than the ASSERTION measures.
-    #
-    # The ruleset does not cover the gap: a rewind pushes a commit that already carries green
-    # required contexts, because the earlier promotion is what put them there, so a
-    # required-status-checks rule cannot refuse one. `non_fast_forward` is the rule that would, and
-    # this repository has none.
-    #
-    # Deliberately NOT wired into any required status check, for the same reason as
-    # promotion-is-manual above: this job fires FROM the push it would need to gate, so requiring
-    # it could only ever block after the fact, never prevent the push itself. That also means it is
-    # `skipped` on every pull request — a green PR rollup says nothing about this job, which is why
-    # test/assert-main-fast-forward.test.ts asserts the wiring below as well as the logic.
-    name: main is fast-forward of dev
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          fetch-depth: 0
-      - name: Assert main only moved forward, onto a commit dev already held
-        env:
-          # The OLD tip is the input the previous version never read, and without it assertion 1
-          # cannot exist at all.
-          BEFORE: ${{ github.event.before }}
-          AFTER: ${{ github.sha }}
-          DEV_REF: origin/dev
-        run: |
-          git fetch origin dev
-          bash scripts/assert-main-fast-forward.sh
 
   config-test-newest-bun:
     # Catches wording/behavior drift in Bun's own native TOML parser (LCLI-436) between this
