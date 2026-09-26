@@ -596,9 +596,12 @@ Record FACTS here: named concrete values such as ports, versions, limits and pat
 
 Group entries under "##" headings. Each entry is a "###" heading whose text is its id, lower-case
 dot-separated segments such as "service.http-port", unique here and never reused. Cite an entry with
-an ordinary link to its heading anchor. Under the heading, one bullet list of "name: value" fields:
+an ordinary link to its heading anchor, which drops the dots: "service.http-port" is cited as
+"#servicehttp-port", not "#service.http-port". Under the heading, one bullet list of "name: value"
+fields:
 
-- value: the value itself
+- value: the value itself, in backticks; fields are read as rendered text, so an unquoted
+  __proto__ would read as "proto" and List<String> as "List"
 - meaning: what it is for
 - source_of_truth: "<repository-relative path>#<dotted.key>" in a JSON, TOML or YAML file, whose
   value lore check compares with this one; or "this-doc" when this document is the source

@@ -35,7 +35,7 @@ import { lookup as dnsLookup } from "node:dns/promises";
 import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, posix, relative, sep } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
-import { resolveHeadCommitDate } from "../adapters/git";
+import { gitTrackedState, resolveHeadCommitDate } from "../adapters/git";
 import { loadAgentProfiles, validateAgentProfileReferences } from "../core/agent-profile";
 import { effectiveProfileFor, loadBundle, walkFiles } from "../core/bundle";
 import {
@@ -565,8 +565,11 @@ function typeBundleRules(
 /**
  * The injected `readSource` a type's bundle rules read repository files through: `path` is
  * repository-relative (the rules vet that it is, with no `..` segment), resolved against the
- * repository `root`, and refused if a symlink carries it outside `root`. Never throws: a failure is
- * `{ ok: false, reason }`, which the rules report as an unreadable source. Memoized per run.
+ * repository `root`. Refused, in this order: a path that does not exist, one a symlink carries
+ * outside `root`, one that is not a regular file, and one git does not TRACK — an untracked or
+ * ignored file (a local `.secrets.json`) is never opened, so a local run and a fresh-clone CI run
+ * see the same sources (ADR-0007). Never throws: a failure is `{ ok: false, reason }`, which the
+ * rules report as an unreadable source. Memoized per run.
  */
 function sourceReader(root: string): (path: string) => SourceRead {
   const cache = new Map<string, SourceRead>();
@@ -586,7 +589,17 @@ function sourceReader(root: string): (path: string) => SourceRead {
       } else if (!statSync(target).isFile()) {
         result = { ok: false, reason: "not a regular file" };
       } else {
-        result = { ok: true, text: readFileSync(target, "utf8") };
+        const tracked = gitTrackedState(root, posix.normalize(path));
+        if (tracked === "no-repository") {
+          result = { ok: false, reason: "no git repository here to confirm it is tracked" };
+        } else if (tracked === "untracked") {
+          result = {
+            ok: false,
+            reason: "not tracked by git; an untracked or ignored file is never read, so every checkout agrees",
+          };
+        } else {
+          result = { ok: true, text: readFileSync(target, "utf8") };
+        }
       }
     } catch (err) {
       const code = errnoCode(err);

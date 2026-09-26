@@ -8,7 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCheck } from "../src/commands/check";
@@ -20,7 +20,7 @@ import { renderSourceScalar } from "../src/core/type-rules";
 import { validateConceptText } from "../src/core/validate";
 import { EXIT_CODES, EXIT_OK } from "../src/errors";
 import type { OutputContext } from "../src/output";
-import { capture } from "./helpers";
+import { capture, gitRun } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 const PLAIN_CTX: OutputContext = { mode: "plain", color: false };
@@ -103,12 +103,19 @@ Prose inside a group, before its first entry, is allowed too.
 - status: retired
 `;
 
-/** The source files {@link VALID}'s comparable entries name, each agreeing with its entry. */
+/**
+ * The source files {@link VALID}'s path entries name, each agreeing with its entry. The Dockerfile is
+ * not comparable, but every path source is opened, so it must exist and be tracked too.
+ */
 const SOURCES: Readonly<Record<string, string>> = {
   "config/app.json": '{ "server": { "port": 8080, "hosts": ["a.example", "b.example"] } }\n',
   "config/tools.toml": '[node]\nversion = "22.4.0"\n',
   "config/flags.yaml": "debug:\n  enabled: false\n",
+  Dockerfile: "FROM scratch\nEXPOSE 8080\n",
 };
+
+/** A marker standing in for a secret: it must never appear in any finding or report (review S2). */
+const SECRET = "hunter2-SECRET";
 
 /** A Reference that cites VALID twice: one entry anchor, and the document as a whole. */
 const CITING = `---
@@ -142,6 +149,8 @@ interface CheckJson {
   readonly code: number;
   readonly findings: CheckFindingJson[];
   readonly readCounts?: Record<string, Record<string, number>>;
+  /** The raw `--json` stdout, for asserting what the report does NOT contain. */
+  readonly stdout: string;
 }
 
 let root: string;
@@ -149,7 +158,15 @@ let root: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "lore-constants-"));
   runInit({ root, args: ["--allow-no-git"], output: JSON_CTX, stdout: capture(), clock: FIXED_CLOCK });
+  // A source_of_truth is read only when git tracks it (review S2b), so each test is a repository.
+  gitRun(root, ["init", "-q"]);
 });
+
+/** Write a repository file at `rel` and `git add` it, so it is tracked. */
+function trackRepoFile(rel: string, contents: string): void {
+  writeRepoFile(rel, contents);
+  gitRun(root, ["add", "--", rel]);
+}
 
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
@@ -167,10 +184,10 @@ function writeDoc(rel: string, contents: string): void {
   writeRepoFile(join("docs", rel), contents);
 }
 
-/** Write every file in {@link SOURCES}. */
+/** Write and track every file in {@link SOURCES}. */
 function writeSources(): void {
   for (const [rel, contents] of Object.entries(SOURCES)) {
-    writeRepoFile(rel, contents);
+    trackRepoFile(rel, contents);
   }
 }
 
@@ -188,7 +205,7 @@ function check(args: string[] = []): CheckJson {
   const report = JSON.parse(stdout.text()) as {
     data: { findings: CheckFindingJson[]; readCounts?: Record<string, Record<string, number>> };
   };
-  return { code, findings: report.data.findings, readCounts: report.data.readCounts };
+  return { code, findings: report.data.findings, readCounts: report.data.readCounts, stdout: stdout.text() };
 }
 
 /**
@@ -323,6 +340,23 @@ describe("Constants — R5 entry shape: lore check fails (AC#1)", () => {
     );
   });
 
+  test.each([
+    ["a blockquote", "> ### build.quoted\n>\n> - value: 1\n"],
+    ["a list item", "- ### build.listed\n\n  - value: 1\n"],
+  ])("a ### entry nested inside %s is an error, not a silently unread entry (review S1)", (_where, nested) => {
+    const doc = mutate("## Build\n", `## Nested\n\n${nested}\n## Build\n`);
+    const result = expectCheckError(
+      doc,
+      /has a "###" heading "build\.(quoted|listed)" nested inside a blockquote or list/,
+    );
+    // The same rule runs per file in lore validate.
+    expect(
+      validateConceptText(`docs/${DOC}`, doc).findings.some((finding) => finding.message.includes("nested inside")),
+    ).toBe(true);
+    // And --strict can no longer exit 0 on the partial read.
+    expect(result.code).toBe(EXIT_CODES.validation);
+  });
+
   test("an entry whose anchor an earlier heading already took (it would not be citable by its own anchor)", () => {
     // `### servicehttp.port` slugs to #servicehttpport; `servicehttpport` is not a valid id, so use a
     // group heading that slugs to the same anchor as an entry id.
@@ -358,7 +392,7 @@ describe("Constants — R7 value comparison against source_of_truth: lore check 
   test("a value that differs from its JSON source_of_truth", () => {
     expectCheckError(
       mutate("- value: `8080`", "- value: `8081`"),
-      /"service\.http-port" has value "8081", but its source_of_truth config\/app\.json#server\.port holds "8080"/,
+      /"service\.http-port" has value "8081", which differs from what its source_of_truth config\/app\.json#server\.port holds/,
       "source-of-truth",
     );
   });
@@ -366,7 +400,7 @@ describe("Constants — R7 value comparison against source_of_truth: lore check 
   test("a value that differs from its TOML source_of_truth", () => {
     expectCheckError(
       mutate("- **value**: 22.4.0", "- **value**: 20.0.0"),
-      /"build\.node-version" has value "20\.0\.0", but its source_of_truth config\/tools\.toml#node\.version holds "22\.4\.0"/,
+      /"build\.node-version" has value "20\.0\.0", which differs from what its source_of_truth config\/tools\.toml#node\.version holds/,
       "source-of-truth",
     );
   });
@@ -374,18 +408,18 @@ describe("Constants — R7 value comparison against source_of_truth: lore check 
   test("a value that differs from its YAML source_of_truth", () => {
     expectCheckError(
       mutate("- value: false", "- value: true"),
-      /"build\.debug-enabled" has value "true", but its source_of_truth config\/flags\.yaml#debug\.enabled holds "false"/,
+      /"build\.debug-enabled" has value "true", which differs from what its source_of_truth config\/flags\.yaml#debug\.enabled holds/,
       "source-of-truth",
     );
   });
 
-  test("a DEPRECATED entry is still compared (opum-agent ruling 2026-09-26: only retired is skipped)", () => {
+  test("a DEPRECATED entry is still compared (opum-doc f51e8b0, ODOC-292: only retired is skipped)", () => {
     expectCheckError(
       mutate(
         "- value: 8000\n- meaning: The port the HTTP server used before 2.0.\n- source_of_truth: this-doc",
         "- value: 8000\n- meaning: The port the HTTP server used before 2.0.\n- source_of_truth: config/app.json#server.port",
       ),
-      /"service\.legacy-port" has value "8000", but its source_of_truth config\/app\.json#server\.port holds "8080"/,
+      /"service\.legacy-port" has value "8000", which differs from what its source_of_truth config\/app\.json#server\.port holds/,
       "source-of-truth",
     );
   });
@@ -399,10 +433,10 @@ describe("Constants — R7 value comparison against source_of_truth: lore check 
   });
 
   test("an unreadable source: the file does not parse", () => {
-    writeRepoFile("config/broken.yaml", "debug: [unterminated\n");
+    trackRepoFile("config/broken.yaml", "debug: [unterminated\n");
     expectCheckError(
       mutate("config/flags.yaml#debug.enabled", "config/broken.yaml#debug.enabled"),
-      /source_of_truth config\/broken\.yaml cannot be parsed as YAML/,
+      /source_of_truth config\/broken\.yaml cannot be parsed as YAML \(YAMLException at line \d+\)/,
       "source-of-truth",
     );
   });
@@ -452,6 +486,159 @@ describe("Constants — R7 value comparison against source_of_truth: lore check 
       renderSourceScalar({ a: 1 }),
       renderSourceScalar([1]),
     ]).toEqual(["0080", "8080", "1.5", "true", "null", undefined, undefined]);
+  });
+});
+
+describe("Constants — R7 never prints what a source holds, and reads only tracked files (review S2)", () => {
+  /** VALID with service.http-port pointed at `source` and given `value`. */
+  function pointedAt(source: string, value = "not-the-value"): string {
+    return mutate("- value: `8080`", `- value: \`${value}\``).replace("config/app.json#server.port", source);
+  }
+
+  test("a mismatch against a secret: the finding and the whole --json report omit the source's value", () => {
+    writeSources();
+    trackRepoFile("config/db.json", JSON.stringify({ db: { password: SECRET } }));
+    writeDoc(DOC, pointedAt("config/db.json#db.password"));
+    const result = check();
+    expect(result.code).toBe(EXIT_CODES.validation);
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({
+        rule: "source-of-truth",
+        message: expect.stringContaining(
+          'has value "not-the-value", which differs from what its source_of_truth config/db.json#db.password holds',
+        ),
+      }),
+    );
+    expect(result.stdout).not.toContain("hunter2");
+  });
+
+  test("the plain report omits it too", () => {
+    writeSources();
+    trackRepoFile("config/db.json", JSON.stringify({ db: { password: SECRET } }));
+    writeDoc(DOC, pointedAt("config/db.json#db.password"));
+    const stdout = capture();
+    runCheck({ root, output: PLAIN_CTX, args: [], stdout, stderr: capture(), headCommitDate: () => "2026-09-26" });
+    expect(stdout.text()).toContain("[source-of-truth]");
+    expect(stdout.text()).not.toContain("hunter2");
+  });
+
+  test.each([
+    ["JSON", "config/db.json", `{ "db": ${SECRET} }`, /cannot be parsed as JSON \(SyntaxError\)/],
+    ["YAML", "config/db.yaml", `db: [${SECRET}\n`, /cannot be parsed as YAML \(YAMLException at line \d+\)/],
+  ])("a %s parse failure names the error class (and YAML line), never a snippet of the file", (_format, path, contents, message) => {
+    writeSources();
+    trackRepoFile(path, contents);
+    writeDoc(DOC, pointedAt(`${path}#db`));
+    const result = check();
+    expect(result.code).toBe(EXIT_CODES.validation);
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ rule: "source-of-truth", message: expect.stringMatching(message) }),
+    );
+    expect(result.stdout).not.toContain("hunter2");
+  });
+
+  test("an UNTRACKED source fails with its own message and is never read, even when it would match", () => {
+    writeSources();
+    writeRepoFile(".secrets.json", JSON.stringify({ db: { password: SECRET } })); // written, never added
+    writeDoc(DOC, pointedAt(".secrets.json#db.password", SECRET));
+    const result = check();
+    expect(result.code).toBe(EXIT_CODES.validation);
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({
+        rule: "source-of-truth",
+        message: expect.stringContaining("source_of_truth .secrets.json cannot be read (not tracked by git"),
+      }),
+    );
+    expect(result.readCounts?.Constants?.comparableSources).toBe(2); // toml and yaml; not the secret
+  });
+
+  test("an IGNORED source is untracked too", () => {
+    writeSources();
+    trackRepoFile(".gitignore", ".secrets.json\n");
+    writeRepoFile(".secrets.json", JSON.stringify({ db: { password: SECRET } }));
+    writeDoc(DOC, pointedAt(".secrets.json#db.password", SECRET));
+    expect(check().findings).toContainEqual(
+      expect.objectContaining({ rule: "source-of-truth", message: expect.stringContaining("not tracked by git") }),
+    );
+  });
+
+  test("outside any git repository, a path source fails rather than being read", () => {
+    writeSources();
+    rmSync(join(root, ".git"), { recursive: true, force: true });
+    writeDoc(DOC, VALID);
+    expect(check().findings).toContainEqual(
+      expect.objectContaining({
+        rule: "source-of-truth",
+        message: expect.stringContaining("no git repository here to confirm it is tracked"),
+      }),
+    );
+  });
+
+  test("a source that is a directory is refused as not a regular file", () => {
+    writeSources();
+    mkdirSync(join(root, "config", "nested.json"), { recursive: true });
+    writeDoc(DOC, pointedAt("config/nested.json#a"));
+    expect(check().findings).toContainEqual(
+      expect.objectContaining({
+        rule: "source-of-truth",
+        message: expect.stringContaining("config/nested.json cannot be read (not a regular file)"),
+      }),
+    );
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "a TRACKED symlink that resolves outside the repository is refused, not followed",
+    () => {
+      writeSources();
+      const outside = mkdtempSync(join(tmpdir(), "lore-constants-outside-"));
+      try {
+        writeFileSync(join(outside, "leak.json"), JSON.stringify({ db: { password: SECRET } }));
+        symlinkSync(join(outside, "leak.json"), join(root, "config", "link.json"));
+        gitRun(root, ["add", "--", "config/link.json"]);
+        writeDoc(DOC, pointedAt("config/link.json#db.password", SECRET));
+        const result = check();
+        expect(result.findings).toContainEqual(
+          expect.objectContaining({
+            rule: "source-of-truth",
+            message: expect.stringContaining("config/link.json cannot be read (resolves outside the repository)"),
+          }),
+        );
+        expect(result.stdout).not.toContain("hunter2");
+      } finally {
+        rmSync(outside, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+describe("Constants — every path source is opened, whatever its extension (review S3)", () => {
+  test.each(["does/not/exist.ini#x", "noext#x"])("a missing non-comparable source %p fails", (source) => {
+    expectCheckError(
+      mutate("Dockerfile#EXPOSE", source),
+      new RegExp(`source_of_truth ${source.split("#")[0]?.replace(/\./g, "\\.")} cannot be read \\(no such file\\)`),
+      "source-of-truth",
+    );
+  });
+
+  test("an existing, tracked non-comparable source passes and is counted as not comparable", () => {
+    writeSources();
+    writeDoc(DOC, VALID);
+    const { code, findings, readCounts } = check();
+    expect(findings).toEqual([]);
+    expect(code).toBe(EXIT_OK);
+    expect(readCounts?.Constants?.notComparableSources).toBe(1);
+  });
+
+  test("an untracked non-comparable source fails", () => {
+    writeSources();
+    gitRun(root, ["rm", "-q", "--cached", "--", "Dockerfile"]);
+    writeDoc(DOC, VALID);
+    expect(check().findings).toContainEqual(
+      expect.objectContaining({
+        rule: "source-of-truth",
+        message: expect.stringContaining("source_of_truth Dockerfile cannot be read (not tracked by git"),
+      }),
+    );
   });
 });
 

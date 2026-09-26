@@ -106,7 +106,10 @@ export interface TypeBundleContext {
   readonly body: string;
   /** Every link in the bundle that resolves to this document, in bundle file order. */
   readonly inboundLinks: readonly InboundLink[];
-  /** Read a REPOSITORY-relative file. Only ever called with a path {@link isRepoRelativePath} accepts. */
+  /**
+   * Read a REPOSITORY-relative, git-TRACKED regular file inside the repository, or say why not. Only
+   * ever called with a path {@link isRepoRelativePath} accepts.
+   */
   readonly readSource: (path: string) => SourceRead;
 }
 
@@ -722,6 +725,18 @@ function parseConstants(body: string): ParsedConstants {
     }
   }
 
+  // A `###` nested in a blockquote or list item is never an entry (only top-level headings are
+  // read), so it would be silently skipped -- never compared, never cite-checked -- while `check`
+  // reported a clean run over a partial read. Name it instead (review finding S1).
+  const topLevel = new Set<Nodes>(root.children);
+  walkMdast(root, (node) => {
+    if (node.type === "heading" && node.depth === 3 && !topLevel.has(node)) {
+      error(
+        `has a "###" heading ${JSON.stringify(nodeText(node).trim())} nested inside a blockquote or list -- an entry must be a top-level "###" heading, or lore cannot read it`,
+      );
+    }
+  });
+
   const entries: ConstantsEntry[] = [];
   const seenIds = new Set<string>();
   for (const candidate of raw) {
@@ -925,31 +940,43 @@ export function renderSourceScalar(value: unknown): string | undefined {
   return undefined;
 }
 
-/** A parser's message, on one line and bounded, for a finding. */
-function oneLine(message: string): string {
-  const flat = message.replace(/\s+/g, " ").trim();
-  return flat.length > 160 ? `${flat.slice(0, 160)}…` : flat;
+/**
+ * What a finding may say about a parse failure: the error's class and, where the parser reports
+ * one reliably, the line. NEVER the parser's message: JSON.parse's quotes the offending token and
+ * js-yaml's carries a snippet of the file, and a source may hold a secret (review finding S2).
+ * Only js-yaml's `mark.line` (0-based) is used; a JSON `SyntaxError`'s own `line` is the
+ * JavaScript stack's, not the data's.
+ */
+function parseFailureSummary(err: unknown): string {
+  const name = err instanceof Error && /^[A-Za-z]+$/.test(err.name) ? err.name : "parse error";
+  const mark = (err as { mark?: { line?: unknown } } | null)?.mark;
+  return typeof mark?.line === "number" ? `${name} at line ${mark.line + 1}` : name;
 }
 
 /**
  * The Constants bundle rules (R6, R7, and the positive control), run only by `lore check`:
  *
- * - R7: every non-retired entry whose `source_of_truth` names a `.json`, `.toml`, `.yaml` or `.yml`
- *   file must hold, at that key, a scalar whose rendering ({@link renderSourceScalar}) EQUALS its
- *   `value`. A file that cannot be read or parsed, a missing key and a non-scalar value all FAIL.
- *   A `this-doc` entry is not compared. Any other extension is NOT COMPARABLE: counted, never
- *   failed, because lore has no reader for it. A retired entry is not compared either: it records
- *   a value that is no longer in force, whose source may rightly be gone (active and deprecated
- *   entries are; confirmed by opum-agent ruling 2026-09-26).
+ * - R7: every non-retired entry whose `source_of_truth` names a file has that file OPENED through
+ *   `readSource` (which refuses a missing, untracked, non-regular or out-of-repository path), and a
+ *   file that cannot be read FAILS whatever its extension. A `.json`, `.toml`, `.yaml` or `.yml`
+ *   source must then hold, at that key, a scalar whose rendering ({@link renderSourceScalar})
+ *   EQUALS its `value`; a parse failure, a missing key and a non-scalar value all FAIL. Any other
+ *   extension is NOT COMPARABLE: opened, counted, never compared. A `this-doc` entry is not
+ *   compared. A retired entry is not compared either: it records a value no longer in force, whose
+ *   source may rightly be gone (active and deprecated entries are; opum-doc f51e8b0, ODOC-292,
+ *   Constants ADR Amendment 2).
+ * - No finding ever prints what a source HOLDS, or a parser's message: a mismatch names the
+ *   `path#key` and the entry's own `value`; a parse failure names the error class and, for YAML,
+ *   the line. A source can be a secret (review finding S2).
  * - R6: every link into this document is counted, and one citing a DEPRECATED or RETIRED entry's
  *   anchor draws a `deprecated-reference` warning on the citing file, its message naming which
- *   (retired extended by opum-agent ruling 2026-09-26). A link to an anchor that does not exist is
+ *   (retired: opum-doc f51e8b0, ODOC-292, Constants ADR Amendment 2). A link to an anchor that does not exist is
  *   already `lore check`'s `broken-anchor` error, which this rule does not duplicate.
  * - Positive control: a Constants document from which zero entries were read FAILS, so an empty or
  *   unreadable-to-lore document can never pass as "every entry compared clean".
  *
  * Counts (never gating): `entries` read, `comparableSources` actually compared (read, key found,
- * scalar), `notComparableSources`, and `references` (links into the document).
+ * scalar), `notComparableSources` (opened, not compared), and `references` (links into the document).
  */
 function constantsBundle(context: TypeBundleContext): TypeBundleResult {
   const { entries } = parseConstants(context.body);
@@ -964,12 +991,15 @@ function constantsBundle(context: TypeBundleContext): TypeBundleResult {
     );
   }
 
-  const parsedSources = new Map<string, { readonly data?: unknown; readonly problem?: string }>();
+  // Every path source is OPENED, whatever its format, so a missing, untracked or unreadable file
+  // fails even where lore cannot compare its contents (review finding S3). Only JSON/TOML/YAML are
+  // then parsed and compared.
+  const loadedSources = new Map<string, { readonly data?: unknown; readonly problem?: string }>();
   const load = (
     path: string,
-    format: "json" | "toml" | "yaml",
+    format: "json" | "toml" | "yaml" | undefined,
   ): { readonly data?: unknown; readonly problem?: string } => {
-    const cached = parsedSources.get(path);
+    const cached = loadedSources.get(path);
     if (cached !== undefined) {
       return cached;
     }
@@ -977,16 +1007,16 @@ function constantsBundle(context: TypeBundleContext): TypeBundleResult {
     let result: { data?: unknown; problem?: string };
     if (!read.ok) {
       result = { problem: `cannot be read (${read.reason})` };
+    } else if (format === undefined) {
+      result = {};
     } else {
       try {
         result = { data: parseSource(read.text, format) };
       } catch (err) {
-        result = {
-          problem: `cannot be parsed as ${format.toUpperCase()} (${oneLine(err instanceof Error ? err.message : String(err))})`,
-        };
+        result = { problem: `cannot be parsed as ${format.toUpperCase()} (${parseFailureSummary(err)})` };
       }
     }
-    parsedSources.set(path, result);
+    loadedSources.set(path, result);
     return result;
   };
 
@@ -1000,16 +1030,16 @@ function constantsBundle(context: TypeBundleContext): TypeBundleResult {
     if (source.kind !== "file") {
       continue; // `this-doc`, or malformed (already a type-shape error)
     }
-    const format = sourceFormat(source.path);
-    if (format === undefined) {
-      notComparableSources++;
-      continue;
-    }
     const label = `entry ${JSON.stringify(entry.id)}`;
     const named = `${source.path}#${source.key}`;
+    const format = sourceFormat(source.path);
     const loaded = load(source.path, format);
     if (loaded.problem !== undefined) {
       fail(SOURCE_OF_TRUTH_RULE, `${label}: source_of_truth ${source.path} ${loaded.problem}`);
+      continue;
+    }
+    if (format === undefined) {
+      notComparableSources++;
       continue;
     }
     const found = lookupKey(loaded.data, source.key);
@@ -1027,12 +1057,12 @@ function constantsBundle(context: TypeBundleContext): TypeBundleResult {
     if (rendered !== value) {
       fail(
         SOURCE_OF_TRUTH_RULE,
-        `${label} has value ${JSON.stringify(value)}, but its source_of_truth ${named} holds ${JSON.stringify(rendered)} -- update whichever is wrong`,
+        `${label} has value ${JSON.stringify(value)}, which differs from what its source_of_truth ${named} holds -- update whichever is wrong (the source's value is never printed: it may be a secret)`,
       );
     }
   }
 
-  // Entries a citation should move off: deprecated (R6) and retired (opum-agent ruling 2026-09-26).
+  // Entries a citation should move off: deprecated (R6) and retired (opum-doc f51e8b0, ODOC-292).
   const superseded = new Map<string, { readonly entry: ConstantsEntry; readonly status: string }>();
   for (const entry of entries) {
     const status = entry.fields.get("status");
