@@ -256,6 +256,55 @@ describe("claude: detection over recorded `claude plugin list --json`", () => {
     const row = claudeRow({ scope: "local", enabled: false, projectPath: real });
     expect((await detect("claude", listed([row]), link)).state).toBe("disabled");
   });
+
+  test("ruling 26 (i): ancestry is by whole path segment — a row for /x/foo is dropped at /x/foobar", async () => {
+    // Review finding 5: the pre-existing sibling case could not see a missing separator, because
+    // `${root}-sibling` is not a string prefix of the nested project at all. This one is.
+    const foo = join(root, "foo");
+    const foobar = join(root, "foobar");
+    mkdirSync(foo);
+    mkdirSync(foobar);
+    const row = claudeRow({ scope: "local", enabled: false, projectPath: foo });
+    expect((await detect("claude", listed([row]), foobar)).state).toBe("not-installed");
+    // Positive control in the same invocation: the same row does apply at /x/foo itself.
+    expect((await detect("claude", listed([row]), foo)).state).toBe("disabled");
+  });
+
+  test("ruling 26 (ii): within one scope, the deeper applicable projectPath decides, in either row order", async () => {
+    // Review finding 4: an enabled local row for /p/outer and a disabled one for /p/outer/inner both
+    // apply at /p/outer/inner. The inner one is the more specific and must decide, whatever the order.
+    const outer = root;
+    const inner = join(root, "inner");
+    mkdirSync(inner);
+    const outerRow = claudeRow({ scope: "local", enabled: true, projectPath: outer });
+    const innerRow = claudeRow({ scope: "local", enabled: false, projectPath: inner });
+    for (const order of ["outer-first", "inner-first"] as const) {
+      const rows = order === "outer-first" ? [outerRow, innerRow] : [innerRow, outerRow];
+      expect({ order, state: (await detect("claude", listed(rows), inner)).state }).toEqual({
+        order,
+        state: "disabled",
+      });
+      // At /p/outer only the outer row applies.
+      expect({ order, state: (await detect("claude", listed(rows), outer)).state }).toEqual({
+        order,
+        state: "installed",
+      });
+    }
+  });
+
+  test("ruling 26 (ii): a more specific SCOPE still beats a deeper path in a less specific scope", async () => {
+    const inner = join(root, "inner");
+    mkdirSync(inner);
+    const localOuter = claudeRow({ scope: "local", enabled: false, projectPath: root });
+    const projectInner = claudeRow({ scope: "project", enabled: true, projectPath: inner });
+    for (const rows of [
+      [localOuter, projectInner],
+      [projectInner, localOuter],
+    ]) {
+      const check = await detect("claude", listed(rows), inner);
+      expect({ state: check.state, scope: check.scope }).toEqual({ state: "disabled", scope: "local" });
+    }
+  });
 });
 
 describe("codex: detection over recorded `codex plugin list --json`", () => {
@@ -403,21 +452,24 @@ async function agentsCheck(
   return { code, text, data: output.mode === "json" ? (JSON.parse(text).data as AgentsResult) : undefined };
 }
 
-describe("lore agents --check reports data.plugin", () => {
-  test("a disabled plugin is reported, and a clean bridge still exits 0", async () => {
+describe("lore agents --check reports data.plugins.<runtime>, never a bare data.plugin (ruling 27)", () => {
+  test("a disabled plugin is reported under plugins.claude, and a clean bridge still exits 0", async () => {
     await seedBridges();
     const port = fakePort({
       claude: { kind: "listed", plugins: [{ id: LORE_PLUGIN_ID, enabled: false, scope: "user" }] },
     });
     const { code, data } = await agentsCheck(port);
     expect(code).toBe(EXIT_OK);
-    expect(data?.plugin).toEqual({
-      runtime: "claude",
-      id: "opum-lore@opum",
-      state: "disabled",
-      scope: "user",
-      remedy: "claude plugin enable opum-lore@opum --scope user",
+    expect(data?.plugins).toEqual({
+      claude: {
+        runtime: "claude",
+        id: "opum-lore@opum",
+        state: "disabled",
+        scope: "user",
+        remedy: "claude plugin enable opum-lore@opum --scope user",
+      },
     });
+    expect(data).not.toHaveProperty("plugin");
     expect(port.calls).toEqual(["claude"]);
   });
 
@@ -430,7 +482,7 @@ describe("lore agents --check reports data.plugin", () => {
     ] as AgentPluginListing[]) {
       const { code, data } = await agentsCheck(fakePort({ claude: listing }));
       expect(code).toBe(EXIT_CODES.drift);
-      expect(data?.plugin?.runtime).toBe("claude");
+      expect(data?.plugins?.claude?.runtime).toBe("claude");
     }
   });
 
@@ -442,38 +494,41 @@ describe("lore agents --check reports data.plugin", () => {
     expect(port.calls).toEqual(["claude"]);
   });
 
-  test("a Codex-only repository reports the codex runtime", async () => {
+  test("a Codex-only repository reports plugins.codex alone, and no bare plugin", async () => {
     await seedBridges(true);
     // Remove the Claude bridge so only Codex is armed.
     rmSync(join(root, ".claude"), { recursive: true, force: true });
     rmSync(join(root, "CLAUDE.md"), { force: true });
     const port = fakePort({ codex: { kind: "listed", plugins: [{ id: LORE_PLUGIN_ID, enabled: true }] } });
     const { data } = await agentsCheck(port);
-    expect(data?.plugin?.runtime).toBe("codex");
-    expect(data?.plugin?.state).toBe("installed");
     expect(Object.keys(data?.plugins ?? {})).toEqual(["codex"]);
+    expect(data?.plugins?.codex?.state).toBe("installed");
+    // Ruling 27: even with exactly one runtime checked, a bare call never gets `data.plugin`.
+    expect(data).not.toHaveProperty("plugin");
     expect(port.calls).toEqual(["codex"]);
   });
 
-  test("both bridges: data.plugins carries both runtimes and data.plugin is Claude's", async () => {
+  test("both bridges: plugins carries both runtimes, and there is no bare plugin to pick one", async () => {
     await seedBridges(true);
     const port = fakePort({
       claude: { kind: "listed", plugins: [] },
       codex: { kind: "listed", plugins: [{ id: LORE_PLUGIN_ID, enabled: false }] },
     });
     const { data } = await agentsCheck(port);
-    expect(data?.plugin?.runtime).toBe("claude");
     expect(data?.plugins?.claude?.state).toBe("not-installed");
     expect(data?.plugins?.codex?.state).toBe("disabled");
+    expect(data).not.toHaveProperty("plugin");
     expect(port.calls.sort()).toEqual(["claude", "codex"]);
   });
 
-  test("a writing run (no --check) reports no plugin and asks no runtime", () => {
+  test("a writing run (no --check) reports no plugin state and asks no runtime", () => {
     const port = fakePort({});
     const stdout = capture();
     const code = runAgents({ root, output: JSON_CTX, args: [], stdout, agentPlugins: port });
     expect(code).toBe(EXIT_OK);
-    expect(JSON.parse(stdout.text()).data).not.toHaveProperty("plugin");
+    const data = JSON.parse(stdout.text()).data;
+    expect(data).not.toHaveProperty("plugin");
+    expect(data).not.toHaveProperty("plugins");
     expect(port.calls).toEqual([]);
   });
 
@@ -500,8 +555,53 @@ describe("lore agents --check reports data.plugin", () => {
       agentPlugins: port,
     });
     expect(code).toBe(EXIT_OK);
-    expect(JSON.parse(stdout.text()).data.plugin.state).toBe("installed");
+    expect(JSON.parse(stdout.text()).data.plugins.claude.state).toBe("installed");
     expect(port.calls).toEqual(["claude"]);
+  });
+});
+
+// ---- Runtime-supplied text on --plain (review finding 2) --------------------------------------
+
+describe("runtime-supplied text cannot inject ANSI or forge a --plain record", () => {
+  const HOSTILE = "\x1b[31mboom\x1b[0m\nup-to-date FORGED.md\r\n\x07tail";
+
+  /** `lore agents --check --plain` through the REAL adapter, with a runtime answering `result`. */
+  async function plainCheck(result: PluginCommandResult): Promise<string> {
+    await seedBridges();
+    const port = new CliAgentPluginPort(root, { runner: recordedRunner({ claude: result }) });
+    const { text } = await agentsCheck(port, PLAIN_CTX);
+    return text;
+  }
+
+  function assertClean(text: string): void {
+    expect(text).not.toContain("\x1b");
+    expect(text).not.toContain("\x07");
+    expect(text).not.toContain("\r");
+    // The forged record must not stand as a line of its own.
+    expect(text.split("\n")).not.toContain("up-to-date FORGED.md");
+  }
+
+  test("stderr of a failing runtime: ESC, BEL and line breaks never reach --plain stdout", async () => {
+    const text = await plainCheck({ exitCode: 1, stdout: "", stderr: HOSTILE });
+    assertClean(text);
+    expect(text.split("\n")).toContain(
+      "plugin-claude-reason claude plugin list exited 1: boom up-to-date FORGED.md tail",
+    );
+  });
+
+  test("version and scope from the listing are reduced to one printable line, and a hostile scope is never put in a command", async () => {
+    const text = await plainCheck(listed([claudeRow({ version: HOSTILE, scope: "user\n; rm -rf ~" })]));
+    assertClean(text);
+    expect(text).not.toContain("--scope user");
+    const plugin = text.split("\n").find((line) => line.startsWith("plugin-claude "));
+    expect(plugin).toBe("plugin-claude installed opum-lore@opum scope=user ; rm -rf ~");
+    expect(text.split("\n")).toContain("plugin-claude-remedy claude plugin update opum-lore@opum");
+  });
+
+  test("a port's own reason is sanitized too (core boundary, not only the CLI adapter)", async () => {
+    await seedBridges();
+    const { data } = await agentsCheck(fakePort({ claude: { kind: "unavailable", reason: HOSTILE } }));
+    expect(data?.plugins?.claude?.reason).toBe("boom up-to-date FORGED.md tail");
   });
 });
 
@@ -638,13 +738,34 @@ describe.skipIf(onWindows)("subprocess: the real lore against fake claude/codex 
   }
 
   /** `bun src/cli.ts <args>` with a PATH holding only the fakes and the system directories. */
-  async function lore(args: readonly string[], off: boolean): Promise<{ code: number; data: Record<string, unknown> }> {
-    const env: Record<string, string | undefined> = { ...process.env, PATH: `${bin}:/usr/bin:/bin`, NO_COLOR: "1" };
+  async function lore(
+    args: readonly string[],
+    off: boolean,
+    extraEnv: Record<string, string> = {},
+  ): Promise<{ code: number; data: Record<string, unknown>; elapsedMs: number }> {
+    const env: Record<string, string | undefined> = {
+      ...process.env,
+      PATH: `${bin}:/usr/bin:/bin`,
+      NO_COLOR: "1",
+      ...extraEnv,
+    };
     if (off) env.LORE_AGENT_PLUGINS = "off";
     else delete env.LORE_AGENT_PLUGINS;
+    const started = Date.now();
     const child = Bun.spawn([process.execPath, CLI_ENTRY, ...args], { cwd: root, env, stdout: "pipe", stderr: "pipe" });
+    // `stdout` is read to EOF alongside `exited`, so `elapsedMs` is when the lore PROCESS was gone,
+    // not when its report was printed — the two differ by exactly the defect review finding 1 names.
     const [code, stdout] = await Promise.all([child.exited, new Response(child.stdout).text()]);
-    return { code, data: JSON.parse(stdout).data };
+    return { code, data: JSON.parse(stdout).data, elapsedMs: Date.now() - started };
+  }
+
+  function alive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   test("LORE_AGENT_PLUGINS=off starts no runtime process at all, for init or --check", async () => {
@@ -655,7 +776,8 @@ describe.skipIf(onWindows)("subprocess: the real lore against fake claude/codex 
     const plugins = initRun.data.plugins as AgentPluginChecks;
     expect([plugins.claude?.state, plugins.codex?.state]).toEqual(["not-detectable", "not-detectable"]);
     const checkRun = await lore(["agents", "--check", "--json"], true);
-    expect((checkRun.data.plugin as AgentPluginCheck).state).toBe("not-detectable");
+    expect((checkRun.data.plugins as AgentPluginChecks).claude?.state).toBe("not-detectable");
+    expect(checkRun.data).not.toHaveProperty("plugin");
     expect(calls()).toEqual([]);
   });
 
@@ -668,7 +790,8 @@ describe.skipIf(onWindows)("subprocess: the real lore against fake claude/codex 
     expect([plugins.claude?.state, plugins.codex?.state]).toEqual(["disabled", "installed"]);
     const checkRun = await lore(["agents", "--check", "--json"], false);
     expect(checkRun.code).toBe(EXIT_OK);
-    expect((checkRun.data.plugin as AgentPluginCheck).state).toBe("disabled");
+    expect((checkRun.data.plugins as AgentPluginChecks).claude?.state).toBe("disabled");
+    expect(checkRun.data).not.toHaveProperty("plugin");
     expect(calls().sort()).toEqual([
       "claude plugin list --json",
       "claude plugin list --json",
@@ -691,5 +814,34 @@ describe.skipIf(onWindows)("subprocess: the real lore against fake claude/codex 
     }).list("claude");
     expect(listing).toEqual({ kind: "unavailable", reason: "claude plugin list --json did not finish within 0.5s." });
     expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  test("review finding 1: the deadline bounds when the lore PROCESS exits, and the grandchild holding its pipes is reaped", async () => {
+    // A runtime that ignores TERM and leaves a grandchild holding stdout/stderr for 12s. Before the
+    // fix lore printed its report at the deadline and then stayed alive until the grandchild exited.
+    const pidFile = join(root, ".grandchild.pid");
+    fake("claude", [], `#!/bin/sh\ntrap '' TERM\nsleep 12 &\necho $! > "${pidFile}"\nsleep 12\n`);
+    const run = await lore(["agents", "--check", "--json"], false, { LORE_AGENT_PLUGINS_TIMEOUT_MS: "500" });
+    const claude = (run.data.plugins as AgentPluginChecks).claude;
+    expect(claude?.state).toBe("not-detectable");
+    expect(claude?.reason).toBe("claude plugin list --json did not finish within 0.5s.");
+    // 0.5s deadline plus bun's own start-up; nowhere near the 12s the grandchild would hold it.
+    expect(run.elapsedMs).toBeLessThan(6000);
+    const grandchild = Number(readFileSync(pidFile, "utf8").trim());
+    expect(grandchild).toBeGreaterThan(0);
+    await Bun.sleep(200);
+    expect(alive(grandchild)).toBe(false);
+  }, 30_000);
+
+  test("output past the cap is not-detectable and is not held in memory", async () => {
+    // Streams ~2 MiB of `[` and then keeps going; the cap stops the read and kills the group.
+    fake("claude", [], `#!/bin/sh\nyes '[' | head -c 2200000\nsleep 12\n`);
+    const started = Date.now();
+    const listing = await new CliAgentPluginPort(root, { env: { PATH: `${bin}:/usr/bin:/bin` } }).list("claude");
+    expect(listing).toEqual({
+      kind: "unavailable",
+      reason: "claude plugin list --json printed more than 1048576 bytes.",
+    });
+    expect(Date.now() - started).toBeLessThan(5000);
   });
 });

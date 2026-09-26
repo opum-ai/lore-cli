@@ -78,16 +78,15 @@ export interface AgentsResult {
   /** Where this run resolved `.claude/skills/lore/SKILL.md` to come from (LCLI-446). */
   skillSource: SkillSource;
   /**
-   * `--check` only (LCLI-592): the opum-lore marketplace plugin for this run's runtime — Claude when
-   * the Claude bridge was checked, else Codex. The field name and shape match quest-cli's
-   * `agents --check` `data.plugin` (QCLI-371). Reported, never acted on, and never part of the exit
-   * code. Absent on a writing run and when no Claude or Codex bridge was checked.
-   */
-  plugin?: AgentPluginCheck;
-  /**
-   * `--check` only (LCLI-592): the same check for EVERY runtime whose bridge this run checked, keyed
-   * by runtime like `lore init`'s `data.plugins`. `lore agents` checks the Claude and Codex bridges
-   * in one call where both exist, which a single `plugin` cannot describe.
+   * `--check` only (LCLI-592): the opum-lore marketplace plugin for every runtime whose bridge this
+   * run checked, keyed by runtime (`plugins.claude`, `plugins.codex`) exactly like `lore init`'s
+   * `data.plugins`. Each entry has quest-cli's QCLI-371 shape. Reported, never acted on, and never
+   * part of the exit code. Absent on a writing run and when no Claude or Codex bridge was checked.
+   *
+   * There is deliberately NO bare `plugin` field here. opum-doc's ADR Amendment 5, ruling 27 (main
+   * 99e8ce5): `data.plugin` appears exactly when a runtime is named with `--target`, never otherwise,
+   * because a bare field's meaning must not depend on which runtime happens to be checked first.
+   * `lore agents` has no `--target` yet (LCLI-593 adds it), so it reports `plugins.<runtime>` only.
    */
   plugins?: AgentPluginChecks;
 }
@@ -307,11 +306,9 @@ function checkedRuntimes(result: AgentsResult): AgentRuntime[] {
   return runtimes;
 }
 
-/** Attach `plugin` (the first runtime's check) and `plugins` (every runtime's) to a result, or return it untouched. */
+/** Attach every checked runtime's plugin state as `plugins.<runtime>` (ruling 27: never a bare `plugin`), or return the result untouched. */
 function withPlugins(result: AgentsResult, plugins: AgentPluginChecks | undefined): AgentsResult {
-  if (plugins === undefined) return result;
-  const plugin = plugins.claude ?? plugins.codex;
-  return { ...result, ...(plugin !== undefined ? { plugin } : {}), plugins };
+  return plugins === undefined ? result : { ...result, plugins };
 }
 
 /** Every plugin check on a result, Claude first. */

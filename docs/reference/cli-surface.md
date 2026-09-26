@@ -1127,21 +1127,28 @@ off, so its skill does not reach the agent — never reported as `installed`),
 `not-installed`, or `not-detectable` (the runtime CLI is missing, exited
 non-zero, or answered in a shape lore cannot read — never folded into
 `not-installed`). On the Claude side, a row scoped to another project is
-ignored and the most specific applicable scope decides (local, then project,
-user, managed, synced). `data.plugin` carries the check for the first such
-runtime (Claude before Codex) and `data.plugins` carries every one, keyed by
-runtime; each is `{runtime, id, state, version?, scope?, reason?, remedy?}`,
-the same shape `quest agents --check` reports for `opum-quest`. `remedy` is the
-command to run next — install, enable, or update — and `--check` never runs it.
-The plugin state never changes the exit code. `LORE_AGENT_PLUGINS=off` skips
-detection entirely: every runtime reads `not-detectable` and no `claude` or
-`codex` process is started.
+ignored and the most specific applicable row decides: the scope first (local,
+then project, user, managed, synced), then, between two rows of the same scope,
+the deeper `projectPath`. The result is `data.plugins.<runtime>` — `plugins.claude`,
+`plugins.codex` — one entry per checked runtime, each
+`{runtime, id, state, version?, scope?, reason?, remedy?}`, the same shape
+`quest agents --check` reports for `opum-quest`. There is **no bare
+`data.plugin`** on a `lore agents` call: opum-doc's ADR Amendment 5, ruling 27
+(main `99e8ce5`), reserves that field for a call naming one runtime with
+`--target`, so its meaning never depends on which runtime happened to be checked
+first. `remedy` is the command to run next — install, enable, or update — and
+`--check` never runs it. Text a runtime supplies (`reason`, `version`, `scope`)
+is reduced to one printable line before it is reported. The plugin state never
+changes the exit code. `LORE_AGENT_PLUGINS=off` skips detection entirely: every
+runtime reads `not-detectable` and no `claude` or `codex` process is started.
+A runtime that has not answered within 15 seconds is `not-detectable`, and lore
+kills its process group rather than waiting on anything it started.
 
 | | |
 |---|---|
 | **Args** | none |
 | **Key flags** | `--force` (overwrite hand-edited generated files, or remove an orphaned SKILL.md that exactly matches the generated content) · `--check` (report drift without writing — CI gate for a stale bridge) |
-| **Output** | `kind: agents.result` — each bridge file and what happened to it (`created`/`updated`/`unchanged`/`protected`/`orphaned`/`removed`), so a failing `--check` names the artifact that drifted; under `--check`, also `plugin`/`plugins`, the `opum-lore` marketplace plugin state (above) |
+| **Output** | `kind: agents.result` — each bridge file and what happened to it (`created`/`updated`/`unchanged`/`protected`/`orphaned`/`removed`), so a failing `--check` names the artifact that drifted; under `--check`, also `plugins.<runtime>`, the `opum-lore` marketplace plugin state (above; never a bare `plugin`) |
 | **Exit** | `0` ok · `6` `--check` found a bridge out of date (including an orphaned leftover under `skill_source = "plugin"`) |
 
 ### `instructions`

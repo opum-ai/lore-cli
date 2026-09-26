@@ -16,6 +16,8 @@
  * exactly as synchronous as it was before this feature existed.
  */
 
+import { stripAnsiAndControls } from "../errors";
+
 /** The agent runtimes whose marketplace plugin lore checks. Each is reached only through its own public CLI. */
 export type AgentRuntime = "claude" | "codex";
 
@@ -77,11 +79,31 @@ export interface AgentPluginCheck {
 /** Per-runtime checks, keyed by runtime — the shape of `lore init`'s `data.plugins`. */
 export type AgentPluginChecks = Partial<Record<AgentRuntime, AgentPluginCheck>>;
 
+/**
+ * ` --scope <scope>`, or nothing. A scope is runtime-supplied text going into a command a user may
+ * paste into a shell, so only a plain token is ever interpolated (every scope Claude reports —
+ * local, project, user, managed, synced — is one).
+ */
+function scopeFlag(scope: string | undefined): string {
+  return scope !== undefined && /^[A-Za-z0-9_-]+$/.test(scope) ? ` --scope ${scope}` : "";
+}
+
 /** The command that updates an installed plugin, naming its deciding scope (ruling 26 iii). */
 export function lorePluginUpdateCommand(runtime: AgentRuntime, scope?: string): string {
   return runtime === "claude"
-    ? `claude plugin update ${LORE_PLUGIN_ID}${scope !== undefined ? ` --scope ${scope}` : ""}`
+    ? `claude plugin update ${LORE_PLUGIN_ID}${scopeFlag(scope)}`
     : `codex plugin marketplace upgrade ${MARKETPLACE_NAME} && codex plugin add ${LORE_PLUGIN_ID}`;
+}
+
+/**
+ * Runtime-supplied text as one printable line: whitespace (line breaks included) collapsed first,
+ * then ANSI escape sequences and control bytes removed. Every field a runtime or a port supplies
+ * passes through this before it can reach `--plain` or pretty output (LCLI-592 review, finding 2):
+ * a newline would forge a standalone plain record (cli-contract §1.3), and an ESC byte would put
+ * ANSI on a stream that must carry none (§6).
+ */
+function printable(text: string): string {
+  return stripAnsiAndControls(text.replace(/\s+/g, " ")).replace(/\s+/g, " ").trim();
 }
 
 /** The next step for a state, or `undefined` for `not-detectable` (whose `reason` is the next step). */
@@ -95,7 +117,7 @@ function remedyFor(runtime: AgentRuntime, state: AgentPluginState, scope?: strin
     // Codex has no plugin enable command (codex-cli 0.155.1; its --enable/--disable toggle
     // features, not plugins): enablement is this config key, which its own list command reads.
     return runtime === "claude"
-      ? `claude plugin enable ${LORE_PLUGIN_ID}${scope !== undefined ? ` --scope ${scope}` : ""}`
+      ? `claude plugin enable ${LORE_PLUGIN_ID}${scopeFlag(scope)}`
       : `set enabled = true under [plugins."${LORE_PLUGIN_ID}"] in $CODEX_HOME/config.toml (default ~/.codex/config.toml)`;
   }
   if (state === "installed") {
@@ -107,18 +129,20 @@ function remedyFor(runtime: AgentRuntime, state: AgentPluginState, scope?: strin
 /** Classify one runtime's listing. The single place a listing becomes a state. */
 export function checkFromListing(runtime: AgentRuntime, listing: AgentPluginListing): AgentPluginCheck {
   if (listing.kind === "unavailable") {
-    return { runtime, id: LORE_PLUGIN_ID, state: "not-detectable", reason: listing.reason };
+    return { runtime, id: LORE_PLUGIN_ID, state: "not-detectable", reason: printable(listing.reason) };
   }
   const row = listing.plugins.find((plugin) => plugin.id === LORE_PLUGIN_ID);
   const state: AgentPluginState =
     row === undefined ? "not-installed" : row.enabled === false ? "disabled" : "installed";
-  const remedy = remedyFor(runtime, state, row?.scope);
+  const version = row?.version !== undefined ? printable(row.version) : undefined;
+  const scope = row?.scope !== undefined ? printable(row.scope) : undefined;
+  const remedy = remedyFor(runtime, state, scope);
   return {
     runtime,
     id: LORE_PLUGIN_ID,
     state,
-    ...(row?.version !== undefined ? { version: row.version } : {}),
-    ...(row?.scope !== undefined ? { scope: row.scope } : {}),
+    ...(version ? { version } : {}),
+    ...(scope ? { scope } : {}),
     ...(remedy !== undefined ? { remedy } : {}),
   };
 }

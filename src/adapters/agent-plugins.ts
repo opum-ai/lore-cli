@@ -16,6 +16,7 @@
 import { realpathSync } from "node:fs";
 import { sep } from "node:path";
 import type { AgentPluginListing, AgentPluginPort, AgentRuntime, ListedAgentPlugin } from "../core/agent-plugins";
+import { stderrHint } from "../errors";
 
 /** Listing is a local read (quest-cli measured 0.14s claude, 0.44s codex); a hung runtime must not hang init or --check. */
 const DEFAULT_LIST_TIMEOUT_MS = 15_000;
@@ -36,16 +37,55 @@ export type PluginCommandRunner = (
   env: Record<string, string | undefined> | undefined,
 ) => Promise<PluginCommandResult>;
 
+/** A listing is a few kilobytes (claude 2.1.283: 9 rows, ~3 KB). Anything past this is not a listing, and is not held in memory. */
+export const MAX_PLUGIN_OUTPUT_BYTES = 1024 * 1024;
+
+/** Why a stream read stopped early. */
+class OutputTooLarge extends Error {}
+
+/** Read a stream to text, throwing {@link OutputTooLarge} once it passes {@link MAX_PLUGIN_OUTPUT_BYTES}. */
+async function readCapped(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<string> {
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_PLUGIN_OUTPUT_BYTES) throw new OutputTooLarge();
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
+}
+
 /**
- * Run one command with a HARD deadline. Bun's own `timeout` sends a single SIGTERM and then still
- * waits for the output pipes, which a grandchild can hold open (the codex Node launcher forwards TERM
- * to its native binary and waits for it), so the deadline here stops waiting, SIGKILLs the child, and
- * returns (quest-cli QCLI-371 review, finding 4).
+ * Run one command with a HARD deadline that bounds when THIS PROCESS exits, not only when the
+ * command's promise settles (LCLI-592 review, finding 1).
+ *
+ * A runtime can start a grandchild that inherits its stdout/stderr pipes and outlives it (the codex
+ * Node launcher forwards TERM to its native binary and waits for it). SIGKILLing the direct child
+ * then leaves the pipes open, and a pending read on them keeps lore's event loop alive until the
+ * grandchild exits — measured on bun 1.3.14 with a fake runtime running `sleep 40 & sleep 40` under
+ * `trap '' TERM`: the report printed at the 15s deadline and the process exited at 40s. `unref()`
+ * does not help: it releases the child handle, not the pipe reads. So on the deadline this does two
+ * things, each measured to matter on its own:
+ *
+ *  - kills the child's whole PROCESS GROUP. The child is spawned `detached`, which makes it a group
+ *    leader, so the grandchild is reaped too instead of lingering. Windows has no process groups in
+ *    this sense, so there only the child itself is killed;
+ *  - cancels both pipe readers, which releases lore's event loop whether or not the kill reached
+ *    every descendant.
  */
 export const bunPluginCommandRunner: PluginCommandRunner = async (argv, timeoutMs, env) => {
+  const posix = process.platform !== "win32";
   let child: ReturnType<typeof Bun.spawn>;
   try {
-    child = Bun.spawn([...argv], { stdin: "ignore", stdout: "pipe", stderr: "pipe", ...(env ? { env } : {}) });
+    child = Bun.spawn([...argv], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      ...(posix ? { detached: true } : {}),
+      ...(env ? { env } : {}),
+    });
   } catch (error) {
     const code = (error as { code?: unknown }).code;
     return {
@@ -58,17 +98,40 @@ export const bunPluginCommandRunner: PluginCommandRunner = async (argv, timeoutM
   if (!(child.stdout instanceof ReadableStream) || !(child.stderr instanceof ReadableStream)) {
     return { failure: `${argv[0]} output streams are unavailable.` };
   }
-  const completed = Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  const stdoutReader = child.stdout.getReader();
+  const stderrReader = child.stderr.getReader();
+  const stop = (): void => {
+    try {
+      if (posix) process.kill(-child.pid, "SIGKILL");
+      else child.kill("SIGKILL");
+    } catch {
+      // Already gone: nothing left to kill.
+    }
+    void stdoutReader.cancel().catch(() => undefined);
+    void stderrReader.cancel().catch(() => undefined);
+    child.unref();
+  };
+  const completed = Promise.all([child.exited, readCapped(stdoutReader), readCapped(stderrReader)]);
+  // Once the deadline wins, cancelling the readers makes this reject with nobody awaiting it.
+  completed.catch(() => undefined);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<"timeout">((resolve) => {
     timer = setTimeout(() => resolve("timeout"), timeoutMs);
   });
-  const outcome = await Promise.race([completed, deadline]);
+  let outcome: Awaited<typeof completed> | "timeout";
+  try {
+    outcome = await Promise.race([completed, deadline]);
+  } catch (error) {
+    clearTimeout(timer);
+    stop();
+    if (error instanceof OutputTooLarge) {
+      return { failure: `${argv.join(" ")} printed more than ${MAX_PLUGIN_OUTPUT_BYTES} bytes.` };
+    }
+    throw error;
+  }
   clearTimeout(timer);
   if (outcome === "timeout") {
-    child.kill("SIGKILL");
-    // Do not keep this process alive for pipes a grandchild still holds.
-    child.unref();
+    stop();
     return { failure: `${argv.join(" ")} did not finish within ${timeoutMs / 1000}s.` };
   }
   const [exitCode, stdout, stderr] = outcome;
@@ -114,7 +177,13 @@ const CLAUDE_SCOPE_PRECEDENCE = ["local", "project", "user", "managed", "synced"
  * projectPath?}` (measured on claude 2.1.283). A local or project row carries the `projectPath` it
  * belongs to and applies only there, so a row for another project is dropped (ruling 26 i) and the
  * most specific applicable row decides (ruling 26 ii). `root` is this project; a row applies when it
- * names `root` itself or an ancestor of it, compared after resolving symlinks.
+ * names `root` itself or an ancestor of it, compared after resolving symlinks and on a whole path
+ * segment (`/x/foo` is not an ancestor of `/x/foobar`).
+ *
+ * "Most specific" is the scope first, then — between two applicable rows of the SAME scope — the
+ * deeper `projectPath` (LCLI-592 review, finding 4): an enabled local row for `/p/outer` and a
+ * disabled one for `/p/outer/inner` both apply at `/p/outer/inner`, and the inner one decides there
+ * whichever order the runtime lists them in. A row with no `projectPath` is the least specific.
  *
  * Returns `undefined` for a shape it cannot read: not an array, or rows present but none decodable.
  * That is `not-detectable`, never `not-installed` — the list shape moving is not an empty install.
@@ -122,21 +191,25 @@ const CLAUDE_SCOPE_PRECEDENCE = ["local", "project", "user", "managed", "synced"
 export function decodeClaudePluginList(parsed: unknown, root: string): readonly ListedAgentPlugin[] | undefined {
   if (!Array.isArray(parsed)) return undefined;
   const here = canonical(root);
-  const byId = new Map<string, { rank: number; listed: ListedAgentPlugin }>();
+  const byId = new Map<string, { rank: number; depth: number; listed: ListedAgentPlugin }>();
   let decodable = 0;
   for (const row of parsed) {
     if (!isRecord(row) || typeof row.id !== "string") continue;
     decodable += 1;
     const scope = typeof row.scope === "string" ? row.scope : "user";
+    let depth = 0;
     if (typeof row.projectPath === "string") {
       const project = canonical(row.projectPath);
       if (here !== project && !here.startsWith(`${project}${sep}`)) continue;
+      depth = project.length;
     }
     const rank = CLAUDE_SCOPE_PRECEDENCE.indexOf(scope);
     const effectiveRank = rank < 0 ? CLAUDE_SCOPE_PRECEDENCE.length : rank;
     const listed = toListed(row.id, row, scope);
     const current = byId.get(row.id);
-    if (listed && (!current || effectiveRank < current.rank)) byId.set(row.id, { rank: effectiveRank, listed });
+    const moreSpecific =
+      !current || effectiveRank < current.rank || (effectiveRank === current.rank && depth > current.depth);
+    if (listed && moreSpecific) byId.set(row.id, { rank: effectiveRank, depth, listed });
   }
   if (parsed.length > 0 && decodable === 0) return undefined;
   return [...byId.values()].map((entry) => entry.listed);
@@ -156,6 +229,12 @@ export function decodeCodexPluginList(parsed: unknown): readonly ListedAgentPlug
   });
   if (parsed.installed.length > 0 && listed.length === 0) return undefined;
   return listed;
+}
+
+/** `: <stderr>` as one sanitized line, or nothing when the runtime printed nothing readable. */
+function stderrSuffix(stderr: string): string {
+  const hint = stderrHint(stderr);
+  return hint === undefined ? "" : `: ${hint}`;
 }
 
 /** Reaches each runtime only through its public CLI, never its internal files. */
@@ -180,7 +259,11 @@ export class CliAgentPluginPort implements AgentPluginPort {
     if (result.exitCode !== 0) {
       return {
         kind: "unavailable",
-        reason: `${runtime} plugin list exited ${result.exitCode}: ${result.stderr.trim().slice(0, 200)}`,
+        // Runtime stderr is foreign bytes headed for --plain stdout: `stderrHint` collapses line
+        // breaks (a newline could forge a standalone plain record, cli-contract §1.3), strips ANSI and
+        // control bytes (which must never reach --plain, even under NO_COLOR, §6), and caps length
+        // (LCLI-592 review, finding 2).
+        reason: `${runtime} plugin list exited ${result.exitCode}${stderrSuffix(result.stderr)}`,
       };
     }
     let parsed: unknown;
@@ -211,12 +294,25 @@ export function agentPluginsOff(env: Record<string, string | undefined> = proces
   return env[AGENT_PLUGINS_ENV] === "off";
 }
 
+/**
+ * Override for the list deadline, in milliseconds — the same shape as `LORE_QUEST_TIMEOUT_MS`
+ * (adapters/quest.ts). It exists so a test can prove the deadline bounds the process's own exit
+ * without waiting out the 15s default; an unset, non-numeric or non-positive value keeps the default.
+ */
+export const AGENT_PLUGINS_TIMEOUT_ENV = "LORE_AGENT_PLUGINS_TIMEOUT_MS";
+
+function listTimeout(env: Record<string, string | undefined>): number {
+  const value = Number(env[AGENT_PLUGINS_TIMEOUT_ENV]);
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_LIST_TIMEOUT_MS;
+}
+
 /** The port `lore init` and `lore agents --check` use unless a caller injects one. */
 export function createAgentPluginPort(
   root: string,
   options: { readonly env?: Record<string, string | undefined>; readonly runner?: PluginCommandRunner } = {},
 ): AgentPluginPort {
-  return agentPluginsOff(options.env ?? process.env)
+  const env = options.env ?? process.env;
+  return agentPluginsOff(env)
     ? new DisabledAgentPluginPort()
-    : new CliAgentPluginPort(root, { runner: options.runner, env: options.env });
+    : new CliAgentPluginPort(root, { runner: options.runner, env: options.env, listTimeoutMs: listTimeout(env) });
 }
