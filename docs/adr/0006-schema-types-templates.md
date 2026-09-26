@@ -16,6 +16,23 @@ Accepted — 2026-06-21
 Amended — 2026-06-25 (LCLI-46): the source of truth is **inverted**. See the amendment below;
 the original decision text is retained as the historical record.
 
+Amended — 2026-09-26 (LCLI-603): the **editor modeline sits inside the frontmatter fence**, not
+above it. As accepted, §3 and the "Modeline as the first line" consequence said `lore new` writes
+the `# yaml-language-server:` comment as the first line of the *file*, above the opening `---`,
+and the §3 example showed it there. Shipped lore never wrote it there, and the correction brings
+the record into line with the code; the decision is unchanged. `serializeConceptWithModeline`
+(`src/core/concept.ts`), the one writer that `lore new` and `lore init` both use, puts it on the
+first line *inside* the opening fence. It has to: `parseConcept` requires `---` at byte 0, so a
+comment above the fence gives the file no usable frontmatter. `parseConcept` rejects it as a
+validation error, and the bundle walk skips it as a non-concept. Every modeline-bearing doc in
+this bundle carries it inside (26 of 82 docs under `docs/`, none above, measured 2026-09-26).
+Since LCLI-601 (opum-ai/lore-cli#290), parsing captures the comment block that opens the fence
+(`Concept.leadingComments`) and serializing re-emits it, so the modeline survives every command
+that rewrites the file. §3 and that consequence are corrected in place and marked *Amended
+(LCLI-603)*. The example's schema filename is also corrected from `story.json` to the shipped
+`<slug>.schema.json`. The decision itself stands as accepted: export Draft-7 JSON Schema and
+point the editor at it with a `yaml-language-server` modeline.
+
 ## Amendment (LCLI-46): the declarative profile is the source of truth
 
 The type/profile layer is now **data, not code**. A committed, declarative
@@ -152,15 +169,22 @@ bundle are written as `2026-06-21T00:00:00Z`.)
 
 For each type we export a **Draft-7 JSON Schema** via Zod's
 `z.toJSONSchema()` (`target: "draft-7"`), written under `.lore/schemas/`.
-`lore new` then injects a modeline as the **first line of the file**:
+`lore new` then injects a modeline as the **first line inside the frontmatter fence**
+(*Amended (LCLI-603)*; the original text placed it above the fence):
 
 ```markdown
-# yaml-language-server: $schema=../../.lore/schemas/story.json
 ---
+# yaml-language-server: $schema=../../.lore/schemas/story.schema.json
 type: Story
 title: …
 ---
 ```
+
+The modeline goes inside the fence because `parseConcept` requires `---` at byte 0. A comment
+above the fence would give the file no usable frontmatter, and lore would stop treating it as a
+concept. Inside the fence it is the opening comment block that `parseConcept` captures and every
+rewrite re-emits (LCLI-601), so it is not lost to the YAML emitter's comment dropping
+([ADR-0011](0011-frontmatter-serialization-stability.md)).
 
 With this comment present, `yaml-language-server` validates the frontmatter
 live and offers key/enum autocomplete — for humans in their editor and for any
@@ -232,10 +256,14 @@ concepts validate on first save.
   Draft-7 representation, so the editor schema is necessarily a *subset* of the
   runtime check. The CLI remains the authoritative validator; the editor is a
   best-effort guide. We accept this asymmetry deliberately.
-- **Modeline as the first line.** The `# yaml-language-server:` comment sits
-  above the `---` frontmatter fence. It is an ordinary comment to every
-  Markdown/OKF consumer and is harmless, but it is one more managed line
-  `lore new` must write and that authors should not delete.
+- **Modeline as the first line.** *Amended (LCLI-603).* The `# yaml-language-server:`
+  comment is the first line inside the `---` frontmatter fence, not above it as
+  first written. It is an ordinary YAML comment to every Markdown/OKF consumer and
+  is harmless, but it is one more managed line `lore new` must write and that
+  authors should not delete. It survives lore's own rewrites only while it stays
+  in the comment block that opens the fence. Moved below the first key, it is an
+  ordinary in-frontmatter comment, and the next rewrite drops it
+  ([ADR-0011](0011-frontmatter-serialization-stability.md)).
 - **Schema artifacts are generated.** `.lore/schemas/*.json` are emitted from
   Zod and committed for portable editor support; a regenerate step (run in
   `lore init` / on type changes) is required to keep them current. They are

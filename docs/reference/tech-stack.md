@@ -412,10 +412,15 @@ falls out of the Zod-as-source-of-truth decision (§7) for free.
 1. Each Zod per-type schema is exported to a Draft-7 JSON Schema via
    `z.toJSONSchema()` and written under `.lore/schemas/<type>.schema.json`.
 2. `lore new` (and the templates under `.lore/templates/<type>.md`) inject a
-   modeline as the file's first line:
+   modeline as the first line *inside* the frontmatter fence, because lore reads
+   a file as a concept only when `---` is at byte 0 (ADR-0006, amended LCLI-603).
+   Commands that rewrite a document keep it (LCLI-601):
 
    ```
+   ---
    # yaml-language-server: $schema=../../.lore/schemas/story.schema.json
+   type: Story
+   ---
    ```
 
 3. The [YAML Language Server](https://github.com/redhat-developer/yaml-language-server)
