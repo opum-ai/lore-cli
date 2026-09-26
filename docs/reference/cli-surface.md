@@ -1210,15 +1210,16 @@ too, with the prose remedy above (ruling 26(iii)). **A `managed` deciding row is
 never updated** (ruling 28): `--target claude --force` runs only the list,
 reports `scope: managed` and `update: not-run` with `updateDetail` `the deciding
 row is managed by your Claude Code administrator, so it is never updated`, and
-keeps the managed remedy; a managed `disabled` row takes the ordinary disabled
-`not-run` path, with the managed remedy. `--check` never updates, with
+keeps the managed remedy, whether the row is `installed` or `disabled`: no
+detail on a managed row mentions enabling it or an update the user can run
+(LCLI-608). `--check` never updates, with
 or without `--force`. **A bare `lore agents --force` names
 no runtime, so it updates none** (ruling 25): each `plugins.<runtime>` entry is
 `not-run`, and its `remedy` is the update command to run by hand or through
 `lore agents --target <runtime> --force` — except where the deciding Claude row
-is `managed`, whose `remedy` is the managed prose above and, when it is
-installed, whose `updateDetail` is the managed detail, because no call ever
-updates it. The plugin report and any update never
+is `managed`, whose `remedy` is the managed prose above and whose
+`updateDetail` is the managed detail, installed or disabled, because no call
+ever updates it. The plugin report and any update never
 change the exit code.
 
 | | |

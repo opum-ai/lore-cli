@@ -312,8 +312,10 @@ export function detectLorePlugins(
 /** Why an update did not run: `updateDetail` on a `not-run` report. */
 function notRunDetail(check: AgentPluginCheck, runtimeNamed: boolean): string {
   // Ruling 28: checked before the bare-call detail, which would otherwise promise that
-  // `--target claude --force` updates a row that no call ever updates.
-  if (check.state === "installed" && claudeScopeManaged(check.runtime, check.scope)) {
+  // `--target claude --force` updates a row that no call ever updates. Installed AND disabled
+  // (LCLI-608, opum-agent 2026-09-26): the ordinary disabled detail tells the user to enable the
+  // plugin and then update, and only an administrator can do either to a managed row.
+  if ((check.state === "installed" || check.state === "disabled") && claudeScopeManaged(check.runtime, check.scope)) {
     return MANAGED_SCOPE_UPDATE_DETAIL;
   }
   if (!runtimeNamed) {

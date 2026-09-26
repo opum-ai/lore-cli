@@ -1083,7 +1083,7 @@ describe("ruling 28: a managed deciding row is never updated, through lore agent
     expect(data).not.toHaveProperty("plugins");
   });
 
-  test("--target claude --force on managed DISABLED: only the list runs, the disabled not-run path, still the managed remedy", async () => {
+  test("--target claude --force on managed DISABLED: only the list runs, and the managed detail and remedy, never 'enable' (LCLI-608)", async () => {
     const port = loggingPort(managedOverLocal(false));
     const { code, data } = await agents(["--target", "claude", "--force"], port);
     expect(code).toBe(EXIT_OK);
@@ -1094,7 +1094,10 @@ describe("ruling 28: a managed deciding row is never updated, through lore agent
       scope: "managed",
       remedy: MANAGED_REMEDY_LITERAL,
       update: "not-run",
+      updateDetail: MANAGED_DETAIL_LITERAL,
     });
+    // opum-agent 2026-09-26: no detail on a managed row mentions enabling or an update the user can run.
+    expect(JSON.stringify(data.plugin)).not.toMatch(/"updateDetail":"[^"]*(enable|--force|--target|claude plugin)/);
     expect(data.plugin).not.toHaveProperty("updateOk");
     expect(data.plugin?.remedy).not.toMatch(/claude plugin|--scope/);
     expect(JSON.stringify(data)).not.toContain("--scope managed");
@@ -1146,17 +1149,23 @@ describe("ruling 28: a managed deciding row is never updated, through lore agent
     }
   });
 
-  test("a bare lore agents --force: managed installed is not-run with the managed detail, not a --target promise", async () => {
-    const port = loggingPort(managedOverLocal(true));
-    const { code, data } = await agents(["--force"], port);
-    expect(code).toBe(EXIT_OK);
-    expect(port.argv).toEqual(["claude plugin list --json"]);
-    expect(data.plugins?.claude).toMatchObject({
-      scope: "managed",
-      update: "not-run",
-      updateDetail: MANAGED_DETAIL_LITERAL,
-      remedy: MANAGED_REMEDY_LITERAL,
-    });
+  test("a bare lore agents --force: managed installed AND disabled are not-run with the managed detail, not a --target promise (LCLI-608)", async () => {
+    for (const managedEnabled of [true, false]) {
+      const port = loggingPort(managedOverLocal(managedEnabled));
+      const { code, data } = await agents(["--force"], port);
+      expect(code).toBe(EXIT_OK);
+      expect(port.argv).toEqual(["claude plugin list --json"]);
+      expect(data.plugins?.claude).toMatchObject({
+        state: managedEnabled ? "installed" : "disabled",
+        scope: "managed",
+        update: "not-run",
+        updateDetail: MANAGED_DETAIL_LITERAL,
+        remedy: MANAGED_REMEDY_LITERAL,
+      });
+      expect(JSON.stringify(data.plugins?.claude)).not.toMatch(
+        /"updateDetail":"[^"]*(enable|--force|--target|claude plugin)/,
+      );
+    }
   });
 });
 
@@ -1652,7 +1661,7 @@ describe.skipIf(onWindows)("subprocess: the real lore against fake claude/codex 
         scope: "managed",
         update: "not-run",
         remedy: MANAGED_REMEDY_LITERAL,
-        ...(managedEnabled ? { updateDetail: MANAGED_DETAIL_LITERAL } : {}),
+        updateDetail: MANAGED_DETAIL_LITERAL,
       });
       expect(JSON.stringify(run.data)).not.toContain("--scope managed");
     }
