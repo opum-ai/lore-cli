@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as yaml from "js-yaml";
 
-const WORKFLOW_PATH = join(import.meta.dir, "..", ".github", "workflows", "ci.yml");
+const WORKFLOWS_DIR = join(import.meta.dir, "..", ".github", "workflows");
+const WORKFLOW_PATH = join(WORKFLOWS_DIR, "ci.yml");
+const GUARD_WORKFLOW_PATH = join(WORKFLOWS_DIR, "main-fast-forward-guard.yml");
 
 interface WorkflowJob {
   env?: Record<string, string>;
@@ -43,8 +45,8 @@ interface WorkflowDoc {
   jobs: Record<string, WorkflowJob>;
 }
 
-function loadWorkflow(): WorkflowDoc {
-  return yaml.load(readFileSync(WORKFLOW_PATH, "utf8"), { schema: yaml.JSON_SCHEMA }) as WorkflowDoc;
+function loadWorkflow(path: string = WORKFLOW_PATH): WorkflowDoc {
+  return yaml.load(readFileSync(path, "utf8"), { schema: yaml.JSON_SCHEMA }) as WorkflowDoc;
 }
 
 describe("ci.yml exact-host LadybugDB qualification", () => {
@@ -73,7 +75,6 @@ describe("ci.yml exact-host LadybugDB qualification", () => {
       "docs-gate",
       "package-set",
       "promotion-is-manual",
-      "main-is-fast-forward-of-dev",
       "config-test-newest-bun",
       "ladybug-benchmark-smoke",
       "build",
@@ -83,10 +84,11 @@ describe("ci.yml exact-host LadybugDB qualification", () => {
       "docker-e2e",
     ]);
 
-    // promotion-is-manual/main-is-fast-forward-of-dev (LCLI-458) are pull_request/push-scoped
-    // promotion guardrails, not Ladybug-related — they never run under workflow_dispatch at all
-    // (any variant, narrow or not), by virtue of their OWN if: condition, not this shared guard.
-    const skippedUnderNarrowMode = new Set(["check", "promotion-is-manual", "main-is-fast-forward-of-dev"]);
+    // promotion-is-manual (LCLI-458) is a pull_request-scoped promotion guardrail, not
+    // Ladybug-related — it never runs under workflow_dispatch at all (any variant, narrow or not),
+    // by virtue of its OWN if: condition, not this shared guard. Its push-side sibling, main is
+    // fast-forward of dev, now lives in its own workflow (LCLI-605).
+    const skippedUnderNarrowMode = new Set(["check", "promotion-is-manual"]);
     const exactHostSkipGuard = "github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true";
     for (const [name, job] of Object.entries(jobs)) {
       if (skippedUnderNarrowMode.has(name)) continue;
@@ -97,7 +99,8 @@ describe("ci.yml exact-host LadybugDB qualification", () => {
   test("the two promotion guardrails (LCLI-458) never run under any workflow_dispatch, narrow mode or not", () => {
     const jobs = loadWorkflow().jobs;
     expect(jobs["promotion-is-manual"]?.if).toBe("github.event_name == 'pull_request' && github.base_ref == 'main'");
-    expect(jobs["main-is-fast-forward-of-dev"]?.if).toBe("github.event_name == 'push'");
+    // The push-side guardrail's workflow has no workflow_dispatch trigger at all (LCLI-605).
+    expect(Object.keys(loadWorkflow(GUARD_WORKFLOW_PATH).on)).toEqual(["push"]);
   });
 
   test("the explorer qualification installs and runs all pinned Playwright engines from a repo-local cache", () => {
@@ -354,7 +357,7 @@ describe("ci.yml push paths-ignore keeps CLAUDE.md and README.md in scope (LCLI-
   test("the push filter's pattern list is exactly the reviewed one", () => {
     // Pinned whole, so a widened list is a visible diff here. Root Markdown is listed by name: a
     // NEW root .md is deliberately not ignored until someone adds it, which errs toward running CI
-    // rather than toward skipping it. `docs/**` is unchanged; its future is OPAG-444's call.
+    // rather than toward skipping it. `docs/**` stays: OPAG-444 ruled it cost control (LCLI-605).
     expect(pushPathsIgnore()).toEqual([
       "*/**/*.md",
       "CHANGELOG.md",
@@ -378,5 +381,64 @@ describe("ci.yml push paths-ignore keeps CLAUDE.md and README.md in scope (LCLI-
     const trigger = loadWorkflow().on.pull_request;
     const keys = trigger !== null && typeof trigger === "object" ? Object.keys(trigger) : [];
     expect(keys.filter((key) => key.startsWith("paths") || key.startsWith("branches"))).toEqual([]);
+  });
+});
+
+describe("the main fast-forward guard has its own unfiltered workflow (LCLI-605)", () => {
+  // opum-doc's ADR "Keep push path filters off main-guard, release, publish and federation jobs":
+  // a path filter applies to a WHOLE workflow, so a job that runs only on the push to main must
+  // live where no filter can reach it. In ci.yml, a Markdown-only push to main skipped it.
+
+  /** Every trigger's path-filter keys, across every event the workflow declares. */
+  function pathFilterKeys(doc: WorkflowDoc): string[] {
+    return Object.entries(doc.on).flatMap(([event, trigger]) =>
+      trigger !== null && typeof trigger === "object"
+        ? Object.keys(trigger)
+            .filter((key) => key === "paths" || key === "paths-ignore")
+            .map((key) => `${event}.${key}`)
+        : [],
+    );
+  }
+
+  test("the guard workflow carries no path filter and fires on push to main, and nothing else", () => {
+    const guard = loadWorkflow(GUARD_WORKFLOW_PATH);
+    expect(pathFilterKeys(guard)).toEqual([]);
+    expect(Object.keys(guard.on)).toEqual(["push"]);
+    expect(Object.keys(guard.on.push ?? {})).toEqual(["branches"]);
+    expect(guard.on.push?.branches).toEqual(["main"]);
+  });
+
+  test("the job keeps its key and its exact rendered name, with no condition that could skip it", () => {
+    const job = loadWorkflow(GUARD_WORKFLOW_PATH).jobs["main-is-fast-forward-of-dev"] as WorkflowJob & {
+      name?: string;
+    };
+    expect(job?.name).toBe("main is fast-forward of dev");
+    expect(job?.if).toBeUndefined();
+    expect(job?.needs).toBeUndefined();
+    // A guard that cannot fail the run, or that a later push can cancel, guards nothing.
+    expect((job as { "continue-on-error"?: unknown })["continue-on-error"]).toBeUndefined();
+    const concurrency = (loadWorkflow(GUARD_WORKFLOW_PATH) as { concurrency?: Record<string, unknown> }).concurrency;
+    expect(concurrency?.["cancel-in-progress"]).toBe(false);
+    expect(String(concurrency?.group)).toContain("github.run_id");
+  });
+
+  test("ci.yml no longer carries the guard, while its own push filter still ignores docs and skills Markdown", () => {
+    const ci = loadWorkflow();
+    expect(Object.keys(ci.jobs)).not.toContain("main-is-fast-forward-of-dev");
+    // skills/ holds Markdown only, which `*/**/*.md` already covers; docs/** is listed outright.
+    expect(ci.on.push?.["paths-ignore"]).toContain("docs/**");
+    expect(ci.on.push?.["paths-ignore"]).toContain("*/**/*.md");
+  });
+
+  test("ci.yml is the only path-filtered workflow, so a new filtered one is a visible diff (audit)", () => {
+    // Audited 2026-09-26: release.yml is workflow_dispatch only and upstream-backlog-watch.yml is
+    // schedule + workflow_dispatch, neither filtered. A new workflow with a path filter has to be
+    // added here, which is the moment to ask whether it holds a push-only, release, publish or
+    // federation job.
+    const filtered = readdirSync(WORKFLOWS_DIR)
+      .filter((file) => file.endsWith(".yml") || file.endsWith(".yaml"))
+      .sort()
+      .filter((file) => pathFilterKeys(loadWorkflow(join(WORKFLOWS_DIR, file))).length > 0);
+    expect(filtered).toEqual(["ci.yml"]);
   });
 });

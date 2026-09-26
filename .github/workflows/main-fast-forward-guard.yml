@@ -1,0 +1,72 @@
+name: Main fast-forward guard
+
+# WHY THIS IS ITS OWN WORKFLOW (LCLI-605; opum-doc ADR "Keep push path filters off main-guard,
+# release, publish and federation jobs", ODOC-287 / OPAG-444). This job used to live in ci.yml,
+# whose `push` trigger carries a `paths-ignore` list. GitHub evaluates a path filter for the WHOLE
+# workflow, never per job, so a Markdown-only push to main -- a non-fast-forward rewind included --
+# skipped this job along with the rest of ci.yml. Every other job in ci.yml already ran on the
+# identical tree through `pull_request` before it reached dev, so skipping them on main is cost
+# control. This job has no `pull_request` counterpart: the push to main is the only run it ever
+# gets, and main carries no ruleset, so skipping it skips the only guard main has.
+#
+# NO `paths` OR `paths-ignore` BELONGS HERE, EVER. test/ci-workflow.test.ts pins that this file
+# carries no path filter and fires on push to main; adding one turns that test red.
+#
+# The job keeps its key and its RENDERED name, `main is fast-forward of dev`, so CLAUDE.md's
+# promotion prose and anything else that finds it by name stays true. It moved workflows, so on a
+# landing SHA it now reports under this workflow's own run, not ci.yml's.
+
+on:
+  push:
+    branches: [main]
+
+# Every push gets its own group, so a run is never cancelled or superseded by another push.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  main-is-fast-forward-of-dev:
+    # Runs on every push to main and fails immediately if the push was not a fast-forward of a dev
+    # that already held it — catching a wrong promotion right away rather than discovering it via a
+    # blocked future promotion. This is the guard that matters most for this repo specifically:
+    # main carries zero branch rules here (dev carries the one ruleset, require-ci-on-dev — see
+    # CLAUDE.md's repo profile), so nothing else stands between a bad push and main.
+    #
+    # TWO ASSERTIONS, AND IT USED TO HAVE ONLY ONE (LCLI-514). It asserted CONTAINMENT — main's new
+    # HEAD is a commit dev already held — while being NAMED for FAST-FORWARDNESS. Those are
+    # different properties, and a REWIND of main to an older commit still on dev satisfies the
+    # first while violating the second: measured 2026-09-15, dev = c1..c4, main rewound c4 -> c2,
+    # guard GREEN while two commits came off main. Both halves of prove-it-rejects-and-accepts were
+    # already satisfied — genuine promotion green, merge button red — so neither half could find
+    # it. The question that does is whether the NAME claims more than the ASSERTION measures.
+    #
+    # The ruleset does not cover the gap: a rewind pushes a commit that already carries green
+    # required contexts, because the earlier promotion is what put them there, so a
+    # required-status-checks rule cannot refuse one. `non_fast_forward` is the rule that would, and
+    # this repository has none.
+    #
+    # Deliberately NOT wired into any required status check: this job fires FROM the push it would
+    # need to gate, so requiring it could only ever block after the fact, never prevent the push
+    # itself. It has no pull_request trigger, so a green PR rollup says nothing about it, which is
+    # why test/assert-main-fast-forward.test.ts asserts the wiring below as well as the logic.
+    name: main is fast-forward of dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - name: Assert main only moved forward, onto a commit dev already held
+        env:
+          # The OLD tip is the input the previous version never read, and without it assertion 1
+          # cannot exist at all.
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          DEV_REF: origin/dev
+        run: |
+          git fetch origin dev
+          bash scripts/assert-main-fast-forward.sh
