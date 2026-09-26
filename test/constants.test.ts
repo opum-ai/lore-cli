@@ -379,6 +379,17 @@ describe("Constants — R7 value comparison against source_of_truth: lore check 
     );
   });
 
+  test("a DEPRECATED entry is still compared (opum-agent ruling 2026-09-26: only retired is skipped)", () => {
+    expectCheckError(
+      mutate(
+        "- value: 8000\n- meaning: The port the HTTP server used before 2.0.\n- source_of_truth: this-doc",
+        "- value: 8000\n- meaning: The port the HTTP server used before 2.0.\n- source_of_truth: config/app.json#server.port",
+      ),
+      /"service\.legacy-port" has value "8000", but its source_of_truth config\/app\.json#server\.port holds "8080"/,
+      "source-of-truth",
+    );
+  });
+
   test("an unreadable source: the file does not exist", () => {
     expectCheckError(
       mutate("config/app.json#server.port", "config/missing.json#server.port"),
@@ -481,6 +492,30 @@ describe("Constants — R6 citation by anchor (AC#1)", () => {
       }),
     ]);
     expect(check(["--strict"]).code).toBe(EXIT_CODES.validation);
+  });
+
+  test("a link to a RETIRED entry also warns, saying retired (opum-agent ruling 2026-09-26)", () => {
+    writeSources();
+    writeDoc(DOC, VALID);
+    writeDoc("reference/ports.md", CITING.replace("#servicehttp-port", "#buildold-flag"));
+    const loose = check();
+    expect(loose.code).toBe(EXIT_OK);
+    expect(loose.findings).toEqual([
+      expect.objectContaining({
+        severity: "warning",
+        rule: "deprecated-reference",
+        file: "reference/ports.md",
+        message: expect.stringMatching(/cites Constants entry "build\.old-flag", which is retired$/),
+      }),
+    ]);
+    expect(check(["--strict"]).code).toBe(EXIT_CODES.validation);
+  });
+
+  test("control: a link to an ACTIVE entry draws no citation warning", () => {
+    writeSources();
+    writeDoc(DOC, VALID);
+    writeDoc("reference/ports.md", CITING);
+    expect(check(["--strict"]).findings).toEqual([]);
   });
 
   test("a link to an entry anchor that does not exist is a broken-anchor error", () => {

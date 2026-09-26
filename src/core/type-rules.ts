@@ -73,7 +73,10 @@ export interface TypeRule {
 
 /** The rule an entry whose `source_of_truth` disagrees with it, or cannot be read, carries. */
 export const SOURCE_OF_TRUTH_RULE = "source-of-truth";
-/** The rule a link citing a deprecated entry carries (a warning). */
+/**
+ * The rule a link citing a deprecated OR retired entry carries (a warning; its message names which).
+ * One rule for both, so a consumer already filtering on it sees retired citations too.
+ */
 export const DEPRECATED_REFERENCE_RULE = "deprecated-reference";
 /** The positive control: a document of an entry-reading type from which no entry was read. */
 export const ZERO_ENTRIES_RULE = "zero-entries-read";
@@ -936,10 +939,12 @@ function oneLine(message: string): string {
  *   `value`. A file that cannot be read or parsed, a missing key and a non-scalar value all FAIL.
  *   A `this-doc` entry is not compared. Any other extension is NOT COMPARABLE: counted, never
  *   failed, because lore has no reader for it. A retired entry is not compared either: it records
- *   a value that is no longer in force, whose source may rightly be gone.
- * - R6: every link into this document is counted, and one citing a DEPRECATED entry's anchor draws
- *   a warning on the citing file. A link to an anchor that does not exist is already `lore check`'s
- *   `broken-anchor` error, which this rule does not duplicate.
+ *   a value that is no longer in force, whose source may rightly be gone (active and deprecated
+ *   entries are; confirmed by opum-agent ruling 2026-09-26).
+ * - R6: every link into this document is counted, and one citing a DEPRECATED or RETIRED entry's
+ *   anchor draws a `deprecated-reference` warning on the citing file, its message naming which
+ *   (retired extended by opum-agent ruling 2026-09-26). A link to an anchor that does not exist is
+ *   already `lore check`'s `broken-anchor` error, which this rule does not duplicate.
  * - Positive control: a Constants document from which zero entries were read FAILS, so an empty or
  *   unreadable-to-lore document can never pass as "every entry compared clean".
  *
@@ -1027,23 +1032,25 @@ function constantsBundle(context: TypeBundleContext): TypeBundleResult {
     }
   }
 
-  const deprecated = new Map<string, ConstantsEntry>();
+  // Entries a citation should move off: deprecated (R6) and retired (opum-agent ruling 2026-09-26).
+  const superseded = new Map<string, { readonly entry: ConstantsEntry; readonly status: string }>();
   for (const entry of entries) {
-    if (entry.fields.get("status") === "deprecated" && entry.anchor !== "") {
-      deprecated.set(entry.anchor, entry);
+    const status = entry.fields.get("status");
+    if ((status === "deprecated" || status === "retired") && entry.anchor !== "") {
+      superseded.set(entry.anchor, { entry, status });
     }
   }
   for (const link of context.inboundLinks) {
-    const entry = deprecated.get(link.fragment);
-    if (entry === undefined) {
+    const cited = superseded.get(link.fragment);
+    if (cited === undefined) {
       continue;
     }
-    const replacement = entry.fields.get("replaced_by");
+    const replacement = cited.entry.fields.get("replaced_by");
     findings.push({
       severity: "warning",
       rule: DEPRECATED_REFERENCE_RULE,
       file: link.file,
-      message: `link to #${link.fragment} in ${context.file} cites Constants entry ${JSON.stringify(entry.id)}, which is deprecated${replacement ? ` -- cite ${JSON.stringify(replacement)} instead` : ""}`,
+      message: `link to #${link.fragment} in ${context.file} cites Constants entry ${JSON.stringify(cited.entry.id)}, which is ${cited.status}${replacement ? ` -- cite ${JSON.stringify(replacement)} instead` : ""}`,
     });
   }
 

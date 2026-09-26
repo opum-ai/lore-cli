@@ -258,10 +258,15 @@ JSON, TOML or YAML source holds a different value at its key, or whose source
 cannot be read or parsed, or lacks the key. A number there is rendered by
 JavaScript's `String()` and a boolean as `true` or `false`, then compared as
 exact text; `this-doc`, a retired entry and any other file extension are not
-compared. `zero-entries-read` (error) is a Constants document from which no
+compared. Active and deprecated entries are compared; retired entries are
+skipped because their source key may rightly be gone. A TOML file containing a date-time is rejected as unparseable, because
+the TOML parser lore uses does not read date-times. An integer above 2^53 in
+a JSON or TOML source loses precision when parsed, so it compares as a
+mismatch. `zero-entries-read` (error) is a Constants document from which no
 entry was read, the gate's positive control. `deprecated-reference` (warning)
-is a link, on the citing file, to a deprecated entry's anchor; a link to an
-anchor that does not exist is already `broken-anchor`. `lore check` reports
+is a link, on the citing file, to a deprecated or a retired entry's anchor, and
+its message says which; a link to an anchor that does not exist is already
+`broken-anchor`. `lore check` reports
 what it read as `readCounts` (entries, comparable and not-comparable sources,
 references) beside its findings.
 

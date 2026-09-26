@@ -101,7 +101,7 @@ export type CheckSeverity = Severity;
  * registered type's BUNDLE rules (`TypeRule.bundle`), today only the built-in Constants type:
  * an entry whose JSON/TOML/YAML `source_of_truth` disagrees with its `value` or cannot be read
  * (error), a Constants document from which no entry was read -- the positive control (error), and a
- * link citing a deprecated entry (warning, on the citing file).
+ * link citing a deprecated or retired entry (warning, on the citing file; the message says which).
  */
 export type CheckRule =
   | "type-shape"

@@ -280,6 +280,7 @@ describe("lore init — fresh bundle (AC#1)", () => {
       ".lore/schemas/runbook.schema.json",
       ".lore/schemas/reference.schema.json",
       ".lore/schemas/constitution.schema.json",
+      ".lore/schemas/constants.schema.json",
       ".lore/schemas/attested-computation.schema.json",
       ".lore/templates/.gitkeep",
       "docs/index.md",
@@ -356,8 +357,8 @@ describe("lore init — idempotent re-run (AC#2)", () => {
     const { code, result } = await init({ clock: () => new Date("2030-12-31T23:59:59Z") });
     expect(code).toBe(0);
     expect(result.created).toEqual([]);
-    // 14, not 13: Arc's deprecated `Story` alias scaffolds a schema file of its own (LCLI-553).
-    expect(result.skipped.length).toBe(14);
+    // 15, not 14: Arc's deprecated `Story` alias scaffolds a schema file of its own (LCLI-553).
+    expect(result.skipped.length).toBe(15);
     expect(readFileSync(join(root, "docs/index.md"), "utf8")).toBe(before);
   });
 
