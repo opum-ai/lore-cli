@@ -146,7 +146,8 @@ const YAML_LOAD_OPTIONS: LoadOptions = Object.freeze({ schema: yaml.JSON_SCHEMA 
  * - `quoteStyle: "double"` + `forceQuotes: false` — when a value *must* be quoted, use
  *   double quotes; otherwise leave it unquoted (don't gratuitously re-quote).
  * - `transform: quoteLeadingZeroStrings` — retain js-yaml 4's stable treatment
- *   of digit strings such as `"007"` after js-yaml 5 stopped quoting them.
+ *   of digit strings such as `"007"` after js-yaml 5 stopped quoting them, and
+ *   double-quote a bare `YYYY-MM-DD` date string (LCLI-595, ADR-0011 §4).
  */
 const YAML_DUMP_OPTIONS: DumpOptions = Object.freeze({
   schema: yaml.JSON_SCHEMA,
@@ -170,13 +171,26 @@ function normalizeEmptyYamlScalars(input: string): string {
   );
 }
 
+/**
+ * A bare `YYYY-MM-DD` calendar date. Under the `JSON_SCHEMA` lore dumps with it is an ordinary
+ * string and would be written plain, but a YAML 1.1 consumer (and `lore validate`'s own
+ * quote-safety lint) reads a plain one as a timestamp — so it is double-quoted, the minimal
+ * YAML-safe quoting ADR-0011 §4 calls for. Added for LCLI-595, whose Constitution seeds
+ * `ratified`/`last_amended`; measured before landing, 0 of 384 fleet docs carried an unquoted
+ * bare-date frontmatter value, so no existing document is rewritten differently.
+ */
+const BARE_CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
 /** Preserve strings whose plain form is unstable or ambiguous for YAML consumers. */
 function quoteLeadingZeroStrings(documents: Document[]): void {
   const stack: Node[] = documents.flatMap((document) => (document.contents ? [document.contents] : []));
   while (stack.length > 0) {
     const node = stack.pop() as Node;
     if (node.kind === "scalar") {
-      if (node.tag === "tag:yaml.org,2002:str" && (/^[-+]?0[0-9]+$/.test(node.value) || /^[-?:]/.test(node.value))) {
+      if (
+        node.tag === "tag:yaml.org,2002:str" &&
+        (/^[-+]?0[0-9]+$/.test(node.value) || /^[-?:]/.test(node.value) || BARE_CALENDAR_DATE.test(node.value))
+      ) {
         node.style.doubleQuoted = true;
       }
     } else if (node.kind === "sequence") {

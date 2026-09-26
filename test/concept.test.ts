@@ -461,6 +461,40 @@ describe("serializeConcept — quote-safety (stable, minimal quoting)", () => {
     expect([back.title, back.description, back.summary, back.note]).toEqual(["@handle", "a: b", "true", "007"]);
   });
 
+  test("a bare YYYY-MM-DD string is double-quoted, round-trips as a string, and is a fixpoint (LCLI-595)", () => {
+    // A YAML 1.1 consumer reads a plain 2026-09-26 as a timestamp; ADR-0011 §4's minimal quoting.
+    // Only a WHOLE bare date is quoted: a datetime, a date inside a sentence, and a date-shaped
+    // non-string are left alone, so nothing else moves.
+    const concept: Concept = {
+      id: "reference/x",
+      path: "reference/x.md",
+      type: "Reference",
+      frontmatter: {
+        type: "Reference",
+        title: "Released 2026-09-26",
+        timestamp: "2026-09-26T00:00:00Z",
+        stale_after: "2026-09-26",
+        dates: ["2026-01-02", "not 2026-01-02"],
+      },
+      body: "B\n",
+    };
+    const bytes = serializeConcept(concept);
+    expect(bytes).toBe(
+      '---\ntype: Reference\ntitle: Released 2026-09-26\ntimestamp: 2026-09-26T00:00:00Z\nstale_after: "2026-09-26"\ndates:\n  - "2026-01-02"\n  - not 2026-01-02\n---\nB\n',
+    );
+    const back = parseConcept("reference/x.md", bytes);
+    expect(back.frontmatter.stale_after).toBe("2026-09-26");
+    expect(back.frontmatter.dates).toEqual(["2026-01-02", "not 2026-01-02"]);
+    expect(serializeConcept(back)).toBe(bytes);
+  });
+
+  test("an UNQUOTED bare date on disk is quoted on its next rewrite, and only that line changes", () => {
+    const authored = "---\ntype: Reference\nstale_after: 2026-09-26\n---\nB\n";
+    expect(serializeConcept(parseConcept("reference/x.md", authored))).toBe(
+      '---\ntype: Reference\nstale_after: "2026-09-26"\n---\nB\n',
+    );
+  });
+
   test("a multi-line string serializes as a YAML block scalar and round-trips", () => {
     const concept: Concept = {
       id: "x",

@@ -89,15 +89,19 @@ export type CheckSeverity = Severity;
  * cited `claim_version` moved, and cannot see whether the citing argument still holds. Reporting
  * that as an error would be a correctness verdict lore is not entitled to.
  *
- * `type-shape` and `singleton-type` (LCLI-595) come from the per-type rule registry
- * (`core/type-rules.ts`), run beside `check`'s per-file type peek: `type-shape` is a registered
- * type's document failing its shape (error), or its one advisory (warning, e.g. an over-long
- * Constitution Principles section); `singleton-type` is a second document of a type a bundle may
- * hold only one of (error).
+ * `type-shape`, `singleton-type`, `frontmatter` and `required-section` (LCLI-595) come from the
+ * per-type rule registry (`core/type-rules.ts`), run beside `check`'s per-file type peek, and only
+ * for a registered built-in type. `type-shape` is that type's own content rules failing (error), or
+ * its one advisory (warning, e.g. an over-long Constitution Principles section). `frontmatter` and
+ * `required-section` are `lore validate`'s own profile-shape errors for the same document, under
+ * validate's rule names. `singleton-type` is a second document of a type a bundle may hold only one
+ * of (error), counted per selected bundle root.
  */
 export type CheckRule =
   | "type-shape"
   | "singleton-type"
+  | "frontmatter"
+  | "required-section"
   | "broken-link"
   | "broken-anchor"
   | "broken-source"

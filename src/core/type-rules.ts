@@ -19,9 +19,11 @@
  * Registering a new type is one {@link TYPE_RULES} entry; neither call site names a type. That is
  * the seam LCLI-596 (Constants) is expected to use.
  *
- * Rules apply only when the ACTIVE profile declares the type: a custom `.lore/profile.toml` replaces
- * the built-in vocabulary wholesale (profile.ts), so a bundle whose profile omits Constitution sees a
- * `type: Constitution` document as an ordinary unknown producer extension, exactly as before.
+ * Rules apply only when the active profile's declaration of the type IS lore's built-in one
+ * ({@link typeRuleFor}). A custom `.lore/profile.toml` replaces the built-in vocabulary wholesale
+ * (profile.ts): if it omits Constitution, a `type: Constitution` document is an ordinary unknown
+ * producer extension; if it declares its OWN Constitution, that declaration keeps exactly the
+ * fields and sections it states and none of these rules (OPAG-425 review finding 2, ruling A).
  *
  * Pure: no filesystem, no clock (a seed takes the caller's injected timestamp).
  */
@@ -30,7 +32,7 @@ import type { Nodes, Root, RootContent } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { nodeText } from "./bundle";
 import type { Finding } from "./finding";
-import { CONSTITUTION_TYPE } from "./profile";
+import { CONSTITUTION_TYPE, type CompiledType, isBuiltinTypeDeclaration } from "./profile";
 
 /** The rule every content finding carries, in both `validate.report` and `check.report`. */
 export const TYPE_SHAPE_RULE = "type-shape";
@@ -76,12 +78,21 @@ function isCalendarDate(value: string): boolean {
 }
 
 /**
- * Unresolved template placeholders: lore's own `{{name}}` token, and the `[UPPER_SNAKE]` bracket
- * token of Spec Kit's constitution template (the reference OPAG-425's research names), which a
- * constitution copied from it carries until filled in. The bracket form requires an underscore so
- * an ordinary citation such as `[RFC2119]` is never mistaken for one.
+ * Unresolved template placeholders, two forms:
+ *
+ * - lore's own `{{name}}` token, anywhere it can hide: prose, link and image URLs and titles,
+ *   and frontmatter strings.
+ * - the `[UPPER_SNAKE]` bracket token of Spec Kit's constitution template (the reference
+ *   OPAG-425's research names), which a constitution copied from it carries until filled in —
+ *   `[PROJECT_NAME]`, `[PRINCIPLE_1_NAME]`, `[LAST_AMENDED_DATE]`. The rule, chosen so a citation
+ *   or link reference never matches: two or more `_`-joined upper-case segments whose FIRST and
+ *   LAST segments are letters only (a middle segment may be digits), not followed by `[` or `(`.
+ *   So `[RFC_2119]` and `[ISO_8601]` (a trailing number is a citation) and `[RFC2119]` (no
+ *   underscore) do not match, and neither does an unresolved reference link such as
+ *   `[FOO_BAR][]`. A RESOLVED reference (`[FOO_BAR]` with a `[FOO_BAR]: <url>` definition) never
+ *   reaches this scan at all: the parser turns it into a link whose text has no brackets.
  */
-const PLACEHOLDER_PATTERNS: readonly RegExp[] = [/\{\{[^{}]*\}\}/g, /\[[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\]/g];
+const PLACEHOLDER_PATTERNS: readonly RegExp[] = [/\{\{[^{}]*\}\}/g, /\[[A-Z]+(?:_(?:[A-Z]+|\d+))*_[A-Z]+\](?![[(])/g];
 
 /** Every distinct placeholder token in `text`, in first-seen order. */
 function placeholdersIn(text: string): string[] {
@@ -96,37 +107,78 @@ function placeholdersIn(text: string): string[] {
   return found;
 }
 
-/** Every string in a frontmatter value, recursing through lists and mappings. */
+/** Every string in a frontmatter value, through lists and mappings (explicit stack, no recursion). */
 function frontmatterStrings(value: unknown): string[] {
-  if (typeof value === "string") {
-    return [value];
+  const strings: string[] = [];
+  const stack: unknown[] = [value];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (typeof current === "string") {
+      strings.push(current);
+    } else if (Array.isArray(current)) {
+      stack.push(...current);
+    } else if (current !== null && typeof current === "object") {
+      stack.push(...Object.values(current));
+    }
   }
-  if (Array.isArray(value)) {
-    return value.flatMap(frontmatterStrings);
-  }
-  if (value !== null && typeof value === "object") {
-    return Object.values(value).flatMap(frontmatterStrings);
-  }
-  return [];
+  return strings;
 }
 
 /**
- * The prose text of a node: `text` nodes only. Code spans, code blocks and raw HTML (comments
- * included) are excluded, so a document can quote `{{name}}` or `MUST` in backticks while
- * explaining the rules without that counting as a placeholder or a normative keyword.
+ * Depth-first pre-order walk over `roots` in document order that neither visits nor descends
+ * into a node `skip` accepts. An **explicit stack**, like {@link import("./bundle").walkMdast}
+ * (which cannot skip a subtree): a body of tens of thousands of nested blockquotes parses fine
+ * and must not overflow the call stack here either.
  */
-function proseText(node: Nodes): string {
-  if (node.type === "text") {
-    return node.value;
+function walkSkipping(roots: readonly Nodes[], skip: (node: Nodes) => boolean, visit: (node: Nodes) => void): void {
+  const stack: Nodes[] = [...roots].reverse();
+  while (stack.length > 0) {
+    const node = stack.pop() as Nodes;
+    if (skip(node)) {
+      continue;
+    }
+    visit(node);
+    if ("children" in node) {
+      for (let i = node.children.length - 1; i >= 0; i--) {
+        stack.push(node.children[i] as Nodes);
+      }
+    }
   }
-  if (node.type === "code" || node.type === "inlineCode" || node.type === "html") {
-    return "";
-  }
-  if ("children" in node) {
-    return (node.children as Nodes[]).map(proseText).join(node.type === "paragraph" ? "" : "\n");
-  }
-  return "";
 }
+
+/**
+ * Not prose: code blocks, code spans and raw HTML (comments included). A document can quote
+ * `{{name}}`, `MUST` or `Rationale:` in backticks while explaining the rules without that counting
+ * as a placeholder, a normative keyword, or a label.
+ */
+function isNotProse(node: Nodes): boolean {
+  return node.type === "code" || node.type === "inlineCode" || node.type === "html";
+}
+
+/** The prose text under `nodes`: every `text` node outside {@link isNotProse} subtrees, newline-joined. */
+function proseText(nodes: readonly Nodes[]): string {
+  const parts: string[] = [];
+  walkSkipping(nodes, isNotProse, (node) => {
+    if (node.type === "text") {
+      parts.push(node.value);
+    }
+  });
+  return parts.join("\n");
+}
+
+/** Every link, image and definition URL and title under `nodes` — a placeholder can hide in a URL. */
+function linkTargets(nodes: readonly Nodes[]): string[] {
+  const targets: string[] = [];
+  walkSkipping(nodes, isNotProse, (node) => {
+    if (node.type === "link" || node.type === "image" || node.type === "definition") {
+      targets.push(node.url, node.title ?? "");
+    }
+  });
+  return targets;
+}
+
+/** Stands in for a code span in {@link paragraphLines}: content (so `Check: \`ci\`` has a body), never a label. */
+const CODE_SPAN = "￼";
 
 /** Heading text normalized the way required-section matching does (validate.ts). */
 function normalizeHeading(text: string): string {
@@ -158,27 +210,35 @@ function findSection(root: Root, name: string): Section | null {
   return { heading: children[start] as RootContent, nodes };
 }
 
-/** Every paragraph's text within `nodes`, split into lines, at any nesting depth (list items, quotes). */
+/**
+ * Every paragraph's text within `nodes`, split into lines, at any nesting depth (list items,
+ * quotes), with an explicit stack throughout. A soft line break (a newline inside a `text` node)
+ * and a hard one (an mdast `break`: a trailing `\` or two spaces) both end a line. A code span
+ * becomes {@link CODE_SPAN}, so `Check: \`ci.yml\`` still has content after its label while
+ * `` `Rationale:` `` quoted in code is not a label. Raw inline HTML contributes nothing.
+ */
 function paragraphLines(nodes: readonly Nodes[]): string[] {
   const lines: string[] = [];
-  const visit = (node: Nodes): void => {
-    if (node.type === "paragraph") {
-      lines.push(
-        ...nodeText(node)
-          .split("\n")
-          .map((line) => line.trim()),
-      );
+  walkSkipping(nodes, isNotProse, (node) => {
+    if (node.type !== "paragraph") {
       return;
     }
-    if ("children" in node) {
-      for (const child of node.children as Nodes[]) {
-        visit(child);
-      }
-    }
-  };
-  for (const node of nodes) {
-    visit(node);
-  }
+    let text = "";
+    walkSkipping(
+      node.children,
+      (inline) => inline.type === "html",
+      (inline) => {
+        if (inline.type === "text") {
+          text += inline.value;
+        } else if (inline.type === "inlineCode") {
+          text += CODE_SPAN;
+        } else if (inline.type === "break") {
+          text += "\n";
+        }
+      },
+    );
+    lines.push(...text.split("\n").map((line) => line.trim()));
+  });
   return lines;
 }
 
@@ -232,7 +292,11 @@ function constitutionFindings(frontmatter: Readonly<Record<string, unknown>>, bo
   findings.push(...amendmentLogFindings(root, body, version, lastAmended));
 
   const placeholders = [
-    ...new Set([...frontmatterStrings(frontmatter), proseText(root)].flatMap((text) => placeholdersIn(text))),
+    ...new Set(
+      [...frontmatterStrings(frontmatter), proseText([root]), ...linkTargets([root])].flatMap((text) =>
+        placeholdersIn(text),
+      ),
+    ),
   ];
   if (placeholders.length > 0) {
     error(`has unresolved template placeholder(s): ${placeholders.join(", ")} -- fill them in`);
@@ -281,7 +345,7 @@ function principleFindings(root: Root): TypeShapeFinding[] {
       seen.set(ordinal, principle.heading);
     }
     const label = `principle ${JSON.stringify(principle.heading)}`;
-    const prose = principle.nodes.map(proseText).join("\n");
+    const prose = proseText(principle.nodes);
     if (!RFC_2119_KEYWORD.test(prose)) {
       error(`${label} has no uppercase RFC 2119/8174 keyword (MUST, MUST NOT, SHOULD, SHOULD NOT, MAY, ...)`);
     }
@@ -311,8 +375,8 @@ function principleFindings(root: Root): TypeShapeFinding[] {
 /** A GFM table delimiter row: `|---|:--:|`, with or without the outer pipes. */
 const TABLE_DELIMITER_ROW = /^\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?$/;
 
-/** The cells of one GFM pipe-table row: outer pipes dropped, split on unescaped `|`, trimmed, code ticks removed. */
-function tableCells(line: string): string[] {
+/** The raw cell sources of one GFM pipe-table row: outer pipes dropped, split on unescaped `|`. */
+function rawCells(line: string): string[] {
   let row = line.trim();
   if (row.startsWith("|")) {
     row = row.slice(1);
@@ -320,18 +384,25 @@ function tableCells(line: string): string[] {
   if (row.endsWith("|") && !row.endsWith("\\|")) {
     row = row.slice(0, -1);
   }
-  return row.split(/(?<!\\)\|/).map((cell) =>
-    cell
-      .trim()
-      .replace(/^`+|`+$/g, "")
-      .trim(),
-  );
+  return row.split(/(?<!\\)\|/);
 }
 
 /**
- * The first pipe table among `nodes`, as rows of cells (header first, delimiter row dropped), or
- * `null`. Read from the raw `body` rather than the mdast: lore parses CommonMark with no GFM
- * extension (tech-stack.md), so a table arrives as a plain paragraph whose source lines ARE the table.
+ * A cell's rendered text: its inline markdown parsed, so `**1.0.0**`, `_1.0.0_`, `` `1.0.0` ``,
+ * `[1.0.0](url)` and `1.0.0` all read as `1.0.0`, and `\|` as `|`.
+ */
+function cellText(cell: string): string {
+  return nodeText(fromMarkdown(cell.trim())).trim();
+}
+
+/**
+ * The first pipe table among `nodes`, as rows of cell text (header first, delimiter row dropped),
+ * or `null`. Read from the raw `body` rather than the mdast: lore parses CommonMark with no GFM
+ * extension (tech-stack.md), so a table arrives inside a plain paragraph. It need not BE the whole
+ * paragraph: GFM lets a table interrupt a paragraph, so prose lines directly above it (no blank
+ * line) render as a paragraph plus a table on GitHub, and are skipped here the same way. The header
+ * is the line above the first delimiter row whose cell count matches it, as GFM requires; every
+ * line after the delimiter row belongs to the table (the paragraph ends at the table's blank line).
  */
 function firstPipeTable(nodes: readonly RootContent[], body: string): string[][] | null {
   for (const node of nodes) {
@@ -341,8 +412,12 @@ function firstPipeTable(nodes: readonly RootContent[], body: string): string[][]
       continue;
     }
     const lines = body.slice(start, end).split("\n");
-    if (lines.length >= 2 && TABLE_DELIMITER_ROW.test((lines[1] ?? "").trim())) {
-      return [lines[0] ?? "", ...lines.slice(2)].map(tableCells);
+    for (let i = 0; i + 1 < lines.length; i++) {
+      const header = lines[i] ?? "";
+      const delimiter = (lines[i + 1] ?? "").trim();
+      if (TABLE_DELIMITER_ROW.test(delimiter) && rawCells(header).length === rawCells(delimiter).length) {
+        return [header, ...lines.slice(i + 2)].map((line) => rawCells(line).map(cellText));
+      }
     }
   }
   return null;
@@ -424,14 +499,18 @@ const TYPE_RULES: ReadonlyMap<string, TypeRule> = new Map<string, TypeRule>([
 ]);
 
 /**
- * The rules for `canonical`, or `undefined` when the type has none OR the active profile does not
- * declare it. Callers pass the type already canonicalized against `declared`'s profile.
+ * The rules for `canonical`, or `undefined` unless the active profile's declaration of it is lore's
+ * OWN built-in one ({@link isBuiltinTypeDeclaration}). A custom `.lore/profile.toml` that declares
+ * a type of the same name — `Constitution`, or later `Constants` — opts out of every rule here
+ * (content rules, singleton, `lore new` seed) and keeps only what it declared itself, exactly as
+ * before the built-in existed (OPAG-425 review finding 2, ruling A). So does a profile that does
+ * not declare the type at all. Callers pass the type already canonicalized against `declared`.
  */
 export function typeRuleFor(
   canonical: string,
-  declared: { readonly types: ReadonlyMap<string, unknown> },
+  declared: { readonly types: ReadonlyMap<string, CompiledType> },
 ): TypeRule | undefined {
-  return declared.types.has(canonical) ? TYPE_RULES.get(canonical) : undefined;
+  return isBuiltinTypeDeclaration(declared.types.get(canonical)) ? TYPE_RULES.get(canonical) : undefined;
 }
 
 /** A document of a singleton type, for {@link singletonFindings}. */

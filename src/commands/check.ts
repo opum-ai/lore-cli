@@ -486,27 +486,28 @@ function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleRe
 }
 
 /**
- * `lore validate`'s whole per-file judgement of one registered-type document, as `check` findings
+ * `lore validate`'s per-file judgement of one registered-type document, as `check` findings
  * (LCLI-595, OPAG-425 R3). Reusing {@link validateConceptText} rather than re-deriving it is what
- * keeps the two gates from disagreeing about the same file: its profile-shape errors (a missing
- * required field or `##` section) and every finding from the type's own content rules are kept;
- * its Tier-3 advisories (extra key, summary length, quote-safety warnings) are not, because `check`
- * does not report those for any other type either. All are reported under the one `type-shape`
- * rule; the message names which requirement failed.
+ * keeps the two gates from disagreeing about the same file. Kept, each under validate's OWN rule
+ * name so a consumer can tell them apart: the profile-shape errors (`frontmatter` — a missing or
+ * mistyped required field — and `required-section`), and every `type-shape` finding from the
+ * type's own content rules. Not kept: quote-safety, resource drift, the unknown-type advisory
+ * and Tier-3 frontmatter warnings, because `check` reports none of those for any other type
+ * either, and a Constitution must not be the one document that draws them.
  *
  * Only registered types reach here. Closing the same gap for every OTHER type — `check` enforcing
  * required sections and fields generally — is deliberately out of scope (OPAG-425 R3).
  */
 function typeShapeCheckFindings(file: CheckInputFile, profile: Profile, state: BundleState): CheckFinding[] {
-  return validateConceptText(file.path, file.raw, profile, state)
-    .findings.filter((finding) => finding.rule === TYPE_SHAPE_RULE || finding.severity === "error")
-    .filter((finding) => finding.rule !== "unknown-type")
-    .map((finding) => ({
-      severity: finding.severity,
-      rule: TYPE_SHAPE_RULE,
-      file: file.path,
-      message: finding.message,
-    }));
+  const findings: CheckFinding[] = [];
+  for (const finding of validateConceptText(file.path, file.raw, profile, state).findings) {
+    const rule = finding.rule;
+    const profileShapeError = finding.severity === "error" && (rule === "frontmatter" || rule === "required-section");
+    if (rule === TYPE_SHAPE_RULE || profileShapeError) {
+      findings.push({ severity: finding.severity, rule, file: file.path, message: finding.message });
+    }
+  }
+  return findings;
 }
 
 /**

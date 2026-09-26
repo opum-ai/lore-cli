@@ -43,7 +43,13 @@ import { readFileSync } from "node:fs";
 import { isAbsolute, join, posix, win32 } from "node:path";
 import { z } from "zod";
 import { errnoCode, LoreError } from "../errors";
-import { type BundleState, CURRENT_OKF_VERSION, type OkfVersion, requireSupportedOkfVersion } from "./okf-version";
+import {
+  type BundleState,
+  CURRENT_OKF_VERSION,
+  LEGACY_OKF_VERSION,
+  type OkfVersion,
+  requireSupportedOkfVersion,
+} from "./okf-version";
 import {
   CLAIM_EVIDENCE_LEVEL_FIELD,
   CLAIM_OUTCOME_FIELD,
@@ -1157,6 +1163,27 @@ export function profileForBundle(profile: Profile, state: BundleState): Profile 
     return defaultProfileForVersion(state.okfVersion);
   }
   return profile.okfVersion === state.okfVersion ? profile : { ...profile, okfVersion: state.okfVersion };
+}
+
+/**
+ * Whether `compiled` is lore's OWN built-in declaration of its type — one of the compiled types
+ * of the built-in profile on either OKF version — rather than a same-named type a project declared
+ * in its own `.lore/profile.toml`. Decided by object identity: {@link profileForBundle} hands a
+ * default-profile bundle these very objects, while a loaded profile replaces the built-in
+ * vocabulary wholesale and compiles its own, so it can never share one.
+ *
+ * Built-in-only behaviour (type-rules.ts) keys on this, by orchestrator ruling (OPAG-425, review
+ * finding 2, ruling A): adding a built-in type must never change behaviour for a bundle that already
+ * declared a type of the same name, which keeps its own fields and sections exactly as before.
+ */
+export function isBuiltinTypeDeclaration(compiled: CompiledType | undefined): boolean {
+  if (compiled === undefined) {
+    return false;
+  }
+  return (
+    defaultProfile().types.get(compiled.name) === compiled ||
+    defaultProfileForVersion(LEGACY_OKF_VERSION).types.get(compiled.name) === compiled
+  );
 }
 
 /**

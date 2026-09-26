@@ -12,7 +12,8 @@ import { join } from "node:path";
 import { runCheck } from "../src/commands/check";
 import { runInit } from "../src/commands/init";
 import { type NewResult, runNew } from "../src/commands/new";
-import { defaultProfile, profileForBundle } from "../src/core/profile";
+import { runValidate } from "../src/commands/validate";
+import { defaultProfile, loadProfile, profileForBundle } from "../src/core/profile";
 import { PRINCIPLES_LINE_BUDGET } from "../src/core/type-rules";
 import { validateConceptText } from "../src/core/validate";
 import { EXIT_CODES, EXIT_OK } from "../src/errors";
@@ -113,19 +114,31 @@ function check(args: string[] = []): { code: number; findings: CheckFindingJson[
   return { code, findings: report.data.findings, warningCount: report.data.warningCount };
 }
 
-/** `lore check` on a bundle holding `contents` as its Constitution: must exit 6 with an error matching `message`. */
-function expectCheckError(contents: string, message: RegExp): void {
+/**
+ * `lore check` on a bundle holding `contents` as its Constitution: must exit 6 with an error
+ * matching `message` under `rule` — `type-shape` for the Constitution's own content rules, and
+ * validate's own names (`frontmatter`, `required-section`) for the profile-shape errors.
+ */
+function expectCheckError(contents: string, message: RegExp, rule = "type-shape"): void {
   writeDoc("constitution/project.md", contents);
   const { code, findings } = check();
   expect(code).toBe(EXIT_CODES.validation);
   const errors = findings.filter((finding) => finding.severity === "error");
   expect(errors).toContainEqual(
     expect.objectContaining({
-      rule: "type-shape",
+      rule,
       file: "constitution/project.md",
       message: expect.stringMatching(message),
     }),
   );
+}
+
+/** `lore check` on a bundle holding `contents` as its Constitution: must exit 0 with no finding at all. */
+function expectCheckClean(contents: string): void {
+  writeDoc("constitution/project.md", contents);
+  const { code, findings } = check(["--strict"]);
+  expect(findings).toEqual([]);
+  expect(code).toBe(EXIT_OK);
 }
 
 describe("Constitution — a valid document", () => {
@@ -153,22 +166,45 @@ describe("Constitution — a valid document", () => {
 describe("Constitution — lore check fails each missing required field (AC#1)", () => {
   test.each(["version", "ratified", "last_amended", "amendment_authority"])("missing %p", (field) => {
     const without = mutate(new RegExp(`^${field}: .*\\n`, "m"), "");
-    expectCheckError(without, new RegExp(field));
+    // Reported under validate's own rule name, not relabelled (review finding 8).
+    expectCheckError(without, new RegExp(field), "frontmatter");
   });
 });
 
 describe("Constitution — lore check fails each missing required section (AC#1)", () => {
   test("missing ## Principles", () => {
     // Renaming the heading removes the section while keeping the rest of the document intact.
-    expectCheckError(mutate("## Principles", "## Values"), /missing the required "## Principles" section/);
+    expectCheckError(
+      mutate("## Principles", "## Values"),
+      /missing the required "## Principles" section/,
+      "required-section",
+    );
   });
 
   test("missing ## Governance", () => {
-    expectCheckError(mutate("## Governance", "## Process"), /missing the required "## Governance" section/);
+    expectCheckError(
+      mutate("## Governance", "## Process"),
+      /missing the required "## Governance" section/,
+      "required-section",
+    );
   });
 
   test("missing ## Amendment log", () => {
-    expectCheckError(mutate("## Amendment log", "## History"), /missing the required "## Amendment log" section/);
+    expectCheckError(
+      mutate("## Amendment log", "## History"),
+      /missing the required "## Amendment log" section/,
+      "required-section",
+    );
+  });
+});
+
+describe("Constitution — lore check reports only what it reports for every type (review finding 8)", () => {
+  test("a quote-safety warning validate raises is NOT reported by check for a Constitution", () => {
+    // `summary: yes` is a YAML 1.1 boolean hazard: validate warns, check reports nothing, as for any type.
+    const hazard = mutate("summary: The project's durable principles and how they change.", "summary: yes");
+    const validate = validateConceptText("docs/constitution/project.md", hazard).findings;
+    expect(validate.map((finding) => finding.rule)).toContain("quote-safety");
+    expectCheckClean(hazard);
   });
 });
 
@@ -274,6 +310,91 @@ describe("Constitution — lore check fails an unresolved template placeholder (
   });
 });
 
+describe("Constitution — markdown forms the rules must read correctly (review findings 4-7)", () => {
+  test("finding 4: a hard line break separates a keyword line from Rationale: and Check:", () => {
+    // `\` at end of line is an mdast `break`; it must end the line, not glue the next one on.
+    const hard = mutate(
+      "Every rule MUST name the gate that verifies it.\n\nRationale: a rule nothing verifies drifts unnoticed.\n\nCheck: the CI job that runs `lore check`.",
+      "Every rule MUST name the gate that verifies it.\\\nRationale: a rule nothing verifies drifts unnoticed.\\\nCheck: the CI job that runs `lore check`.",
+    );
+    expectCheckClean(hard);
+  });
+
+  test("finding 4: the two-trailing-space hard break works the same way", () => {
+    const hard = mutate(
+      "Every rule MUST name the gate that verifies it.\n\nRationale: a rule nothing verifies drifts unnoticed.\n\n",
+      "Every rule MUST name the gate that verifies it.  \nRationale: a rule nothing verifies drifts unnoticed.\n\n",
+    );
+    expectCheckClean(hard);
+  });
+
+  test("finding 5: a prose line directly above the Amendment log table (no blank line) still finds the table", () => {
+    expectCheckClean(mutate("| Version | Date | Change |", "Newest first.\n| Version | Date | Change |"));
+  });
+
+  test("finding 5: ... and still compares its top row", () => {
+    const shifted = mutate("| Version | Date | Change |", "Newest first.\n| Version | Date | Change |");
+    expectCheckError(
+      mutate("| 1.2.0 | 2026-09-01 |", "| 1.1.0 | 2026-09-01 |", shifted),
+      /top row's Version "1\.1\.0" does not match/,
+    );
+  });
+
+  test("finding 6: 20,000 nested blockquotes do not overflow the stack in validate or check", () => {
+    const deep = mutate("## Governance\n", `## Governance\n\n${">".repeat(20_000)} deep\n`);
+    expect(() => validateConceptText("docs/constitution/project.md", deep)).not.toThrow();
+    expectCheckClean(deep);
+  });
+
+  test("finding 6: 20,000 nested blockquotes inside a principle are walked too", () => {
+    const deep = mutate("Principles SHOULD stay brief.", `Principles SHOULD stay brief.\n\n${">".repeat(20_000)} deep`);
+    expect(() => validateConceptText("docs/constitution/project.md", deep)).not.toThrow();
+    expectCheckClean(deep);
+  });
+
+  test.each([
+    ["bold", "**1.2.0**"],
+    ["emphasis", "_1.2.0_"],
+    ["code", "`1.2.0`"],
+  ])("finding 7: a %s top-row Version cell reads as its text", (_label, cell) => {
+    expectCheckClean(mutate("| 1.2.0 | 2026-09-01 |", `| ${cell} | 2026-09-01 |`));
+  });
+
+  test("finding 7: a Rationale: label inside a code span does not count as the label", () => {
+    expectCheckError(
+      mutate("Rationale: a rule nothing verifies drifts unnoticed.", "`Rationale:` a rule nothing verifies drifts."),
+      /"P1\. Gates enforce rules" has no "Rationale:" line/,
+    );
+  });
+
+  test("finding 7: a Check: whose whole content is a code span still counts", () => {
+    expectCheckClean(mutate("Check: the CI job that runs `lore check`.", "Check: `lore check`"));
+  });
+
+  test("finding 7: a {{placeholder}} inside a link URL is detected", () => {
+    expectCheckError(
+      mutate("Principles SHOULD stay brief.", "Principles SHOULD stay brief ([guide]({{guide_url}}))."),
+      /unresolved template placeholder\(s\): \{\{guide_url\}\}/,
+    );
+  });
+
+  test("finding 7: a Spec Kit [UPPER_SNAKE] placeholder in the body is detected", () => {
+    expectCheckError(
+      mutate("Principles SHOULD stay brief.", "Principles SHOULD stay [PRINCIPLE_2_DESCRIPTION]."),
+      /\[PRINCIPLE_2_DESCRIPTION\]/,
+    );
+  });
+
+  test.each([
+    ["a citation ending in a number", "See [RFC_2119] and [ISO_8601]."],
+    ["an unresolved reference link", "See [STYLE_GUIDE][]."],
+    ["a resolved reference link", "See [STYLE_GUIDE].\n\n[STYLE_GUIDE]: https://example.com/style"],
+    ["a single segment", "See [RFC2119] and [NOTE]."],
+  ])("finding 7: %s is not a placeholder", (_label, text) => {
+    expectCheckClean(mutate("## Governance\n", `## Governance\n\n${text}\n`));
+  });
+});
+
 describe("Constitution — at most one per bundle (R2, AC#1)", () => {
   test("a second Constitution fails lore check, naming the first", () => {
     writeDoc("constitution/project.md", VALID);
@@ -319,6 +440,101 @@ describe("Constitution — the Principles line budget (AC#1)", () => {
   });
 });
 
+describe("Constitution — rules attach only to lore's BUILT-IN declaration (review finding 2, ruling A)", () => {
+  /** A custom profile that declares its OWN Constitution: alias Charter, one section, no fields. */
+  function customCharterProfile(): void {
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(
+      join(root, ".lore/profile.toml"),
+      [
+        "[profile]",
+        'name = "custom"',
+        'okf_version = "0.2"',
+        "",
+        "[base.fields]",
+        "type = { required = true }",
+        "title = {}",
+        "summary = {}",
+        "",
+        "[[types]]",
+        'name = "Reference"',
+        "",
+        "[[types]]",
+        'name = "Constitution"',
+        'aliases = ["Charter"]',
+        'sections = ["Articles"]',
+        "",
+      ].join("\n"),
+    );
+    rmSync(join(root, ".lore", "schemas"), { recursive: true, force: true });
+  }
+
+  /** A document that satisfies the CUSTOM declaration and breaks every built-in rule. */
+  const CHARTER = `---
+type: Charter
+title: Our charter
+summary: The charter this bundle declared before lore had a Constitution type.
+version: next
+ratified: someday
+---
+
+# Our charter
+
+## Articles
+
+Nothing here is a P-numbered principle, and there is no Amendment log.
+`;
+
+  test("two `type: Charter` docs both pass lore check: no singleton, SemVer, date or shape rule runs", () => {
+    customCharterProfile();
+    writeDoc("charter/one.md", CHARTER);
+    writeDoc("charter/two.md", CHARTER);
+    const { code, findings } = check(["--strict"]);
+    expect(findings).toEqual([]);
+    expect(code).toBe(EXIT_OK);
+  });
+
+  test("the custom declaration's OWN section is still enforced, exactly as before the built-in existed", () => {
+    customCharterProfile();
+    const report = validateConceptText(
+      "docs/charter/one.md",
+      CHARTER.replace("## Articles", "## Other"),
+      loadProfile({ root }),
+    );
+    // Its only error is its own missing section; `version`/`ratified` are just undeclared extension
+    // keys to it (Tier-3 warnings), never SemVer or dates.
+    expect(report.findings.filter((finding) => finding.severity === "error")).toEqual([
+      expect.objectContaining({ rule: "required-section", message: expect.stringContaining('"## Articles"') }),
+    ]);
+    expect(report.findings.some((finding) => finding.rule === "type-shape")).toBe(false);
+  });
+
+  test("control: the BUILT-IN Constitution still gets every rule on the same documents", () => {
+    // No profile.toml: the same two documents, typed as the built-in, draw the built-in rules.
+    const builtin = CHARTER.replace("type: Charter", "type: Constitution");
+    writeDoc("charter/one.md", builtin);
+    writeDoc("charter/two.md", builtin);
+    const { code, findings } = check();
+    expect(code).toBe(EXIT_CODES.validation);
+    // Missing required fields (a `frontmatter` error, which short-circuits validate's later tiers)
+    // on each, and the singleton on the second.
+    const rules = new Set(findings.map((finding) => finding.rule));
+    expect(rules).toEqual(new Set(["frontmatter", "singleton-type"]));
+    // With its required fields present, the same document draws the section, SemVer, date,
+    // Principles and Amendment log rules too.
+    const complete = builtin.replace(
+      "ratified: someday",
+      'ratified: someday\nlast_amended: "2026-01-01"\namendment_authority: us',
+    );
+    const report = validateConceptText("docs/charter/one.md", complete);
+    const messages = report.findings.map((finding) => finding.message).join("\n");
+    expect(messages).toContain('version "next" is not a SemVer version');
+    expect(messages).toContain('ratified "someday" is not an ISO calendar date');
+    expect(messages).toContain('missing the required "## Principles" section');
+    expect(messages).toContain('missing the required "## Amendment log" section');
+  });
+});
+
 describe("Constitution — only where the active profile declares it", () => {
   test("a custom profile without Constitution treats it as an unknown type, not a shape failure", () => {
     mkdirSync(join(root, ".lore"), { recursive: true });
@@ -361,33 +577,25 @@ describe("lore new constitution (R9, AC#2)", () => {
     expect(code).toBe(EXIT_OK);
   });
 
-  test("and that lore validate passes with no error", () => {
-    const { result, contents } = newConstitution();
-    const findings = validateConceptText(result.path, contents).findings;
-    expect(findings.filter((finding) => finding.severity === "error")).toEqual([]);
-    // KNOWN, pinned so it cannot change unnoticed: the serializer writes the seeded dates unquoted,
-    // and validate's quote-safety lint warns on a bare YYYY-MM-DD (YAML 1.1 reads it as a date).
-    // Quoting them is a serializer change under ADR-0011's byte-stability contract, outside
-    // LCLI-595; `lore check` does not report quote-safety warnings, so it stays clean.
-    expect(findings).toEqual([
-      expect.objectContaining({
-        severity: "warning",
-        rule: "quote-safety",
-        message: expect.stringContaining('"2026-06-25"'),
-      }),
-      expect.objectContaining({
-        severity: "warning",
-        rule: "quote-safety",
-        message: expect.stringContaining('"2026-06-25"'),
-      }),
-    ]);
+  test("and that lore validate --strict passes with ZERO findings, warnings included (ruling b)", () => {
+    const { result } = newConstitution();
+    const stdout = capture();
+    const code = runValidate({ root, output: JSON_CTX, args: ["--strict", result.path], stdout, stderr: capture() });
+    const report = JSON.parse(stdout.text()) as {
+      data: { errorCount: number; warningCount: number; files: { findings: unknown[] }[] };
+    };
+    expect(report.data.files).toHaveLength(1);
+    expect(report.data.files[0]?.findings).toEqual([]);
+    expect([report.data.errorCount, report.data.warningCount]).toEqual([0, 0]);
+    expect(code).toBe(EXIT_OK);
   });
 
   test("carries the R9 components", () => {
     const { contents } = newConstitution();
     expect(contents).toContain("version: 1.0.0");
-    expect(contents).toMatch(/ratified: "?2026-06-25"?/);
-    expect(contents).toMatch(/last_amended: "?2026-06-25"?/);
+    // Double-quoted by the serializer's bare-date rule, so YAML 1.1 consumers read a string.
+    expect(contents).toContain('ratified: "2026-06-25"');
+    expect(contents).toContain('last_amended: "2026-06-25"');
     expect(contents).toContain('"MUST", "MUST NOT", "REQUIRED"'); // RFC 8174 boilerplate
     expect(contents).toContain("RFC 8174");
     expect(contents).toMatch(/### P1\. .+\n\n.*MUST[\s\S]*Rationale: [\s\S]*Check: /); // example principle

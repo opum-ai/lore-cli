@@ -1380,7 +1380,7 @@ step_json "lore sync: heal the ADR index left stale by Phase 16's unsynced `lore
 
 # ── Phase 17: schema export ─────────────────────────────────────────────────────
 step_json "lore schema export" '.kind == "schema.result"' -- lore schema export --json
-for T in epic arc story spec adr runbook reference attested-computation; do
+for T in epic arc story spec adr runbook reference constitution attested-computation; do
   check "schema export produced valid JSON for $T" "jq -e . .lore/schemas/${T}.schema.json >/dev/null 2>&1"
 done
 
@@ -1416,12 +1416,13 @@ check "LCLI-299 AC3: custom-output schema probe starts from an absent directory"
 step_json "LCLI-299 AC3: schema export --out writes the full profile outside the default directory" \
   '.kind == "schema.result"
    and .data.out == "'"$LCLI299_CUSTOM_OUT"'"
-   and .data.count == 8
+   and .data.count == 9
    and (.data.removed | length) == 0
    and (([.data.files[].path] | sort) == [
      "'"$LCLI299_CUSTOM_OUT"'/adr.schema.json",
      "'"$LCLI299_CUSTOM_OUT"'/arc.schema.json",
      "'"$LCLI299_CUSTOM_OUT"'/attested-computation.schema.json",
+     "'"$LCLI299_CUSTOM_OUT"'/constitution.schema.json",
      "'"$LCLI299_CUSTOM_OUT"'/epic.schema.json",
      "'"$LCLI299_CUSTOM_OUT"'/reference.schema.json",
      "'"$LCLI299_CUSTOM_OUT"'/runbook.schema.json",
@@ -1430,14 +1431,14 @@ step_json "LCLI-299 AC3: schema export --out writes the full profile outside the
    ])
    and all(.data.files[]; (.path | startswith(".lore/schemas/") | not))' \
   -- lore schema export --out "$LCLI299_CUSTOM_OUT" --json
-for T in epic arc story spec adr runbook reference attested-computation; do
+for T in epic arc story spec adr runbook reference constitution attested-computation; do
   check "LCLI-299 AC3: custom output produced valid JSON for $T" \
     "jq -e . '$LCLI299_CUSTOM_OUT/${T}.schema.json' >/dev/null 2>&1"
 done
 
 rm -f "$LCLI299_TYPE_OUT/arc.schema.json" "$LCLI299_TYPE_OUT/story.schema.json"
 rmdir "$LCLI299_TYPE_OUT"
-for T in epic arc story spec adr runbook reference attested-computation; do
+for T in epic arc story spec adr runbook reference constitution attested-computation; do
   rm -f "$LCLI299_CUSTOM_OUT/${T}.schema.json"
 done
 rmdir "$LCLI299_CUSTOM_OUT"
@@ -1589,7 +1590,7 @@ step_json "profile restored: lore schema export succeeds again (loadProfile reco
   '.kind == "schema.result"' -- lore schema export --json
 
 # Leave no induced state behind (LORE-63's convention): a custom profile.toml REPLACES the
-# default seven-type vocabulary wholesale, and a full `lore schema export` prunes a
+# default eight-type vocabulary wholesale, and a full `lore schema export` prunes a
 # *.schema.json whose type the active profile no longer declares ONLY when its generator stamp
 # matches the active profile's digest (LCLI-565). So the two custom-profile exports above no
 # longer prune Phase 17's default schema files: those carry the DEFAULT profile's stamp, foreign
@@ -1602,7 +1603,7 @@ step_json "profile restored: lore schema export succeeds again (loadProfile reco
 # end to end; the hand rm below is that deliberate step, which leaves Phase 18+ the bundle
 # state they already expect.
 rm -f .lore/profile.toml .lore/templates/e2e-custom-type.md
-step_json "profile removed: lore schema export regenerates the seven default schemas and KEEPS the foreign-stamped custom schema (LCLI-565)" \
+step_json "profile removed: lore schema export regenerates the default schemas and KEEPS the foreign-stamped custom schema (LCLI-565)" \
   '.kind == "schema.result" and ((.data.keptUnattributable // []) | map(.path) | any(endswith("e2e-custom-type.schema.json")))' \
   -- lore schema export --json
 check "the orphaned custom schema, stamped by another profile, was NOT pruned by export (LCLI-565)" \
@@ -1612,7 +1613,7 @@ step "lore check exits 7 (indeterminate) on the kept foreign-stamped schema, nev
 rm -f .lore/schemas/e2e-custom-type.schema.json
 step "after the deliberate hand rm, lore check no longer exits 7" 0 \
   -- bash -c 'lore check --json >/dev/null 2>&1; [ $? -ne 7 ]'
-for T in epic arc story spec adr runbook reference attested-computation; do
+for T in epic arc story spec adr runbook reference constitution attested-computation; do
   check "default schema for $T restored after the profile subsystem probe" \
     "jq -e . .lore/schemas/${T}.schema.json >/dev/null 2>&1"
 done
