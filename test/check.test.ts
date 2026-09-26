@@ -2001,7 +2001,7 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
   test("OKF 0.2 checks task drift against lore_task_status while preserving lifecycle status", async () => {
     writeFileSync(join(root, "docs", "index.md"), '---\ntype: Reference\nokf_version: "0.2"\n---\n# Docs\n');
     const raw =
-      "---\ntype: Story\ntitle: X\nstatus: stable\nlore_task_status: done\ntasks:\n  - lore-1\n---\n# X\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n";
+      "---\ntype: Story\ntitle: X\nstatus: stable\nlore_task_status: done\ntasks:\n  - lore-1\n---\n# X\n\n## Acceptance criteria\n\n- It works.\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n";
     writeDoc("stories/x.md", regenerateTaskBlock(raw, [doneRow], { docPath: "docs/stories/x.md" }));
     const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
 
@@ -2191,7 +2191,10 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
   });
 
   test("a concept with no tasks: is never reconciled and constructs no adapter", async () => {
-    writeDoc("stories/plain.md", "---\ntype: Story\ntitle: Plain\n---\n# Plain\n\nNo tasks.\n");
+    writeDoc(
+      "stories/plain.md",
+      "---\ntype: Story\ntitle: Plain\n---\n# Plain\n\nNo tasks.\n\n## Acceptance criteria\n\n- It works.\n",
+    );
     const poison = new Proxy(
       {},
       {
@@ -2301,10 +2304,11 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     expect(parsed.data.findings.some((f: { rule: string }) => f.rule === "broken-link")).toBe(true);
   });
 
-  test("a malformed concept that ALSO links tasks rejects instead of silently passing (LORE-27 regression)", async () => {
-    // Unlike a malformed concept with no tasks: link (silently skipped -- lore validate's job), one
-    // that DOES link a task is reconciliation-relevant: `lore sync` would refuse to touch it too, so
-    // silently treating it as un-linked would be a false negative.
+  test("a malformed concept that ALSO links tasks fails the gate instead of silently passing (LORE-27; a finding since LCLI-606)", () => {
+    // A malformed concept that links a task is reconciliation-relevant: `lore sync` would refuse to
+    // touch it, so treating it as un-linked would be a false negative. Before LCLI-606 this was a
+    // run-aborting rejection (`complete: false`, first error only); it is now the same ordinary
+    // `frontmatter` finding `lore validate` reports, and the parse throw is not ALSO raised for it.
     writeDoc(
       "stories/bad.md",
       "---\ntype: Story\nstatus: 12345\ntasks:\n  - lore-1\n---\n# Bad\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n",
@@ -2313,19 +2317,25 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
       {},
       {
         get(): never {
-          throw new Error("no adapter method should ever be called -- the throw happens before any Backlog IO");
+          throw new Error("no adapter method should ever be called for a concept that fails its frontmatter");
         },
       },
     ) as BacklogAdapter;
 
-    // needsReconciliation is true (the scan found a linked-but-invalid concept), so runCheck takes
-    // its async path and returns a rejecting Promise, not a synchronous throw.
-    const result = runCheck(opts([], poison));
-    expect(result).toBeInstanceOf(Promise);
-    await expect(result).rejects.toThrow(/invalid Story frontmatter/);
+    const o = opts([], poison);
+    // No reconcilable concept remains and no scan error is carried, so the run stays synchronous.
+    const code = runCheck(o);
+    expect(code).toBe(EXIT_CODES.validation);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(parsed.data.complete).toBe(true);
+    const frontmatter = parsed.data.findings.filter((f: { rule: string }) => f.rule === "frontmatter");
+    expect(frontmatter).toHaveLength(1); // reported once: as a finding, never also as a thrown error
+    expect(frontmatter[0]).toMatchObject({ severity: "error", file: "stories/bad.md" });
+    expect(frontmatter[0].message).toMatch(/invalid Story frontmatter/);
+    expect((o.stderr as ReturnType<typeof capture>).text()).not.toMatch(/invalid Story frontmatter/);
   });
 
-  test("the already-computed report survives even a malformed-linked-concept rejection (LORE-27 regression)", async () => {
+  test("the already-computed report survives alongside a malformed-linked-concept finding (LORE-27 regression)", () => {
     writeDoc("adr/x.md", ref("X", "[ghost](../reference/ghost.md)."));
     writeDoc(
       "stories/bad.md",
@@ -2334,20 +2344,21 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     const poison = new Proxy(
       {},
       {
-        get: (): never => {
-          throw new Error("unreachable");
+        get(): never {
+          throw new Error("no adapter method should ever be called for a concept that fails its frontmatter");
         },
       },
     ) as BacklogAdapter;
 
     const o = opts([], poison);
-    await expect(runCheck(o)).rejects.toThrow(/invalid Story frontmatter/);
+    expect(runCheck(o)).toBe(EXIT_CODES.validation);
     const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
     expect(parsed.kind).toBe("check.report");
     expect(parsed.data.findings.some((f: { rule: string }) => f.rule === "broken-link")).toBe(true);
+    expect(parsed.data.findings.some((f: { rule: string }) => f.rule === "frontmatter")).toBe(true);
   });
 
-  test("advisories flush before the report is emitted, even on a malformed-linked-concept rejection (LORE-27 regression)", async () => {
+  test("advisories flush before the report is emitted, even with a malformed linked concept (LORE-27 regression)", () => {
     // Matches every other path in runCheck: flushing after emit would mean a failing emit() drops
     // the advisories entirely (exactly the bug class fixed for the async rejection path).
     writeFileSync(join(root, "docs", "real.md"), ref("R", "Body."));
@@ -2359,8 +2370,8 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     const poison = new Proxy(
       {},
       {
-        get: (): never => {
-          throw new Error("unreachable");
+        get(): never {
+          throw new Error("no adapter method should ever be called for a concept that fails its frontmatter");
         },
       },
     ) as BacklogAdapter;
@@ -2369,7 +2380,7 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     const stdout = { write: (): void => void order.push("stdout") };
     const stderr = { write: (): void => void order.push("stderr") };
     const o = { root, output: JSON_CTX, args: [], adapter: poison, stdout, stderr };
-    await expect(runCheck(o)).rejects.toThrow(/invalid Story frontmatter/);
+    expect(runCheck(o)).toBe(EXIT_CODES.validation);
     expect(order[0]).toBe("stderr");
   });
 
@@ -2410,13 +2421,10 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     ).toBe(true);
   });
 
-  test("one bundle root's concept-scan failure does not discard another root's drift findings (LORE-27 regression)", async () => {
-    // Distinct from the test above: this failure originates in the concept-scan pass
-    // (tryConceptsForBundle, which itself runs synchronously per root), before any async
-    // reconciliation even begins -- a bare `bundles.map()` over that scan would abort for EVERY
-    // root the instant one root's scan throws, discarding drift that was never even computed for
-    // the others (not just already-computed-and-lost). The overall runCheck() call is still async
-    // either way (needsReconciliation is true), same as every other reconciliation-rejection test.
+  test("one bundle root's malformed linked concept does not discard another root's drift findings (LORE-27 regression)", async () => {
+    // Before LCLI-606 root "b"'s malformed concept was a concept-SCAN failure, and this proved a bare
+    // `bundles.map()` could not abort every root on it. It is now an ordinary finding; the property
+    // kept is the same one: root "a"'s drift is still computed and reported beside it.
     mkdirSync(join(root, "a"), { recursive: true });
     mkdirSync(join(root, "b"), { recursive: true });
     writeFileSync(join(root, "a", "index.md"), "# A\n\nClean.\n");
@@ -2429,13 +2437,12 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
 
     const o = { root, output: JSON_CTX, args: ["a", "b"], adapter, stdout: capture(), stderr: capture() };
-    await expect(runCheck(o)).rejects.toThrow(/invalid Story frontmatter/);
+    expect(await runCheck(o)).toBe(EXIT_CODES.validation);
     const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
-    expect(
-      parsed.data.findings.some(
-        (f: { rule: string; file: string }) => f.rule === "managed-block-drift" && f.file === "a/x.md",
-      ),
-    ).toBe(true);
+    expect(parsed.data.complete).toBe(true);
+    const found = parsed.data.findings.map((f: { rule: string; file: string }) => `${f.rule} ${f.file}`);
+    expect(found).toContain("managed-block-drift a/x.md");
+    expect(found).toContain("frontmatter b/bad.md");
   });
 
   test("a non-docs bundle root's drift message never suggests `lore sync` (it can't fix that root)", async () => {
@@ -2486,33 +2493,30 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     ).toBe(true);
   });
 
-  test("a later file's scan failure does not discard an earlier file's already-scanned concept in the SAME bundle (LORE-27 regression)", async () => {
-    // Distinct from the test above (which fails during reconcileDriftFindings, after the scan
-    // already succeeded): this file fails during the concept-SCAN stage itself
-    // (tryConceptsForBundle). An earlier version shared one try/catch across that whole loop, so
-    // this failure silently discarded stories/a.md's ALREADY-collected concept too, not just
-    // stories/bad.md's -- losing a.md's real drift finding entirely, before reconciliation even ran.
+  test("a later malformed linked file does not discard an earlier file's already-scanned concept in the SAME bundle (LORE-27 regression)", async () => {
+    // An earlier version shared one try/catch across the whole scan loop, so a later file's failure
+    // discarded stories/a.md's ALREADY-collected concept too. Since LCLI-606 the malformed file is a
+    // finding rather than a scan failure; stories/a.md's drift must still be found beside it.
     writeDoc("stories/a.md", storyDoc("A", ["lore-1"], "done")); // stale (empty) block -- real drift, scans fine
     writeDoc(
-      "stories/bad.md", // processed after a.md; malformed AND tasks:-linked -- fails during the scan itself
+      "stories/bad.md", // processed after a.md; malformed AND tasks:-linked
       "---\ntype: Story\nstatus: 12345\ntasks:\n  - lore-1\n---\n# Bad\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n",
     );
     const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
 
     const o = opts([], adapter);
-    await expect(runCheck(o)).rejects.toThrow(/invalid Story frontmatter/);
+    expect(await runCheck(o)).toBe(EXIT_CODES.validation);
     const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
-    expect(
-      parsed.data.findings.some(
-        (f: { rule: string; file: string }) => f.rule === "managed-block-drift" && f.file === "stories/a.md",
-      ),
-    ).toBe(true);
+    const found = parsed.data.findings.map((f: { rule: string; file: string }) => `${f.rule} ${f.file}`);
+    expect(found).toContain("managed-block-drift stories/a.md");
+    expect(found).toContain("frontmatter stories/bad.md");
   });
 
   test("a tasks:-linked concept violating a custom-profile-required field is caught by check's own scan, matching validate/query/sync (LORE-89)", async () => {
     // The built-in default Story schema has no "owner" field at all, so this doc would otherwise
     // pass check silently (the exact false negative LORE-89 fixes) — the project's own profile
-    // requires it, and lore query/validate/sync already correctly reject the identical file.
+    // requires it, and lore query/validate/sync already correctly reject the identical file. Since
+    // LCLI-606 it is validate's own `frontmatter` finding, not a run-aborting rejection.
     mkdirSync(join(root, ".lore"), { recursive: true });
     writeFileSync(
       join(root, ".lore/profile.toml"),
@@ -2524,9 +2528,32 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     );
     const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
 
-    const result = runCheck(opts([], adapter));
-    await expect(result).rejects.toThrow(LoreError);
-    await expect(result).rejects.toThrow(/owner/);
+    const o = opts([], adapter);
+    expect(await runCheck(o)).toBe(EXIT_CODES.validation);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    const frontmatter = parsed.data.findings.filter((f: { rule: string }) => f.rule === "frontmatter");
+    expect(frontmatter).toHaveLength(1);
+    expect(frontmatter[0]).toMatchObject({ severity: "error", file: "stories/x.md" });
+    expect(frontmatter[0].message).toMatch(/owner/);
+  });
+
+  test("[section] a tasks:-linked Story missing its required section fails on required-section and is still reconciled (LCLI-606)", async () => {
+    // The shape of the one fleet document LCLI-598 measured: a Story carrying `tasks:` with no
+    // `## Acceptance criteria`. Before LCLI-606 check parsed it fully and still said nothing, since a
+    // missing section never throws. It must now fail on validate's rule, and — because a missing
+    // section does not stop `lore sync` — still be reconciled, so its real drift is reported too.
+    const reconciled = regenerateTaskBlock(storyDoc("X", ["lore-1"], "todo"), [doneRow], {
+      docPath: "docs/stories/x.md",
+    });
+    writeDoc("stories/x.md", reconciled.replace("## Acceptance criteria\n\n- It works.\n\n", ""));
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const o = opts([], adapter);
+    expect(await runCheck(o)).toBe(EXIT_CODES.validation);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(parsed.data.complete).toBe(true);
+    const found = parsed.data.findings.map((f: { rule: string; file: string }) => `${f.rule} ${f.file}`).sort();
+    expect(found).toEqual(["required-section stories/x.md", "status-drift stories/x.md"]);
   });
 
   test("a tasks:-linked concept satisfying the custom profile's required field passes check cleanly (LORE-89, no regression)", async () => {
@@ -2654,14 +2681,10 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     }
   });
 
-  test("a bundle root's own concept-scan error still wins over another root's shared config failure, in argument order (LORE-50 regression)", async () => {
-    // Reproduces the exact regression an earlier version of the LORE-50 pooling introduced: root "b"
-    // has its OWN scan error (a malformed concept -- no Backlog IO involved at all) and comes FIRST in
-    // argument order; root "a" has a real eligible concept that only fails because the shared config
-    // is ALSO broken. A version that short-circuited computeDriftFindings on the pooled config failure
-    // discarded b's own (more specific, actionable) scan error in favor of the generic
-    // config-validation error, regardless of argument order -- breaking the documented "first error,
-    // in bundle-argument order" contract.
+  test("a bundle root's malformed linked concept is a finding, and another root's shared config failure still rejects (LORE-50; LCLI-606)", async () => {
+    // Before LCLI-606 root "b"'s malformed concept was a concept-SCAN error that won over root "a"'s
+    // config failure by argument order. It is now an ordinary finding, so it no longer competes for
+    // the run's one error: the config failure is that error, and b's defect is still reported.
     mkdirSync(join(root, ".lore"), { recursive: true });
     writeFileSync(join(root, ".lore", "config.toml"), '[reconcile.overrides]\nCancelled = "bogus"\n');
     mkdirSync(join(root, "a"), { recursive: true });
@@ -2670,13 +2693,139 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     writeFileSync(join(root, "b", "index.md"), "# B\n\nClean.\n");
     writeFileSync(join(root, "a", "x.md"), storyDoc("A", ["lore-1"], "done")); // real eligible concept
     writeFileSync(
-      join(root, "b", "bad.md"), // b's ONLY concept fails to scan at all -- b collects zero concepts
+      join(root, "b", "bad.md"),
       "---\ntype: Story\nstatus: 12345\ntasks:\n  - lore-2\n---\n# Bad\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n",
     );
     const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
 
     const o = { root, output: JSON_CTX, args: ["b", "a"], adapter, stdout: capture(), stderr: capture() };
-    await expect(runCheck(o)).rejects.toThrow(/invalid Story frontmatter/);
+    await expect(runCheck(o)).rejects.toThrow(/bogus/);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(parsed.data.complete).toBe(false);
+    expect(
+      parsed.data.findings.some(
+        (f: { rule: string; file: string }) => f.rule === "frontmatter" && f.file === "b/bad.md",
+      ),
+    ).toBe(true);
+  });
+
+  // ── The concept-scan error path, reached since LCLI-606 by a file judged in two contexts ──────
+  //
+  // Since LCLI-606 a malformed linked concept is an ordinary finding, so the scan-error carry needs
+  // a file whose reconciliation parse throws a defect NO finding names. The bundle-root `index.md`
+  // is one: `lore validate` (and so check's per-file rules) judge it by the BUILT-IN profile, while
+  // check's reconciliation parse uses the bundle's own profile. Under a profile requiring `owner`
+  // on a Reference, a root index carrying `tasks:` is clean for validate and throws for the parse.
+
+  /** A profile requiring `owner` on a Reference; Story keeps `tasks` for reconciliation. */
+  const OWNER_PROFILE =
+    '[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "Reference"\nfields = { owner = { required = true }, tasks = { kind = "list" } }\n\n[[types]]\nname = "Story"\nfields = { tasks = { kind = "list" } }\n';
+  /** A bundle-root index with `tasks:` and no `owner`: validate-clean, parse-rejected under OWNER_PROFILE. */
+  const TRAP_INDEX = "---\ntype: Reference\ntitle: Docs\ntasks: []\n---\n# Docs\n";
+
+  function plantTrap(indexDir = "docs"): void {
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(join(root, ".lore", "profile.toml"), OWNER_PROFILE);
+    writeFileSync(join(root, indexDir, "index.md"), TRAP_INDEX);
+  }
+
+  const POISON = new Proxy(
+    {},
+    {
+      get(): never {
+        throw new Error("no adapter method should be called: the scan error precedes any Backlog IO");
+      },
+    },
+  ) as BacklogAdapter;
+
+  test("[scan-error] a root index the bundle profile rejects and validate accepts is carried as the run's error", async () => {
+    plantTrap();
+    const o = opts([], POISON);
+    const result = runCheck(o);
+    expect(result).toBeInstanceOf(Promise);
+    await expect(result).rejects.toThrow(/invalid Reference frontmatter in index\.md: owner/);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(parsed.data.complete).toBe(false);
+    // validate judges this file clean, so check's per-file rules report nothing for it either.
+    expect(parsed.data.findings.filter((f: { file: string }) => f.file === "index.md")).toEqual([]);
+  });
+
+  test("[scan-error] the already-computed report is emitted before the rejection (LORE-27)", async () => {
+    plantTrap();
+    writeDoc("adr/x.md", ref("X", "[ghost](../reference/ghost.md)."));
+    const o = opts([], POISON);
+    await expect(runCheck(o)).rejects.toThrow(/owner/);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(parsed.kind).toBe("check.report");
+    expect(parsed.data.findings.some((f: { rule: string }) => f.rule === "broken-link")).toBe(true);
+  });
+
+  test("[scan-error] advisories flush before the report, even when the scan error rejects (LORE-27)", async () => {
+    plantTrap();
+    writeFileSync(join(root, "docs", "real.md"), ref("R", "Body."));
+    symlinkSync(join(root, "docs", "real.md"), join(root, "docs", "link.md"));
+    const order: string[] = [];
+    const stdout = { write: (): void => void order.push("stdout") };
+    const stderr = { write: (): void => void order.push("stderr") };
+    await expect(runCheck({ root, output: JSON_CTX, args: [], adapter: POISON, stdout, stderr })).rejects.toThrow(
+      /owner/,
+    );
+    expect(order[0]).toBe("stderr");
+  });
+
+  test("[scan-error] a scan error does not discard another file's concept in the SAME root (LORE-27 round 10)", async () => {
+    plantTrap();
+    writeDoc("stories/a.md", storyDoc("A", ["lore-1"], "done")); // stale (empty) block -- real drift
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+    const o = opts([], adapter);
+    await expect(runCheck(o)).rejects.toThrow(/owner/);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(
+      parsed.data.findings.some(
+        (f: { rule: string; file: string }) => f.rule === "managed-block-drift" && f.file === "stories/a.md",
+      ),
+    ).toBe(true);
+  });
+
+  test("[scan-error] one root's scan error does not discard another root's drift findings (LORE-27 round 9)", async () => {
+    plantTrap();
+    mkdirSync(join(root, "a"), { recursive: true });
+    writeFileSync(join(root, "a", "x.md"), storyDoc("A", ["lore-1"], "done")); // stale (empty) block
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+    const o = { root, output: JSON_CTX, args: ["docs", "a"], adapter, stdout: capture(), stderr: capture() };
+    await expect(runCheck(o)).rejects.toThrow(/owner/);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(
+      parsed.data.findings.some(
+        (f: { rule: string; file: string }) => f.rule === "managed-block-drift" && f.file === "a/x.md",
+      ),
+    ).toBe(true);
+  });
+
+  test("[scan-error] a root's own scan error wins over a later root's shared config failure, in argument order (LORE-50)", async () => {
+    plantTrap();
+    writeFileSync(join(root, ".lore", "config.toml"), '[reconcile.overrides]\nCancelled = "bogus"\n');
+    mkdirSync(join(root, "a"), { recursive: true });
+    writeFileSync(join(root, "a", "x.md"), storyDoc("A", ["lore-1"], "done")); // eligible: fails only on the config
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+    const o = { root, output: JSON_CTX, args: ["docs", "a"], adapter, stdout: capture(), stderr: capture() };
+    await expect(runCheck(o)).rejects.toThrow(/owner/);
+  });
+
+  test("[scan-error] a parse throw is NOT suppressed when the file's finding names a different defect", async () => {
+    // validate (built-in profile) sees a mistyped `title`; the bundle-profile parse ALSO sees the
+    // missing `owner`. Suppressing on "the file has some frontmatter finding" would drop the owner
+    // defect silently; the exact-message guard keeps it as the run's error.
+    plantTrap();
+    writeFileSync(join(root, "docs", "index.md"), TRAP_INDEX.replace("title: Docs", "title: 123"));
+    const o = opts([], POISON);
+    await expect(runCheck(o)).rejects.toThrow(/owner/);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    const mine = parsed.data.findings.filter((f: { file: string }) => f.file === "index.md");
+    expect(mine).toHaveLength(1);
+    expect(mine[0]).toMatchObject({ severity: "error", rule: "frontmatter" });
+    expect(mine[0].message).toMatch(/title/);
+    expect(mine[0].message).not.toMatch(/owner/);
   });
 });
 

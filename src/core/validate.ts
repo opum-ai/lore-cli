@@ -169,14 +169,20 @@ export function validateConceptText(
   findings.push(...resourceDriftFindings(path, concept, effective));
   findings.push(...quoteSafetyFindings(raw));
   if (hasStrayFrontmatterFence(concept.body)) {
-    findings.push({
-      severity: "error",
-      rule: "frontmatter",
-      message: `${path} contains a second frontmatter fence in its body (LCLI-372) -- likely a template that embedded its own frontmatter; remove the stray '---' block so only one frontmatter fence remains`,
-    });
+    findings.push({ severity: "error", rule: "frontmatter", message: strayFenceMessage(path) });
   }
 
   return finalize(path, concept.type, findings);
+}
+
+/**
+ * The one message for a second frontmatter fence in a body (LCLI-372), shared by this module's
+ * `frontmatter` finding and `lore check`'s own `double-frontmatter` rule so the two spell one defect
+ * identically — and so `check`, which reports it under `double-frontmatter`, can recognise this
+ * module's copy of it exactly and not report the defect twice (LCLI-606).
+ */
+export function strayFenceMessage(path: string): string {
+  return `${path} contains a second frontmatter fence in its body (LCLI-372) -- likely a template that embedded its own frontmatter; remove the stray '---' block so only one frontmatter fence remains`;
 }
 
 /**
