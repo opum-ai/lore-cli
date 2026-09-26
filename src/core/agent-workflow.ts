@@ -246,13 +246,19 @@ export function parseWorkflowBinding(raw: string): WorkflowBinding {
  * so a hit would let a document `inputRevisions` never names change a pinned
  * `packDigest`. Without it, the pack's bytes and digest are exactly the
  * pre-LCLI-575 ones, and every input that can move the digest is listed.
+ *
+ * The bundle's built-in Constitution, when `options.constitutionPath` names one,
+ * IS auto-pinned here, as in every other pack (LCLI-609, OPAG-425 R8 as
+ * clarified by Amendment 4). That keeps the invariant above: the auto-pin is a
+ * catalog entry, so its file is in `inputRevisions` and its reference in
+ * `sources`. With no Constitution the projection is byte-identical to before.
  */
 export function compileAgentWorkflowProjection(
   snapshot: AgentProfileSnapshot,
   graph: BundleGraph,
   profileName: string,
   request: WorkflowRequest,
-  options: { root: string; maxTokens?: number },
+  options: { root: string; maxTokens?: number; constitutionPath?: string },
 ): AgentWorkflowProjection {
   const context = compileAgentContextWithoutQueryHits(
     snapshot,
@@ -260,6 +266,7 @@ export function compileAgentWorkflowProjection(
     profileName,
     request.task.text,
     options.maxTokens,
+    options.constitutionPath,
   );
   const pinned = request.expect?.contextDigest;
   if (pinned !== undefined && pinned !== context.packDigest) {

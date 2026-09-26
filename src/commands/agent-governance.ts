@@ -1,6 +1,8 @@
 /**
  * commands/agent-governance.ts — find the documents `lore agents` renders into its managed block
- * (LCLI-597, OPAG-425 R8).
+ * (LCLI-597, OPAG-425 R8), and the Constitution `lore agent context` auto-pins into every pack
+ * (LCLI-609, R8 as clarified by Amendment 4) — one discovery, {@link discoverAgentGovernanceDocs},
+ * for both.
  *
  * When the bundle has a Constitution, the `lore:agents` block carries its path, version, and each
  * principle's id with its MUST / MUST NOT rules; when it has a Constants document, one pointer line
@@ -55,9 +57,20 @@ const BUNDLE_ROOT_INDEX_DISPLAY = posix.join(DOCS_DIR, BUNDLE_ROOT_INDEX);
  * the block byte-identical to what it was before R8.
  */
 export function readAgentGovernance(root: string): string[] {
+  return agentBlockLines(discoverAgentGovernanceDocs(root));
+}
+
+/**
+ * The first document of each built-in type that has an `agentBlock` facet, keyed by canonical type
+ * (`Constitution`, `Constants`): empty when `docs/` does not exist or holds neither. This is the one
+ * definition of "the bundle's Constitution" — `lore agents` renders from it and `lore agent context`
+ * auto-pins from it (LCLI-609, OPAG-425 R8 as clarified by Amendment 4), so the two can never
+ * disagree about which document governs, or about a profile-declared type (R12) being none.
+ */
+export function discoverAgentGovernanceDocs(root: string): ReadonlyMap<string, AgentBlockDoc> {
   const docsRoot = join(root, DOCS_DIR);
   if (!isDirectory(docsRoot)) {
-    return [];
+    return new Map();
   }
   const bundleProfile = profileForBundle(loadProfile({ root }), readBundleState(docsRoot));
   const docs = new Map<string, AgentBlockDoc>();
@@ -82,7 +95,7 @@ export function readAgentGovernance(root: string): string[] {
     }
     docs.set(rule.type, { path: display, frontmatter, body });
   }
-  return agentBlockLines(docs);
+  return docs;
 }
 
 /**
