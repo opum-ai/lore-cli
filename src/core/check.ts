@@ -96,10 +96,19 @@ export type CheckSeverity = Severity;
  * `required-section` are `lore validate`'s own profile-shape errors for the same document, under
  * validate's rule names. `singleton-type` is a second document of a type a bundle may hold only one
  * of (error), counted per selected bundle root.
+ *
+ * `source-of-truth`, `zero-entries-read` and `deprecated-reference` (LCLI-596) come from a
+ * registered type's BUNDLE rules (`TypeRule.bundle`), today only the built-in Constants type:
+ * an entry whose JSON/TOML/YAML `source_of_truth` disagrees with its `value` or cannot be read
+ * (error), a Constants document from which no entry was read -- the positive control (error), and a
+ * link citing a deprecated entry (warning, on the citing file).
  */
 export type CheckRule =
   | "type-shape"
   | "singleton-type"
+  | "source-of-truth"
+  | "zero-entries-read"
+  | "deprecated-reference"
   | "frontmatter"
   | "required-section"
   | "broken-link"
@@ -205,6 +214,15 @@ export interface CheckReport {
    * affect the error/warning counts or exit code.
    */
   readonly skippedOutOfBundleLinkCount: number;
+  /**
+   * How much each registered type's bundle rules READ (LCLI-596, OPAG-425 R7), keyed by canonical
+   * type and summed across the selected bundle roots — for Constants: `entries`,
+   * `comparableSources` (compared against a JSON/TOML/YAML file), `notComparableSources`, and
+   * `references` (links into the document). Printed beside the findings so a clean result can be
+   * told apart from a pass that read nothing. Present only when a document of such a type was
+   * found; informational, never affects the exit code (its failures are findings).
+   */
+  readonly readCounts?: Readonly<Record<string, Readonly<Record<string, number>>>>;
   /**
    * Whether every pass that was supposed to run for this report actually finished. Always `true`
    * from this module (`checkBundle`/`summarize` are fully synchronous and never partial) — it only
@@ -967,30 +985,11 @@ function linkFindings(
   fromId: string,
   slugsById: ReadonlyMap<string, ReadonlySet<string>>,
 ): CheckFinding[] {
-  const trimmed = target.trim();
-  const fragment = fragmentOf(trimmed);
-  const path = pathPart(trimmed);
-
-  if (path === "") {
-    // A pure `#fragment` — an in-page anchor; resolve it against this file's own headings.
-    return anchorFindings(target, file, fromId, fragment, slugsById);
+  const internal = resolveInternalTarget(target, dir, fromId);
+  if (internal === null) {
+    return [];
   }
-  if (isExternalTarget(path)) {
-    return []; // external scheme / protocol-relative — not an internal cross-link
-  }
-  const decoded = decodeTarget(path);
-  if (!/\.md$/i.test(decoded)) {
-    return []; // a non-`.md` asset link — not a concept edge (matches the bundle resolver)
-  }
-  // A `/`-absolute destination resolves against the bundle root, not the linking file's
-  // directory (it is non-portable — `validateLink` warns — but its existence is judged from
-  // the root so the broken-link message names the path the author meant). A relative path
-  // joins to the linking dir as usual.
-  const resolved = posix.normalize(decoded.startsWith("/") ? decoded.slice(1) : posix.join(dir, decoded));
-  if (resolved === ".." || resolved.startsWith("../")) {
-    return []; // escapes the bundle root — a cross-bundle link, out of scope for this pass
-  }
-  const targetId = idFromPath(resolved);
+  const { targetId, fragment } = internal;
   if (!slugsById.has(targetId)) {
     return [
       {
@@ -1002,6 +1001,81 @@ function linkFindings(
     ];
   }
   return anchorFindings(target, file, targetId, fragment, slugsById);
+}
+
+/**
+ * Where a body-link destination points inside the bundle: the target's concept id (the linking
+ * file's own for a pure `#fragment`) and its raw fragment, or `null` for anything out of the link
+ * gate's scope — an external URL, a non-`.md` asset, or a target that escapes the bundle root. The
+ * ONE resolution rule shared by {@link linkFindings} and {@link linksInto}, so a link the gate
+ * judges is the same link a type's bundle rules count.
+ */
+function resolveInternalTarget(
+  target: string,
+  dir: string,
+  fromId: string,
+): { readonly targetId: string; readonly fragment: string } | null {
+  const trimmed = target.trim();
+  const fragment = fragmentOf(trimmed);
+  const path = pathPart(trimmed);
+  if (path === "") {
+    // A pure `#fragment` — an in-page anchor; it resolves against this file's own headings.
+    return { targetId: fromId, fragment };
+  }
+  if (isExternalTarget(path)) {
+    return null; // external scheme / protocol-relative — not an internal cross-link
+  }
+  const decoded = decodeTarget(path);
+  if (!/\.md$/i.test(decoded)) {
+    return null; // a non-`.md` asset link — not a concept edge (matches the bundle resolver)
+  }
+  // A `/`-absolute destination resolves against the bundle root, not the linking file's
+  // directory (it is non-portable — `validateLink` warns — but its existence is judged from
+  // the root so the broken-link message names the path the author meant). A relative path
+  // joins to the linking dir as usual.
+  const resolved = posix.normalize(decoded.startsWith("/") ? decoded.slice(1) : posix.join(dir, decoded));
+  if (resolved === ".." || resolved.startsWith("../")) {
+    return null; // escapes the bundle root — a cross-bundle link, out of scope for this pass
+  }
+  return { targetId: idFromPath(resolved), fragment };
+}
+
+/** One link into a file, as {@link linksInto} reports it. */
+export interface InboundLinkRecord {
+  /** The citing file's bundle-root-relative path. */
+  readonly file: string;
+  /** The link's fragment, percent-decoded (`""` when it has none). */
+  readonly fragment: string;
+}
+
+/**
+ * Every body link in `files` that resolves to one of `targets` (bundle-root-relative paths), keyed
+ * by target path, in file-then-document order — the inbound citations a registered type's bundle
+ * rules count and judge (LCLI-596, OPAG-425 R6). Resolution is {@link resolveInternalTarget}, the
+ * link gate's own, so a link `lore check` resolves is counted here and one it skips is not. Pure:
+ * it parses the bytes it is given. Every target has an entry, empty when nothing links to it.
+ */
+export function linksInto(
+  files: readonly CheckInputFile[],
+  targets: readonly string[],
+): Map<string, InboundLinkRecord[]> {
+  const byId = new Map<string, string>(targets.map((path) => [idFromPath(path), path]));
+  const links = new Map<string, InboundLinkRecord[]>(targets.map((path) => [path, []]));
+  if (targets.length === 0) {
+    return links;
+  }
+  for (const file of files) {
+    const dir = posix.dirname(file.path);
+    const fromId = idFromPath(file.path);
+    for (const target of extractLinkTargets(fromMarkdown(bodyText(file.raw)))) {
+      const internal = resolveInternalTarget(target, dir, fromId);
+      const path = internal === null ? undefined : byId.get(internal.targetId);
+      if (internal !== null && path !== undefined) {
+        links.get(path)?.push({ file: file.path, fragment: decodeTarget(internal.fragment) });
+      }
+    }
+  }
+  return links;
 }
 
 /** Whether a relative Markdown link escapes the selected bundle root. */

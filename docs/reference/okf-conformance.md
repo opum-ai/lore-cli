@@ -242,6 +242,29 @@ bundle-scoped, so only `lore check` can judge it. These rules attach only to
 lore's built-in Constitution: a `.lore/profile.toml` that declares its own
 `Constitution` keeps exactly the fields and sections it declares.
 
+The lore-only `Constants` type (LCLI-596) is declared on every OKF version for
+the same reason, and is also a `singleton-type`. Its `type-shape` rules, run by
+both `lore validate` and `lore check`, cover a malformed `version` (SemVer) or
+`last_reviewed` (calendar date), an empty `owner`, and every entry: a `###`
+heading under a `##` group whose text is an id matching
+`^[a-z0-9]+(\.[a-z0-9-]+)+$`, unique, owning its own heading anchor, followed
+only by a bullet list of `name: value` fields. `value`, `meaning`,
+`source_of_truth` (`<path>#<key>` or `this-doc`) and `status` (`active`,
+`deprecated`, `retired`) are required; `kind`, `avoid`, `owner`, `used_by`,
+`hot` and `replaced_by` are optional, and any other field fails. A deprecated
+entry must name an active `replaced_by`. Three further rules are bundle-scoped,
+so only `lore check` runs them. `source-of-truth` (error) is an entry whose
+JSON, TOML or YAML source holds a different value at its key, or whose source
+cannot be read or parsed, or lacks the key. A number there is rendered by
+JavaScript's `String()` and a boolean as `true` or `false`, then compared as
+exact text; `this-doc`, a retired entry and any other file extension are not
+compared. `zero-entries-read` (error) is a Constants document from which no
+entry was read, the gate's positive control. `deprecated-reference` (warning)
+is a link, on the citing file, to a deprecated entry's anchor; a link to an
+anchor that does not exist is already `broken-anchor`. `lore check` reports
+what it read as `readCounts` (entries, comparable and not-comparable sources,
+references) beside its findings.
+
 `relation-version-drift` stays a warning on principle rather than convenience.
 Lore can see that a cited version moved; it cannot see whether the citing
 argument still holds, so it reports possible impact and never a correctness

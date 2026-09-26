@@ -20,6 +20,7 @@ describe("buildTypeVocabulary — the default (story-convention) profile", () =>
       "Runbook",
       "Reference",
       "Constitution",
+      "Constants",
       "Attested Computation",
     ]);
   });

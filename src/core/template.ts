@@ -47,6 +47,7 @@ import { encodePathSegments } from "./links";
 import type { BundleState, OkfVersion } from "./okf-version";
 import {
   ATTESTED_COMPUTATION_TYPE,
+  CONSTANTS_TYPE,
   CONSTITUTION_TYPE,
   defaultProfile,
   type Profile,
@@ -574,6 +575,52 @@ materially expands one, PATCH clarifies wording without changing meaning.
 `;
 
 /**
+ * Constants (OPAG-425 R9, LCLI-596): one example group holding one example entry, the field list
+ * spelled out in a comment, the facts-not-rules-or-secrets guidance, and the same CODEOWNERS comment
+ * as Constitution's — saying plainly that lore cannot enforce who edits the file. The example entry
+ * is `source_of_truth: this-doc`, so a fresh document passes R7 without naming a file the project
+ * may not have. The field syntax is type-rules.ts's.
+ */
+const CONSTANTS_TEMPLATE = `
+# {{title}}
+
+<!--
+Protect this file with a CODEOWNERS entry and a required review on its path. lore checks the shape
+of this document and compares its values with their sources; it cannot enforce who edits it, so that
+control belongs to your repository host.
+-->
+
+<!--
+Record FACTS here: named concrete values such as ports, versions, limits and paths, never rules
+(those belong in a Constitution) and never secrets (credentials, tokens, private URLs).
+
+Group entries under "##" headings. Each entry is a "###" heading whose text is its id, lower-case
+dot-separated segments such as "service.http-port", unique here and never reused. Cite an entry with
+an ordinary link to its heading anchor. Under the heading, one bullet list of "name: value" fields:
+
+- value: the value itself
+- meaning: what it is for
+- source_of_truth: "<repository-relative path>#<dotted.key>" in a JSON, TOML or YAML file, whose
+  value lore check compares with this one; or "this-doc" when this document is the source
+- status: active, deprecated or retired
+- optional: kind, avoid, owner, used_by, hot (true or false), and replaced_by (an active entry's
+  id, required when status is deprecated)
+
+Bump version for every change: MAJOR removes an entry or changes a value, MINOR adds one.
+-->
+
+## Documentation
+
+### docs.bundle-root
+
+- value: \`docs\`
+- meaning: The directory that holds this project's lore documentation bundle.
+- source_of_truth: this-doc
+- status: active
+- kind: path
+`;
+
+/**
  * The built-in body template content lore ships for its story-convention and OKF types — the
  * zero-config fallback when no `.lore/templates/<type>.md` is present. Keyed by canonical type
  * name (a plain string map, **independent of the active profile**): a custom-profile type lore
@@ -589,6 +636,7 @@ const BUILTIN_TEMPLATES: Readonly<Record<string, string>> = Object.freeze({
   Epic: EPIC_TEMPLATE,
   Arc: ARC_TEMPLATE,
   [CONSTITUTION_TYPE]: CONSTITUTION_TEMPLATE,
+  [CONSTANTS_TYPE]: CONSTANTS_TEMPLATE,
   [ATTESTED_COMPUTATION_TYPE]: ATTESTED_COMPUTATION_TEMPLATE,
 });
 

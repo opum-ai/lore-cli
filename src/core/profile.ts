@@ -18,7 +18,7 @@
  *
  * - **Zero-config.** A missing `profile.toml` is not an error: {@link loadProfile}
  *   returns the built-in {@link defaultProfile} — the story-convention types, the lore-only
- *   Constitution type, and the OKF 0.2 Attested Computation type. Consuming an OKF 0.1 bundle
+ *   Constitution and Constants types, and the OKF 0.2 Attested Computation type. Consuming an OKF 0.1 bundle
  *   omits the additive 0.2 spec type so it remains a tolerated producer extension there.
  * - **The declarative language is the boundary.** The grammar expresses field kinds,
  *   enums, list items, required-ness, required sections, and a template ref — and
@@ -68,6 +68,13 @@ export const ATTESTED_COMPUTATION_TYPE = "Attested Computation";
  * declared on every OKF version lore consumes -- see {@link storyConventionProfile}.
  */
 export const CONSTITUTION_TYPE = "Constitution";
+
+/**
+ * A project's catalogue of named concrete values -- ports, versions, limits, paths -- each a `###`
+ * entry citable by its heading anchor (OPAG-425 R1/R5, LCLI-596). A lore-only built-in, declared on
+ * every OKF version for the same reason as {@link CONSTITUTION_TYPE}.
+ */
+export const CONSTANTS_TYPE = "Constants";
 
 /** Where the declarative profile lives, relative to the repo root (ADR-0013). `.toml` wins over `.json`. */
 export const PROFILE_REL_PATH = ".lore/profile.toml";
@@ -1049,7 +1056,8 @@ const optionalStringList: FieldSpec = { required: false, kind: "list", items: { 
 
 /**
  * The built-in **story-convention** profile (AC#3): the six legacy types lore shipped before the
- * profile existed, the lore-only Constitution type (LCLI-595, on every OKF version), and OKF 0.2's
+ * profile existed, the lore-only Constitution and Constants types (LCLI-595/596, on every OKF
+ * version), and OKF 0.2's
  * additive Attested Computation type (0.2 only), re-expressed as data and run
  * through the same {@link compileProfile} as a loaded profile. Its generated validators are
  * byte-compatible with the old hand-authored Zod, with one documented narrowing: `supersedes` /
@@ -1121,6 +1129,19 @@ function storyConventionProfile(okfVersion: OkfVersion = CURRENT_OKF_VERSION): P
         },
         sections: ["Principles", "Governance", "Amendment log"],
       },
+      // Constants (OPAG-425 R1/R5, LCLI-596): on every OKF version for Constitution's reason above.
+      // Its `##` groups are the project's own, so no section is required; the entry shape (`###`
+      // ids, the field list, replaced_by) and the frontmatter FORMATS live in type-rules.ts, and
+      // the bundle-scoped rules (anchor citations, source_of_truth comparison) in `lore check`.
+      {
+        name: CONSTANTS_TYPE,
+        fields: {
+          version: requiredString,
+          last_reviewed: requiredString,
+          owner: requiredString,
+        },
+        sections: [],
+      },
       ...(okfVersion === "0.2" ? [{ name: ATTESTED_COMPUTATION_TYPE, fields: {}, sections: [] }] : []),
     ],
   };
@@ -1156,7 +1177,7 @@ function defaultProfileForVersion(okfVersion: OkfVersion): Profile {
  * profiles retain their explicitly-owned type vocabulary across versions. The built-in profile is
  * versioned: OKF 0.2 includes Attested Computation, while OKF 0.1 omits it so that additive OKF spec
  * type remains unknown and therefore tolerated under the 0.1 consumer contract. The lore-only
- * Constitution type is declared on both.
+ * Constitution and Constants types are declared on both.
  */
 export function profileForBundle(profile: Profile, state: BundleState): Profile {
   if (profile === DEFAULT_PROFILE || profile === LEGACY_DEFAULT_PROFILE) {
