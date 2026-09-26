@@ -148,15 +148,18 @@ counting: `upstream-backlog-watch.yml` fires on a schedule against whatever SHA
 commit — so a third, unrelated, green `schedule` run routinely appears alongside
 the two. Run verbatim against `ccda1dd7` on 2026-09-16 it returns exactly that:
 `35155792741` CI push success, `35155304664` CI pull_request failure, and
-`35090664272` Upstream Backlog.md --json tag watch schedule success.
+`35090664272` Upstream Backlog.md --json tag watch schedule success. Since
+LCLI-605 a landing SHA also carries a `Main fast-forward guard` push run, the
+guard's own workflow, which a docs-only promotion no longer skips.
 
 Main's landing commit is the one commit here that gets both, because `ci.yml`'s
 `push:` trigger is `branches: [main]` — LCLI-251 dropped `dev`, so a `dev` squash
 commit still gets no run of its own. The `pull_request` run necessarily contains
 `promotion is manual` failing **by design**: it exists to put an unmissable red X
 on any PR targeting `main`, so nobody lands a promotion with the merge button. The
-`push` run is the one that fires from the promotion itself and is where
-`main is fast-forward of dev` actually executes (it is `skipped` on every PR).
+`push` run is the one that fires from the promotion itself. Until LCLI-605 it
+was also where `main is fast-forward of dev` executed; that job now runs as its
+own `Main fast-forward guard` push run on the same SHA, and has no PR run at all.
 
 Measured across two promotions. 2026-09-16, landing `ccda1dd7`: `35155304664`
 (pull_request) failure whose ONLY red job is `promotion is manual`, and
@@ -179,11 +182,13 @@ writing the query above rather than the conclusion.
 Correcting it does not make a green push run a *gate*:
 `rules/branches/main` still returns `[]` (re-read 2026-09-16), so it is evidence,
 not enforcement. Two caveats keep the new claim honest. A docs-only promotion
-produces no push run at all, because that trigger carries `paths-ignore` for
+produces no `ci.yml` push run, because that trigger carries `paths-ignore` for
 Markdown below the root (`*/**/*.md`), the root `.md` files it lists by name,
 `docs/**`, `backlog/**` and `.claude/**`. `CLAUDE.md` and `README.md` are
 deliberately not ignored (LCLI-602): three required jobs read `CLAUDE.md`, and
-compile smoke runs `README.md`'s quickstart. And the gating evidence is
+compile smoke runs `README.md`'s quickstart. The fast-forward guard is NOT
+behind that filter: it lives in `main-fast-forward-guard.yml`, which carries no
+path filter (LCLI-605), so even a docs-only promotion runs it. And the gating evidence is
 still the run on the PR head that merged into `dev`, a third SHA again —
 `35030927529` on `02deee37` for the 2026-09-16 promotion, `34996243105` on
 `9d1d631d` for the one before. Cite the `dev`-side run, and say which one.
@@ -212,15 +217,20 @@ The two promotion guards (`promotion is manual`, `main is fast-forward of dev`) 
 deliberately NOT required contexts, for two different reasons that an earlier
 revision of this paragraph collapsed into one. `promotion is manual` runs only on
 PRs into `main`, so requiring it would leave the direct push with no run to
-satisfy. `main is fast-forward of dev` runs only on the PUSH to `main` (it is
-`skipped` on every PR, so a green promotion-PR rollup says nothing about it), and
+satisfy. `main is fast-forward of dev` runs only on the PUSH to `main` (its
+workflow has no `pull_request` trigger, so it does not appear in a promotion-PR
+rollup at all, and a green rollup says nothing about it), and
 fires from the very push it would gate, so it can only go red after the fact.
 It asserts both that the new tip already sits on `dev` and that the old tip is an
 ancestor of the new one (LCLI-514: before that it measured containment alone, and
-a rewind of `main` to an older `dev` commit stayed green). A docs-only push does
-not trigger it at all, because the `push` trigger carries `paths-ignore` for
-most Markdown (never `CLAUDE.md` or `README.md`), `docs/` and
-`.claude/`.
+a rewind of `main` to an older `dev` commit stayed green). It runs on every push
+to `main`, docs-only included -- except a head commit carrying a `[skip ci]`-style
+token, and a push whose tip predates LCLI-605, which runs that older tree's
+workflows instead: it lives in its own workflow,
+`main-fast-forward-guard.yml`, with no path filter (LCLI-605). Until then it sat in
+`ci.yml`, whose `push` path filter applies to the whole file, so a
+Markdown-only push (a rewind included) skipped the one guard `main` has.
+`test/ci-workflow.test.ts` pins that the guard workflow stays unfiltered.
 
 **Promotion shape, which `ci.yml` cites as procedure:** open a PR from `dev` into
 `main`, confirm the newest run per context on that exact SHA, then

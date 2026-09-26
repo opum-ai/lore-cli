@@ -18,7 +18,8 @@ import { resolve } from "node:path";
 // pair back into one check fails loudly rather than quietly re-opening the blind spot.
 
 const SCRIPT = resolve(import.meta.dir, "..", "scripts", "assert-main-fast-forward.sh");
-const CI_YML = resolve(import.meta.dir, "..", ".github", "workflows", "ci.yml");
+// The guard's own workflow since LCLI-605: ci.yml's push path filter used to skip it on a Markdown-only push.
+const GUARD_YML = resolve(import.meta.dir, "..", ".github", "workflows", "main-fast-forward-guard.yml");
 const ZERO = "0".repeat(40);
 
 // The script shells out to git and uses `mktemp`-style POSIX layout; the job runs on ubuntu.
@@ -123,12 +124,12 @@ describeOnPosix("main-fast-forward guard", () => {
     expect(r.out).not.toContain("both assertions hold");
   });
 
-  // WIRING. Every test above proves the LOGIC. None of them proves the workflow calls it, and on a
-  // pull request this job is `skipped` — so a green PR rollup says nothing about whether the job
-  // is wired correctly. quest-cli made this point about these exact two jobs. Reading ci.yml is
+  // WIRING. Every test above proves the LOGIC. None of them proves the workflow calls it, and its
+  // workflow has no pull_request trigger — so a green PR rollup says nothing about whether the job
+  // is wired correctly. quest-cli made this point about these exact two jobs. Reading the workflow is
   // the cheapest thing that fails when the wiring breaks.
-  test("ci.yml calls the script and passes BOTH pushed SHAs, not just the new one", () => {
-    const ci = readFileSync(CI_YML, "utf8");
+  test("the guard workflow calls the script and passes BOTH pushed SHAs, not just the new one", () => {
+    const ci = readFileSync(GUARD_YML, "utf8");
     expect(ci).toContain("scripts/assert-main-fast-forward.sh");
     // The missing input was the OLD tip. Without it, assertion 1 cannot exist at all.
     expect(ci).toMatch(/BEFORE:\s*\$\{\{\s*github\.event\.before\s*\}\}/);
