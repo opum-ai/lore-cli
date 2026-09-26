@@ -47,6 +47,7 @@ import { runSync } from "./commands/sync";
 import { runTasks } from "./commands/tasks";
 import { runTypes } from "./commands/types";
 import { runValidate } from "./commands/validate";
+import type { AgentPluginPort } from "./core/agent-plugins";
 import { buildManifest } from "./core/manifest";
 import { loadReferenceRetrievalGraph, loadRetrievalGraph, type RetrievalGraphLoader } from "./core/retrieval";
 import { EXIT_OK, EXIT_UNCAUGHT, LoreError, reportError, type Writer } from "./errors";
@@ -123,6 +124,8 @@ export interface RunContext {
   prompter?: InitPrompter;
   /** Injectable executable discovery for `lore init`; keeps router tests independent of the host PATH. */
   agentAvailability?: () => AgentAvailability;
+  /** How `lore init` and `lore agents --check` read the opum-lore marketplace plugin (LCLI-592); defaults to each runtime's own `plugin list --json`, or nothing under `LORE_AGENT_PLUGINS=off`. */
+  agentPlugins?: AgentPluginPort;
 }
 
 /**
@@ -419,6 +422,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
       adapter: context.adapter,
       prompter: context.prompter,
       agentAvailability: context.agentAvailability,
+      agentPlugins: context.agentPlugins,
     });
   },
   new: (args, context, output) =>
@@ -643,7 +647,13 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
     }),
   instructions: (args, context, output) => runInstructions({ output, args, stdout: context.stdout }),
   agents: (args, context, output) =>
-    runAgents({ root: context.cwd || process.cwd(), output, args, stdout: context.stdout }),
+    runAgents({
+      root: context.cwd || process.cwd(),
+      output,
+      args,
+      stdout: context.stdout,
+      agentPlugins: context.agentPlugins,
+    }),
   help: (args, context, output) => runHelp({ output, args, stdout: context.stdout }),
 };
 

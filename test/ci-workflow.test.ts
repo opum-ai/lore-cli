@@ -25,6 +25,11 @@ interface WorkflowJob {
 
 interface WorkflowDoc {
   on: {
+    push?: {
+      branches?: string[];
+      "paths-ignore"?: string[];
+    };
+    pull_request?: unknown;
     workflow_dispatch?: {
       inputs?: {
         ladybug_exact_hosts_only?: {
@@ -229,5 +234,149 @@ describe("ci.yml docs gate (LCLI-504)", () => {
     // context is absent rather than green — which blocks dev until an admin notices.
     // Same trap as an `if:` that evaluates false, reached through a dependency instead.
     expect(loadWorkflow().jobs["docs-gate"]?.needs).toBeUndefined();
+  });
+});
+
+describe("ci.yml push paths-ignore keeps CLAUDE.md and README.md in scope (LCLI-602)", () => {
+  /**
+   * GitHub's path-filter semantics, from the "Filter pattern cheat sheet" in the workflow-syntax
+   * reference: patterns match the WHOLE path from the repository root, `*` matches zero or more
+   * characters but never `/`, and `**` matches zero or more of any character. The cheat sheet's
+   * own examples fix the one subtle case — `docs/**\/*.md` matches `docs/README.md` and
+   * `**\/README.md` matches `README.md` — so a `**` followed by `/` also matches ZERO directories.
+   *
+   * Only the subset this workflow's push filter uses is implemented. Anything else (`?`, `+`, `[]`,
+   * a leading `!`) throws instead of guessing, so a future pattern that needs those semantics fails
+   * this suite loudly rather than being scored by a matcher that does not implement it.
+   */
+  function githubPathPattern(pattern: string): RegExp {
+    if (/[?+[\]]/.test(pattern) || pattern.startsWith("!")) {
+      throw new Error(`pattern ${JSON.stringify(pattern)} uses filter syntax this matcher does not implement`);
+    }
+    let source = "";
+    for (let i = 0; i < pattern.length; ) {
+      if (pattern.startsWith("**/", i)) {
+        source += "(?:.*/)?";
+        i += 3;
+      } else if (pattern.startsWith("**", i)) {
+        source += ".*";
+        i += 2;
+      } else if (pattern[i] === "*") {
+        source += "[^/]*";
+        i += 1;
+      } else {
+        source += (pattern[i] as string).replace(/[.^$|(){}\\/]/g, "\\$&");
+        i += 1;
+      }
+    }
+    return new RegExp(`^${source}$`);
+  }
+
+  function ignoredBy(patterns: readonly string[], path: string): boolean {
+    return patterns.some((pattern) => githubPathPattern(pattern).test(path));
+  }
+
+  function pushPathsIgnore(): string[] {
+    const patterns = loadWorkflow().on.push?.["paths-ignore"];
+    if (!patterns) throw new Error("ci.yml's push trigger has no paths-ignore list");
+    return patterns;
+  }
+
+  // The list this task replaced, kept as the "before" half of the measurement so the suite
+  // states what changed and not only what is true now.
+  const BEFORE = ["**/*.md", "docs/**", "backlog/**", ".claude/**"];
+
+  test("the matcher reproduces the cheat sheet's own documented examples (positive control)", () => {
+    // Every row is taken from GitHub's cheat sheet. If the matcher disagreed with any of them,
+    // the assertions below would be measuring a different glob dialect from GitHub's.
+    const documented: Array<[string, string, boolean]> = [
+      ["*", "README.md", true],
+      ["*", "docs/README.md", false],
+      ["*.js", "app.js", true],
+      ["*.js", "src/app.js", false],
+      ["**.js", "index.js", true],
+      ["**.js", "src/js/app.js", true],
+      ["docs/*", "docs/README.md", true],
+      ["docs/*", "docs/mona/octocat.txt", false],
+      ["docs/**", "docs/mona/octocat.txt", true],
+      ["docs/**/*.md", "docs/README.md", true],
+      ["docs/**/*.md", "docs/a/markdown/file.md", true],
+      ["**/docs/**", "space/docs/plan/space.doc", true],
+      ["**/README.md", "README.md", true],
+      ["**/README.md", "js/README.md", true],
+      ["**/*-post.md", "my-post.md", true],
+      ["**/*-post.md", "path/their-post.md", true],
+      ["**/migrate-*.sql", "db/sept/migrate-v1.sql", true],
+    ];
+    for (const [pattern, path, expected] of documented) {
+      expect([pattern, path, githubPathPattern(pattern).test(path)]).toEqual([pattern, path, expected]);
+    }
+  });
+
+  test("a push touching only CLAUDE.md or README.md is not filtered out", () => {
+    const patterns = pushPathsIgnore();
+    // Tracker integrity, the docs gate and compile smoke all read CLAUDE.md's declared Quest
+    // version; compile smoke runs README.md's quickstart.
+    expect(ignoredBy(patterns, "CLAUDE.md")).toBe(false);
+    expect(ignoredBy(patterns, "README.md")).toBe(false);
+    // The defect this replaces, measured with the same matcher: both used to be ignored.
+    expect(ignoredBy(BEFORE, "CLAUDE.md")).toBe(true);
+    expect(ignoredBy(BEFORE, "README.md")).toBe(true);
+  });
+
+  test("every other path the old filter ignored is still ignored", () => {
+    const patterns = pushPathsIgnore();
+    for (const path of [
+      "docs/x.md",
+      "docs/reference/cli-contract.md",
+      "docs/assets/diagram.svg",
+      "backlog/tasks/task-1.md",
+      ".claude/settings.json",
+      "skills/lore/SKILL.md",
+      "test/fixtures/nested/page.md",
+      "CHANGELOG.md",
+      "CODE_OF_CONDUCT.md",
+      "CONTRIBUTING.md",
+      "DEVELOPMENT.md",
+      "ECK-ALIGNMENT.md",
+      "SECURITY.md",
+      "lore-spec.md",
+    ]) {
+      expect([path, ignoredBy(BEFORE, path)]).toEqual([path, true]);
+      expect([path, ignoredBy(patterns, path)]).toEqual([path, true]);
+    }
+    // Code was never ignored and still is not.
+    for (const path of ["src/cli.ts", "package.json", "scripts/readme-quickstart.sh", "test/ci-workflow.test.ts"]) {
+      expect([path, ignoredBy(patterns, path)]).toEqual([path, false]);
+    }
+  });
+
+  test("the push filter's pattern list is exactly the reviewed one", () => {
+    // Pinned whole, so a widened list is a visible diff here. Root Markdown is listed by name: a
+    // NEW root .md is deliberately not ignored until someone adds it, which errs toward running CI
+    // rather than toward skipping it. `docs/**` is unchanged; its future is OPAG-444's call.
+    expect(pushPathsIgnore()).toEqual([
+      "*/**/*.md",
+      "CHANGELOG.md",
+      "CODE_OF_CONDUCT.md",
+      "CONTRIBUTING.md",
+      "DEVELOPMENT.md",
+      "ECK-ALIGNMENT.md",
+      "SECURITY.md",
+      "lore-spec.md",
+      "docs/**",
+      "backlog/**",
+      ".claude/**",
+    ]);
+    expect(loadWorkflow().on.push?.branches).toEqual(["main"]);
+  });
+
+  test("the pull_request trigger stays unfiltered", () => {
+    // A path-filtered PR run leaves required contexts pending forever (see ci.yml's comment).
+    // Under JSON_SCHEMA a bare `pull_request:` key loads as "", not null; either way it carries
+    // no filter keys, which is the property that matters.
+    const trigger = loadWorkflow().on.pull_request;
+    const keys = trigger !== null && typeof trigger === "object" ? Object.keys(trigger) : [];
+    expect(keys.filter((key) => key.startsWith("paths") || key.startsWith("branches"))).toEqual([]);
   });
 });

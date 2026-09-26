@@ -180,7 +180,10 @@ Correcting it does not make a green push run a *gate*:
 `rules/branches/main` still returns `[]` (re-read 2026-09-16), so it is evidence,
 not enforcement. Two caveats keep the new claim honest. A docs-only promotion
 produces no push run at all, because that trigger carries `paths-ignore` for
-`**/*.md`, `docs/**`, `backlog/**` and `.claude/**`. And the gating evidence is
+Markdown below the root (`*/**/*.md`), the root `.md` files it lists by name,
+`docs/**`, `backlog/**` and `.claude/**`. `CLAUDE.md` and `README.md` are
+deliberately not ignored (LCLI-602): three required jobs read `CLAUDE.md`, and
+compile smoke runs `README.md`'s quickstart. And the gating evidence is
 still the run on the PR head that merged into `dev`, a third SHA again —
 `35030927529` on `02deee37` for the 2026-09-16 promotion, `34996243105` on
 `9d1d631d` for the one before. Cite the `dev`-side run, and say which one.
@@ -216,7 +219,8 @@ It asserts both that the new tip already sits on `dev` and that the old tip is a
 ancestor of the new one (LCLI-514: before that it measured containment alone, and
 a rewind of `main` to an older `dev` commit stayed green). A docs-only push does
 not trigger it at all, because the `push` trigger carries `paths-ignore` for
-Markdown, `docs/` and `.claude/`.
+most Markdown (never `CLAUDE.md` or `README.md`), `docs/` and
+`.claude/`.
 
 **Promotion shape, which `ci.yml` cites as procedure:** open a PR from `dev` into
 `main`, confirm the newest run per context on that exact SHA, then
