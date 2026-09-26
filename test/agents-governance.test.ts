@@ -12,25 +12,21 @@
  * byte-identical to the pre-R8 block, pinned against LITERAL pre-R8 text rather than the code under
  * test.
  *
- * Mutation map (which case each deliberate break should redden, readable from this file alone; 43
+ * Mutation map (which case each deliberate break should redden, readable from this file alone; 51
  * cases). Each prediction was written here before the mutation was run.
  *   - discovery ignores the Constants document -> only "Constants drift" goes red: it is the one case
  *     that renders Constants through `lore agents`; the pure Constants cases never touch discovery.
- *   - B1 reverted (rules judged and rendered line by line, as first built) -> 3 of 43: the wrapped
+ *   - B1 reverted (rules judged and rendered line by line, as first built) -> 3 of 51: the wrapped
  *     exact-bytes case, the review's-example case, and the unlabelled positive control. Every other
  *     Constitution fixture writes one rule per single-line paragraph, which both forms render alike;
  *     and the "Rationale: / **Check:** line" case stays green, because the line-based form also
  *     dropped a line that STARTS with a label.
- *   - S1 reverted (escape only `\` and `<`) -> 22 of 43: every case pinning escaped punctuation from
- *     CONSTITUTION_LINES (Constitution exact-lines, CLAUDE.md and AGENTS.md blocks, Constitution-
- *     before-Constants, `lore init --claude`, absent-documents positive control, other-case type,
- *     unparseable sibling, S2 tracked-over-ignored, S5 unreadable), the wrapped exact-bytes case, 7 of
- *     the 9 inert classes (heading, blockquote, list item, fence, link, emphasis, entity; the HTML
- *     comment and tag stay inert because `<` is still escaped), the stray backtick, the principle-name
- *     case, the hostile block, and the S3 rule case (its `.`). Constants cases stay green: their text is
- *     lore's own or inside code spans.
- *   - S3: the ANSI/control strip removed from prose -> 2 of 43: the two S3 cases, the only fixtures
- *     carrying those bytes in prose.
+ *   - `&` dropped from the inline escape set -> 1 of 51: "an entity in a rule renders inert", the only
+ *     fixture with `&` in prose.
+ *   - the line-start `#` escape dropped -> 1 of 51: "a heading in a rule renders inert", the only rule
+ *     that opens with `#` (the literal-mid-text case has `#7` mid-rule, which is never block syntax).
+ *   - the ANSI/control/bidi strip removed from prose -> 3 of 51: the two ANSI cases and the bidi case,
+ *     the only fixtures carrying those characters in prose.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -171,16 +167,15 @@ Amendments MUST go through review.
 `;
 
 /**
- * Exactly what R8 renders for {@link CONSTITUTION} at `docs/constitution.md`. Every ASCII punctuation
- * character in document prose is backslash-escaped (review S1), so `.` reads `\.` in the raw block
- * and renders as `.`; lore's own text (the label, the path and version code spans, the `P<n>.` id)
- * is not.
+ * Exactly what R8 renders for {@link CONSTITUTION} at `docs/constitution.md`. Only markdown-significant
+ * characters are escaped (inline ones anywhere, block openers at the start of a rule), so ordinary
+ * punctuation like this fixture's `.` and `,` reads as written in the raw block.
  */
 const CONSTITUTION_LINES = [
   "- **Constitution:** `docs/constitution.md`, version `1.2.0`",
   "  - P1. Deterministic output",
-  "    - Lore MUST produce identical output for identical input\\.",
-  "    - It MUST NOT call a network service\\, per `ADR-0014`\\.",
+  "    - Lore MUST produce identical output for identical input.",
+  "    - It MUST NOT call a network service, per `ADR-0014`.",
   "  - P2. Contributions are open",
 ];
 
@@ -548,10 +543,10 @@ still renders as one rule.`);
 const WRAPPED_LINES = [
   "- **Constitution:** `docs/constitution.md`, version `1.0.0`",
   "  - P3. Destructive git operations",
-  "    - An agent MUST force\\-push\\, rewrite history\\, or delete a remote branch only after the user has approved that exact operation in the current session\\.",
+  "    - An agent MUST force-push, rewrite history, or delete a remote branch only after the user has approved that exact operation in the current session.",
   "  - P4. Provenance",
-  "    - Every commit MUST carry a sign\\-off trailer naming the human accountable for it\\, and the trailer MUST NOT be added by the agent on its own\\.",
-  "    - A MUST rule broken by a hard line break still renders as one rule\\.",
+  "    - Every commit MUST carry a sign-off trailer naming the human accountable for it, and the trailer MUST NOT be added by the agent on its own.",
+  "    - A MUST rule broken by a hard line break still renders as one rule.",
 ];
 
 describe("B1 — a MUST rule is its whole paragraph, and rationale and checks never render", () => {
@@ -671,9 +666,68 @@ describe("S1 — every class of markdown in document prose renders as literal te
   test("a principle NAME is escaped the same way; its validated P<n>. id is kept verbatim", () => {
     // Source escapes, so the heading's TEXT carries the literal `*`, `[`, `]`, `(` and `)`.
     const lines = renderConstitution(constitutionWith("### P7. A \\*starred\\* \\[name](x)\n\nIt MUST hold."));
-    expect(lines[1]).toBe("  - P7. A \\*starred\\* \\[name\\]\\(x\\)");
+    expect(lines[1]).toBe("  - P7. A \\*starred\\* \\[name\\](x)");
     expect(parsed(lines).live).toEqual([]);
   });
+
+  test("ordinary punctuation reads as written: the review's rule renders with no backslash at all", () => {
+    const lines = renderConstitution(
+      constitutionWith(
+        "### P1. Readable\n\nAn agent MUST force-push, rewrite history (or publish) only after approval.",
+      ),
+    );
+    expect(lines[2]).toBe("    - An agent MUST force-push, rewrite history (or publish) only after approval.");
+    expect(lines.slice(1).join("\n")).not.toContain("\\");
+  });
+
+  test("punctuation that is only significant at a line start stays literal mid-text, and inert", () => {
+    const rule =
+      "It MUST cite v1.2 (not 1.0), #7, 50%, a-b + c = d; see: https://example.com/x?y=z 'q' \"q\" $5 @me {x} ^ / 1) and 2.";
+    const lines = renderConstitution(constitutionWith(`### P1. Literal\n\n${rule}`));
+    expect(lines[2]).toBe(`    - ${rule}`);
+    expect(parsed(lines).live).toEqual([]);
+  });
+
+  for (const { name, source, rendered, shows } of [
+    {
+      name: "a leading +",
+      source: "\\+ A plus MUST stay.",
+      rendered: "\\+ A plus MUST stay.",
+      shows: "+ A plus MUST stay.",
+    },
+    {
+      name: "a leading =",
+      source: "\\= An equals MUST stay.",
+      rendered: "\\= An equals MUST stay.",
+      shows: "= An equals MUST stay.",
+    },
+    {
+      name: "a leading ---",
+      source: "\\--- A rule MUST stay.",
+      rendered: "\\--- A rule MUST stay.",
+      shows: "--- A rule MUST stay.",
+    },
+    {
+      name: "a leading 1.",
+      source: "1\\. A number MUST stay.",
+      rendered: "1\\. A number MUST stay.",
+      shows: "1. A number MUST stay.",
+    },
+    {
+      name: "a leading 12)",
+      source: "12\\) A number MUST stay.",
+      rendered: "12\\) A number MUST stay.",
+      shows: "12) A number MUST stay.",
+    },
+  ]) {
+    test(`${name} at the start of a rule is escaped there, and only there`, () => {
+      const lines = renderConstitution(constitutionWith(`### P1. Inert text\n\n${source}`));
+      expect(lines[2]).toBe(`    - ${rendered}`);
+      const block = parsed(lines);
+      expect(block.live).toEqual([]);
+      expect(block.items[2]).toBe(shows);
+    });
+  }
 
   test("a hostile document still yields one well-formed, idempotent managed block", () => {
     writeDoc(
@@ -688,7 +742,7 @@ describe("S1 — every class of markdown in document prose renders as literal te
       "<!-- lore:agents:begin -->",
       "<!-- lore:agents:end -->",
     ]);
-    expect(written).toContain("    - It MUST NOT \\<script\\>run\\<\\/script\\> or C\\:\\\\path\\.");
+    expect(written).toContain("    - It MUST NOT \\<script\\>run\\</script\\> or C:\\\\path.");
     const again = agents(["--check"]);
     expect(again.code).toBe(EXIT_OK);
     expect(actionFor(again.result, CLAUDE_MD_REL_PATH)).toBe("unchanged");
@@ -715,11 +769,17 @@ describe("S3 — ANSI escapes and control bytes are stripped, in a principle nam
     expect(lines[1]).toBe("  - P1. Colour red name");
   });
 
+  test("a bidi override in a rule does not reach the block (S4, by LCLI-607's shared strip)", () => {
+    const lines = renderConstitution(constitutionWith("### P1. Plain\n\nIt MUST ‮yalp‬ hold."));
+    expect(lines[2]).toBe("    - It MUST yalp hold.");
+    expect(lines.join("\n")).not.toMatch(/[‪-‮⁦-⁩]/);
+  });
+
   test("a rule carrying ANSI and control bytes renders without them", () => {
     const lines = renderConstitution(
       constitutionWith("### P1. Plain\n\nIt MUST \u001b[1mnot\u001b[22m ring\u0007 a bell."),
     );
-    expect(lines[2]).toBe("    - It MUST not ring a bell\\.");
+    expect(lines[2]).toBe("    - It MUST not ring a bell.");
   });
 });
 

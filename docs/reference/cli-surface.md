@@ -1108,13 +1108,18 @@ clean clone, and a `.lore/profile.toml` that declares its own `Constitution` or
 in sorted path order is rendered. A document lore cannot read or parse is
 skipped; a malformed `.lore/profile.toml` or `docs/index.md` fails the command,
 exit `6`, since without them lore cannot tell which document is which. Document
-prose is made inert before it is written: ANSI escapes and control bytes are
-removed, then every ASCII punctuation character is backslash-escaped, so no
-text in a document can act as markdown in the block — no HTML or comment, code
-span, emphasis, link, heading, quote or list. Each escape renders as its
-character, but the raw file shows the backslashes (`input\.`). Paths, versions
-and `id = value` lines are code spans. `lore init --claude` and `lore init
---codex` write the same lines.
+prose is made inert before it is written. ANSI escapes, control bytes and bidi
+or invisible format characters are removed. Then the characters that can open
+inline markdown (`` \ ` * _ [ ] < > & ! | ~ ``) are backslash-escaped wherever
+they appear, and a leading `#`, `-`, `+`, `=` or ordered-list delimiter is
+escaped at the start of a rule, the only place block syntax can begin inside
+the block's nested list. So no text in a document can act as markdown in the
+block — no HTML or comment, code span, emphasis, link, entity, heading, quote,
+list or fence — while ordinary punctuation such as `.`, `,`, `-`, `(`, `)` and
+`:` reads as written in the raw file. GitHub's GFM rendering still autolinks a
+bare URL or email address in a rule, showing the author's own text. Paths,
+versions and `id = value` lines are code spans. `lore init --claude` and
+`lore init --codex` write the same lines.
 
 **`.lore/config.toml`'s `[agents].skill_source` (LCLI-443) can opt SKILL.md out of
 per-repo generation entirely.** The default, `"repo"`, is this section's behavior

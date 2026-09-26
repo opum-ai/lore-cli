@@ -383,8 +383,10 @@ rules, each rule one whole paragraph -- no rationale, no Check: text. With a
 Constants document, it adds one line, "before writing or changing a name,
 identifier, prefix, URL or pinned value, read <path>", plus \`id = value\` for
 each active entry flagged \`hot: true\`. Git-ignored files are never read.
-Document prose is escaped so it cannot act as markdown in the block, which is
-why the raw lines show backslashes before punctuation. Editing either document
+Document prose is escaped so it cannot act as markdown in the block: only the
+markdown-significant characters are, so ordinary punctuation reads as written
+and a backslash in the raw block marks a character that would otherwise be
+markup. Editing either document
 is drift for \`lore agents --check\` until \`lore agents\` regenerates the
 block; with neither, the block is unchanged.
 

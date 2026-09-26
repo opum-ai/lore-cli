@@ -351,13 +351,24 @@ function paragraphLines(nodes: readonly Nodes[]): string[] {
  * so every piece of it passes one of these before it is placed there:
  *
  * - {@link escapeProse} for prose, applied to each text node: whitespace is collapsed and ANSI
- *   escapes and control bytes are removed FIRST (`stripAnsiAndControls`, the strip {@link printable}
- *   applies to runtime-supplied text), then EVERY ASCII punctuation character is backslash-escaped:
- *   the whole set CommonMark lets a backslash escape. Nothing in document prose can then act as
- *   markdown in the block: no raw HTML or comment (so no marker), no code span, emphasis, link,
- *   heading, quote or list, no entity. Each escape renders as its literal character. Stripping comes
- *   first because escaping would otherwise split an ANSI sequence (`ESC [31m` into `ESC \[31m`) into
- *   pieces the strip no longer recognises. {@link agentText} is the same for a whole string.
+ *   escapes, control bytes and (since LCLI-607) bidi and invisible format characters are removed
+ *   FIRST (`stripAnsiAndControls`, the strip {@link printable} applies to runtime-supplied text),
+ *   then every character that can act as INLINE markdown is backslash-escaped wherever it appears
+ *   ({@link INLINE_SIGNIFICANT}). Stripping comes first because escaping would otherwise split an
+ *   ANSI sequence (`ESC [31m` into `ESC \[31m`) into pieces the strip no longer recognises.
+ *   {@link agentText} is the same for a whole string.
+ * - {@link escapeItemStart} for the one position where BLOCK markdown can start: the first character
+ *   of a rendered rule, which opens a nested list item. `#`, `-`, `+` and `=` are escaped there, and
+ *   an ordered-list marker (`1.`, `2)`) has its delimiter escaped. Every rendered line is a nested
+ *   list item, so block syntax cannot fire anywhere else in it (LCLI-597 review follow-up).
+ *
+ *   Together these leave document prose inert — no raw HTML or comment (so no marker), no code
+ *   span, emphasis, link, image, entity, heading, quote, list or fence — while `.`, `,`, `-`, `(`,
+ *   `)`, `:` and the rest stay literal mid-text, so the raw block reads as written: agents read the
+ *   raw file, and every escape is noise in always-loaded context. Each escape renders as its literal
+ *   character. `lore check`'s CommonMark parser is the measure of "inert"; GitHub's GFM extensions
+ *   additionally autolink a bare URL or email address mid-text, which this does not prevent: the link
+ *   shows the author's own text, so it is display, not injected markup.
  * - {@link agentCode} for a literal (a path, a version, an `id = value` line): one printable line in
  *   a code span whose fence is longer than any backtick run inside it, so nothing in it is markdown,
  *   with the HTML comment delimiters additionally turned into entities as defence in depth (as the
@@ -370,19 +381,39 @@ function paragraphLines(nodes: readonly Nodes[]): string[] {
  * refuses a body that disturbs them.
  */
 
-/** Every ASCII punctuation character: exactly the set a CommonMark backslash escape applies to. */
-const ASCII_PUNCTUATION = /[!-/:-@[-`{-~]/g;
+/**
+ * The characters that can open inline markdown anywhere in a line: escapes, code spans, emphasis and
+ * strikethrough, links and images, raw HTML, autolinks and comments, entities, table cells, and `>`
+ * (a quote once it reaches a line start).
+ */
+const INLINE_SIGNIFICANT = /[\\`*_[\]<>&!|~]/g;
 
 /**
- * Prose with, on each line, whitespace collapsed and control bytes stripped, then all ASCII
- * punctuation escaped (see above). Line endings are KEPT, so a rendered paragraph's lines still
- * correspond to its {@link PROBE_RENDER} lines and can be cut at the same label line.
+ * Prose with, on each line, whitespace collapsed and control bytes stripped, then every
+ * {@link INLINE_SIGNIFICANT} character escaped (see above). Line endings are KEPT, so a rendered
+ * paragraph's lines still correspond to its {@link PROBE_RENDER} lines and can be cut at the same
+ * label line.
  */
 function escapeProse(value: string): string {
   return value
     .split("\n")
-    .map((line) => stripAnsiAndControls(line.replace(/\s+/g, " ")).replace(ASCII_PUNCTUATION, (char) => `\\${char}`))
+    .map((line) => stripAnsiAndControls(line.replace(/\s+/g, " ")).replace(INLINE_SIGNIFICANT, (char) => `\\${char}`))
     .join("\n");
+}
+
+/**
+ * Escape the block markdown a nested list item's text could open with (see above): a leading `#`
+ * (heading), `-` or `+` (a list, or `---` a thematic break), `=` (a setext underline), or the
+ * delimiter of a leading ordered-list marker (`1.` becomes `1\.`). `text` has already been through
+ * {@link escapeProse}, so every other block opener (`>`, `*`, `_`, a backtick or `~` fence, `<`)
+ * is escaped already.
+ */
+function escapeItemStart(text: string): string {
+  if (/^[#\-+=]/.test(text)) {
+    return `\\${text}`;
+  }
+  const marker = /^\d+(?=[.)])/.exec(text);
+  return marker === null ? text : `${marker[0]}\\${text.slice(marker[0].length)}`;
 }
 
 /** Document prose as one trimmed line of inert markdown (see above). */
@@ -575,7 +606,7 @@ function mustRule(probe: string, shown: string): string | undefined {
   if (!/\bMUST\b/.test(probeLines.slice(0, cut).join(" "))) {
     return undefined;
   }
-  return shown.split("\n").slice(0, cut).join(" ").replace(/\s+/g, " ").trim();
+  return escapeItemStart(shown.split("\n").slice(0, cut).join(" ").replace(/\s+/g, " ").trim());
 }
 
 /**
@@ -591,7 +622,7 @@ function mustRule(probe: string, shown: string): string | undefined {
  * ```
  * - **Constitution:** `docs/constitution.md`, version `1.2.0`
  *   - P1. Deterministic output
- *     - Lore MUST produce identical output for identical input\.
+ *     - Lore MUST produce identical output for identical input.
  * ```
  */
 function constitutionAgentBlock(doc: AgentBlockDoc): string[] {
