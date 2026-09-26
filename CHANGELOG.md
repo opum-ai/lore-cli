@@ -7,14 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade notice: schema drift on every repository that commits `.lore/schemas/`
+
+- **This release adds two built-in document types, so the built-in profile's digest changes and
+  every committed `.lore/schemas/` goes stale at once** (LCLI-599, OPAG-425 R10). After upgrading,
+  `lore check` exits `6` with `schema-drift` findings until you run **`lore schema export`** and
+  commit the regenerated `.lore/schemas/*.json`. That covers the re-stamped existing schemas plus
+  the new `constitution.schema.json` and `constants.schema.json`. Nothing else is needed; do not
+  hand-edit the stamps. Measured by ref on 2026-09-26: 10 of 10 fleet repositories commit
+  `.lore/schemas/` (nine hold the eight pre-Constitution schemas), so every one of them needs this
+  step in the same change that bumps its lore pin.
+- **The `lore agents` managed block now depends on the lore version when a Constitution or
+  Constants document exists** (LCLI-597). A repository that adds either document and regenerates
+  its block with this release will fail `lore agents --check` under an older lore, and an older
+  lore would strip the new lines again. Upgrade every CI job that runs `lore agents --check` in
+  the same change. A repository with neither document is unaffected: its block is byte-identical.
+
+### Added
+
+- **Built-in `Constitution` document type** (LCLI-595, OPAG-425 R1-R4, R9). At most one per bundle.
+  It carries required `version`, `ratified`, `last_amended` and `amendment_authority`, and the
+  sections Principles, Governance and Amendment log. `### P<n>. <Name>` principles need an RFC
+  2119 keyword, `Rationale:` and `Check:`. `lore validate` and `lore check` both enforce the
+  shape, and `lore new constitution` writes a document that passes.
+- **Built-in `Constants` document type** (LCLI-596, OPAG-425 R1, R2, R5-R7, R9). A catalogue of
+  named concrete values, at most one per bundle. Each `###` entry is an id, cited by its heading
+  anchor (the anchor drops dots: `service.http-port` is `#servicehttp-port`). `lore check`:
+  - compares every entry whose `source_of_truth` names a git-tracked JSON, TOML or YAML file and
+    key against that file (new rule `source-of-truth`);
+  - warns on a link to a deprecated or retired entry (`deprecated-reference`);
+  - fails a Constants document from which no entry was read (`zero-entries-read`);
+  - prints the entry, comparable-source and reference counts it read (`readCounts` in `--json`).
+
+  No finding ever prints what a source file holds. `lore new constants` writes a document that
+  passes.
+- **`lore agents` renders governance into its managed block** (LCLI-597, OPAG-425 R8). With a
+  Constitution present, the block gains its path, version and each principle's MUST/MUST NOT
+  rules. With a Constants document present, it gains a read-before-you-name trigger line and
+  `id = value` for active entries flagged `hot`. `lore agents --check` reports drift when either
+  document changes. Document text is rendered inert.
+
 ### Changed
 
+- **BEHAVIOUR CHANGE: `lore check` now fails on the error-tier `frontmatter` and `required-section`
+  findings `lore validate` reports, for every type** (LCLI-606). Ships in a lore minor release.
+  Until now `lore check` could exit `0` over a document that `lore validate` failed. It now exits
+  `6` on every such finding: a missing required section (an ADR without `## Consequences`, a Story
+  without `## Acceptance criteria`), a missing `type`, a missing or mistyped field (including one
+  your own `.lore/profile.toml` requires), and an invalid enum value (for example an OKF 0.2
+  lifecycle `status` that is not `draft`, `stable` or `deprecated`). The findings keep `validate`'s
+  rule names and messages, and `check` judges each file exactly as `validate` does, with its
+  repository-relative path and the `docs/` root's OKF version and profile, even in a scoped
+  `lore check <dir>`. A stray second frontmatter fence stays one finding, under the
+  `double-frontmatter` rule `check` has used since 0.4.0. **Before upgrading, run
+  `lore validate`**: its `required-section` findings and error-tier `frontmatter` findings are
+  exactly what `lore check` will now fail on. Files without frontmatter are still skipped.
+  `validate`'s error-tier `quote-safety` findings, and its resource and warning-tier findings, stay
+  `validate`-only. A `tasks:`-linked document with invalid frontmatter now draws an ordinary
+  `frontmatter` finding and is left out of reconciliation. Before, it aborted the run with the
+  first such error only (a thrown error on stderr, `complete: false` in `--json`). The exit code is
+  still `6`. The `--json` report's shape is unchanged: the new findings are new values of the
+  existing `rule` field. LCLI-598 measured the ten fleet repositories on 2026-09-26 and found 1 of
+  384 documents that would newly fail, since fixed. A re-measurement before merge, counting every
+  error-tier finding, found 0 of 385.
 - **Declaring the built-in `Constants` type adds `owner` and `last_reviewed` to the profile-wide
   frontmatter key order** (LCLI-596). A document of any type that already carries `owner:` has it
   reordered on its next lore rewrite. Measured 2026-09-26: 0 fleet documents affected.
 
 ### Fixed
 
+- **A Claude Code plugin row set by your administrator (`managed` scope) now decides, and is never
+  updated** (LCLI-604, LCLI-608; ADR ruling 28). Scope precedence is managed > local > project >
+  user > synced. A managed row applies to every project, and among several managed rows a
+  disabled one wins. `lore agents --target claude --force` never runs an update against it and
+  never prints `--scope managed`. Installed or disabled, it reports `update: not-run` with a
+  remedy naming the administrator's managed settings, not a command you can run.
+- **The shared output sanitiser also strips bidi overrides, isolates and invisible format
+  characters** (LCLI-607): U+202A-U+202E, U+2066-U+2069, U+200B, U+2060 and U+FEFF. An RLO in a
+  document title or a runtime message can no longer reorder a printed line. ZWJ, ZWNJ, LRM, RLM
+  and ALM are kept, because they carry meaning in emoji and RTL, Persian and Indic text. The class
+  is identical to quest's.
 - **`lore link` no longer half-applies when Quest has no actor declared** (LCLI-582). With
   `LORE_QUEST_ACTOR` unset, it used to write the concept's `tasks:` frontmatter, then fail the
   back-reference edit with exit `6`, leaving a one-sided link. It now refuses before any write, so
