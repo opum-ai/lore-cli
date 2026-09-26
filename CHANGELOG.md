@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Declaring the built-in `Constants` type adds `owner` and `last_reviewed` to the profile-wide
+  frontmatter key order** (LCLI-596). A document of any type that already carries `owner:` has it
+  reordered on its next lore rewrite. Measured 2026-09-26: 0 fleet documents affected.
+
 ### Fixed
 
 - **`lore link` no longer half-applies when Quest has no actor declared** (LCLI-582). With

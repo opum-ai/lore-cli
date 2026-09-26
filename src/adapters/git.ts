@@ -259,3 +259,30 @@ function parseHistory(output: string): GitCommit[] {
   }
   return commits;
 }
+
+/** Whether a path is tracked by git, as {@link gitTrackedState} reports it. */
+export type GitTrackedState = "tracked" | "untracked" | "no-repository";
+
+/**
+ * Whether `path` (relative to `cwd`) is a TRACKED file: `git ls-files --error-unmatch` exits 0 only
+ * when the index holds it, so an untracked or ignored file is `untracked`, and a `cwd` outside any
+ * repository (or no `git` at all) is `no-repository`. Used by `lore check`'s Constants rules
+ * (LCLI-596) so a `source_of_truth` is read only when a fresh clone would have it too, keeping a
+ * local run and a CI run in agreement (ADR-0007). Never throws.
+ */
+export function gitTrackedState(cwd: string, path: string): GitTrackedState {
+  let proc: ReturnType<typeof Bun.spawnSync>;
+  try {
+    proc = Bun.spawnSync(["git", "ls-files", "--error-unmatch", "--", literalPathspec(path)], {
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  } catch {
+    return "no-repository";
+  }
+  if (proc.exitCode === 0) {
+    return "tracked";
+  }
+  return /not a git repository/i.test(proc.stderr?.toString("utf8") ?? "") ? "no-repository" : "untracked";
+}

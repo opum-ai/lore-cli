@@ -242,6 +242,51 @@ bundle-scoped, so only `lore check` can judge it. These rules attach only to
 lore's built-in Constitution: a `.lore/profile.toml` that declares its own
 `Constitution` keeps exactly the fields and sections it declares.
 
+The lore-only `Constants` type (LCLI-596) is declared on every OKF version for
+the same reason, and is also a `singleton-type`. Its `type-shape` rules, run by
+both `lore validate` and `lore check`, cover a malformed `version` (SemVer) or
+`last_reviewed` (calendar date), an empty `owner`, and every entry: a `###`
+heading under a `##` group whose text is an id matching
+`^[a-z0-9]+(\.[a-z0-9-]+)+$`, unique, owning its own heading anchor, followed
+only by a bullet list of `name: value` fields. A `###` nested inside a
+blockquote or list item is an error, since lore reads only top-level entries.
+`value`, `meaning`, `source_of_truth` (`<path>#<key>` or `this-doc`) and
+`status` (`active`, `deprecated`, `retired`) are required; `kind`, `avoid`,
+`owner`, `used_by`, `hot` and `replaced_by` are optional, and any other field
+fails. A deprecated entry must name an active `replaced_by`. Fields are read as
+rendered text, so write a value in backticks: unquoted, `__proto__` reads as
+`proto` and `List<String>` as `List`. An entry is cited by its heading anchor,
+which drops the dots: `service.http-port` is cited as `#servicehttp-port`, not
+`#service.http-port`.
+
+Three further Constants rules are bundle-scoped, so only `lore check` runs
+them. `source-of-truth` (error) covers every non-retired entry whose
+`source_of_truth` names a file. The file is opened whatever its extension, and
+fails if it is missing, not a regular file, outside the repository, or not
+tracked by git; an untracked or ignored file is never read, so a local run and
+a fresh-clone CI run agree. A JSON, TOML or YAML source must also parse, have
+the key, and hold there a single value equal to the entry's `value`. A number
+there is rendered by JavaScript's `String()` and a boolean as `true` or
+`false`, then compared as exact text. Any other extension is opened but not
+compared, and `this-doc` is not compared. Active and deprecated entries are
+compared; retired entries are skipped because their source key may rightly be
+gone (opum-doc `f51e8b0`, ODOC-292, Constants ADR Amendment 2). No finding
+prints what a source holds or a parser's message, since a source may be a
+secret: a mismatch names the `path#key` and the entry's own `value`, and a
+parse failure names the error class and, for YAML, the line. A TOML file
+containing a date-time is rejected as unparseable, because the TOML parser lore
+uses does not read date-times. An integer above 2^53 in a JSON or TOML source
+loses precision when parsed, so it compares as a mismatch. JSONC files such as
+`tsconfig.json` cannot be cited, because comments fail the JSON parse, and a
+key that itself contains a dot cannot be addressed. `zero-entries-read`
+(error) is a Constants document from which no entry was read, the gate's
+positive control. `deprecated-reference` (warning; an error only under
+`--strict`) is a link, on the citing file, to a deprecated or a retired entry's
+anchor, and its message says which (retired: the same Amendment 2); a link to
+an anchor that does not exist is already `broken-anchor`. `lore check` reports
+what it read as `readCounts` (entries, comparable and not-comparable sources,
+references) beside its findings.
+
 `relation-version-drift` stays a warning on principle rather than convenience.
 Lore can see that a cited version moved; it cannot see whether the citing
 argument still holds, so it reports possible impact and never a correctness

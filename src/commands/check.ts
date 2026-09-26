@@ -32,13 +32,14 @@
  */
 
 import { lookup as dnsLookup } from "node:dns/promises";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, posix } from "node:path";
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { isAbsolute, join, posix, relative, sep } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
-import { resolveHeadCommitDate } from "../adapters/git";
+import { gitTrackedState, resolveHeadCommitDate } from "../adapters/git";
 import { loadAgentProfiles, validateAgentProfileReferences } from "../core/agent-profile";
 import { effectiveProfileFor, loadBundle, walkFiles } from "../core/bundle";
 import {
+  bodyText,
   type CheckFinding,
   type CheckInputFile,
   type CheckReport,
@@ -51,6 +52,7 @@ import {
   isAddressLiteral,
   isIndeterminateFinding,
   isIsoCalendarDate,
+  linksInto,
   reconcileDriftFindings,
   schemaDriftFindings,
   tallySeverity,
@@ -61,12 +63,20 @@ import { type BundleState, type BundleVersionIssue, resolveBundleState, taskRoll
 import { loadProfile, type Profile, profileForBundle, profileTypeDeclaresField } from "../core/profile";
 import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
 import { canonicalType, emitSchemaFiles, profileDigest, SCHEMAS_DIR, unknownTypeHint } from "../core/schema";
-import { type SingletonCandidate, singletonFindings, TYPE_SHAPE_RULE, typeRuleFor } from "../core/type-rules";
+import {
+  type SingletonCandidate,
+  type SourceRead,
+  singletonFindings,
+  TYPE_SHAPE_RULE,
+  type TypeRule,
+  typeRuleFor,
+} from "../core/type-rules";
 import { validateConceptText } from "../core/validate";
 import {
   ANSI,
   EXIT_CODES,
   EXIT_OK,
+  errnoCode,
   ioError,
   LoreError,
   paint,
@@ -284,16 +294,20 @@ function checkAfterSchemaPass(
   // type does not declare it as an explicit gate finding before any Backlog IO.
   const conceptBundleResults = bundles.map((bundle) => tryConceptsForBundle(bundle, profile));
   const multi = bundles.length > 1;
+  const typeBundle = typeBundleRules(options.root, conceptBundleResults);
   const scanFindings = [
     ...conceptBundleResults.flatMap((result) =>
       result.findings.map((finding) => prefixFinding(finding, result.bundle.label, multi)),
     ),
+    ...typeBundle.findings.map(({ finding, label }) => prefixFinding(finding, label, multi)),
     ...bundles.flatMap((bundle) => tryIndexDriftForBundle(options.root, bundle, profile, multi)),
     // Repo-scoped, so it is computed once (first, in `runCheck`) rather than per bundle — see
     // `schemaDriftForRoot`.
     ...schemaFindings,
   ];
-  const baseReport = mergeFindings(linkReport, scanFindings);
+  const merged = mergeFindings(linkReport, scanFindings);
+  const baseReport: CheckReport =
+    Object.keys(typeBundle.readCounts).length > 0 ? { ...merged, readCounts: typeBundle.readCounts } : merged;
   const needsReconciliation = conceptBundleResults.some(
     (result) => result.error !== null || taskBlockConcepts(result.concepts).length > 0,
   );
@@ -380,6 +394,15 @@ interface ConceptBundleResult {
   readonly concepts: Concept[];
   readonly findings: CheckFinding[];
   readonly error: unknown | null;
+  /** Documents of a registered type that has bundle rules ({@link TypeRule.bundle}), for {@link typeBundleRules}. */
+  readonly bundleRuleDocs: readonly BundleRuleDoc[];
+}
+
+/** One document whose registered type carries bundle rules, found by the per-file scan. */
+interface BundleRuleDoc {
+  readonly file: CheckInputFile;
+  readonly frontmatter: Readonly<Record<string, unknown>>;
+  readonly rule: TypeRule;
 }
 
 /**
@@ -423,6 +446,7 @@ function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleRe
   const concepts: Concept[] = [];
   const findings: CheckFinding[] = [];
   const singletons: SingletonCandidate[] = [];
+  const bundleRuleDocs: BundleRuleDoc[] = [];
   let error: unknown | null = null;
   for (const file of bundle.files) {
     try {
@@ -457,6 +481,9 @@ function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleRe
         if (rule.singleton) {
           singletons.push({ file: file.path, type: rule.type });
         }
+        if (rule.bundle !== undefined) {
+          bundleRuleDocs.push({ file, frontmatter: raw, rule });
+        }
       }
       if (!Object.hasOwn(raw, "tasks")) {
         continue;
@@ -482,7 +509,105 @@ function tryConceptsForBundle(bundle: Bundle, profile: Profile): ConceptBundleRe
     }
   }
   findings.push(...singletonFindings(singletons));
-  return { bundle, concepts, findings, error };
+  return { bundle, concepts, findings, error, bundleRuleDocs };
+}
+
+/**
+ * Run every registered type's BUNDLE rules (LCLI-596, OPAG-425 R6/R7) over the documents the
+ * per-file scan found, and sum what they read per type. The rules are pure
+ * ({@link TypeRule.bundle}); this is where their two inputs come from: the links into each document
+ * ({@link linksInto}, resolved exactly as the link gate resolves them) and {@link sourceReader}, the
+ * only filesystem access. Each finding keeps its bundle label so the caller can prefix it the way
+ * every other scan finding is prefixed. Names no type.
+ */
+function typeBundleRules(
+  root: string,
+  results: readonly ConceptBundleResult[],
+): {
+  readonly findings: readonly { readonly finding: CheckFinding; readonly label: string }[];
+  readonly readCounts: Record<string, Record<string, number>>;
+} {
+  const findings: { finding: CheckFinding; label: string }[] = [];
+  const readCounts: Record<string, Record<string, number>> = {};
+  const readSource = sourceReader(root);
+  for (const result of results) {
+    if (result.bundleRuleDocs.length === 0) {
+      continue;
+    }
+    const inbound = linksInto(
+      result.bundle.files,
+      result.bundleRuleDocs.map((doc) => doc.file.path),
+    );
+    for (const doc of result.bundleRuleDocs) {
+      const run = doc.rule.bundle?.({
+        file: doc.file.path,
+        frontmatter: doc.frontmatter,
+        body: bodyText(doc.file.raw),
+        inboundLinks: inbound.get(doc.file.path) ?? [],
+        readSource,
+      });
+      if (run === undefined) {
+        continue;
+      }
+      for (const finding of run.findings) {
+        findings.push({ finding, label: result.bundle.label });
+      }
+      const counts = readCounts[doc.rule.type] ?? {};
+      for (const [key, count] of Object.entries(run.counts)) {
+        counts[key] = (counts[key] ?? 0) + count;
+      }
+      readCounts[doc.rule.type] = counts;
+    }
+  }
+  return { findings, readCounts };
+}
+
+/**
+ * The injected `readSource` a type's bundle rules read repository files through: `path` is
+ * repository-relative (the rules vet that it is, with no `..` segment), resolved against the
+ * repository `root`. Refused, in this order: a path that does not exist, one a symlink carries
+ * outside `root`, one that is not a regular file, and one git does not TRACK — an untracked or
+ * ignored file (a local `.secrets.json`) is never opened, so a local run and a fresh-clone CI run
+ * see the same sources (ADR-0007). Never throws: a failure is `{ ok: false, reason }`, which the
+ * rules report as an unreadable source. Memoized per run.
+ */
+function sourceReader(root: string): (path: string) => SourceRead {
+  const cache = new Map<string, SourceRead>();
+  let realRoot: string | undefined;
+  return (path) => {
+    const cached = cache.get(path);
+    if (cached !== undefined) {
+      return cached;
+    }
+    let result: SourceRead;
+    try {
+      realRoot ??= realpathSync(root);
+      const target = realpathSync(join(root, path));
+      const inside = relative(realRoot, target);
+      if (inside === "" || inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
+        result = { ok: false, reason: "resolves outside the repository" };
+      } else if (!statSync(target).isFile()) {
+        result = { ok: false, reason: "not a regular file" };
+      } else {
+        const tracked = gitTrackedState(root, posix.normalize(path));
+        if (tracked === "no-repository") {
+          result = { ok: false, reason: "no git repository here to confirm it is tracked" };
+        } else if (tracked === "untracked") {
+          result = {
+            ok: false,
+            reason: "not tracked by git; an untracked or ignored file is never read, so every checkout agrees",
+          };
+        } else {
+          result = { ok: true, text: readFileSync(target, "utf8") };
+        }
+      }
+    } catch (err) {
+      const code = errnoCode(err);
+      result = { ok: false, reason: code === "ENOENT" ? "no such file" : (code ?? String(err)) };
+    }
+    cache.set(path, result);
+    return result;
+  };
 }
 
 /**
@@ -1355,14 +1480,32 @@ function reportRenderable(data: CheckReport): Renderable<CheckReport> {
   };
 }
 
-/** One line per gate finding, then the opt-in external-liveness findings, then a summary line. */
+/**
+ * One line per gate finding, then the opt-in external-liveness findings, then one line per type
+ * whose bundle rules read something ({@link readCountsLine}), then a summary line.
+ */
 function renderReport(data: CheckReport, color: boolean): string {
   const lines: string[] = data.findings.map((finding) => findingLine(finding, color));
   for (const finding of data.externalFindings ?? []) {
     lines.push(findingLine(finding, color));
   }
+  for (const [type, counts] of Object.entries(data.readCounts ?? {})) {
+    lines.push(readCountsLine(type, counts));
+  }
   lines.push(summaryLine(data, color));
   return lines.join("\n");
+}
+
+/**
+ * What a type's bundle rules read (LCLI-596, OPAG-425 R7), e.g. `Constants read: entries 3,
+ * comparable sources 1, not comparable sources 0, references 2` — each count key's camelCase
+ * spelled as words, so the line names exactly the `readCounts` fields `--json` carries.
+ */
+function readCountsLine(type: string, counts: Readonly<Record<string, number>>): string {
+  const parts = Object.entries(counts).map(
+    ([key, count]) => `${key.replace(/([A-Z])/g, " $1").toLowerCase()} ${count}`,
+  );
+  return `${type} read: ${parts.join(", ")}`;
 }
 
 /**
