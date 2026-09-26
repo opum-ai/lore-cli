@@ -48,6 +48,7 @@ import {
 } from "../core/codex-bridge";
 import { ANSI, EXIT_CODES, EXIT_OK, paint, readFileIfPresent, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { readAgentGovernance } from "./agent-governance";
 import { parseCommandArgs, usage } from "./args";
 import { assertNoSymlinkInAnyPath, ensureDir, writeFileAtomic } from "./fswrite";
 
@@ -189,7 +190,14 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
   // the bare `lore agents` call ("keep whatever's selected current") is scoped to the persisted
   // config, so `lore agents --check` run bare in CI sees the repo's own opt-in without a flag.
   const skillSource = includeCodex ? loadConfig({ root }).agents.skillSource : "repo";
-  const plan = claudeArmed ? planBridge({ skillOnDisk, claudeOnDisk, force, check, skillSource }) : { files: [] };
+  // The Constitution core and Constants pointer (LCLI-597, OPAG-425 R8), rendered into BOTH managed
+  // blocks from the same read, so `lore init --claude`, `lore init --codex` and `lore agents` can
+  // never write a block the others' `--check` calls drift. Read only when a bridge is planned: a run
+  // that plans nothing has no block to render into.
+  const governance = claudeArmed || codexArmed ? readAgentGovernance(root) : [];
+  const plan = claudeArmed
+    ? planBridge({ skillOnDisk, claudeOnDisk, force, check, skillSource, governance })
+    : { files: [] };
 
   const codexPlan = codexArmed
     ? planCodexBridge({
@@ -197,6 +205,7 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
         agentsOnDisk: normalizeOnDisk(agentsRaw),
         force,
         check,
+        governance,
       })
     : { files: [] };
   const files = [...plan.files, ...codexPlan.files];

@@ -2,6 +2,7 @@ import { dirname, join } from "node:path";
 import type { BridgeAction } from "../core/agent-bridge";
 import { AGENTS_MD_REL_PATH, CODEX_SKILL_REL_PATH, planCodexBridge } from "../core/codex-bridge";
 import { readFileIfPresent } from "../errors";
+import { readAgentGovernance } from "./agent-governance";
 import { assertNoSymlinkInAnyPath, ensureDir, writeFileAtomic } from "./fswrite";
 
 export interface CodexBridgeResult {
@@ -15,7 +16,15 @@ export function applyCodexBridge(options: { root: string; force: boolean; check:
   const skillOnDisk = normalize(skillRaw);
   const agentsOnDisk = normalize(agentsRaw);
   const agentsStyle = detectStyle(agentsRaw);
-  const plan = planCodexBridge({ skillOnDisk, agentsOnDisk, force: options.force, check: options.check });
+  // The same Constitution core and Constants pointer `lore agents` renders (LCLI-597), so the block
+  // `lore init --codex` writes is the block `lore agents --check` expects.
+  const plan = planCodexBridge({
+    skillOnDisk,
+    agentsOnDisk,
+    force: options.force,
+    check: options.check,
+    governance: readAgentGovernance(options.root),
+  });
 
   if (!options.check) {
     const targets = plan.files.filter((file) => file.contents !== null).map((file) => file.path);

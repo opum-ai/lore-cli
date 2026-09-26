@@ -1083,6 +1083,44 @@ Generate/refresh the agent bridges: write `.claude/skills/lore/SKILL.md` (how
 an agent should drive lore) and a small `CLAUDE.md` nudge. Idempotent —
 regenerating with no change is byte-identical.
 
+**The managed nudge also carries the bundle's Constitution core and Constants
+pointer** (LCLI-597; opum-doc ADR "Add Constitution and Constants document
+types to lore", R8). When `docs/` holds a built-in `Constitution`, the block —
+in `CLAUDE.md`, and in `AGENTS.md` where the Codex bridge is selected — gains
+one item naming its path and `version`, with each principle's id (`P1. <Name>`)
+and that principle's MUST / MUST NOT rules under it, and nothing more: no
+rationale, no `Check:` text, no SHOULD or MAY paragraph, no governance text. A
+rule is a whole paragraph that says MUST, its wrapped lines joined into one
+item, so a condition on a continuation line is never dropped; it ends at the
+first line that opens a `Rationale:` or `Check:` label, bold or not, and a
+paragraph that opens with one contributes nothing. When `docs/` holds a
+built-in `Constants` document, the block gains one line — "before writing or
+changing a name, identifier, prefix, URL or pinned value, read `<path>`" —
+then one `id = value` line for each `active` entry flagged `hot: true`. The
+lines are part of the block's bytes, so editing either document makes
+`--check` report the nudge as drift until `lore agents` runs again. With
+neither document the block is byte-identical to what it was before R8.
+
+The documents are found the way `lore check` finds and types them: git-ignored
+files under `docs/` are never read, so the block is always computable from a
+clean clone, and a `.lore/profile.toml` that declares its own `Constitution` or
+`Constants` renders nothing (Amendment 3, R12). With two of a type, the first
+in sorted path order is rendered. A document lore cannot read or parse is
+skipped; a malformed `.lore/profile.toml` or `docs/index.md` fails the command,
+exit `6`, since without them lore cannot tell which document is which. Document
+prose is made inert before it is written. ANSI escapes, control bytes and bidi
+or invisible format characters are removed. Then the characters that can open
+inline markdown (`` \ ` * _ [ ] < > & ! | ~ ``) are backslash-escaped wherever
+they appear, and a leading `#`, `-`, `+`, `=` or ordered-list delimiter is
+escaped at the start of a rule, the only place block syntax can begin inside
+the block's nested list. So no text in a document can act as markdown in the
+block — no HTML or comment, code span, emphasis, link, entity, heading, quote,
+list or fence — while ordinary punctuation such as `.`, `,`, `-`, `(`, `)` and
+`:` reads as written in the raw file. GitHub's GFM rendering still autolinks a
+bare URL or email address in a rule, showing the author's own text. Paths,
+versions and `id = value` lines are code spans. `lore init --claude` and
+`lore init --codex` write the same lines.
+
 **`.lore/config.toml`'s `[agents].skill_source` (LCLI-443) can opt SKILL.md out of
 per-repo generation entirely.** The default, `"repo"`, is this section's behavior
 above, unchanged. `"plugin"` means the `opum-lore` marketplace plugin owns the
