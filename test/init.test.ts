@@ -40,6 +40,7 @@ import { buildGeminiContextDoc, GEMINI_MD_REL_PATH } from "../src/core/antigravi
 import { loadBundle } from "../src/core/bundle";
 import { parseConcept } from "../src/core/concept";
 import { buildHermesContextDoc, HERMES_CONTEXT_REL_PATH } from "../src/core/hermes-bridge";
+import { findInstructionTopic } from "../src/core/instructions";
 import { EXIT_CODES, exitCodeFor, LoreError, reportError, WarningCollector } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import type { TrackerMigrationResult } from "../src/tracker-migration";
@@ -2089,6 +2090,25 @@ describe("lore init — the interactive wizard is TTY-gated (AC#1/AC#2, the lock
     expect(result.interactive).toBe(false);
     expect(result.agents).toBeUndefined();
     expect(result.scaffolds).toEqual([]);
+  });
+
+  test("a bare non-interactive init writes no Claude bridge, and `lore instructions agents` says so (LCLI-594)", async () => {
+    // The code and the agent guidance once disagreed: the guidance said a bare `lore init` still
+    // bootstrapped Claude, while this path has only ever scaffolded docs/ and .lore/. Pinned as a
+    // pair so neither half can drift back on its own.
+    const { code, result } = await init({ stdinIsTTY: false, prompter: forbiddenPrompter() });
+    expect(code).toBe(0);
+    expect(result.interactive).toBe(false);
+    expect(result.agents).toBeUndefined();
+    expect(result.plugins).toBeUndefined();
+    expect(existsSync(join(root, "CLAUDE.md"))).toBe(false);
+    expect(existsSync(join(root, ".claude"))).toBe(false);
+
+    const guidance = findInstructionTopic("agents")?.body.replace(/\s+/g, " ") ?? "";
+    expect(guidance).toContain(
+      "A bare `lore init` -- no bridge flag, run non-interactively -- creates NO bridge at all",
+    );
+    expect(guidance).not.toContain("still bootstraps Claude by default");
   });
 
   test("--non-interactive is a plain alias for --yes (NIT-2)", async () => {

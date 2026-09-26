@@ -362,8 +362,11 @@ This presence-based defaulting applies ONLY to the bare \`lore agents\`
 call. An EXPLICIT, scoped request always means exactly what it asks for,
 regardless of what else exists: \`lore init --claude\` or \`lore init --agents\`
 always creates/checks the Claude bridge; \`lore init --codex\` always
-creates/checks the Codex bridge. \`lore init\` with no bridge flag and no
-prior selection still bootstraps Claude by default.
+creates/checks the Codex bridge. A bare \`lore init\` -- no bridge flag,
+run non-interactively -- creates NO bridge at all: it scaffolds \`docs/\` and
+\`.lore/\` and nothing else, and the wizard's bridge question starts with
+nothing ticked. The Claude-by-default bootstrap above belongs to the bare
+\`lore agents\` call only; to get a bridge from \`lore init\`, pass the flag.
 
 \`.lore/config.toml\`'s \`[agents] skill_source = "plugin"\` opts the Claude
 half out of repo-local generation entirely: \`.claude/skills/lore/SKILL.md\`
