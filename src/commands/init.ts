@@ -83,6 +83,7 @@ import { join } from "node:path";
 import * as readline from "node:readline/promises";
 import type { Readable, Writable } from "node:stream";
 import { isCancel as clackIsCancel, multiselect as clackMultiselect } from "@clack/prompts";
+import { createAgentPluginPort } from "../adapters/agent-plugins";
 import { type BacklogAdapter, isBacklogVersionFloorFailure } from "../adapters/backlog";
 import {
   bunGitPreflightSpawn,
@@ -117,6 +118,15 @@ import {
   TRACKER_BACKENDS,
   type TrackerBackend,
 } from "../config";
+import {
+  type AgentPluginChecks,
+  type AgentPluginPort,
+  type AgentRuntime,
+  detectLorePlugins,
+  renderPluginPlain,
+  renderPluginPretty,
+  thenMaybe,
+} from "../core/agent-plugins";
 import { loadProfile } from "../core/profile";
 import { buildScaffold } from "../core/scaffold";
 import { ANSI, EXIT_OK, LoreError, paint, WarningCollector, type Writer } from "../errors";
@@ -182,6 +192,14 @@ export interface InitResult {
   agents?: AgentsResult;
   /** Codex bridge result, present iff Codex setup was selected or explicitly requested. */
   codex?: CodexBridgeResult;
+  /**
+   * The opum-lore marketplace plugin for each selected Claude or Codex target, keyed by runtime
+   * (LCLI-592; field name and shape match quest-cli's `init` `data.plugins`, QCLI-371). Detected
+   * after target selection and before any bridge write, and only reported: `init` never installs,
+   * enables or updates a plugin, and the state never changes the exit code. Present iff a Claude or
+   * Codex bridge was selected this run.
+   */
+  plugins?: AgentPluginChecks;
   /** Hermes project-context bridge result, present iff `--hermes` or the wizard selected it. */
   hermes?: HermesBridgeResult;
   /** Antigravity/Gemini CLI context bridge result, present iff `--antigravity` or the wizard selected it. */
@@ -327,6 +345,12 @@ export interface InitOptions {
   previewBacklogMigration?: (migrationOptions?: QuestBacklogMigrationOptions) => Promise<QuestMigrationPreview>;
   /** Injectable executable discovery for the interactive agent choices. */
   agentAvailability?: () => AgentAvailability;
+  /**
+   * How init reads the opum-lore marketplace plugin (LCLI-592); defaults to each runtime's own
+   * `plugin list --json`, or to nothing at all under `LORE_AGENT_PLUGINS=off`. Injected in tests so
+   * no test reaches the machine's real agent install.
+   */
+  agentPlugins?: AgentPluginPort;
   /**
    * Tracker CLI/repository detection (LCLI-358.3); defaults to the real PATH-and-marker probe.
    * Injected in tests so the wizard's environment summary and install offers run without any
@@ -866,6 +890,50 @@ function finishNonInteractive(
   /** What a plain `--migrate-backlog` run did about `backlog/` (LCLI-467); absent when no migration ran. */
   backlogRemoval?: InitBacklogRemoval,
 ): number | Promise<number> {
+  // LCLI-592 (ADR ruling (a), Amendments 1-4): with a Claude or Codex bridge selected, report whether
+  // that runtime has the opum-lore plugin — after target selection, before any bridge write, and
+  // without mutating anything. Synchronous under LORE_AGENT_PLUGINS=off, so a run with detection
+  // off keeps whatever sync/async shape it had before.
+  const runtimes = pluginRuntimesFor(parsed.agents, parsed.codex);
+  const complete = (plugins: AgentPluginChecks | undefined) =>
+    completeNonInteractive(
+      options,
+      parsed,
+      base,
+      clock,
+      priorSelection,
+      plugins,
+      migration,
+      verified,
+      installedPackage,
+      backlogRemoval,
+    );
+  if (runtimes.length === 0) return complete(undefined);
+  return thenMaybe(detectLorePlugins(agentPluginPortFor(options), runtimes), complete);
+}
+
+/** The marketplace-plugin runtimes a bridge selection covers: `claude` for the Claude bridge, `codex` for the Codex one. */
+function pluginRuntimesFor(claude: boolean, codex: boolean): AgentRuntime[] {
+  return [...(claude ? (["claude"] as const) : []), ...(codex ? (["codex"] as const) : [])];
+}
+
+/** {@link InitOptions.agentPlugins}, defaulting to the runtimes' own list commands (or nothing, when switched off). */
+function agentPluginPortFor(options: InitOptions): AgentPluginPort {
+  return options.agentPlugins ?? createAgentPluginPort(options.root);
+}
+
+function completeNonInteractive(
+  options: InitOptions,
+  parsed: InitArgs,
+  base: { root: string; created: string[]; skipped: string[] },
+  clock: () => Date,
+  priorSelection: () => TrackerSelection,
+  plugins: AgentPluginChecks | undefined,
+  migration?: TrackerMigrationResult,
+  verified?: InitTrackerCheck,
+  installedPackage?: string,
+  backlogRemoval?: InitBacklogRemoval,
+): number | Promise<number> {
   const scaffoldTargets = [...new Set(parsed.scaffolds)];
   // Detected on every run, not only the wizard's (LCLI-358.3): three PATH lookups and three
   // `existsSync` calls, no subprocess — so the pre-LORE-260 "a bare init spawns no tracker"
@@ -896,6 +964,7 @@ function finishNonInteractive(
         interactive: false,
         agents,
         codex,
+        plugins,
         hermes,
         antigravity,
         scaffolds,
@@ -923,6 +992,7 @@ function finishNonInteractive(
         interactive: false,
         agents,
         codex,
+        plugins,
         hermes,
         antigravity,
         scaffolds,
@@ -1470,6 +1540,12 @@ async function runInteractiveWizard(
     prompter.close();
   }
 
+  // LCLI-592: the opum-lore plugin for each ticked Claude/Codex bridge, read now — after the
+  // selection and before the first byte of this run is written. Read-only; never changes the exit.
+  const pluginRuntimes = pluginRuntimesFor(wantAgents, wantCodex);
+  const plugins =
+    pluginRuntimes.length > 0 ? await detectLorePlugins(agentPluginPortFor(options), pluginRuntimes) : undefined;
+
   // Every question is answered and nothing can still refuse: only now is the first byte written
   // (LCLI-358.1, AC#4). An EOF/Ctrl-D or a declined git prompt above throws out of the `try` and
   // reaches here never — leaving the directory exactly as the run found it, `.git` included.
@@ -1531,6 +1607,7 @@ async function runInteractiveWizard(
     interactive: true,
     agents,
     codex,
+    plugins,
     hermes,
     antigravity,
     scaffolds,
@@ -2399,6 +2476,9 @@ function renderPretty(data: InitResult, opts: { color: boolean }): string {
       lines.push(`  ${paint(file.action, bridgeActionColor(file.action), opts.color)} ${file.path}`);
     }
   }
+  for (const check of [data.plugins?.claude, data.plugins?.codex]) {
+    if (check !== undefined) lines.push(...renderPluginPretty(check));
+  }
   if (data.hermes) {
     lines.push("Hermes project context bridge:");
     for (const file of data.hermes.files) {
@@ -2480,6 +2560,9 @@ function renderPlain(data: InitResult): string {
     for (const file of data.codex.files) {
       lines.push(`codex-${file.action} ${file.path}`);
     }
+  }
+  for (const check of [data.plugins?.claude, data.plugins?.codex]) {
+    if (check !== undefined) lines.push(...renderPluginPlain(check));
   }
   if (data.hermes) {
     for (const file of data.hermes.files) {

@@ -8,3 +8,7 @@ coverageDir = "coverage"
 # Floor starts at 0 (no source under test yet) and is raised as the core/ library
 # lands so coverage can only ratchet upward.
 coverageThreshold = 0.0
+# LCLI-592 (opum-doc ADR ruling 23): `lore init --claude/--codex` and `lore agents --check` would
+# otherwise start the machine's real `claude` and `codex` CLIs to read the opum-lore plugin. Tests
+# that exercise detection inject a fake port or fake binaries instead.
+preload = ["./test/preload-agent-plugins-off.ts"]

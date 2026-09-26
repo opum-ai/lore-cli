@@ -96,6 +96,7 @@ async function init(
     trackerEnvironment?: () => TrackerEnvironment;
     installTracker?: InitOptions["installTracker"];
     jira?: JiraOnboarding;
+    agentPlugins?: InitOptions["agentPlugins"];
   } = {},
 ): Promise<{ code: number; result: InitResult; stderr: string }> {
   const stdout = capture();
@@ -126,6 +127,9 @@ async function init(
     // machine's own `jira` binary and read whichever credential profiles the developer happens to
     // have (LCLI-358.4).
     jira: extra.jira ?? fakeJira(),
+    // Unset means the default port, which the suite's LORE_AGENT_PLUGINS=off preload turns into
+    // the no-spawn one (LCLI-592).
+    agentPlugins: extra.agentPlugins,
   };
   const code = await runInit(options);
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: InitResult };
@@ -891,6 +895,53 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
     const codexOption = offeredOptions.find((option) => option.value === "codex");
     expect(codexOption?.label).toContain("pi");
     expect(codexOption?.label).toContain("OpenCode");
+  });
+
+  test("the wizard reports data.plugins for each ticked Claude/Codex bridge, read before the first write (LCLI-592)", async () => {
+    const asked: string[] = [];
+    const agentPlugins = {
+      list: async (runtime: "claude" | "codex") => {
+        // Nothing of this run is on disk yet: not the bundle, and not either bridge.
+        asked.push(
+          `${runtime}:${existsSync(join(root, ".lore")) || existsSync(join(root, "CLAUDE.md")) ? "late" : "early"}`,
+        );
+        return runtime === "claude"
+          ? { kind: "listed" as const, plugins: [{ id: "opum-lore@opum", enabled: false, scope: "user" }] }
+          : { kind: "listed" as const, plugins: [] };
+      },
+    };
+    const { code, result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter: scriptedPrompter({ agents: true, codex: true, site: "none", obsidian: false }),
+      agentAvailability: () => ({ claude: true, codex: true }),
+      adapter: fakeAdapter([], { probe: "ok" }),
+      agentPlugins,
+    });
+    expect(code).toBe(0);
+    expect(result.interactive).toBe(true);
+    expect(asked.sort()).toEqual(["claude:early", "codex:early"]);
+    expect(result.plugins?.claude).toMatchObject({ state: "disabled", scope: "user" });
+    expect(result.plugins?.codex).toMatchObject({ state: "not-installed" });
+  });
+
+  test("the wizard asks no runtime when no Claude or Codex bridge is ticked (LCLI-592)", async () => {
+    const asked: string[] = [];
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter: scriptedPrompter({ agents: false, codex: false, site: "none", obsidian: false }),
+      agentAvailability: () => ({ claude: true, codex: true }),
+      adapter: fakeAdapter([], { probe: "ok" }),
+      agentPlugins: {
+        list: async (runtime) => {
+          asked.push(runtime);
+          return { kind: "listed", plugins: [] };
+        },
+      },
+    });
+    expect(result).not.toHaveProperty("plugins");
+    expect(asked).toEqual([]);
   });
 
   test("--tracker none persists an explicit no-tracker mode without probing a tracker", async () => {
