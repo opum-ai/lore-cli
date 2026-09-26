@@ -376,6 +376,16 @@ whichever source is actually in effect. This config is read only for the
 bare, presence-based \`lore agents\` call -- a scoped \`lore init --claude\`/
 \`--agents\` request ignores it, an explicit ask is never silently redirected.
 
+Both managed nudge blocks also carry the bundle's Constitution core and
+Constants pointer (LCLI-597). With a Constitution under \`docs/\`, the block
+names its path and \`version\`, then each principle id with its MUST / MUST NOT
+lines -- no rationale, no Check: line. With a Constants document, it adds one
+line, "before writing or changing a name, identifier, prefix, URL or pinned
+value, read <path>", plus \`id = value\` for each active entry flagged
+\`hot: true\`. Editing either document is drift for \`lore agents --check\`
+until \`lore agents\` regenerates the block; with neither, the block is
+unchanged.
+
 To find out which bridge(s) a given repository currently has selected without
 running a write, run \`lore agents --check --json\` and read \`data.files\`:
 an empty or absent entry for a bridge's own files means that bridge was never

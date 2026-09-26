@@ -260,19 +260,35 @@ ${footer}
  * `"plugin"` repository has no per-repo file to point at, so the line says where the skill actually
  * comes from instead of naming a path that must not exist.
  */
-export function buildNudgeBody(skillSource: SkillSource): string {
+export function buildNudgeBody(skillSource: SkillSource, governance: readonly string[] = []): string {
   const skillLine =
     skillSource === "plugin"
       ? "- **Skill:** installed from the `opum-lore` Claude Code plugin, not this repository — how to drive lore."
       : `- **Skill:** \`${SKILL_REL_PATH}\` — how to drive lore.`;
-  return `This repo uses **lore** — an OKF-native documentation CLI — for the docs bundle under \`docs/\`.
+  return withGovernance(
+    `This repo uses **lore** — an OKF-native documentation CLI — for the docs bundle under \`docs/\`.
 Drive docs work through \`lore\` (not a plain editor or \`grep\`) so Story <-> Task coupling, managed
 blocks, and cross-links stay coherent.
 
 - **Find and read docs:** \`lore query "<words>" --limit 5\`, then \`lore read <id>\` for the best hit.
 ${skillLine}
 - **Just-in-time detail:** run \`lore instructions\` for the canonical agent loop, then
-  \`lore instructions <topic>\` (${instructionTopicKeys()}).`;
+  \`lore instructions <topic>\` (${instructionTopicKeys()}).`,
+    governance,
+  );
+}
+
+/**
+ * Append the Constitution core and Constants pointer (LCLI-597, OPAG-425 R8) to a nudge body, as more
+ * items of the bullet list the body already ends with. `governance` is
+ * {@link import("./type-rules").agentBlockLines}'s output, already sanitized. Empty — a repository
+ * with neither document — returns `body` UNCHANGED, byte for byte: every repository that has
+ * neither regenerates exactly the block it had before R8 existed, so `lore agents --check` stays
+ * green across the upgrade. Because the lines are part of the managed block's bytes, a changed
+ * Constitution or Constants document changes the expected block, which is how `--check` reports it.
+ */
+export function withGovernance(body: string, governance: readonly string[]): string {
+  return governance.length === 0 ? body : `${body}\n${governance.join("\n")}`;
 }
 
 /** What {@link planBridge} decided a single bridge file's next state should be. */
@@ -344,6 +360,11 @@ export interface PlanBridgeInput {
    * {@link planSkill} (LORE-129).
    */
   readonly check: boolean;
+  /**
+   * The Constitution core and Constants pointer lines for the `CLAUDE.md` nudge (LCLI-597, OPAG-425
+   * R8; see {@link withGovernance}). Absent or empty leaves the nudge exactly as it was before R8.
+   */
+  readonly governance?: readonly string[];
 }
 
 /**
@@ -409,7 +430,10 @@ function planSkill(input: PlanBridgeInput): BridgeFilePlan {
 /** Plan the CLAUDE.md nudge (managed-block, always-refresh discipline). */
 function planNudge(input: PlanBridgeInput): BridgeFilePlan {
   const base = input.claudeOnDisk ?? "";
-  const desired = upsertManagedBlock(base, { label: AGENT_BLOCK_LABEL, body: buildNudgeBody(input.skillSource) });
+  const desired = upsertManagedBlock(base, {
+    label: AGENT_BLOCK_LABEL,
+    body: buildNudgeBody(input.skillSource, input.governance),
+  });
   if (input.claudeOnDisk === null) {
     return { path: CLAUDE_MD_REL_PATH, action: "created", contents: desired };
   }

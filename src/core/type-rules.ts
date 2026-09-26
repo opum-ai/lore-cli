@@ -20,6 +20,9 @@
  *   ADR-0007 reason as `singleton`. It stays pure: the command layer hands it the inbound links and
  *   an injected `readSource`, and it returns findings plus counts of what it read, which
  *   `check.report` prints beside its findings (`readCounts`).
+ * - `agentBlock` — the lines `lore agents` renders into its managed block for the bundle's one
+ *   document of this type (LCLI-597, OPAG-425 R8), read with the same parsers `check` judges it by
+ *   ({@link agentBlockLines}).
  *
  * Registering a new type is one {@link TYPE_RULES} entry; neither call site names a type.
  * Constitution (LCLI-595) and Constants (LCLI-596) are the two registered today.
@@ -37,6 +40,7 @@ import GithubSlugger, { slug as githubSlug } from "github-slugger";
 import * as yaml from "js-yaml";
 import type { Heading, Nodes, Root, RootContent } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
+import { printable } from "./agent-plugins";
 import { nodeText, walkMdast } from "./bundle";
 import type { Finding } from "./finding";
 import { CONSTANTS_TYPE, CONSTITUTION_TYPE, type CompiledType, isBuiltinTypeDeclaration } from "./profile";
@@ -69,6 +73,21 @@ export interface TypeRule {
   readonly seed?: (timestamp: string) => TypeSeed;
   /** Bundle-scoped rules over one document of this type (`lore check` only); see {@link TypeBundleContext}. */
   readonly bundle?: (context: TypeBundleContext) => TypeBundleResult;
+  /**
+   * The lines `lore agents` renders into its managed block for the bundle's one document of this type
+   * (LCLI-597, OPAG-425 R8), in the managed block's own bullet-list form. Every piece of document
+   * text in them has passed {@link agentText} or {@link agentCode}, because the block is read by
+   * agents as always-loaded context.
+   */
+  readonly agentBlock?: (doc: AgentBlockDoc) => readonly string[];
+}
+
+/** One document `lore agents` renders a type's {@link TypeRule.agentBlock} facet from. */
+export interface AgentBlockDoc {
+  /** The document's REPOSITORY-relative POSIX path, e.g. `docs/constitution.md`: what an agent opens. */
+  readonly path: string;
+  readonly frontmatter: Readonly<Record<string, unknown>>;
+  readonly body: string;
 }
 
 /** The rule an entry whose `source_of_truth` disagrees with it, or cannot be read, carries. */
@@ -272,13 +291,29 @@ function findSection(root: Root, name: string): Section | null {
 }
 
 /**
+ * How {@link paragraphLines} renders the two inline kinds it keeps. Neither may return a line ending
+ * for a value that has none: the split into lines happens after rendering. mdast KEEPS a line ending
+ * inside a code span's value, so a `code` renderer that preserved one would add a line; both
+ * renderers here drop it (the placeholder has none, and {@link agentCode} collapses whitespace), so
+ * two calls over the same nodes return lines that correspond index for index.
+ */
+interface LineRender {
+  readonly text: (value: string) => string;
+  readonly code: (value: string) => string;
+}
+
+/** The rule-checking render: text as authored, every code span the {@link CODE_SPAN} placeholder. */
+const PROBE_RENDER: LineRender = { text: (value) => value, code: () => CODE_SPAN };
+
+/**
  * Every paragraph's text within `nodes`, split into lines, at any nesting depth (list items,
  * quotes), with an explicit stack throughout. A soft line break (a newline inside a `text` node)
- * and a hard one (an mdast `break`: a trailing `\` or two spaces) both end a line. A code span
- * becomes {@link CODE_SPAN}, so `Check: \`ci.yml\`` still has content after its label while
- * `` `Rationale:` `` quoted in code is not a label. Raw inline HTML contributes nothing.
+ * and a hard one (an mdast `break`: a trailing `\` or two spaces) both end a line. By default a code
+ * span becomes {@link CODE_SPAN}, so `Check: \`ci.yml\`` still has content after its label while
+ * `` `Rationale:` `` quoted in code is not a label; `lore agents` passes {@link AGENT_RENDER} instead
+ * (LCLI-597). Raw inline HTML contributes nothing.
  */
-function paragraphLines(nodes: readonly Nodes[]): string[] {
+function paragraphLines(nodes: readonly Nodes[], render: LineRender = PROBE_RENDER): string[] {
   const lines: string[] = [];
   walkSkipping(nodes, isNotProse, (node) => {
     if (node.type !== "paragraph") {
@@ -290,9 +325,9 @@ function paragraphLines(nodes: readonly Nodes[]): string[] {
       (inline) => inline.type === "html",
       (inline) => {
         if (inline.type === "text") {
-          text += inline.value;
+          text += render.text(inline.value);
         } else if (inline.type === "inlineCode") {
-          text += CODE_SPAN;
+          text += render.code(inline.value);
         } else if (inline.type === "break") {
           text += "\n";
         }
@@ -302,6 +337,48 @@ function paragraphLines(nodes: readonly Nodes[]): string[] {
   });
   return lines;
 }
+
+// ── lore agents rendering (LCLI-597, OPAG-425 R8) ─────────────────────────────—
+
+/*
+ * `lore agents` copies document text into a managed block that agents read as always-loaded context,
+ * so every piece of it passes one of these two before it is placed there:
+ *
+ * - {@link agentText} for prose: the same one-printable-line reduction `lore agents` already applies
+ *   to runtime-supplied text ({@link printable}: whitespace collapsed, ANSI and control bytes
+ *   stripped), after {@link escapeProse} has backslash-escaped every `\` and `<`. Escaping `<` means
+ *   document text can never open raw HTML in the block, an HTML comment included, so it can never
+ *   spell a marker; escaping `\` too means an authored backslash cannot cancel that escape. Both
+ *   escapes render as the literal character.
+ * - {@link agentCode} for a literal (a path, a version, an `id = value` line): one printable line in
+ *   a code span whose fence is longer than any backtick run inside it, so nothing in it is markdown.
+ *
+ * Every rendered line is also a nested item of the block's own bullet list, so no text reaches the
+ * block's top level; `upsertManagedBlock` re-locates its markers after every write regardless, and
+ * refuses a body that disturbs them.
+ */
+
+/** Backslash-escape `\` and `<` in prose (see above). Keeps line endings, which {@link paragraphLines} splits on. */
+function escapeProse(value: string): string {
+  return value.replace(/[\\<]/g, (char) => `\\${char}`);
+}
+
+/** Document prose as one printable, HTML-free markdown line (see above). */
+function agentText(value: string): string {
+  return printable(escapeProse(value));
+}
+
+/** A literal as a one-line code span that nothing inside it can close early (see above). */
+function agentCode(value: string): string {
+  const text = printable(value);
+  const longestRun = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(longestRun + 1);
+  const pad = text === "" || text.startsWith("`") || text.endsWith("`") ? " " : "";
+  return `${fence}${pad}${text}${pad}${fence}`;
+}
+
+/** The display render for a principle's lines: escaped prose, code spans kept as code spans. */
+const AGENT_RENDER: LineRender = { text: escapeProse, code: agentCode };
 
 // ── Constitution (OPAG-425 R4, R9) ─────────────────────────────────────────────—
 
@@ -365,6 +442,29 @@ function constitutionFindings(frontmatter: Readonly<Record<string, unknown>>, bo
   return findings;
 }
 
+/** One `###` principle of the Principles section: its heading text and the nodes under it. */
+interface PrincipleBlock {
+  readonly heading: string;
+  readonly nodes: readonly RootContent[];
+}
+
+/**
+ * Split the Principles section into principles at each `###`; a `####` or deeper stays inside its
+ * principle. The one split both {@link principleFindings} (the gate) and {@link constitutionAgentBlock}
+ * (what `lore agents` renders) read, so the two can never disagree about what a principle is.
+ */
+function splitPrinciples(section: Section): PrincipleBlock[] {
+  const principles: { heading: string; nodes: RootContent[] }[] = [];
+  for (const node of section.nodes) {
+    if (node.type === "heading" && node.depth === 3) {
+      principles.push({ heading: nodeText(node).trim(), nodes: [] });
+    } else {
+      principles.at(-1)?.nodes.push(node);
+    }
+  }
+  return principles;
+}
+
 /** The Principles rules: heading form, unique ids, keyword + Rationale + Check, and the line budget. */
 function principleFindings(root: Root): TypeShapeFinding[] {
   const section = findSection(root, "principles");
@@ -376,15 +476,7 @@ function principleFindings(root: Root): TypeShapeFinding[] {
     findings.push({ severity: "error", rule: TYPE_SHAPE_RULE, message: `Constitution ${message}` });
   };
 
-  // Split the section into principles at each `###`; a `####` or deeper stays inside its principle.
-  const principles: { heading: string; nodes: RootContent[] }[] = [];
-  for (const node of section.nodes) {
-    if (node.type === "heading" && node.depth === 3) {
-      principles.push({ heading: nodeText(node).trim(), nodes: [] });
-    } else {
-      principles.at(-1)?.nodes.push(node);
-    }
-  }
+  const principles = splitPrinciples(section);
   if (principles.length === 0) {
     error('"## Principles" declares no principle -- add one as a "### P1. <Name>" heading');
   }
@@ -431,6 +523,60 @@ function principleFindings(root: Root): TypeShapeFinding[] {
     });
   }
   return findings;
+}
+
+/** A frontmatter scalar as text: a string trimmed, a number (YAML reads `1` bare) as written; else `undefined`. */
+function scalarText(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  return typeof value === "number" ? String(value) : undefined;
+}
+
+/**
+ * A MUST / MUST NOT line (R8): a principle line holding the uppercase keyword `MUST` in its prose,
+ * read on the {@link PROBE_RENDER} text so a `MUST` quoted in a code span does not count. A
+ * `Rationale:` or `Check:` line never is one, whatever it says: R8 renders the rule, not its reasons
+ * or its verification.
+ */
+function isMustLine(probe: string): boolean {
+  return /\bMUST\b/.test(probe) && !/^(?:Rationale|Check):/.test(probe);
+}
+
+/**
+ * What `lore agents` renders for the Constitution (LCLI-597, OPAG-425 R8): its path, its `version`,
+ * and each principle's id with its MUST / MUST NOT lines, "nothing more". The principle id is the
+ * heading as written (`P1. <Name>`), since the name is what makes the id legible in a list; a
+ * heading not of that form is skipped, because it is no principle (`lore check` names it). A
+ * principle with no MUST line still lists its id, so the block never implies a principle is absent.
+ * No rationale, no `Check:` line, no SHOULD or MAY line, no governance text.
+ *
+ * ```
+ * - **Constitution:** `docs/constitution.md`, version `1.2.0`
+ *   - P1. Deterministic output
+ *     - Lore MUST produce identical output for identical input.
+ * ```
+ */
+function constitutionAgentBlock(doc: AgentBlockDoc): string[] {
+  const version = scalarText(doc.frontmatter.version);
+  const lines = [
+    `- **Constitution:** ${agentCode(doc.path)}, version ${version === undefined || version === "" ? "unset" : agentCode(version)}`,
+  ];
+  const section = findSection(fromMarkdown(doc.body), "principles");
+  for (const principle of section === null ? [] : splitPrinciples(section)) {
+    if (!PRINCIPLE_HEADING.test(principle.heading)) {
+      continue;
+    }
+    lines.push(`  - ${agentText(principle.heading)}`);
+    const probes = paragraphLines(principle.nodes);
+    const shown = paragraphLines(principle.nodes, AGENT_RENDER);
+    probes.forEach((probe, index) => {
+      if (isMustLine(probe)) {
+        lines.push(`    - ${printable(shown[index] ?? "")}`);
+      }
+    });
+  }
+  return lines;
 }
 
 /** A GFM table delimiter row: `|---|:--:|`, with or without the outer pipes. */
@@ -868,6 +1014,45 @@ function constantsFindings(frontmatter: Readonly<Record<string, unknown>>, body:
   return findings;
 }
 
+/**
+ * The observable trigger R8 names, verbatim from the ruling's own example, so an agent knows WHEN to
+ * open the Constants document rather than merely that one exists.
+ */
+export const CONSTANTS_TRIGGER = "before writing or changing a name, identifier, prefix, URL or pinned value, read";
+
+/**
+ * What `lore agents` renders for the Constants document (LCLI-597, OPAG-425 R8): one pointer line
+ * carrying {@link CONSTANTS_TRIGGER} and the document's path, then one `id = value` line for each
+ * entry flagged `hot: true`, in document order, read by the same {@link parseConstants} `lore check`
+ * judges the document with. Only an `active` entry with a well-formed id is rendered, once: a
+ * `deprecated` or `retired` value is exactly the one an agent must NOT write (Amendment 2: `retired`
+ * is a historical record, and R6 warns on citing either), and a malformed or repeated id is a
+ * `lore check` error, not a fact.
+ *
+ * ```
+ * - **Constants:** before writing or changing a name, identifier, prefix, URL or pinned value, read `docs/constants.md`.
+ *   - `service.http-port = 8080`
+ * ```
+ */
+function constantsAgentBlock(doc: AgentBlockDoc): string[] {
+  const lines = [`- **Constants:** ${CONSTANTS_TRIGGER} ${agentCode(doc.path)}.`];
+  const rendered = new Set<string>();
+  for (const entry of parseConstants(doc.body).entries) {
+    const { id, fields } = entry;
+    if (
+      fields.get("hot") !== "true" ||
+      fields.get("status") !== "active" ||
+      !CONSTANT_ID.test(id) ||
+      rendered.has(id)
+    ) {
+      continue;
+    }
+    rendered.add(id);
+    lines.push(`  - ${agentCode(`${id} = ${fields.get("value") ?? ""}`)}`);
+  }
+  return lines;
+}
+
 /** The source formats R7 compares, by lower-cased file extension. Anything else is not comparable. */
 const SOURCE_FORMATS: Readonly<Record<string, "json" | "toml" | "yaml">> = {
   ".json": "json",
@@ -1113,13 +1298,45 @@ function constantsSeed(timestamp: string): TypeSeed {
 const TYPE_RULES: ReadonlyMap<string, TypeRule> = new Map<string, TypeRule>([
   [
     CONSTITUTION_TYPE,
-    { type: CONSTITUTION_TYPE, singleton: true, check: constitutionFindings, seed: constitutionSeed },
+    {
+      type: CONSTITUTION_TYPE,
+      singleton: true,
+      check: constitutionFindings,
+      seed: constitutionSeed,
+      agentBlock: constitutionAgentBlock,
+    },
   ],
   [
     CONSTANTS_TYPE,
-    { type: CONSTANTS_TYPE, singleton: true, check: constantsFindings, seed: constantsSeed, bundle: constantsBundle },
+    {
+      type: CONSTANTS_TYPE,
+      singleton: true,
+      check: constantsFindings,
+      seed: constantsSeed,
+      bundle: constantsBundle,
+      agentBlock: constantsAgentBlock,
+    },
   ],
 ]);
+
+/**
+ * Every line `lore agents` renders into its managed block from `docs`, the bundle's first document
+ * of each type that has an {@link TypeRule.agentBlock} facet, keyed by canonical type (LCLI-597).
+ * Rendered in registry order (Constitution, then Constants), never in the caller's map order, so
+ * the block's bytes depend only on the documents. Empty when `docs` holds no such document, which is
+ * what keeps a repository with neither document's block byte-identical to what it was before R8.
+ * Names no type: a type joins the block by gaining the facet.
+ */
+export function agentBlockLines(docs: ReadonlyMap<string, AgentBlockDoc>): string[] {
+  const lines: string[] = [];
+  for (const rule of TYPE_RULES.values()) {
+    const doc = docs.get(rule.type);
+    if (doc !== undefined && rule.agentBlock !== undefined) {
+      lines.push(...rule.agentBlock(doc));
+    }
+  }
+  return lines;
+}
 
 /**
  * The rules for `canonical`, or `undefined` unless the active profile's declaration of it is lore's

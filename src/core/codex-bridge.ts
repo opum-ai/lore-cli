@@ -1,4 +1,10 @@
-import { type BridgeAction, type BridgeFilePlan, type BridgePlan, instructionTopicKeys } from "./agent-bridge";
+import {
+  type BridgeAction,
+  type BridgeFilePlan,
+  type BridgePlan,
+  instructionTopicKeys,
+  withGovernance,
+} from "./agent-bridge";
 import { upsertManagedBlock } from "./managed-block";
 
 export const CODEX_SKILL_REL_PATH = ".codex/skills/lore/SKILL.md";
@@ -71,15 +77,23 @@ permissions, or execution settings.
 `;
 }
 
-export function buildCodexNudgeBody(): string {
-  return `This repo uses **lore** — an OKF-native documentation CLI — for the docs bundle under \`docs/\`.
+/**
+ * The `AGENTS.md` nudge body. `governance` is the Constitution core and Constants pointer
+ * (LCLI-597, OPAG-425 R8), appended exactly as the `CLAUDE.md` nudge appends it
+ * ({@link withGovernance}); empty leaves the body byte-identical to what it was before R8.
+ */
+export function buildCodexNudgeBody(governance: readonly string[] = []): string {
+  return withGovernance(
+    `This repo uses **lore** — an OKF-native documentation CLI — for the docs bundle under \`docs/\`.
 When working on documentation, drive it through \`lore\` (not a plain editor) so Story <-> Task
 coupling, managed blocks, and cross-links stay coherent.
 
 - **Find and read docs:** \`lore query "<words>" --limit 5\`, then \`lore read <id>\` for the best hit.
 - **Skill:** \`${CODEX_SKILL_REL_PATH}\` — how to drive lore.
 - **Just-in-time detail:** run \`lore instructions\` for the canonical agent loop, then
-  \`lore instructions <topic>\` (${instructionTopicKeys()}).`;
+  \`lore instructions <topic>\` (${instructionTopicKeys()}).`,
+    governance,
+  );
 }
 
 export interface PlanCodexBridgeInput {
@@ -87,6 +101,8 @@ export interface PlanCodexBridgeInput {
   readonly agentsOnDisk: string | null;
   readonly force: boolean;
   readonly check: boolean;
+  /** The Constitution core and Constants pointer lines (LCLI-597); see {@link buildCodexNudgeBody}. */
+  readonly governance?: readonly string[];
 }
 
 export function planCodexBridge(input: PlanCodexBridgeInput): BridgePlan {
@@ -104,7 +120,7 @@ function planSkill(input: PlanCodexBridgeInput): BridgeFilePlan {
 function planNudge(input: PlanCodexBridgeInput): BridgeFilePlan {
   const desired = upsertManagedBlock(input.agentsOnDisk ?? "", {
     label: CODEX_AGENT_BLOCK_LABEL,
-    body: buildCodexNudgeBody(),
+    body: buildCodexNudgeBody(input.governance),
   });
   if (input.agentsOnDisk === null) return { path: AGENTS_MD_REL_PATH, action: "created", contents: desired };
   if (input.agentsOnDisk === desired) return { path: AGENTS_MD_REL_PATH, action: "unchanged", contents: null };
