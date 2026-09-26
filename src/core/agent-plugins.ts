@@ -6,7 +6,8 @@
  * states a selected runtime is in, and the command to run next. `init` and `--check` never run it:
  * they do not mutate the user's agent install (ruling 19). The one mutation is LCLI-593's: `lore
  * agents --target <runtime> --force` updates that runtime's INSTALLED plugin (rulings 19, 25, 27) —
- * never installs one, never enables one (ruling 21), and never for a runtime the call did not name.
+ * never installs one, never enables one (ruling 21), never for a runtime the call did not name, and
+ * never for a Claude row whose scope is `managed` (Amendment 6, ruling 28, LCLI-604: main `b4368735`).
  * Ruling (d) requires lore and quest to do this the same way, so the field names, the state strings
  * and the remedy strings here match quest-cli's `QCLI-371` (`opum-ai/quest-cli#266`, merged
  * `30a6846`) with the plugin id swapped from `opum-quest@opum` to `opum-lore@opum`.
@@ -139,6 +140,36 @@ function claudeScopeUnnamable(runtime: AgentRuntime, scope: string | undefined):
 /** The remedy, as prose rather than a runnable command, for a Claude plugin whose scope cannot be named. */
 export const UNNAMABLE_SCOPE_REMEDY = `the Claude scope that decided this state cannot be named safely in a command, so lore prints none: run \`claude plugin list --json\`, find the ${LORE_PLUGIN_ID} row that applies to this project, and act on it with that row's own --scope`;
 
+/**
+ * The Claude scope an administrator sets through Claude Code's managed settings (`policySettings`).
+ * It decides over every other scope and applies to every project (opum-doc ADR Amendment 6, ruling
+ * 28). Claude Code itself refuses to install to it ("Cannot install plugins to managed scope").
+ */
+export const CLAUDE_MANAGED_SCOPE = "managed";
+
+/**
+ * The remedy whenever a Claude `managed` row decided the state, installed or disabled alike (ruling
+ * 28). Prose, never a command: the plugin user cannot change a managed setting, so no `claude plugin`
+ * command — and never `--scope managed` — is offered. Agreed byte-for-byte with quest-cli (QCLI-381)
+ * on 2026-09-26 under ruling (d); quest's differs only in the plugin id. Deliberately ONE string for
+ * both states (a per-state variant invites a runnable-looking one) and NO filesystem path (the
+ * managed-settings location differs by OS and is unmeasured).
+ */
+export const MANAGED_SCOPE_REMEDY = `managed by your Claude Code administrator: ${LORE_PLUGIN_ID} is set in the managed settings, which only an administrator can change`;
+
+/**
+ * `updateDetail` when an installed plugin's deciding Claude row is `managed`: nothing ran, because a
+ * managed row is never updated (ruling 28). quest-cli proposed it for QCLI-381 and lore-cli agreed it
+ * byte-for-byte on 2026-09-26 under ruling (d).
+ */
+export const MANAGED_SCOPE_UPDATE_DETAIL =
+  "the deciding row is managed by your Claude Code administrator, so it is never updated";
+
+/** Whether a Claude plugin's deciding row is administrator-managed (ruling 28). */
+function claudeScopeManaged(runtime: AgentRuntime, scope: string | undefined): boolean {
+  return runtime === "claude" && scope === CLAUDE_MANAGED_SCOPE;
+}
+
 /** ` --scope <scope>`, or nothing. */
 function scopeFlag(scope: string | undefined): string {
   return isPlainScope(scope) ? ` --scope ${scope}` : "";
@@ -149,9 +180,11 @@ function scopeFlag(scope: string | undefined): string {
  * runs ({@link AgentPluginPort.update}) and the command it prints ({@link lorePluginUpdateCommand}),
  * so the two cannot drift. Claude names the deciding scope (ruling 26 iii). Codex has no per-plugin
  * update (codex-cli 0.155.1): refreshing the marketplace and re-adding the plugin is its equivalent,
- * and that refresh covers EVERY plugin the `opum` marketplace serves (ruling 25).
+ * and that refresh covers EVERY plugin the `opum` marketplace serves (ruling 25). A Claude `managed`
+ * row has NO steps: it is never updated (ruling 28), so `--scope managed` is never built into argv.
  */
 export function lorePluginUpdateSteps(runtime: AgentRuntime, scope?: string): string[][] {
+  if (claudeScopeManaged(runtime, scope)) return [];
   return runtime === "claude"
     ? [["claude", "plugin", "update", LORE_PLUGIN_ID, ...(isPlainScope(scope) ? ["--scope", scope] : [])]]
     : [
@@ -203,6 +236,11 @@ function remedyFor(runtime: AgentRuntime, state: AgentPluginState, scope?: strin
     return runtime === "claude"
       ? `claude plugin marketplace add ${MARKETPLACE_REPOSITORY} && claude plugin install ${LORE_PLUGIN_ID}`
       : `codex plugin marketplace add ${MARKETPLACE_REPOSITORY} && codex plugin add ${LORE_PLUGIN_ID}`;
+  }
+  // Ruling 28: a managed row is the administrator's to change, so the user is told that, in prose,
+  // ahead of every enable/update command — none of which may name `--scope managed`.
+  if ((state === "disabled" || state === "installed") && claudeScopeManaged(runtime, scope)) {
+    return MANAGED_SCOPE_REMEDY;
   }
   // An unscoped `claude plugin enable`/`update` would act at Claude's default scope, which may not be
   // the row this state came from (ruling 26 iii), so no command is offered at all.
@@ -269,6 +307,11 @@ export function detectLorePlugins(
 
 /** Why an update did not run: `updateDetail` on a `not-run` report. */
 function notRunDetail(check: AgentPluginCheck, runtimeNamed: boolean): string {
+  // Ruling 28: checked before the bare-call detail, which would otherwise promise that
+  // `--target claude --force` updates a row that no call ever updates.
+  if (check.state === "installed" && claudeScopeManaged(check.runtime, check.scope)) {
+    return MANAGED_SCOPE_UPDATE_DETAIL;
+  }
   if (!runtimeNamed) {
     // Rulings 25 and 27: a call naming no runtime is not consent to updating one.
     return `this call named no runtime, so it updates none; \`lore agents --target ${check.runtime} --force\` updates this one`;
@@ -306,8 +349,12 @@ export function updateLorePlugin(
   port: AgentPluginPort,
   check: AgentPluginCheck,
 ): AgentPluginUpdateReport | Promise<AgentPluginUpdateReport> {
-  // Ruling 21: never install, never enable. Only an installed plugin is updated.
-  if (check.state !== "installed") return notRunReport(check, true);
+  // Ruling 21: never install, never enable. Only an installed plugin is updated — and never one whose
+  // deciding Claude row is managed (ruling 28): that is reported not-run and nothing is asked of the
+  // port, so no `--scope managed` update is ever attempted (Claude Code would refuse it anyway).
+  if (check.state !== "installed" || claudeScopeManaged(check.runtime, check.scope)) {
+    return notRunReport(check, true);
+  }
   if (claudeScopeUnnamable(check.runtime, check.scope)) {
     // Ruling 26 (iii): an update names its deciding scope, and never updates a row the reported state
     // did not come from. A scope that cannot be put into a command cannot be named, so nothing runs,
@@ -367,8 +414,16 @@ export function renderPluginPretty(check: AgentPluginCheck | AgentPluginUpdateRe
   const scope = check.scope !== undefined ? ` (${check.scope} scope)` : "";
   const lines = [`${runtimeName} plugin ${check.id}: ${check.state}${version}${scope}`];
   if (check.reason !== undefined) lines.push(`  ${check.reason}`);
-  // Ruling 19: init/--check print the command that would update an installed plugin, too.
-  if (check.remedy !== undefined) lines.push(`  ${check.state === "installed" ? "to update" : "run"}: ${check.remedy}`);
+  // Ruling 19: init/--check print the command that would update an installed plugin, too. A managed
+  // row's remedy is not a command at all (ruling 28), so it is not introduced as one.
+  if (check.remedy !== undefined) {
+    const label = claudeScopeManaged(check.runtime, check.scope)
+      ? "note"
+      : check.state === "installed"
+        ? "to update"
+        : "run";
+    lines.push(`  ${label}: ${check.remedy}`);
+  }
   if (isUpdateReport(check)) {
     const outcome = check.update === "not-run" ? "not run" : check.updateOk ? "ran" : "FAILED";
     lines.push(`  update ${outcome}${check.updateDetail !== undefined ? `: ${check.updateDetail}` : ""}`);

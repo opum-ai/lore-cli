@@ -49,6 +49,8 @@ import {
   detectLorePlugins,
   LORE_PLUGIN_ID,
   lorePluginUpdateSteps,
+  MANAGED_SCOPE_REMEDY,
+  MANAGED_SCOPE_UPDATE_DETAIL,
   UNNAMABLE_SCOPE_REMEDY,
 } from "../src/core/agent-plugins";
 import { EXIT_CODES, EXIT_OK } from "../src/errors";
@@ -243,15 +245,20 @@ describe("claude: detection over recorded `claude plugin list --json`", () => {
     }
   });
 
-  test("ruling 26 (ii): the full precedence is local > project > user > managed > synced", async () => {
-    const scopes = ["synced", "managed", "user", "project", "local"];
+  test("ruling 28: the full precedence is managed > local > project > user > synced, in either row order", async () => {
+    const scopes = ["synced", "user", "project", "local", "managed"];
     for (let winner = 0; winner < scopes.length; winner += 1) {
-      // Rows for every scope from the least specific up to `winner`; only the winner is disabled.
+      // Rows for every scope from the least deciding up to `winner`; only the winner is disabled. A
+      // managed row carries no projectPath (the schema Amendment 6 measured leaves it optional).
       const rows = scopes
         .slice(0, winner + 1)
-        .map((scope, index) => claudeRow({ scope, enabled: index !== winner, projectPath: root }));
-      const check = await detect("claude", listed(rows));
-      expect({ scope: check.scope, state: check.state }).toEqual({ scope: scopes[winner], state: "disabled" });
+        .map((scope, index) =>
+          claudeRow({ scope, enabled: index !== winner, ...(scope === "managed" ? {} : { projectPath: root }) }),
+        );
+      for (const ordered of [rows, [...rows].reverse()]) {
+        const check = await detect("claude", listed(ordered));
+        expect({ scope: check.scope, state: check.state }).toEqual({ scope: scopes[winner], state: "disabled" });
+      }
     }
   });
 
@@ -321,6 +328,122 @@ describe("claude: detection over recorded `claude plugin list --json`", () => {
       const check = await detect("claude", listed(rows), inner);
       expect({ state: check.state, scope: check.scope }).toEqual({ state: "disabled", scope: "local" });
     }
+  });
+});
+
+// ---- LCLI-604: ruling 28 — a managed row decides over every scope and is never updated ----------
+// opum-doc ADR Amendment 6 (ODOC-286, 44326c508). A managed row's real rendering is unmeasured on any
+// install, so these rows are built from the schema Amendment 6 measured — `{id, scope, enabled,
+// version, projectPath?}` — plus the keys every recorded row carries (`claudeRow`).
+
+/** The two agreed strings, as literals: a test that imported them would pass whatever they said. */
+const MANAGED_REMEDY_LITERAL =
+  "managed by your Claude Code administrator: opum-lore@opum is set in the managed settings, which only an administrator can change";
+const MANAGED_DETAIL_LITERAL = "the deciding row is managed by your Claude Code administrator, so it is never updated";
+
+/** A managed row, optionally with a projectPath (which must never matter). */
+const managedRow = (enabled: boolean, projectPath?: string): ClaudeRow =>
+  claudeRow({ scope: "managed", enabled, ...(projectPath === undefined ? {} : { projectPath }) });
+
+describe("ruling 28: a managed row decides over every scope (LCLI-604)", () => {
+  test("the agreed remedy and update detail are exported byte-for-byte, and lore's plugin id renders opum-lore@opum", () => {
+    expect(LORE_PLUGIN_ID).toBe("opum-lore@opum");
+    expect(MANAGED_SCOPE_REMEDY).toBe(MANAGED_REMEDY_LITERAL);
+    expect(MANAGED_SCOPE_UPDATE_DETAIL).toBe(MANAGED_DETAIL_LITERAL);
+  });
+
+  test("managed ENABLED decides over a project-matching DISABLED local row and every other scope, in either order", async () => {
+    const others = ["local", "project", "user", "synced"].map((scope) =>
+      claudeRow({ scope, enabled: false, projectPath: root }),
+    );
+    for (const rows of [
+      [...others, managedRow(true)],
+      [managedRow(true), ...others],
+    ]) {
+      const check = await detect("claude", listed([...CLAUDE_NEIGHBOURS, ...rows]));
+      expect(check).toEqual({
+        runtime: "claude",
+        id: LORE_PLUGIN_ID,
+        state: "installed",
+        version: "0.9.0",
+        scope: "managed",
+        remedy: MANAGED_REMEDY_LITERAL,
+      });
+    }
+  });
+
+  test("managed DISABLED decides over a project-matching ENABLED local row and every other scope, in either order", async () => {
+    const others = ["local", "project", "user", "synced"].map((scope) =>
+      claudeRow({ scope, enabled: true, projectPath: root }),
+    );
+    for (const rows of [
+      [...others, managedRow(false)],
+      [managedRow(false), ...others],
+    ]) {
+      const check = await detect("claude", listed(rows));
+      expect(check).toEqual({
+        runtime: "claude",
+        id: LORE_PLUGIN_ID,
+        state: "disabled",
+        version: "0.9.0",
+        scope: "managed",
+        remedy: MANAGED_REMEDY_LITERAL,
+      });
+    }
+  });
+
+  test("a managed row applies to every project: one WITH a non-matching projectPath still decides", async () => {
+    const elsewhere = `${root}-elsewhere`;
+    const local = claudeRow({ scope: "local", enabled: true, projectPath: root });
+    for (const rows of [
+      [local, managedRow(false, elsewhere)],
+      [managedRow(false, elsewhere), local],
+    ]) {
+      const check = await detect("claude", listed(rows));
+      expect({ state: check.state, scope: check.scope }).toEqual({ state: "disabled", scope: "managed" });
+    }
+    // Alone, too: nothing else applies, and it still is this project's install.
+    expect((await detect("claude", listed([managedRow(true, elsewhere)]))).scope).toBe("managed");
+    // Positive control in the same invocation: the same projectPath on a LOCAL row is dropped.
+    const foreignLocal = claudeRow({ scope: "local", enabled: false, projectPath: elsewhere });
+    expect((await detect("claude", listed([foreignLocal]))).state).toBe("not-installed");
+  });
+
+  test("ruling 29 still holds, and a managed row never enters the depth tie-break against local rows", async () => {
+    const inner = join(root, "inner");
+    mkdirSync(inner);
+    const outerLocal = claudeRow({ scope: "local", enabled: true, projectPath: root });
+    const innerLocal = claudeRow({ scope: "local", enabled: false, projectPath: inner });
+    // A managed row carrying a projectPath DEEPER than either local row, and one shallower than both:
+    // neither depth may matter, because a managed row's projectPath is never compared.
+    for (const managedPath of [join(inner, "deeper", "still"), "/"]) {
+      for (const rows of [
+        [outerLocal, innerLocal, managedRow(true, managedPath)],
+        [managedRow(true, managedPath), innerLocal, outerLocal],
+      ]) {
+        const check = await detect("claude", listed(rows), inner);
+        expect({ managedPath, state: check.state, scope: check.scope }).toEqual({
+          managedPath,
+          state: "installed",
+          scope: "managed",
+        });
+      }
+    }
+    // Without the managed row, ruling 29 decides between the local rows exactly as before.
+    for (const rows of [
+      [outerLocal, innerLocal],
+      [innerLocal, outerLocal],
+    ]) {
+      expect((await detect("claude", listed(rows), inner)).state).toBe("disabled");
+    }
+  });
+
+  test("--scope managed is never built: no update argv, and the adapter runs nothing if reached directly", async () => {
+    expect(lorePluginUpdateSteps("claude", "managed")).toEqual([]);
+    const runner = recordedRunner({ claude: listed([]) });
+    const outcome = await new CliAgentPluginPort(root, { runner }).update("claude", "managed");
+    expect(runner.calls).toEqual([]);
+    expect(outcome).toEqual({ ok: false, detail: MANAGED_DETAIL_LITERAL, completed: 0 });
   });
 });
 
@@ -836,7 +959,8 @@ describe("LCLI-593 review findings a and b: a scope is named only when it is a p
   });
 
   test("a: every scope Claude actually reports is still named, including a digit-led token", async () => {
-    for (const scope of ["local", "project", "user", "managed", "synced", "2fa_scope-1"]) {
+    // `managed` is absent on purpose: it is never updated, so never named (ruling 28, tested below).
+    for (const scope of ["local", "project", "user", "synced", "2fa_scope-1"]) {
       const port = fakePort({ claude: installedAt(scope) });
       const { data } = await agents(["--target", "claude", "--force"], port);
       expect(port.updates).toEqual([`claude@${scope}`]);
@@ -850,6 +974,115 @@ describe("LCLI-593 review findings a and b: a scope is named only when it is a p
       expect(data.plugin?.remedy).toBe(UNNAMABLE_SCOPE_REMEDY);
       expect(data.plugin?.remedy).not.toMatch(/^claude plugin (update|enable)/);
     }
+  });
+});
+
+/**
+ * A stub port that logs EVERY call it receives (`list claude`, `update claude@managed`) and serves them
+ * through the REAL adapter over a recorded runner, which logs every argv it is asked to run — so the
+ * decoder, the precedence and the update path are all the shipped code, and nothing can run unseen.
+ */
+function loggingPort(listing: unknown): AgentPluginPort & { log: string[]; argv: string[] } {
+  const runner = recordedRunner({ claude: listed(listing) });
+  const real = new CliAgentPluginPort(root, { runner });
+  const log: string[] = [];
+  return {
+    log,
+    argv: runner.calls,
+    list: (runtime) => {
+      log.push(`list ${runtime}`);
+      return real.list(runtime);
+    },
+    update: (runtime, scope) => {
+      log.push(`update ${runtime}@${scope}`);
+      return real.update(runtime, scope);
+    },
+  };
+}
+
+/** A managed row alongside a project-matching local row of the opposite state, and the neighbours. */
+const managedOverLocal = (managedEnabled: boolean): ClaudeRow[] => [
+  ...CLAUDE_NEIGHBOURS,
+  claudeRow({ scope: "local", enabled: !managedEnabled, projectPath: root }),
+  managedRow(managedEnabled),
+];
+
+describe("ruling 28: a managed deciding row is never updated, through lore agents (LCLI-604)", () => {
+  test("--target claude --force on managed INSTALLED: only the list runs, update not-run, the agreed detail and prose remedy", async () => {
+    const port = loggingPort(managedOverLocal(true));
+    const { code, data } = await agents(["--target", "claude", "--force"], port);
+    expect(code).toBe(EXIT_OK);
+    expect(port.log).toEqual(["list claude"]);
+    expect(port.argv).toEqual(["claude plugin list --json"]);
+    expect(data.plugin).toEqual({
+      runtime: "claude",
+      id: LORE_PLUGIN_ID,
+      state: "installed",
+      version: "0.9.0",
+      scope: "managed",
+      remedy: MANAGED_REMEDY_LITERAL,
+      update: "not-run",
+      updateDetail: MANAGED_DETAIL_LITERAL,
+    });
+    expect(data.plugin?.remedy).not.toContain("claude plugin");
+    expect(data.plugin?.remedy).not.toContain("--scope");
+    expect(JSON.stringify(data)).not.toContain("--scope managed");
+    expect(data).not.toHaveProperty("plugins");
+  });
+
+  test("--target claude --force on managed DISABLED: only the list runs, the disabled not-run path, still the managed remedy", async () => {
+    const port = loggingPort(managedOverLocal(false));
+    const { code, data } = await agents(["--target", "claude", "--force"], port);
+    expect(code).toBe(EXIT_OK);
+    expect(port.log).toEqual(["list claude"]);
+    expect(port.argv).toEqual(["claude plugin list --json"]);
+    expect(data.plugin).toMatchObject({
+      state: "disabled",
+      scope: "managed",
+      remedy: MANAGED_REMEDY_LITERAL,
+      update: "not-run",
+    });
+    expect(data.plugin).not.toHaveProperty("updateOk");
+    expect(data.plugin?.remedy).not.toMatch(/claude plugin|--scope/);
+    expect(JSON.stringify(data)).not.toContain("--scope managed");
+  });
+
+  test("--plain and pretty say the same, and never introduce the managed remedy as a command", async () => {
+    const plain = await agents(["--target", "claude", "--force"], loggingPort(managedOverLocal(true)), PLAIN_CTX);
+    expect(plain.text.split("\n").filter((line) => line.startsWith("plugin-"))).toEqual([
+      "plugin-claude installed opum-lore@opum scope=managed",
+      `plugin-claude-remedy ${MANAGED_REMEDY_LITERAL}`,
+      "plugin-claude-update not-run",
+      `plugin-claude-update-detail ${MANAGED_DETAIL_LITERAL}`,
+    ]);
+    const pretty = await agents(["--target", "claude", "--force"], loggingPort(managedOverLocal(true)), {
+      mode: "pretty",
+      color: false,
+    });
+    expect(pretty.text).toContain(`  note: ${MANAGED_REMEDY_LITERAL}`);
+    expect(pretty.text).not.toContain("to update: managed");
+  });
+
+  test("--target claude --check: the managed remedy for installed and disabled alike, and nothing runs", async () => {
+    for (const enabled of [true, false]) {
+      const port = loggingPort(managedOverLocal(enabled));
+      const { data } = await agents(["--target", "claude", "--check"], port);
+      expect(port.argv).toEqual(["claude plugin list --json"]);
+      expect(data.plugin).toMatchObject({ scope: "managed", remedy: MANAGED_REMEDY_LITERAL });
+    }
+  });
+
+  test("a bare lore agents --force: managed installed is not-run with the managed detail, not a --target promise", async () => {
+    const port = loggingPort(managedOverLocal(true));
+    const { code, data } = await agents(["--force"], port);
+    expect(code).toBe(EXIT_OK);
+    expect(port.argv).toEqual(["claude plugin list --json"]);
+    expect(data.plugins?.claude).toMatchObject({
+      scope: "managed",
+      update: "not-run",
+      updateDetail: MANAGED_DETAIL_LITERAL,
+      remedy: MANAGED_REMEDY_LITERAL,
+    });
   });
 });
 
@@ -1326,6 +1559,29 @@ describe.skipIf(onWindows)("subprocess: the real lore against fake claude/codex 
       remedy: "claude plugin enable opum-lore@opum --scope user",
     });
     expect(codexRun.data.plugin).toMatchObject({ state: "disabled", update: "not-run" });
+  });
+
+  test("ruling 28 (LCLI-604): a managed deciding row under --target claude --force starts the list command only", async () => {
+    // Managed installed over a project-matching disabled local row, then managed disabled over an
+    // enabled one: the real lore against a fake claude that logs every invocation.
+    for (const managedEnabled of [true, false]) {
+      rmSync(log, { force: true });
+      fake("claude", [
+        claudeRow({ scope: "local", enabled: !managedEnabled, projectPath: root }),
+        managedRow(managedEnabled, `${root}-elsewhere`),
+      ]);
+      const run = await lore(["agents", "--target", "claude", "--force", "--json"], false);
+      expect(run.code).toBe(EXIT_OK);
+      expect(calls()).toEqual([LIST_CLAUDE]);
+      expect(run.data.plugin).toMatchObject({
+        state: managedEnabled ? "installed" : "disabled",
+        scope: "managed",
+        update: "not-run",
+        remedy: MANAGED_REMEDY_LITERAL,
+        ...(managedEnabled ? { updateDetail: MANAGED_DETAIL_LITERAL } : {}),
+      });
+      expect(JSON.stringify(run.data)).not.toContain("--scope managed");
+    }
   });
 
   test("ruling B: a plain write, bare or --target, starts no runtime process even with detection ON", async () => {

@@ -400,7 +400,11 @@ list --json\`. The state is one of \`installed\`, \`disabled\` (installed but
 switched off, so its skill does not reach the agent), \`not-installed\`, or
 \`not-detectable\` (the runtime CLI is missing, failed, or answered in a shape
 lore cannot read), with the command to run next in \`remedy\`. Claude rows scoped
-to another project are ignored, and the most specific applicable scope decides.
+to another project are ignored, and the deciding row is chosen by scope in the
+order managed > local > project > user > synced, then, within one scope, by the
+deepest \`projectPath\`. A \`managed\` row is set by a Claude Code administrator:
+it applies to every project and decides over every other scope, and its
+\`remedy\` is prose saying only an administrator can change it, never a command.
 
 Only \`lore agents --target <runtime> --force\` changes the plugin install, and
 only an \`installed\` plugin: \`claude plugin update opum-lore@opum --scope
@@ -409,9 +413,11 @@ opum-lore@opum\` -- and the Codex upgrade refreshes EVERY opum plugin installed 
 Codex, not only opum-lore, which \`updateDetail\` says once that upgrade has
 succeeded. The outcome is in \`update\` (\`ran\` or \`not-run\`), \`updateOk\` and
 \`updateDetail\`. It never enables a disabled plugin or installs a missing one
-(it prints the command instead), and never updates a Claude plugin whose
-deciding scope cannot be named in a command (it prints prose instead of an
-unscoped command, which would act at Claude's default scope);
+(it prints the command instead), never updates a Claude plugin whose deciding
+row is \`managed\` (it reports \`update: not-run\` and runs only the list), and
+never updates a Claude plugin whose deciding scope cannot be named in a command
+(it prints prose instead of an unscoped command, which would act at Claude's
+default scope);
 \`lore init\`, \`--check\`, and a bare \`lore agents --force\` that names no runtime
 never update anything. A failed update, like the state itself, never changes an
 exit code. Because the state depends on what is installed on the machine, not
