@@ -305,17 +305,20 @@ export class CliAgentPluginPort implements AgentPluginPort {
   async update(runtime: AgentRuntime, scope: string | undefined): Promise<AgentPluginUpdateOutcome> {
     const runner = this.options.runner ?? bunPluginCommandRunner;
     const steps = lorePluginUpdateSteps(runtime, scope);
+    let completed = 0;
     for (const argv of steps) {
       const result = await runner(argv, this.options.updateTimeoutMs ?? DEFAULT_UPDATE_TIMEOUT_MS, this.options.env);
-      if ("failure" in result) return { ok: false, detail: result.failure };
+      if ("failure" in result) return { ok: false, detail: result.failure, completed };
       if (result.exitCode !== 0) {
         return {
           ok: false,
           detail: `${argv.join(" ")} exited ${result.exitCode}${stderrSuffix(result.stderr || result.stdout)}`,
+          completed,
         };
       }
+      completed += 1;
     }
-    return { ok: true, detail: steps.map((argv) => argv.join(" ")).join(" && ") };
+    return { ok: true, detail: steps.map((argv) => argv.join(" ")).join(" && "), completed };
   }
 }
 
@@ -330,7 +333,7 @@ export class DisabledAgentPluginPort implements AgentPluginPort {
 
   /** Unreachable through `updateLorePlugin` (nothing here is ever `installed`), and runs nothing if reached. */
   async update(): Promise<AgentPluginUpdateOutcome> {
-    return { ok: false, detail: OFF_REASON };
+    return { ok: false, detail: OFF_REASON, completed: 0 };
   }
 }
 

@@ -48,6 +48,8 @@ import {
   type AgentRuntime,
   detectLorePlugins,
   LORE_PLUGIN_ID,
+  lorePluginUpdateSteps,
+  UNNAMABLE_SCOPE_REMEDY,
 } from "../src/core/agent-plugins";
 import { EXIT_CODES, EXIT_OK } from "../src/errors";
 import type { OutputContext } from "../src/output";
@@ -161,7 +163,7 @@ async function detect(runtime: AgentRuntime, result: PluginCommandResult, at = r
 function fakePort(
   listings: Partial<Record<AgentRuntime, AgentPluginListing>>,
   onList?: (runtime: AgentRuntime) => void,
-  updateOutcome: AgentPluginUpdateOutcome = { ok: true, detail: "updated" },
+  updateOutcome: AgentPluginUpdateOutcome = { ok: true, detail: "updated", completed: 2 },
 ): AgentPluginPort & { calls: AgentRuntime[]; updates: string[] } {
   const calls: AgentRuntime[] = [];
   const updates: string[] = [];
@@ -536,27 +538,37 @@ describe("lore agents --check reports data.plugins.<runtime>, never a bare data.
     expect(port.calls.sort()).toEqual(["claude", "codex"]);
   });
 
-  test("a writing run (no --check) reports plugins.<runtime> too, and never a bare plugin or an update (ruling 27.3)", async () => {
-    // LCLI-592 reported plugin state under --check only; ruling 27.3 reports it on every call that
-    // names no runtime, so a plain `lore agents` now asks the runtime whose bridge it wrote.
-    const port = fakePort({
-      claude: { kind: "listed", plugins: [{ id: LORE_PLUGIN_ID, enabled: true, scope: "user" }] },
-    });
+  test("a writing run (no --check) reports no plugin state and asks no runtime", () => {
+    const port = fakePort({});
     const stdout = capture();
-    const code = await runAgents({ root, output: JSON_CTX, args: [], stdout, agentPlugins: port });
+    const code = runAgents({ root, output: JSON_CTX, args: [], stdout, agentPlugins: port });
     expect(code).toBe(EXIT_OK);
     const data = JSON.parse(stdout.text()).data;
     expect(data).not.toHaveProperty("plugin");
-    expect(data).not.toHaveProperty("target");
-    expect(data.plugins.claude).toEqual({
-      runtime: "claude",
-      id: LORE_PLUGIN_ID,
-      state: "installed",
-      scope: "user",
-      remedy: "claude plugin update opum-lore@opum --scope user",
-    });
-    expect(port.calls).toEqual(["claude"]);
-    expect(port.updates).toEqual([]);
+    expect(data).not.toHaveProperty("plugins");
+    expect(port.calls).toEqual([]);
+
+    // LCLI-593, orchestrator ruling B: the same holds for a plain `--target <runtime>` write. Detection
+    // happens only under --check or --force, so naming a runtime alone asks nothing and reports
+    // nothing, even with an installed plugin on offer. Synchronous, like the bare write above.
+    for (const runtime of ["claude", "codex"] as const) {
+      const targeted = fakePort({ [runtime]: installedAt(runtime === "claude" ? "user" : undefined) });
+      const out = capture();
+      const targetedCode = runAgents({
+        root,
+        output: JSON_CTX,
+        args: ["--target", runtime],
+        stdout: out,
+        agentPlugins: targeted,
+      });
+      expect(targetedCode).toBe(EXIT_OK);
+      const targetedData = JSON.parse(out.text()).data;
+      expect(targetedData.target).toBe(runtime);
+      expect(targetedData).not.toHaveProperty("plugin");
+      expect(targetedData).not.toHaveProperty("plugins");
+      expect(targeted.calls).toEqual([]);
+      expect(targeted.updates).toEqual([]);
+    }
   });
 
   test("--plain renders a stable plugin line plus its remedy", async () => {
@@ -636,7 +648,11 @@ describe("lore agents --target scopes the bridge and reports data.plugin (ruling
       { path: "AGENTS.md", action: "created" },
     ]);
     expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toBe(claudeBefore);
-    expect(data.plugin).toMatchObject({ runtime: "codex", state: "not-installed" });
+    // A plain write detects nothing (ruling B); the same scoped call under --check reports data.plugin.
+    expect(port.calls).toEqual([]);
+    const checked = await agents(["--target", "codex", "--check"], port);
+    expect(checked.code).toBe(EXIT_OK);
+    expect(checked.data.plugin).toMatchObject({ runtime: "codex", state: "not-installed" });
     expect(port.calls).toEqual(["codex"]);
   });
 
@@ -656,9 +672,9 @@ describe("lore agents --target scopes the bridge and reports data.plugin (ruling
     ]);
   });
 
-  test("a plain --target write (no --force) reports the plugin and runs no update", async () => {
+  test("--target --check reports the plugin with its update command as remedy, and runs no update", async () => {
     const port = fakePort({ claude: installedAt("user") });
-    const { data } = await agents(["--target", "claude"], port);
+    const { data } = await agents(["--target", "claude", "--check"], port);
     expect(data.plugin).not.toHaveProperty("update");
     expect(data.plugin?.remedy).toBe("claude plugin update opum-lore@opum --scope user");
     expect(port.updates).toEqual([]);
@@ -693,6 +709,7 @@ describe("lore agents --target <runtime> --force runs that runtime's plugin upda
     const port = fakePort({ claude: installedAt("project") }, undefined, {
       ok: true,
       detail: "claude plugin update opum-lore@opum --scope project",
+      completed: 1,
     });
     const { code, data } = await agents(["--target", "claude", "--force"], port);
     expect(code).toBe(EXIT_OK);
@@ -727,7 +744,11 @@ describe("lore agents --target <runtime> --force runs that runtime's plugin upda
   });
 
   test("a failed update keeps exit 0, reports updateOk false, and keeps the update command as the remedy", async () => {
-    const port = fakePort({ claude: installedAt("user") }, undefined, { ok: false, detail: "network down" });
+    const port = fakePort({ claude: installedAt("user") }, undefined, {
+      ok: false,
+      detail: "network down",
+      completed: 0,
+    });
     const { code, data } = await agents(["--target", "claude", "--force"], port);
     expect(code).toBe(EXIT_OK);
     expect(data.plugin).toMatchObject({
@@ -783,11 +804,112 @@ describe("lore agents --target <runtime> --force runs that runtime's plugin upda
     }
   });
 
-  test("ruling 26 (iii): a Claude scope that cannot be named in a command is never updated", async () => {
+  test("ruling 26 (iii): a Claude scope that cannot be named in a command is never updated, and no command is offered", async () => {
     const port = fakePort({ claude: installedAt("user; rm -rf ~") });
     const { data } = await agents(["--target", "claude", "--force"], port);
     expect(port.updates).toEqual([]);
-    expect(data.plugin).toMatchObject({ update: "not-run" });
+    expect(data.plugin).toMatchObject({
+      update: "not-run",
+      updateDetail: "the deciding scope could not be named in a command",
+      remedy: UNNAMABLE_SCOPE_REMEDY,
+    });
+  });
+});
+
+describe("LCLI-593 review findings a and b: a scope is named only when it is a plain, non-option token", () => {
+  test("a: a dash-prefixed scope (`--help`, `-x`) is never put into argv or a remedy, and no update runs", async () => {
+    for (const scope of ["--help", "-x", "-"]) {
+      for (const listing of [installedAt(scope), disabledAt(scope)]) {
+        const port = fakePort({ claude: listing });
+        const { code, data } = await agents(["--target", "claude", "--force"], port);
+        expect(code).toBe(EXIT_OK);
+        expect(port.updates).toEqual([]);
+        expect(data.plugin).toMatchObject({ update: "not-run", remedy: UNNAMABLE_SCOPE_REMEDY });
+        expect(JSON.stringify(data.plugin)).not.toContain(`--scope ${scope}`);
+      }
+    }
+  });
+
+  test("a: the update argv never carries a dash-prefixed scope, even if the adapter is reached directly", () => {
+    expect(lorePluginUpdateSteps("claude", "--help")).toEqual([["claude", "plugin", "update", LORE_PLUGIN_ID]]);
+    expect(lorePluginUpdateSteps("claude", "-x")).toEqual([["claude", "plugin", "update", LORE_PLUGIN_ID]]);
+  });
+
+  test("a: every scope Claude actually reports is still named, including a digit-led token", async () => {
+    for (const scope of ["local", "project", "user", "managed", "synced", "2fa_scope-1"]) {
+      const port = fakePort({ claude: installedAt(scope) });
+      const { data } = await agents(["--target", "claude", "--force"], port);
+      expect(port.updates).toEqual([`claude@${scope}`]);
+      expect(data.plugin).toMatchObject({ update: "ran", updateOk: true });
+    }
+  });
+
+  test("b: under --check, an unnamable scope's remedy is prose for installed and disabled alike, never an unscoped command", async () => {
+    for (const listing of [installedAt("user; rm -rf ~"), disabledAt("--help"), installedAt()]) {
+      const { data } = await agents(["--target", "claude", "--check"], fakePort({ claude: listing }));
+      expect(data.plugin?.remedy).toBe(UNNAMABLE_SCOPE_REMEDY);
+      expect(data.plugin?.remedy).not.toMatch(/^claude plugin (update|enable)/);
+    }
+  });
+});
+
+describe("LCLI-593 review finding c: the Codex detail is worded by how far the update got", () => {
+  const CODEX_LISTING = listed({ installed: [codexRow({})], available: [] });
+  const REFRESHED_EVERYTHING = "refreshes every opum plugin installed in Codex";
+  const ALREADY_REFRESHED =
+    "had already succeeded, so every opum plugin installed in Codex (opum-quest included) was refreshed";
+
+  /** The REAL adapter over a runner that answers the listing and then each update step in turn. */
+  async function codexForce(
+    steps: PluginCommandResult[],
+  ): Promise<{ plugin: Record<string, unknown>; calls: string[] }> {
+    const calls: string[] = [];
+    const runner: PluginCommandRunner = async (argv) => {
+      calls.push(argv.join(" "));
+      if (argv[1] === "plugin" && argv[2] === "list") return CODEX_LISTING;
+      return steps[calls.length - 2] ?? { exitCode: 0, stdout: "", stderr: "" };
+    };
+    const port = new CliAgentPluginPort(root, { runner });
+    const { data } = await agents(["--target", "codex", "--force"], port);
+    return { plugin: data.plugin as unknown as Record<string, unknown>, calls };
+  }
+
+  test("upgrade and add both succeed: the all-opum-plugins notice is given", async () => {
+    const { plugin, calls } = await codexForce([]);
+    expect(calls).toEqual([
+      "codex plugin list --json",
+      "codex plugin marketplace upgrade opum",
+      "codex plugin add opum-lore@opum",
+    ]);
+    expect(plugin.updateOk).toBe(true);
+    expect(plugin.updateDetail).toContain(REFRESHED_EVERYTHING);
+  });
+
+  test("the upgrade fails: no notice, because no refresh happened, and the add is never attempted", async () => {
+    const { plugin, calls } = await codexForce([{ exitCode: 1, stdout: "", stderr: "fetch failed" }]);
+    expect(calls).toHaveLength(2);
+    expect(plugin.updateOk).toBe(false);
+    expect(plugin.updateDetail).toBe("codex plugin marketplace upgrade opum exited 1: fetch failed");
+  });
+
+  test("the upgrade times out: no notice either", async () => {
+    const { plugin } = await codexForce([
+      { failure: "codex plugin marketplace upgrade opum did not finish within 600s." },
+    ]);
+    expect(plugin.updateOk).toBe(false);
+    expect(plugin.updateDetail).toBe("codex plugin marketplace upgrade opum did not finish within 600s.");
+  });
+
+  test("the upgrade succeeds and the add fails: the detail says every opum plugin was ALREADY refreshed", async () => {
+    const { plugin, calls } = await codexForce([
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 2, stdout: "", stderr: "add refused" },
+    ]);
+    expect(calls).toHaveLength(3);
+    expect(plugin.updateOk).toBe(false);
+    expect(plugin.updateDetail).toStartWith("codex plugin add opum-lore@opum exited 2: add refused; note: ");
+    expect(plugin.updateDetail).toContain(ALREADY_REFRESHED);
+    expect(plugin.remedy).toBe("codex plugin marketplace upgrade opum && codex plugin add opum-lore@opum");
   });
 });
 
@@ -843,7 +965,7 @@ describe("the update adapter: one argv source, a separate budget, stop at the fi
   test("claude runs one step naming the scope, on the update budget rather than the listing's", async () => {
     const runner = timedRunner();
     const outcome = await new CliAgentPluginPort(root, { runner }).update("claude", "local");
-    expect(outcome).toEqual({ ok: true, detail: "claude plugin update opum-lore@opum --scope local" });
+    expect(outcome).toEqual({ ok: true, detail: "claude plugin update opum-lore@opum --scope local", completed: 1 });
     expect(runner.calls).toEqual([{ argv: "claude plugin update opum-lore@opum --scope local", timeoutMs: 600_000 }]);
   });
 
@@ -884,6 +1006,7 @@ describe("the update adapter: one argv source, a separate budget, stop at the fi
     expect(await port.update("claude", "user")).toEqual({
       ok: false,
       detail: "plugin detection is off (LORE_AGENT_PLUGINS=off).",
+      completed: 0,
     });
     expect(runner.calls).toEqual([]);
   });
@@ -924,7 +1047,10 @@ describe("runtime-supplied text cannot inject ANSI or forge a --plain record", (
     expect(text).not.toContain("--scope user");
     const plugin = text.split("\n").find((line) => line.startsWith("plugin-claude "));
     expect(plugin).toBe("plugin-claude installed opum-lore@opum scope=user ; rm -rf ~");
-    expect(text.split("\n")).toContain("plugin-claude-remedy claude plugin update opum-lore@opum");
+    // LCLI-593 review finding b: not even an UNSCOPED command, which would act at Claude's default
+    // scope rather than on the row this state came from (ruling 26 iii). The remedy is prose.
+    expect(text.split("\n")).toContain(`plugin-claude-remedy ${UNNAMABLE_SCOPE_REMEDY}`);
+    expect(text).not.toContain("claude plugin update");
   });
 
   test("a port's own reason is sanitized too (core boundary, not only the CLI adapter)", async () => {
@@ -1200,6 +1326,29 @@ describe.skipIf(onWindows)("subprocess: the real lore against fake claude/codex 
       remedy: "claude plugin enable opum-lore@opum --scope user",
     });
     expect(codexRun.data.plugin).toMatchObject({ state: "disabled", update: "not-run" });
+  });
+
+  test("ruling B: a plain write, bare or --target, starts no runtime process even with detection ON", async () => {
+    fake("claude", [claudeRow({})]);
+    fake("codex", { installed: [codexRow({})], available: [] });
+    for (const args of [["agents"], ["agents", "--target", "claude"], ["agents", "--target", "codex"]]) {
+      const run = await lore([...args, "--json"], false);
+      expect(run.code).toBe(EXIT_OK);
+      expect(run.data).not.toHaveProperty("plugin");
+      expect(run.data).not.toHaveProperty("plugins");
+    }
+    expect(calls()).toEqual([]);
+    // Positive control in the same test: --check with the same fakes DOES ask.
+    await lore(["agents", "--target", "claude", "--check", "--json"], false);
+    expect(calls()).toEqual([LIST_CLAUDE]);
+  });
+
+  test("review finding a: a stub reporting scope `--help` never sees `--scope --help`, and no update runs", async () => {
+    fake("claude", [claudeRow({ scope: "--help" })]);
+    const run = await lore(["agents", "--target", "claude", "--force", "--json"], false);
+    expect(run.code).toBe(EXIT_OK);
+    expect(calls()).toEqual([LIST_CLAUDE]);
+    expect(run.data.plugin).toMatchObject({ update: "not-run", remedy: UNNAMABLE_SCOPE_REMEDY });
   });
 
   test("LORE_AGENT_PLUGINS=off: --target <runtime> --force starts no runtime process at all", async () => {

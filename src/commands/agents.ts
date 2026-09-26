@@ -88,17 +88,19 @@ export interface AgentsResult {
    */
   target?: AgentRuntime;
   /**
-   * A call with NO `--target` (LCLI-592, LCLI-593): the opum-lore marketplace plugin for every
-   * runtime whose bridge this run covered, keyed by runtime (`plugins.claude`, `plugins.codex`)
-   * exactly like `lore init`'s `data.plugins`. Each entry has quest-cli's QCLI-371 shape; on a
-   * `--force` run (not `--check`) each is also an update report whose `update` is always `not-run`,
-   * because a call naming no runtime is consent to updating none (rulings 25, 27). Never part of the
-   * exit code. Absent when no Claude or Codex bridge was covered, and on every `--target` call.
+   * A `--check` or `--force` call with NO `--target` (LCLI-592, LCLI-593): the opum-lore marketplace
+   * plugin for every runtime whose bridge this run covered, keyed by runtime (`plugins.claude`,
+   * `plugins.codex`) exactly like `lore init`'s `data.plugins`. Each entry has quest-cli's QCLI-371
+   * shape; on a `--force` run (not `--check`) each is also an update report whose `update` is always
+   * `not-run`, because a call naming no runtime is consent to updating none (rulings 25, 27). Never
+   * part of the exit code. Absent on a plain write (orchestrator ruling B: detection only under
+   * `--check` or `--force`), when no Claude or Codex bridge was covered, and on every `--target` call.
    */
   plugins?: AgentPluginChecks | AgentPluginUpdateReports;
   /**
-   * A `--target <runtime>` call only (LCLI-593): that runtime's opum-lore plugin state, and on a
-   * `--force` run (not `--check`) the outcome of its update. opum-doc's ADR Amendment 5, ruling 27
+   * A `--target <runtime>` call under `--check` or `--force` only (LCLI-593; a plain targeted write
+   * detects nothing, ruling B): that runtime's opum-lore plugin state, and on a `--force` run (not
+   * `--check`) the outcome of its update. opum-doc's ADR Amendment 5, ruling 27
    * (main 99e8ce5): `data.plugin` appears exactly when a runtime is named, never otherwise, because a
    * bare field's meaning must not depend on which runtime happens to be checked first. So `plugin`
    * and `plugins` are never both present.
@@ -319,11 +321,14 @@ export function runAgents(options: AgentsOptions): number | Promise<number> {
     // 19): only bridge drift does, so a failed update still exits 0.
     return check && drift ? EXIT_CODES.drift : EXIT_OK;
   };
-  // Every `lore agents` call reports the opum-lore marketplace plugin for each runtime whose bridge it
-  // covered: as `data.plugin` for the runtime a `--target` named, otherwise as `data.plugins.<runtime>`
-  // (ADR ruling 27). Detected after the bridge plan on purpose — the plan is what says which runtimes
-  // this run covered. Synchronous under LORE_AGENT_PLUGINS=off unless an update could run, so the off
-  // path returns a plain number exactly as before.
+  // Plugin state is detected and reported ONLY under `--check` or `--force` (orchestrator ruling B on
+  // LCLI-593): a plain write-mode `lore agents` starts no runtime and reports no plugin state, with or
+  // without `--target`. Ruling 27 governs WHERE state appears when it is reported: as `data.plugin`
+  // for the runtime a `--target` named, otherwise as `data.plugins.<runtime>`. Detected after the
+  // bridge plan on purpose — the plan is what says which runtimes this run covered. Synchronous under
+  // LORE_AGENT_PLUGINS=off unless an update could run, so the off path returns a plain number exactly
+  // as before.
+  if (!check && !force) return finish(result);
   const runtimes = target !== undefined ? [target] : coveredRuntimes(result);
   if (runtimes.length === 0) return finish(result);
   const port = options.agentPlugins ?? createAgentPluginPort(options.root);

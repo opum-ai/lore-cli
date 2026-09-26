@@ -925,7 +925,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
         name: "target",
         takesValue: true,
         summary:
-          "Scope to one runtime (claude|codex): its bridge only, its opum-lore plugin as data.plugin, and with --force the plugin update",
+          "Scope to one runtime (claude|codex): its bridge only; under --check or --force its opum-lore plugin as data.plugin, and with --force the plugin update",
       },
     ],
     json: true,

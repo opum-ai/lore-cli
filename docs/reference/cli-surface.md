@@ -1129,10 +1129,12 @@ governs SKILL.md under `--target claude`, because this is still `lore agents`
 keeping a bridge current. A runtime other than `claude` or `codex`, or
 `--target` given twice, is a usage error (exit `2`).
 
-**Every `lore agents` call also reports the `opum-lore` marketplace plugin**
-(LCLI-592) for each runtime whose bridge it covered: Claude when the Claude bridge
-is in scope, Codex when the Codex bridge is, or the one runtime `--target` named.
-It asks the runtime's own public list command
+**`--check` and `--force` also report the `opum-lore` marketplace plugin**
+(LCLI-592) for each runtime whose bridge the call covered: Claude when the Claude
+bridge is in scope, Codex when the Codex bridge is, or the one runtime `--target`
+named. **A plain write-mode `lore agents`, with or without `--target`, reports no
+plugin state and starts no runtime process at all** (the orchestrator's ruling B
+on LCLI-593). It asks the runtime's own public list command
 — `claude plugin list --json` or `codex plugin list --json` — and nothing else,
 and reports one of four states: `installed`, `disabled` (installed but switched
 off, so its skill does not reach the agent — never reported as `installed`),
@@ -1145,15 +1147,22 @@ the deeper `projectPath`. Each entry is
 `{runtime, id, state, version?, scope?, reason?, remedy?}`, the same shape
 `quest agents --check` reports for `opum-quest`.
 
-**`data.plugin` appears exactly when `--target` names a runtime, and never
-otherwise** (ruling 27). A call with no `--target` reports
-`data.plugins.<runtime>` — `plugins.claude`, `plugins.codex` — one entry per
-covered runtime, and no bare `data.plugin`, so that field's meaning never
-depends on which runtime happened to be checked first. A `--target` call
-reports `data.plugin` for the named runtime, plus `data.target`, and no
-`data.plugins`. The two are never both present.
+When plugin state is reported, **`data.plugin` appears exactly when `--target`
+names a runtime, and `data.plugins.<runtime>` otherwise** (ruling 27). A call
+with no `--target` reports `data.plugins.<runtime>` — `plugins.claude`,
+`plugins.codex` — one entry per covered runtime, and no bare `data.plugin`, so
+that field's meaning never depends on which runtime happened to be checked
+first. A `--target` call reports `data.plugin` for the named runtime and no
+`data.plugins`. The two are never both present. `data.target` names the runtime
+on every `--target` call, a plain write included.
 
-`remedy` is the command to run next — install, enable, or update. Text a runtime
+`remedy` is the command to run next — install, enable, or update. One exception
+keeps ruling 26(iii) intact: where the Claude scope that decided the state
+cannot be named safely in a command (it is absent, or not a plain token that
+starts with a letter or digit, so `--help` or `-x` never becomes `--scope`), the
+remedy is prose naming the problem rather than a command, because an unscoped
+`claude plugin update` or `enable` would act at Claude's default scope, which
+may be a different row. Text a runtime
 supplies (`reason`, `version`, `scope`) is reduced to one printable line before
 it is reported. `LORE_AGENT_PLUGINS=off` skips detection entirely: every runtime
 reads `not-detectable` and no `claude` or `codex` process is started. A runtime
@@ -1167,8 +1176,11 @@ updated: Claude with `claude plugin update opum-lore@opum --scope <scope>`,
 naming the scope whose row decided the state; Codex, which has no per-plugin
 update, with `codex plugin marketplace upgrade opum` then `codex plugin add
 opum-lore@opum`. **The Codex upgrade refreshes every `opum` plugin installed in
-Codex, `opum-quest` included, not only `opum-lore`**, and the command's own
-output says so. Each update step has its own ten-minute budget, separate from
+Codex, `opum-quest` included, not only `opum-lore`**, and `updateDetail` says so
+by outcome: after a successful upgrade and add, it gives that notice; when the
+upgrade succeeded and the add then failed, it says every `opum` plugin was
+already refreshed; when the upgrade itself failed or timed out, it gives no
+notice, because no refresh can be vouched for. Each update step has its own ten-minute budget, separate from
 the listing's 15 seconds (`LORE_AGENT_PLUGINS_UPDATE_TIMEOUT_MS` overrides it),
 because quest-cli measured the Codex upgrade at over two minutes. On any
 `--force` run that is not `--check`, every plugin entry also carries `update`
@@ -1180,8 +1192,10 @@ update keeps exit `0` and keeps its command as the `remedy`.
 Nothing else ever runs. A `disabled` plugin is never enabled: it is reported
 with the enable command (ruling 21). A `not-installed` or `not-detectable`
 plugin is reported with its remedy and nothing runs, and the repository's own
-bridge files are written exactly as they would be without a plugin. `--check`
-never updates, with or without `--force`. **A bare `lore agents --force` names
+bridge files are written exactly as they would be without a plugin. An
+`installed` Claude plugin whose deciding scope cannot be named is `not-run`
+too, with the prose remedy above (ruling 26(iii)). `--check` never updates, with
+or without `--force`. **A bare `lore agents --force` names
 no runtime, so it updates none** (ruling 25): each `plugins.<runtime>` entry is
 `not-run`, and its `remedy` is the update command to run by hand or through
 `lore agents --target <runtime> --force`. The plugin report and any update never
@@ -1191,7 +1205,7 @@ change the exit code.
 |---|---|
 | **Args** | none |
 | **Key flags** | `--force` (overwrite hand-edited generated files, or remove an orphaned SKILL.md that exactly matches the generated content; with `--target`, also update that runtime's installed `opum-lore` plugin) · `--check` (report drift without writing — CI gate for a stale bridge; never updates a plugin) · `--target <claude\|codex>` (scope the bridge and the plugin report to one runtime) |
-| **Output** | `kind: agents.result` — each bridge file and what happened to it (`created`/`updated`/`unchanged`/`protected`/`orphaned`/`removed`), so a failing `--check` names the artifact that drifted; the `opum-lore` marketplace plugin state as `plugins.<runtime>` without `--target`, or as `plugin` (plus `target`) with it, never both; on a `--force` run that is not `--check`, each plugin entry also carries `update`, `updateOk` and `updateDetail` (above) |
+| **Output** | `kind: agents.result` — each bridge file and what happened to it (`created`/`updated`/`unchanged`/`protected`/`orphaned`/`removed`), so a failing `--check` names the artifact that drifted; `target` on every `--target` call; under `--check` or `--force` only, the `opum-lore` marketplace plugin state as `plugins.<runtime>` without `--target`, or as `plugin` with it, never both; on a `--force` run that is not `--check`, each plugin entry also carries `update`, `updateOk` and `updateDetail` (above) |
 | **Exit** | `0` ok, including a failed plugin update · `2` usage (a runtime other than `claude`/`codex`, or `--target` given twice) · `6` `--check` found a bridge out of date (including an orphaned leftover under `skill_source = "plugin"`) |
 
 ### `instructions`

@@ -41,10 +41,15 @@ export type AgentPluginListing =
   | { readonly kind: "listed"; readonly plugins: readonly ListedAgentPlugin[] }
   | { readonly kind: "unavailable"; readonly reason: string };
 
-/** What running a plugin update produced: whether every step exited 0, and what to say about it. */
+/** What running a plugin update produced: whether every step exited 0, how many did, and what to say about it. */
 export interface AgentPluginUpdateOutcome {
   readonly ok: boolean;
   readonly detail: string;
+  /**
+   * How many of {@link lorePluginUpdateSteps} exited 0 before the run stopped. It is what lets the
+   * Codex report say whether the marketplace-wide refresh (step 1) actually happened.
+   */
+  readonly completed: number;
 }
 
 /**
@@ -112,11 +117,27 @@ export type AgentPluginUpdateReports = Partial<Record<AgentRuntime, AgentPluginU
 /**
  * Whether a scope may be put into a command. A scope is runtime-supplied text going into a command a
  * user may paste into a shell, or that lore itself runs, so only a plain token is ever interpolated
- * (every scope Claude reports — local, project, user, managed, synced — is one).
+ * (every scope Claude reports — local, project, user, managed, synced — is one). It must START with a
+ * letter or digit: a dash-prefixed value such as `--help` or `-x` would be parsed as an option of
+ * the runtime's CLI rather than as the scope's value (LORE-96's rule for dash-prefixed argv; LCLI-593
+ * review finding a).
  */
 function isPlainScope(scope: string | undefined): scope is string {
-  return scope !== undefined && /^[A-Za-z0-9_-]+$/.test(scope);
+  return scope !== undefined && /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(scope);
 }
+
+/**
+ * Whether a Claude plugin's deciding scope cannot be named in a command. Ruling 26 (iii): a Claude
+ * update names its deciding scope and never touches a row the reported state did not come from. A
+ * command without `--scope` acts at Claude's DEFAULT scope, which may be a different row, so where the
+ * scope cannot be named lore neither runs nor prints a command (LCLI-593 review finding b).
+ */
+function claudeScopeUnnamable(runtime: AgentRuntime, scope: string | undefined): boolean {
+  return runtime === "claude" && !isPlainScope(scope);
+}
+
+/** The remedy, as prose rather than a runnable command, for a Claude plugin whose scope cannot be named. */
+export const UNNAMABLE_SCOPE_REMEDY = `the Claude scope that decided this state cannot be named safely in a command, so lore prints none: run \`claude plugin list --json\`, find the ${LORE_PLUGIN_ID} row that applies to this project, and act on it with that row's own --scope`;
 
 /** ` --scope <scope>`, or nothing. */
 function scopeFlag(scope: string | undefined): string {
@@ -153,6 +174,19 @@ export function lorePluginUpdateCommand(runtime: AgentRuntime, scope?: string): 
 export const CODEX_MARKETPLACE_NOTICE = `\`codex plugin marketplace upgrade ${MARKETPLACE_NAME}\` refreshes every ${MARKETPLACE_NAME} plugin installed in Codex (opum-quest included), not only ${LORE_PLUGIN_ID}`;
 
 /**
+ * The Codex update's detail, worded by how far it got (LCLI-593 review finding c). The all-plugins
+ * notice is said only when the marketplace upgrade actually ran to success: a failed or timed-out
+ * upgrade refreshed nothing lore can vouch for. When the upgrade succeeded and the re-add then failed,
+ * the refresh of every opum plugin has ALREADY happened, and the detail says so rather than reading as
+ * though nothing changed.
+ */
+function codexUpdateDetail(detail: string, outcome: AgentPluginUpdateOutcome): string {
+  if (outcome.completed < 1) return detail;
+  if (outcome.ok) return `${detail}; note: ${CODEX_MARKETPLACE_NOTICE}`;
+  return `${detail}; note: \`codex plugin marketplace upgrade ${MARKETPLACE_NAME}\` had already succeeded, so every ${MARKETPLACE_NAME} plugin installed in Codex (opum-quest included) was refreshed; only re-adding ${LORE_PLUGIN_ID} failed`;
+}
+
+/**
  * Runtime-supplied text as one printable line: whitespace (line breaks included) collapsed first,
  * then ANSI escape sequences and control bytes removed. Every field a runtime or a port supplies
  * passes through this before it can reach `--plain` or pretty output (LCLI-592 review, finding 2):
@@ -169,6 +203,11 @@ function remedyFor(runtime: AgentRuntime, state: AgentPluginState, scope?: strin
     return runtime === "claude"
       ? `claude plugin marketplace add ${MARKETPLACE_REPOSITORY} && claude plugin install ${LORE_PLUGIN_ID}`
       : `codex plugin marketplace add ${MARKETPLACE_REPOSITORY} && codex plugin add ${LORE_PLUGIN_ID}`;
+  }
+  // An unscoped `claude plugin enable`/`update` would act at Claude's default scope, which may not be
+  // the row this state came from (ruling 26 iii), so no command is offered at all.
+  if ((state === "disabled" || state === "installed") && claudeScopeUnnamable(runtime, scope)) {
+    return UNNAMABLE_SCOPE_REMEDY;
   }
   if (state === "disabled") {
     // Codex has no plugin enable command (codex-cli 0.155.1; its --enable/--disable toggle
@@ -269,9 +308,10 @@ export function updateLorePlugin(
 ): AgentPluginUpdateReport | Promise<AgentPluginUpdateReport> {
   // Ruling 21: never install, never enable. Only an installed plugin is updated.
   if (check.state !== "installed") return notRunReport(check, true);
-  if (check.runtime === "claude" && !isPlainScope(check.scope)) {
+  if (claudeScopeUnnamable(check.runtime, check.scope)) {
     // Ruling 26 (iii): an update names its deciding scope, and never updates a row the reported state
-    // did not come from. A scope that cannot be put into a command cannot be named, so nothing runs.
+    // did not come from. A scope that cannot be put into a command cannot be named, so nothing runs,
+    // and the check's remedy is already prose rather than an unscoped command (see remedyFor).
     return { ...check, update: "not-run", updateDetail: "the deciding scope could not be named in a command" };
   }
   return port.update(check.runtime, check.scope).then((outcome): AgentPluginUpdateReport => {
@@ -281,7 +321,7 @@ export function updateLorePlugin(
       ...rest,
       update: "ran",
       updateOk: outcome.ok,
-      updateDetail: check.runtime === "codex" ? `${detail}; note: ${CODEX_MARKETPLACE_NOTICE}` : detail,
+      updateDetail: check.runtime === "codex" ? codexUpdateDetail(detail, outcome) : detail,
       // A failed update keeps its command visible so it can be run by hand.
       ...(outcome.ok ? {} : { remedy: lorePluginUpdateCommand(check.runtime, check.scope) }),
     };

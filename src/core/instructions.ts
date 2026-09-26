@@ -386,11 +386,12 @@ unchanged, exit codes included.
 
 The \`opum-lore\` marketplace plugin is reported alongside the bridges. With a
 Claude or Codex bridge selected, \`lore init\` reports \`data.plugins.<runtime>\`.
-\`lore agents\` reports it on every call, and the field depends on one rule:
-\`data.plugin\` appears exactly when \`--target\` names a runtime, and never
-otherwise. A call with no \`--target\` reports \`data.plugins.<runtime>\` for every
-runtime whose bridge it covered; a \`--target\` call reports \`data.plugin\` (and
-\`data.target\`) for that runtime alone; the two are never both present. Each is
+\`lore agents\` reports plugin state ONLY under \`--check\` or \`--force\`: a plain
+write-mode \`lore agents\`, with or without \`--target\`, starts no runtime and
+reports no plugin state. When it is reported, \`data.plugin\` appears when
+\`--target\` names a runtime, and \`data.plugins.<runtime>\` otherwise -- one entry
+for every runtime whose bridge the call covered; the two are never both
+present. (\`data.target\` names the runtime on every \`--target\` call.) Each is
 read through that runtime's own \`claude plugin list --json\` or \`codex plugin
 list --json\`. The state is one of \`installed\`, \`disabled\` (installed but
 switched off, so its skill does not reach the agent), \`not-installed\`, or
@@ -402,9 +403,12 @@ Only \`lore agents --target <runtime> --force\` changes the plugin install, and
 only an \`installed\` plugin: \`claude plugin update opum-lore@opum --scope
 <scope>\`, or \`codex plugin marketplace upgrade opum\` then \`codex plugin add
 opum-lore@opum\` -- and the Codex upgrade refreshes EVERY opum plugin installed in
-Codex, not only opum-lore, which its output says. The outcome is in \`update\`
-(\`ran\` or \`not-run\`), \`updateOk\` and \`updateDetail\`. It never enables a
-disabled plugin or installs a missing one (it prints the command instead);
+Codex, not only opum-lore, which \`updateDetail\` says once that upgrade has
+succeeded. The outcome is in \`update\` (\`ran\` or \`not-run\`), \`updateOk\` and
+\`updateDetail\`. It never enables a disabled plugin or installs a missing one
+(it prints the command instead), and never updates a Claude plugin whose
+deciding scope cannot be named in a command (it prints prose instead of an
+unscoped command, which would act at Claude's default scope);
 \`lore init\`, \`--check\`, and a bare \`lore agents --force\` that names no runtime
 never update anything. A failed update, like the state itself, never changes an
 exit code. Because the state depends on what is installed on the machine, not
