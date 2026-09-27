@@ -91,11 +91,24 @@ export declare function evaluateReleaseReceipt(
   doc: unknown,
   context: {
     version: string;
-    commit: string;
+    /** null at staging only: there is no v<version> tag to peel yet. */
+    commit: string | null;
     releaseRunId: string;
     staged: Record<string, string>;
     final: { filename: string; sha256: string };
     launcherVersion: string;
+    stagedLabel?: string;
   },
 ): PairVerdict;
+export interface CheckArgs {
+  file: string;
+  version: string;
+  runId: string;
+  artifacts: string;
+  carried: string;
+  launcherVersion: string;
+  staged: string[];
+}
+export declare function parseCheckArgs(argv: string[]): CheckArgs | null;
+export declare function checkReleaseReceiptFile(args: CheckArgs): { code: number; stdout: string[]; stderr: string[] };
 export declare function describeOverride(override: Override, source: string): string;

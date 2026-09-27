@@ -166,6 +166,15 @@ function makeWorkspace(
     releaseRunId: Number(RUN_ID),
     runAttempt: 1,
     tarballs: { ...tarballs },
+    // TASK-126 (opum-cli-e2e receipts/README.md at 4f078e6b), required from LCLI-621 on: the staged
+    // rc, and opum-cli-e2e's own substitution verdict naming the carried X launcher's bytes.
+    launcherVersion: LAUNCHER_RC,
+    launcherSubstitution: {
+      verdict: "MATCH",
+      finalTarball: { filename: finalTarball, sha256: sha256(readFileSync(resolve(source, finalTarball))) },
+      method: "entry by entry, X-rc.N -> X",
+      mismatches: [],
+    },
     verdict: "QUALIFIED",
     counts: { pass: 461, fail: 0, blocked: 2 },
     blocked: [],
@@ -465,8 +474,14 @@ describeOnPosix("scripts/publish-release.sh", () => {
       // cwd-independence it is named for.
       // The version-parity checker (LCLI-613) is the same kind of sibling, and runs first: without
       // it the copy refuses at the gate, which proves the gate fails closed and nothing else.
-      // The launcher equivalence gate (LCLI-621) is a third such sibling.
-      for (const sibling of ["shipped-readme-version.mjs", "version-parity.mjs", "launcher-equivalence.mjs"])
+      // The launcher equivalence gate (LCLI-621) is a third such sibling, and the pass-1 receipt
+      // evaluator (pair-receipt.mjs, shared with promote-latest.mjs since LCLI-621) a fourth.
+      for (const sibling of [
+        "shipped-readme-version.mjs",
+        "version-parity.mjs",
+        "launcher-equivalence.mjs",
+        "pair-receipt.mjs",
+      ])
         writeFileSync(resolve(scriptDir, sibling), readFileSync(resolve(import.meta.dir, "..", "scripts", sibling)));
 
       const defaultArtifacts = resolve(scriptDir, `release-${VERSION}`);
@@ -1041,13 +1056,80 @@ describeOnPosix("scripts/publish-release.sh qualification receipt (LCLI-578)", (
     }, `tarballs names "${extra}", which this release does not publish`);
   });
 
+  // ── TASK-126 fields, required at staging since LCLI-621 (the rule promotion applies too) ──────
+  test("a receipt with no launcherVersion (pre-TASK-126) refuses", () => {
+    refuses((r) => {
+      delete r.launcherVersion;
+    }, `launcherVersion is undefined, not ${VERSION}-rc.<N>`);
+  });
+
+  test("a malformed launcherVersion refuses", () => {
+    refuses((r) => {
+      r.launcherVersion = `${VERSION}-rc.01`;
+    }, `launcherVersion is "${VERSION}-rc.01", not ${VERSION}-rc.<N>`);
+  });
+
+  test("a launcherVersion that is not this run's rc refuses", () => {
+    refuses((r) => {
+      r.launcherVersion = `${VERSION}-rc.7`;
+    }, `launcherVersion is ${VERSION}-rc.7, but the artifact stages the launcher as ${LAUNCHER_RC}`);
+  });
+
+  test("a receipt with no launcherSubstitution refuses", () => {
+    refuses((r) => {
+      delete r.launcherSubstitution;
+    }, "receipt has no launcherSubstitution");
+  });
+
+  test("a launcherSubstitution that is not MATCH refuses, and so does a MATCH listing mismatches", () => {
+    refuses((r) => {
+      (r.launcherSubstitution as Record<string, unknown>).verdict = "MISMATCH";
+    }, 'launcherSubstitution.verdict is "MISMATCH", not "MATCH"');
+    refuses((r) => {
+      (r.launcherSubstitution as Record<string, unknown>).mismatches = ["package/README.md"];
+    }, 'launcherSubstitution.verdict is "MATCH" but lists 1 mismatch(es)');
+  });
+
+  test("a finalTarball that is not the carried launcher's basename refuses", () => {
+    refuses((r) => {
+      const sub = r.launcherSubstitution as { finalTarball: { filename: string } };
+      sub.finalTarball.filename = `final/${sub.finalTarball.filename}`;
+    }, `launcherSubstitution.finalTarball.filename is "final/opum-ai-lore-${VERSION}.tgz", not the basename`);
+  });
+
+  test("a finalTarball sha256 that is not the carried launcher's refuses", () => {
+    refuses(
+      (r) => {
+        (r.launcherSubstitution as { finalTarball: { sha256: string } }).finalTarball.sha256 = "9".repeat(64);
+      },
+      `launcherSubstitution.finalTarball.sha256 is "${"9".repeat(64)}", the artifact's opum-ai-lore-${VERSION}.tgz is`,
+    );
+  });
+
+  test("an override waives the verdict but never the launcher substitution", () => {
+    refuses((r) => {
+      r.verdict = "NOT QUALIFIED";
+      r.override = { by: "jdnewhouse", reason: "r", task: "LCLI-999", adr: "docs/adr/x.md@abc1234" };
+      (r.launcherSubstitution as Record<string, unknown>).verdict = "MISMATCH";
+    }, 'launcherSubstitution.verdict is "MISMATCH"');
+  });
+
+  test("the shell calls the shared pass-1 evaluator; it carries no receipt rule of its own", () => {
+    const script = readFileSync(SCRIPT, "utf8");
+    expect(script).toContain('node "$SCRIPT_DIR/pair-receipt.mjs" --check-release-receipt "$RECEIPT_FILE"');
+    expect(script).toContain('--launcher-version "$LAUNCHER_VERSION"');
+    // No inline checker survives: the kind string is the tell of one.
+    expect(script).not.toContain('"opum.qualification-receipt.v1"');
+    expect(script).not.toContain("receipt_check_js()");
+  });
+
   test("a partial override refuses: each of by, reason, task and adr is required", () => {
     for (const blank of ["by", "reason", "task", "adr"]) {
       refuses((r) => {
         r.verdict = "NOT QUALIFIED";
         r.override = { by: "jdnewhouse", reason: "scale row unbound", task: "LCLI-999", adr: "docs/adr/x.md@abc1234" };
         (r.override as Record<string, string>)[blank] = "";
-      }, "override is present but INCOMPLETE");
+      }, `missing or empty: ${blank}`);
     }
   });
 
@@ -1097,9 +1179,9 @@ describeOnPosix("scripts/publish-release.sh qualification receipt (LCLI-578)", (
     }
   });
 
-  // The checker is `node -e <heredoc>`. These two replace `node` on PATH with a shim that passes
-  // every call through to the real node EXCEPT the receipt check (recognised by the receipt kind
-  // in its script text), where it simulates a checker that exits 0 having said nothing -- what an
+  // The checker is `node scripts/pair-receipt.mjs --check-release-receipt` (LCLI-621; it was a
+  // `node -e <heredoc>`). These two replace `node` on PATH with a shim that passes every call
+  // through to the real node EXCEPT the receipt check (recognised by its flag), where it simulates a checker that exits 0 having said nothing -- what an
   // emptied heredoc produces -- or one that emits a warning on stderr before answering.
   function shimNode(ws: ReturnType<typeof makeWorkspace>) {
     const realNode = execFileSync("bash", ["-c", "command -v node"], { encoding: "utf8" }).trim();
@@ -1107,7 +1189,7 @@ describeOnPosix("scripts/publish-release.sh qualification receipt (LCLI-578)", (
       resolve(ws.bin, "node"),
       `#!/usr/bin/env bash
 case "$*" in
-  *opum.qualification-receipt.v1*)
+  *--check-release-receipt*)
     [ "\${NODE_SHIM:-}" = silent ] && exit 0
     [ "\${NODE_SHIM:-}" = warn ] && echo "(node:4242) ExperimentalWarning: a stray line on stderr" >&2 ;;
 esac
@@ -2059,6 +2141,12 @@ esac
       execFileSync("tar", ["-xzf", resolve(ws.source, ws.finalTarball)], { cwd: stage });
       writeFileSync(resolve(stage, "package", "NOTICE"), "not in the rc\n");
       execFileSync("tar", ["-czf", resolve(ws.source, ws.finalTarball), "package"], { cwd: stage });
+      // The receipt names the carried launcher's bytes (TASK-126), so it is re-issued for the new
+      // ones: this test is about the equivalence gate, which must be what refuses.
+      const newFinal = sha256(readFileSync(resolve(ws.source, ws.finalTarball)));
+      ws.writeReceipt((r) => {
+        (r.launcherSubstitution as { finalTarball: { sha256: string } }).finalTarball.sha256 = newFinal;
+      });
       const published = registryNpm(ws);
       const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
       expect(r.code).toBe(1);

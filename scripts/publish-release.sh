@@ -136,7 +136,9 @@
 # launcher at <version>-rc.N. The <version> launcher is carried and never published here.
 #
 # Refuses to publish without receipts/lore/<version>.json on opum-ai/opum-cli-e2e main (read with
-# your gh login) matching this version, run id and all seven staged tarball sha256s, with verdict
+# your gh login) matching this version, run id and all seven staged tarball sha256s, naming this
+# run's launcher rc as launcherVersion, and carrying a launcherSubstitution MATCH whose
+# finalTarball is the carried launcher, with verdict
 # QUALIFIED or a complete override {by, reason, task, adr} in that file. No flag or env var this
 # script reads bypasses it; the host is pinned to github.com even if GH_HOST is set. --dry-run
 # reports the receipt verdict, and stops non-zero if it would refuse.
@@ -635,68 +637,19 @@ regenerating it -- refusing to report a seal that did not happen."
 RECEIPT_REPO="opum-ai/opum-cli-e2e"
 RECEIPT_PATH="receipts/lore/${VERSION}.json"
 
-receipt_check_js() {
-  cat <<'JS'
-const fs = require("fs"), path = require("path"), crypto = require("crypto");
-const [file, version, runId, artifacts, carried, ...publishNames] = process.argv.slice(1);
-const show = (v) => JSON.stringify(v);
-const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
-const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
-let r;
-try { r = JSON.parse(fs.readFileSync(file, "utf8")); } catch (e) { console.error("  - receipt is not parseable JSON: " + e.message); process.exit(1); }
-if (!isObj(r)) { console.error("  - receipt is not a JSON object"); process.exit(1); }
-const p = [];
-if (r.kind !== "opum.qualification-receipt.v1") p.push(`kind is ${show(r.kind)}, not "opum.qualification-receipt.v1" (an unknown kind is refused, never guessed at)`);
-if (r.schemaVersion !== 1) p.push(`schemaVersion is ${show(r.schemaVersion)}, not 1`);
-if (r.product !== "lore") p.push(`product is ${show(r.product)}, not "lore"`);
-if (r.version !== version) p.push(`version is ${show(r.version)}, not "${version}"`);
-// Run ids compared as normalised DIGIT STRINGS: a number must be a safe integer (a larger one has
-// already lost precision in JSON.parse), a string must be all digits; leading zeros are dropped.
-const norm = (s) => s.replace(/^0+(?=\d)/, "");
-const rid = r.releaseRunId;
-const ridStr = typeof rid === "number" && Number.isSafeInteger(rid) && rid > 0 ? String(rid)
-  : typeof rid === "string" && /^[0-9]+$/.test(rid) ? norm(rid) : null;
-if (ridStr === null || ridStr !== norm(runId)) p.push(`releaseRunId is ${show(rid)}, not ${runId} (the run these tarballs were downloaded from)`);
-// Tarballs: own-property lookup AND set equality, so a receipt omitting a platform, or naming one
-// this release does not publish, refuses. Each digest is recomputed here from the exact file.
-// THE CARRIED X LAUNCHER (LCLI-621) is on disk but not published here. The receipt MUST name all
-// seven staged tarballs, the X-rc.N launcher among them; it MAY also name the carried one, and if it
-// does, that digest must match too. Whether opum-cli-e2e's receipt names it is theirs to settle.
-const expected = [...publishNames].sort();
-const onDisk = fs.readdirSync(artifacts).filter((n) => n.endsWith(".tgz")).sort();
-const wanted = [...publishNames, ...(carried ? [carried] : [])].sort();
-if (show(onDisk) !== show(wanted)) p.push(`${artifacts} holds ${show(onDisk)}, not exactly the tarballs this script publishes plus the carried launcher`);
-const t = r.tarballs;
-const digestProblem = (name, what) => {
-  const actual = crypto.createHash("sha256").update(fs.readFileSync(path.join(artifacts, name))).digest("hex");
-  if (typeof t[name] !== "string" || t[name].toLowerCase() !== actual) p.push(`sha256 MISMATCH for ${name}: receipt says ${show(t[name])}, the ${what} is ${actual}`);
-};
-if (!isObj(t)) p.push(`tarballs is ${show(t)}, not an object of {filename: sha256}`);
-else {
-  for (const name of expected) {
-    if (!own(t, name)) { p.push(`tarballs has no entry for ${name}`); continue; }
-    digestProblem(name, "file to be published");
-  }
-  if (carried && own(t, carried)) digestProblem(carried, "carried launcher");
-  for (const key of Object.keys(t)) if (!expected.includes(key) && key !== carried) p.push(`tarballs names ${show(key)}, which this release does not publish`);
-}
-// Override: waives nothing unless by, reason, task and adr are ALL non-empty strings. A partial
-// override is refused outright -- even beside a QUALIFIED verdict, because it is a malformed
-// record. `null` is treated as absent (it waives nothing either way).
-const F = ["by", "reason", "task", "adr"];
-let override = null;
-if (own(r, "override") && r.override !== null) {
-  const o = r.override;
-  if (isObj(o) && F.every((f) => own(o, f) && typeof o[f] === "string" && o[f].trim() !== "")) override = o;
-  else p.push(`override is present but INCOMPLETE: ${F.join(", ")} must all be non-empty strings, and a partial override waives nothing. Found: ${show(o)}`);
-}
-if (r.verdict !== "QUALIFIED" && override === null) p.push(`verdict is ${show(r.verdict)}, not "QUALIFIED", and the receipt carries no complete override`);
-if (p.length) { for (const m of p) console.error("  - " + m); process.exit(1); }
-if (r.verdict === "QUALIFIED") { console.log("QUALIFIED"); process.exit(0); }
-console.log("OVERRIDE " + show(r.verdict));
-console.log(JSON.stringify(override, null, 2));
-JS
-}
+# THE CHECK ITSELF IS scripts/pair-receipt.mjs --check-release-receipt (LCLI-621), the SAME
+# evaluateReleaseReceipt that scripts/promote-latest.mjs re-runs at promotion, so staging and
+# promotion cannot disagree about one receipt. It replaced a 60-line inline `node -e` heredoc here,
+# which never learned the TASK-126 fields and so staged receipts that promotion then refused. The
+# rules it keeps from that checker: kind, schemaVersion, product, version and releaseRunId (compared
+# as normalised digit strings); every staged tarball's sha256 by own-property lookup and set
+# equality, the carried X launcher optional but digest-checked if named; the artifact directory
+# holding exactly the staged tarballs plus the carried launcher; a partial override refuses and
+# `override: null` is absent. What it adds, from opum-cli-e2e receipts/README.md at 4f078e6b:
+# launcherVersion is required, ^<X>-rc\.[1-9][0-9]*$ and equal to this run's rc; launcherSubstitution
+# is required, verdict MATCH with no mismatches, and its finalTarball names the BASENAME
+# opum-ai-lore-<X>.tgz at the carried launcher's sha256. The receipt's `commit` is NOT bound here,
+# as before: lore tags at publish, so there is no v<version> to peel yet. Promotion binds it.
 
 # THE RECEIPT THE GATE READ IS KEPT, not deleted after the check (LCLI-586), because
 # recheck_against_receipt below compares each tarball with it again immediately before that
@@ -745,7 +698,7 @@ install_cleanup_traps
 # path again, so a swap in the milliseconds between the two still goes unchecked. Closing it would
 # mean publishing from a private copy made at check time, which was deliberately not done here.
 receipt_digest_for() {
-  # Own-property lookup, as receipt_check_js does: an inherited key such as `constructor` must
+  # Own-property lookup, as the receipt gate does: an inherited key such as `constructor` must
   # not resolve to a value. Prints nothing and exits non-zero unless the entry is 64 hex digits.
   node -e '
 const fs = require("fs");
@@ -818,7 +771,9 @@ land an override in it by PR. No flag or environment variable this script reads 
   # STDOUT AND STDERR ARE KEPT APART. The verdict is read from stdout only; the reasons for a
   # refusal, and anything node itself prints (a deprecation warning, say), go to stderr and are
   # only ever quoted in a die message -- so a stray line can never be read as the verdict.
-  out="$(node -e "$(receipt_check_js)" "$RECEIPT_FILE" "$VERSION" "$RUN_ID" "$ARTIFACTS" "$FINAL_LAUNCHER_TARBALL" "${names[@]}" 2>"$err")"
+  out="$(node "$SCRIPT_DIR/pair-receipt.mjs" --check-release-receipt "$RECEIPT_FILE" --version "$VERSION" \
+    --run-id "$RUN_ID" --artifacts "$ARTIFACTS" --carried "$FINAL_LAUNCHER_TARBALL" \
+    --launcher-version "$LAUNCHER_VERSION" -- "${names[@]}" 2>"$err")"
   rc=$?
   nerr="$(cat "$err")"
   # $RECEIPT_FILE is KEPT for recheck_against_receipt; cleanup_private_files removes it on exit.

@@ -66,6 +66,10 @@
 // error and a malformed document all read as NO RECEIPT.
 
 import { execFile as execFileCallback } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
@@ -331,7 +335,10 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
  * one with no MATCH on the launcher substitution, refuses whatever its override says, because
  * Article 3 clause 5 is what makes publishing X to `latest` legitimate at all.
  */
-export function evaluateReleaseReceipt(doc, { version, commit, releaseRunId, staged, final, launcherVersion }) {
+export function evaluateReleaseReceipt(
+  doc,
+  { version, commit, releaseRunId, staged, final, launcherVersion, stagedLabel = "staged tarball in the artifact" },
+) {
   if (!isObject(doc)) return { ok: false, problems: ["receipt is not a JSON object"], override: null };
   const show = (/** @type {unknown} */ v) => JSON.stringify(v);
   /** @type {string[]} */
@@ -343,7 +350,10 @@ export function evaluateReleaseReceipt(doc, { version, commit, releaseRunId, sta
   if (doc.schemaVersion !== 1) problems.push(`schemaVersion is ${show(doc.schemaVersion)}, not 1`);
   if (doc.product !== "lore") problems.push(`product is ${show(doc.product)}, not "lore"`);
   if (doc.version !== version) problems.push(`version is ${show(doc.version)}, not "${version}"`);
-  if (!SHA1_HEX.test(String(doc.commit ?? "")) || doc.commit !== commit)
+  // `commit: null` is STAGING, and only staging: lore tags at publish, so there is no v<version>
+  // to peel yet (receipts/README.md "Fields"), and publish-release.sh has never bound the field.
+  // Promotion always passes the commit the tag peels to, and a mismatch there refuses.
+  if (commit !== null && (!SHA1_HEX.test(String(doc.commit ?? "")) || doc.commit !== commit))
     problems.push(`commit is ${show(doc.commit)}, but v${version} peels to ${show(commit)}`);
   // Run ids compared as normalised digit strings, exactly as publish-release.sh compares them.
   const norm = (/** @type {string} */ text) => text.replace(/^0+(?=\d)/, "");
@@ -369,18 +379,18 @@ export function evaluateReleaseReceipt(doc, { version, commit, releaseRunId, sta
     };
     for (const [name, digest] of Object.entries(staged)) {
       if (!Object.hasOwn(tarballs, name)) problems.push(`tarballs has no entry for ${name}`);
-      else digestProblem(name, digest, "staged tarball in the artifact");
+      else digestProblem(name, digest, stagedLabel);
     }
-    if (Object.hasOwn(tarballs, final.filename)) digestProblem(final.filename, final.sha256, "carried X launcher");
+    if (Object.hasOwn(tarballs, final.filename)) digestProblem(final.filename, final.sha256, "carried launcher");
     for (const key of Object.keys(tarballs))
       if (!Object.hasOwn(staged, key) && key !== final.filename)
-        problems.push(`tarballs names ${show(key)}, which this release does not carry`);
+        problems.push(`tarballs names ${show(key)}, which this release does not publish or carry`);
   }
 
   // The launcher (TASK-126): the staged rc, and opum-cli-e2e's own substitution verdict.
   if (!isLauncherVersionOf(version, doc.launcherVersion))
     problems.push(
-      `launcherVersion is ${show(doc.launcherVersion)}, not ${version}-rc.<N>; a receipt without it predates root-launcher rc-staging (LCLI-621) and cannot promote`,
+      `launcherVersion is ${show(doc.launcherVersion)}, not ${version}-rc.<N>; a receipt without it predates root-launcher rc-staging (LCLI-621, opum-cli-e2e TASK-126) and can neither stage nor promote`,
     );
   else if (doc.launcherVersion !== launcherVersion)
     problems.push(
@@ -571,4 +581,121 @@ export function describeOverride(override, source) {
     JSON.stringify(override, null, 2),
     "",
   ].join("\n");
+}
+
+// ── The staging gate's entry point (LCLI-621) ──────────────────────────────────────────────────
+// scripts/publish-release.sh gates STAGING on the pass-1 receipt by calling this file, so staging
+// and promotion apply ONE implementation of the rule (evaluateReleaseReceipt) rather than two
+// copies that drift. Until LCLI-621 the shell carried its own inline node checker, which never
+// learned launcherVersion or launcherSubstitution, so staging accepted a receipt promotion refuses.
+//
+//   node scripts/pair-receipt.mjs --check-release-receipt <file> --version <X> --run-id <id> \
+//     --artifacts <dir> --carried <X launcher .tgz> --launcher-version <X-rc.N> -- <staged .tgz>...
+//
+// The shell's protocol, unchanged: exit 0 with stdout line 1 `QUALIFIED`, or `OVERRIDE <verdict>`
+// followed by the override printed verbatim; exit 1 with every problem on stderr as `  - <reason>`;
+// exit 2 on a usage error. The shell refuses on any non-zero exit and on any other first line.
+
+/**
+ * Reads the receipt file and the artifact directory, hashes each tarball from its bytes, and judges
+ * the receipt with evaluateReleaseReceipt at STAGING (commit not bound). The directory must hold
+ * exactly the staged tarballs plus the carried X launcher.
+ * @param {{ file: string, version: string, runId: string, artifacts: string, carried: string, launcherVersion: string, staged: string[] }} args
+ * @returns {{ code: number, stdout: string[], stderr: string[] }}
+ */
+export function checkReleaseReceiptFile({ file, version, runId, artifacts, carried, launcherVersion, staged }) {
+  let doc;
+  try {
+    doc = JSON.parse(readFileSync(file, "utf8"));
+  } catch (error) {
+    return { code: 1, stdout: [], stderr: [`  - receipt is not parseable JSON: ${firstLine(error)}`] };
+  }
+  /** @type {string[]} */
+  const problems = [];
+  const onDisk = readdirSync(artifacts)
+    .filter((name) => name.endsWith(".tgz"))
+    .sort();
+  const wanted = [...staged, carried].sort();
+  if (JSON.stringify(onDisk) !== JSON.stringify(wanted))
+    problems.push(
+      `${artifacts} holds ${JSON.stringify(onDisk)}, not exactly the tarballs this script publishes plus the carried launcher`,
+    );
+  const digest = (/** @type {string} */ name) => {
+    try {
+      return createHash("sha256")
+        .update(readFileSync(join(artifacts, name)))
+        .digest("hex");
+    } catch (error) {
+      problems.push(`${name} could not be read from ${artifacts} (${firstLine(error)})`);
+      return "";
+    }
+  };
+  /** @type {Record<string, string>} */
+  const stagedDigests = {};
+  for (const name of staged) stagedDigests[name] = digest(name);
+  const verdict = evaluateReleaseReceipt(doc, {
+    version,
+    commit: null,
+    releaseRunId: runId,
+    staged: stagedDigests,
+    final: { filename: carried, sha256: digest(carried) },
+    launcherVersion,
+    stagedLabel: "file to be published",
+  });
+  problems.push(...verdict.problems);
+  if (problems.length) return { code: 1, stdout: [], stderr: problems.map((problem) => `  - ${problem}`) };
+  // QUALIFIED wins over an override that is also present, exactly as the shell's checker had it.
+  if (!verdict.override || /** @type {any} */ (doc).verdict === "QUALIFIED")
+    return { code: 0, stdout: ["QUALIFIED"], stderr: [] };
+  return {
+    code: 0,
+    stdout: [`OVERRIDE ${JSON.stringify(/** @type {any} */ (doc).verdict)}`, JSON.stringify(verdict.override, null, 2)],
+    stderr: [],
+  };
+}
+
+const CHECK_USAGE =
+  "usage: pair-receipt.mjs --check-release-receipt <file> --version <X> --run-id <id> --artifacts <dir> --carried <file.tgz> --launcher-version <X-rc.N> -- <staged.tgz>...";
+
+/** Each flag exactly once with a value, then `--` and at least one staged name; null otherwise. */
+export function parseCheckArgs(argv) {
+  const split = argv.indexOf("--");
+  if (split === -1) return null;
+  const flags = argv.slice(0, split);
+  const staged = argv.slice(split + 1);
+  const names = ["--check-release-receipt", "--version", "--run-id", "--artifacts", "--carried", "--launcher-version"];
+  const seen = new Map();
+  for (let i = 0; i < flags.length; i += 2) {
+    const [flag, value] = [flags[i], flags[i + 1]];
+    if (!names.includes(flag) || value === undefined || value === "" || seen.has(flag)) return null;
+    seen.set(flag, value);
+  }
+  if (seen.size !== names.length || staged.length === 0) return null;
+  return {
+    file: seen.get("--check-release-receipt"),
+    version: seen.get("--version"),
+    runId: seen.get("--run-id"),
+    artifacts: seen.get("--artifacts"),
+    carried: seen.get("--carried"),
+    launcherVersion: seen.get("--launcher-version"),
+    staged,
+  };
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const args = parseCheckArgs(process.argv.slice(2));
+  if (!args) {
+    console.error(CHECK_USAGE);
+    process.exitCode = 2;
+  } else {
+    try {
+      const result = checkReleaseReceiptFile(args);
+      for (const line of result.stdout) console.log(line);
+      for (const line of result.stderr) console.error(line);
+      process.exitCode = result.code;
+    } catch (error) {
+      console.error(`  - the receipt checker could not run: ${error instanceof Error ? error.message : String(error)}`);
+      process.exitCode = 2;
+    }
+  }
 }

@@ -12,7 +12,12 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+  checkReleaseReceiptFile,
   evaluatePairReceipt,
   evaluateReleaseReceipt,
   expectedTarballNames,
@@ -24,6 +29,7 @@ import {
   observeRelease,
   PAIR_RECEIPT_KIND,
   PLATFORMS,
+  parseCheckArgs,
   RELEASE_PACKAGES,
   RELEASE_RECEIPT_KIND,
   receiptReadArgs,
@@ -781,7 +787,7 @@ describe("scripts/pair-receipt.mjs: evaluateReleaseReceipt (the pass-1 receipt a
         d.tarballs[FINAL.filename] = "1".repeat(64);
         return d;
       },
-      `sha256 MISMATCH for ${FINAL.filename}: receipt says "${"1".repeat(64)}", the carried X launcher`,
+      `sha256 MISMATCH for ${FINAL.filename}: receipt says "${"1".repeat(64)}", the carried launcher`,
     ],
     [
       "an extra tarball",
@@ -789,7 +795,7 @@ describe("scripts/pair-receipt.mjs: evaluateReleaseReceipt (the pass-1 receipt a
         d.tarballs[`opum-ai-lore-${V}-rc.1.tgz`] = "2".repeat(64);
         return d;
       },
-      `tarballs names "opum-ai-lore-${V}-rc.1.tgz", which this release does not carry`,
+      `tarballs names "opum-ai-lore-${V}-rc.1.tgz", which this release does not publish or carry`,
     ],
     [
       "no launcherVersion (pre-amendment)",
@@ -863,6 +869,23 @@ describe("scripts/pair-receipt.mjs: evaluateReleaseReceipt (the pass-1 receipt a
     });
   }
 
+  test("commit: null (STAGING, before the tag exists) leaves commit unbound; a string binds it", () => {
+    const at = (commit: string | null, doc: unknown) =>
+      evaluateReleaseReceipt(doc, {
+        version: V,
+        commit,
+        releaseRunId: RUN,
+        staged: staged(),
+        final: FINAL,
+        launcherVersion: RC,
+      });
+    const other = { ...goodPass1(), commit: "e".repeat(40) };
+    expect(at(null, other).ok).toBe(true);
+    expect(at(LORE_COMMIT, other).ok).toBe(false);
+    // Every other clause still applies at staging.
+    expect(at(null, { ...other, launcherVersion: undefined }).ok).toBe(false);
+  });
+
   test("an override waives the verdict, never the launcher substitution", () => {
     const override = { by: "op", reason: "r", task: "TASK-1", adr: "a@b" };
     const waived = judge({ ...goodPass1(), verdict: "NOT QUALIFIED", override });
@@ -895,5 +918,140 @@ describe("scripts/pair-receipt.mjs: evaluateReleaseReceipt (the pass-1 receipt a
       `repos/opum-ai/opum-cli-e2e/contents/receipts/lore/${V}.json?ref=main`,
     ]);
     expect(fetched.source).toBe(`opum-ai/opum-cli-e2e@main:receipts/lore/${V}.json`);
+  });
+});
+
+// ── The staging entry point publish-release.sh calls (LCLI-621) ────────────────────────────────
+describe("scripts/pair-receipt.mjs --check-release-receipt (the staging gate)", () => {
+  const RUN = "4242";
+  const staged = expectedTarballNames(V, RC);
+  const carried = `opum-ai-lore-${V}.tgz`;
+  const hex = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+
+  type Receipt = Record<string, unknown> & { launcherVersion?: string; launcherSubstitution?: unknown };
+  function workspace(mutate: (r: Receipt) => void = () => {}) {
+    const dir = mkdtempSync(join(tmpdir(), "lore-check-receipt-"));
+    const artifacts = join(dir, "artifacts");
+    mkdirSync(artifacts);
+    const digests: Record<string, string> = {};
+    for (const name of [...staged, carried]) {
+      const bytes = Buffer.from(`bytes of ${name}`);
+      writeFileSync(join(artifacts, name), bytes);
+      digests[name] = hex(bytes);
+    }
+    const receipt: Receipt = {
+      schemaVersion: 1,
+      kind: RELEASE_RECEIPT_KIND,
+      product: "lore",
+      version: V,
+      commit: LORE_COMMIT,
+      releaseRunId: Number(RUN),
+      tarballs: Object.fromEntries(staged.map((name) => [name, digests[name]])),
+      launcherVersion: RC,
+      launcherSubstitution: {
+        verdict: "MATCH",
+        finalTarball: { filename: carried, sha256: digests[carried] },
+        mismatches: [],
+      },
+      verdict: "QUALIFIED",
+    };
+    mutate(receipt);
+    const file = join(dir, "receipt.json");
+    writeFileSync(file, JSON.stringify(receipt));
+    const args = { file, version: V, runId: RUN, artifacts, carried, launcherVersion: RC, staged };
+    return { dir, artifacts, args, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  }
+
+  test("QUALIFIED on stdout for a matching receipt (the positive control)", () => {
+    const w = workspace();
+    try {
+      expect(checkReleaseReceiptFile(w.args)).toEqual({ code: 0, stdout: ["QUALIFIED"], stderr: [] });
+    } finally {
+      w.cleanup();
+    }
+  });
+
+  test("an override prints OVERRIDE <verdict> and the override verbatim; QUALIFIED wins over a spare override", () => {
+    const override = { by: "op", reason: "r", task: "T", adr: "a@b" };
+    const w = workspace((r) => {
+      r.verdict = "NOT QUALIFIED";
+      r.override = override;
+    });
+    try {
+      expect(checkReleaseReceiptFile(w.args)).toEqual({
+        code: 0,
+        stdout: ['OVERRIDE "NOT QUALIFIED"', JSON.stringify(override, null, 2)],
+        stderr: [],
+      });
+    } finally {
+      w.cleanup();
+    }
+    const q = workspace((r) => {
+      r.override = override;
+    });
+    try {
+      expect(checkReleaseReceiptFile(q.args).stdout).toEqual(["QUALIFIED"]);
+    } finally {
+      q.cleanup();
+    }
+  });
+
+  test("a refusal exits 1 with each problem on stderr, and nothing on stdout", () => {
+    const w = workspace((r) => {
+      delete r.launcherSubstitution;
+      r.launcherVersion = `${V}-rc.9`;
+    });
+    try {
+      const result = checkReleaseReceiptFile(w.args);
+      expect(result.code).toBe(1);
+      expect(result.stdout).toEqual([]);
+      expect(result.stderr).toEqual([
+        `  - launcherVersion is ${V}-rc.9, but the artifact stages the launcher as ${RC}`,
+        `  - receipt has no launcherSubstitution, so nothing re-derived that the ${V} launcher is the qualified rc with only its version changed`,
+      ]);
+    } finally {
+      w.cleanup();
+    }
+  });
+
+  test("an unparseable receipt, and an artifact directory holding anything else, refuse", () => {
+    const w = workspace();
+    try {
+      writeFileSync(w.args.file, "{ nope");
+      expect(checkReleaseReceiptFile(w.args).stderr[0]).toContain("receipt is not parseable JSON");
+    } finally {
+      w.cleanup();
+    }
+    const x = workspace();
+    try {
+      writeFileSync(join(x.artifacts, `opum-ai-lore-${V}-rc.1.tgz`), "stray");
+      expect(checkReleaseReceiptFile(x.args).stderr.join("\n")).toContain(
+        "not exactly the tarballs this script publishes plus the carried launcher",
+      );
+    } finally {
+      x.cleanup();
+    }
+  });
+
+  test("parseCheckArgs: every flag once, then -- and at least one staged name", () => {
+    const flags = [
+      "--check-release-receipt",
+      "f",
+      "--version",
+      V,
+      "--run-id",
+      "1",
+      "--artifacts",
+      "d",
+      "--carried",
+      "c",
+      "--launcher-version",
+      RC,
+    ];
+    expect(parseCheckArgs([...flags, "--", "a.tgz"])?.staged).toEqual(["a.tgz"]);
+    expect(parseCheckArgs(flags)).toBeNull();
+    expect(parseCheckArgs([...flags, "--"])).toBeNull();
+    expect(parseCheckArgs([...flags.slice(0, -2), "--", "a.tgz"])).toBeNull();
+    expect(parseCheckArgs([...flags, "--version", V, "--", "a.tgz"])).toBeNull();
   });
 });
