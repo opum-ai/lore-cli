@@ -33,7 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compares entry by entry over the unpacked tarballs: the same set of paths, the same type and
   mode per entry, and byte-identical content after every `X-rc.N` is replaced with `X`. It also
   refuses an rc whose own `package.json` is not `X-rc.N`, and an rc pinning a platform at
-  anything but `X`. It runs in `release.yml`'s `package` job and in `scripts/publish-release.sh`,
+  anything but `X`. It reads each archive to its end and refuses non-zero data after a zero
+  block, because node-tar installs an entry placed after a lone zero block. It runs in `release.yml`'s `package` job and in `scripts/publish-release.sh`,
   and both launchers get the LCLI-510 shipped-README assertion and install-sanity.
 
 ## [0.11.0] - 2026-09-27

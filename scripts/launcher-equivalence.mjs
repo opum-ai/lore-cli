@@ -107,15 +107,32 @@ function parsePax(data) {
  * [{ path, type, mode, content }]. Header checksums are verified; pax (`x`) and GNU long-name
  * (`L`) headers are honoured for the entry that follows them; global pax headers are skipped.
  * Throws on anything it cannot read, rather than returning a partial list.
+ *
+ * THE END OF THE ARCHIVE IS WHERE THE BYTES END, NOT THE FIRST ZERO BLOCK (LCLI-621 review). The
+ * end marker is two zero blocks, and node-tar -- what npm installs with -- reads straight past a
+ * LONE zero block to any header after it. Stopping at the first zero block would let an entry
+ * placed after one be installed without ever being compared. So from the first zero block on,
+ * every remaining byte must be zero (the end marker and the record padding after it); anything
+ * else, a header after a lone zero block included, refuses. A trailing partial block refuses too
+ * unless it is all zero.
  */
 export function readTarEntries(gzipped) {
   const tar = gunzipSync(gzipped);
   const entries = [];
   let offset = 0;
   let pending = {};
-  while (offset + 512 <= tar.length) {
+  while (offset < tar.length) {
     const header = tar.subarray(offset, offset + 512);
-    if (header.every((byte) => byte === 0)) break;
+    if (header.every((byte) => byte === 0)) {
+      const trailing = tar.subarray(offset).findIndex((byte) => byte !== 0);
+      if (trailing !== -1)
+        throw new Error(
+          `non-zero data at offset ${offset + trailing}, after a zero block at offset ${offset}: a tar reader such as node-tar reads past a lone zero block, so anything there would be installed without being compared`,
+        );
+      break;
+    }
+    if (header.length < 512)
+      throw new Error(`${header.length} trailing bytes at offset ${offset} are not a whole tar block`);
     let sum = 0;
     for (let i = 0; i < 512; i++) sum += i >= 148 && i < 156 ? 32 : (header[i] ?? 0);
     if (sum !== octal(header, 148, 8)) throw new Error(`tar header checksum mismatch at offset ${offset}`);

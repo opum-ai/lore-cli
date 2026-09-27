@@ -37,8 +37,8 @@ interface Entry {
   type?: "0" | "5";
 }
 
-/** A gzipped ustar archive holding exactly these entries, in this order. */
-function tarball(entries: Entry[]): Buffer {
+/** The uncompressed ustar blocks for these entries, in this order, with NO end-of-archive marker. */
+function tarBlocks(entries: Entry[]): Buffer {
   const blocks: Buffer[] = [];
   for (const entry of entries) {
     const content = Buffer.isBuffer(entry.content) ? entry.content : Buffer.from(entry.content, "utf8");
@@ -61,8 +61,12 @@ function tarball(entries: Entry[]): Buffer {
     put(`${sum.toString(8).padStart(6, "0")}\0 `, 148, 8);
     blocks.push(header, content, Buffer.alloc((512 - (content.length % 512)) % 512));
   }
-  blocks.push(Buffer.alloc(1024));
-  return gzipSync(Buffer.concat(blocks));
+  return Buffer.concat(blocks);
+}
+
+/** A gzipped ustar archive holding exactly these entries, in this order, then the two-block end marker. */
+function tarball(entries: Entry[]): Buffer {
+  return gzipSync(Buffer.concat([tarBlocks(entries), Buffer.alloc(1024)]));
 }
 
 function manifest(version: string, pin: string = X): string {
@@ -189,6 +193,63 @@ describe("launcher equivalence (LCLI-621)", () => {
     ]);
     const corrupt = launcher(RC);
     expect(() => readTarEntries(corrupt.subarray(0, 20))).toThrow();
+  });
+
+  // node-tar reads past a LONE zero block, so an entry placed after one is installed. A reader that
+  // stopped at the first zero block would never compare it (LCLI-621 review).
+  const LAUNCHER_ENTRIES = (version: string): Entry[] => [
+    { path: "package/LICENSE", content: "MIT\n" },
+    { path: "package/bin/lore.cjs", content: "#!/usr/bin/env node\nrequire('./x');\n", mode: 0o755 },
+    { path: "package/package.json", content: manifest(version) },
+    { path: "package/README.md", content: readme(version) },
+  ];
+  const hidden: Entry = { path: "package/bin/hidden.cjs", content: "require('child_process');\n", mode: 0o755 };
+
+  test("RED: an entry after a LONE zero block is refused, not silently left uncompared", () => {
+    const rc = gzipSync(
+      Buffer.concat([tarBlocks(LAUNCHER_ENTRIES(RC)), Buffer.alloc(512), tarBlocks([hidden]), Buffer.alloc(1024)]),
+    );
+    expect(() => readTarEntries(rc)).toThrow(
+      /after a zero block at offset \d+: a tar reader such as node-tar reads past/,
+    );
+    expect(() => compare(rc)).toThrow("after a zero block");
+  });
+
+  test("RED: non-zero data after the two-block end marker is refused", () => {
+    const rc = gzipSync(
+      Buffer.concat([tarBlocks(LAUNCHER_ENTRIES(RC)), Buffer.alloc(1024), tarBlocks([hidden]), Buffer.alloc(1024)]),
+    );
+    expect(() => readTarEntries(rc)).toThrow("after a zero block");
+  });
+
+  test("GREEN: zero record padding after the end marker, as tar writers emit, is accepted", () => {
+    const rc = gzipSync(Buffer.concat([tarBlocks(LAUNCHER_ENTRIES(RC)), Buffer.alloc(1024), Buffer.alloc(8192)]));
+    expect(readTarEntries(rc).map((e) => e.path)).toEqual(LAUNCHER_ENTRIES(RC).map((e) => e.path));
+    expect(compare(rc).ok).toBe(true);
+  });
+
+  test("the CLI exits 2, measuring nothing, on an archive hiding an entry after a lone zero block", () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "launcher-equivalence-"));
+    try {
+      const rcFile = resolve(dir, "rc.tgz");
+      const finalFile = resolve(dir, "final.tgz");
+      writeFileSync(
+        rcFile,
+        gzipSync(
+          Buffer.concat([tarBlocks(LAUNCHER_ENTRIES(RC)), Buffer.alloc(512), tarBlocks([hidden]), Buffer.alloc(1024)]),
+        ),
+      );
+      writeFileSync(finalFile, launcher(X));
+      const lines: string[] = [];
+      const code = main(["--rc", rcFile, "--final", finalFile, "--version", X, "--rc-version", RC], {
+        out: (l) => lines.push(l),
+        err: (l) => lines.push(l),
+      });
+      expect(code).toBe(2);
+      expect(lines.join("\n")).toContain("launcher equivalence could not be measured: non-zero data at offset");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("the CLI exits 0 on an equivalent pair, 1 naming every problem, 2 on a bad version pair", () => {
