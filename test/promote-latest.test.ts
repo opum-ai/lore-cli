@@ -37,6 +37,7 @@ import {
   checkRollbackState,
   checkServedLauncher,
   distTagReadArgs,
+  downloadServedTarball,
   launcherPublishArgs,
   main,
   type PromotionRecord,
@@ -319,7 +320,8 @@ function world(options: WorldOptions = {}) {
           throw Object.assign(new Error("Command failed"), { stderr: "npm error E404\nmore" });
         const into = args[3] as string;
         writeFileSync(join(into, RC_FILE), state.servedRc);
-        return { stdout: JSON.stringify([{ filename: RC_FILE }]) };
+        // npm 12.1.0's real shape: an object keyed by package name (measured against the registry).
+        return { stdout: JSON.stringify({ [LAUNCHER]: { id: `${LAUNCHER}@${RC}`, filename: RC_FILE } }) };
       }
       if (command === "npm" && args[0] === "publish") {
         writes.push(args.join(" "));
@@ -1108,6 +1110,26 @@ describe("scripts/promote-latest.mjs: arguments and credentials", () => {
     } finally {
       h.cleanup();
     }
+  });
+
+  test("downloadServedTarball reads npm 12's object answer and an older npm's array, and refuses anything else", async () => {
+    const answer = (stdout: string) => async () => ({ stdout });
+    const spec = `${LAUNCHER}@${RC}`;
+    expect(
+      await downloadServedTarball(spec, "/d", { run: answer(JSON.stringify({ [LAUNCHER]: { filename: RC_FILE } })) }),
+    ).toBe(join("/d", RC_FILE));
+    expect(await downloadServedTarball(spec, "/d", { run: answer(JSON.stringify([{ filename: RC_FILE }])) })).toBe(
+      join("/d", RC_FILE),
+    );
+    for (const bad of [
+      JSON.stringify({}),
+      JSON.stringify([{ filename: RC_FILE }, { filename: X_FILE }]),
+      JSON.stringify([{ filename: `../${RC_FILE}` }]),
+      JSON.stringify([{}]),
+    ])
+      await expect(downloadServedTarball(spec, "/d", { run: answer(bad) })).rejects.toThrow(
+        "reported no archive filename",
+      );
   });
 
   test("launcherPublishArgs: the file, --tag latest, and nothing that stages", () => {

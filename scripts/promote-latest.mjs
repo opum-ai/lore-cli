@@ -545,7 +545,10 @@ export async function readArtifact(dir, version) {
 export async function downloadServedTarball(spec, into, { run = defaultRun } = {}) {
   const { stdout } = await run("npm", packArgs(spec, into));
   const parsed = JSON.parse(stdout);
-  const entry = Array.isArray(parsed) ? parsed[0] : null;
+  // npm 12.1.0 answers with an object keyed by package name ({"@opum-ai/lore": {filename, ...}},
+  // measured against the real registry); older npm with a one-element array. Exactly one entry.
+  const entries = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" ? Object.values(parsed) : [];
+  const entry = entries.length === 1 ? entries[0] : null;
   const filename = entry?.filename;
   if (typeof filename !== "string" || !filename || basename(filename) !== filename)
     throw new Error(`npm pack ${spec} reported no archive filename (${JSON.stringify(filename)})`);
