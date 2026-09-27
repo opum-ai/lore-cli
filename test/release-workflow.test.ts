@@ -349,6 +349,127 @@ describe("release.yml keeps the provenance gate ENFORCING, not merely present (L
 // Clause 5: publication stages under `release-candidate` and never moves `latest`. Both are
 // asserted against the parsed workflow, so a reordering or a dropped flag fails here even though
 // actionlint and typecheck stay silent on it.
+// ── The publish-site scanner (LCLI-621 refinement iv; hardened after final review F4) ─────────────
+type ScannedFile = { path: string; text: string };
+type PublishSite = { path: string; text: string };
+
+/**
+ * Tracked paths NOT scanned, each for a stated reason. Everything else that git tracks and that is
+ * text is scanned, whatever its directory or extension.
+ */
+const PUBLISH_SCAN_EXCLUDED: RegExp[] = [
+  /\.md$/, // prose: runbooks, CHANGELOG, CLAUDE.md and ADRs describe `npm publish` by the dozen
+  /^\.quest\//, // tracker records: prose in JSON, never executed
+  /^docs\//, // the documentation bundle, prose (its .md is excluded above; this covers any data beside it)
+  /^archive\//, // retired material kept for history, never executed
+  /^research\//, // survey data about other tools, never executed
+  // Test sources and their fixtures: they spell publish argv on purpose, to drive stub `npm`s and to
+  // assert on what the scripts hand to npm. They never run in a release. Scanning them would turn
+  // this allowlist into a copy of every test's expectations.
+  /^test\//,
+];
+
+const SHELL_LIKE = /\.(sh|bash|zsh|ya?ml|toml)$/;
+const JS_LIKE = /\.(js|mjs|cjs|ts|mts|cts|tsx|jsx)$/;
+
+/**
+ * Every line that could be a publish. Rule A: a `publish` word on a line that also names npm, pnpm,
+ * bun or yarn ANYWHERE -- so `x && npm publish`, `npm --registry r publish`, `- run: npm publish`,
+ * `pnpm publish`, `bun publish` and a JS template all count. Rule B: a "publish" string literal in
+ * JS/TS source, which catches an argv array built apart from its `npm`. Rule C: a shell array whose
+ * first word is `publish` (`args=(publish ...)`, `args+=(publish ...)`), the bash form of the same
+ * thing -- publish-release.sh's own site is one, and names no package manager on its line, so rule
+ * A alone missed it (found by running this scanner on the real tree). Only FULL-LINE comments are
+ * skipped (`#` in shell-like files, `//`, `*`, `/*` in JS/TS); a trailing comment is still read.
+ * Known limit: a shell command split across lines with `\` (`npm \` then `publish`) is not seen.
+ */
+function publishSites(files: ScannedFile[]): PublishSite[] {
+  const sites: PublishSite[] = [];
+  for (const { path, text } of files) {
+    const shellLike = SHELL_LIKE.test(path);
+    const jsLike = JS_LIKE.test(path);
+    for (const raw of text.split("\n")) {
+      const line = raw.trim();
+      if (shellLike && line.startsWith("#")) continue;
+      if (jsLike && (line.startsWith("//") || line.startsWith("*") || line.startsWith("/*"))) continue;
+      const ruleA = /\bpublish\b/.test(line) && /\b(npm|pnpm|bun|yarn)\b/.test(line);
+      const ruleB = jsLike && /["'`]publish["'`]/.test(line);
+      const ruleC = shellLike && /\(\s*["']?publish\b/.test(line);
+      if (ruleA || ruleB || ruleC) sites.push({ path, text: line });
+    }
+  }
+  return sites;
+}
+
+/**
+ * EVERY line the scanner finds in the repository today, exact, in `git ls-files` order. Three run a
+ * publish (marked RUNS); the rest are messages, a job name and a Keychain service name that happen
+ * to name npm and publish together. Editing any of these lines means editing this list.
+ * readme-readback.sh's two lines belong to LCLI-616's file: an edit there lands here too.
+ */
+const PUBLISH_SITE_ALLOWLIST: PublishSite[] = [
+  { path: ".github/workflows/release.yml", text: "name: publish (npm, OIDC trusted publishing)" },
+  {
+    path: ".github/workflows/release.yml",
+    text: 'echo "::error::a registry auth token is configured for this job. npm still ATTEMPTS OIDC first, but this token becomes the silent fallback if the exchange fails -- publishing under the wrong identity without provenance, or returning an E404 that looks like a missing trust relationship. Remove the NPM_TOKEN secret / node-auth-token input from the publish job; trusted publishing needs no stored credential."',
+  },
+  {
+    path: ".github/workflows/release.yml",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: exact text of a tracked file the scanner reads, not a JS template.
+    text: "echo \"::error::${name}@${version} is already on the registry with different bytes (registry dist.integrity '${got}', this run's ${tgz} ${want}). It was published outside this run. npm versions are immutable: for the X-rc.N launcher, re-dispatch with launcher_rc set to the next N; for an X platform package a new rc cannot help (every rc pins X), so re-run the failed publish job of the Release run whose platform tarballs are the registry's ('Re-run failed jobs', NOT 'Re-run all jobs', which re-runs package and overwrites npm-packages; a re-dispatch rebuilds and may not match), or, if those platforms were staged by scripts/publish-release.sh from a publish: false run that has no failed publish job, run 'scripts/publish-release.sh ${version} <that run id>'; otherwise cut a new version. Do NOT run npm unpublish.\"",
+  },
+  { path: ".github/workflows/release.yml", text: 'echo "::group::npm publish $tgz ($name@$version)"' },
+  // RUNS: staging, under release-candidate.
+  { path: ".github/workflows/release.yml", text: 'npm publish "$tgz" --tag release-candidate' },
+  {
+    path: ".github/workflows/release.yml",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: exact text of a tracked file the scanner reads, not a JS template.
+    text: 'echo "::warning::still not visible on the registry read API after ${REGISTRY_WINDOW_SECONDS}s:${pending}. This is NOT proof the publish failed -- npm already confirmed it, and only the registry read API is behind (LCLI-460: 0.4.5 ~15s, 0.4.6 ~35s, 0.5.0 ~25min). Do NOT unpublish. Re-check before treating it as a failure."',
+  },
+  { path: "scripts/promote-latest.mjs", text: 'export const KEYCHAIN_SERVICE = "npm-opum-ai-publish";' },
+  // RUNS: the ONE publish without release-candidate -- the X launcher, --tag latest.
+  {
+    path: "scripts/promote-latest.mjs",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: exact text of a tracked file the scanner reads, not a JS template.
+    text: 'return ["publish", tarball, "--tag", PROMOTE_TAG, `--registry=${PUBLIC_REGISTRY}`, ...(otp ? ["--otp", otp] : [])];',
+  },
+  {
+    path: "scripts/promote-latest.mjs",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: exact text of a tracked file the scanner reads, not a JS template.
+    text: "`Refusing to promote ${version}: ${reason(error)}. Whether ${version} is already on npm decides publish or tag-move. Nothing has moved.`,",
+  },
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: exact text of a tracked file the scanner reads, not a JS template.
+  { path: "scripts/publish-release.sh", text: 'KEYCHAIN_SERVICE="${KEYCHAIN_SERVICE:-npm-opum-ai-publish}"' },
+  {
+    path: "scripts/publish-release.sh",
+    text: "gate and before npm publish. Something outside this script wrote to $ARTIFACTS. Find out what",
+  },
+  {
+    path: "scripts/publish-release.sh",
+    text: 'say "  IT MAY ALSO NOT BE LAG AT ALL (LCLI-502). npm 12 can park a publish in a non-public"',
+  },
+  {
+    path: "scripts/publish-release.sh",
+    text: 'workflow with launcher_rc set to the next N, then publish that run. Do NOT run npm unpublish."',
+  },
+  // RUNS: staging -- STAGE_TAG is release-candidate, asserted below.
+  { path: "scripts/publish-release.sh", text: 'local npm_args=(publish "$tarball" --tag "$STAGE_TAG")' },
+  {
+    path: "scripts/publish-release.sh",
+    text: 'die "npm publish for $pkg@$ver printed text this script recognises as a 2FA challenge',
+  },
+  {
+    path: "scripts/readme-readback.sh",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: exact text of a tracked file the scanner reads, not a JS template.
+    text: "echo \"::warning::${name}: after ${REGISTRY_WINDOW_SECONDS}s the registry is still serving the README of the PREVIOUS release (${prev}), not ${version}'s. It satisfies ${prev}'s assertions exactly, which is what propagation lag looks like on an established package -- npm's readme field is package-level and updates when the publish finishes propagating (LCLI-460: 0.5.0 took ~25min). This is NOT a confirmed defect and NOT a reason to unpublish. Re-read 'npm view ${name} readme' later; if it still shows ${prev} once propagation is plainly done, THAT is the defect, and the fix is the next release.\"",
+  },
+  {
+    path: "scripts/readme-readback.sh",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: exact text of a tracked file the scanner reads, not a JS template.
+    text: "echo \"::error::A4 FAILED for package '${name}', release '${version}', read $(date -u +%FT%TZ) after ${attempt} attempt(s) over ${REGISTRY_WINDOW_SECONDS}s. The readme npm serves satisfies NEITHER ${version}'s assertions NOR ${prev:-the previous release}'s, so propagation lag has been ruled out -- this is not a replica catching up, it is a page that matches no release we published. The packed tarball passed the gate, so the divergence was introduced at or after publish. This page is IMMUTABLE: the fix is the next release, never an unpublish. Findings against ${version}:\"",
+  },
+];
+
 describe("release.yml enforces constitution Article 3 (LCLI-613)", () => {
   const publishSteps = () => loadWorkflow().jobs.publish?.steps ?? [];
   const parityIndex = (steps: WorkflowStep[]) =>
@@ -445,50 +566,50 @@ describe("release.yml enforces constitution Article 3 (LCLI-613)", () => {
 
   // LCLI-621, the paired design's refinement iv: EXACTLY ONE `npm publish` in this repository omits
   // --tag release-candidate -- the X launcher's fresh publish with --tag latest -- and it is in
-  // scripts/promote-latest.mjs, in launcherPublishArgs, and nowhere else. Every tracked file under
-  // scripts/ and .github/ is scanned for a publish SITE (a shell or workflow line that runs
-  // `npm publish`, a bash argv array beginning with `publish`, or a JS argv array holding the
-  // literal "publish"), and the set of sites must be exactly the three below. A fourth site
-  // anywhere, or a second one without release-candidate, fails here and has to be admitted by
-  // editing this list, which is the point: the exception is one reviewed line, not a pattern.
+  // scripts/promote-latest.mjs's launcherPublishArgs and nowhere else. The scanner (publishSites,
+  // below) reads EVERY git-tracked text file bar the prose/fixture classes in PUBLISH_SCAN_EXCLUDED
+  // and reports every line that could be a publish, and the set must equal PUBLISH_SITE_ALLOWLIST
+  // exactly. A new site anywhere, in any spelling the scanner sees, has to be admitted by editing
+  // that list, which is the point: the exception is a reviewed line, not a pattern. Hardened after
+  // the final review (F4) got eight spellings past a scanner that looked only at `npm publish` at
+  // the start of a line in scripts/ and .github/; each spelling is a case below.
   test("exactly one npm publish site omits --tag release-candidate: promote-latest.mjs's X launcher, --tag latest", async () => {
     const repo = join(import.meta.dir, "..");
-    const tracked = execFileSync("git", ["ls-files", "scripts", ".github"], { cwd: repo, encoding: "utf8" })
-      .split("\n")
-      .filter((path) => /\.(sh|mjs|cjs|js|ts|ya?ml)$/.test(path));
-    // Positive control: the scan read the files that hold the three known sites.
-    for (const path of [".github/workflows/release.yml", "scripts/publish-release.sh", "scripts/promote-latest.mjs"])
-      expect(tracked).toContain(path);
-    const sites: Array<{ file: string; line: number; text: string }> = [];
-    for (const file of tracked) {
-      const lines = readFileSync(join(repo, file), "utf8").split("\n");
-      const js = /\.(mjs|cjs|js|ts)$/.test(file);
-      lines.forEach((raw, index) => {
-        const text = raw.trim();
-        if (text.startsWith("#") || text.startsWith("//") || text.startsWith("*")) return;
-        const site = js
-          ? /["'`]publish["'`]\s*,/.test(text)
-          : /^(?:run:\s*)?npm\s+publish\b/.test(text) || /=\(\s*publish\b/.test(text);
-        if (site) sites.push({ file, line: index + 1, text });
-      });
+    const tracked = execFileSync("git", ["ls-files"], { cwd: repo, encoding: "utf8" }).split("\n").filter(Boolean);
+    const files: ScannedFile[] = [];
+    for (const path of tracked) {
+      if (PUBLISH_SCAN_EXCLUDED.some((rule) => rule.test(path))) continue;
+      let bytes: Buffer;
+      try {
+        bytes = readFileSync(join(repo, path));
+      } catch {
+        continue; // a tracked path deleted in the working tree is not a site
+      }
+      if (bytes.subarray(0, 8000).includes(0)) continue; // binary
+      files.push({ path, text: bytes.toString("utf8") });
     }
-    expect(sites.map((s) => [s.file, s.text])).toEqual([
-      [".github/workflows/release.yml", 'npm publish "$tgz" --tag release-candidate'],
-      [
-        "scripts/promote-latest.mjs",
-        'return ["publish", tarball, "--tag", PROMOTE_TAG, ...(otp ? ["--otp", otp] : [])];',
-      ],
-      ["scripts/publish-release.sh", 'local npm_args=(publish "$tarball" --tag "$STAGE_TAG")'],
-    ]);
-    // publish-release.sh's site stages because STAGE_TAG is release-candidate, assigned once.
+    // Positive control: the scan read every tracked non-excluded text file, the known sites' among them.
+    expect(files.length).toBeGreaterThan(100);
+    for (const path of [
+      ".github/workflows/release.yml",
+      "scripts/publish-release.sh",
+      "scripts/promote-latest.mjs",
+      "package.json",
+    ])
+      expect(files.map((f) => f.path)).toContain(path);
+    expect(publishSites(files)).toEqual(PUBLISH_SITE_ALLOWLIST);
+
+    // Of the allowlisted sites, exactly three RUN a publish; two stage, one is the X launcher.
     const script = readFileSync(join(repo, "scripts", "publish-release.sh"), "utf8");
     expect(script.match(/^\s*STAGE_TAG=.*$/gm)).toEqual(['STAGE_TAG="release-candidate"']);
-    // The one site without release-candidate is launcherPublishArgs, and it builds --tag latest.
-    const unstaged = sites.filter((s) => !s.text.includes("release-candidate") && !s.text.includes("$STAGE_TAG"));
-    expect(unstaged.map((s) => s.file)).toEqual(["scripts/promote-latest.mjs"]);
+    expect(script).toContain('local npm_args=(publish "$tarball" --tag "$STAGE_TAG")');
     const promoteSource = readFileSync(join(repo, "scripts", "promote-latest.mjs"), "utf8").split("\n");
+    const site = PUBLISH_SITE_ALLOWLIST.find(
+      (s) => s.path === "scripts/promote-latest.mjs" && s.text.startsWith("return ["),
+    );
+    const index = promoteSource.findIndex((line) => line.trim() === site?.text);
     const owner = promoteSource
-      .slice(0, (unstaged[0]?.line ?? 1) - 1)
+      .slice(0, index)
       .reverse()
       .find((line) => /^export function /.test(line));
     expect(owner).toBe("export function launcherPublishArgs(tarball, { otp } = {}) {");
@@ -499,7 +620,43 @@ describe("release.yml enforces constitution Article 3 (LCLI-613)", () => {
       "/artifact/opum-ai-lore-1.2.3.tgz",
       "--tag",
       "latest",
+      "--registry=https://registry.npmjs.org/",
     ]);
+  });
+
+  // The eight spellings the final review got past the previous scanner, plus a package.json script,
+  // each fed to the scanner as a file of its own: every one must surface as a site the allowlist
+  // does not admit.
+  const evasions: Array<[string, ScannedFile]> = [
+    ["a publish after &&", { path: "scripts/x.sh", text: "build && npm publish out.tgz\n" }],
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: exact text of a tracked file the scanner reads, not a JS template.
+    ["a JS template string", { path: "scripts/x.mjs", text: "await sh(`npm publish ${tarball}`);\n" }],
+    ["a JS argv built by concat", { path: "scripts/x.mjs", text: 'await run("npm", ["publish"].concat(args));\n' }],
+    ["a run: step in another workflow", { path: ".github/workflows/other.yml", text: "      - run: npm publish\n" }],
+    ["pnpm", { path: "scripts/x.sh", text: "pnpm publish --no-git-checks\n" }],
+    ["bun", { path: "scripts/x.sh", text: "bun publish\n" }],
+    ["a .bash file", { path: "scripts/release.bash", text: "npm publish dist/x.tgz\n" }],
+    [
+      "flags between npm and publish",
+      { path: "scripts/x.sh", text: "npm --registry https://r.example publish x.tgz\n" },
+    ],
+    ["a package.json script", { path: "package.json", text: '    "release": "npm publish --tag latest",\n' }],
+    ["yarn, outside scripts/", { path: "src/release.ts", text: 'execSync("yarn npm publish");\n' }],
+    ["a bash argv array built apart from its npm", { path: "scripts/x.sh", text: 'args+=(publish "$t")\n' }],
+  ];
+  for (const [label, file] of evasions)
+    test(`the scanner flags ${label} as an unadmitted publish site`, () => {
+      const sites = publishSites([file]);
+      expect(sites.length).toBe(1);
+      expect(PUBLISH_SITE_ALLOWLIST).not.toContainEqual(sites[0]);
+    });
+
+  test("the scanner skips full-line comments, and only full-line comments", () => {
+    expect(publishSites([{ path: "scripts/x.sh", text: "# npm publish x.tgz\n" }])).toEqual([]);
+    expect(publishSites([{ path: "scripts/x.mjs", text: "// npm publish x.tgz\n * npm publish\n" }])).toEqual([]);
+    expect(publishSites([{ path: "scripts/x.sh", text: "true # npm publish x.tgz\n" }])).toHaveLength(1);
+    // JSON has no comments, so a `#` does not hide a line there.
+    expect(publishSites([{ path: "package.json", text: '"#": "npm publish"\n' }])).toHaveLength(1);
   });
 });
 

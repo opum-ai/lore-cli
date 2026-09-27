@@ -37,6 +37,7 @@ import {
   requirePairQualification,
   resolveTagCommit,
   tarballName,
+  viewVersionArgs,
 } from "../scripts/pair-receipt.mjs";
 
 const V = "3.4.5";
@@ -472,13 +473,8 @@ describe("scripts/pair-receipt.mjs: the reads", () => {
     expect(observed.gitHead).toBe(LORE_COMMIT);
     // The launcher is read at its rc: the X launcher is not on the registry until promotion.
     expect(calls.filter((c) => c[0] === "npm")).toEqual(
-      RELEASE_PACKAGES.map((name) => [
-        "npm",
-        "view",
-        `${name}@${name === "@opum-ai/lore" ? RC : V}`,
-        "--json",
-        "--prefer-online",
-      ]),
+      // Anonymous against the public registry, like every other read (review F6).
+      RELEASE_PACKAGES.map((name) => ["npm", ...viewVersionArgs(`${name}@${name === "@opum-ai/lore" ? RC : V}`)]),
     );
     expect(calls.filter((c) => c[0] === "gh")).toEqual([
       ["gh", "api", "--hostname", "github.com", `repos/opum-ai/lore-cli/git/ref/tags/v${V}`],
@@ -1010,6 +1006,17 @@ describe("scripts/pair-receipt.mjs --check-release-receipt (the staging gate)", 
     } finally {
       w.cleanup();
     }
+  });
+
+  test("viewVersionArgs is anonymous and pinned to the public registry", () => {
+    expect(viewVersionArgs("@opum-ai/lore@1.2.3")).toEqual([
+      "view",
+      "@opum-ai/lore@1.2.3",
+      "--json",
+      "--prefer-online",
+      expect.stringMatching(/^--userconfig=/),
+      "--registry=https://registry.npmjs.org/",
+    ]);
   });
 
   test("an unparseable receipt, and an artifact directory holding anything else, refuse", () => {

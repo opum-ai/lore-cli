@@ -68,6 +68,7 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
+import { devNull } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -434,9 +435,25 @@ export function evaluateReleaseReceipt(
   return { ok: problems.length === 0, problems, override: verdict.override };
 }
 
+/**
+ * The one argv a version's registry metadata is read with: ANONYMOUS against the public registry,
+ * like every other read (LCLI-621 review F6) -- no ~/.npmrc token is sent and no mirror answers.
+ * @param {string} spec
+ */
+export function viewVersionArgs(spec) {
+  return [
+    "view",
+    spec,
+    "--json",
+    "--prefer-online",
+    `--userconfig=${devNull}`,
+    "--registry=https://registry.npmjs.org/",
+  ];
+}
+
 /** Reads one version's registry metadata as an object, or null. npm 12 wraps it in a one-element array. */
 export async function viewVersion(name, version, { execFile: execFileFn = execFile } = {}) {
-  const { stdout } = await execFileFn("npm", ["view", `${name}@${version}`, "--json", "--prefer-online"], {
+  const { stdout } = await execFileFn("npm", viewVersionArgs(`${name}@${version}`), {
     maxBuffer: 16 * 1024 * 1024,
   });
   const parsed = JSON.parse(stdout);

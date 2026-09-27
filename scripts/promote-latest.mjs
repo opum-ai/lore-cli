@@ -137,12 +137,16 @@ export const defaultRun = (command, args, options = {}) =>
   execFileAsync(command, args, { maxBuffer: 64 * 1024 * 1024, ...options });
 
 /**
- * The one argv a `latest` (or rollback) move is made with.
+ * The one argv a `latest` (or rollback) move is made with. The registry is PINNED to the public
+ * one, as every read is, so an operator's configured mirror or scope registry cannot receive the
+ * write (LCLI-621 review F6). Auth still resolves: npm keys a token by the registry's nerf-dart,
+ * and both the private npmrc this script writes and a web-login ~/.npmrc key it
+ * `//registry.npmjs.org/`, which is exactly this registry.
  * @param {string} name @param {string} target @param {string} tag
  * @param {{ otp?: string }} [options]
  */
 export function distTagAddArgs(name, target, tag, { otp } = {}) {
-  return ["dist-tag", "add", `${name}@${target}`, tag, ...(otp ? ["--otp", otp] : [])];
+  return ["dist-tag", "add", `${name}@${target}`, tag, `--registry=${PUBLIC_REGISTRY}`, ...(otp ? ["--otp", otp] : [])];
 }
 
 /**
@@ -154,7 +158,7 @@ export function distTagAddArgs(name, target, tag, { otp } = {}) {
  * @param {string} tarball @param {{ otp?: string }} [options]
  */
 export function launcherPublishArgs(tarball, { otp } = {}) {
-  return ["publish", tarball, "--tag", PROMOTE_TAG, ...(otp ? ["--otp", otp] : [])];
+  return ["publish", tarball, "--tag", PROMOTE_TAG, `--registry=${PUBLIC_REGISTRY}`, ...(otp ? ["--otp", otp] : [])];
 }
 
 /** An anonymous read against the public registry: no ~/.npmrc token is sent, no mirror answers. */
@@ -462,8 +466,8 @@ export async function verifyTags({
 // ── The Release run and its artifact (LCLI-621) ─────────────────────────────────────────────────
 
 /**
- * Is `run` (the GitHub API's workflow-run object) this repository's release.yml run of exactly
- * `commit`, and did it succeed? Returns every problem. quest-cli checks the same three fields of
+ * Is `run` (the GitHub API's workflow-run object) this repository's dispatched release.yml run of
+ * exactly `commit`, and did it succeed? Returns every problem. quest-cli checks the same three fields of
  * its qualification run (QCLI-399, qualifyBundle).
  * @param {any} run @param {{ runId: string, commit: string }} expected
  */
@@ -478,6 +482,14 @@ export function checkReleaseRun(run, { runId, commit }) {
     problems.push(`run ${runId} built ${JSON.stringify(run.head_sha)}, but the tag peels to ${commit}`);
   if (run.conclusion !== "success")
     problems.push(`run ${runId} concluded ${JSON.stringify(run.conclusion)}, not "success"`);
+  // release.yml is workflow_dispatch only, and its artifact must have been built from this
+  // repository, never a fork's head (LCLI-621 review F8).
+  if (run.event !== "workflow_dispatch")
+    problems.push(`run ${runId} was triggered by ${JSON.stringify(run.event)}, not "workflow_dispatch"`);
+  if (run.head_repository?.full_name !== OWN_REPOSITORY)
+    problems.push(
+      `run ${runId} built ${JSON.stringify(run.head_repository?.full_name ?? null)}'s code, not ${OWN_REPOSITORY}'s`,
+    );
   return problems;
 }
 
@@ -498,7 +510,7 @@ export async function readArtifact(dir, version) {
   let launcherVersion = null;
   if (rcNames.length !== 1)
     problems.push(
-      `the artifact must hold exactly one launcher ${rcPrefix}<N>.tgz, and holds ${rcNames.length}: ${JSON.stringify(rcNames)}`,
+      `the artifact must hold exactly one launcher ${rcPrefix}<N>.tgz, and holds ${rcNames.length}; it holds ${present.length} tarball(s) in all: ${JSON.stringify(present)}`,
     );
   else {
     const candidate = /** @type {string} */ (rcNames[0]).slice("opum-ai-lore-".length, -".tgz".length);
@@ -699,7 +711,7 @@ export async function verifyFinalLauncher({
           ok: false,
           attempts: attempt,
           problems: [
-            `${LAUNCHER}@${version}: npm serves ${state.integrity}, the artifact's ${final.filename} is ${final.integrity}`,
+            `${LAUNCHER}@${version}: npm serves ${state.integrity}, the artifact's ${final.filename} is ${final.integrity}; restore every latest with \`node scripts/promote-latest.mjs --rollback <record>\`, and do NOT unpublish`,
           ],
         };
       last = state.state === "absent" ? "npm answered not-found" : "npm returned no dist.integrity";
@@ -1160,7 +1172,7 @@ export async function main(
     if (!bytes.ok) {
       for (const problem of bytes.problems) err(`  ${problem}`);
       err(
-        `${PROMOTE_TAG} reads ${record.version} everywhere, but npm does not serve ${final.filename} as ${LAUNCHER}@${record.version}. Do NOT run npm unpublish.`,
+        `${PROMOTE_TAG} reads ${record.version} everywhere, but npm does not serve ${final.filename} as ${LAUNCHER}@${record.version}. This run restores nothing by itself: put every ${PROMOTE_TAG} back with node scripts/promote-latest.mjs --rollback ${args.recordPath}. Do NOT run npm unpublish.`,
       );
       return 1;
     }

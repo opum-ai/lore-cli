@@ -63,6 +63,7 @@ export declare function evaluatePairReceipt(
 ): PairVerdict;
 export declare function receiptReadArgs(version: string): string[];
 export declare function fetchPairReceipt(version: string, options?: { execFile?: ExecFile }): Promise<Fetched>;
+export declare function viewVersionArgs(spec: string): string[];
 export declare function viewVersion(
   name: string,
   version: string,
