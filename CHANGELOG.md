@@ -20,7 +20,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are byte-identical to the ones already on the registry. That has been measured once: two Release
   dispatches on the same commit, `20a1d24b` (0.6.1, runs 34783940117 and 34786808767), produced
   seven byte-identical tarballs. From a different commit it is unmeasured. The final `X`
-  launcher's publish to `latest` is not part of this change.
+  launcher reaches `latest` through `scripts/promote-latest.mjs`; see the next entry.
+- **`latest` gets the launcher by a fresh publish of the qualified `X`, last** (LCLI-621, Part B).
+  `scripts/promote-latest.mjs` now takes `--release-run <id>`. It downloads that run's
+  `npm-packages` artifact afresh and re-runs the equivalence gate on it. It then re-reads the
+  pass-1 receipt against the artifact. That receipt's `commit` must be what `v<version>` peels to,
+  its `launcherVersion` must be the artifact's `X-rc.N`, and its `launcherSubstitution` must be
+  `MATCH` naming the basename `opum-ai-lore-<X>.tgz` at the artifact `X` launcher's sha256. The
+  staging check reads `X-rc.N` on the launcher, and the pair receipt's `launcherVersion` is now
+  required and must equal the artifact's rc. A receipt without `launcherVersion` refuses, as
+  quest-cli's reader refuses it. Before anything moves, and again after the six platforms move by
+  dist-tag, `npm pack` of the registry's `X-rc.N` must be sha256-identical to the artifact's rc.
+  The `X` launcher must be equivalent to that served rc and still hash to the receipt's
+  `finalTarball.sha256`. Then it runs `npm publish <X> --tag latest`, last. That is the one publish
+  in the repository without `--tag release-candidate`, and a test holds it to that one site. If
+  `X` is already on npm as the artifact's bytes, it moves the tag instead. Other bytes refuse
+  before anything moves. Afterwards it verifies `latest` on all seven packages and npm's `X`
+  integrity. It then prints the byte count of the package-level `readme` (OPAG-474 AC3), with a
+  loud warning, not a failure, on `0`. A failure, and `--rollback`, restore every moved `latest` by
+  dist-tag, the launcher's included. Nothing is unpublished. The spec is quest-cli's promote clause
+  (QCLI-399, `e3c59d7b`) and opum-cli-e2e's `receipts/README.md` steps 5 to 7 (`4f078e6b`).
 - **A resumed staging skips a package only if the registry holds this run's bytes** (LCLI-621).
   Both `release.yml`'s `publish` job and `scripts/publish-release.sh` compare an already-published
   package's `dist.integrity` with the run's tarball, platforms included, and refuse on a difference

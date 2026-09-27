@@ -445,7 +445,8 @@ numbered items after them are the lore side's detail.
 5. **`latest` moves quest first, then lore, on opum-agent's go.**
    `scripts/promote-latest.mjs` refuses without a verifying pair receipt. It
    records every package's prior `latest` before it moves anything, and it
-   restores them on a failure or on `--rollback`. Item 7.
+   restores them on a failure or on `--rollback`. The platforms move by
+   dist-tag, and the launcher's `X` is published to `latest`, last. Item 7.
 6. **The LCLI-469 marketplace handshake follows the `latest` move.**
    `opum-marketplace` holds its pins until `latest` moves, then bumps
    `opum-lore` and `opum-quest` together in one change (clause 4). Item 8.
@@ -510,8 +511,8 @@ works like this:
   own installed `package.json` must name its own version, `X` or `X-rc.N`, and
   pin the platforms at `X`.
 
-The final `X` launcher's `--tag latest` publish, gated on the pair receipt, is
-the promotion half. It is not part of staging.
+The final `X` launcher's `--tag latest` publish, gated on both receipts, is
+the promotion half, item 7. It is not part of staging.
 
 1. **For the initial release, flip `package.json`'s `bin.lore` from
    `src/cli.ts` to `bin/lore.cjs`.** `0.1.0` completed this trigger; subsequent
@@ -996,38 +997,96 @@ the promotion half. It is not part of staging.
    release-truth record. Later versions may use `publish: true` only after
    LCLI-278 is Done; until then, OIDC publication remains prohibited despite
    the valid npm trust relationships.
-7. **Move `latest`, after the pair receipt and after quest (LCLI-613).**
+7. **Move `latest`, after the pair receipt and after quest (LCLI-613, LCLI-621).**
    Wait for opum-cli-e2e to land `receipts/pair/<version>.json` on its `main`,
    and for opum-agent's go, which comes after quest-cli has moved `latest`
-   (quest first, then lore). Then:
+   (quest first, then lore). Then, naming the Release run whose `npm-packages`
+   artifact was staged:
 
    ```
-   node scripts/promote-latest.mjs --record <file> --version <version> --dry-run
-   node scripts/promote-latest.mjs --record <file> --version <version> --promote
+   node scripts/promote-latest.mjs --record <file> --version <version> --release-run <run-id> --dry-run
+   node scripts/promote-latest.mjs --record <file> --version <version> --release-run <run-id> --promote
    ```
 
-   It is quest-cli's `scripts/promote-release.mjs` (QCLI-385) and pair-receipt
-   gate (QCLI-388), mirrored. It refuses unless all seven packages carry
-   `release-candidate` = `<version>`. It then refuses unless the pair receipt
-   passes every step of "What a reader must do":
+   **The six platform packages move by dist-tag. The launcher is published
+   (constitution Article 3 clause 5 as amended by ODOC-302).** `@opum-ai/lore`
+   reaches `latest` by a fresh `npm publish <X tarball> --tag latest` of the
+   `X` launcher carried in that run's artifact, never by a dist-tag move,
+   because only a publish onto `latest` makes npm fill the package-level
+   `readme` (OPAG-474). That publish is the only `npm publish` in this
+   repository without `--tag release-candidate`, and
+   `test/release-workflow.test.ts` holds it to that one site. It is
+   quest-cli's promote clause (QCLI-399, `scripts/promote-release.mjs` at
+   `e3c59d7b`), adopted. Steps 5 to 7 are opum-cli-e2e's `receipts/README.md`
+   "What a reader must do" (at `4f078e6b`, TASK-126).
 
-   1. `kind` is `opum.pair-qualification-receipt.v1`.
-   2. `verdict` is `QUALIFIED`, or a complete override is present (`by`,
-      `reason`, `task`, `adr`), which is printed verbatim.
-   3. `pair.lore.version` and `pair.quest.version` are both `<version>`, and
-      `pair.lore.commit` is the commit `v<version>` peels to on lore-cli.
-   4. `pair.lore.tarballs` names exactly the seven archives, and each
-      `distIntegrity` is what npm serves for that package now.
+   Before anything moves, dry run included, it checks each of these in order
+   and refuses on the first that fails:
 
-   The receipt is read with the host, repository and ref pinned. A 403 or 404
-   means no receipt, and it refuses.
+   1. **The tag and the run.** `v<version>` peels to a commit, and
+      `--release-run` is `release.yml`'s successful run of exactly that commit.
+   2. **The artifact.** It downloads `npm-packages` afresh into a private
+      directory. It must hold exactly eight tarballs: six platforms at `X`,
+      one launcher at `X-rc.N` (`N` is read from its name) and the launcher at
+      `X`. The two launchers must pass `scripts/launcher-equivalence.mjs`.
+   3. **The pass-1 receipt.** `receipts/lore/<version>.json` is read again,
+      with the staging gate's rules plus three more. Its `commit` must be what
+      the tag peels to. Its `launcherVersion` must be the artifact's `X-rc.N`,
+      in the form `^<X>-rc\.[1-9][0-9]*$`. Its `launcherSubstitution` must be
+      `MATCH` with no mismatches, and its `finalTarball` must name the basename
+      `opum-ai-lore-<X>.tgz` at the artifact `X` launcher's sha256. A receipt
+      without `launcherVersion` predates the amendment and refuses, as
+      quest-cli's reader refuses it.
+   4. **Staging.** `release-candidate` reads `X` on the six platforms and
+      `X-rc.N` on the launcher. Every package's prior `latest`, the
+      launcher's included, goes into the record.
+   5. **The pair receipt.** It must pass every step of "What a reader must
+      do":
+      - `kind` is `opum.pair-qualification-receipt.v1`.
+      - `verdict` is `QUALIFIED`, or a complete override is present (`by`,
+        `reason`, `task`, `adr`), which is printed verbatim.
+      - `pair.lore.version` and `pair.quest.version` are both `<version>`, and
+        `pair.lore.commit` is the commit `v<version>` peels to on lore-cli.
+      - `pair.lore.tarballs` names exactly the seven staged archives, and each
+        `distIntegrity` is what npm serves for that package now.
+      - `pair.lore.launcherVersion` is the artifact's `X-rc.N`, and the
+        launcher entry is keyed and read at it, not at `X`.
+   6. **Quest first.** `@opum-ai/quest`'s `latest` already reads `<version>`.
+   7. **Step 6.** `npm pack @opum-ai/lore@<X-rc.N>` from the registry must be
+      sha256-identical to the artifact's rc. The `X` launcher must be
+      equivalent to that served rc, and must still hash to the pass-1
+      receipt's `finalTarball.sha256`.
+   8. **`X` not already taken.** If `@opum-ai/lore@<version>` is already on
+      npm, its `dist.integrity` must be the artifact `X` launcher's. That is a
+      resume, and the launcher's tag moves instead of republishing. Other
+      bytes refuse: npm versions are immutable, so that needs a new version.
+      A registry read that fails with anything but npm's not-found also
+      refuses.
 
-   **Quest first is enforced, not remembered.** Before moving anything, dry run
-   included, it reads `@opum-ai/quest`'s dist-tags. It refuses unless quest's
-   `latest` already reads `<version>`. `--version` must be strict semver: a `v`
-   prefix or a dist-tag name is refused.
+   The receipts are read with the host, repository and ref pinned. A 403 or
+   404 means no receipt, and it refuses. `--version` must be strict semver.
 
-   **The commit in step 3 comes from the tag, not from npm, and that is the one
+   `--promote` then writes every prior `latest` to `<file>` **before** anything
+   moves. It moves the six platforms with `npm dist-tag add`. It runs step 6
+   again, and then publishes the `X` launcher with `--tag latest`, last. If a
+   platform move or the launcher publish fails, it restores every tag that run
+   moved, the launcher's `latest` included, by dist-tag. After a successful
+   run it runs step 7. It re-reads `latest` on all seven packages until each
+   reads `<version>`. It also checks that npm serves `@opum-ai/lore@<version>`
+   with the artifact `X` launcher's `dist.integrity`.
+
+   **Then it reads the README back and prints its size (OPAG-474 AC3).** It
+   prints the byte count of the package-level `readme` npm serves for
+   `@opum-ai/lore`, and the command it used
+   (`npm view @opum-ai/lore readme | wc -c`). On `0` bytes it prints a loud
+   warning and still exits `0`. That is a warning and not a failure for three
+   reasons. The promotion is already complete and verified. npm pages are
+   immutable, so a rollback cannot give the page a readme. And the field lags a
+   publish (LCLI-460 measured about 25 minutes), so a `0` inside the read
+   window is more often lag than a defect. Re-measure after the lag window,
+   and record the byte count and the command on LCLI-621 and OPAG-474.
+
+   **The commit comes from the tag, not from npm, and that is the one
    place this cannot mirror quest.** quest checks npm's recorded `gitHead`.
    npm records **no** `gitHead` for any `@opum-ai/lore` package, because a
    tarball-file publish carries none. Measured 2026-09-26 on 0.9.3 and 0.9.2,
@@ -1045,18 +1104,16 @@ the promotion half. It is not part of staging.
    a blob, when the API answers for a different ref, and when the chain is too
    deep or cycles. It never falls back to a branch head.
 
-   `--promote` writes every package's prior `latest` to `<file>` **before** any
-   tag moves. It then runs `npm dist-tag add @opum-ai/<pkg>@<version> latest`
-   for the six platform packages and then the launcher, and re-reads the
-   registry to confirm. If a move fails part way, it restores the tags that run
-   already moved. `--rollback <file>` restores all seven later, for instance if
-   quest's side must be undone. Rollback is deliberately not gated on the
-   receipt. Keep `<file>`: a rerun reuses it rather than re-reading `latest`,
-   because after a partial move the registry's `latest` is the new version.
-   Registry publication is irreversible, so what rolls back is the dist-tags.
-   Never unpublish, and never skip a failed side to a different number
-   (clause 5). `--dry-run` reads everything, prints the record it would write
-   and each move, and changes nothing.
+   `--rollback <file>` restores all seven later, the launcher's `latest`
+   included, for instance if quest's side must be undone. It needs no Release
+   run, and it is deliberately not gated on either receipt. Keep `<file>`: a
+   rerun reuses it rather than re-reading `latest`, because after a partial
+   move the registry's `latest` is the new version. Registry publication is
+   irreversible, so what rolls back is the dist-tags. A published `X` stays
+   published and a rerun at the same version finds it. Never unpublish, and
+   never skip a failed side to a different number (clause 5). `--dry-run`
+   reads everything, runs step 6 once, prints the record it would write and
+   each move, and changes nothing.
 8. **Then send the LCLI-469 handshake's second message.** `opum-marketplace`
    holds its `opum-lore` pin until `dist-tags.latest` moves, and clause 4 has it
    bump `opum-lore` and `opum-quest` together. Tell it `latest` has moved, and
@@ -1288,11 +1345,14 @@ version-bump item has happened.
   retryable. If the launcher itself published and something is still wrong,
   you cannot republish that version — cut `X.Y.Z+1` and `npm deprecate` the
   bad one (see below).
-- **A `latest` move failed or must be undone** (LCLI-613): nothing is
-  unpublished. `scripts/promote-latest.mjs` has already restored every tag its
-  own failed run moved, including the package whose write failed, since a
-  timed-out write may still have landed. To restore all seven from the record,
-  run `node scripts/promote-latest.mjs --rollback <file>`. It is idempotent and
+- **A `latest` move failed or must be undone** (LCLI-613, LCLI-621): nothing
+  is unpublished. `scripts/promote-latest.mjs` has already restored every tag
+  its own failed run moved, including the package whose write failed, since a
+  timed-out write may still have landed. That includes the launcher, whose
+  `X` reaches `latest` by a publish: its `latest` is restored to the recorded
+  prior value by dist-tag, and the published `X` stays on the registry. To
+  restore all seven from the record, the launcher's `latest` included, run
+  `node scripts/promote-latest.mjs --rollback <file>`. It is idempotent and
   not gated on the pair receipt. It refuses a record whose prior values are
   not plain `X.Y.Z` releases or equal the record's own release. It first reads
   every package's dist-tags anonymously, and it refuses if any `latest` reads
