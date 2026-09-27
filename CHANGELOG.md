@@ -50,6 +50,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already published is read as absent only from npm's own not-found (E404); any other `npm view`
   failure refuses, while the registry-visibility poll still retries it.
 
+- **Staging now requires the receipt fields promotion requires** (LCLI-621).
+  `scripts/publish-release.sh` gates staging on `scripts/pair-receipt.mjs --check-release-receipt`.
+  That is the same `evaluateReleaseReceipt` promotion runs, and it replaces a 60-line inline
+  `node -e` checker that had never learned opum-cli-e2e's TASK-126 fields. A receipt must now name
+  this run's `X-rc.N` as `launcherVersion`. It must also carry a `launcherSubstitution` of `MATCH`
+  whose `finalTarball` names the basename `opum-ai-lore-<X>.tgz` at the carried launcher's sha256.
+  Before this, staging accepted receipts that promotion then refused. The closing checklist's
+  promote commands now pass `--release-run <run-id>`, without which `promote-latest.mjs` exits 2.
+
 ### Added
 
 - **Launcher equivalence gate** (LCLI-621). `scripts/launcher-equivalence.mjs` refuses an

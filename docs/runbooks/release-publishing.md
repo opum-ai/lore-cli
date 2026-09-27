@@ -813,7 +813,16 @@ the promotion half, item 7. It is not part of staging.
    `releaseRunId` match, its `tarballs` name all seven files being staged, the
    `X-rc.N` launcher among them, and each sha256 matches the file handed to
    `npm publish`. The receipt may also name the carried `X` launcher. If it
-   does, that digest must match too, and it may name nothing else. The
+   does, that digest must match too, and it may name nothing else. Since
+   LCLI-621 it must also carry the fields opum-cli-e2e requires from TASK-126
+   on (its `receipts/README.md` at `4f078e6b`). `launcherVersion` must be this
+   run's `X-rc.N`. `launcherSubstitution` must be `MATCH` with no mismatches,
+   and its `finalTarball` must name the basename `opum-ai-lore-<X>.tgz` at the
+   carried launcher's sha256. A receipt without them refuses. The rule is
+   `scripts/pair-receipt.mjs`'s `evaluateReleaseReceipt`, the same one
+   `scripts/promote-latest.mjs` re-runs at promotion, so a receipt that stages
+   cannot then be refused at promotion for these fields. Only promotion binds
+   the receipt's `commit`, because lore has no tag to peel at staging. The
    verdict must be `QUALIFIED`, or the receipt must carry a complete `override`
    (`by`, `reason`, `task`, `adr`), which is printed verbatim. A 404 or 403
    means no receipt, and the script refuses without retrying. No flag or
