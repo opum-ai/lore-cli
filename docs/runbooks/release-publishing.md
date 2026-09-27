@@ -415,7 +415,12 @@ numbered items after them are the lore side's detail.
    tags. Items 1 to 4 below.
 2. **The parity gate.** Before any registry write, `--dry-run` included, both
    `scripts/publish-release.sh` and `release.yml`'s `publish` job run
-   `scripts/version-parity.mjs`. It reads `@opum-ai/quest`'s `package.json` on
+   `scripts/version-parity.mjs`. `release.yml` also runs it in its own
+   `version-parity` job on every dispatch, `publish: false` included, and
+   `publish` needs that job (LCLI-620). Before LCLI-620 a `publish: false`
+   rehearsal skipped the check along with the `publish` job. A consequence: a
+   `publish: false` re-run on an old tag goes red once quest-cli `main` has
+   moved to a new number. That red is the gate working, not a broken build. It reads `@opum-ai/quest`'s `package.json` on
    quest-cli `main` through the GitHub contents API and refuses unless its
    `name` is `@opum-ai/quest` and its `version` equals the lore version being
    published (clause 6). The refusal names both versions, both refs and the
@@ -890,7 +895,8 @@ previous release.
    gh workflow run release.yml --ref v<version> -f publish=true
    ```
 
-   The `publish` job runs the same version-parity gate before its first
+   The `version-parity` job runs the gate on every dispatch, and `publish`
+   needs it. The `publish` job runs the same gate again before its first
    `npm publish`. It uses a sparse checkout of `package.json` and the checker
    only, with no persisted credential. It publishes under `--tag release-candidate`,
    exactly like the script. `test/release-workflow.test.ts` pins both.

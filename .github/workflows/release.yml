@@ -5,7 +5,8 @@ name: Release
 # a plain dispatch (or any dispatch that leaves `publish` at its default) only builds
 # and packages every platform artifact and proves the npx/launcher mechanism resolves
 # the right binary end-to-end (LCLI-9 AC#1/AC#2) — the `publish` job below simply does
-# not run. Setting `publish: true` additionally runs that job, publishing every
+# not run. The `version-parity` job runs either way (LCLI-620), so a rehearsal still
+# refuses a mismatched lore/quest pair. Setting `publish: true` additionally runs that job, publishing every
 # platform package and the root launcher to npm via OIDC Trusted Publishing (LCLI-255)
 # — but only once a maintainer has completed the one-time npmjs.com Trusted Publisher
 # setup for every package;

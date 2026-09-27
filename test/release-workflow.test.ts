@@ -34,6 +34,7 @@ const WORKFLOW_PATH = join(import.meta.dir, "..", ".github", "workflows", "relea
 /** The handful of `release.yml` fields this file's assertions actually read. */
 interface WorkflowStep {
   name?: string;
+  if?: string;
   uses?: string;
   with?: Record<string, string | boolean>;
   env?: Record<string, string>;
@@ -379,7 +380,13 @@ describe("release.yml enforces constitution Article 3 (LCLI-613)", () => {
     // No condition at all: any `if:` could reintroduce the publish-only skip, directly or not.
     expect(job?.if).toBeUndefined();
     expect(job?.["continue-on-error"]).toBeUndefined();
+    // A `needs:` on any conditionally skipped job would skip this one with it, silently.
+    expect(job?.needs).toBeUndefined();
     const steps = job?.steps ?? [];
+    // A step-level `if:` would leave the job running and the gate skipped: green over a mismatch
+    // (LCLI-620 review finding 1). No step in this job may carry one.
+    expect(steps.length).toBeGreaterThan(0);
+    for (const s of steps) expect(s.if).toBeUndefined();
     const gate = parityIndex(steps);
     expect(gate).toBeGreaterThan(-1);
     const step = steps[gate] as WorkflowStep;
