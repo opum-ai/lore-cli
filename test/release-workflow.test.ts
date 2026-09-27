@@ -434,13 +434,72 @@ describe("release.yml enforces constitution Article 3 (LCLI-613)", () => {
     expect(commands.filter((c) => c.startsWith("npm publish")).length).toBeGreaterThanOrEqual(1);
     // NO EXCEPTION IN THIS FILE (LCLI-621). The paired design settled with quest-cli (QCLI-399,
     // refinement iv) admits exactly one publish without --tag release-candidate anywhere: the X
-    // launcher's fresh publish with --tag latest, in the promote script only. release.yml stages;
-    // the X launcher it packs is carried and never published here, which the executed test of the
-    // publish step below pins.
+    // launcher's fresh publish with --tag latest, in the promote script only -- pinned repository-
+    // wide by the next test. release.yml stages; the X launcher it packs is carried and never
+    // published here, which the executed test of the publish step below pins.
     for (const command of commands) {
       if (command.startsWith("npm publish")) expect(command).toContain("--tag release-candidate");
       expect(command.split(/\s+/)).not.toContain("latest");
     }
+  });
+
+  // LCLI-621, the paired design's refinement iv: EXACTLY ONE `npm publish` in this repository omits
+  // --tag release-candidate -- the X launcher's fresh publish with --tag latest -- and it is in
+  // scripts/promote-latest.mjs, in launcherPublishArgs, and nowhere else. Every tracked file under
+  // scripts/ and .github/ is scanned for a publish SITE (a shell or workflow line that runs
+  // `npm publish`, a bash argv array beginning with `publish`, or a JS argv array holding the
+  // literal "publish"), and the set of sites must be exactly the three below. A fourth site
+  // anywhere, or a second one without release-candidate, fails here and has to be admitted by
+  // editing this list, which is the point: the exception is one reviewed line, not a pattern.
+  test("exactly one npm publish site omits --tag release-candidate: promote-latest.mjs's X launcher, --tag latest", async () => {
+    const repo = join(import.meta.dir, "..");
+    const tracked = execFileSync("git", ["ls-files", "scripts", ".github"], { cwd: repo, encoding: "utf8" })
+      .split("\n")
+      .filter((path) => /\.(sh|mjs|cjs|js|ts|ya?ml)$/.test(path));
+    // Positive control: the scan read the files that hold the three known sites.
+    for (const path of [".github/workflows/release.yml", "scripts/publish-release.sh", "scripts/promote-latest.mjs"])
+      expect(tracked).toContain(path);
+    const sites: Array<{ file: string; line: number; text: string }> = [];
+    for (const file of tracked) {
+      const lines = readFileSync(join(repo, file), "utf8").split("\n");
+      const js = /\.(mjs|cjs|js|ts)$/.test(file);
+      lines.forEach((raw, index) => {
+        const text = raw.trim();
+        if (text.startsWith("#") || text.startsWith("//") || text.startsWith("*")) return;
+        const site = js
+          ? /["'`]publish["'`]\s*,/.test(text)
+          : /^(?:run:\s*)?npm\s+publish\b/.test(text) || /=\(\s*publish\b/.test(text);
+        if (site) sites.push({ file, line: index + 1, text });
+      });
+    }
+    expect(sites.map((s) => [s.file, s.text])).toEqual([
+      [".github/workflows/release.yml", 'npm publish "$tgz" --tag release-candidate'],
+      [
+        "scripts/promote-latest.mjs",
+        'return ["publish", tarball, "--tag", PROMOTE_TAG, ...(otp ? ["--otp", otp] : [])];',
+      ],
+      ["scripts/publish-release.sh", 'local npm_args=(publish "$tarball" --tag "$STAGE_TAG")'],
+    ]);
+    // publish-release.sh's site stages because STAGE_TAG is release-candidate, assigned once.
+    const script = readFileSync(join(repo, "scripts", "publish-release.sh"), "utf8");
+    expect(script.match(/^\s*STAGE_TAG=.*$/gm)).toEqual(['STAGE_TAG="release-candidate"']);
+    // The one site without release-candidate is launcherPublishArgs, and it builds --tag latest.
+    const unstaged = sites.filter((s) => !s.text.includes("release-candidate") && !s.text.includes("$STAGE_TAG"));
+    expect(unstaged.map((s) => s.file)).toEqual(["scripts/promote-latest.mjs"]);
+    const promoteSource = readFileSync(join(repo, "scripts", "promote-latest.mjs"), "utf8").split("\n");
+    const owner = promoteSource
+      .slice(0, (unstaged[0]?.line ?? 1) - 1)
+      .reverse()
+      .find((line) => /^export function /.test(line));
+    expect(owner).toBe("export function launcherPublishArgs(tarball, { otp } = {}) {");
+    const promote = await import("../scripts/promote-latest.mjs");
+    expect(promote.PROMOTE_TAG).toBe("latest");
+    expect(promote.launcherPublishArgs("/artifact/opum-ai-lore-1.2.3.tgz")).toEqual([
+      "publish",
+      "/artifact/opum-ai-lore-1.2.3.tgz",
+      "--tag",
+      "latest",
+    ]);
   });
 });
 
