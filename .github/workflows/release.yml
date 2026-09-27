@@ -793,6 +793,33 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+      # LCLI-613, constitution Article 3 clause 6: this job otherwise has no checkout (it
+      # publishes the packed tarballs), so the parity gate brings exactly two files: the
+      # checker and the package.json of the commit this run was dispatched on -- the commit
+      # verify-versions already bound every tarball's version to. Sparse, in its own
+      # directory, and without persisted credentials, so the only job holding id-token: write
+      # gains no working tree and no token on disk.
+      - name: Check out the version-parity gate (package.json and its checker only)
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          path: parity
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          # Anchored with a leading "/": in non-cone mode a bare "package.json" matches at ANY
+          # depth (7 tracked here, measured with git ls-files --ignored), not just the root (LCLI-613 N1).
+          sparse-checkout: |
+            /package.json
+            /scripts/version-parity.mjs
+      # Refuse unless quest-cli's package.json on its main names this same version. The rule is
+      # quest-cli's scripts/qualification/version-parity.mjs (QCLI-386), mirrored in
+      # scripts/version-parity.mjs; quest-cli's release.yml runs the mirror against lore-cli.
+      # quest-cli is public, so the job's own token reads it. Any read failure refuses: there is
+      # no continue-on-error here and no input or variable that skips it.
+      # test/release-workflow.test.ts pins that this runs before the first npm publish.
+      - name: Gate on lore/quest version parity (constitution Article 3 clause 6)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node parity/scripts/version-parity.mjs --require
       - name: Upgrade npm to meet the OIDC trusted-publishing floor
         # Trusted publishing needs npm >= 11.5.1. `node-version: 24` above resolves to
         # whatever the latest 24.x ships, which is not guaranteed to bundle a new-enough
@@ -886,8 +913,8 @@ jobs:
         # `npx @opum-ai/lore` installs a launcher whose platform deps 404 (npm skips
         # an unresolvable optional dep, so the install "succeeds" and only fails at run
         # time with "no compiled binary found"), and (b) on any mid-loop failure leave the
-        # root published at a version that can never be republished — with the first
-        # publish having already set the `latest` dist-tag. Root last means a partial
+        # root published at a version that can never be republished — with that
+        # publish having already set a dist-tag on it. Root last means a partial
         # failure leaves nothing users can install, so the same version can be retried
         # after fixing the cause (see docs/runbooks/release-publishing.md Rollback).
         #
@@ -896,6 +923,12 @@ jobs:
         # on the packages already published. `publish_or_skip` checks the registry first
         # and skips anything already there, so re-dispatching after a partial failure
         # completes the rest instead of being permanently stuck.
+        #
+        # STAGED, NEVER `latest` (constitution Article 3 clause 5, LCLI-613). Every publish carries
+        # `--tag release-candidate`: a bare `npm publish` moves `latest` as a side effect, and
+        # `latest` moves only through scripts/promote-latest.mjs once opum-cli-e2e's pair receipt
+        # for this version verifies, quest first and then lore. test/release-workflow.test.ts fails
+        # on any `npm publish` in this file without the tag.
         #
         # This job has no checkout (only the packed tarballs), so the platform set comes
         # from `needs.setup.outputs.namesSpace` (the same single source of truth every
@@ -960,7 +993,7 @@ jobs:
               return 0
             fi
             echo "::group::npm publish $tgz ($name@$version)"
-            npm publish "$tgz"
+            npm publish "$tgz" --tag release-candidate
             echo "::endgroup::"
           }
 
@@ -1019,7 +1052,7 @@ jobs:
           # Trusted Publisher registration (step 1) BEFORE the version bump (step 2),
           # so a `publish: true` dispatch made between those two steps would otherwise
           # sail through every other check and publish an installable `0.0.0`
-          # release, moving `latest` onto it. Checked once against the root
+          # release, staging it for promotion. Checked once against the root
           # tarball (verify-versions already proved every manifest shares one
           # version, so any artifact would do).
           root_version="$(tar -xzOf "$root" package/package.json | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>console.log(JSON.parse(d).version));')"

@@ -35,7 +35,8 @@ const WORKFLOW_PATH = join(import.meta.dir, "..", ".github", "workflows", "relea
 interface WorkflowStep {
   name?: string;
   uses?: string;
-  with?: Record<string, string>;
+  with?: Record<string, string | boolean>;
+  env?: Record<string, string>;
   run?: string;
   "continue-on-error"?: boolean;
 }
@@ -321,6 +322,66 @@ describe("release.yml keeps the provenance gate ENFORCING, not merely present (L
       const setupNode = doc.jobs[job]?.steps?.find((s) => s.uses?.startsWith("actions/setup-node@"));
       expect(setupNode).toBeDefined();
       expect(setupNode?.with?.["registry-url"]).toBeUndefined();
+    }
+  });
+});
+
+// ── Constitution Article 3 (LCLI-613) ──────────────────────────────────────────────────────────
+// Clause 6: the release workflow refuses to publish when lore's and quest's versions differ.
+// Clause 5: publication stages under `release-candidate` and never moves `latest`. Both are
+// asserted against the parsed workflow, so a reordering or a dropped flag fails here even though
+// actionlint and typecheck stay silent on it.
+describe("release.yml enforces constitution Article 3 (LCLI-613)", () => {
+  const publishSteps = () => loadWorkflow().jobs.publish?.steps ?? [];
+  const parityIndex = (steps: WorkflowStep[]) =>
+    steps.findIndex((s) => /node parity\/scripts\/version-parity\.mjs --require\s*$/.test(s.run ?? ""));
+
+  test("the publish job gates on lore/quest version parity BEFORE its first npm publish", () => {
+    const steps = publishSteps();
+    const gate = parityIndex(steps);
+    const firstPublish = steps.findIndex((s) => /^\s*npm publish\b/m.test(s.run ?? ""));
+    expect(gate).toBeGreaterThan(-1);
+    expect(firstPublish).toBeGreaterThan(-1);
+    expect(gate).toBeLessThan(firstPublish);
+    const step = steps[gate] as WorkflowStep;
+    // Fail closed: nothing lets a red gate through, and the read has a token to make.
+    expect(step["continue-on-error"]).toBeUndefined();
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal GitHub Actions expression syntax from release.yml, not a JS template placeholder.
+    expect(step.env?.GH_TOKEN).toBe("${{ github.token }}");
+  });
+
+  test("the gate runs the checker it names, from a sparse checkout with no persisted credential", () => {
+    const steps = publishSteps();
+    const gate = parityIndex(steps);
+    const checkout = steps.slice(0, gate).find((s) => s.uses?.startsWith("actions/checkout@"));
+    expect(checkout).toBeDefined();
+    expect(checkout?.with?.path).toBe("parity");
+    expect(checkout?.with?.["persist-credentials"]).toBe(false);
+    const sparse = String(checkout?.with?.["sparse-checkout"] ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    // Anchored: in non-cone mode an unanchored "package.json" matches at every depth.
+    expect(sparse.sort()).toEqual(["/package.json", "/scripts/version-parity.mjs"]);
+    expect(checkout?.with?.["sparse-checkout-cone-mode"]).toBe(false);
+    // The file the gate runs exists at that path in this repository.
+    expect(readFileSync(join(import.meta.dir, "..", "scripts", "version-parity.mjs"), "utf8")).toContain(
+      "export function checkVersionParity",
+    );
+  });
+
+  test("every npm publish in release.yml stages under release-candidate, and nothing writes latest", () => {
+    const doc = loadWorkflow();
+    const commands: string[] = [];
+    for (const job of Object.values(doc.jobs))
+      for (const step of job.steps ?? [])
+        for (const line of (step.run ?? "").split("\n"))
+          if (/^\s*npm (publish|dist-tag)\b/.test(line)) commands.push(line.trim());
+    // Positive control: the loop below must have something to check, or it passes vacuously.
+    expect(commands.filter((c) => c.startsWith("npm publish")).length).toBeGreaterThanOrEqual(1);
+    for (const command of commands) {
+      if (command.startsWith("npm publish")) expect(command).toContain("--tag release-candidate");
+      expect(command.split(/\s+/)).not.toContain("latest");
     }
   });
 });

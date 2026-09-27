@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -21,6 +21,14 @@ const SCRIPT = resolve(import.meta.dir, "..", "scripts", "publish-release.sh");
 // The PATH join below still uses the platform delimiter — joining with ":" on Windows
 // silently destroys the inherited PATH, which is how this first went red.
 const describeOnPosix = process.platform === "win32" ? describe.skip : describe;
+
+// A TIME BUDGET FOR THIS FILE, not a bound on any one command. Every case spawns the real release
+// script end to end, about 1.2s each in isolation, and several cases spawn it four times. Measured
+// with junit timings on 2026-09-26: the four-run "a partial override refuses" case took 4.93s alone
+// and 5.82s under the full suite, against bun's 5s default. The LCLI-613 parity step added about
+// 50ms per invocation (10 runs of the checker: 483ms), which tipped an already-marginal case over;
+// it did not create the margin. A hang still fails, at 30s.
+setDefaultTimeout(30_000);
 const VERSION = "9.9.9";
 const RUN_ID = "4242424242";
 const ATTEMPT = "3";
@@ -155,6 +163,14 @@ function makeWorkspace(
   };
   writeReceipt();
 
+  // quest-cli main's package.json (LCLI-613, Article 3 clause 6). The DEFAULT names this same
+  // version, so every test not about parity passes the gate; a parity test rewrites or deletes it.
+  // Deleting it is "no such file": the stub answers as gh does, a 404 on stderr and exit 1.
+  const questManifestFile = resolve(root, "quest-package.json");
+  const writeQuestManifest = (manifest: unknown = { name: "@opum-ai/quest", version: VERSION }) =>
+    writeFileSync(questManifestFile, typeof manifest === "string" ? manifest : JSON.stringify(manifest));
+  writeQuestManifest();
+
   // `gh` stub: resolves the run attempt, serves the receipt, serves npm-packages, and serves the
   // attempt-suffixed qualification artifacts by pattern. Every report download is counted, so the
   // LCLI-572 retry is asserted as exactly two attempts rather than inferred from the output.
@@ -166,6 +182,26 @@ set -uo pipefail
 if [ "\${1:-}" = "api" ]; then
   [ -n "\${GH_FAIL_API:-}" ] && exit 1
   case "$*" in
+    *contents/package.json*)
+      # PINNED like the receipt below: quest's manifest is served ONLY for the exact read
+      # scripts/version-parity.mjs must make -- github.com host, the raw media type, quest-cli's
+      # package.json at ref=main. Any other host, header, repository or ref answers 404, so a
+      # mutation that reads the wrong object refuses rather than passing.
+      shift
+      host=""; accept=""; path=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --hostname) host="$2"; shift 2 ;;
+          -H) accept="$2"; shift 2 ;;
+          *) path="$1"; shift ;;
+        esac
+      done
+      if [ "$host" != "github.com" ] || [ "$accept" != "Accept: application/vnd.github.raw" ] \
+         || [ "$path" != "repos/opum-ai/quest-cli/contents/package.json?ref=main" ] \
+         || [ ! -f "${questManifestFile}" ]; then
+        echo "gh: Not Found (HTTP 404)" >&2; exit 1
+      fi
+      cat "${questManifestFile}"; exit 0 ;;
     *contents/receipts/*)
       # PINNED, not pattern-matched: the receipt is served ONLY for the exact request the script
       # must make -- github.com host (so GH_HOST cannot redirect it), the raw media type, and the
@@ -261,6 +297,8 @@ esac
     rootTarball,
     receiptFile,
     writeReceipt,
+    questManifestFile,
+    writeQuestManifest,
     patternAttempts: () => Number(readFileSync(patternAttempts, "utf8").trim()),
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
@@ -407,10 +445,10 @@ describeOnPosix("scripts/publish-release.sh", () => {
       // location, so a copy of publish-release.sh WITHOUT it is not a deployment that exists in
       // the repository. Copy both, or this test measures a missing file rather than the
       // cwd-independence it is named for.
-      writeFileSync(
-        resolve(scriptDir, "shipped-readme-version.mjs"),
-        readFileSync(resolve(import.meta.dir, "..", "scripts", "shipped-readme-version.mjs")),
-      );
+      // The version-parity checker (LCLI-613) is the same kind of sibling, and runs first: without
+      // it the copy refuses at the gate, which proves the gate fails closed and nothing else.
+      for (const sibling of ["shipped-readme-version.mjs", "version-parity.mjs"])
+        writeFileSync(resolve(scriptDir, sibling), readFileSync(resolve(import.meta.dir, "..", "scripts", sibling)));
 
       const defaultArtifacts = resolve(scriptDir, `release-${VERSION}`);
       mkdirSync(defaultArtifacts, { recursive: true });
@@ -769,11 +807,10 @@ case "\${1:-}" in
   view)
     spec="$2"
     field="\${3:-}"
-    if [ "$field" = "dist-tags.latest" ]; then
-      name="$spec"
-    else
-      name="\${spec%@*}"
-    fi
+    case "$field" in
+      dist-tags.*) name="$spec" ;;
+      *) name="\${spec%@*}" ;;
+    esac
     if [ ! -f "$STATE/published-$(safe "$name")" ]; then
       echo "VIEW-MISS $name (not yet published)" >> "$LOG"
       exit 1
@@ -1165,7 +1202,7 @@ case "\${1:-}" in
   ping) exit 0 ;;
   view)
     spec="$2"; field="\${3:-}"
-    if [ "$field" = "dist-tags.latest" ]; then name="$spec"; else name="\${spec%@*}"; fi
+    case "$field" in dist-tags.*) name="$spec" ;; *) name="\${spec%@*}" ;; esac
     if [ "$ON" = "view-root-2" ] && [ "$name" = "@opum-ai/lore" ] && [ "$field" = "version" ]; then
       n=$(( $(cat "$STATE/root-views" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$STATE/root-views"
       [ "$n" -eq 2 ] && do_swap
@@ -1558,5 +1595,283 @@ describeOnPosix("the closing checklist", () => {
       env: { ...process.env, PATH: "/usr/bin:/bin" },
     });
     expect(out).toContain("PUBLISHED");
+  });
+});
+
+// ── Constitution Article 3: version parity (clause 6) and release-candidate staging (clause 5) ──
+//
+// LCLI-613. Two properties, each proven on the script's real behaviour rather than on its text:
+//
+//   - PARITY RUNS FIRST. Every refusal below asserts the artifact directory was never even
+//     created, so "before any digest, receipt or credential step" is measured, not read off the
+//     line order. Each read-failure class is its own case, on the real path AND the dry run.
+//   - NOTHING WRITES `latest`. A recording npm stub logs every argv the script hands to npm, and
+//     applies a publish with no --tag the way npm does, to `latest`. So a publish that lost its
+//     --tag is caught twice: by its argv, and by a `latest` the registry state should never hold.
+describeOnPosix("scripts/publish-release.sh version parity (LCLI-613, Article 3 clause 6)", () => {
+  const PARITY_REFUSED = "lore/quest VERSION PARITY refused";
+
+  function parityRefuses(
+    setup: (ws: ReturnType<typeof makeWorkspace>) => void,
+    reason: string,
+    flags: string[],
+    extraEnv: Record<string, string> = {},
+  ) {
+    const ws = makeWorkspace();
+    try {
+      setup(ws);
+      const r = runScript(ws, ws.root, ws.artifacts, { ...REAL_RUN, ...extraEnv }, flags);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain(PARITY_REFUSED);
+      expect(r.stderr).toContain(reason);
+      expect(r.stderr).toContain("Article 3");
+      // Before anything else: no artifact directory, no download, no receipt, no credential.
+      expect(existsSync(ws.artifacts)).toBe(false);
+      expect(r.out).not.toContain("npm-packages");
+      expect(r.out).not.toContain("reading the qualification receipt");
+      expect(r.out).not.toContain("auth:");
+      expect(r.out).not.toContain("STUB PUBLISH");
+      return r;
+    } finally {
+      ws.cleanup();
+    }
+  }
+
+  test("a match passes, names both versions and both refs, and is the FIRST thing the script does", () => {
+    const ws = makeWorkspace();
+    try {
+      const r = runScript(ws, ws.root, ws.artifacts);
+      expect(r.code).toBe(0);
+      const parity = r.out.indexOf(
+        `lore ${VERSION} (the version publish-release.sh is publishing) and quest ${VERSION} (opum-ai/quest-cli@main:package.json) are one version (Article 3.6).`,
+      );
+      expect(parity).toBeGreaterThanOrEqual(0);
+      expect(parity).toBeLessThan(r.out.indexOf("artifact directory is empty"));
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  for (const flags of [["--dry-run"], []]) {
+    const mode = flags.length ? "dry run" : "real run";
+
+    test(`${mode}: a version mismatch refuses, naming both versions, both refs and the clause`, () => {
+      parityRefuses(
+        (ws) => ws.writeQuestManifest({ name: "@opum-ai/quest", version: "9.9.8" }),
+        `lore is ${VERSION} (the version publish-release.sh is publishing) but quest is 9.9.8 (opum-ai/quest-cli@main:package.json); Article 3.6: lore and quest publish at one version, or not at all`,
+        flags,
+      );
+    });
+
+    test(`${mode}: a package.json naming another package refuses`, () => {
+      parityRefuses(
+        (ws) => ws.writeQuestManifest({ name: "@opum-ai/lore", version: VERSION }),
+        'names package "@opum-ai/lore", not @opum-ai/quest',
+        flags,
+      );
+    });
+
+    test(`${mode}: a package.json with no version refuses`, () => {
+      parityRefuses((ws) => ws.writeQuestManifest({ name: "@opum-ai/quest" }), "carries no version", flags);
+    });
+
+    test(`${mode}: a malformed package.json refuses`, () => {
+      parityRefuses(
+        (ws) => ws.writeQuestManifest("{ this is not json"),
+        "quest's version could not be read from opum-ai/quest-cli@main:package.json",
+        flags,
+      );
+    });
+
+    test(`${mode}: a 404 refuses, quoting gh's own error`, () => {
+      parityRefuses((ws) => rmSync(ws.questManifestFile), "Not Found (HTTP 404)", flags);
+    });
+
+    test(`${mode}: a gh failure with no answer at all (network, auth) refuses`, () => {
+      parityRefuses(() => {}, "quest's version could not be read", flags, { GH_FAIL_API: "1" });
+    });
+  }
+
+  test("no environment variable bypasses a mismatch", () => {
+    parityRefuses(
+      (ws) => ws.writeQuestManifest({ name: "@opum-ai/quest", version: "9.9.8" }),
+      "but quest is 9.9.8",
+      ["--dry-run"],
+      {
+        SKIP_VERSION_PARITY: "1",
+        LORE_SKIP_VERSION_PARITY: "1",
+        VERSION_PARITY: "off",
+        SKIP_TOKEN_SHAPE_CHECK: "1",
+        GH_HOST: "evil.example",
+      },
+    );
+  });
+
+  test("--verify-only is exempt: it writes nothing, and must answer with GitHub unreachable", () => {
+    const ws = makeWorkspace();
+    try {
+      rmSync(ws.questManifestFile);
+      const r = runScript(ws, ws.root, resolve(ws.root, "absent"), { GH_FAIL_API: "1", GH_FAIL_ALL: "1" }, [
+        "--verify-only",
+      ]);
+      expect(r.code).toBe(0);
+      expect(r.out).not.toContain("version parity");
+      expect(r.out).toContain("registry state for");
+    } finally {
+      ws.cleanup();
+    }
+  });
+});
+
+describeOnPosix("scripts/publish-release.sh stages under release-candidate only (LCLI-613, Article 3 clause 5)", () => {
+  /**
+   * An npm that records every argv and keeps registry state as marker files. A publish with no
+   * --tag lands on `latest`, as npm's does, so the state is a second witness beside the argv.
+   * `preexisting` names packages already published before this run, with the release-candidate
+   * value each carries (null: none), to drive the resume path.
+   */
+  function recordingNpm(ws: ReturnType<typeof makeWorkspace>, preexisting: Record<string, string | null> = {}) {
+    const log = resolve(ws.root, "npm-argv.log");
+    const state = resolve(ws.root, "npm-state");
+    writeFileSync(log, "");
+    mkdirSync(state, { recursive: true });
+    const safe = (name: string) => name.replaceAll("/", "_");
+    for (const [name, rc] of Object.entries(preexisting)) {
+      writeFileSync(resolve(state, `published-${safe(name)}`), "");
+      if (rc !== null) writeFileSync(resolve(state, `tag-${safe(name)}-release-candidate`), rc);
+    }
+    writeFileSync(
+      resolve(ws.bin, "npm"),
+      `#!/usr/bin/env bash
+set -uo pipefail
+LOG="${log}"; STATE="${state}"
+safe() { printf '%s' "\${1//\\//_}"; }
+{ printf 'ARGV'; for a in "$@"; do printf ' %s' "$a"; done; printf '\\n'; } >> "$LOG"
+case "\${1:-}" in
+  ping) exit 0 ;;
+  view)
+    spec="$2"; field="\${3:-}"
+    case "$field" in
+      dist-tags.*) f="$STATE/tag-$(safe "$spec")-\${field#dist-tags.}"; [ -f "$f" ] && cat "$f"; exit 0 ;;
+      *) [ -f "$STATE/published-$(safe "\${spec%@*}")" ] || exit 1; echo "${VERSION}"; exit 0 ;;
+    esac ;;
+  publish)
+    tarball="$2"; shift 2; tag="latest"
+    while [ "$#" -gt 0 ]; do case "$1" in --tag) tag="$2"; shift 2 ;; *) shift ;; esac; done
+    base="$(basename "$tarball")"; stripped="\${base%-${VERSION}.tgz}"; name="@opum-ai/\${stripped#opum-ai-}"
+    touch "$STATE/published-$(safe "$name")"
+    printf '%s' "${VERSION}" > "$STATE/tag-$(safe "$name")-$tag"
+    echo "STUB PUBLISH $tarball"; exit 0 ;;
+  dist-tag)
+    [ "\${2:-}" = add ] || exit 1
+    spec="$3"; printf '%s' "\${spec##*@}" > "$STATE/tag-$(safe "\${spec%@*}")-$4"; exit 0 ;;
+  *) exit 0 ;;
+esac
+`,
+    );
+    chmodSync(resolve(ws.bin, "npm"), 0o755);
+    const npxLog = resolve(ws.root, "npx-argv.log");
+    writeFileSync(resolve(ws.bin, "npx"), `#!/usr/bin/env bash\necho "$*" >> "${npxLog}"\nexit 0\n`);
+    chmodSync(resolve(ws.bin, "npx"), 0o755);
+    const argv = () =>
+      readFileSync(log, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => line.slice("ARGV ".length));
+    const tag = (name: string, t: string) => {
+      const f = resolve(state, `tag-${safe(name)}-${t}`);
+      return existsSync(f) ? readFileSync(f, "utf8") : null;
+    };
+    return { argv, tag, npx: () => (existsSync(npxLog) ? readFileSync(npxLog, "utf8") : "") };
+  }
+
+  const ALL = [...PLATFORMS.map((p) => `@opum-ai/lore-${p}`), "@opum-ai/lore"];
+  const writes = (argv: string[]) => argv.filter((a) => a.startsWith("publish ") || a.startsWith("dist-tag "));
+
+  test("every npm publish carries --tag release-candidate, and no argv this script builds writes latest", () => {
+    const ws = makeWorkspace();
+    try {
+      const npm = recordingNpm(ws);
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(0);
+      const publishes = npm.argv().filter((a) => a.startsWith("publish "));
+      expect(publishes).toEqual([
+        ...PLATFORMS.map(
+          (p) => `publish ${resolve(ws.artifacts, `opum-ai-lore-${p}-${VERSION}.tgz`)} --tag release-candidate`,
+        ),
+        `publish ${resolve(ws.artifacts, ws.rootTarball)} --tag release-candidate`,
+      ]);
+      // No write of any kind names latest: not a publish, not a dist-tag.
+      for (const w of writes(npm.argv())) expect(w.split(" ")).not.toContain("latest");
+      // And the registry agrees: release-candidate on all seven, latest on none.
+      for (const name of ALL) {
+        expect(npm.tag(name, "release-candidate")).toBe(VERSION);
+        expect(npm.tag(name, "latest")).toBeNull();
+      }
+      expect(r.out).toContain("'latest' is NOT moved here");
+      expect(r.out).not.toContain("moving 'latest'");
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("a resumed run points release-candidate at the version for SKIPPED packages only, never latest", () => {
+    const ws = makeWorkspace();
+    try {
+      // darwin-arm64 went out on an earlier attempt that left release-candidate on an older
+      // version; darwin-x64 went out already tagged. Only the first needs the repair.
+      const npm = recordingNpm(ws, {
+        "@opum-ai/lore-darwin-arm64": "9.9.8",
+        "@opum-ai/lore-darwin-x64": VERSION,
+      });
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(0);
+      expect(npm.argv().filter((a) => a.startsWith("publish ")).length).toBe(5);
+      expect(npm.argv().filter((a) => a.startsWith("dist-tag "))).toEqual([
+        `dist-tag add @opum-ai/lore-darwin-arm64@${VERSION} release-candidate`,
+      ]);
+      for (const w of writes(npm.argv())) expect(w.split(" ")).not.toContain("latest");
+      for (const name of ALL) expect(npm.tag(name, "release-candidate")).toBe(VERSION);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("the dry run prints each publish's full argv, tag included, and writes nothing", () => {
+    const ws = makeWorkspace();
+    try {
+      const npm = recordingNpm(ws, { "@opum-ai/lore-linux-x64": "9.9.8" });
+      const r = runScript(ws, ws.root, ws.artifacts);
+      expect(r.code).toBe(0);
+      for (const p of PLATFORMS.filter((p) => p !== "linux-x64"))
+        expect(r.out).toContain(
+          `would    npm publish ${resolve(ws.artifacts, `opum-ai-lore-${p}-${VERSION}.tgz`)} --tag release-candidate\n`,
+        );
+      expect(r.out).toContain(
+        `would    npm publish ${resolve(ws.artifacts, ws.rootTarball)} --tag release-candidate\n`,
+      );
+      expect(r.out).toContain(`would    npm dist-tag add @opum-ai/lore-linux-x64@${VERSION} release-candidate`);
+      expect(writes(npm.argv())).toEqual([]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("the install smoke asks for the exact version, never the bare name that resolves latest", () => {
+    const ws = makeWorkspace();
+    try {
+      const npm = recordingNpm(ws);
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(0);
+      expect(npm.npx().trim()).toBe(`--yes @opum-ai/lore@${VERSION} --version`);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("the closing checklist says staged is not released and names the latest move", () => {
+    const out = execFileSync("bash", [SCRIPT, VERSION, RUN_ID, "--print-checklist"], { encoding: "utf8" });
+    expect(out).toContain(`PUBLISHED ${VERSION} under the release-candidate dist-tag. latest has NOT moved.`);
+    expect(out).toContain(`node scripts/promote-latest.mjs --record <file> --version ${VERSION} --promote`);
   });
 });
