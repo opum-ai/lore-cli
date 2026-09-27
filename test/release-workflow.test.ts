@@ -370,6 +370,35 @@ describe("release.yml enforces constitution Article 3 (LCLI-613)", () => {
     );
   });
 
+  // LCLI-620: the publish job is skipped on a publish:false dispatch, taking its parity step with
+  // it, so a rehearsal went green on a mismatched pair. A second job evaluates it on every dispatch.
+  test("parity is evaluated on EVERY dispatch, and publish cannot start without it (LCLI-620)", () => {
+    const doc = loadWorkflow();
+    const job = doc.jobs["version-parity"];
+    expect(job).toBeDefined();
+    // No condition at all: any `if:` could reintroduce the publish-only skip, directly or not.
+    expect(job?.if).toBeUndefined();
+    expect(job?.["continue-on-error"]).toBeUndefined();
+    const steps = job?.steps ?? [];
+    const gate = parityIndex(steps);
+    expect(gate).toBeGreaterThan(-1);
+    const step = steps[gate] as WorkflowStep;
+    expect(step["continue-on-error"]).toBeUndefined();
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal GitHub Actions expression syntax from release.yml, not a JS template placeholder.
+    expect(step.env?.GH_TOKEN).toBe("${{ github.token }}");
+    const checkout = steps.slice(0, gate).find((s) => s.uses?.startsWith("actions/checkout@"));
+    expect(checkout?.with?.path).toBe("parity");
+    expect(checkout?.with?.["persist-credentials"]).toBe(false);
+    expect(checkout?.with?.["sparse-checkout-cone-mode"]).toBe(false);
+    const sparse = String(checkout?.with?.["sparse-checkout"] ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    expect(sparse.sort()).toEqual(["/package.json", "/scripts/version-parity.mjs"]);
+    // A red parity job must block the real publish, not merely sit beside it.
+    expect(doc.jobs.publish?.needs).toContain("version-parity");
+  });
+
   test("every npm publish in release.yml stages under release-candidate, and nothing writes latest", () => {
     const doc = loadWorkflow();
     const commands: string[] = [];
