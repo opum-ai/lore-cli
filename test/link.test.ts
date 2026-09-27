@@ -429,9 +429,10 @@ describe("lore unlink — removal (AC#2)", () => {
     // lore's label edits are read-modify-write. Under a precondition, a competing writer landing
     // between the read and the write makes the write REFUSE rather than clobber -- and the retry is
     // what keeps that an improvement rather than a link that used to succeed now failing.
+    // The task carries a revision, so the edit is GUARDED: only such a conflict is retried (LCLI-614).
     writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
     const adapter = fakeAdapter(
-      [makeTask("LORE-1", { labels: ["doc:stories/x"], documentation: ["docs/stories/x.md"] })],
+      [makeTask("LORE-1", { labels: ["doc:stories/x"], documentation: ["docs/stories/x.md"], revision: "r1" })],
       { editTaskConflictsFirst: 2 },
     );
 
@@ -448,7 +449,7 @@ describe("lore unlink — removal (AC#2)", () => {
     // instead of reporting. Four conflicts exceeds the limit of three retries after the first try.
     writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
     const adapter = fakeAdapter(
-      [makeTask("LORE-1", { labels: ["doc:stories/x"], documentation: ["docs/stories/x.md"] })],
+      [makeTask("LORE-1", { labels: ["doc:stories/x"], documentation: ["docs/stories/x.md"], revision: "r1" })],
       { editTaskConflictsFirst: 99 },
     );
 
@@ -1944,7 +1945,8 @@ describe("guarded tracker edits: a race quest reports as validation is retried (
 // Mutation map (predicted from this block before running):
 //   convert on revision alone (SF1 reverted)  -> red: "unrelated write" only.
 //   convert actor-context failures (SF1)      -> red: "actor-context ... never converted" only.
-//   link retries any conflict (SF2 reverted)  -> red: "link: an unguarded conflict" only.
+//   retry any conflict (SF2 reverted)         -> red: the three "an unguarded conflict" tests
+//                                                (link, unlink, move) only.
 //   remove only the first case-variant (SF3)  -> red: "every case-variant" only.
 describe("guarded tracker edits: review fixes (LCLI-614)", () => {
   const noEntryMatches = (label: string) =>
@@ -2021,20 +2023,33 @@ describe("guarded tracker edits: review fixes (LCLI-614)", () => {
     expect(adapter.calls).toHaveLength(3);
   });
 
-  test("SF2: unlink and move keep retrying an unguarded conflict, exactly as before", async () => {
+  // One rule on every path (orchestrator ruling, 2026-09-27): an unguarded conflict — Jira-shaped,
+  // no revision, so no precondition was sent — fails on its first attempt. BEHAVIOUR CHANGE for
+  // unlink and the move: before LCLI-614 they retried every conflict, up to four attempts.
+  test("SF2: unlink: an unguarded conflict (a Jira 429 or timeout) fails once, never retried", async () => {
     writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
-    const unlinkAdapter = fakeAdapter([makeTask("LORE-1", { labels: ["doc:stories/x"] })], {
-      editTaskConflictsFirst: 2,
-    });
-    expect((await unlinkCmd(["stories/x", "lore-1"], unlinkAdapter)).code).toBe(EXIT_OK);
-    expect(unlinkAdapter.calls).toHaveLength(3);
+    const adapter = fakeAdapter([makeTask("LORE-1", { labels: ["doc:stories/x"] })], { editTaskConflictsFirst: 99 });
 
-    const moveAdapter = fakeAdapter(
+    const err = (await unlinkCmd(["stories/x", "lore-1"], adapter).then(
+      () => null,
+      (e: unknown) => e,
+    )) as LoreError;
+
+    expect(err).toBeInstanceOf(LoreError);
+    expect(err.type).toBe("drift");
+    expect(adapter.calls).toHaveLength(1);
+    expect(adapter.calls[0]?.patch.ifRevision).toBeUndefined();
+    expect(backoffDelays).toEqual([]);
+  });
+
+  test("SF2: move (rename): an unguarded conflict (a Jira 429 or timeout) fails once, never retried", async () => {
+    const adapter = fakeAdapter(
       [makeTask("LORE-1", { labels: ["doc:stories/old"], documentation: ["docs/stories/old.md"] })],
-      { editTaskConflictsFirst: 2 },
+      { editTaskConflictsFirst: 99 },
     );
+
     const { outcomes } = await moveBackRefs(
-      moveAdapter,
+      adapter,
       ["lore-1"],
       "stories/old",
       "stories/new",
@@ -2042,8 +2057,11 @@ describe("guarded tracker edits: review fixes (LCLI-614)", () => {
       "docs/stories/new.md",
       "jira",
     );
-    expect(outcomes).toEqual([{ task: "lore-1", backRef: "moved" }]);
-    expect(moveAdapter.calls).toHaveLength(3);
+
+    expect(outcomes[0]?.backRef).toBe("failed");
+    expect(adapter.calls).toHaveLength(1);
+    expect(adapter.calls[0]?.patch.ifRevision).toBeUndefined();
+    expect(backoffDelays).toEqual([]);
   });
 
   test("SF3: unlink removes EVERY case-variant of the label, by stored spelling", async () => {
@@ -2063,7 +2081,9 @@ describe("guarded tracker edits: review fixes (LCLI-614)", () => {
   test("N2: each retry waits a bounded, jittered, growing backoff", async () => {
     writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
     conflictRetryBackoff.random = () => 0.99;
-    const adapter = fakeAdapter([makeTask("LORE-1", { labels: ["doc:stories/x"] })], { editTaskConflictsFirst: 99 });
+    const adapter = fakeAdapter([makeTask("LORE-1", { labels: ["doc:stories/x"], revision: "r1" })], {
+      editTaskConflictsFirst: 99,
+    });
 
     await unlinkCmd(["stories/x", "lore-1"], adapter).catch(() => undefined);
 

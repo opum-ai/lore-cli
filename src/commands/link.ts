@@ -317,7 +317,7 @@ export async function runLink(options: LinkOptions): Promise<number> {
         // about where QUEST stores the record (LCLI-428), not a path lore itself needs to commit.
         refs.push({ taskId, file: commitFileFor(backend, detail.file) });
         return "added" as const;
-      }, "guarded-only"),
+      }),
     );
     backRefOutcomes = outcomes;
     outcomes.forEach((outcome, i) => {
@@ -519,8 +519,7 @@ async function removeBackRefs(
       });
       refs.push({ taskId, file: commitFileFor(backend, detail.file) });
       return "removed" as const;
-      // "any-conflict": unlink has retried every conflict since LCLI-522, Jira's included; kept.
-    }, "any-conflict"),
+    }),
   );
   return { outcomes, refs };
 }
@@ -548,21 +547,19 @@ const CONFLICT_RETRY_LIMIT = 3;
  * a link that used to succeed. That would be more CORRECT and less USEFUL; the retry is what makes
  * the fix an improvement in both directions rather than one.
  *
- * `retry` scopes WHICH conflicts are retried (LCLI-614 SF2). `"guarded-only"` retries only a
- * conflict raised by an edit that sent a precondition ({@link guardedConflicts}) — `lore link`'s
- * mode, so a Jira 429 or timeout on link still fails once, as it did before link had any retry.
- * `"any-conflict"` is unlink's and the move's unchanged LCLI-522 behaviour. Each retry waits a short
- * jittered backoff first ({@link conflictRetryDelayMs}).
+ * ONLY a conflict raised by an edit that actually sent a precondition ({@link guardedConflicts}) is
+ * retried, on every path — link, unlink and the move (LCLI-614). Any other `conflict` fails on the
+ * first attempt: Jira maps a 429, a timeout and a failed transition to `conflict` and its hint
+ * promises "Lore does not retry silently". Before LCLI-614, unlink and the move retried every
+ * conflict (LCLI-522), so a Jira 429 there took up to four immediate attempts; it now takes one.
+ * Each retry waits a short jittered backoff first ({@link conflictRetryDelayMs}).
  */
-async function withConflictRetry<T>(run: () => Promise<T>, retry: "guarded-only" | "any-conflict"): Promise<T> {
+async function withConflictRetry<T>(run: () => Promise<T>): Promise<T> {
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await run();
     } catch (error) {
-      const retryable =
-        error instanceof LoreError &&
-        error.type === "conflict" &&
-        (retry === "any-conflict" || guardedConflicts.has(error));
+      const retryable = error instanceof LoreError && error.type === "conflict" && guardedConflicts.has(error);
       if (!retryable || attempt >= CONFLICT_RETRY_LIMIT) throw error;
       await conflictRetryBackoff.sleep(conflictRetryDelayMs(attempt));
     }
@@ -573,8 +570,8 @@ async function withConflictRetry<T>(run: () => Promise<T>, retry: "guarded-only"
  * Conflicts raised by an edit that actually SENT an `ifRevision` precondition — the tracker's own
  * exit-5 refusal of it, or a misreported race {@link guardedEditTask} reclassified. Only these say
  * "the record moved; re-read and re-decide". Jira maps a 429, a timeout and a failed transition to
- * `conflict` too, and its hint promises Lore does not retry silently, so `lore link` (which never
- * retried before LCLI-614) retries only these (LCLI-614 SF2).
+ * `conflict` too, and its hint promises Lore does not retry silently, so {@link withConflictRetry}
+ * retries only these, on every path (LCLI-614).
  */
 const guardedConflicts = new WeakSet<LoreError>();
 
@@ -767,8 +764,7 @@ export async function moveBackRefs(
       });
       refs.push({ taskId, file: commitFileFor(backend, detail.file) });
       return "moved" as const;
-      // "any-conflict": the move has retried every conflict since LCLI-522, Jira's included; kept.
-    }, "any-conflict"),
+    }),
   );
   const outcomes = taskIds.map((task, i): MovedBackRef => {
     const outcome = settled[i] as PromiseSettledResult<"moved" | "already-current">;
