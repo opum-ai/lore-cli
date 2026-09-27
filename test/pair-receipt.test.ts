@@ -745,11 +745,9 @@ describe("scripts/pair-receipt.mjs: evaluateReleaseReceipt (the pass-1 receipt a
     });
 
   test("positive control: a receipt binding these bytes, this commit and this run verifies", () => {
+    // Exactly the seven staged tarballs (opum-cli-e2e receipts/README.md at e0021c7).
+    expect(Object.keys(goodPass1().tarballs)).toEqual(expectedTarballNames(V, RC));
     expect(judge(goodPass1())).toEqual({ ok: true, problems: [], override: null });
-    // The carried X launcher MAY also be named in tarballs, as at staging, if its digest matches.
-    const named = goodPass1();
-    named.tarballs[FINAL.filename] = FINAL.sha256;
-    expect(judge(named).ok).toBe(true);
     // A run id as a digit string, and `override: null`, are what publish-release.sh also accepts.
     expect(judge({ ...goodPass1(), releaseRunId: RUN, override: null }).ok).toBe(true);
   });
@@ -782,12 +780,12 @@ describe("scripts/pair-receipt.mjs: evaluateReleaseReceipt (the pass-1 receipt a
       `sha256 MISMATCH for opum-ai-lore-linux-x64-${V}.tgz`,
     ],
     [
-      "the carried X named with another digest",
+      "an EIGHTH key, the X launcher, even at its true digest (e0021c7: never eight)",
       (d) => {
-        d.tarballs[FINAL.filename] = "1".repeat(64);
+        d.tarballs[FINAL.filename] = FINAL.sha256;
         return d;
       },
-      `sha256 MISMATCH for ${FINAL.filename}: receipt says "${"1".repeat(64)}", the carried launcher`,
+      `tarballs names "${FINAL.filename}", the built ${V} launcher; a pass-1 receipt's tarballs holds exactly the seven staged packages`,
     ],
     [
       "an extra tarball",
@@ -795,7 +793,7 @@ describe("scripts/pair-receipt.mjs: evaluateReleaseReceipt (the pass-1 receipt a
         d.tarballs[`opum-ai-lore-${V}-rc.1.tgz`] = "2".repeat(64);
         return d;
       },
-      `tarballs names "opum-ai-lore-${V}-rc.1.tgz", which this release does not publish or carry`,
+      `tarballs names "opum-ai-lore-${V}-rc.1.tgz", which this release does not publish`,
     ],
     [
       "no launcherVersion (pre-amendment)",

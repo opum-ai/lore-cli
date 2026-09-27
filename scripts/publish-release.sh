@@ -136,7 +136,7 @@
 # launcher at <version>-rc.N. The <version> launcher is carried and never published here.
 #
 # Refuses to publish without receipts/lore/<version>.json on opum-ai/opum-cli-e2e main (read with
-# your gh login) matching this version, run id and all seven staged tarball sha256s, naming this
+# your gh login) matching this version, run id and exactly the seven staged tarball sha256s, naming this
 # run's launcher rc as launcherVersion, and carrying a launcherSubstitution MATCH whose
 # finalTarball is the carried launcher, with verdict
 # QUALIFIED or a complete override {by, reason, task, adr} in that file. No flag or env var this
@@ -643,12 +643,14 @@ RECEIPT_PATH="receipts/lore/${VERSION}.json"
 # which never learned the TASK-126 fields and so staged receipts that promotion then refused. The
 # rules it keeps from that checker: kind, schemaVersion, product, version and releaseRunId (compared
 # as normalised digit strings); every staged tarball's sha256 by own-property lookup and set
-# equality, the carried X launcher optional but digest-checked if named; the artifact directory
+# equality; the artifact directory
 # holding exactly the staged tarballs plus the carried launcher; a partial override refuses and
 # `override: null` is absent. What it adds, from opum-cli-e2e receipts/README.md at 4f078e6b:
 # launcherVersion is required, ^<X>-rc\.[1-9][0-9]*$ and equal to this run's rc; launcherSubstitution
-# is required, verdict MATCH with no mismatches, and its finalTarball names the BASENAME
-# opum-ai-lore-<X>.tgz at the carried launcher's sha256. The receipt's `commit` is NOT bound here,
+# is required, verdict MATCH with no mismatches (no override waives it), and its finalTarball names
+# the BASENAME opum-ai-lore-<X>.tgz at the carried launcher's sha256; and `tarballs` holds EXACTLY
+# the seven staged packages -- the carried X launcher as an eighth key refuses (opum-cli-e2e
+# receipts/README.md at e0021c7, which superseded 4f078e6b on this point). The receipt's `commit` is NOT bound here,
 # as before: lore tags at publish, so there is no v<version> to peel yet. Promotion binds it.
 
 # THE RECEIPT THE GATE READ IS KEPT, not deleted after the check (LCLI-586), because

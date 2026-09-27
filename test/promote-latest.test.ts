@@ -624,6 +624,28 @@ refusalSuite(
       `launcherVersion is "${V}-rc.0", not ${V}-rc.<N>`,
     ],
     [
+      "an EIGHT-entry receipt: the X launcher named in tarballs, even at its true digest (e0021c7)",
+      {
+        pass1: pass1With((r) => {
+          r.tarballs[X_FILE] = r.launcherSubstitution.finalTarball.sha256;
+        }),
+      },
+      `tarballs names "${X_FILE}", the built ${V} launcher; a pass-1 receipt's tarballs holds exactly the seven staged packages`,
+    ],
+    [
+      "a MISMATCH launcherSubstitution beside a complete override (no override path for it)",
+      {
+        pass1: pass1With((r) => {
+          r.launcherSubstitution.verdict = "MISMATCH";
+          Object.assign(r, {
+            verdict: "NOT QUALIFIED",
+            override: { by: "op", reason: "r", task: "T-1", adr: "docs/adr/x.md@abc" },
+          });
+        }),
+      },
+      'launcherSubstitution.verdict is "MISMATCH", not "MATCH"',
+    ],
+    [
       "a MISMATCH launcherSubstitution",
       { pass1: pass1With((r) => (r.launcherSubstitution.verdict = "MISMATCH")) },
       'launcherSubstitution.verdict is "MISMATCH", not "MATCH"',
@@ -759,6 +781,26 @@ refusalSuite(
       "the served rc cannot be downloaded",
       { servedRc: "fail" },
       `${LAUNCHER}@${RC} could not be downloaded from the registry (npm error E404)`,
+    ],
+    // Step 6 is a live computation, not a receipt field: overrides on BOTH receipts waive nothing
+    // there (opum-cli-e2e receipts/README.md at e0021c7, reader step 6).
+    [
+      "a served rc of other bytes while BOTH receipts carry complete overrides",
+      {
+        servedRc: launcher(RC, "restaged\n"),
+        receipt: {
+          ...goodReceipt(),
+          verdict: "NOT QUALIFIED",
+          override: { by: "op", reason: "r", task: "T-1", adr: "docs/adr/x.md@abc" },
+        },
+        pass1: pass1With((r) =>
+          Object.assign(r, {
+            verdict: "NOT QUALIFIED",
+            override: { by: "op", reason: "r", task: "T-1", adr: "docs/adr/x.md@abc" },
+          }),
+        ),
+      },
+      `npm serves ${LAUNCHER}@${RC} as sha256`,
     ],
     // Equivalent entries at another gzip level: only the sha256 identity clause can see this.
     [

@@ -367,24 +367,29 @@ export function evaluateReleaseReceipt(
   if (ridText === null || ridText !== norm(String(releaseRunId)))
     problems.push(`releaseRunId is ${show(rid)}, not ${releaseRunId} (the run the artifact was downloaded from)`);
 
-  // Own-property lookup and set equality over the seven staged tarballs. The carried X launcher MAY
-  // be named too, as at staging, and then its digest must match; nothing else may be named.
+  // Own-property lookup and SET EQUALITY with exactly the seven staged tarballs: the six platforms at
+  // X and the rc launcher at X-rc.N, never eight. opum-cli-e2e ruled this at e0021c7 (receipts/
+  // README.md blob 76dad762, "Per-product (pass-1) receipt"): the built X launcher was never staged,
+  // so it is never a key in `tarballs`; its identity lives only in launcherSubstitution.finalTarball.
+  // An X key refuses by name rather than as a generic extra, so the refusal cites that rule.
   const tarballs = doc.tarballs;
   if (!isObject(tarballs)) problems.push(`tarballs is ${show(tarballs)}, not an object of {filename: sha256}`);
   else {
-    const digestProblem = (/** @type {string} */ name, /** @type {string} */ actual, /** @type {string} */ what) => {
-      const recorded = tarballs[name];
-      if (typeof recorded !== "string" || recorded.toLowerCase() !== actual)
-        problems.push(`sha256 MISMATCH for ${name}: receipt says ${show(recorded)}, the ${what} is ${actual}`);
-    };
     for (const [name, digest] of Object.entries(staged)) {
       if (!Object.hasOwn(tarballs, name)) problems.push(`tarballs has no entry for ${name}`);
-      else digestProblem(name, digest, stagedLabel);
+      else if (typeof tarballs[name] !== "string" || tarballs[name].toLowerCase() !== digest)
+        problems.push(
+          `sha256 MISMATCH for ${name}: receipt says ${show(tarballs[name])}, the ${stagedLabel} is ${digest}`,
+        );
     }
-    if (Object.hasOwn(tarballs, final.filename)) digestProblem(final.filename, final.sha256, "carried launcher");
-    for (const key of Object.keys(tarballs))
-      if (!Object.hasOwn(staged, key) && key !== final.filename)
-        problems.push(`tarballs names ${show(key)}, which this release does not publish or carry`);
+    for (const key of Object.keys(tarballs)) {
+      if (Object.hasOwn(staged, key)) continue;
+      if (key === final.filename)
+        problems.push(
+          `tarballs names ${show(key)}, the built ${version} launcher; a pass-1 receipt's tarballs holds exactly the seven staged packages, never the unpublished ${version} launcher, whose identity lives only in launcherSubstitution.finalTarball (opum-cli-e2e receipts/README.md at e0021c7)`,
+        );
+      else problems.push(`tarballs names ${show(key)}, which this release does not publish`);
+    }
   }
 
   // The launcher (TASK-126): the staged rc, and opum-cli-e2e's own substitution verdict.

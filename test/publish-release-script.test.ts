@@ -2192,23 +2192,28 @@ esac
     }
   });
 
-  test("a receipt MAY also name the carried launcher, and then its digest must match", () => {
+  // opum-cli-e2e ruled at e0021c7 (receipts/README.md blob 76dad762, superseding 4f078e6b here):
+  // `tarballs` holds EXACTLY the seven staged packages, never eight. The carried X launcher is never
+  // a key there, even at its true digest; its identity lives only in launcherSubstitution.finalTarball.
+  test("an eight-entry receipt (the carried X launcher named in tarballs) refuses, whatever the digest", () => {
     const ws = makeWorkspace();
     try {
       const finalSha = sha256(readFileSync(resolve(ws.source, ws.finalTarball)));
-      ws.writeReceipt((r) => {
-        (r.tarballs as Record<string, string>)[ws.finalTarball] = finalSha;
-      });
+      for (const digest of [finalSha, "0".repeat(64)]) {
+        ws.writeReceipt((r) => {
+          (r.tarballs as Record<string, string>)[ws.finalTarball] = digest;
+        });
+        const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+        expect(r.code).toBe(1);
+        expect(r.stderr).toContain(REFUSED);
+        expect(r.stderr).toContain(
+          `tarballs names "${ws.finalTarball}", the built ${VERSION} launcher; a pass-1 receipt's tarballs holds exactly the seven staged packages`,
+        );
+        expect(r.out).not.toContain("STUB PUBLISH");
+      }
+      // The seven-entry receipt, the clean case, still stages.
+      ws.writeReceipt();
       expect(runScript(ws, ws.root, ws.artifacts).out).toContain("receipt: QUALIFIED (would proceed)");
-      ws.writeReceipt((r) => {
-        (r.tarballs as Record<string, string>)[ws.finalTarball] = "0".repeat(64);
-      });
-      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
-      expect(r.code).toBe(1);
-      expect(r.stderr).toContain(
-        `sha256 MISMATCH for ${ws.finalTarball}: receipt says "${"0".repeat(64)}", the carried launcher is`,
-      );
-      expect(r.out).not.toContain("STUB PUBLISH");
     } finally {
       ws.cleanup();
     }
