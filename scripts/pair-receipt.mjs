@@ -24,6 +24,23 @@
 //      pair.lore.commit is the commit that version resolves to
 //   4. pair.lore.tarballs names exactly the seven archives, and each
 //      distIntegrity is what npm serves for that package right now
+//   5. (LCLI-621, opum-cli-e2e TASK-126) pair.lore.launcherVersion is
+//      <version>-rc.<N>, and the launcher entry is keyed, read and verified at
+//      THAT version: the X launcher is not on the registry until promotion
+//      publishes it. A receipt without launcherVersion -- every one written
+//      before the amendment -- is refused, as quest-cli's reader refuses it
+//      (QCLI-399): there is no older shape this flow can promote.
+//
+// Steps 6 and 7 -- the substitution re-check against the rc npm serves, and
+// `latest` serving X afterwards -- are the promotion's, in promote-latest.mjs.
+//
+// The contract for step 5 was read by ref at opum-cli-e2e 4f078e6b (#309,
+// TASK-126), receipts/README.md "Root launcher rc-staging" and "What a reader
+// must do"; quest-cli's reader at e3c59d7b (draft #344, QCLI-399) is the mirror.
+//
+// This file also re-reads the PASS-1 receipt, receipts/lore/<version>.json, for
+// promotion (evaluateReleaseReceipt, below): the X launcher that reaches
+// `latest` is named and hashed there, in launcherSubstitution.finalTarball.
 //
 // Also: installedFrom.lore.source must be "registry", because a verdict on a
 // candidate bundle is a pre-publication receipt, not this.
@@ -68,13 +85,16 @@ export const PLATFORMS = Object.freeze([
   "win32-x64",
 ]);
 
+/** The root launcher: package.json, README.md, LICENSE, bin/. Staged as X-rc.N, published as X. */
+export const LAUNCHER = "@opum-ai/lore";
+
 /** Platforms first, launcher last: the order publish-release.sh writes in. */
-export const RELEASE_PACKAGES = Object.freeze([
-  ...PLATFORMS.map((platform) => `@opum-ai/lore-${platform}`),
-  "@opum-ai/lore",
-]);
+export const RELEASE_PACKAGES = Object.freeze([...PLATFORMS.map((platform) => `@opum-ai/lore-${platform}`), LAUNCHER]);
 
 const OVERRIDE_FIELDS = Object.freeze(["by", "reason", "task", "adr"]);
+
+/** @param {unknown} value @returns {value is Record<string, any>} */
+const isObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
 export function pairReceiptPath(version) {
   return `receipts/pair/${version}.json`;
@@ -85,12 +105,36 @@ export function tarballName(pkgName, version) {
   return `${pkgName.replace("@", "").replace("/", "-")}-${version}.tgz`;
 }
 
-/** The seven archives a lore release consists of. */
-export function expectedTarballNames(version) {
-  return RELEASE_PACKAGES.map((name) => tarballName(name, version));
+/**
+ * Is `launcherVersion` an rc of exactly `version`? opum-cli-e2e's receipts/README.md validates it
+ * against ^<X>-rc\.[1-9][0-9]*$ with X taken from the release, never a bare pattern an rc of some
+ * other release would also satisfy. The same predicate as quest-cli's isLauncherVersionOf.
+ * @param {unknown} version @param {unknown} launcherVersion
+ */
+export function isLauncherVersionOf(version, launcherVersion) {
+  if (typeof version !== "string" || typeof launcherVersion !== "string") return false;
+  const prefix = `${version}-rc.`;
+  return launcherVersion.startsWith(prefix) && /^[1-9][0-9]*$/.test(launcherVersion.slice(prefix.length));
 }
 
-const isObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+/**
+ * The seven archives a lore release STAGES, named as `npm pack` names them: the six platforms at X
+ * and the root launcher at its rc version (LCLI-621), in RELEASE_PACKAGES order. The X launcher is
+ * not one of them; it is published only on promotion.
+ * @param {string} version @param {string} launcherVersion
+ */
+export function expectedTarballNames(version, launcherVersion) {
+  if (!isLauncherVersionOf(version, launcherVersion))
+    throw new Error(`the launcher version must be ${version}-rc.<N>, got ${JSON.stringify(launcherVersion)}`);
+  return RELEASE_PACKAGES.map((name) => tarballName(name, name === LAUNCHER ? launcherVersion : version));
+}
+
+/** The receipt's pair.lore.launcherVersion when it is an rc of `version`, else null. */
+export function receiptLauncherVersion(doc, version) {
+  const candidate =
+    isObject(doc) && isObject(doc.pair) && isObject(doc.pair.lore) ? doc.pair.lore.launcherVersion : null;
+  return isLauncherVersionOf(version, candidate) ? /** @type {string} */ (candidate) : null;
+}
 
 /**
  * The verdict half every opum-cli-e2e receipt shares: QUALIFIED, or a
@@ -124,9 +168,11 @@ export function evaluateVerdict(doc) {
  * Pure verdict over a pair receipt and what lore's release resolves to now.
  * `observed.integrities` is keyed by tarball name; `observed.commit` is the
  * commit `v<version>` peels to on lore-cli; `observed.gitHead` is what npm
- * records for @opum-ai/lore@<version>, or null when it records none.
+ * records for the staged launcher, @opum-ai/lore@<launcherVersion>, or null
+ * when it records none. `launcherVersion`, when given, is the rc the Release
+ * run's artifact stages; the receipt must have qualified exactly that one.
  */
-export function evaluatePairReceipt(doc, { version, observed }) {
+export function evaluatePairReceipt(doc, { version, observed, launcherVersion = undefined }) {
   if (!isObject(doc)) return { ok: false, problems: ["pair receipt is not a JSON object"], override: null };
   const problems = [];
   // Step 1.
@@ -148,9 +194,20 @@ export function evaluatePairReceipt(doc, { version, observed }) {
     problems.push(
       `pair.lore.commit is ${JSON.stringify(lore.commit)}, ${observed.commitSource ?? `v${version}`} resolves to ${JSON.stringify(observed.commit ?? null)}${observed.commitError ? ` (${observed.commitError})` : ""}`,
     );
+  // Step 5: the launcher entry is verified at launcherVersion, not version.
+  const qualifiedRc = receiptLauncherVersion(doc, version);
+  if (!qualifiedRc)
+    problems.push(
+      `pair.lore.launcherVersion is ${JSON.stringify(lore.launcherVersion)}, not ${version}-rc.<N>; a receipt without it predates root-launcher rc-staging (LCLI-621) and cannot promote`,
+    );
+  else if (launcherVersion !== undefined && qualifiedRc !== launcherVersion)
+    problems.push(
+      `pair.lore.launcherVersion is ${qualifiedRc}, but the Release run's artifact stages the launcher as ${JSON.stringify(launcherVersion)}`,
+    );
+  // observed.gitHead is read from the staged launcher, the only root launcher on npm yet.
   if (observed.gitHead && lore.commit !== observed.gitHead)
     problems.push(
-      `pair.lore.commit is ${JSON.stringify(lore.commit)}, npm records gitHead ${JSON.stringify(observed.gitHead)} for @opum-ai/lore@${version}`,
+      `pair.lore.commit is ${JSON.stringify(lore.commit)}, npm records gitHead ${JSON.stringify(observed.gitHead)} for ${LAUNCHER}@${qualifiedRc ?? lore.launcherVersion}`,
     );
   if (doc.installedFrom?.lore?.source !== "registry")
     problems.push(
@@ -161,7 +218,14 @@ export function evaluatePairReceipt(doc, { version, observed }) {
   // never `in`: `in` also finds inherited keys such as `constructor`.
   const recorded = isObject(lore.tarballs) ? lore.tarballs : {};
   if (recorded !== lore.tarballs) problems.push("pair.lore.tarballs is not an object");
-  const expected = expectedTarballNames(version);
+  // Without a valid launcherVersion the launcher entry cannot be named, so only the platforms are
+  // checked and step 5's problem above refuses. An extra key is reported only when the full set is
+  // known, as quest-cli does: otherwise the launcher's own entry would be reported as extra.
+  const expected = qualifiedRc
+    ? expectedTarballNames(version, qualifiedRc)
+    : expectedTarballNames(version, `${version}-rc.1`).filter(
+        (name) => !name.startsWith(`opum-ai-lore-${version}-rc.`),
+      );
   for (const name of expected) {
     if (!Object.hasOwn(recorded, name)) {
       problems.push(`${name}: not in the pair receipt, so it was never qualified`);
@@ -175,7 +239,8 @@ export function evaluatePairReceipt(doc, { version, observed }) {
       problems.push(`${name}: qualified ${recordedIntegrity}, npm serves ${served ?? "nothing"}`);
   }
   for (const name of Object.keys(recorded))
-    if (!expected.includes(name)) problems.push(`${name}: named in the pair receipt but not part of this release`);
+    if (qualifiedRc && !expected.includes(name))
+      problems.push(`${name}: named in the pair receipt but not part of this release`);
 
   // Step 2.
   const verdict = evaluateVerdict(doc);
@@ -188,16 +253,32 @@ const firstLine = (error) =>
     .trim()
     .split("\n")[0];
 
-/** The one argv the receipt is read with. Exported so a test can pin it. */
-export function receiptReadArgs(version) {
+/** The one argv a receipt at `path` on opum-cli-e2e main is read with: host, repo and ref pinned. */
+function contentsReadArgs(path) {
   return [
     "api",
     "--hostname",
     RECEIPT_HOST,
     "-H",
     "Accept: application/vnd.github.raw",
-    `repos/${RECEIPT_REPOSITORY}/contents/${pairReceiptPath(version)}?ref=${RECEIPT_REF}`,
+    `repos/${RECEIPT_REPOSITORY}/contents/${path}?ref=${RECEIPT_REF}`,
   ];
+}
+
+/** The one argv the pair receipt is read with. Exported so a test can pin it. */
+export function receiptReadArgs(version) {
+  return contentsReadArgs(pairReceiptPath(version));
+}
+
+/** Every failure is `doc: null` with the reason, never thrown and never retried into a pass. */
+async function fetchReceiptAt(path, execFileFn) {
+  const source = `${RECEIPT_REPOSITORY}@${RECEIPT_REF}:${path}`;
+  try {
+    const { stdout } = await execFileFn("gh", contentsReadArgs(path), { maxBuffer: 8 * 1024 * 1024 });
+    return { doc: JSON.parse(stdout), source };
+  } catch (error) {
+    return { doc: null, source, error: firstLine(error) };
+  }
 }
 
 /**
@@ -205,13 +286,137 @@ export function receiptReadArgs(version) {
  * as `doc: null` with the reason, never thrown and never retried into a pass.
  */
 export async function fetchPairReceipt(version, { execFile: execFileFn = execFile } = {}) {
-  const source = `${RECEIPT_REPOSITORY}@${RECEIPT_REF}:${pairReceiptPath(version)}`;
-  try {
-    const { stdout } = await execFileFn("gh", receiptReadArgs(version), { maxBuffer: 8 * 1024 * 1024 });
-    return { doc: JSON.parse(stdout), source };
-  } catch (error) {
-    return { doc: null, source, error: firstLine(error) };
+  return fetchReceiptAt(pairReceiptPath(version), execFileFn);
+}
+
+// ── The pass-1 receipt, re-read at promotion (LCLI-621) ─────────────────────────────────────────
+// receipts/lore/<version>.json is what scripts/publish-release.sh gates STAGING on (LCLI-578). The
+// promotion reads it again, against the Release run's artifact downloaded afresh, because it is the
+// one record that names and hashes the X launcher about to become `latest`: opum-cli-e2e's own
+// re-derived launcherSubstitution verdict and its finalTarball {filename, sha256} (TASK-126, read at
+// opum-cli-e2e 4f078e6b). The rules publish-release.sh's receipt_check_js applies are applied here
+// unchanged, plus three a promotion can and staging cannot:
+//   - `commit` is bound to what v<version> peels to: at staging lore had no tag to peel yet
+//     (receipts/README.md "Fields"), and by promotion it has one, which must peel to that commit;
+//   - launcherVersion is required, an rc of exactly <version>, and the artifact's rc;
+//   - launcherSubstitution is MATCH with no mismatches, its finalTarball.filename is the BASENAME
+//     opum-ai-lore-<version>.tgz, and its sha256 is the artifact's X launcher.
+
+export const RELEASE_RECEIPT_KIND = "opum.qualification-receipt.v1";
+
+export function releaseReceiptPath(version) {
+  return `receipts/lore/${version}.json`;
+}
+
+/** The one argv the pass-1 receipt is read with. Exported so a test can pin it. */
+export function releaseReceiptReadArgs(version) {
+  return contentsReadArgs(releaseReceiptPath(version));
+}
+
+/** Reads receipts/lore/<version>.json from opum-cli-e2e's main; failures are `doc: null`. */
+export async function fetchReleaseReceipt(version, { execFile: execFileFn = execFile } = {}) {
+  return fetchReceiptAt(releaseReceiptPath(version), execFileFn);
+}
+
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/**
+ * Pure verdict over the pass-1 receipt and the Release run's artifact as downloaded now.
+ *
+ * `staged` maps each of the seven staged tarball names (the X-rc.N launcher among them) to its
+ * sha256; `final` is the carried X launcher's `{ filename, sha256 }`. `commit` is what v<version>
+ * peels to, `releaseRunId` the run the artifact came from, `launcherVersion` the artifact's rc.
+ *
+ * The override waives the VERDICT and nothing else, as at staging: a receipt about other bytes, or
+ * one with no MATCH on the launcher substitution, refuses whatever its override says, because
+ * Article 3 clause 5 is what makes publishing X to `latest` legitimate at all.
+ */
+export function evaluateReleaseReceipt(doc, { version, commit, releaseRunId, staged, final, launcherVersion }) {
+  if (!isObject(doc)) return { ok: false, problems: ["receipt is not a JSON object"], override: null };
+  const show = (/** @type {unknown} */ v) => JSON.stringify(v);
+  /** @type {string[]} */
+  const problems = [];
+  if (doc.kind !== RELEASE_RECEIPT_KIND)
+    problems.push(
+      `kind is ${show(doc.kind)}, not "${RELEASE_RECEIPT_KIND}" (an unknown kind is refused, never guessed at)`,
+    );
+  if (doc.schemaVersion !== 1) problems.push(`schemaVersion is ${show(doc.schemaVersion)}, not 1`);
+  if (doc.product !== "lore") problems.push(`product is ${show(doc.product)}, not "lore"`);
+  if (doc.version !== version) problems.push(`version is ${show(doc.version)}, not "${version}"`);
+  if (!SHA1_HEX.test(String(doc.commit ?? "")) || doc.commit !== commit)
+    problems.push(`commit is ${show(doc.commit)}, but v${version} peels to ${show(commit)}`);
+  // Run ids compared as normalised digit strings, exactly as publish-release.sh compares them.
+  const norm = (/** @type {string} */ text) => text.replace(/^0+(?=\d)/, "");
+  const rid = doc.releaseRunId;
+  const ridText =
+    typeof rid === "number" && Number.isSafeInteger(rid) && rid > 0
+      ? String(rid)
+      : typeof rid === "string" && /^[0-9]+$/.test(rid)
+        ? norm(rid)
+        : null;
+  if (ridText === null || ridText !== norm(String(releaseRunId)))
+    problems.push(`releaseRunId is ${show(rid)}, not ${releaseRunId} (the run the artifact was downloaded from)`);
+
+  // Own-property lookup and set equality over the seven staged tarballs. The carried X launcher MAY
+  // be named too, as at staging, and then its digest must match; nothing else may be named.
+  const tarballs = doc.tarballs;
+  if (!isObject(tarballs)) problems.push(`tarballs is ${show(tarballs)}, not an object of {filename: sha256}`);
+  else {
+    const digestProblem = (/** @type {string} */ name, /** @type {string} */ actual, /** @type {string} */ what) => {
+      const recorded = tarballs[name];
+      if (typeof recorded !== "string" || recorded.toLowerCase() !== actual)
+        problems.push(`sha256 MISMATCH for ${name}: receipt says ${show(recorded)}, the ${what} is ${actual}`);
+    };
+    for (const [name, digest] of Object.entries(staged)) {
+      if (!Object.hasOwn(tarballs, name)) problems.push(`tarballs has no entry for ${name}`);
+      else digestProblem(name, digest, "staged tarball in the artifact");
+    }
+    if (Object.hasOwn(tarballs, final.filename)) digestProblem(final.filename, final.sha256, "carried X launcher");
+    for (const key of Object.keys(tarballs))
+      if (!Object.hasOwn(staged, key) && key !== final.filename)
+        problems.push(`tarballs names ${show(key)}, which this release does not carry`);
   }
+
+  // The launcher (TASK-126): the staged rc, and opum-cli-e2e's own substitution verdict.
+  if (!isLauncherVersionOf(version, doc.launcherVersion))
+    problems.push(
+      `launcherVersion is ${show(doc.launcherVersion)}, not ${version}-rc.<N>; a receipt without it predates root-launcher rc-staging (LCLI-621) and cannot promote`,
+    );
+  else if (doc.launcherVersion !== launcherVersion)
+    problems.push(
+      `launcherVersion is ${doc.launcherVersion}, but the artifact stages the launcher as ${launcherVersion}`,
+    );
+  const substitution = doc.launcherSubstitution;
+  if (!isObject(substitution))
+    problems.push(
+      `receipt has no launcherSubstitution, so nothing re-derived that the ${version} launcher is the qualified rc with only its version changed`,
+    );
+  else {
+    const mismatches = Array.isArray(substitution.mismatches) ? substitution.mismatches : [];
+    if (substitution.verdict !== "MATCH")
+      problems.push(
+        `launcherSubstitution.verdict is ${show(substitution.verdict)}, not "MATCH"${mismatches.length ? `: ${mismatches.map((m) => show(m)).join("; ")}` : ""}`,
+      );
+    else if (mismatches.length)
+      problems.push(
+        `launcherSubstitution.verdict is "MATCH" but lists ${mismatches.length} mismatch(es); a MATCH has none`,
+      );
+    const recorded = isObject(substitution.finalTarball) ? substitution.finalTarball : {};
+    // The BASENAME npm pack gives the X launcher, exactly: a path, or another version's name, is not it.
+    if (recorded.filename !== final.filename)
+      problems.push(
+        `launcherSubstitution.finalTarball.filename is ${show(recorded.filename)}, not the basename ${show(final.filename)}`,
+      );
+    if (!SHA256_HEX.test(String(recorded.sha256 ?? "")) || recorded.sha256 !== final.sha256)
+      problems.push(
+        `launcherSubstitution.finalTarball.sha256 is ${show(recorded.sha256)}, the artifact's ${final.filename} is ${final.sha256}`,
+      );
+  }
+
+  // `override: null` waives nothing and is not malformed: publish-release.sh treats it as absent.
+  const verdict = evaluateVerdict(doc.override === null ? { ...doc, override: undefined } : doc);
+  problems.push(...verdict.problems);
+  return { ok: problems.length === 0, problems, override: verdict.override };
 }
 
 /** Reads one version's registry metadata as an object, or null. npm 12 wraps it in a one-element array. */
@@ -225,19 +430,27 @@ export async function viewVersion(name, version, { execFile: execFileFn = execFi
 }
 
 /**
- * What the registry serves for the seven packages at this version, and the
- * commit the version resolves to. A package that cannot be read is simply
- * absent from the result, which the verdict then reports; it is never guessed.
+ * What the registry serves for the seven packages, and the commit the version resolves to. The
+ * platforms are read at `version`; the launcher at `launcherVersion` (LCLI-621), and a null
+ * launcherVersion leaves it unread, which the verdict reports as not served. A package that cannot
+ * be read is simply absent from the result, which the verdict then reports; it is never guessed.
  */
-export async function observeRelease(version, packages = RELEASE_PACKAGES, { execFile: execFileFn = execFile } = {}) {
+export async function observeRelease(
+  version,
+  packages = RELEASE_PACKAGES,
+  { execFile: execFileFn = execFile, launcherVersion = null } = {},
+) {
   const integrities = {};
   let gitHead = null;
   for (const name of packages) {
+    const atVersion = name === LAUNCHER ? launcherVersion : version;
+    if (!atVersion) continue;
     try {
-      const view = await viewVersion(name, version, { execFile: execFileFn });
+      const view = await viewVersion(name, atVersion, { execFile: execFileFn });
       const integrity = view && isObject(view.dist) ? view.dist.integrity : undefined;
-      if (typeof integrity === "string") integrities[tarballName(name, version)] = integrity;
-      if (name === "@opum-ai/lore" && view && Object.hasOwn(view, "gitHead") && typeof view.gitHead === "string")
+      if (typeof integrity === "string") integrities[tarballName(name, atVersion)] = integrity;
+      // By presence, not value: a tarball publish records no gitHead at all.
+      if (name === LAUNCHER && view && Object.hasOwn(view, "gitHead") && typeof view.gitHead === "string")
         gitHead = view.gitHead;
     } catch {
       // Left absent on purpose: see above.
@@ -319,12 +532,17 @@ export async function resolveTagCommit(version, { execFile: execFileFn = execFil
   }
 }
 
-/** The whole gate: fetch the pair receipt, read what the release resolves to, compare. */
+/**
+ * The whole gate: fetch the pair receipt, read what the release resolves to, compare. The launcher
+ * is read at the receipt's own launcherVersion (step 5); `launcherVersion`, when given, is the rc
+ * the Release run's artifact stages, and the receipt must name that same one.
+ */
 export async function requirePairQualification({
   version,
   packages = RELEASE_PACKAGES,
+  launcherVersion = undefined,
   fetch = (v) => fetchPairReceipt(v),
-  observe = (v) => observeRelease(v, packages),
+  observe = (v, rc) => observeRelease(v, packages, { launcherVersion: rc }),
 }) {
   const fetched = await fetch(version);
   if (!fetched.doc)
@@ -333,9 +551,15 @@ export async function requirePairQualification({
       problems: [`no opum-cli-e2e pair receipt at ${fetched.source} (${fetched.error ?? "unreadable"})`],
       override: null,
       source: fetched.source,
+      launcherVersion: null,
     };
-  const verdict = evaluatePairReceipt(fetched.doc, { version, observed: await observe(version) });
-  return { ...verdict, source: fetched.source };
+  const qualifiedRc = receiptLauncherVersion(fetched.doc, version);
+  const verdict = evaluatePairReceipt(fetched.doc, {
+    version,
+    observed: await observe(version, qualifiedRc),
+    launcherVersion,
+  });
+  return { ...verdict, source: fetched.source, launcherVersion: qualifiedRc };
 }
 
 /** Printed verbatim whenever an override is what let a promotion proceed. */
@@ -343,7 +567,7 @@ export function describeOverride(override, source) {
   return [
     "",
     "!!! QUALIFICATION OVERRIDE IN USE !!!",
-    `The pair receipt at ${source} does not record QUALIFIED. It carries this override, printed verbatim:`,
+    `The receipt at ${source} does not record QUALIFIED. It carries this override, printed verbatim:`,
     JSON.stringify(override, null, 2),
     "",
   ].join("\n");

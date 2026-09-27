@@ -5,25 +5,36 @@
  * receipts/README.md "What a reader must do" lists, mirrored from quest-cli's pair-receipt.mjs.
  * One good receipt passes; each bad-receipt class below breaks ONE step and names it, so a reader
  * that skipped a step turns exactly that step's cases red.
+ *
+ * LCLI-621: step 5 -- pair.lore.launcherVersion is required, an rc of exactly the version, and the
+ * launcher entry is keyed and read at it (opum-cli-e2e receipts/README.md at 4f078e6b, TASK-126).
+ * The pass-1 receipt reader the promotion re-runs (evaluateReleaseReceipt) is tested at the end.
  */
 
 import { describe, expect, test } from "bun:test";
 import {
   evaluatePairReceipt,
+  evaluateReleaseReceipt,
   expectedTarballNames,
   fetchPairReceipt,
+  fetchReleaseReceipt,
+  isLauncherVersionOf,
   MAX_PEEL_DEPTH,
   type Observed,
   observeRelease,
   PAIR_RECEIPT_KIND,
+  PLATFORMS,
   RELEASE_PACKAGES,
+  RELEASE_RECEIPT_KIND,
   receiptReadArgs,
+  releaseReceiptReadArgs,
   requirePairQualification,
   resolveTagCommit,
   tarballName,
 } from "../scripts/pair-receipt.mjs";
 
 const V = "3.4.5";
+const RC = "3.4.5-rc.2";
 const LORE_COMMIT = "a".repeat(40);
 const QUEST_COMMIT = "b".repeat(40);
 const integrity = (name: string) => `sha512-${Buffer.from(name).toString("base64")}==`;
@@ -36,13 +47,13 @@ type Doc = Record<string, unknown> & {
 /** A receipt that satisfies every step for lore V paired with quest V. */
 function goodReceipt(): Doc {
   const loreTarballs = Object.fromEntries(
-    expectedTarballNames(V).map((name) => [name, { sha256: "c".repeat(64), distIntegrity: integrity(name) }]),
+    expectedTarballNames(V, RC).map((name) => [name, { sha256: "c".repeat(64), distIntegrity: integrity(name) }]),
   );
   return {
     schemaVersion: 1,
     kind: PAIR_RECEIPT_KIND,
     pair: {
-      lore: { version: V, commit: LORE_COMMIT, tarballs: loreTarballs },
+      lore: { version: V, commit: LORE_COMMIT, launcherVersion: RC, tarballs: loreTarballs },
       quest: { version: V, commit: QUEST_COMMIT, tarballs: {} },
     },
     installedFrom: {
@@ -60,7 +71,7 @@ function goodReceipt(): Doc {
 /** What the registry and the v<V> tag resolve to when the receipt is right. */
 function goodObserved(): Observed {
   return {
-    integrities: Object.fromEntries(expectedTarballNames(V).map((name) => [name, integrity(name)])),
+    integrities: Object.fromEntries(expectedTarballNames(V, RC).map((name) => [name, integrity(name)])),
     commit: LORE_COMMIT,
     commitSource: `opum-ai/lore-cli tag v${V}`,
     gitHead: null,
@@ -123,6 +134,30 @@ describe("scripts/pair-receipt.mjs: a good receipt", () => {
     ]);
     expect(tarballName("@opum-ai/lore-linux-x64", V)).toBe(`opum-ai-lore-linux-x64-${V}.tgz`);
     expect(tarballName("@opum-ai/lore", V)).toBe(`opum-ai-lore-${V}.tgz`);
+    // LCLI-621: what a release STAGES is the launcher at its rc, so that is the seventh name.
+    expect(expectedTarballNames(V, RC)).toEqual([
+      ...PLATFORMS.map((p) => `opum-ai-lore-${p}-${V}.tgz`),
+      `opum-ai-lore-${RC}.tgz`,
+    ]);
+    expect(() => expectedTarballNames(V, V)).toThrow(`the launcher version must be ${V}-rc.<N>`);
+  });
+
+  test("isLauncherVersionOf: an rc of exactly this version, N a positive integer with no leading zero", () => {
+    for (const good of [`${V}-rc.1`, `${V}-rc.2`, `${V}-rc.10`, `${V}-rc.123`])
+      expect([good, isLauncherVersionOf(V, good)]).toEqual([good, true]);
+    for (const bad of [
+      V,
+      `${V}-rc.0`,
+      `${V}-rc.01`,
+      `${V}-rc.`,
+      `${V}-rc.1x`,
+      `${V}-beta.1`,
+      "3.4.6-rc.1",
+      `v${V}-rc.1`,
+    ])
+      expect([bad, isLauncherVersionOf(V, bad)]).toEqual([bad, false]);
+    expect(isLauncherVersionOf(V, undefined)).toBe(false);
+    expect(isLauncherVersionOf(V, 1)).toBe(false);
   });
 
   test("verifies: every step passes, no override", () => {
@@ -143,6 +178,17 @@ describe("scripts/pair-receipt.mjs: a good receipt", () => {
 
   test("an npm gitHead that agrees with the tag also verifies", () => {
     expect(evaluate(goodReceipt(), { ...goodObserved(), gitHead: LORE_COMMIT }).ok).toBe(true);
+  });
+
+  test("step 5: the artifact's rc, when given, must be the one the receipt qualified (positive control too)", () => {
+    const at = (launcherVersion: string) =>
+      evaluatePairReceipt(goodReceipt(), { version: V, observed: goodObserved(), launcherVersion });
+    expect(at(RC)).toEqual({ ok: true, problems: [], override: null });
+    const other = at(`${V}-rc.3`);
+    expect(other.ok).toBe(false);
+    expect(other.problems).toEqual([
+      `pair.lore.launcherVersion is ${RC}, but the Release run's artifact stages the launcher as "${V}-rc.3"`,
+    ]);
   });
 });
 
@@ -261,7 +307,7 @@ describe("scripts/pair-receipt.mjs: every bad-receipt class refuses, naming its 
     [
       "a digest npm does not serve",
       (d) => {
-        const name = `opum-ai-lore-${V}.tgz`;
+        const name = `opum-ai-lore-${RC}.tgz`;
         return {
           ...d,
           pair: {
@@ -273,7 +319,7 @@ describe("scripts/pair-receipt.mjs: every bad-receipt class refuses, naming its 
           },
         };
       },
-      `opum-ai-lore-${V}.tgz: qualified sha512-other, npm serves ${integrity(`opum-ai-lore-${V}.tgz`)}`,
+      `opum-ai-lore-${RC}.tgz: qualified sha512-other, npm serves ${integrity(`opum-ai-lore-${RC}.tgz`)}`,
     ],
     [
       "an archive with no distIntegrity",
@@ -298,7 +344,7 @@ describe("scripts/pair-receipt.mjs: every bad-receipt class refuses, naming its 
       `opum-ai-lore-darwin-x64-${V}.tgz: qualified ${integrity(`opum-ai-lore-darwin-x64-${V}.tgz`)}, npm serves nothing`,
       {
         integrities: Object.fromEntries(
-          expectedTarballNames(V)
+          expectedTarballNames(V, RC)
             .filter((n) => n !== `opum-ai-lore-darwin-x64-${V}.tgz`)
             .map((n) => [n, integrity(n)]),
         ),
@@ -308,6 +354,30 @@ describe("scripts/pair-receipt.mjs: every bad-receipt class refuses, naming its 
       "tarballs that are not an object",
       (d) => ({ ...d, pair: { ...d.pair, lore: { ...d.pair.lore, tarballs: [] } } }),
       "pair.lore.tarballs is not an object",
+    ],
+    // Step 5 (LCLI-621): launcherVersion required, an rc of exactly V, the launcher keyed at it.
+    [
+      "no launcherVersion (a receipt from before the amendment)",
+      (d) => {
+        const { launcherVersion: _dropped, ...lore } = d.pair.lore;
+        return { ...d, pair: { ...d.pair, lore } };
+      },
+      `pair.lore.launcherVersion is undefined, not ${V}-rc.<N>; a receipt without it predates root-launcher rc-staging`,
+    ],
+    ...[`${V}-rc.0`, `${V}-rc.01`, "3.4.6-rc.1", V, `${V}-rc.2x`].map((bad): [string, (d: Doc) => unknown, string] => [
+      `a launcherVersion ${bad}`,
+      (d) => ({ ...d, pair: { ...d.pair, lore: { ...d.pair.lore, launcherVersion: bad } } }),
+      `pair.lore.launcherVersion is "${bad}", not ${V}-rc.<N>`,
+    ]),
+    [
+      "the launcher keyed at X, not at its rc (the pre-amendment key)",
+      (d) => {
+        const tarballs = { ...(d.pair.lore.tarballs as Record<string, unknown>) };
+        tarballs[`opum-ai-lore-${V}.tgz`] = tarballs[`opum-ai-lore-${RC}.tgz`];
+        delete tarballs[`opum-ai-lore-${RC}.tgz`];
+        return { ...d, pair: { ...d.pair, lore: { ...d.pair.lore, tarballs } } };
+      },
+      `opum-ai-lore-${RC}.tgz: not in the pair receipt, so it was never qualified`,
     ],
   ];
 
@@ -381,11 +451,12 @@ describe("scripts/pair-receipt.mjs: the reads", () => {
     const tagSha = "9".repeat(40);
     const git = gitObjects(V, { type: "tag", sha: tagSha }, { [tagSha]: { type: "commit", sha: LORE_COMMIT } });
     const observed = await observeRelease(V, RELEASE_PACKAGES, {
+      launcherVersion: RC,
       execFile: async (file, args) => {
         calls.push([file, ...args]);
         if (file === "gh") return git.execFile(file, args);
-        const [name] = (args[1] as string).split(/@(?=[^@]*$)/);
-        const meta = { name, version: V, dist: { integrity: integrity(tarballName(name as string, V)) } };
+        const [name, at] = (args[1] as string).split(/@(?=[^@]*$)/);
+        const meta = { name, version: at, dist: { integrity: integrity(tarballName(name as string, at as string)) } };
         // npm 12 answers an exact-version view with a one-element array; an older npm, the object.
         return { stdout: JSON.stringify(name === "@opum-ai/lore" ? [{ ...meta, gitHead: LORE_COMMIT }] : meta) };
       },
@@ -393,8 +464,15 @@ describe("scripts/pair-receipt.mjs: the reads", () => {
     expect(observed.integrities).toEqual(goodObserved().integrities);
     expect(observed.commit).toBe(LORE_COMMIT);
     expect(observed.gitHead).toBe(LORE_COMMIT);
+    // The launcher is read at its rc: the X launcher is not on the registry until promotion.
     expect(calls.filter((c) => c[0] === "npm")).toEqual(
-      RELEASE_PACKAGES.map((name) => ["npm", "view", `${name}@${V}`, "--json", "--prefer-online"]),
+      RELEASE_PACKAGES.map((name) => [
+        "npm",
+        "view",
+        `${name}@${name === "@opum-ai/lore" ? RC : V}`,
+        "--json",
+        "--prefer-online",
+      ]),
     );
     expect(calls.filter((c) => c[0] === "gh")).toEqual([
       ["gh", "api", "--hostname", "github.com", `repos/opum-ai/lore-cli/git/ref/tags/v${V}`],
@@ -405,12 +483,15 @@ describe("scripts/pair-receipt.mjs: the reads", () => {
 
   test("observeRelease never guesses: an unreadable package is absent, a missing tag is null", async () => {
     const observed = await observeRelease(V, RELEASE_PACKAGES, {
+      launcherVersion: RC,
       execFile: async (file, args) => {
         if (file === "gh") return gitObjects(V, "missing").execFile(file, args);
         if ((args[1] as string).startsWith("@opum-ai/lore-win32-x64@")) throw new Error("E404");
         if ((args[1] as string).startsWith("@opum-ai/lore-linux-x64@")) return { stdout: "[1, 2]" };
-        const [name] = (args[1] as string).split(/@(?=[^@]*$)/);
-        return { stdout: JSON.stringify({ dist: { integrity: integrity(tarballName(name as string, V)) } }) };
+        const [name, at] = (args[1] as string).split(/@(?=[^@]*$)/);
+        return {
+          stdout: JSON.stringify({ dist: { integrity: integrity(tarballName(name as string, at as string)) } }),
+        };
       },
     });
     expect(Object.keys(observed.integrities).length).toBe(5);
@@ -421,6 +502,38 @@ describe("scripts/pair-receipt.mjs: the reads", () => {
     expect(verdict.ok).toBe(false);
     expect(verdict.problems.join("\n")).toContain(`opum-ai-lore-win32-x64-${V}.tgz: qualified`);
     expect(verdict.problems.join("\n")).toContain(`opum-ai-lore-linux-x64-${V}.tgz: qualified`);
+  });
+
+  test("observeRelease with no launcherVersion leaves the launcher unread, and the verdict refuses it", async () => {
+    const reads: string[] = [];
+    const observed = await observeRelease(V, RELEASE_PACKAGES, {
+      execFile: async (file, args) => {
+        if (file === "gh") return gitObjects(V, "missing").execFile(file, args);
+        reads.push(args[1] as string);
+        const [name, at] = (args[1] as string).split(/@(?=[^@]*$)/);
+        return {
+          stdout: JSON.stringify({ dist: { integrity: integrity(tarballName(name as string, at as string)) } }),
+        };
+      },
+    });
+    expect(reads.some((spec) => spec.startsWith("@opum-ai/lore@"))).toBe(false);
+    expect(Object.keys(observed.integrities).length).toBe(6);
+  });
+
+  test("the gate reads the launcher at the RECEIPT's launcherVersion and returns it", async () => {
+    const seen: Array<string | null> = [];
+    const gate = await requirePairQualification({
+      version: V,
+      launcherVersion: RC,
+      fetch: async () => ({ doc: goodReceipt(), source: "s" }),
+      observe: async (_v, rc) => {
+        seen.push(rc);
+        return goodObserved();
+      },
+    });
+    expect(seen).toEqual([RC]);
+    expect(gate.ok).toBe(true);
+    expect(gate.launcherVersion).toBe(RC);
   });
 });
 
@@ -578,5 +691,209 @@ describe("scripts/pair-receipt.mjs: resolveTagCommit review nits (N5, N6)", () =
     const pastBound = await resolveTagCommit(V, { execFile: nested(MAX_PEEL_DEPTH + 1).execFile });
     expect(pastBound.commit).toBeNull();
     expect(pastBound.error).toContain(`is still a tag after ${MAX_PEEL_DEPTH} dereferences`);
+  });
+});
+
+// ── The pass-1 receipt, re-read at promotion (LCLI-621) ─────────────────────────────────────────
+// receipts/lore/<version>.json per opum-cli-e2e receipts/README.md at 4f078e6b (TASK-126): the seven
+// staged tarballs (the launcher keyed at its rc), launcherVersion, and opum-cli-e2e's own
+// launcherSubstitution verdict naming the X launcher by BASENAME and sha256.
+describe("scripts/pair-receipt.mjs: evaluateReleaseReceipt (the pass-1 receipt at promotion)", () => {
+  const RUN = "36291717192";
+  const sha = (name: string) => Buffer.from(name).toString("hex").padEnd(64, "0").slice(0, 64);
+  const FINAL = { filename: `opum-ai-lore-${V}.tgz`, sha256: "f".repeat(64) };
+  const staged = () => Object.fromEntries(expectedTarballNames(V, RC).map((name) => [name, sha(name)]));
+
+  type Pass1 = Record<string, unknown> & {
+    tarballs: Record<string, unknown>;
+    launcherSubstitution: Record<string, unknown> & { finalTarball: Record<string, unknown> };
+  };
+  function goodPass1(): Pass1 {
+    return {
+      schemaVersion: 1,
+      kind: RELEASE_RECEIPT_KIND,
+      product: "lore",
+      version: V,
+      commit: LORE_COMMIT,
+      releaseRunId: Number(RUN),
+      runAttempt: 1,
+      tarballs: staged(),
+      launcherVersion: RC,
+      launcherSubstitution: {
+        verdict: "MATCH",
+        finalTarball: { ...FINAL },
+        method: "entry by entry after X-rc.N -> X",
+        mismatches: [],
+      },
+      verdict: "QUALIFIED",
+    };
+  }
+  const judge = (doc: unknown) =>
+    evaluateReleaseReceipt(doc, {
+      version: V,
+      commit: LORE_COMMIT,
+      releaseRunId: RUN,
+      staged: staged(),
+      final: FINAL,
+      launcherVersion: RC,
+    });
+
+  test("positive control: a receipt binding these bytes, this commit and this run verifies", () => {
+    expect(judge(goodPass1())).toEqual({ ok: true, problems: [], override: null });
+    // The carried X launcher MAY also be named in tarballs, as at staging, if its digest matches.
+    const named = goodPass1();
+    named.tarballs[FINAL.filename] = FINAL.sha256;
+    expect(judge(named).ok).toBe(true);
+    // A run id as a digit string, and `override: null`, are what publish-release.sh also accepts.
+    expect(judge({ ...goodPass1(), releaseRunId: RUN, override: null }).ok).toBe(true);
+  });
+
+  const cases: Array<[string, (d: Pass1) => unknown, string]> = [
+    ["not an object", () => [], "receipt is not a JSON object"],
+    ["another kind", (d) => ({ ...d, kind: PAIR_RECEIPT_KIND }), `not "${RELEASE_RECEIPT_KIND}"`],
+    ["another product", (d) => ({ ...d, product: "quest" }), 'product is "quest", not "lore"'],
+    ["another version", (d) => ({ ...d, version: "3.4.4" }), `version is "3.4.4", not "${V}"`],
+    [
+      "a commit the tag does not peel to",
+      (d) => ({ ...d, commit: "e".repeat(40) }),
+      `but v${V} peels to "${LORE_COMMIT}"`,
+    ],
+    ["another run", (d) => ({ ...d, releaseRunId: 1 }), `releaseRunId is 1, not ${RUN}`],
+    [
+      "a staged tarball missing",
+      (d) => {
+        delete d.tarballs[`opum-ai-lore-${RC}.tgz`];
+        return d;
+      },
+      `tarballs has no entry for opum-ai-lore-${RC}.tgz`,
+    ],
+    [
+      "a staged digest that is not the artifact's",
+      (d) => {
+        d.tarballs[`opum-ai-lore-linux-x64-${V}.tgz`] = "0".repeat(64);
+        return d;
+      },
+      `sha256 MISMATCH for opum-ai-lore-linux-x64-${V}.tgz`,
+    ],
+    [
+      "the carried X named with another digest",
+      (d) => {
+        d.tarballs[FINAL.filename] = "1".repeat(64);
+        return d;
+      },
+      `sha256 MISMATCH for ${FINAL.filename}: receipt says "${"1".repeat(64)}", the carried X launcher`,
+    ],
+    [
+      "an extra tarball",
+      (d) => {
+        d.tarballs[`opum-ai-lore-${V}-rc.1.tgz`] = "2".repeat(64);
+        return d;
+      },
+      `tarballs names "opum-ai-lore-${V}-rc.1.tgz", which this release does not carry`,
+    ],
+    [
+      "no launcherVersion (pre-amendment)",
+      (d) => {
+        const { launcherVersion: _dropped, ...rest } = d;
+        return rest;
+      },
+      `launcherVersion is undefined, not ${V}-rc.<N>`,
+    ],
+    ["a malformed launcherVersion", (d) => ({ ...d, launcherVersion: `${V}-rc.0` }), `launcherVersion is "${V}-rc.0"`],
+    [
+      "a launcherVersion that is not the artifact's rc",
+      (d) => ({ ...d, launcherVersion: `${V}-rc.1` }),
+      `launcherVersion is ${V}-rc.1, but the artifact stages the launcher as ${RC}`,
+    ],
+    [
+      "no launcherSubstitution",
+      (d) => ({ ...d, launcherSubstitution: undefined }),
+      "receipt has no launcherSubstitution",
+    ],
+    [
+      "a MISMATCH verdict",
+      (d) => ({
+        ...d,
+        launcherSubstitution: { ...d.launcherSubstitution, verdict: "MISMATCH", mismatches: ["package/README.md"] },
+      }),
+      'launcherSubstitution.verdict is "MISMATCH", not "MATCH": "package/README.md"',
+    ],
+    [
+      "a MATCH that lists mismatches",
+      (d) => ({ ...d, launcherSubstitution: { ...d.launcherSubstitution, mismatches: ["x"] } }),
+      'launcherSubstitution.verdict is "MATCH" but lists 1 mismatch(es)',
+    ],
+    [
+      "a finalTarball filename that is a path, not the basename",
+      (d) => ({
+        ...d,
+        launcherSubstitution: {
+          ...d.launcherSubstitution,
+          finalTarball: { ...FINAL, filename: `final/${FINAL.filename}` },
+        },
+      }),
+      `launcherSubstitution.finalTarball.filename is "final/${FINAL.filename}", not the basename "${FINAL.filename}"`,
+    ],
+    [
+      "a finalTarball naming the rc",
+      (d) => ({
+        ...d,
+        launcherSubstitution: {
+          ...d.launcherSubstitution,
+          finalTarball: { ...FINAL, filename: `opum-ai-lore-${RC}.tgz` },
+        },
+      }),
+      "launcherSubstitution.finalTarball.filename is",
+    ],
+    [
+      "a finalTarball sha256 that is not the artifact's X",
+      (d) => ({
+        ...d,
+        launcherSubstitution: { ...d.launcherSubstitution, finalTarball: { ...FINAL, sha256: "9".repeat(64) } },
+      }),
+      `launcherSubstitution.finalTarball.sha256 is "${"9".repeat(64)}", the artifact's ${FINAL.filename} is ${FINAL.sha256}`,
+    ],
+    ["NOT QUALIFIED, no override", (d) => ({ ...d, verdict: "NOT QUALIFIED" }), 'verdict is "NOT QUALIFIED"'],
+  ];
+  for (const [label, mutate, reason] of cases) {
+    test(`refuses ${label}`, () => {
+      const verdict = judge(mutate(goodPass1()));
+      expect(verdict.ok).toBe(false);
+      expect(verdict.problems.join("\n")).toContain(reason);
+    });
+  }
+
+  test("an override waives the verdict, never the launcher substitution", () => {
+    const override = { by: "op", reason: "r", task: "TASK-1", adr: "a@b" };
+    const waived = judge({ ...goodPass1(), verdict: "NOT QUALIFIED", override });
+    expect(waived.ok).toBe(true);
+    expect(waived.override).toEqual(override);
+    const stillRefused = judge({
+      ...goodPass1(),
+      verdict: "NOT QUALIFIED",
+      override,
+      launcherSubstitution: { ...goodPass1().launcherSubstitution, verdict: "MISMATCH" },
+    });
+    expect(stillRefused.ok).toBe(false);
+  });
+
+  test("it is read pinned: github.com, raw, opum-cli-e2e receipts/lore/<v>.json at main", async () => {
+    const seen: string[][] = [];
+    const fetched = await fetchReleaseReceipt(V, {
+      execFile: async (file, args) => {
+        seen.push([file, ...args]);
+        return { stdout: JSON.stringify(goodPass1()) };
+      },
+    });
+    expect(seen).toEqual([["gh", ...releaseReceiptReadArgs(V)]]);
+    expect(releaseReceiptReadArgs(V)).toEqual([
+      "api",
+      "--hostname",
+      "github.com",
+      "-H",
+      "Accept: application/vnd.github.raw",
+      `repos/opum-ai/opum-cli-e2e/contents/receipts/lore/${V}.json?ref=main`,
+    ]);
+    expect(fetched.source).toBe(`opum-ai/opum-cli-e2e@main:receipts/lore/${V}.json`);
   });
 });

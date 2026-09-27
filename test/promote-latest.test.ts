@@ -1,140 +1,357 @@
 /**
- * promote-latest.test.ts — the `latest` move (LCLI-613, constitution Article 3 clause 5).
+ * promote-latest.test.ts — the `latest` move (LCLI-613, constitution Article 3 clause 5), and since
+ * LCLI-621 the root launcher's fresh publish of X onto `latest` (Article 3 clause 5 as amended by
+ * ODOC-302; the paired design with quest-cli QCLI-399; opum-cli-e2e receipts/README.md steps 5-7).
  *
  * scripts/promote-latest.mjs is driven end to end through its one injectable runner against an
- * in-memory registry, so every npm and gh call it makes is observed and none reaches a network.
- * Proven here: it refuses without a verifying pair receipt (each bad class), refuses unless all
- * seven packages are staged under release-candidate, records every prior `latest` to a file
- * BEFORE moving anything, moves platforms first and the launcher last, restores on a partial
- * failure, rolls back from the record, and --dry-run writes nothing.
+ * in-memory GitHub and registry, so every npm and gh call it makes is observed and none reaches a
+ * network. The world serves the Release run, its npm-packages artifact (eight tarballs, the two
+ * launchers built here as real gzipped ustar archives so scripts/launcher-equivalence.mjs runs on
+ * them for real), the pass-1 receipt, the pair receipt, the tag peel and the registry.
+ *
+ * Proven here: every pre-move refusal (tag, run, artifact, pass-1 receipt, staging, pair receipt,
+ * quest first, step 6, X already on npm as other bytes) exits 1 with no record and no write; the
+ * clean case promotes -- record first, six platforms by dist-tag, then exactly one
+ * `npm publish <X> --tag latest`, last; step 6 re-runs after the platform move and a change there
+ * rolls every moved tag back, the launcher's included; a resume moves the tag instead of
+ * republishing; step 7 verifies all seven tags and npm's X integrity; the readme read-back reports
+ * a byte count and warns on 0; --rollback restores all seven by dist-tag and unpublishes nothing.
  */
 
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { devNull, tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
-import { expectedTarballNames, PAIR_RECEIPT_KIND, RELEASE_PACKAGES, tarballName } from "../scripts/pair-receipt.mjs";
+import { gzipSync } from "node:zlib";
 import {
+  expectedTarballNames,
+  PAIR_RECEIPT_KIND,
+  PLATFORMS,
+  RELEASE_PACKAGES,
+  tarballName,
+} from "../scripts/pair-receipt.mjs";
+import {
+  artifactDownloadArgs,
+  checkReleaseRun,
   checkRollbackState,
+  checkServedLauncher,
   distTagReadArgs,
+  launcherPublishArgs,
   main,
   type PromotionRecord,
+  publishFinalLauncher,
   RECORD_KIND,
   RELEASE_VERSION,
+  readBackReadme,
+  releaseRunReadArgs,
   rollback,
   SEMVER,
   tokenShape,
   validateRecord,
+  verifyFinalLauncher,
 } from "../scripts/promote-latest.mjs";
 
 const V = "5.6.7";
+const RC = "5.6.7-rc.2";
 const PRIOR = "5.6.6";
+const RUN = "4242";
 const COMMIT = "a".repeat(40);
 const TAG_OBJECT = "9".repeat(40);
 const GIT = "git";
+const LAUNCHER = "@opum-ai/lore";
+const RC_FILE = `opum-ai-lore-${RC}.tgz`;
+const X_FILE = `opum-ai-lore-${V}.tgz`;
 const integrity = (name: string) => `sha512-${Buffer.from(name).toString("base64")}==`;
+const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+const sri = (bytes: Uint8Array) => `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
 const FAST = { attempts: 1, delayMs: 0, sleep: async () => {} };
+const PLATFORM_PACKAGES = RELEASE_PACKAGES.filter((name) => name !== LAUNCHER);
 
-function goodReceipt(): Record<string, unknown> {
+// ── Launcher tarballs: a minimal ustar writer (as test/launcher-equivalence.test.ts), so the bytes
+// are exactly what each case says on every platform and the real equivalence gate reads them.
+function tarball(entries: Array<{ path: string; content: string; mode?: number }>): Buffer {
+  const blocks: Buffer[] = [];
+  for (const entry of entries) {
+    const content = Buffer.from(entry.content, "utf8");
+    const header = Buffer.alloc(512);
+    const put = (text: string, offset: number, length: number) => header.write(text, offset, length, "utf8");
+    const num = (n: number, offset: number, length: number) =>
+      put(`${n.toString(8).padStart(length - 1, "0")}\0`, offset, length);
+    put(entry.path, 0, 100);
+    num(entry.mode ?? 0o644, 100, 8);
+    num(0, 108, 8);
+    num(0, 116, 8);
+    num(content.length, 124, 12);
+    num(499162500, 136, 12);
+    header.fill(32, 148, 156);
+    put("0", 156, 1);
+    put("ustar\0", 257, 6);
+    put("00", 263, 2);
+    let sum = 0;
+    for (const byte of header) sum += byte;
+    put(`${sum.toString(8).padStart(6, "0")}\0 `, 148, 8);
+    blocks.push(header, content, Buffer.alloc((512 - (content.length % 512)) % 512));
+  }
+  return gzipSync(Buffer.concat([...blocks, Buffer.alloc(1024)]));
+}
+
+function launcher(version: string, readmeExtra = ""): Buffer {
+  const manifest = `${JSON.stringify(
+    {
+      name: LAUNCHER,
+      version,
+      optionalDependencies: Object.fromEntries(PLATFORMS.map((p) => [`@opum-ai/lore-${p}`, V])),
+      bin: { lore: "bin/lore.cjs" },
+    },
+    null,
+    2,
+  )}\n`;
+  return tarball([
+    { path: "package/LICENSE", content: "MIT\n" },
+    { path: "package/bin/lore.cjs", content: "#!/usr/bin/env node\n", mode: 0o755 },
+    { path: "package/package.json", content: manifest },
+    {
+      path: "package/README.md",
+      content: `# lore\n\n> **Status: ${version} released.** Tag \`v${version}\`\n${readmeExtra}`,
+    },
+  ]);
+}
+
+/** The Release run's npm-packages artifact: eight tarballs. */
+function artifact(): Map<string, Buffer> {
+  const files = new Map<string, Buffer>();
+  for (const p of PLATFORMS) files.set(`opum-ai-lore-${p}-${V}.tgz`, Buffer.from(`platform ${p} ${V}\n`));
+  files.set(RC_FILE, launcher(RC));
+  files.set(X_FILE, launcher(V));
+  return files;
+}
+
+function goodPass1(files: Map<string, Buffer>, commit = COMMIT): Record<string, unknown> {
+  // An artifact case may have removed a file; the receipt still names what the release should carry.
+  const digest = (name: string) => sha256(files.get(name) ?? Buffer.alloc(0));
+  return {
+    schemaVersion: 1,
+    kind: "opum.qualification-receipt.v1",
+    product: "lore",
+    version: V,
+    commit,
+    releaseRunId: Number(RUN),
+    tarballs: Object.fromEntries(expectedTarballNames(V, RC).map((name) => [name, digest(name)])),
+    launcherVersion: RC,
+    launcherSubstitution: {
+      verdict: "MATCH",
+      finalTarball: { filename: X_FILE, sha256: digest(X_FILE) },
+      method: "entry by entry, X-rc.N -> X",
+      mismatches: [],
+    },
+    verdict: "QUALIFIED",
+  };
+}
+
+function goodReceipt(commit = COMMIT): Record<string, unknown> {
   return {
     schemaVersion: 1,
     kind: PAIR_RECEIPT_KIND,
     pair: {
       lore: {
         version: V,
-        commit: COMMIT,
+        commit,
+        launcherVersion: RC,
         tarballs: Object.fromEntries(
-          expectedTarballNames(V).map((n) => [n, { sha256: "c".repeat(64), distIntegrity: integrity(n) }]),
+          expectedTarballNames(V, RC).map((n) => [n, { sha256: "c".repeat(64), distIntegrity: integrity(n) }]),
         ),
       },
-      quest: { version: V, commit: "b".repeat(40), tarballs: {} },
+      quest: { version: V, commit: "b".repeat(40), launcherVersion: RC, tarballs: {} },
     },
     installedFrom: { lore: { source: "registry" }, quest: { source: "registry" } },
     verdict: "QUALIFIED",
   };
 }
 
+type WorldOptions = {
+  receipt?: unknown;
+  pass1?: unknown | ((files: Map<string, Buffer>) => unknown);
+  tags?: Record<string, Record<string, string>>;
+  tagCommit?: string | null;
+  run?: Record<string, unknown>;
+  /** Edits the eight artifact files before the download serves them. */
+  artifact?: (files: Map<string, Buffer>) => void;
+  downloadFails?: boolean;
+  /** What `npm pack @opum-ai/lore@<RC>` serves; default the artifact's rc. "fail" throws. */
+  servedRc?: Buffer | "fail";
+  /** @opum-ai/lore@V already on npm as these bytes (a resume), or unreadable. */
+  xPublished?: Buffer | "unreadable";
+  /** npm serves this integrity for X after the publish (step 7's mismatch). */
+  publishedIntegrity?: string;
+  failAdd?: string;
+  failAfterApply?: string;
+  failRestore?: string;
+  failPublish?: boolean;
+  failPublishAfterApply?: boolean;
+  questLatest?: string | null;
+  readme?: string | "fail";
+  onAdd?: () => void;
+  /** Runs once, when the LAST platform's latest move to V lands. */
+  afterPlatforms?: (w: World) => void;
+};
+
+type World = ReturnType<typeof world>;
+
 /**
- * An in-memory registry + GitHub behind one runner. `calls` records every argv; `writes` only the
- * dist-tag writes. `failAdd` makes one package's latest move fail; `onAdd` runs before each write.
+ * An in-memory GitHub + registry behind one runner. `calls` records every argv; `writes` records
+ * every registry write, dist-tag moves and publishes alike, in order.
  */
-function world(
-  options: {
-    receipt?: unknown;
-    tags?: Record<string, Record<string, string>>;
-    tagCommit?: string | null;
-    failAdd?: string;
-    /** The move to V for this package is APPLIED by the registry, then the client call fails. */
-    failAfterApply?: string;
-    /** Restoring this package to its prior value fails. */
-    failRestore?: string;
-    /** @opum-ai/quest's latest; defaults to V (quest has moved first). null: unreadable. */
-    questLatest?: string | null;
-    onAdd?: () => void;
-  } = {},
-) {
+function world(options: WorldOptions = {}) {
   const tags: Record<string, Record<string, string>> = {};
   for (const name of RELEASE_PACKAGES)
-    tags[name] = { latest: PRIOR, "release-candidate": V, ...(options.tags?.[name] ?? {}) };
+    tags[name] = {
+      latest: PRIOR,
+      "release-candidate": name === LAUNCHER ? RC : V,
+      ...(options.tags?.[name] ?? {}),
+    };
   const calls: string[][] = [];
   const writes: string[] = [];
   const envs: Array<Record<string, string | undefined>> = [];
-  const receipt = "receipt" in options ? options.receipt : goodReceipt();
-  const run = async (command: string, args: string[], opts: Record<string, unknown> = {}) => {
-    calls.push([command, ...args]);
-    const line = [command, ...args].join(" ");
-    if (command === "security") throw Object.assign(new Error("no keychain item"), { code: 44 });
-    if (
-      command === "gh" &&
-      line ===
-        `gh api --hostname github.com -H Accept: application/vnd.github.raw repos/opum-ai/opum-cli-e2e/contents/receipts/pair/${V}.json?ref=main`
-    ) {
-      if (receipt === undefined)
-        throw Object.assign(new Error("Command failed"), { stderr: "gh: Not Found (HTTP 404)" });
-      return { stdout: typeof receipt === "string" ? receipt : JSON.stringify(receipt) };
-    }
-    // lore's release tags are ANNOTATED: the ref names a tag object, which names the commit. The
-    // world serves that shape, so the reader must peel through the tag object to reach `tagCommit`.
-    if (command === "gh" && line === `gh api --hostname github.com repos/opum-ai/lore-cli/${GIT}/ref/tags/v${V}`) {
-      const commit = "tagCommit" in options ? options.tagCommit : COMMIT;
-      if (commit === null) throw Object.assign(new Error("Command failed"), { stderr: "gh: Not Found (HTTP 404)" });
-      return { stdout: JSON.stringify({ ref: `refs/tags/v${V}`, object: { type: "tag", sha: TAG_OBJECT } }) };
-    }
-    if (command === "gh" && line === `gh api --hostname github.com repos/opum-ai/lore-cli/${GIT}/tags/${TAG_OBJECT}`) {
-      const commit = "tagCommit" in options ? options.tagCommit : COMMIT;
-      return { stdout: JSON.stringify({ sha: TAG_OBJECT, object: { type: "commit", sha: commit } }) };
-    }
-    if (command === "npm" && args[0] === "view" && args[1] === "@opum-ai/quest" && args[2] === "dist-tags") {
-      const questLatest = "questLatest" in options ? options.questLatest : V;
-      if (questLatest === null) throw new Error("E503 registry unreachable");
-      return { stdout: JSON.stringify([{ latest: questLatest, "release-candidate": V }]) };
-    }
-    if (command === "npm" && args[0] === "view" && args[2] === "dist-tags") {
-      const t = tags[args[1] as string];
-      if (!t) throw new Error("E404");
-      return { stdout: JSON.stringify([t]) };
-    }
-    if (command === "npm" && args[0] === "view" && args[2] === "--json") {
-      const name = (args[1] as string).slice(0, (args[1] as string).lastIndexOf("@"));
-      return { stdout: JSON.stringify([{ name, version: V, dist: { integrity: integrity(tarballName(name, V)) } }]) };
-    }
-    if (command === "npm" && args[0] === "dist-tag" && args[1] === "add") {
-      options.onAdd?.();
-      const spec = args[2] as string;
-      const at = spec.lastIndexOf("@");
-      const name = spec.slice(0, at);
-      writes.push(args.join(" "));
-      envs.push((opts.env ?? {}) as Record<string, string | undefined>);
-      if (options.failAdd === name && spec.endsWith(`@${V}`)) throw new Error("E403 Forbidden");
-      if (options.failRestore === name && !spec.endsWith(`@${V}`)) throw new Error("ETIMEDOUT restoring");
-      (tags[name] as Record<string, string>)[args[3] as string] = spec.slice(at + 1);
-      if (options.failAfterApply === name && spec.endsWith(`@${V}`))
-        throw new Error("ETIMEDOUT (the registry applied the write; the client never heard back)");
-      return { stdout: "" };
-    }
-    throw new Error(`unexpected command in test: ${line}`);
+  const files = artifact();
+  options.artifact?.(files);
+  const commit = "tagCommit" in options ? options.tagCommit : COMMIT;
+  const receipt = "receipt" in options ? options.receipt : goodReceipt(commit ?? COMMIT);
+  const pass1 =
+    "pass1" in options
+      ? typeof options.pass1 === "function"
+        ? (options.pass1 as (f: Map<string, Buffer>) => unknown)(files)
+        : options.pass1
+      : goodPass1(files, commit ?? COMMIT);
+  const state: {
+    servedRc: Buffer | "fail";
+    xPublished: Buffer | "unreadable" | null;
+    downloadDir: string | null;
+    platformsMoved: number;
+  } = {
+    servedRc: options.servedRc ?? (files.get(RC_FILE) as Buffer),
+    xPublished: options.xPublished ?? null,
+    downloadDir: null,
+    platformsMoved: 0,
   };
-  return { run, tags, calls, writes, envs };
+  const self = {
+    run: async (command: string, args: string[], opts: Record<string, unknown> = {}) => {
+      calls.push([command, ...args]);
+      const line = [command, ...args].join(" ");
+      if (command === "security") throw Object.assign(new Error("no keychain item"), { code: 44 });
+      const receiptAt = (path: string) =>
+        `gh api --hostname github.com -H Accept: application/vnd.github.raw repos/opum-ai/opum-cli-e2e/contents/${path}?ref=main`;
+      const serve = (doc: unknown) => {
+        if (doc === undefined) throw Object.assign(new Error("Command failed"), { stderr: "gh: Not Found (HTTP 404)" });
+        return { stdout: typeof doc === "string" ? doc : JSON.stringify(doc) };
+      };
+      if (command === "gh" && line === receiptAt(`receipts/pair/${V}.json`)) return serve(receipt);
+      if (command === "gh" && line === receiptAt(`receipts/lore/${V}.json`)) return serve(pass1);
+      // lore's release tags are ANNOTATED: the ref names a tag object, which names the commit.
+      if (command === "gh" && line === `gh api --hostname github.com repos/opum-ai/lore-cli/${GIT}/ref/tags/v${V}`) {
+        if (commit === null) throw Object.assign(new Error("Command failed"), { stderr: "gh: Not Found (HTTP 404)" });
+        return { stdout: JSON.stringify({ ref: `refs/tags/v${V}`, object: { type: "tag", sha: TAG_OBJECT } }) };
+      }
+      if (command === "gh" && line === `gh api --hostname github.com repos/opum-ai/lore-cli/${GIT}/tags/${TAG_OBJECT}`)
+        return { stdout: JSON.stringify({ sha: TAG_OBJECT, object: { type: "commit", sha: commit } }) };
+      if (command === "gh" && line === `gh ${releaseRunReadArgs(RUN).join(" ")}`)
+        return {
+          stdout: JSON.stringify({
+            id: Number(RUN),
+            path: ".github/workflows/release.yml",
+            head_sha: commit,
+            conclusion: "success",
+            ...(options.run ?? {}),
+          }),
+        };
+      if (command === "gh" && args[0] === "run" && args[1] === "download") {
+        const dir = args[args.length - 1] as string;
+        expect(args).toEqual(artifactDownloadArgs(RUN, dir));
+        if (options.downloadFails) throw Object.assign(new Error("Command failed"), { stderr: "no artifact matches" });
+        state.downloadDir = dir;
+        for (const [name, bytes] of files) writeFileSync(join(dir, name), bytes);
+        return { stdout: "" };
+      }
+      if (command === "npm" && args[0] === "view" && args[1] === "@opum-ai/quest" && args[2] === "dist-tags") {
+        const questLatest = "questLatest" in options ? options.questLatest : V;
+        if (questLatest === null) throw new Error("E503 registry unreachable");
+        return { stdout: JSON.stringify([{ latest: questLatest, "release-candidate": V }]) };
+      }
+      if (command === "npm" && args[0] === "view" && args[2] === "dist-tags") {
+        const t = tags[args[1] as string];
+        if (!t) throw new Error("E404");
+        return { stdout: JSON.stringify([t]) };
+      }
+      if (command === "npm" && args[0] === "view" && args[2] === "readme") {
+        if (options.readme === "fail") throw new Error("E503 registry unreachable");
+        const text = options.readme ?? "# lore\n\nThe README.\n";
+        return { stdout: text ? `${text}\n` : "" };
+      }
+      if (command === "npm" && args[0] === "view" && args[2] === "--json" && args.includes(`--userconfig=${devNull}`)) {
+        // probeVersion: anonymous, exact version.
+        expect(args[1]).toBe(`${LAUNCHER}@${V}`);
+        if (state.xPublished === "unreadable") throw new Error("ETIMEDOUT reading the registry");
+        if (state.xPublished === null)
+          throw Object.assign(new Error("Command failed: npm view"), {
+            stderr: `npm error code E404\nnpm error 404 No match found for version ${V}`,
+            stdout: JSON.stringify({ error: { code: "E404" } }),
+          });
+        const served = options.publishedIntegrity ?? sri(state.xPublished);
+        return { stdout: JSON.stringify([{ name: LAUNCHER, version: V, dist: { integrity: served } }]) };
+      }
+      if (command === "npm" && args[0] === "view" && args[2] === "--json") {
+        // observeRelease: the staged versions, platforms at V and the launcher at RC.
+        const spec = args[1] as string;
+        const at = spec.lastIndexOf("@");
+        const name = spec.slice(0, at);
+        const version = spec.slice(at + 1);
+        return {
+          stdout: JSON.stringify([{ name, version, dist: { integrity: integrity(tarballName(name, version)) } }]),
+        };
+      }
+      if (command === "npm" && args[0] === "pack") {
+        expect(args[1]).toBe(`${LAUNCHER}@${RC}`);
+        if (state.servedRc === "fail")
+          throw Object.assign(new Error("Command failed"), { stderr: "npm error E404\nmore" });
+        const into = args[3] as string;
+        writeFileSync(join(into, RC_FILE), state.servedRc);
+        return { stdout: JSON.stringify([{ filename: RC_FILE }]) };
+      }
+      if (command === "npm" && args[0] === "publish") {
+        writes.push(args.join(" "));
+        envs.push((opts.env ?? {}) as Record<string, string | undefined>);
+        if (options.failPublish) throw new Error("E403 Forbidden");
+        state.xPublished = readFileSync(args[1] as string);
+        (tags[LAUNCHER] as Record<string, string>).latest = V;
+        if (options.failPublishAfterApply) throw new Error("ETIMEDOUT (the registry applied the publish)");
+        return { stdout: `+ ${LAUNCHER}@${V}` };
+      }
+      if (command === "npm" && args[0] === "dist-tag" && args[1] === "add") {
+        options.onAdd?.();
+        const spec = args[2] as string;
+        const at = spec.lastIndexOf("@");
+        const name = spec.slice(0, at);
+        writes.push(args.join(" "));
+        envs.push((opts.env ?? {}) as Record<string, string | undefined>);
+        if (options.failAdd === name && spec.endsWith(`@${V}`)) throw new Error("E403 Forbidden");
+        if (options.failRestore === name && !spec.endsWith(`@${V}`)) throw new Error("ETIMEDOUT restoring");
+        (tags[name] as Record<string, string>)[args[3] as string] = spec.slice(at + 1);
+        if (options.failAfterApply === name && spec.endsWith(`@${V}`))
+          throw new Error("ETIMEDOUT (the registry applied the write; the client never heard back)");
+        if (name !== LAUNCHER && spec.endsWith(`@${V}`) && ++state.platformsMoved === PLATFORMS.length)
+          options.afterPlatforms?.(self);
+        return { stdout: "" };
+      }
+      throw new Error(`unexpected command in test: ${line}`);
+    },
+    tags,
+    calls,
+    writes,
+    envs,
+    files,
+    state,
+  };
+  return self;
 }
 
 function harness() {
@@ -142,12 +359,8 @@ function harness() {
   const record = join(dir, "promotion-record.json");
   const out: string[] = [];
   const err: string[] = [];
-  const go = (
-    argv: string[],
-    w: ReturnType<typeof world>,
-    env: Record<string, string | undefined> = { NPM_TOKEN: "" },
-  ) =>
-    main(argv, {
+  const go = (argv: string[], w: World, env: Record<string, string | undefined> = { NPM_TOKEN: "" }) =>
+    main(argv.includes("--rollback") || argv.includes("--release-run") ? argv : [...argv, "--release-run", RUN], {
       run: w.run,
       env,
       out: (l) => out.push(l),
@@ -167,10 +380,12 @@ function harness() {
   };
 }
 
-describe("scripts/promote-latest.mjs: a verifying pair receipt", () => {
-  test("--promote records every prior latest BEFORE moving anything, then moves platforms first, launcher last", async () => {
+const platformMoves = (target: string) => PLATFORM_PACKAGES.map((name) => `dist-tag add ${name}@${target} latest`);
+const publishLine = (w: World) => `publish ${join(w.state.downloadDir as string, X_FILE)} --tag latest`;
+
+describe("scripts/promote-latest.mjs: the clean case (LCLI-621)", () => {
+  test("--promote records every prior latest first, moves six platforms by dist-tag, then publishes X --tag latest LAST", async () => {
     const h = harness();
-    // A holder, not a `let`: tsc narrows a `let` assigned only inside a closure to its initial null.
     const seen: { recordAtFirstWrite: boolean | null } = { recordAtFirstWrite: null };
     const w = world({
       onAdd: () => {
@@ -180,42 +395,71 @@ describe("scripts/promote-latest.mjs: a verifying pair receipt", () => {
     try {
       expect(await h.go(["--record", h.record, "--promote"], w)).toBe(0);
       expect(seen.recordAtFirstWrite).toBe(true);
-      expect(w.writes).toEqual(RELEASE_PACKAGES.map((name) => `dist-tag add ${name}@${V} latest`));
-      expect(w.writes.at(-1)).toBe(`dist-tag add @opum-ai/lore@${V} latest`);
+      // Exactly one publish, the X launcher from the artifact, with --tag latest, after all six moves.
+      expect(w.writes).toEqual([...platformMoves(V), publishLine(w)]);
+      expect(w.writes.filter((line) => line.startsWith("publish "))).toEqual([publishLine(w)]);
+      // The bytes npm now holds for X are the artifact's X launcher, not a repack.
+      expect(sha256(w.state.xPublished as Buffer)).toBe(sha256(w.files.get(X_FILE) as Buffer));
       const record = h.readRecord();
       expect(record.kind).toBe(RECORD_KIND);
       expect(record.version).toBe(V);
+      expect(record.launcherVersion).toBe(RC);
+      expect(record.releaseRunId).toBe(RUN);
+      // Seven priors, the launcher's included, so a rollback can restore it by dist-tag.
       expect(record.packages).toEqual(RELEASE_PACKAGES.map((name) => ({ name, priorLatest: PRIOR })));
       for (const name of RELEASE_PACKAGES) expect(w.tags[name]?.latest).toBe(V);
-      // The prior values are printed as well as written.
       for (const name of RELEASE_PACKAGES) expect(h.out).toContain(`  ${name}  ${PRIOR}`);
       expect(h.text()).toContain(
         `Pair receipt opum-ai/opum-cli-e2e@main:receipts/pair/${V}.json qualifies lore ${V} with quest ${V}`,
+      );
+      expect(h.text()).toContain(`Pass-1 receipt opum-ai/opum-cli-e2e@main:receipts/lore/${V}.json binds run ${RUN}`);
+      expect(h.text()).toContain(
+        `Promoted: latest reads ${V} on all 7 packages, and npm serves ${LAUNCHER}@${V} as ${X_FILE}`,
+      );
+      // Step 6 ran twice: before any move, and again after the platforms, before the publish.
+      const packs = w.calls.filter((c) => c[0] === "npm" && c[1] === "pack");
+      expect(packs.length).toBe(2);
+      const firstPack = w.calls.findIndex((c) => c[0] === "npm" && c[1] === "pack");
+      const lastPack = w.calls.findLastIndex((c) => c[0] === "npm" && c[1] === "pack");
+      const firstMove = w.calls.findIndex((c) => c[1] === "dist-tag");
+      const lastPlatformMove = w.calls.findLastIndex((c) => c[1] === "dist-tag");
+      const publish = w.calls.findIndex((c) => c[1] === "publish");
+      expect(firstPack).toBeLessThan(firstMove);
+      expect(lastPlatformMove).toBeLessThan(lastPack);
+      expect(lastPack).toBeLessThan(publish);
+      // OPAG-474 AC3: the readme's byte count is read back and printed.
+      expect(h.text()).toContain(
+        `npm's package-level readme for ${LAUNCHER} is ${Buffer.byteLength("# lore\n\nThe README.\n")} bytes`,
       );
     } finally {
       h.cleanup();
     }
   });
 
-  test("--dry-run reads everything, prints the record and each move, and changes NOTHING", async () => {
+  test("--dry-run reads everything, runs step 6 once, prints the record and each move, and writes NOTHING", async () => {
     const h = harness();
     const w = world();
     try {
       expect(await h.go(["--record", h.record, "--dry-run"], w)).toBe(0);
       expect(w.writes).toEqual([]);
       expect(existsSync(h.record)).toBe(false);
-      for (const name of RELEASE_PACKAGES) {
+      for (const name of PLATFORM_PACKAGES)
         expect(h.out.join("\n")).toContain(`would    npm dist-tag add ${name}@${V} latest   (now ${PRIOR})`);
-        expect(w.tags[name]?.latest).toBe(PRIOR);
-      }
+      expect(h.out.join("\n")).toContain(
+        `would    npm publish ${join(w.state.downloadDir as string, X_FILE)} --tag latest`,
+      );
+      for (const name of RELEASE_PACKAGES) expect(w.tags[name]?.latest).toBe(PRIOR);
       expect(h.text()).toContain('"priorLatest": "5.6.6"');
-      expect(h.text()).toContain("Dry run only: nothing was written and no tag moved.");
+      expect(h.text()).toContain("Dry run only: nothing was written, published or tag-moved.");
+      expect(w.calls.filter((c) => c[1] === "pack").length).toBe(1);
+      // No credential is even looked up.
+      expect(w.calls.some((c) => c[0] === "security")).toBe(false);
     } finally {
       h.cleanup();
     }
   });
 
-  test("an override receipt proceeds and prints the override verbatim", async () => {
+  test("an override on the pair receipt proceeds and prints the override verbatim", async () => {
     const h = harness();
     const receipt = goodReceipt();
     receipt.verdict = "NOT QUALIFIED";
@@ -228,10 +472,173 @@ describe("scripts/promote-latest.mjs: a verifying pair receipt", () => {
       h.cleanup();
     }
   });
+
+  test("the artifact is downloaded afresh into a private directory, which is removed on exit", async () => {
+    const h = harness();
+    const w = world();
+    try {
+      expect(await h.go(["--record", h.record, "--dry-run"], w)).toBe(0);
+      expect(w.state.downloadDir).not.toBeNull();
+      expect(existsSync(w.state.downloadDir as string)).toBe(false);
+    } finally {
+      h.cleanup();
+    }
+  });
 });
 
-describe("scripts/promote-latest.mjs refuses without a verifying pair receipt", () => {
-  const bad: Array<[string, Parameters<typeof world>[0], string]> = [
+/** Every refusal below: exit 1, no record written, nothing written to the registry, no credential read. */
+function expectRefusedBeforeAnyWrite(h: ReturnType<typeof harness>, w: World) {
+  expect(w.writes).toEqual([]);
+  expect(existsSync(h.record)).toBe(false);
+  expect(w.calls.some((c) => c[0] === "security")).toBe(false);
+}
+
+function refusalSuite(title: string, header: string, cases: Array<[string, WorldOptions, string]>) {
+  describe(title, () => {
+    for (const [label, options, reason] of cases) {
+      for (const mode of ["--promote", "--dry-run"] as const) {
+        test(`${label} (${mode}): exit 1, no record, no write`, async () => {
+          const h = harness();
+          const w = world(options);
+          try {
+            expect(await h.go(["--record", h.record, mode], w)).toBe(1);
+            expect(h.err.join("\n")).toContain(header);
+            expect(h.err.join("\n")).toContain(reason);
+            expectRefusedBeforeAnyWrite(h, w);
+          } finally {
+            h.cleanup();
+          }
+        });
+      }
+    }
+  });
+}
+
+const edit = (name: string, change: (bytes: Buffer) => Buffer) => (files: Map<string, Buffer>) =>
+  files.set(name, change(files.get(name) as Buffer));
+
+refusalSuite("scripts/promote-latest.mjs: the tag and the Release run (LCLI-621)", `Refusing to promote ${V}`, [
+  ["no v<version> tag", { tagCommit: null }, `refs/tags/v${V} could not be read (gh: Not Found (HTTP 404))`],
+  [
+    "a run of another workflow",
+    { run: { path: ".github/workflows/ci.yml" } },
+    `run ${RUN} is ".github/workflows/ci.yml", not .github/workflows/release.yml`,
+  ],
+  ["a run of another commit", { run: { head_sha: "e".repeat(40) } }, `but the tag peels to ${COMMIT}`],
+  ["a run that did not succeed", { run: { conclusion: "failure" } }, `run ${RUN} concluded "failure", not "success"`],
+  ["an artifact that cannot be downloaded", { downloadFails: true }, "artifact of run 4242 could not be downloaded"],
+]);
+
+refusalSuite(
+  "scripts/promote-latest.mjs: the artifact must be the eight tarballs of this release (LCLI-621)",
+  `the npm-packages artifact of run ${RUN} is not a lore ${V} release`,
+  [
+    ["no X launcher carried", { artifact: (f) => f.delete(X_FILE) }, `the artifact is missing ${X_FILE}`],
+    [
+      "two rc launchers",
+      { artifact: (f) => f.set(`opum-ai-lore-${V}-rc.3.tgz`, launcher(`${V}-rc.3`)) },
+      "must hold exactly one launcher",
+    ],
+    [
+      "an rc with a leading-zero N",
+      {
+        artifact: (f) => {
+          f.set(`opum-ai-lore-${V}-rc.02.tgz`, f.get(RC_FILE) as Buffer);
+          f.delete(RC_FILE);
+        },
+      },
+      `opum-ai-lore-${V}-rc.02.tgz does not name a launcher ${V}-rc.<N>`,
+    ],
+    [
+      "a platform missing",
+      { artifact: (f) => f.delete(`opum-ai-lore-win32-x64-${V}.tgz`) },
+      `the artifact is missing opum-ai-lore-win32-x64-${V}.tgz`,
+    ],
+    [
+      "an extra tarball",
+      { artifact: (f) => f.set(`opum-ai-lore-freebsd-x64-${V}.tgz`, Buffer.from("x")) },
+      `the artifact carries opum-ai-lore-freebsd-x64-${V}.tgz`,
+    ],
+    [
+      "an X launcher that differs from the rc beyond the version",
+      { artifact: edit(X_FILE, () => launcher(V, "an extra line\n")) },
+      "launcher equivalence (artifact): package/README.md: content differs beyond",
+    ],
+  ],
+);
+
+type Pass1Doc = {
+  commit: string;
+  releaseRunId: number;
+  tarballs: Record<string, string>;
+  launcherVersion?: string;
+  launcherSubstitution: { verdict: string; finalTarball: { filename: string; sha256: string } };
+};
+
+/** A pass-1 receipt built from the files, then edited. */
+const pass1With = (change: (r: Pass1Doc) => void) => (files: Map<string, Buffer>) => {
+  const r = goodPass1(files) as unknown as Pass1Doc;
+  change(r);
+  return r;
+};
+
+refusalSuite(
+  "scripts/promote-latest.mjs: the pass-1 receipt binds the artifact (LCLI-621)",
+  `Refusing to promote ${V}`,
+  [
+    [
+      "no pass-1 receipt (404)",
+      { pass1: undefined },
+      `no opum-cli-e2e qualification receipt at opum-ai/opum-cli-e2e@main:receipts/lore/${V}.json`,
+    ],
+    [
+      "a commit the tag does not peel to",
+      { pass1: pass1With((r) => (r.commit = "e".repeat(40))) },
+      `but v${V} peels to "${COMMIT}"`,
+    ],
+    ["another run", { pass1: pass1With((r) => (r.releaseRunId = 1)) }, `releaseRunId is 1, not ${RUN}`],
+    [
+      "a staged digest that is not the artifact's",
+      { pass1: pass1With((r) => (r.tarballs[RC_FILE] = "0".repeat(64))) },
+      `sha256 MISMATCH for ${RC_FILE}`,
+    ],
+    [
+      "no launcherVersion (a pre-amendment receipt)",
+      { pass1: pass1With((r) => delete r.launcherVersion) },
+      `launcherVersion is undefined, not ${V}-rc.<N>`,
+    ],
+    [
+      "a launcherVersion that is not the artifact's rc",
+      { pass1: pass1With((r) => (r.launcherVersion = `${V}-rc.1`)) },
+      `launcherVersion is ${V}-rc.1, but the artifact stages the launcher as ${RC}`,
+    ],
+    [
+      "a malformed launcherVersion",
+      { pass1: pass1With((r) => (r.launcherVersion = `${V}-rc.0`)) },
+      `launcherVersion is "${V}-rc.0", not ${V}-rc.<N>`,
+    ],
+    [
+      "a MISMATCH launcherSubstitution",
+      { pass1: pass1With((r) => (r.launcherSubstitution.verdict = "MISMATCH")) },
+      'launcherSubstitution.verdict is "MISMATCH", not "MATCH"',
+    ],
+    [
+      "a finalTarball that is a path, not the basename",
+      { pass1: pass1With((r) => (r.launcherSubstitution.finalTarball.filename = `final/${X_FILE}`)) },
+      `not the basename "${X_FILE}"`,
+    ],
+    [
+      "a finalTarball sha256 that is not the artifact's X launcher",
+      { pass1: pass1With((r) => (r.launcherSubstitution.finalTarball.sha256 = "9".repeat(64))) },
+      `launcherSubstitution.finalTarball.sha256 is "${"9".repeat(64)}"`,
+    ],
+  ],
+);
+
+refusalSuite(
+  "scripts/promote-latest.mjs refuses without a verifying pair receipt",
+  `Refusing to promote ${V}: no opum-cli-e2e pair receipt qualifies`,
+  [
     [
       "no receipt (404)",
       { receipt: undefined },
@@ -275,23 +682,22 @@ describe("scripts/promote-latest.mjs refuses without a verifying pair receipt", 
       },
       'pair.quest.version is "5.6.8"',
     ],
-    ["step 3: a commit the tag does not peel to", { tagCommit: "e".repeat(40) }, `resolves to "${"e".repeat(40)}"`],
-    ["step 3: no v<version> tag", { tagCommit: null }, `refs/tags/v${V} could not be read (gh: Not Found (HTTP 404))`],
+    ["step 3: a commit the tag does not peel to", { receipt: goodReceipt("e".repeat(40)) }, `resolves to "${COMMIT}"`],
     [
       "installedFrom not the registry",
       { receipt: { ...goodReceipt(), installedFrom: { lore: { source: "candidate" } } } },
       'installedFrom.lore.source is "candidate"',
     ],
     [
-      "step 4: a missing archive",
+      "step 4: a missing platform archive",
       {
         receipt: (() => {
           const r = goodReceipt() as { pair: { lore: { tarballs: Record<string, unknown> } } };
-          delete r.pair.lore.tarballs[`opum-ai-lore-${V}.tgz`];
+          delete r.pair.lore.tarballs[`opum-ai-lore-linux-x64-${V}.tgz`];
           return r;
         })(),
       },
-      `opum-ai-lore-${V}.tgz: not in the pair receipt`,
+      `opum-ai-lore-linux-x64-${V}.tgz: not in the pair receipt`,
     ],
     [
       "step 4: a digest npm does not serve",
@@ -304,46 +710,223 @@ describe("scripts/promote-latest.mjs refuses without a verifying pair receipt", 
       },
       "qualified sha512-else, npm serves",
     ],
-  ];
-  for (const [label, options, reason] of bad) {
-    for (const mode of ["--promote", "--dry-run"] as const) {
-      test(`${label} (${mode}): exit 1, no record written, no tag moved`, async () => {
-        const h = harness();
-        const w = world(options);
-        try {
-          expect(await h.go(["--record", h.record, mode], w)).toBe(1);
-          expect(h.err.join("\n")).toContain(`Refusing to promote ${V}: no opum-cli-e2e pair receipt qualifies`);
-          expect(h.err.join("\n")).toContain(reason);
-          expect(w.writes).toEqual([]);
-          expect(existsSync(h.record)).toBe(false);
-          expect(w.calls.some((c) => c[0] === "security")).toBe(false);
-        } finally {
-          h.cleanup();
-        }
-      });
-    }
-  }
-});
+    [
+      "step 5: no launcherVersion (a pre-amendment receipt)",
+      {
+        receipt: (() => {
+          const r = goodReceipt() as { pair: { lore: Record<string, unknown> } };
+          delete r.pair.lore.launcherVersion;
+          return r;
+        })(),
+      },
+      `pair.lore.launcherVersion is undefined, not ${V}-rc.<N>`,
+    ],
+    [
+      "step 5: a launcherVersion that is not the artifact's rc",
+      {
+        receipt: (() => {
+          const r = goodReceipt() as {
+            pair: { lore: { launcherVersion?: string; tarballs: Record<string, unknown> } };
+          };
+          r.pair.lore.launcherVersion = `${V}-rc.1`;
+          const rc1 = `opum-ai-lore-${V}-rc.1.tgz`;
+          r.pair.lore.tarballs[rc1] = { distIntegrity: integrity(rc1) };
+          delete r.pair.lore.tarballs[RC_FILE];
+          return r;
+        })(),
+      },
+      `pair.lore.launcherVersion is ${V}-rc.1, but the Release run's artifact stages the launcher as "${RC}"`,
+    ],
+  ],
+);
 
-describe("scripts/promote-latest.mjs: the staging precondition and the record", () => {
-  test("refuses unless ALL seven are staged at the version under release-candidate", async () => {
+refusalSuite(
+  "scripts/promote-latest.mjs: step 6 before anything moves (LCLI-621)",
+  `Refusing to promote ${V}: the ${V} launcher is not the rc npm serves with only its version substituted`,
+  [
+    [
+      "npm serves the rc as other bytes than the artifact's",
+      { servedRc: launcher(RC, "restaged\n") },
+      `npm serves ${LAUNCHER}@${RC} as sha256`,
+    ],
+    [
+      "the served rc cannot be downloaded",
+      { servedRc: "fail" },
+      `${LAUNCHER}@${RC} could not be downloaded from the registry (npm error E404)`,
+    ],
+  ],
+);
+
+describe("scripts/promote-latest.mjs: X already on npm (a resume, LCLI-621)", () => {
+  test("X on npm as exactly the artifact's bytes: the tag moves, nothing is republished", async () => {
     const h = harness();
-    const w = world({ tags: { "@opum-ai/lore-win32-x64": { "release-candidate": "5.6.6" } } });
+    const w = world({ xPublished: artifact().get(X_FILE) as Buffer });
     try {
-      expect(await h.go(["--record", h.record, "--promote"], w)).toBe(1);
-      expect(h.err.join("\n")).toContain(
-        `@opum-ai/lore-win32-x64: release-candidate is "5.6.6", not ${V}; stage it with scripts/publish-release.sh first`,
-      );
-      expect(w.writes).toEqual([]);
-      expect(existsSync(h.record)).toBe(false);
+      expect(await h.go(["--record", h.record, "--promote"], w)).toBe(0);
+      expect(w.writes).toEqual([...platformMoves(V), `dist-tag add ${LAUNCHER}@${V} latest`]);
+      expect(h.text()).toContain("already on npm as the artifact's bytes; tag moved");
     } finally {
       h.cleanup();
     }
   });
 
+  for (const mode of ["--promote", "--dry-run"] as const) {
+    test(`X on npm as OTHER bytes refuses before anything moves (${mode})`, async () => {
+      const h = harness();
+      const w = world({ xPublished: launcher(V, "someone else's\n") });
+      try {
+        expect(await h.go(["--record", h.record, mode], w)).toBe(1);
+        expect(h.err.join("\n")).toContain(`${LAUNCHER}@${V} is already on the registry as sha512-`);
+        expect(h.err.join("\n")).toContain("this needs a new version, not a rerun. Do NOT run npm unpublish.");
+        expectRefusedBeforeAnyWrite(h, w);
+      } finally {
+        h.cleanup();
+      }
+    });
+  }
+
+  test("an unreadable registry is not read as 'X is absent': it refuses before anything moves", async () => {
+    const h = harness();
+    const w = world({ xPublished: "unreadable" });
+    try {
+      expect(await h.go(["--record", h.record, "--promote"], w)).toBe(1);
+      expect(h.err.join("\n")).toContain(`npm view ${LAUNCHER}@${V} failed with something other than npm's not-found`);
+      expectRefusedBeforeAnyWrite(h, w);
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+describe("scripts/promote-latest.mjs: step 6 re-runs after the platform move (LCLI-621)", () => {
+  test("npm serving another rc by then: no publish, and every moved latest is restored, the launcher's included", async () => {
+    const h = harness();
+    const w = world({
+      afterPlatforms: (self) => {
+        self.state.servedRc = launcher(RC, "swapped after the platforms moved\n");
+      },
+    });
+    try {
+      expect(await h.go(["--record", h.record, "--promote"], w)).toBe(1);
+      expect(w.writes.some((line) => line.startsWith("publish "))).toBe(false);
+      expect(w.writes).toEqual([
+        ...platformMoves(V),
+        ...platformMoves(PRIOR),
+        `dist-tag add ${LAUNCHER}@${PRIOR} latest`,
+      ]);
+      for (const name of RELEASE_PACKAGES) expect(w.tags[name]?.latest).toBe(PRIOR);
+      expect(h.err.join("\n")).toContain(`PROMOTION FAILED at ${LAUNCHER}`);
+      expect(h.text()).toContain("step 6 no longer holds against the registry");
+      expect(h.err.join("\n")).toContain("Nothing was unpublished.");
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("the X tarball changing on disk by then: its sha256 no longer matches the receipt's finalTarball, no publish", async () => {
+    const h = harness();
+    const w = world({
+      afterPlatforms: (self) => {
+        writeFileSync(join(self.state.downloadDir as string, X_FILE), launcher(V, "tampered\n"));
+      },
+    });
+    try {
+      expect(await h.go(["--record", h.record, "--promote"], w)).toBe(1);
+      expect(w.writes.some((line) => line.startsWith("publish "))).toBe(false);
+      expect(h.text()).toContain(`${X_FILE} hashes to sha256`);
+      expect(h.text()).toContain("the pass-1 receipt's launcherSubstitution.finalTarball.sha256 is");
+      for (const name of RELEASE_PACKAGES) expect(w.tags[name]?.latest).toBe(PRIOR);
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+describe("scripts/promote-latest.mjs: step 7 and the readme read-back (LCLI-621)", () => {
+  test("npm serving X as other bytes after the publish fails, without rolling back or unpublishing", async () => {
+    const h = harness();
+    const w = world({ publishedIntegrity: "sha512-somethingelse" });
+    try {
+      expect(await h.go(["--record", h.record, "--promote"], w)).toBe(1);
+      expect(h.err.join("\n")).toContain(
+        `${LAUNCHER}@${V}: npm serves sha512-somethingelse, the artifact's ${X_FILE} is sha512-`,
+      );
+      expect(h.err.join("\n")).toContain("Do NOT run npm unpublish.");
+      expect(w.writes).toEqual([...platformMoves(V), publishLine(w)]);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("a 0-byte readme WARNS loudly and names the re-measure command, but the verified promotion exits 0", async () => {
+    const h = harness();
+    const w = world({ readme: "" });
+    try {
+      expect(await h.go(["--record", h.record, "--promote"], w)).toBe(0);
+      const errText = h.err.join("\n");
+      expect(errText).toContain("!!! WARNING: npm SERVES NO README FOR THE LAUNCHER YET (OPAG-474 AC3) !!!");
+      expect(errText).toContain(`npm's package-level readme for ${LAUNCHER} is 0 bytes after 1 read(s).`);
+      expect(errText).toContain(`npm view ${LAUNCHER} readme | wc -c`);
+      expect(errText).toContain("do NOT roll back or unpublish for this");
+      expect(w.calls).toContainEqual([
+        "npm",
+        "view",
+        LAUNCHER,
+        "readme",
+        "--prefer-online",
+        `--userconfig=${devNull}`,
+        "--registry=https://registry.npmjs.org/",
+      ]);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("an unreadable readme is reported as unreadable, never as 0 bytes", async () => {
+    const h = harness();
+    const w = world({ readme: "fail" });
+    try {
+      expect(await h.go(["--record", h.record, "--promote"], w)).toBe(0);
+      expect(h.err.join("\n")).toContain("is unreadable (E503 registry unreachable)");
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("unit: readBackReadme re-reads through lag and stops at the first non-empty answer", async () => {
+    const answers = ["", "", "# lore\n"];
+    let reads = 0;
+    const result = await readBackReadme({
+      run: async () => ({ stdout: answers[reads++] ?? "" }),
+      attempts: 5,
+      sleep: async () => {},
+    });
+    expect(result).toEqual({ bytes: "# lore".length, attempts: 3 });
+  });
+});
+
+describe("scripts/promote-latest.mjs: the staging precondition, the record, and rollback", () => {
+  test("refuses unless ALL seven are staged: the platforms at X, the launcher at X-rc.N", async () => {
+    for (const [name, rc, reason] of [
+      ["@opum-ai/lore-win32-x64", "5.6.6", `@opum-ai/lore-win32-x64: release-candidate is "5.6.6", not ${V}`],
+      [LAUNCHER, V, `${LAUNCHER}: release-candidate is "${V}", not ${RC}`],
+      [LAUNCHER, `${V}-rc.1`, `${LAUNCHER}: release-candidate is "${V}-rc.1", not ${RC}`],
+    ] as const) {
+      const h = harness();
+      const w = world({ tags: { [name]: { "release-candidate": rc } } });
+      try {
+        expect(await h.go(["--record", h.record, "--promote"], w)).toBe(1);
+        expect(h.err.join("\n")).toContain(`${reason}; stage it with scripts/publish-release.sh first`);
+        expectRefusedBeforeAnyWrite(h, w);
+      } finally {
+        h.cleanup();
+      }
+    }
+  });
+
   test("refuses to build a fresh record when latest already reads the version (a lost record)", async () => {
     const h = harness();
-    const w = world({ tags: { "@opum-ai/lore": { latest: V } } });
+    const w = world({ tags: { [LAUNCHER]: { latest: V } } });
     try {
       expect(await h.go(["--record", h.record, "--promote"], w)).toBe(1);
       expect(h.err.join("\n")).toContain(
@@ -377,20 +960,44 @@ describe("scripts/promote-latest.mjs: the staging precondition and the record", 
     }
   });
 
-  test("--rollback restores every recorded prior latest, and is NOT gated on the pair receipt", async () => {
+  test("a failed launcher PUBLISH restores all six platforms AND the launcher's latest, by dist-tag", async () => {
+    const h = harness();
+    const w = world({ failPublishAfterApply: true });
+    try {
+      expect(await h.go(["--record", h.record, "--promote"], w)).toBe(1);
+      expect(w.writes).toEqual([
+        ...platformMoves(V),
+        publishLine(w),
+        ...platformMoves(PRIOR),
+        `dist-tag add ${LAUNCHER}@${PRIOR} latest`,
+      ]);
+      // The publish landed before the client heard back; the launcher's latest is put back all the same.
+      for (const name of RELEASE_PACKAGES) expect(w.tags[name]?.latest).toBe(PRIOR);
+      expect(h.err.join("\n")).toContain(`PROMOTION FAILED at ${LAUNCHER}`);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("--rollback restores all seven by dist-tag, the launcher's included, needs no Release run, and is NOT gated on either receipt", async () => {
     const h = harness();
     const promoted = world();
     try {
       expect(await h.go(["--record", h.record, "--promote"], promoted)).toBe(0);
-      // Later: quest's side failed and lore must be put back. The receipt is gone by now.
       const w = world({
         receipt: undefined,
+        pass1: undefined,
         tags: Object.fromEntries(RELEASE_PACKAGES.map((n) => [n, { latest: V }])),
       });
       expect(await h.go(["--rollback", h.record], w)).toBe(0);
       expect(w.writes).toEqual(RELEASE_PACKAGES.map((name) => `dist-tag add ${name}@${PRIOR} latest`));
+      expect(w.writes.at(-1)).toBe(`dist-tag add ${LAUNCHER}@${PRIOR} latest`);
       for (const name of RELEASE_PACKAGES) expect(w.tags[name]?.latest).toBe(PRIOR);
-      expect(w.calls.some((c) => c.join(" ").includes("receipts/pair"))).toBe(false);
+      expect(w.calls.some((c) => c.join(" ").includes("receipts/"))).toBe(false);
+      expect(w.calls.some((c) => c[0] === "gh")).toBe(false);
+      // Nothing is ever unpublished: no npm unpublish, and no publish, on the rollback path.
+      expect(w.calls.some((c) => c[0] === "npm" && (c[1] === "unpublish" || c[1] === "publish"))).toBe(false);
+      expect(h.text()).toContain("Nothing was unpublished.");
     } finally {
       h.cleanup();
     }
@@ -399,10 +1006,9 @@ describe("scripts/promote-latest.mjs: the staging precondition and the record", 
   test("a rerun reuses the first run's record: prior values are never re-read after a partial move", async () => {
     const h = harness();
     try {
-      expect(await h.go(["--record", h.record, "--promote"], world({ failAdd: "@opum-ai/lore" }))).toBe(1);
-      // The failure restored everything, but simulate a crash that left two moved: the registry now
-      // says latest=V for those, and a fresh read would record V as their "prior".
+      expect(await h.go(["--record", h.record, "--promote"], world({ failPublish: true }))).toBe(1);
       const first = h.readRecord();
+      // Simulate a crash that left two moved: a fresh read would record V as their "prior".
       const w = world({
         tags: { "@opum-ai/lore-darwin-arm64": { latest: V }, "@opum-ai/lore-darwin-x64": { latest: V } },
       });
@@ -428,7 +1034,7 @@ describe("scripts/promote-latest.mjs: the staging precondition and the record", 
 });
 
 describe("scripts/promote-latest.mjs: arguments and credentials", () => {
-  test("says --dry-run or --promote, exactly one; --record is required", async () => {
+  test("says --dry-run or --promote, exactly one; --record and --release-run are required", async () => {
     const h = harness();
     try {
       await expect(h.go(["--record", h.record], world())).rejects.toThrow("exactly one");
@@ -437,6 +1043,15 @@ describe("scripts/promote-latest.mjs: arguments and credentials", () => {
       await expect(h.go(["--record", h.record, "--promote", "--force"], world())).rejects.toThrow(
         "unknown argument: --force",
       );
+      const bare = world();
+      await expect(
+        main(["--record", h.record, "--promote"], { run: bare.run, readPackageVersion: async () => V }),
+      ).rejects.toThrow("--release-run <id> is required");
+      expect(bare.calls).toEqual([]);
+      await expect(h.go(["--record", h.record, "--promote", "--release-run", "v1"], world())).rejects.toThrow(
+        '--release-run must be a numeric run id, got "v1"',
+      );
+      await expect(h.go(["--rollback", h.record, "--release-run", RUN], world())).rejects.toThrow("stands alone");
     } finally {
       h.cleanup();
     }
@@ -450,6 +1065,8 @@ describe("scripts/promote-latest.mjs: arguments and credentials", () => {
       expect(await h.go(["--record", h.record, "--promote"], w, { NPM_TOKEN: token })).toBe(0);
       expect(h.text()).toContain("length=40 prefix=npm_ internal_whitespace=no");
       expect(h.text()).not.toContain(token);
+      // Every write, the launcher publish included, used the private npmrc.
+      expect(w.envs.length).toBe(RELEASE_PACKAGES.length);
       expect(w.envs.every((e) => typeof e.npm_config_userconfig === "string")).toBe(true);
       expect(existsSync(w.envs[0]?.npm_config_userconfig as string)).toBe(false);
     } finally {
@@ -468,14 +1085,135 @@ describe("scripts/promote-latest.mjs: arguments and credentials", () => {
     }
   });
 
-  test("with no token it uses ~/.npmrc and passes --otp to each move", async () => {
+  test("with no token it uses ~/.npmrc and passes --otp to each move and to the publish", async () => {
     const h = harness();
     const w = world();
     try {
       expect(await h.go(["--record", h.record, "--promote", "--otp", "123456"], w)).toBe(0);
       expect(w.writes[0]).toBe(`dist-tag add @opum-ai/lore-darwin-arm64@${V} latest --otp 123456`);
+      expect(w.writes.at(-1)).toBe(`${publishLine(w)} --otp 123456`);
     } finally {
       h.cleanup();
+    }
+  });
+
+  test("launcherPublishArgs: the file, --tag latest, and nothing that stages", () => {
+    expect(launcherPublishArgs("/a/opum-ai-lore-1.2.3.tgz")).toEqual([
+      "publish",
+      "/a/opum-ai-lore-1.2.3.tgz",
+      "--tag",
+      "latest",
+    ]);
+    expect(launcherPublishArgs("/a/x.tgz", { otp: "1" })).toEqual([
+      "publish",
+      "/a/x.tgz",
+      "--tag",
+      "latest",
+      "--otp",
+      "1",
+    ]);
+  });
+});
+
+describe("scripts/promote-latest.mjs: units", () => {
+  test("checkReleaseRun: release.yml, the peeled commit, success, and the run asked for", () => {
+    const good = { id: 7, path: ".github/workflows/release.yml", head_sha: COMMIT, conclusion: "success" };
+    expect(checkReleaseRun(good, { runId: "7", commit: COMMIT })).toEqual([]);
+    expect(checkReleaseRun({ ...good, id: 8 }, { runId: "7", commit: COMMIT })).toEqual([
+      "the API answered for run 8, not 7",
+    ]);
+    expect(checkReleaseRun(null, { runId: "7", commit: COMMIT })).toEqual(["run 7 did not read as a workflow run"]);
+  });
+
+  test("publishFinalLauncher: step 6 first; a failed recheck neither publishes nor tags", async () => {
+    const calls: string[] = [];
+    const final = { filename: X_FILE, path: `/art/${X_FILE}`, sha256: "s", integrity: "sha512-final" };
+    const go = (
+      recheck: { ok: boolean; problems: string[] },
+      probe: { state: "absent" } | { state: "present"; integrity: string | null },
+    ) =>
+      publishFinalLauncher({
+        version: V,
+        final,
+        recheck: async () => {
+          calls.push("recheck");
+          return recheck;
+        },
+        publish: async (tarball) => {
+          calls.push(`publish ${tarball}`);
+        },
+        setTag: async (name, version, tag) => {
+          calls.push(`tag ${name}@${version} ${tag}`);
+        },
+        probe: async () => probe,
+      });
+    expect(await go({ ok: true, problems: [] }, { state: "absent" })).toBe(`published from ${X_FILE}`);
+    expect(calls).toEqual(["recheck", `publish /art/${X_FILE}`]);
+    calls.length = 0;
+    await expect(go({ ok: false, problems: ["npm serves another rc"] }, { state: "absent" })).rejects.toThrow(
+      "npm serves another rc",
+    );
+    expect(calls).toEqual(["recheck"]);
+    calls.length = 0;
+    await expect(go({ ok: true, problems: [] }, { state: "present", integrity: null })).rejects.toThrow(
+      "could not be read; re-run the promotion at the same version",
+    );
+    expect(calls).toEqual(["recheck"]);
+  });
+
+  test("verifyFinalLauncher: lag is retried, a different integrity fails at once", async () => {
+    const final = { filename: X_FILE, path: "/x", sha256: "s", integrity: "sha512-final" };
+    let reads = 0;
+    const lagging = await verifyFinalLauncher({
+      version: V,
+      final,
+      attempts: 3,
+      sleep: async () => {},
+      probe: async () => {
+        reads++;
+        return reads < 3 ? { state: "absent" } : { state: "present", integrity: "sha512-final" };
+      },
+    });
+    expect(lagging).toEqual({ ok: true, attempts: 3, problems: [] });
+    reads = 0;
+    const other = await verifyFinalLauncher({
+      version: V,
+      final,
+      attempts: 3,
+      sleep: async () => {},
+      probe: async () => {
+        reads++;
+        return { state: "present", integrity: "sha512-other" };
+      },
+    });
+    expect(reads).toBe(1);
+    expect(other.ok).toBe(false);
+  });
+
+  test("checkServedLauncher: an X that differs from the SERVED rc beyond the version refuses, even when the digests hold", async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "lore-served-"));
+    try {
+      const rcBytes = launcher(RC);
+      const xBytes = launcher(V, "a banner\n");
+      writeFileSync(join(dir, "x.tgz"), xBytes);
+      const result = await checkServedLauncher({
+        version: V,
+        launcherVersion: RC,
+        rc: { filename: RC_FILE, path: "/unused", sha256: sha256(rcBytes), integrity: "" },
+        final: { filename: X_FILE, path: join(dir, "x.tgz"), sha256: sha256(xBytes), integrity: "" },
+        finalSha256: sha256(xBytes),
+        download: async (_spec, into) => {
+          writeFileSync(join(into, RC_FILE), rcBytes);
+          return join(into, RC_FILE);
+        },
+      });
+      expect(result.ok).toBe(false);
+      expect(result.problems).toHaveLength(1);
+      expect(result.problems[0]).toContain(
+        `the served ${RC} and ${X_FILE} differ beyond the version string: package/README.md`,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
@@ -483,7 +1221,7 @@ describe("scripts/promote-latest.mjs: arguments and credentials", () => {
 describe("scripts/promote-latest.mjs as a command", () => {
   const describePosix = process.platform === "win32" ? describe.skip : describe;
   describePosix("with stubs on PATH", () => {
-    test("the entrypoint wires the real runner: a missing receipt refuses with exit 1 and moves nothing", () => {
+    test("the entrypoint wires the real runner: an unreadable tag refuses with exit 1 and moves nothing", () => {
       const dir = mkdtempSync(resolve(tmpdir(), "lore-promote-cli-"));
       try {
         const bin = join(dir, "bin");
@@ -505,12 +1243,15 @@ describe("scripts/promote-latest.mjs as a command", () => {
             "--promote",
             "--version",
             V,
+            "--release-run",
+            RUN,
           ],
           env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}`, NPM_TOKEN: "" },
         });
         expect(r.exitCode).toBe(1);
         expect(r.stderr.toString()).toContain("gh: Not Found (HTTP 404)");
-        expect(readFileSync(log, "utf8")).not.toContain("dist-tag add");
+        expect(existsSync(log) ? readFileSync(log, "utf8") : "").not.toContain("dist-tag add");
+        expect(existsSync(log) ? readFileSync(log, "utf8") : "").not.toContain("publish");
         expect(existsSync(join(dir, "rec.json"))).toBe(false);
       } finally {
         rmSync(dir, { recursive: true, force: true });
@@ -565,7 +1306,6 @@ describe("scripts/promote-latest.mjs: --rollback moves latest only to what the r
 
   test("an OLD release's record, rolled back after a later promotion, refuses instead of downgrading", async () => {
     const h = harness();
-    // The record is for V (prior PRIOR); since then 5.6.8 was promoted everywhere.
     const w = world({
       receipt: undefined,
       tags: Object.fromEntries(RELEASE_PACKAGES.map((n) => [n, { latest: "5.6.8" }])),
@@ -660,13 +1400,11 @@ describe("scripts/promote-latest.mjs: --rollback moves latest only to what the r
 });
 
 describe("scripts/promote-latest.mjs: the failed package is restored too (review S2)", () => {
-  // The case quest-cli's QCLI-390 test uses: setTag APPLIES the write, then throws ETIMEDOUT.
   test("a write the registry APPLIED before the client failed is still put back, so no package stays moved", async () => {
     const h = harness();
     const w = world({ failAfterApply: "@opum-ai/lore-linux-arm64" });
     try {
       expect(await h.go(["--record", h.record, "--promote"], w)).toBe(1);
-      // Without S2 linux-arm64 would read V here while the output said "restored".
       for (const name of RELEASE_PACKAGES) expect(w.tags[name]?.latest).toBe(PRIOR);
       expect(w.writes).toContain(`dist-tag add @opum-ai/lore-linux-arm64@${PRIOR} latest`);
       expect(h.err.join("\n")).toContain(
@@ -728,10 +1466,10 @@ describe("scripts/promote-latest.mjs: quest first, read not remembered (review S
         expect(h.err.join("\n")).toContain(
           `Refusing to promote ${V}: @opum-ai/quest's latest is "${PRIOR}", not ${V}. Article 3 clause 5 moves quest's latest first`,
         );
-        expect(w.writes).toEqual([]);
-        expect(existsSync(h.record)).toBe(false);
-        // Read through the runner, as a registry read.
+        expectRefusedBeforeAnyWrite(h, w);
         expect(w.calls).toContainEqual(["npm", ...distTagReadArgs("@opum-ai/quest")]);
+        // Quest first is checked before step 6's registry download.
+        expect(w.calls.some((c) => c[1] === "pack")).toBe(false);
       } finally {
         h.cleanup();
       }
