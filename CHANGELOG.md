@@ -21,7 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A resumed staging skips a package only if the registry holds this run's bytes** (LCLI-621).
   Both `release.yml`'s `publish` job and `scripts/publish-release.sh` compare an already-published
   package's `dist.integrity` with the run's tarball, platforms included, and refuse on a difference
-  or an unreadable value. Before this, a platform package already on the registry was skipped
+  or an unreadable value. The comparison runs for all seven in a pre-flight before the first write,
+  so a refusal leaves nothing published and never waits out the registry-visibility window. Before this, a platform package already on the registry was skipped
   unchecked, so an `X-rc.N` staged from a new Release run could install an older run's `X`
   platform bytes.
 

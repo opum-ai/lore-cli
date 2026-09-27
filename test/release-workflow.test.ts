@@ -628,6 +628,40 @@ describeOnPosix("release.yml's publish step stages seven of eight tarballs (LCLI
     `::error::@opum-ai/lore-darwin-arm64@${X} is already on the registry with different bytes`,
   );
 
+  // The pre-flight (LCLI-621 review): win32-x64 is the LAST platform in the loop and the rc launcher
+  // comes after all six, so without it each of these would refuse only after earlier publishes.
+  refuses(
+    "the pre-flight refuses the LAST platform package with other bytes before anything publishes",
+    { preexisting: { [`opum-ai-lore-win32-x64-${X}.tgz`]: "other" } },
+    `::error::@opum-ai/lore-win32-x64@${X} is already on the registry with different bytes`,
+  );
+  refuses(
+    "the pre-flight refuses an X-rc.N launcher already on the registry with other bytes before anything publishes",
+    { rc: 2, preexisting: { [`opum-ai-lore-${X}-rc.2.tgz`]: "other" } },
+    `::error::@opum-ai/lore@${X}-rc.2 is already on the registry with different bytes`,
+  );
+
+  test("the pre-flight runs the publish step's own comparison, in check mode, before the publish loop", () => {
+    const script = publishRun();
+    const preflight = script.search(
+      /for tgz in "\$\{platform_tgz\[@\]\}" "\$root"; do\s+publish_or_skip "\$tgz" check\n/,
+    );
+    const publishLoop = script.search(/for tgz in "\$\{platform_tgz\[@\]\}"; do\s+publish_or_skip "\$tgz"\n/);
+    expect(preflight).toBeGreaterThan(-1);
+    expect(publishLoop).toBeGreaterThan(preflight);
+    const ws = workspace({ preexisting: { [`opum-ai-lore-linux-x64-${X}.tgz`]: "same" } });
+    try {
+      const r = ws.run();
+      expect(r.code).toBe(0);
+      expect(r.out).toContain(
+        `pre-flight: @opum-ai/lore-linux-x64@${X} is already on the registry as this run's bytes`,
+      );
+      expect(r.publishes).toHaveLength(6);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
   refuses("refuses when the carried X launcher is absent", { omit: `opum-ai-lore-${X}.tgz` }, "expected 8 tarballs");
   refuses("refuses an unexpected ninth tarball", { extra: `opum-ai-lore-freebsd-x64-${X}.tgz` }, "expected 8 tarballs");
   refuses("refuses a launcher_rc of 0", {}, "launcher_rc must be a positive integer", "0");

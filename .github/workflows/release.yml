@@ -1099,8 +1099,10 @@ jobs:
           # future npm starts logging credentials at verbose, this env var is the thing to pull.
           NPM_CONFIG_LOGLEVEL: verbose
         run: |
+          # `publish_or_skip <tgz> check` makes the SAME registry comparison and publishes nothing:
+          # the pre-flight below runs it over all seven before the first write (LCLI-621 review).
           publish_or_skip() {
-            local tgz="$1"
+            local tgz="$1" mode="${2:-publish}"
             local name version
             # Here-string (not a heredoc): the RHS is a command substitution whose
             # output ("name version", space-separated) `read` splits into the two
@@ -1145,9 +1147,14 @@ jobs:
                 echo "::error::${name}@${version} is already on the registry with different bytes (registry dist.integrity '${got}', this run's ${tgz} ${want}). It was published outside this run. npm versions are immutable: for the X-rc.N launcher, re-dispatch with launcher_rc set to the next N; for an X platform package a new rc cannot help (every rc pins X), so re-run the failed publish job of the Release run whose platform tarballs are the registry's ('Re-run failed jobs' reuses that run's artifact; a re-dispatch rebuilds and may not match), or cut a new version. Do NOT run npm unpublish."
                 exit 1
               fi
+              if [ "$mode" = check ]; then
+                echo "pre-flight: ${name}@${version} is already on the registry as this run's bytes (will be skipped)"
+                return 0
+              fi
               echo "${name}@${version} already published as this run's bytes — skipping (resuming a partially-failed publish)"
               return 0
             fi
+            if [ "$mode" = check ]; then return 0; fi
             echo "::group::npm publish $tgz ($name@$version)"
             npm publish "$tgz" --tag release-candidate
             echo "::endgroup::"
@@ -1236,6 +1243,13 @@ jobs:
           echo "staging platform packages at ${version} and the launcher at ${launcher_rc_version}; the ${version} launcher is carried, not staged"
           # The verify step below reads back exactly what was staged, never the carried X launcher.
           printf '%s\n' "${platform_tgz[@]}" "$root" > staged-tarballs.txt
+
+          # PRE-FLIGHT, before the first write (LCLI-621 review): a package already on the registry
+          # with other bytes fails the job here, with nothing published, rather than after the
+          # platforms ahead of it in the loop went out. publish_or_skip re-checks at publish time.
+          for tgz in "${platform_tgz[@]}" "$root"; do
+            publish_or_skip "$tgz" check
+          done
 
           for tgz in "${platform_tgz[@]}"; do
             publish_or_skip "$tgz"

@@ -1205,6 +1205,68 @@ Exit 1: the two launchers differ by more than the version string; the lines abov
 difference. Exit 2: it could not read its input, so it verified NOTHING. Either way re-cut the
 artifacts from one Release run; do NOT hand-edit a tarball."
 
+# ── Already on the registry means: already on the registry AS THESE BYTES (LCLI-621 review) ──
+# A skip is only a resume when npm holds exactly the tarball this run would have published. Any
+# other bytes were published outside this gate -- an earlier Release run, a hand publish -- and a
+# skip would stage them under this run's qualification. It bites hardest on the platforms: a
+# re-stage as X-rc.N+1 comes from a NEW Release run, which rebuilds the platform tarballs (not
+# proven byte-reproducible), so this run's digests and receipt all verify against tarballs the
+# registry does not serve, and the rc.N+1 launcher then installs the OLD X platform bytes.
+#
+# dist.integrity (sha512, the SRI string npm itself verifies installs against), not dist.shasum
+# (sha1): same one read, a digest nobody can collide, and the field quest-cli's matching guard
+# compares (QCLI-366). Hashed with node, which this script already requires, because shasum has
+# no base64 output. An unreadable integrity refuses: a match that could not be observed is not one.
+# ONE helper for all seven, platforms and launcher alike; only the remedy it names differs. Called
+# by the pre-flight below, before any write, and again by publish_one's skip.
+tarball_integrity() {
+  node -e 'process.stdout.write("sha512-" + require("crypto").createHash("sha512").update(require("fs").readFileSync(process.argv[1])).digest("base64"))' "$1"
+}
+
+refuse_unless_registry_holds() {
+  local pkg="$1" ver="$2" tarball="$3" got want
+  want="$(tarball_integrity "$tarball")" || die "could not hash $tarball to compare it with $pkg@$ver on the registry"
+  got="$(npm view "$pkg@$ver" dist.integrity | tr -d '[:space:]')"
+  [ -n "$got" ] && [ "$got" = "$want" ] && return 0
+  if [ "$ver" != "$VERSION" ]; then
+    # The launcher at X-rc.N. N is chosen per dispatch, so a re-stage that forgot to bump it would
+    # otherwise "resume" past a launcher that is not this run's and leave the old one staged.
+    die "$pkg@$ver is ALREADY on the registry with different bytes
+(registry dist.integrity ${got:-<unreadable>},
+ this run's tarball        $want). npm versions are
+immutable, so this run's launcher cannot be staged under $ver. Re-stage by dispatching the Release
+workflow with launcher_rc set to the next N, then publish that run. Do NOT run npm unpublish."
+  fi
+  die "$pkg@$ver is ALREADY on the registry with different bytes
+(registry dist.integrity ${got:-<unreadable>},
+ this run's tarball        $want).
+It was published outside this gate, or by a different Release run than $RUN_ID. A new launcher_rc
+does NOT fix this: every $VERSION-rc.N launcher pins the platform packages at exactly $VERSION,
+and $VERSION platform packages are immutable, so any rc staged now would install the registry's
+bytes rather than the ones this run qualified. Either publish from the Release run whose platform
+tarballs ARE the registry's (re-run this script with that run id), or cut a new version.
+Do NOT run npm unpublish."
+}
+
+# ── Pre-flight: anything already on the registry is this run's bytes (LCLI-621 review) ───────
+# publish_one compares bytes when it reaches a package, but it reaches the launcher only after the
+# platform loop and the registry-visibility wait (up to REGISTRY_WINDOW_SECONDS), so a refusal
+# there came after six platform publishes and half an hour. This pass runs the SAME comparison
+# (refuse_unless_registry_holds) over all seven before the first write, so a taken X-rc.N or a
+# foreign X platform refuses with nothing written. Reads only, so the dry run makes it too.
+# publish_one still re-checks at skip time: a publish landing between here and there would
+# otherwise be skipped unverified.
+hr
+say "pre-flight: anything already on the registry must be this run's bytes, checked before any write"
+for entry in "${PLATFORM_PKGS[@]}" "$ROOT_PKG"; do
+  pkg="${entry%%:*}"
+  ver="$VERSION"
+  [ "$pkg" = "$ROOT_NAME" ] && ver="$LAUNCHER_VERSION"
+  published "$pkg" "$ver" || continue
+  refuse_unless_registry_holds "$pkg" "$ver" "$ARTIFACTS/${entry#*:}"
+  say "  held     $pkg@$ver (already on the registry as this run's bytes; will be skipped)"
+done
+
 # ── Publish ─────────────────────────────────────────────────────────────────
 hr
 [ "$DRY_RUN" -eq 1 ] && say "DRY RUN — no registry writes will be made"
@@ -1269,55 +1331,13 @@ looks_like_2fa_or_staging() {
 # effect, which is exactly the move Article 3 clause 5 reserves for scripts/promote-latest.mjs.
 # The dry run prints this same list, so a rehearsal shows the tag it would publish under.
 STAGED_SKIPPED=""
-
-# ── Already on the registry means: already on the registry AS THESE BYTES (LCLI-621 review) ──
-# A skip is only a resume when npm holds exactly the tarball this run would have published. Any
-# other bytes were published outside this gate -- an earlier Release run, a hand publish -- and a
-# skip would stage them under this run's qualification. It bites hardest on the platforms: a
-# re-stage as X-rc.N+1 comes from a NEW Release run, which rebuilds the platform tarballs (not
-# proven byte-reproducible), so this run's digests and receipt all verify against tarballs the
-# registry does not serve, and the rc.N+1 launcher then installs the OLD X platform bytes.
-#
-# dist.integrity (sha512, the SRI string npm itself verifies installs against), not dist.shasum
-# (sha1): same one read, a digest nobody can collide, and the field quest-cli's matching guard
-# compares (QCLI-366). Hashed with node, which this script already requires, because shasum has
-# no base64 output. An unreadable integrity refuses: a match that could not be observed is not one.
-# ONE helper for all seven, platforms and launcher alike; only the remedy it names differs.
-tarball_integrity() {
-  node -e 'process.stdout.write("sha512-" + require("crypto").createHash("sha512").update(require("fs").readFileSync(process.argv[1])).digest("base64"))' "$1"
-}
-
-refuse_unless_registry_holds() {
-  local pkg="$1" ver="$2" tarball="$3" got want
-  want="$(tarball_integrity "$tarball")" || die "could not hash $tarball to compare it with $pkg@$ver on the registry"
-  got="$(npm view "$pkg@$ver" dist.integrity | tr -d '[:space:]')"
-  [ -n "$got" ] && [ "$got" = "$want" ] && return 0
-  if [ "$ver" != "$VERSION" ]; then
-    # The launcher at X-rc.N. N is chosen per dispatch, so a re-stage that forgot to bump it would
-    # otherwise "resume" past a launcher that is not this run's and leave the old one staged.
-    die "$pkg@$ver is ALREADY on the registry with different bytes
-(registry dist.integrity ${got:-<unreadable>},
- this run's tarball        $want). npm versions are
-immutable, so this run's launcher cannot be staged under $ver. Re-stage by dispatching the Release
-workflow with launcher_rc set to the next N, then publish that run. Do NOT run npm unpublish."
-  fi
-  die "$pkg@$ver is ALREADY on the registry with different bytes
-(registry dist.integrity ${got:-<unreadable>},
- this run's tarball        $want).
-It was published outside this gate, or by a different Release run than $RUN_ID. A new launcher_rc
-does NOT fix this: every $VERSION-rc.N launcher pins the platform packages at exactly $VERSION,
-and $VERSION platform packages are immutable, so any rc staged now would install the registry's
-bytes rather than the ones this run qualified. Either publish from the Release run whose platform
-tarballs ARE the registry's (re-run this script with that run id), or cut a new version.
-Do NOT run npm unpublish."
-}
-
 publish_one() {
   local pkg="$1" tarball="$ARTIFACTS/$2" ver="${3:-$VERSION}" out rc
   local npm_args=(publish "$tarball" --tag "$STAGE_TAG")
   if published "$pkg" "$ver"; then
     [ -f "$tarball" ] || die "$tarball is missing, so $pkg@$ver on the registry cannot be compared with it"
-    # Dies on a mismatch; see refuse_unless_registry_holds.
+    # Dies on a mismatch; see refuse_unless_registry_holds. The pre-flight already checked, and this
+    # re-check covers a publish that landed in between.
     refuse_unless_registry_holds "$pkg" "$ver" "$tarball"
     say "  skip     $pkg@$ver (already on the registry as this run's bytes)"
     # Resumed, not published by this run: its dist-tags are whatever the earlier run left, so the

@@ -471,7 +471,8 @@ works like this:
   `X-rc.N` already on the registry cannot carry new bytes. The script reads
   `N` from the artifact, where the run holds exactly one `X-rc.N` launcher. It
   refuses to resume past an `X-rc.N` whose registry bytes differ from the
-  run's, and names the next `N` as the remedy.
+  run's, and names the next `N` as the remedy. Both staging paths make that
+  check for all seven packages in a pre-flight, before the first write.
 - **A new `N` does not fix a platform package.** Every `X-rc.N` pins the
   platforms at exactly `X`, and `X` platform packages are immutable. Both
   staging paths compare an already-published platform package's

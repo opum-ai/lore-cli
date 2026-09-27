@@ -1200,8 +1200,9 @@ describeOnPosix("scripts/publish-release.sh re-hash before publish (LCLI-586)", 
     mkdirSync(state, { recursive: true });
     writeFileSync(replacement, swap.bytes);
     // `on` is "publish:<basename>" (swap while that tarball is being published) or
-    // "view-root-2" (swap on the second `npm view @opum-ai/lore@<v> version`: the first is
-    // report_state's, the second is publish_one's resumability check for the root).
+    // "view-root-3" (swap on the third `npm view @opum-ai/lore@<v> version`: the first is
+    // report_state's, the second the pre-flight's byte check (LCLI-621 review), the third
+    // publish_one's resumability check for the root).
     writeFileSync(
       resolve(ws.bin, "npm"),
       `#!/usr/bin/env bash
@@ -1219,9 +1220,9 @@ case "\${1:-}" in
   view)
     spec="$2"; field="\${3:-}"
     case "$field" in dist-tags.*) name="$spec" ;; *) name="\${spec%@*}" ;; esac
-    if [ "$ON" = "view-root-2" ] && [ "$name" = "@opum-ai/lore" ] && [ "$field" = "version" ]; then
+    if [ "$ON" = "view-root-3" ] && [ "$name" = "@opum-ai/lore" ] && [ "$field" = "version" ]; then
       n=$(( $(cat "$STATE/root-views" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$STATE/root-views"
-      [ "$n" -eq 2 ] && do_swap
+      [ "$n" -eq 3 ] && do_swap
     fi
     [ -f "$STATE/published-$(safe "$name")" ] || exit 1
     echo "${VERSION}"; exit 0 ;;
@@ -1338,7 +1339,7 @@ esac
     const ws = makeWorkspace();
     try {
       const { original, swapped } = regzippedRoot(ws);
-      const npm = swapStubNpm(ws, { target: ws.rootTarball, bytes: swapped, on: "view-root-2" });
+      const npm = swapStubNpm(ws, { target: ws.rootTarball, bytes: swapped, on: "view-root-3" });
       const r = runScript(ws, ws.root, ws.artifacts);
 
       expect(r.code).toBe(1);
@@ -2048,7 +2049,12 @@ esac
       expect(taken.out).toContain(`${spec} is ALREADY on the registry with different bytes`);
       expect(taken.out).toContain("launcher_rc set to the next N");
       expect(taken.out).toContain("Do NOT run npm unpublish");
-      expect(published()).not.toContain(resolve(ws.artifacts, ws.rootTarball));
+      // A PRE-WRITE refusal (LCLI-621 review): the pre-flight fires before the platform loop and
+      // the registry-visibility wait, so not one package was published and nothing waited.
+      expect(published()).toEqual([]);
+      expect(taken.out).toContain("pre-flight: anything already on the registry must be this run's bytes");
+      expect(taken.out).not.toContain("publishing platform packages first");
+      expect(taken.out).not.toContain("gating the root launcher on registry visibility");
 
       published = registryNpm(ws, { [spec]: integrity(readFileSync(resolve(ws.source, ws.rootTarball))) });
       const resumed = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
@@ -2097,6 +2103,42 @@ esac
         ),
         resolve(ws.artifacts, ws.rootTarball),
       ]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("the pre-flight refuses a foreign LAST platform package before the first platform publishes", () => {
+    // win32-x64 is the last of the six in the loop, so a refusal reached only there would come
+    // after five publishes. The pre-flight must see it first.
+    const ws = makeWorkspace();
+    try {
+      const spec = `@opum-ai/lore-win32-x64@${VERSION}`;
+      const published = registryNpm(ws, { [spec]: integrity(Buffer.from("an earlier Release run's platform")) });
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain(`${spec} is ALREADY on the registry with different bytes`);
+      expect(published()).toEqual([]);
+      expect(r.out).not.toContain("publishing platform packages first");
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("the pre-flight reports a matching package as held, and the dry run makes the same check", () => {
+    const ws = makeWorkspace();
+    try {
+      const file = `opum-ai-lore-linux-x64-${VERSION}.tgz`;
+      const spec = `@opum-ai/lore-linux-x64@${VERSION}`;
+      registryNpm(ws, { [spec]: integrity(readFileSync(resolve(ws.source, file))) });
+      const held = runScript(ws, ws.root, ws.artifacts);
+      expect(held.code).toBe(0);
+      expect(held.out).toContain(`held     ${spec} (already on the registry as this run's bytes; will be skipped)`);
+      registryNpm(ws, { [spec]: integrity(Buffer.from("other")) });
+      const refused = runScript(ws, ws.root, ws.artifacts);
+      expect(refused.code).toBe(1);
+      expect(refused.out).toContain(`${spec} is ALREADY on the registry with different bytes`);
+      expect(refused.out).not.toContain("would    npm publish");
     } finally {
       ws.cleanup();
     }
