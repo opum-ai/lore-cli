@@ -92,6 +92,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`lore unlink` no longer fails when another writer removed the back-reference label first**
+  (LCLI-614). It removes the label only when its own read found it, and it removes every case
+  variant by its stored spelling. A guarded Quest edit whose own task's labels or documentation
+  changed under it is retried as a conflict, even when quest 0.10.0 reports it as a validation
+  miss. `lore link` now guards its whole-list `--doc` write with `--if-revision` too. Conflict
+  retries back off briefly, with jitter. **Behaviour change:** only a conflict from an edit that
+  actually sent a precondition is retried. A Jira rate limit or timeout on `lore unlink` or a
+  rename's back-reference move now fails after one attempt, where before there were up to four
+  immediate attempts.
 - **A Claude Code plugin row set by your administrator (`managed` scope) now decides, and is never
   updated** (LCLI-604, LCLI-608; ADR ruling 28). Scope precedence is managed > local > project >
   user > synced. A managed row applies to every project, and among several managed rows a

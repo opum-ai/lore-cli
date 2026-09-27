@@ -54,7 +54,7 @@
  */
 
 import { join } from "node:path";
-import type { BacklogAdapter, BacklogTaskDetail } from "../adapters/backlog";
+import type { BacklogAdapter, BacklogTaskDetail, EditTaskPatch } from "../adapters/backlog";
 import { isQuestActorContextFailure } from "../adapters/quest";
 import { createConfiguredTrackerAdapter } from "../adapters/tracker";
 import type { TrackerBackend } from "../config";
@@ -275,44 +275,50 @@ export async function runLink(options: LinkOptions): Promise<number> {
   // reaches either push, so it stays excluded (see the "partial back-ref failure" test).
   const refs: TrackerWriteRef[] = [];
   if (!noBackRef) {
-    const outcomes = await runSequentially(taskIds, async (taskId) => {
-      // Re-read fresh right before editing (not the up-front validation snapshot): matches
-      // runUnlink's freshness and closes a narrow race where the task changed out-of-band
-      // between the existence check above and this edit. `verifiedViewTask` (LORE-177) also
-      // refuses a detail whose own `id` doesn't match `taskId` — never used to compute
-      // `desiredDocs`/labels below, which would otherwise borrow another task's data.
-      const detail = await verifiedViewTask(adapter, taskId);
-      if (detail === null) {
-        throw new Error(`task "${taskId}" no longer exists in Backlog`);
-      }
-      const wasPresent = hasLabel(detail, label);
-      // Matched case-insensitively, like `hasLabel` and `removeBackRefs`'s `hadDoc` — an existing
-      // documentation entry that differs from `docPath` only by case (a hand-edit or out-of-band
-      // move) already reflects this link, so it must not be treated as changed (which would force
-      // an unnecessary edit) nor fall through to `addDoc` appending a casing-variant duplicate.
-      const docChanged = !containsCaseInsensitive(detail.documentation, docPath);
-      if (wasPresent && !docChanged) {
-        // Both the label and --doc already reflect this link, so there is no Backlog edit to make
-        // — but the task's file can still be dirty and uncommitted on disk if a PRIOR `lore link`
-        // run already applied that same edit and then its own `commitBacklogFiles` call failed
-        // (e.g. a rejected pre-commit hook, LORE-121). Recording the path here, even though this
-        // run makes no edit, lets `commitBacklogFiles`'s own `git status` (scoped to exactly this
-        // path) decide whether there is real drift to stage and commit: a clean file reports
-        // nothing dirty and stays a true no-op (AC#3), while a dirty one gets picked up and
-        // committed by this retry (AC#1/#2) instead of silently no-opping forever.
-        if (detail.file) {
-          refs.push({ taskId, file: commitFileFor(backend, detail.file) });
+    // Guarded like unlink and rename's move (LCLI-614): `doc` is a whole-list REPLACE computed from
+    // this read, so an unguarded edit racing a competing `--doc`/label writer would silently drop
+    // that writer's entry — the LCLI-522 exposure this path had been left with. The precondition
+    // makes that race refuse instead, and `withConflictRetry` re-reads and re-decides.
+    const outcomes = await runSequentially(taskIds, (taskId) =>
+      withConflictRetry(async () => {
+        // Re-read fresh right before editing (not the up-front validation snapshot): matches
+        // runUnlink's freshness and closes a narrow race where the task changed out-of-band
+        // between the existence check above and this edit. `verifiedViewTask` (LORE-177) also
+        // refuses a detail whose own `id` doesn't match `taskId` — never used to compute
+        // `desiredDocs`/labels below, which would otherwise borrow another task's data.
+        const detail = await verifiedViewTask(adapter, taskId);
+        if (detail === null) {
+          throw new Error(`task "${taskId}" no longer exists in Backlog`);
         }
-        return "already-present" as const;
-      }
-      const desiredDocs = addDoc(detail.documentation, docPath);
-      await adapter.editTask(taskId, { addLabels: [label], doc: desiredDocs });
-      // Only after a successful editTask. `commitFileFor` collapses `detail.file` to `null` for
-      // every backend but backlog (LCLI-433) — a non-null Quest `file` is real, wanted metadata
-      // about where QUEST stores the record (LCLI-428), not a path lore itself needs to commit.
-      refs.push({ taskId, file: commitFileFor(backend, detail.file) });
-      return "added" as const;
-    });
+        const wasPresent = hasLabel(detail, label);
+        // Matched case-insensitively, like `hasLabel` and `removeBackRefs`'s `hadDoc` — an existing
+        // documentation entry that differs from `docPath` only by case (a hand-edit or out-of-band
+        // move) already reflects this link, so it must not be treated as changed (which would force
+        // an unnecessary edit) nor fall through to `addDoc` appending a casing-variant duplicate.
+        const docChanged = !containsCaseInsensitive(detail.documentation, docPath);
+        if (wasPresent && !docChanged) {
+          // Both the label and --doc already reflect this link, so there is no Backlog edit to make
+          // — but the task's file can still be dirty and uncommitted on disk if a PRIOR `lore link`
+          // run already applied that same edit and then its own `commitBacklogFiles` call failed
+          // (e.g. a rejected pre-commit hook, LORE-121). Recording the path here, even though this
+          // run makes no edit, lets `commitBacklogFiles`'s own `git status` (scoped to exactly this
+          // path) decide whether there is real drift to stage and commit: a clean file reports
+          // nothing dirty and stays a true no-op (AC#3), while a dirty one gets picked up and
+          // committed by this retry (AC#1/#2) instead of silently no-opping forever.
+          if (detail.file) {
+            refs.push({ taskId, file: commitFileFor(backend, detail.file) });
+          }
+          return "already-present" as const;
+        }
+        const desiredDocs = addDoc(detail.documentation, docPath);
+        await guardedEditTask(adapter, taskId, detail, { addLabels: [label], doc: desiredDocs });
+        // Only after a successful editTask. `commitFileFor` collapses `detail.file` to `null` for
+        // every backend but backlog (LCLI-433) — a non-null Quest `file` is real, wanted metadata
+        // about where QUEST stores the record (LCLI-428), not a path lore itself needs to commit.
+        refs.push({ taskId, file: commitFileFor(backend, detail.file) });
+        return "added" as const;
+      }),
+    );
     backRefOutcomes = outcomes;
     outcomes.forEach((outcome, i) => {
       const entry = tasks[i] as LinkedTask;
@@ -461,15 +467,27 @@ async function removeBackRefs(
       if (detail === null) {
         return "skipped" as const; // the task no longer exists in Backlog — nothing to clean up
       }
-      const hadLabel = hasLabel(detail, label);
+      // EVERY stored case-variant, by its stored spelling, not `label`: Quest matches a removal
+      // EXACTLY and fails loud on a miss (QCLI-297), while `hasLabel` matches case-insensitively --
+      // and Quest will hold `doc:stories/Dup` and `doc:stories/dup` on one task side by side.
+      const storedLabels = detail.labels.filter((l) => l.toLowerCase() === label.toLowerCase());
+      const hadLabel = storedLabels.length > 0;
       // Matched case-insensitively, like `hasLabel` — necessary for `--allow-missing`, whose
       // `docPath` is *reconstructed* from the given id, not read from a live concept's real path, so
       // it may not match the originally-stored casing exactly. Safe because `assertNoLabelCaseCollision`
       // already ran up front and ruled out any other concept whose id (and so doc path) could
       // case-collide, so a case-insensitive match here can't strip a different concept's real entry.
       const hadDoc = containsCaseInsensitive(detail.documentation, docPath);
-      if (!hadLabel && !hadDoc) {
-        // Neither the label nor the doc entry is present, so there is no Backlog edit to make — but
+      const remainingDocs = removeDoc(detail.documentation, docPath);
+      // With no label to remove, an edit whose remaining `--doc` list is empty would carry no field
+      // flag at all (`--doc` cannot clear, contract §2.4): it could not remove the doc entry, yet it
+      // would still be a write -- bumping Quest's workspace-wide revision -- and report `removed`
+      // for a back-reference it never touched (LCLI-614 N1). The queryable back-reference is the
+      // label, and it is already gone; the doc entry lingers exactly as it does after an unlink
+      // that removes the label (the accepted ADR-0009 tradeoff). So this is `already-absent`, with
+      // no write.
+      if (!hadLabel && (!hadDoc || remainingDocs.length === 0)) {
+        // Neither the label nor a removable doc entry is present, so there is no Backlog edit to make — but
         // the task's file can still be dirty and uncommitted on disk if a PRIOR `lore unlink` run
         // already applied this exact removal and then its own `commitBacklogFiles` call failed (e.g.
         // a rejected pre-commit hook — LORE-121's pattern, LORE-179). Recording the path here, even
@@ -482,16 +500,22 @@ async function removeBackRefs(
         }
         return "already-absent" as const; // nothing to remove — skip the edit entirely
       }
-      // An empty `desiredDocs` is not special-cased: the real adapter's `--doc` accumulator
+      // Alongside a label removal, an empty `remainingDocs` is not special-cased: the real adapter's `--doc` accumulator
       // (`for (const doc of patch.doc ?? [])`) sends zero flags for `[]`, identical to `undefined` —
       // Backlog is left with whatever it already had (it cannot clear `--doc` via an empty value,
       // contract §2.4), so a stale annotation cosmetically lingers either way.
-      await adapter.editTask(taskId, {
-        removeLabels: [label],
-        doc: removeDoc(detail.documentation, docPath),
-        // The precondition comes from the SAME read that decided the label was present, which is
-        // what makes it a guard rather than decoration (LCLI-522).
-        ...(detail.revision === undefined ? {} : { ifRevision: detail.revision }),
+      // The precondition comes from the SAME read that decided the label was present, which is
+      // what makes it a guard rather than decoration (LCLI-522); `guardedEditTask` sends it.
+      //
+      // Remove the label only when THIS read found it (LCLI-614). A competing writer that already
+      // removed the label but not the `--doc` entry leaves `hadDoc` alone to trigger this edit, and
+      // asking Quest to remove an absent label is an exit-6 `validation` miss, not a no-op. That,
+      // not a stale revision, is how opum-cli-e2e's same-value competing-removal row actually lost:
+      // lore's read landed AFTER the competitor, so the revision it sent was current and there was
+      // no race for `guardedEditTask` to recognise.
+      await guardedEditTask(adapter, taskId, detail, {
+        ...(hadLabel ? { removeLabels: storedLabels } : {}),
+        doc: remainingDocs,
       });
       refs.push({ taskId, file: commitFileFor(backend, detail.file) });
       return "removed" as const;
@@ -522,16 +546,123 @@ const CONFLICT_RETRY_LIMIT = 3;
  * Without this, adding the precondition would trade a silent clobber for a user-visible failure on
  * a link that used to succeed. That would be more CORRECT and less USEFUL; the retry is what makes
  * the fix an improvement in both directions rather than one.
+ *
+ * ONLY a conflict raised by an edit that actually sent a precondition ({@link guardedConflicts}) is
+ * retried, on every path — link, unlink and the move (LCLI-614). Any other `conflict` fails on the
+ * first attempt: Jira maps a 429, a timeout and a failed transition to `conflict` and its hint
+ * promises "Lore does not retry silently". Before LCLI-614, unlink and the move retried every
+ * conflict (LCLI-522), so a Jira 429 there took up to four immediate attempts; it now takes one.
+ * Each retry waits a short jittered backoff first ({@link conflictRetryDelayMs}).
  */
 async function withConflictRetry<T>(run: () => Promise<T>): Promise<T> {
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await run();
     } catch (error) {
-      const isConflict = error instanceof LoreError && error.type === "conflict";
-      if (!isConflict || attempt >= CONFLICT_RETRY_LIMIT) throw error;
+      const retryable = error instanceof LoreError && error.type === "conflict" && guardedConflicts.has(error);
+      if (!retryable || attempt >= CONFLICT_RETRY_LIMIT) throw error;
+      await conflictRetryBackoff.sleep(conflictRetryDelayMs(attempt));
     }
   }
+}
+
+/**
+ * Conflicts raised by an edit that actually SENT an `ifRevision` precondition — the tracker's own
+ * exit-5 refusal of it, or a misreported race {@link guardedEditTask} reclassified. Only these say
+ * "the record moved; re-read and re-decide". Jira maps a 429, a timeout and a failed transition to
+ * `conflict` too, and its hint promises Lore does not retry silently, so {@link withConflictRetry}
+ * retries only these, on every path (LCLI-614).
+ */
+const guardedConflicts = new WeakSet<LoreError>();
+
+/** Base of the backoff between conflict retries: attempt n waits base·2ⁿ plus up to base of jitter. */
+const CONFLICT_RETRY_BASE_MS = 10;
+
+/**
+ * The pause before retry `attempt` (0-based): 10–20ms, 20–30ms, 40–50ms, so the whole bounded
+ * retry waits at most ~100ms. Jittered so two lore processes contending on one Quest workspace (whose
+ * revision is workspace-wide) do not retry in lockstep and collide again (LCLI-614 N2).
+ */
+function conflictRetryDelayMs(attempt: number): number {
+  return CONFLICT_RETRY_BASE_MS * 2 ** attempt + Math.floor(conflictRetryBackoff.random() * CONFLICT_RETRY_BASE_MS);
+}
+
+/** The backoff's clock and jitter source — replaced in tests so the suite neither sleeps nor varies. */
+export const conflictRetryBackoff: { sleep: (ms: number) => Promise<void>; random: () => number } = {
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  random: Math.random,
+};
+
+/**
+ * The one `editTask` call every read-modify-write back-reference edit goes through (link, unlink,
+ * rename's move): it sends `detail.revision` — from the SAME read that decided the patch — as the
+ * `ifRevision` precondition, and reclassifies a race the tracker misreports (LCLI-614).
+ *
+ * Quest 0.10.0 answers a STALE `--if-revision` whose removal target is already gone with exit-6
+ * `validation` ("no entry matches") instead of the exit-5 `conflict` its own `task edit` contract
+ * promises, so {@link withConflictRetry} never fired and a same-value competing removal failed the
+ * whole unlink. When a guarded edit fails `validation`, this re-reads the task: if THIS task's
+ * labels or documentation — the only fields any back-reference patch touches — differ from the read
+ * the patch was computed from, the edit lost a race, so it is rethrown as a `conflict` (the
+ * tracker's own error kept as `cause` and quoted in the message) and the caller's bounded retry
+ * re-reads and re-decides — an unlink then finds the label gone and reports `already-absent`.
+ *
+ * NOT decided by the revision: Quest's `revision` is WORKSPACE-WIDE (measured on 0.10.0 and 0.11.0
+ * — editing T-1 changes T-2's viewed revision), so "the revision moved" is true after any write
+ * anywhere and would turn a genuine refusal into a retry and then a misleading `drift` (LCLI-614
+ * SF1). Never by message text either. A Quest actor-context failure is never converted, whatever
+ * moved. Every other outcome rethrows the ORIGINAL error object: a non-`validation` error, an
+ * unguarded edit, unchanged content, a record that is gone, or a re-read that itself fails.
+ *
+ * "Guarded" means the precondition was actually SENT: `detail.revision` is defined only when the
+ * adapter will pass it on (the Quest adapter reports a revision only when its manifest advertises
+ * `--if-revision`; Backlog and Jira report none). A conflict from a guarded edit is marked in
+ * {@link guardedConflicts} so {@link withConflictRetry} can tell it from Jira's rate-limit conflicts.
+ */
+async function guardedEditTask(
+  adapter: BacklogAdapter,
+  taskId: string,
+  detail: BacklogTaskDetail,
+  patch: Omit<EditTaskPatch, "ifRevision">,
+): Promise<void> {
+  const sent = detail.revision;
+  try {
+    await adapter.editTask(taskId, sent === undefined ? patch : { ...patch, ifRevision: sent });
+  } catch (error) {
+    if (sent === undefined || !(error instanceof LoreError)) throw error;
+    if (error.type === "conflict") {
+      guardedConflicts.add(error);
+      throw error;
+    }
+    if (error.type !== "validation" || isQuestActorContextFailure(error)) throw error;
+    let current: BacklogTaskDetail | null;
+    try {
+      current = await verifiedViewTask(adapter, taskId);
+    } catch {
+      throw error;
+    }
+    if (current === null || !backRefFieldsDiffer(detail, current)) throw error;
+    const lostRace = new LoreError(
+      "conflict",
+      `task "${taskId}" changed while lore was editing it; the tracker reported: ${error.message}`,
+      "re-read the task and retry",
+      {
+        taskId,
+        sentRevision: sent,
+        ...(current.revision === undefined ? {} : { currentRevision: current.revision }),
+        trackerError: { type: error.type, message: error.message },
+      },
+    );
+    lostRace.cause = error;
+    guardedConflicts.add(lostRace);
+    throw lostRace;
+  }
+}
+
+/** Whether a task's labels or documentation — as sets — differ between two reads of it. */
+function backRefFieldsDiffer(before: BacklogTaskDetail, after: BacklogTaskDetail): boolean {
+  const key = (values: readonly string[]) => JSON.stringify([...new Set(values)].sort());
+  return key(before.labels) !== key(after.labels) || key(before.documentation) !== key(after.documentation);
 }
 
 /** One task's outcome after {@link moveBackRefs} moves its back-reference to a concept's new id/path. */
@@ -626,11 +757,10 @@ export async function moveBackRefs(
       if (!docs.includes(newDocPath)) {
         docs.push(newDocPath);
       }
-      await adapter.editTask(taskId, {
+      await guardedEditTask(adapter, taskId, detail, {
         addLabels: hasExactNewLabel ? undefined : [newLabel],
         removeLabels: staleLabel !== undefined ? [staleLabel] : undefined,
         doc: docs,
-        ...(detail.revision === undefined ? {} : { ifRevision: detail.revision }),
       });
       refs.push({ taskId, file: commitFileFor(backend, detail.file) });
       return "moved" as const;

@@ -434,7 +434,14 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
     async viewTask(id) {
       const taskId = safe(id);
       try {
-        return detail(await data(["task", "view", taskId, "--json"], "task view --json", "task.view"));
+        const read = detail(await data(["task", "view", taskId, "--json"], "task view --json", "task.view"));
+        // A revision is reported only when `editTask` will actually SEND it back as
+        // `--if-revision` (LCLI-614 N3): `data` has run the probe, so `ifRevisionSupported` is
+        // settled here. A caller can then treat "has a revision" as "this edit is guarded" without
+        // knowing the manifest, instead of believing a precondition was asserted when it was dropped.
+        if (ifRevisionSupported || read.revision === undefined) return read;
+        const { revision: _unsendable, ...unguarded } = read;
+        return unguarded;
       } catch (error) {
         if (error instanceof LoreError && error.type === "not_found") return null;
         throw error;
