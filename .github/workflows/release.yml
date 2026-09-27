@@ -7,7 +7,9 @@ name: Release
 # the right binary end-to-end (LCLI-9 AC#1/AC#2) — the `publish` job below simply does
 # not run. The `version-parity` job runs either way (LCLI-620), so a rehearsal still
 # refuses a mismatched lore/quest pair. Setting `publish: true` additionally runs that job, publishing every
-# platform package and the root launcher to npm via OIDC Trusted Publishing (LCLI-255)
+# platform package and the root launcher to npm via OIDC Trusted Publishing (LCLI-255),
+# all under the release-candidate dist-tag: the platforms at X and the launcher at X-rc.N,
+# with the X launcher carried in the artifact and never staged (LCLI-621, Article 3.5)
 # — but only once a maintainer has completed the one-time npmjs.com Trusted Publisher
 # setup for every package;
 # see docs/runbooks/release-publishing.md's First-release checklist for the full
@@ -37,6 +39,19 @@ on:
         description: "Only if provenance-pre failed: the task id tracking an accepted dangling-provenance loss (e.g. LCLI-481). Waives the finding for THIS dispatch, loudly, and does not persist. Leave empty."
         type: string
         default: ""
+      launcher_rc:
+        # N in the root launcher's release-candidate version X-rc.N (constitution Article 3
+        # clause 5 as amended by ODOC-302; LCLI-621). The launcher stages as X-rc.N and reaches
+        # `latest` later by a fresh publish of X; the six platform packages stage as X.
+        #
+        # DEFAULT 1, because the first staging of any X is rc.1 (paired design P1: N starts at 1)
+        # and every rehearsal is a first staging. A RE-STAGE of the same X must pass N+1: npm
+        # versions are immutable, so an X-rc.N already on the registry cannot carry new bytes.
+        # A required input with no default was the alternative; it would make every
+        # publish:false rehearsal name a number that means nothing to it.
+        description: "N in the launcher's staged version X-rc.N (a positive integer, no leading zero). 1 for the first staging of X; a re-stage of the same X takes the next N."
+        type: number
+        default: 1
 
 permissions:
   contents: read
@@ -639,6 +654,55 @@ jobs:
           ls -la dist-npm
           echo "ROOT_TARBALL=dist-npm/opum-ai-lore-${version}.tgz" >> "$GITHUB_ENV"
           echo "LINUX_X64_TARBALL=dist-npm/opum-ai-lore-linux-x64-${version}.tgz" >> "$GITHUB_ENV"
+      - name: "npm pack the release-candidate launcher X-rc.N (constitution Article 3 clause 5, LCLI-621)"
+        # The EIGHTH tarball. Constitution Article 3 clause 5 as amended by ODOC-302: the root
+        # launcher stages as X-rc.N under release-candidate, and the X launcher packed above
+        # reaches `latest` later by a fresh publish, never by a dist-tag move. Both come from
+        # this one checkout, and the ONLY source difference is the one this step makes:
+        #
+        #   - package.json's own "version" line becomes X-rc.N. optionalDependencies keep
+        #     pinning the six platform packages at exactly X, because those stage as X.
+        #   - README.md's lore-version managed blocks are re-rendered for X-rc.N by the same
+        #     generator the X launcher's README comes from (scripts/shipped-readme-version.mjs),
+        #     never by ad-hoc sed. Rendering the rc's OWN version (paired design, refinement
+        #     (i), settled with quest-cli on QCLI-399) is what lets LCLI-510's --tarball
+        #     assertion below hold unmodified for both launchers, and substituting X-rc.N -> X
+        #     carries every generated line to the X launcher's bytes.
+        #
+        # Then both files are restored and the restore is asserted, so the install-sanity step
+        # and anything after it read the X tree the tag names. The equivalence gate below is
+        # what proves the two launchers differ by the version string alone.
+        env:
+          LAUNCHER_RC: ${{ inputs.launcher_rc }}
+        run: |
+          case "$LAUNCHER_RC" in
+            ""|0*|*[!0-9]*)
+              echo "::error::launcher_rc must be a positive integer with no leading zero (X-rc.N, N >= 1); got '${LAUNCHER_RC}'"
+              exit 1 ;;
+          esac
+          version="$(node -p "require('./package.json').version")"
+          rc_version="${version}-rc.${LAUNCHER_RC}"
+          if ! git diff --quiet -- package.json README.md; then
+            echo "::error::package.json or README.md is already modified in this checkout; refusing to pack the rc launcher from a tree the tag does not name"
+            exit 1
+          fi
+          # The ${...} below are JS template literals for `node -e`, not shell interpolation.
+          # shellcheck disable=SC2016
+          FROM="$version" TO="$rc_version" node -e '
+            const fs = require("node:fs");
+            const text = fs.readFileSync("package.json", "utf8");
+            const line = `  "version": "${process.env.FROM}",`;
+            const count = text.split("\n").filter((l) => l === line).length;
+            if (count !== 1) throw new Error(`expected exactly one ${line} line in package.json, found ${count}`);
+            fs.writeFileSync("package.json", text.replace(line, `  "version": "${process.env.TO}",`));
+          '
+          node scripts/shipped-readme-version.mjs --write
+          npm pack --pack-destination "$PWD/dist-npm" .
+          git checkout -- package.json README.md
+          git diff --exit-code -- package.json README.md
+          ls -la dist-npm
+          echo "RC_TARBALL=dist-npm/opum-ai-lore-${rc_version}.tgz" >> "$GITHUB_ENV"
+          echo "LAUNCHER_RC_VERSION=${rc_version}" >> "$GITHUB_ENV"
       - name: "Shipped-README version assertions against the PACKED tarball (LCLI-510)"
         # THE GATE for the contract in opum-doc's docs/reference/shipped-readme-version-assertions.md
         # (main@ba3055d). It refuses the release when the README npm will serve as this package's
@@ -660,42 +724,81 @@ jobs:
         # ci.yml gates the worktree copy too, via `bun test` — test/shipped-readme-version.test.ts
         # runs `--check` against the real README on every pull request. That is early feedback and
         # deliberately NOT the gate; this step is.
-        run: node scripts/shipped-readme-version.mjs --tarball "$ROOT_TARBALL"
-      - name: Install-sanity — npx-equivalent resolution through the real launcher (LCLI-9 AC#2)
+        #
+        # BOTH LAUNCHERS (LCLI-621). The X-rc.N launcher is the one staged and qualified, and its
+        # README renders its own version, so it is held to the same assertion as the X launcher.
         run: |
-          # Same comparison mechanism as ci.yml's compile-smoke job (ci.yml:56-64):
-          # read package.json's version, compare strictly, hard-fail naming both
-          # values on mismatch. This job has no bun toolchain (no setup-bun step),
-          # so `node -p` reads package.json here — matching the `node -p` already
-          # used earlier in this same job — rather than the `bun -e` the build job
-          # uses (which does have bun via setup-bun).
+          node scripts/shipped-readme-version.mjs --tarball "$ROOT_TARBALL"
+          node scripts/shipped-readme-version.mjs --tarball "$RC_TARBALL"
+      - name: "Launcher equivalence: X-rc.N and X differ only by the version string (Article 3 clause 5, LCLI-621)"
+        # THE GATE the amended clause names: "the qualified X-rc.N and the published X must be
+        # identical once X-rc.N is substituted for X throughout, checked mechanically in CI".
+        # Entry by entry over the unpacked tarballs (same paths, same modes, byte-identical
+        # content after substitution), never whole tar or gzip bytes; it also refuses an rc not
+        # at X-rc.N and an rc pinning its platforms at anything but X. A red here stops the
+        # artifact from ever being uploaded, so no pair that fails it can be staged from this run.
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          node scripts/launcher-equivalence.mjs --rc "$RC_TARBALL" --final "$ROOT_TARBALL" \
+            --version "$version" --rc-version "$LAUNCHER_RC_VERSION"
+      - name: Install-sanity — npx-equivalent resolution through the real launcher (LCLI-9 AC#2)
+        # Same comparison mechanism as ci.yml's compile-smoke job (ci.yml:56-64): read
+        # package.json's version, compare strictly, hard-fail naming both values on mismatch.
+        # This job has no bun toolchain (no setup-bun step), so `node -p` reads package.json
+        # here, matching the `node -p` already used earlier in this same job.
+        #
+        # RUN FOR BOTH LAUNCHERS (LCLI-621), and they assert different things on purpose.
+        # `lore --version` is answered by the PLATFORM BINARY, not the launcher (bin/lore.cjs
+        # only resolves and execs it), and the platform packages stage as X, so the binary must
+        # print X through either launcher. The launcher's OWN version is a different fact, read
+        # from its installed package.json: X for the final, X-rc.N for the rc. Asserting X-rc.N
+        # from `lore --version` would demand a binary that is never built; asserting only X would
+        # let an rc launcher that is secretly the final pass. The rc's platform pins are checked
+        # to be exactly X as well, so the install below resolves the X linux-x64 tarball because
+        # the rc asks for it, not by accident.
+        run: |
           expected="$(node -p "require('./package.json').version")"
-          rm -rf /tmp/lore-install-sanity && mkdir -p /tmp/lore-install-sanity
-          cd /tmp/lore-install-sanity
-          npm init -y >/dev/null
-          npm install "$GITHUB_WORKSPACE/$ROOT_TARBALL" "$GITHUB_WORKSPACE/$LINUX_X64_TARBALL"
-          node -e '
-            const manifest = require("./node_modules/@opum-ai/lore/package.json");
-            if (manifest.dependencies && Object.keys(manifest.dependencies).length > 0) {
-              throw new Error("published launcher unexpectedly contains runtime dependencies");
-            }
-            try {
-              require.resolve("@ladybugdb/core/package.json");
-              throw new Error("published launcher unexpectedly installed @ladybugdb/core");
-            } catch (error) {
-              if (error.code !== "MODULE_NOT_FOUND") throw error;
-            }
-          '
-          version="$(node node_modules/.bin/lore --version)"
-          echo "lore --version (via bin/lore.cjs -> the linux-x64 optionalDependency) => '${version}' (package.json: '${expected}')"
-          if [ -z "$version" ]; then
-            echo "::error::the launcher did not resolve/run the installed platform binary"
-            exit 1
-          fi
-          if [ "${version}" != "${expected}" ]; then
-            echo "::error::version mismatch: binary='${version}' package.json='${expected}'"
-            exit 1
-          fi
+          sanity() {
+            local tarball="$1" launcher_version="$2"
+            rm -rf /tmp/lore-install-sanity && mkdir -p /tmp/lore-install-sanity
+            (
+              cd /tmp/lore-install-sanity || exit 1
+              npm init -y >/dev/null
+              npm install "$GITHUB_WORKSPACE/$tarball" "$GITHUB_WORKSPACE/$LINUX_X64_TARBALL"
+              # The ${...} below are JS template literals for `node -e`, not shell interpolation.
+              # shellcheck disable=SC2016
+              LAUNCHER_VERSION="$launcher_version" BINARY_VERSION="$expected" node -e '
+                const manifest = require("./node_modules/@opum-ai/lore/package.json");
+                if (manifest.dependencies && Object.keys(manifest.dependencies).length > 0) {
+                  throw new Error("published launcher unexpectedly contains runtime dependencies");
+                }
+                try {
+                  require.resolve("@ladybugdb/core/package.json");
+                  throw new Error("published launcher unexpectedly installed @ladybugdb/core");
+                } catch (error) {
+                  if (error.code !== "MODULE_NOT_FOUND") throw error;
+                }
+                if (manifest.version !== process.env.LAUNCHER_VERSION) {
+                  throw new Error(`installed launcher is ${manifest.version}, expected ${process.env.LAUNCHER_VERSION}`);
+                }
+                for (const [name, pin] of Object.entries(manifest.optionalDependencies ?? {})) {
+                  if (pin !== process.env.BINARY_VERSION) throw new Error(`launcher pins ${name} at ${pin}, expected ${process.env.BINARY_VERSION}`);
+                }
+              '
+              version="$(node node_modules/.bin/lore --version)"
+              echo "launcher ${launcher_version}: lore --version (via bin/lore.cjs -> the linux-x64 optionalDependency) => '${version}' (expected binary '${expected}')"
+              if [ -z "$version" ]; then
+                echo "::error::the ${launcher_version} launcher did not resolve/run the installed platform binary"
+                exit 1
+              fi
+              if [ "${version}" != "${expected}" ]; then
+                echo "::error::version mismatch through the ${launcher_version} launcher: binary='${version}' package.json='${expected}'"
+                exit 1
+              fi
+            )
+          }
+          sanity "$ROOT_TARBALL" "$expected"
+          sanity "$RC_TARBALL" "$LAUNCHER_RC_VERSION"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: npm-packages
@@ -963,15 +1066,21 @@ jobs:
         # for this version verifies, quest first and then lore. test/release-workflow.test.ts fails
         # on any `npm publish` in this file without the tag.
         #
-        # This job has no checkout (only the packed tarballs), so the platform set comes
-        # from `needs.setup.outputs.namesSpace` (the same single source of truth every
-        # other job derives its platform list from) rather than re-deriving it from
-        # package.json here. The root/launcher tarball is whatever tarball's name does
-        # NOT match any `-<platform>-` segment — asserted to be exactly one, so a
-        # naming/count drift fails loud instead of silently publishing the wrong thing
-        # last (or not at all).
+        # This job has no full checkout (only the packed tarballs and the two-file parity
+        # checkout), so the platform set comes from `needs.setup.outputs.namesSpace` (the same
+        # single source of truth every other job derives its platform list from).
+        #
+        # EIGHT TARBALLS ARRIVE, SEVEN ARE STAGED (Article 3 clause 5 as amended by ODOC-302,
+        # LCLI-621). The artifact carries the six platform tarballs at X, the launcher at
+        # X-rc.N and the launcher at X. The staged launcher is the X-rc.N one, named exactly
+        # from X (parity/package.json, the dispatched commit's) and this dispatch's launcher_rc
+        # input. The X launcher is CARRIED, NEVER STAGED: it reaches `latest` later by a fresh
+        # publish, only after the pair receipt verifies. Every tarball must be one of those
+        # eight by name, asserted, so a naming/count drift fails loud instead of silently
+        # publishing the wrong thing last (or not at all).
         env:
           PLATFORM_NAMES_SPACE: ${{ needs.setup.outputs.namesSpace }}
+          LAUNCHER_RC: ${{ inputs.launcher_rc }}
           # npm logs the ONE line that says why trusted publishing was refused at verbose only:
           #   log.verbose('oidc', `Failed token exchange request with body message: ${...}`)
           # At the default loglevel that failure is swallowed (oidc.js returns undefined) and the
@@ -1033,7 +1142,8 @@ jobs:
           shopt -s nullglob
           read -r -a platform_names <<< "$PLATFORM_NAMES_SPACE"
           expected_platform_count=${#platform_names[@]}
-          expected_total_count=$((expected_platform_count + 1))
+          # Six platform tarballs, the X-rc.N launcher and the carried X launcher.
+          expected_total_count=$((expected_platform_count + 2))
           # `./` is LOAD-BEARING, not style. npm parses a bare relative path containing a slash
           # as a GitHub shorthand: `npm publish dist-npm/x.tgz` resolves to
           # `github:dist-npm/x.tgz` and fails trying to `git ls-remote
@@ -1048,31 +1158,43 @@ jobs:
           # that only runs at release time sat here from the day it was written.
           all_tgz=(./dist-npm/*.tgz)
           if [ "${#all_tgz[@]}" -ne "$expected_total_count" ]; then
-            echo "::error::expected ${expected_total_count} tarballs in dist-npm (${expected_platform_count} platform + 1 launcher), found ${#all_tgz[@]}"
+            echo "::error::expected ${expected_total_count} tarballs in dist-npm (${expected_platform_count} platform + the X-rc.N launcher + the carried X launcher), found ${#all_tgz[@]}"
             ls -la dist-npm
             exit 1
           fi
 
-          root=""
+          case "$LAUNCHER_RC" in
+            ""|0*|*[!0-9]*)
+              echo "::error::launcher_rc must be a positive integer with no leading zero; got '${LAUNCHER_RC}'"
+              exit 1 ;;
+          esac
+          version="$(node -p "require('./parity/package.json').version")"
+          launcher_rc_version="${version}-rc.${LAUNCHER_RC}"
+          # The ONLY launcher this job stages.
+          root="./dist-npm/opum-ai-lore-${launcher_rc_version}.tgz"
+          # Carried for the later fresh publish of X to latest, and never handed to npm here.
+          carried="./dist-npm/opum-ai-lore-${version}.tgz"
+          if [ ! -f "$root" ] || [ ! -f "$carried" ]; then
+            echo "::error::expected the launcher tarballs $root (staged) and $carried (carried, never staged) in dist-npm"
+            ls -la dist-npm
+            exit 1
+          fi
+
           platform_tgz=()
           for tgz in "${all_tgz[@]}"; do
+            if [ "$tgz" = "$root" ] || [ "$tgz" = "$carried" ]; then continue; fi
             is_platform=false
             for name in "${platform_names[@]}"; do
-              case "$tgz" in
-                *"-${name}-"*) is_platform=true ;;
-              esac
+              if [ "$tgz" = "./dist-npm/opum-ai-lore-${name}-${version}.tgz" ]; then is_platform=true; fi
             done
-            if [ "$is_platform" = true ]; then
-              platform_tgz+=("$tgz")
-            elif [ -z "$root" ]; then
-              root="$tgz"
-            else
-              echo "::error::found two candidate root/launcher tarballs: $root and $tgz"
+            if [ "$is_platform" != true ]; then
+              echo "::error::unexpected tarball in dist-npm: $tgz (neither a platform package at ${version} nor one of the two launchers)"
               exit 1
             fi
+            platform_tgz+=("$tgz")
           done
-          if [ "${#platform_tgz[@]}" -ne "$expected_platform_count" ] || [ -z "$root" ]; then
-            echo "::error::expected ${expected_platform_count} platform tarballs + 1 root tarball, found ${#platform_tgz[@]} platform (root='${root}')"
+          if [ "${#platform_tgz[@]}" -ne "$expected_platform_count" ]; then
+            echo "::error::expected ${expected_platform_count} platform tarballs, found ${#platform_tgz[@]}"
             ls -la dist-npm
             exit 1
           fi
@@ -1085,15 +1207,21 @@ jobs:
           # Trusted Publisher registration (step 1) BEFORE the version bump (step 2),
           # so a `publish: true` dispatch made between those two steps would otherwise
           # sail through every other check and publish an installable `0.0.0`
-          # release, staging it for promotion. Checked once against the root
-          # tarball (verify-versions already proved every manifest shares one
-          # version, so any artifact would do).
+          # release, staging it for promotion. Checked against the staged launcher's own
+          # package.json, which must name exactly X-rc.N (verify-versions already proved
+          # every platform manifest shares X).
           root_version="$(tar -xzOf "$root" package/package.json | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>console.log(JSON.parse(d).version));')"
-          if [ -z "$root_version" ] || [ "$root_version" = "0.0.0" ]; then
-            echo "::error::refusing to publish version '${root_version}' — 0.0.0 is the pre-release placeholder. Complete the version-bump item in docs/runbooks/release-publishing.md's First-release checklist first."
+          if [ -z "$root_version" ] || [ "$version" = "0.0.0" ]; then
+            echo "::error::refusing to publish version '${version}' (launcher '${root_version}') — 0.0.0 is the pre-release placeholder. Complete the version-bump item in docs/runbooks/release-publishing.md's First-release checklist first."
             exit 1
           fi
-          echo "publishing version ${root_version}"
+          if [ "$root_version" != "$launcher_rc_version" ]; then
+            echo "::error::the staged launcher tarball names version '${root_version}', not '${launcher_rc_version}'"
+            exit 1
+          fi
+          echo "staging platform packages at ${version} and the launcher at ${launcher_rc_version}; the ${version} launcher is carried, not staged"
+          # The verify step below reads back exactly what was staged, never the carried X launcher.
+          printf '%s\n' "${platform_tgz[@]}" "$root" > staged-tarballs.txt
 
           for tgz in "${platform_tgz[@]}"; do
             publish_or_skip "$tgz"
@@ -1141,8 +1269,18 @@ jobs:
             '
           }
 
+          # EXACTLY WHAT WAS STAGED (LCLI-621): the carried X launcher is in dist-npm but was never
+          # published here, so polling for it would burn the whole window and report a false lag.
+          # An absent or empty list fails, rather than verifying nothing and reporting clean.
+          if [ ! -s staged-tarballs.txt ]; then
+            echo "::error::staged-tarballs.txt is missing or empty; the publish step did not record what it staged"
+            exit 1
+          fi
+          # A read loop rather than `mapfile`, which is bash 4+ (see the declare -A note above).
+          staged=()
+          while IFS= read -r line; do staged+=("$line"); done < staged-tarballs.txt
           pending=""
-          for tgz in ./dist-npm/*.tgz; do
+          for tgz in "${staged[@]}"; do
             spec="$(spec_of_tgz "$tgz")"
             case "$spec" in
               ""|"@"|*"@") echo "::error::could not read name/version from $tgz"; exit 1 ;;
@@ -1182,7 +1320,7 @@ jobs:
           # CONTENT. Only meaningful for what is actually visible; a package still propagating
           # has no bytes to compare yet.
           rc=0
-          for tgz in ./dist-npm/*.tgz; do
+          for tgz in "${staged[@]}"; do
             spec="$(spec_of_tgz "$tgz")"
             # Skip anything still propagating -- it has no bytes on the registry to compare yet.
             case " ${visible# } " in *" $spec "*) ;; *) continue ;; esac

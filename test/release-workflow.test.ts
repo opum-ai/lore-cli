@@ -25,8 +25,10 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import * as yaml from "js-yaml";
 
 const WORKFLOW_PATH = join(import.meta.dir, "..", ".github", "workflows", "release.yml");
@@ -58,6 +60,7 @@ interface WorkflowDoc {
       inputs?: {
         publish?: { default?: boolean };
         acknowledge_dangling_provenance?: { type?: string; default?: string };
+        launcher_rc?: { type?: string; default?: number };
       };
     };
   };
@@ -225,7 +228,8 @@ describe("release.yml publish job stays safely gated", () => {
 
     // biome-ignore lint/suspicious/noTemplateCurlyInString: literal bash array expansion in release.yml.
     expect(script).toContain("expected_platform_count=${#platform_names[@]}");
-    expect(script).toContain("expected_total_count=$((expected_platform_count + 1))");
+    // Eight in the artifact since LCLI-621: the platforms, the X-rc.N launcher, the carried X one.
+    expect(script).toContain("expected_total_count=$((expected_platform_count + 2))");
     expect(script).not.toMatch(/platform_tgz\[@\].*-ne\s+[0-9]/);
   });
 
@@ -415,9 +419,170 @@ describe("release.yml enforces constitution Article 3 (LCLI-613)", () => {
           if (/^\s*npm (publish|dist-tag)\b/.test(line)) commands.push(line.trim());
     // Positive control: the loop below must have something to check, or it passes vacuously.
     expect(commands.filter((c) => c.startsWith("npm publish")).length).toBeGreaterThanOrEqual(1);
+    // NO EXCEPTION IN THIS FILE (LCLI-621). The paired design settled with quest-cli (QCLI-399,
+    // refinement iv) admits exactly one publish without --tag release-candidate anywhere: the X
+    // launcher's fresh publish with --tag latest, in the promote script only. release.yml stages;
+    // the X launcher it packs is carried and never published here, which the executed test of the
+    // publish step below pins.
     for (const command of commands) {
       if (command.startsWith("npm publish")) expect(command).toContain("--tag release-candidate");
       expect(command.split(/\s+/)).not.toContain("latest");
     }
   });
+});
+
+// ── The launcher stages as X-rc.N; the X launcher is carried and never staged (LCLI-621) ───────
+// Constitution Article 3 clause 5 as amended by ODOC-302. The package job must produce and gate
+// eight tarballs, and the publish job must stage exactly seven of them. The publish step's REAL
+// `run:` block is executed below against a stub npm, because a static read of a selection loop
+// cannot show which tarballs it actually hands to `npm publish`.
+const describeOnPosix = process.platform === "win32" ? describe.skip : describe;
+
+describe("release.yml packs and gates both launchers (LCLI-621)", () => {
+  const packageSteps = () => loadWorkflow().jobs.package?.steps ?? [];
+  const indexOf = (steps: WorkflowStep[], pattern: RegExp) => steps.findIndex((s) => pattern.test(s.run ?? ""));
+
+  test("the launcher_rc input is a number defaulting to 1, and both jobs that use it validate it", () => {
+    const doc = loadWorkflow();
+    expect(doc.on.workflow_dispatch?.inputs?.launcher_rc?.type).toBe("number");
+    expect(doc.on.workflow_dispatch?.inputs?.launcher_rc?.default).toBe(1);
+    const rcStep = packageSteps().find((s) => s.run?.includes("shipped-readme-version.mjs --write"));
+    const publishStep = doc.jobs.publish?.steps?.find((s) => s.run?.includes("npm publish"));
+    for (const step of [rcStep, publishStep]) {
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal GitHub Actions expression syntax from release.yml.
+      expect(step?.env?.LAUNCHER_RC).toBe("${{ inputs.launcher_rc }}");
+      expect(step?.run).toContain('""|0*|*[!0-9]*)');
+    }
+  });
+
+  test("the rc launcher is packed from the generator, restored, then README-gated, equivalence-gated and install-checked", () => {
+    const steps = packageSteps();
+    const packX = indexOf(steps, /npm pack --pack-destination/);
+    const packRc = indexOf(steps, /shipped-readme-version\.mjs --write/);
+    const readme = indexOf(steps, /--tarball "\$RC_TARBALL"/);
+    const equivalence = indexOf(steps, /launcher-equivalence\.mjs --rc "\$RC_TARBALL" --final "\$ROOT_TARBALL"/);
+    const sanity = indexOf(steps, /sanity "\$RC_TARBALL" "\$LAUNCHER_RC_VERSION"/);
+    const upload = steps.findIndex((s) => s.uses?.startsWith("actions/upload-artifact@"));
+    for (const i of [packX, packRc, readme, equivalence, sanity, upload]) expect(i).toBeGreaterThan(-1);
+    expect(packX).toBeLessThan(packRc);
+    expect(packRc).toBeLessThan(readme);
+    expect(readme).toBeLessThan(upload);
+    expect(equivalence).toBeLessThan(upload);
+    expect(sanity).toBeLessThan(upload);
+    const rcRun = steps[packRc]?.run ?? "";
+    expect(rcRun).toContain("git checkout -- package.json README.md");
+    expect(rcRun).toContain("git diff --exit-code -- package.json README.md");
+    // Both launchers get the LCLI-510 assertion, and both get install-sanity.
+    expect(steps[readme]?.run).toContain('--tarball "$ROOT_TARBALL"');
+    expect(steps[sanity]?.run).toContain('sanity "$ROOT_TARBALL" "$expected"');
+    for (const i of [packRc, readme, equivalence, sanity]) expect(steps[i]?.["continue-on-error"]).toBeUndefined();
+    expect(readFileSync(join(import.meta.dir, "..", "scripts", "launcher-equivalence.mjs"), "utf8")).toContain(
+      "export function compareLauncherTarballs",
+    );
+  });
+});
+
+describeOnPosix("release.yml's publish step stages seven of eight tarballs (LCLI-621)", () => {
+  const X = "7.8.9";
+  const PLATFORMS = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"];
+
+  function publishRun(): string {
+    const step = loadWorkflow().jobs.publish?.steps?.find((s) => s.run?.includes("npm publish"));
+    expect(step?.run).toBeDefined();
+    return step?.run ?? "";
+  }
+
+  /** A workspace the publish step's run block can execute in: dist-npm, parity/, a stub npm. */
+  function workspace(options: { rc?: number; omit?: string; extra?: string; rcManifestVersion?: string } = {}) {
+    const root = mkdtempSync(join(tmpdir(), "release-publish-step-"));
+    const dist = join(root, "dist-npm");
+    const bin = join(root, "bin");
+    mkdirSync(dist, { recursive: true });
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(join(root, "parity"), { recursive: true });
+    writeFileSync(join(root, "parity", "package.json"), JSON.stringify({ name: "@opum-ai/lore", version: X }));
+    const rcVersion = `${X}-rc.${options.rc ?? 1}`;
+    const pack = (file: string, name: string, version: string) => {
+      const stage = mkdtempSync(join(root, "stage-"));
+      mkdirSync(join(stage, "package"));
+      writeFileSync(join(stage, "package", "package.json"), JSON.stringify({ name, version }));
+      execFileSync("tar", ["-czf", join(dist, file), "package"], { cwd: stage });
+    };
+    for (const p of PLATFORMS) pack(`opum-ai-lore-${p}-${X}.tgz`, `@opum-ai/lore-${p}`, X);
+    pack(`opum-ai-lore-${rcVersion}.tgz`, "@opum-ai/lore", options.rcManifestVersion ?? rcVersion);
+    pack(`opum-ai-lore-${X}.tgz`, "@opum-ai/lore", X);
+    if (options.extra) pack(options.extra, "@opum-ai/lore-extra", X);
+    if (options.omit) rmSync(join(dist, options.omit));
+    const log = join(root, "npm.log");
+    writeFileSync(log, "");
+    writeFileSync(join(bin, "npm"), `#!/usr/bin/env bash\necho "$*" >> "${log}"\n[ "$1" = view ] && exit 1\nexit 0\n`);
+    chmodSync(join(bin, "npm"), 0o755);
+    const run = (launcherRc = String(options.rc ?? 1)) => {
+      const result = Bun.spawnSync({
+        cmd: ["bash", "-e", "-c", publishRun()],
+        cwd: root,
+        env: {
+          ...process.env,
+          PATH: `${bin}${delimiter}${process.env.PATH}`,
+          PLATFORM_NAMES_SPACE: PLATFORMS.join(" "),
+          LAUNCHER_RC: launcherRc,
+        },
+      });
+      const calls = readFileSync(log, "utf8").split("\n").filter(Boolean);
+      const staged = join(root, "staged-tarballs.txt");
+      return {
+        code: result.exitCode,
+        out: result.stdout.toString() + result.stderr.toString(),
+        publishes: calls.filter((c) => c.startsWith("publish ")),
+        staged: existsSync(staged) ? readFileSync(staged, "utf8").split("\n").filter(Boolean) : [],
+      };
+    };
+    return { run, rcVersion, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  }
+
+  test("positive control: six platforms at X, then the X-rc.N launcher last, all under release-candidate", () => {
+    const ws = workspace({ rc: 3 });
+    try {
+      const r = ws.run();
+      expect(r.code).toBe(0);
+      expect(r.publishes).toEqual([
+        ...PLATFORMS.map((p) => `publish ./dist-npm/opum-ai-lore-${p}-${X}.tgz --tag release-candidate`),
+        `publish ./dist-npm/opum-ai-lore-${X}-rc.3.tgz --tag release-candidate`,
+      ]);
+      // The carried X launcher is never handed to npm, and never recorded as staged.
+      expect(r.publishes.join("\n")).not.toContain(`opum-ai-lore-${X}.tgz`);
+      expect(r.staged).toHaveLength(7);
+      expect(r.staged).not.toContain(`./dist-npm/opum-ai-lore-${X}.tgz`);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  const refuses = (name: string, options: Parameters<typeof workspace>[0], message: string, launcherRc?: string) =>
+    test(name, () => {
+      const ws = workspace(options);
+      try {
+        const r = ws.run(launcherRc);
+        expect(r.code).not.toBe(0);
+        expect(r.out).toContain(message);
+        expect(r.publishes).toEqual([]);
+      } finally {
+        ws.cleanup();
+      }
+    });
+
+  refuses("refuses when the carried X launcher is absent", { omit: `opum-ai-lore-${X}.tgz` }, "expected 8 tarballs");
+  refuses("refuses an unexpected ninth tarball", { extra: `opum-ai-lore-freebsd-x64-${X}.tgz` }, "expected 8 tarballs");
+  refuses("refuses a launcher_rc of 0", {}, "launcher_rc must be a positive integer", "0");
+  refuses(
+    "refuses when the input names an rc the artifact does not carry",
+    { rc: 1 },
+    "expected the launcher tarballs",
+    "2",
+  );
+  refuses(
+    "refuses an rc tarball whose own version is not X-rc.N",
+    { rcManifestVersion: X },
+    "names version '7.8.9', not '7.8.9-rc.1'",
+  );
 });
