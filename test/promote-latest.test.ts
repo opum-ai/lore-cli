@@ -70,7 +70,7 @@ const PLATFORM_PACKAGES = RELEASE_PACKAGES.filter((name) => name !== LAUNCHER);
 
 // ── Launcher tarballs: a minimal ustar writer (as test/launcher-equivalence.test.ts), so the bytes
 // are exactly what each case says on every platform and the real equivalence gate reads them.
-function tarball(entries: Array<{ path: string; content: string; mode?: number }>): Buffer {
+function tarball(entries: Array<{ path: string; content: string; mode?: number }>, level?: number): Buffer {
   const blocks: Buffer[] = [];
   for (const entry of entries) {
     const content = Buffer.from(entry.content, "utf8");
@@ -93,10 +93,11 @@ function tarball(entries: Array<{ path: string; content: string; mode?: number }
     put(`${sum.toString(8).padStart(6, "0")}\0 `, 148, 8);
     blocks.push(header, content, Buffer.alloc((512 - (content.length % 512)) % 512));
   }
-  return gzipSync(Buffer.concat([...blocks, Buffer.alloc(1024)]));
+  return gzipSync(Buffer.concat([...blocks, Buffer.alloc(1024)]), level === undefined ? {} : { level });
 }
 
-function launcher(version: string, readmeExtra = ""): Buffer {
+/** `level` repacks the SAME entries at another gzip level: other bytes, an equivalent launcher. */
+function launcher(version: string, readmeExtra = "", level?: number): Buffer {
   const manifest = `${JSON.stringify(
     {
       name: LAUNCHER,
@@ -107,15 +108,18 @@ function launcher(version: string, readmeExtra = ""): Buffer {
     null,
     2,
   )}\n`;
-  return tarball([
-    { path: "package/LICENSE", content: "MIT\n" },
-    { path: "package/bin/lore.cjs", content: "#!/usr/bin/env node\n", mode: 0o755 },
-    { path: "package/package.json", content: manifest },
-    {
-      path: "package/README.md",
-      content: `# lore\n\n> **Status: ${version} released.** Tag \`v${version}\`\n${readmeExtra}`,
-    },
-  ]);
+  return tarball(
+    [
+      { path: "package/LICENSE", content: "MIT\n" },
+      { path: "package/bin/lore.cjs", content: "#!/usr/bin/env node\n", mode: 0o755 },
+      { path: "package/package.json", content: manifest },
+      {
+        path: "package/README.md",
+        content: `# lore\n\n> **Status: ${version} released.** Tag \`v${version}\`\n${readmeExtra}`,
+      },
+    ],
+    level,
+  );
 }
 
 /** The Release run's npm-packages artifact: eight tarballs. */
@@ -754,6 +758,12 @@ refusalSuite(
       { servedRc: "fail" },
       `${LAUNCHER}@${RC} could not be downloaded from the registry (npm error E404)`,
     ],
+    // Equivalent entries at another gzip level: only the sha256 identity clause can see this.
+    [
+      "npm serves a REPACK of the rc (same entries, other bytes)",
+      { servedRc: launcher(RC, "", 1) },
+      `npm serves ${LAUNCHER}@${RC} as sha256`,
+    ],
   ],
 );
 
@@ -823,11 +833,14 @@ describe("scripts/promote-latest.mjs: step 6 re-runs after the platform move (LC
     }
   });
 
-  test("the X tarball changing on disk by then: its sha256 no longer matches the receipt's finalTarball, no publish", async () => {
+  test("the X tarball REPACKED on disk by then: equivalent entries, but not the receipt's finalTarball bytes, so no publish", async () => {
     const h = harness();
+    const repacked = launcher(V, "", 1);
+    // The repack changes only the bytes, never an entry: the equivalence gate alone would pass it.
+    expect(sha256(repacked)).not.toBe(sha256(launcher(V)));
     const w = world({
       afterPlatforms: (self) => {
-        writeFileSync(join(self.state.downloadDir as string, X_FILE), launcher(V, "tampered\n"));
+        writeFileSync(join(self.state.downloadDir as string, X_FILE), repacked);
       },
     });
     try {
