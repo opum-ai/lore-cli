@@ -257,10 +257,12 @@ print_closing_checklist() {
     0. STAGED IS NOT RELEASED. opum-cli-e2e qualifies the staged pair (lore $VERSION with
        quest $VERSION) from registry installs and lands receipts/pair/$VERSION.json on its
        main. Then, on opum-agent's go and AFTER quest's latest has moved:
-           node scripts/promote-latest.mjs --record <file> --version $VERSION --dry-run
-           node scripts/promote-latest.mjs --record <file> --version $VERSION --promote
-       It refuses without a verifying pair receipt, writes every prior latest to <file>
-       first, and --rollback <file> restores them. Steps 1 to 4 below follow the latest move.
+           node scripts/promote-latest.mjs --record <file> --version $VERSION --release-run $RUN_ID --dry-run
+           node scripts/promote-latest.mjs --record <file> --version $VERSION --release-run $RUN_ID --promote
+       It re-reads this run's artifact and both receipts, refuses unless they verify, writes
+       every prior latest to <file> first, moves the platforms by dist-tag and then publishes
+       the carried $VERSION launcher to latest, last. --rollback <file> restores every latest.
+       Steps 1 to 4 below follow the latest move.
 
     1. Update the release-truth doc so it states $VERSION is released. REPLACE the
        current-state claim, do not merely add alongside it:

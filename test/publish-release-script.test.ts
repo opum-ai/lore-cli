@@ -1913,7 +1913,56 @@ esac
   test("the closing checklist says staged is not released and names the latest move", () => {
     const out = execFileSync("bash", [SCRIPT, VERSION, RUN_ID, "--print-checklist"], { encoding: "utf8" });
     expect(out).toContain(`PUBLISHED ${VERSION} under the release-candidate dist-tag. latest has NOT moved.`);
-    expect(out).toContain(`node scripts/promote-latest.mjs --record <file> --version ${VERSION} --promote`);
+    expect(out).toContain(
+      `node scripts/promote-latest.mjs --record <file> --version ${VERSION} --release-run ${RUN_ID} --promote`,
+    );
+  });
+
+  // LCLI-621: a string match cannot tell whether the printed command still PARSES -- the pin above
+  // stayed green while the command it names exited 2 on a missing --release-run. So each printed
+  // promote command is run through the real promote-latest.mjs main() with a stubbed runner. A
+  // parser refusal throws; an accepted argv starts reading, and the stub proves the reads are for
+  // this version's tag and THIS run id before refusing the first one that matters.
+  test("each promote command the checklist prints is accepted by promote-latest.mjs's parser, for this run", async () => {
+    const { main } = await import("../scripts/promote-latest.mjs");
+    const out = execFileSync("bash", [SCRIPT, VERSION, RUN_ID, "--print-checklist"], { encoding: "utf8" });
+    const commands = out
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("node scripts/promote-latest.mjs "));
+    // Positive control: both the dry run and the real move are printed.
+    expect(commands.map((c) => c.split(" ").at(-1))).toEqual(["--dry-run", "--promote"]);
+    const dir = mkdtempSync(resolve(tmpdir(), "lore-checklist-argv-"));
+    try {
+      for (const command of commands) {
+        const argv = command
+          .split(/\s+/)
+          .slice(2)
+          .map((word) => (word === "<file>" ? resolve(dir, "record.json") : word));
+        const calls: string[] = [];
+        const err: string[] = [];
+        const code = await main(argv, {
+          run: async (cmd: string, args: string[]) => {
+            const line = [cmd, ...args].join(" ");
+            calls.push(line);
+            if (line.endsWith(`repos/opum-ai/lore-cli/git/ref/tags/v${VERSION}`))
+              return {
+                stdout: JSON.stringify({ ref: `refs/tags/v${VERSION}`, object: { type: "commit", sha: COMMIT } }),
+              };
+            throw Object.assign(new Error("stub: no further reads"), { stderr: "stub: no further reads" });
+          },
+          out: () => {},
+          err: (line: string) => err.push(line),
+          readPackageVersion: async () => "0.0.0-not-this",
+        });
+        expect({ command, code }).toEqual({ command, code: 1 });
+        expect(calls[1]).toBe(`gh api --hostname github.com repos/opum-ai/lore-cli/actions/runs/${RUN_ID}`);
+        expect(err.join("\n")).toContain(`Release run ${RUN_ID} could not be read`);
+        expect(existsSync(resolve(dir, "record.json"))).toBe(false);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
