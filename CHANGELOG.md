@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The root launcher stages as `X-rc.N`; the platform packages still stage as `X`** (LCLI-621,
+  constitution Article 3 clause 5 as amended by ODOC-302). The Release run's `npm-packages`
+  artifact now carries eight tarballs: the six platform packages at `X`, the launcher at `X-rc.N`
+  and the launcher at `X`. Staging, from `release.yml`'s `publish` job or from
+  `scripts/publish-release.sh`, publishes seven of them under `release-candidate`: the platforms
+  at `X` and the launcher at `X-rc.N`, which pins the platforms at exactly `X`. The `X` launcher
+  is carried and never staged. `N` is the new `launcher_rc` dispatch input, which defaults to `1`.
+  A re-stage of the same `X` takes the next `N`. The final `X` launcher's publish to `latest` is
+  not part of this change.
+
+### Added
+
+- **Launcher equivalence gate** (LCLI-621). `scripts/launcher-equivalence.mjs` refuses an
+  `X-rc.N` launcher that differs from the `X` launcher by anything but the version string. It
+  compares entry by entry over the unpacked tarballs: the same set of paths, the same type and
+  mode per entry, and byte-identical content after every `X-rc.N` is replaced with `X`. It also
+  refuses an rc whose own `package.json` is not `X-rc.N`, and an rc pinning a platform at
+  anything but `X`. It runs in `release.yml`'s `package` job and in `scripts/publish-release.sh`,
+  and both launchers get the LCLI-510 shipped-README assertion and install-sanity.
+
 ## [0.11.0] - 2026-09-27
 
 ### Upgrade notice: schema drift on every repository that commits `.lore/schemas/`
