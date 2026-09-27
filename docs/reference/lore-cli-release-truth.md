@@ -21,7 +21,84 @@ availability claim.
 
 ### Current state
 
-`0.9.2` is **RELEASED**. It is a patch whose only shipped change is LCLI-573
+`0.11.0` is **RELEASED**. It is a minor release, paired with `quest` `0.11.0` under
+the Opum project constitution's Article 3 (opum-ai/opum-agent#988): one version number
+across lore and quest, and every release a pair. It carries the built-in Constitution and
+Constants document types (LCLI-595/596), the managed-block render and Constitution auto-pin
+(LCLI-597/609), `lore check` enforcing `lore validate`'s required sections and fields for
+every type (LCLI-606, a behaviour change), the ruling-28 managed plugin scope (LCLI-604/608),
+the bidi/format-character sanitiser (LCLI-607), and the TASK-90 race fix in `lore unlink`
+(LCLI-614). It was cut from tag `v0.11.0` (annotated tag object
+`1734cc960431f2df7d37a63bb6cb33865238ef65`, peeling to
+`bb225f1c43d39e896d2ec7094fdc7427072d2e4d`, which `origin/main` named when read on
+2026-09-27). `lore` never published `0.10.0`: that number went unused so the pair could share
+`0.11.0` (operator's choice, relayed as an opum-agent ruling and confirmed first-party in this
+repository's session).
+
+**First release through the Article 3 gates (LCLI-613).** It was staged, then promoted:
+- **Staged.** `scripts/publish-release.sh 0.11.0 36291717192` ran manually, 04:07-04:12Z,
+  exit 0, on the user's direct approval. Its gates, in order:
+  - version parity: lore `0.11.0` equals quest `0.11.0` on quest-cli `main`;
+  - all six platform tarballs match their CI-recorded digests;
+  - opum-cli-e2e's `receipts/lore/0.11.0.json` on `main` is QUALIFIED, and its run and all
+    seven sha256 match.
+
+  Every package was published under `--tag release-candidate` only. The packument `time`
+  field records the platforms at 04:09:26Z-04:10:22Z and the root launcher at 04:11:59Z.
+- **Pair-qualified.** opum-cli-e2e's `receipts/pair/0.11.0.json` (main `40cb46e`) is
+  QUALIFIED, 483 pass / 0 fail / 1 blocked.
+- **Promoted.** quest moved first. Then `scripts/promote-latest.mjs --version 0.11.0 --promote`
+  ran at 05:00:13-05:00:41Z on opum-agent's go (OPAG-465):
+  - it re-verified all four gates;
+  - it wrote the rollback record before any move: every prior `latest` was `0.9.3`, kept
+    locally at `scripts/release-0.11.0/latest-rollback-0.11.0.json`, gitignored;
+  - it moved `latest` to `0.11.0`, platforms first and the launcher last.
+
+  Read with `npm view --prefer-online` at 05:00:49Z, all seven packages show
+  `latest` = `release-candidate` = `0.11.0`. A clean `npm install @opum-ai/lore` resolves
+  to `0.11.0`.
+
+**Qualified on the exact bytes that shipped.** Release run `36291717192`
+(`workflow_dispatch`, `publish: false`, on `bb225f1c`) finished `success`, with all six
+matching-host qualifications green. opum-cli-e2e's cross-product suite, run against that run's
+built darwin-arm64 binary with quest `0.11.0`, was QUALIFIED 31/31. Its TASK-90
+"same-value competing removal" row passed 5/5. The same row failed 5/5 against `c9b9377e`,
+which predates LCLI-614, so the green is caused by that fix.
+
+**`0.11.0` carries NO provenance attestation (LCLI-482, open).** `npm view
+@opum-ai/<pkg>@0.11.0 dist --json` has no `attestations` key on any of the seven packages
+(checked for the key's presence). It was a manual publish with the Keychain granular token
+(`keychain:npm-opum-ai-publish`).
+
+**Rollout cost.** Adding two built-in types moves the profile digest, so every committed
+`.lore/schemas/` goes stale. `lore check` exits `6` with `schema-drift` until `lore schema
+export` is run and committed. Measured by ref, 10 of 10 fleet repositories commit
+`.lore/schemas/` (LCLI-599). `lore check` now also fails on `lore validate`'s error-tier
+`frontmatter` and `required-section` findings; the fleet was re-measured by ref just before
+merge at 0 of 385 documents newly failing (LCLI-606).
+
+**Package README on npm is EMPTY: a known consequence of release-candidate staging.**
+Read on 2026-09-27 after the `latest` move, the packument's package-level `readme` is 0 bytes
+and `readmeFilename` is empty. `versions["0.11.0"].readmeFilename` is `README.md`, and the
+tarball contains `package/README.md`. `@opum-ai/quest` reads the same after the same flow.
+npm derives the package README from a publish that lands on `latest`, and a later dist-tag
+move does not re-derive it. `scripts/readme-readback.sh` saw no `readme` within its window.
+This is not yet fixed; tracked with LCLI-616/LCLI-618.
+
+**GitHub Release and plugin content.** GitHub Release `v0.11.0` reports `published_at`
+2026-09-27T05:04:03Z, non-draft and non-prerelease, with the CHANGELOG's `[0.11.0]` section as
+its body. **`skills/` at `v0.11.0` is tree `ce580cd17d1da6a61ddb53f649398719b9262f96`,
+unchanged from `v0.9.3`.** opum-marketplace pins `v0.9.3` and already records that baseline,
+so moving its pin is a content no-op. It was sent the LCLI-469 handshake: tag, tag object,
+peeled commit and tree.
+
+**Record gap.** `0.9.3` (released 2026-09-25) was never written into this record, and it is
+not reconstructed here from memory. The previous state below is `0.9.2`, the last release
+this record actually captured.
+
+### Previous state
+
+`0.9.2` was **RELEASED**. It is a patch whose only shipped change is LCLI-573
 (opum-ai/lore-cli#237): agent guidance starts with retrieval (`lore query` then
 `lore read`), the plugin skill `skills/lore/SKILL.md` is generated, and the retired
 Backlog preflight is dropped. Published 2026-09-24 from tag `v0.9.2` (annotated tag
@@ -97,8 +174,6 @@ sent the tag name, tag object, peeled commit and tree on publication (LCLI-469).
 opum-cli-e2e and quest-cli were told on publication.
 
 **The README quickstart still does not run unedited** (LCLI-571, open).
-
-### Previous state
 
 `0.9.1` was **RELEASED**. It is a patch whose only change is ODOC-262: `lore new story`
 scaffolds into `docs/stories/` again, writing `type: Arc` (LCLI-570). Published

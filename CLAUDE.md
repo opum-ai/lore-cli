@@ -112,8 +112,10 @@ external users invoke, which the retirement-scope rule explicitly protects.
 `.claude-plugin/marketplace.json` pins `opum-ai/lore-cli` at a tag name, and
 `scripts/check-federated-content.mjs` re-resolves the whole chain — tag ref, tag
 object, commit, root tree, `skills/` subtree — against a recorded baseline in
-`scripts/federated-pin-baselines.json`. Read by ref 2026-09-15: pinned at `v0.7.0`,
-`skills/` baseline `2998f74d077845f8ad73f83aa296e37e034378a4`.
+`scripts/federated-pin-baselines.json`. Read by ref 2026-09-27 (origin/main `8e5eec20`):
+pinned at `v0.9.3`, `skills/` baseline `ce580cd17d1da6a61ddb53f649398719b9262f96`, which
+`v0.11.0` also resolves to. (An earlier revision recorded the 2026-09-15 read, `v0.7.0` /
+`2998f74d…`; it went stale as the pin moved.)
 
 Two things follow, and the second is the one that gets misstated. Anything landing
 under `skills/` changes what the next tag ships to plugin users, so it is not an
