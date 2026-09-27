@@ -5,7 +5,8 @@ name: Release
 # a plain dispatch (or any dispatch that leaves `publish` at its default) only builds
 # and packages every platform artifact and proves the npx/launcher mechanism resolves
 # the right binary end-to-end (LCLI-9 AC#1/AC#2) — the `publish` job below simply does
-# not run. Setting `publish: true` additionally runs that job, publishing every
+# not run. The `version-parity` job runs either way (LCLI-620), so a rehearsal still
+# refuses a mismatched lore/quest pair. Setting `publish: true` additionally runs that job, publishing every
 # platform package and the root launcher to npm via OIDC Trusted Publishing (LCLI-255)
 # — but only once a maintainer has completed the one-time npmjs.com Trusted Publisher
 # setup for every package;
@@ -65,6 +66,38 @@ jobs:
           echo "names=$names" >> "$GITHUB_OUTPUT"
           namesSpace=$(node -e "console.log(JSON.parse(process.argv[1]).map((p) => p.name).join(' '))" "$matrix")
           echo "namesSpace=$namesSpace" >> "$GITHUB_OUTPUT"
+
+  # LCLI-620, constitution Article 3 clause 6, on EVERY dispatch. The publish job's own parity
+  # step (below) only runs when publish is true, because that whole job is skipped otherwise --
+  # so before this job a publish:false rehearsal went green on a mismatched lore/quest pair,
+  # where quest-cli's release.yml already refused (QCLI-386; OPAG-465 AC1). Deliberately no `if:`
+  # on inputs.publish, and `publish` lists it in `needs:`, so a real publish cannot start without
+  # it. The publish job's step stays as the re-check nearest the irreversible `npm publish`:
+  # the qualification jobs in between can run a long time, and quest-cli main can move.
+  # Same checker, same two-file sparse checkout of the dispatched commit, same fail-closed read.
+  version-parity:
+    name: lore/quest version parity (constitution Article 3 clause 6)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the version-parity gate (package.json and its checker only)
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          path: parity
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          # Anchored: in non-cone mode a bare "package.json" matches at ANY depth (LCLI-613 N1).
+          sparse-checkout: |
+            /package.json
+            /scripts/version-parity.mjs
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+      # Any read failure refuses: no continue-on-error, and no input or variable skips it.
+      - name: Gate on lore/quest version parity (constitution Article 3 clause 6)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node parity/scripts/version-parity.mjs --require
 
   verify-versions:
     name: assert release package versions + metadata are consistent
@@ -745,7 +778,7 @@ jobs:
     if: ${{ inputs.publish == true }}
     # provenance-pre gates this job: a rewrite that dangled an already-published version's
     # attestation must stop the release rather than be added to (LCLI-481).
-    needs: [setup, package, provenance-pre]
+    needs: [setup, version-parity, package, provenance-pre]
     runs-on: ubuntu-latest
     # LCLI-268: an OUT-OF-FILE gate, on top of (not instead of) the `if:` guard above.
     # npm Trusted Publishing (LCLI-255) matches OIDC tokens on repo + WORKFLOW FILENAME,
