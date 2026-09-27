@@ -982,6 +982,23 @@ describe("Quest adapter — optimistic concurrency on read-modify-write (LCLI-52
     expect(detail?.revision).toBe("sha256:live");
   });
 
+  test("a revision the adapter cannot send back is not reported (LCLI-614 N3)", async () => {
+    // The view emits a revision but the manifest does not advertise --if-revision, so editTask
+    // would silently drop it. Reporting it would let a caller believe its edit was guarded.
+    const spawn: QuestSpawn = async (readonlyArgs) => {
+      const args = [...readonlyArgs];
+      if (args[0] === "--version") return { exitCode: 0, stdout: "0.7.1\n", stderr: "" };
+      if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
+      if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
+      if (args.slice(0, 2).join(" ") === "task view") return ok("task.view", task({ revision: "sha256:live" }));
+      throw new Error(`unexpected Quest call: ${args.join(" ")}`);
+    };
+    const detail = await adapter(spawn).viewTask("QUEST-2");
+    expect(detail?.id).toBe("QUEST-2");
+    expect(detail?.revision).toBeUndefined();
+    expect(detail !== null && "revision" in detail).toBe(false);
+  });
+
   test("a Quest that emits no revision yields undefined rather than failing the read", async () => {
     const spawn: QuestSpawn = async (readonlyArgs) => {
       const args = [...readonlyArgs];

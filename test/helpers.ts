@@ -250,17 +250,19 @@ export function fakeAdapter(
      */
     editTaskConflictsFirst?: number;
     /**
-     * Reject the first `times` `editTask` calls PER TASK with `error` (a `validation` LoreError),
-     * the way quest 0.10.0 answers a stale `--if-revision` whose removal target is already gone
-     * (LCLI-614). With `competingWrite`, the competing writer lands first: the stored record is
-     * replaced by `competingWrite(record)` and its `revision` bumped, so a re-read sees the race.
-     * Without it the record and its revision are untouched — a genuine, non-race refusal.
-     */
-    /**
      * Fail a `removeLabels` entry that matches no stored label EXACTLY with a `validation`
      * LoreError, as Quest has since QCLI-297 (0.8.0) — a loud miss, not a no-op (LCLI-614).
      */
     strictRemovals?: boolean;
+    /**
+     * Reject the first `times` `editTask` calls PER TASK with `error` (a `validation` LoreError),
+     * the way quest 0.10.0 answers a stale `--if-revision` whose removal target is already gone
+     * (LCLI-614). With `competingWrite`, another write lands first: the stored record is replaced by
+     * `competingWrite(record)` and its `revision` bumped EVEN IF `competingWrite` changes nothing —
+     * Quest's revision is WORKSPACE-WIDE, so `competingWrite: (t) => t` models an unrelated write to
+     * some other task, which moves this task's revision without touching its content (SF1).
+     * Without `competingWrite`, the record and its revision are untouched.
+     */
     editTaskValidation?: {
       readonly times: number;
       readonly error: LoreError;

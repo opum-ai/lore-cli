@@ -317,7 +317,7 @@ export async function runLink(options: LinkOptions): Promise<number> {
         // about where QUEST stores the record (LCLI-428), not a path lore itself needs to commit.
         refs.push({ taskId, file: commitFileFor(backend, detail.file) });
         return "added" as const;
-      }),
+      }, "guarded-only"),
     );
     backRefOutcomes = outcomes;
     outcomes.forEach((outcome, i) => {
@@ -467,18 +467,27 @@ async function removeBackRefs(
       if (detail === null) {
         return "skipped" as const; // the task no longer exists in Backlog — nothing to clean up
       }
-      // The stored spelling, not `label`: Quest matches a removal EXACTLY and fails loud on a miss
-      // (QCLI-297), while `hasLabel` matches case-insensitively.
-      const storedLabel = detail.labels.find((l) => l.toLowerCase() === label.toLowerCase());
-      const hadLabel = storedLabel !== undefined;
+      // EVERY stored case-variant, by its stored spelling, not `label`: Quest matches a removal
+      // EXACTLY and fails loud on a miss (QCLI-297), while `hasLabel` matches case-insensitively --
+      // and Quest will hold `doc:stories/Dup` and `doc:stories/dup` on one task side by side.
+      const storedLabels = detail.labels.filter((l) => l.toLowerCase() === label.toLowerCase());
+      const hadLabel = storedLabels.length > 0;
       // Matched case-insensitively, like `hasLabel` — necessary for `--allow-missing`, whose
       // `docPath` is *reconstructed* from the given id, not read from a live concept's real path, so
       // it may not match the originally-stored casing exactly. Safe because `assertNoLabelCaseCollision`
       // already ran up front and ruled out any other concept whose id (and so doc path) could
       // case-collide, so a case-insensitive match here can't strip a different concept's real entry.
       const hadDoc = containsCaseInsensitive(detail.documentation, docPath);
-      if (!hadLabel && !hadDoc) {
-        // Neither the label nor the doc entry is present, so there is no Backlog edit to make — but
+      const remainingDocs = removeDoc(detail.documentation, docPath);
+      // With no label to remove, an edit whose remaining `--doc` list is empty would carry no field
+      // flag at all (`--doc` cannot clear, contract §2.4): it could not remove the doc entry, yet it
+      // would still be a write -- bumping Quest's workspace-wide revision -- and report `removed`
+      // for a back-reference it never touched (LCLI-614 N1). The queryable back-reference is the
+      // label, and it is already gone; the doc entry lingers exactly as it does after an unlink
+      // that removes the label (the accepted ADR-0009 tradeoff). So this is `already-absent`, with
+      // no write.
+      if (!hadLabel && (!hadDoc || remainingDocs.length === 0)) {
+        // Neither the label nor a removable doc entry is present, so there is no Backlog edit to make — but
         // the task's file can still be dirty and uncommitted on disk if a PRIOR `lore unlink` run
         // already applied this exact removal and then its own `commitBacklogFiles` call failed (e.g.
         // a rejected pre-commit hook — LORE-121's pattern, LORE-179). Recording the path here, even
@@ -491,7 +500,7 @@ async function removeBackRefs(
         }
         return "already-absent" as const; // nothing to remove — skip the edit entirely
       }
-      // An empty `desiredDocs` is not special-cased: the real adapter's `--doc` accumulator
+      // Alongside a label removal, an empty `remainingDocs` is not special-cased: the real adapter's `--doc` accumulator
       // (`for (const doc of patch.doc ?? [])`) sends zero flags for `[]`, identical to `undefined` —
       // Backlog is left with whatever it already had (it cannot clear `--doc` via an empty value,
       // contract §2.4), so a stale annotation cosmetically lingers either way.
@@ -505,12 +514,13 @@ async function removeBackRefs(
       // lore's read landed AFTER the competitor, so the revision it sent was current and there was
       // no race for `guardedEditTask` to recognise.
       await guardedEditTask(adapter, taskId, detail, {
-        ...(storedLabel === undefined ? {} : { removeLabels: [storedLabel] }),
-        doc: removeDoc(detail.documentation, docPath),
+        ...(hadLabel ? { removeLabels: storedLabels } : {}),
+        doc: remainingDocs,
       });
       refs.push({ taskId, file: commitFileFor(backend, detail.file) });
       return "removed" as const;
-    }),
+      // "any-conflict": unlink has retried every conflict since LCLI-522, Jira's included; kept.
+    }, "any-conflict"),
   );
   return { outcomes, refs };
 }
@@ -537,17 +547,54 @@ const CONFLICT_RETRY_LIMIT = 3;
  * Without this, adding the precondition would trade a silent clobber for a user-visible failure on
  * a link that used to succeed. That would be more CORRECT and less USEFUL; the retry is what makes
  * the fix an improvement in both directions rather than one.
+ *
+ * `retry` scopes WHICH conflicts are retried (LCLI-614 SF2). `"guarded-only"` retries only a
+ * conflict raised by an edit that sent a precondition ({@link guardedConflicts}) — `lore link`'s
+ * mode, so a Jira 429 or timeout on link still fails once, as it did before link had any retry.
+ * `"any-conflict"` is unlink's and the move's unchanged LCLI-522 behaviour. Each retry waits a short
+ * jittered backoff first ({@link conflictRetryDelayMs}).
  */
-async function withConflictRetry<T>(run: () => Promise<T>): Promise<T> {
+async function withConflictRetry<T>(run: () => Promise<T>, retry: "guarded-only" | "any-conflict"): Promise<T> {
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await run();
     } catch (error) {
-      const isConflict = error instanceof LoreError && error.type === "conflict";
-      if (!isConflict || attempt >= CONFLICT_RETRY_LIMIT) throw error;
+      const retryable =
+        error instanceof LoreError &&
+        error.type === "conflict" &&
+        (retry === "any-conflict" || guardedConflicts.has(error));
+      if (!retryable || attempt >= CONFLICT_RETRY_LIMIT) throw error;
+      await conflictRetryBackoff.sleep(conflictRetryDelayMs(attempt));
     }
   }
 }
+
+/**
+ * Conflicts raised by an edit that actually SENT an `ifRevision` precondition — the tracker's own
+ * exit-5 refusal of it, or a misreported race {@link guardedEditTask} reclassified. Only these say
+ * "the record moved; re-read and re-decide". Jira maps a 429, a timeout and a failed transition to
+ * `conflict` too, and its hint promises Lore does not retry silently, so `lore link` (which never
+ * retried before LCLI-614) retries only these (LCLI-614 SF2).
+ */
+const guardedConflicts = new WeakSet<LoreError>();
+
+/** Base of the backoff between conflict retries: attempt n waits base·2ⁿ plus up to base of jitter. */
+const CONFLICT_RETRY_BASE_MS = 10;
+
+/**
+ * The pause before retry `attempt` (0-based): 10–20ms, 20–30ms, 40–50ms, so the whole bounded
+ * retry waits at most ~100ms. Jittered so two lore processes contending on one Quest workspace (whose
+ * revision is workspace-wide) do not retry in lockstep and collide again (LCLI-614 N2).
+ */
+function conflictRetryDelayMs(attempt: number): number {
+  return CONFLICT_RETRY_BASE_MS * 2 ** attempt + Math.floor(conflictRetryBackoff.random() * CONFLICT_RETRY_BASE_MS);
+}
+
+/** The backoff's clock and jitter source — replaced in tests so the suite neither sleeps nor varies. */
+export const conflictRetryBackoff: { sleep: (ms: number) => Promise<void>; random: () => number } = {
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  random: Math.random,
+};
 
 /**
  * The one `editTask` call every read-modify-write back-reference edit goes through (link, unlink,
@@ -557,16 +604,23 @@ async function withConflictRetry<T>(run: () => Promise<T>): Promise<T> {
  * Quest 0.10.0 answers a STALE `--if-revision` whose removal target is already gone with exit-6
  * `validation` ("no entry matches") instead of the exit-5 `conflict` its own `task edit` contract
  * promises, so {@link withConflictRetry} never fired and a same-value competing removal failed the
- * whole unlink. When a guarded edit fails `validation`, this re-reads the task: a revision that
- * moved away from the one sent means the edit lost a race, so it is rethrown as a `conflict` (the
+ * whole unlink. When a guarded edit fails `validation`, this re-reads the task: if THIS task's
+ * labels or documentation — the only fields any back-reference patch touches — differ from the read
+ * the patch was computed from, the edit lost a race, so it is rethrown as a `conflict` (the
  * tracker's own error kept as `cause` and quoted in the message) and the caller's bounded retry
  * re-reads and re-decides — an unlink then finds the label gone and reports `already-absent`.
  *
- * Decided by revision comparison ONLY, never by message text. Every other outcome rethrows the
- * ORIGINAL error unchanged, same object: a non-`validation` error, an unguarded edit (no revision
- * to compare), an unchanged revision (a genuine refusal, e.g. a missing Quest actor), a record that
- * is gone or reports no revision, or a re-read that itself fails. So a persistent validation
- * failure is never masked, and a real race is the only thing that becomes retryable.
+ * NOT decided by the revision: Quest's `revision` is WORKSPACE-WIDE (measured on 0.10.0 and 0.11.0
+ * — editing T-1 changes T-2's viewed revision), so "the revision moved" is true after any write
+ * anywhere and would turn a genuine refusal into a retry and then a misleading `drift` (LCLI-614
+ * SF1). Never by message text either. A Quest actor-context failure is never converted, whatever
+ * moved. Every other outcome rethrows the ORIGINAL error object: a non-`validation` error, an
+ * unguarded edit, unchanged content, a record that is gone, or a re-read that itself fails.
+ *
+ * "Guarded" means the precondition was actually SENT: `detail.revision` is defined only when the
+ * adapter will pass it on (the Quest adapter reports a revision only when its manifest advertises
+ * `--if-revision`; Backlog and Jira report none). A conflict from a guarded edit is marked in
+ * {@link guardedConflicts} so {@link withConflictRetry} can tell it from Jira's rate-limit conflicts.
  */
 async function guardedEditTask(
   adapter: BacklogAdapter,
@@ -578,28 +632,40 @@ async function guardedEditTask(
   try {
     await adapter.editTask(taskId, sent === undefined ? patch : { ...patch, ifRevision: sent });
   } catch (error) {
-    if (sent === undefined || !(error instanceof LoreError) || error.type !== "validation") throw error;
-    let current: string | undefined;
+    if (sent === undefined || !(error instanceof LoreError)) throw error;
+    if (error.type === "conflict") {
+      guardedConflicts.add(error);
+      throw error;
+    }
+    if (error.type !== "validation" || isQuestActorContextFailure(error)) throw error;
+    let current: BacklogTaskDetail | null;
     try {
-      current = (await verifiedViewTask(adapter, taskId))?.revision;
+      current = await verifiedViewTask(adapter, taskId);
     } catch {
       throw error;
     }
-    if (current === undefined || current === sent) throw error;
+    if (current === null || !backRefFieldsDiffer(detail, current)) throw error;
     const lostRace = new LoreError(
       "conflict",
-      `task "${taskId}" changed while lore was editing it (revision ${sent} -> ${current}); the tracker reported: ${error.message}`,
+      `task "${taskId}" changed while lore was editing it; the tracker reported: ${error.message}`,
       "re-read the task and retry",
       {
         taskId,
         sentRevision: sent,
-        currentRevision: current,
+        ...(current.revision === undefined ? {} : { currentRevision: current.revision }),
         trackerError: { type: error.type, message: error.message },
       },
     );
     lostRace.cause = error;
+    guardedConflicts.add(lostRace);
     throw lostRace;
   }
+}
+
+/** Whether a task's labels or documentation — as sets — differ between two reads of it. */
+function backRefFieldsDiffer(before: BacklogTaskDetail, after: BacklogTaskDetail): boolean {
+  const key = (values: readonly string[]) => JSON.stringify([...new Set(values)].sort());
+  return key(before.labels) !== key(after.labels) || key(before.documentation) !== key(after.documentation);
 }
 
 /** One task's outcome after {@link moveBackRefs} moves its back-reference to a concept's new id/path. */
@@ -701,7 +767,8 @@ export async function moveBackRefs(
       });
       refs.push({ taskId, file: commitFileFor(backend, detail.file) });
       return "moved" as const;
-    }),
+      // "any-conflict": the move has retried every conflict since LCLI-522, Jira's included; kept.
+    }, "any-conflict"),
   );
   const outcomes = taskIds.map((task, i): MovedBackRef => {
     const outcome = settled[i] as PromiseSettledResult<"moved" | "already-current">;

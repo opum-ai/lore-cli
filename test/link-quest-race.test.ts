@@ -121,7 +121,7 @@ describe("lore unlink vs a same-value competing removal, real quest (LCLI-614)",
   );
 
   test.skipIf(questBinary === null)(
-    "the competitor wins BEFORE lore reads (label gone, --doc left): unlink exits 0 with no absent-label removal",
+    "the competitor wins BEFORE lore reads (label gone, --doc left): unlink exits 0 with no write",
     async () => {
       // The interleaving that actually failed the harness row: `lore link` writes label + --doc,
       // the competitor removes only the label, and lore's read lands after it -- so the revision
@@ -149,7 +149,7 @@ describe("lore unlink vs a same-value competing removal, real quest (LCLI-614)",
       const view = () =>
         (
           JSON.parse(quest(["task", "view", taskId, "--json"]).stdout) as {
-            data: { labels: string[]; documentation: string[] };
+            data: { labels: string[]; documentation: string[]; revision: string };
           }
         ).data;
 
@@ -160,13 +160,78 @@ describe("lore unlink vs a same-value competing removal, real quest (LCLI-614)",
 
       expect(quest(["task", "edit", taskId, "--remove-label", "doc:stories/x", ...HUMAN, "--json"]).exitCode).toBe(0);
 
+      const revisionBefore = view().revision;
+
       const stdout = capture();
       const code = await runUnlink({ ...base(["stories/x", taskId]), stdout });
 
       expect(code).toBe(EXIT_OK);
       const report = (JSON.parse(stdout.text()) as { data: UnlinkReport }).data;
-      expect(report.tasks[0]?.backRef).toBe("removed");
+      // The label is gone and the only doc entry cannot be cleared by --doc, so there is nothing
+      // to send: `already-absent`, with no write at all (N1) -- Quest's revision is unmoved.
+      expect(report.tasks[0]?.backRef).toBe("already-absent");
       expect(view().labels).not.toContain("doc:stories/x");
+      expect(view().revision).toBe(revisionBefore);
+    },
+    30_000,
+  );
+
+  test.skipIf(questBinary === null)(
+    "an unrelated write to ANOTHER task does not turn a missing-actor refusal into a retry (SF1: revision is workspace-wide)",
+    async () => {
+      // The review's reproduction: `lore unlink <gone> T-1 --allow-missing` with no actor, while
+      // something edits only T-2. Quest's revision is workspace-wide, so T-1's viewed revision moves;
+      // converting on that alone reported "task T-1 changed ..." as drift instead of the LCLI-459
+      // actor-context validation error.
+      expect(run(["git", "init", "-q", "."]).exitCode).toBe(0);
+      expect(quest(["init", "--json"]).exitCode).toBe(0);
+      const t1 = quest(["task", "create", "Target", "--label", "doc:stories/gone", ...HUMAN, "--json"]);
+      const t2 = quest(["task", "create", "Bystander", ...HUMAN, "--json"]);
+      const t1Id = (JSON.parse(t1.stdout) as { data: { id: string } }).data.id;
+      const t2Id = (JSON.parse(t2.stdout) as { data: { id: string } }).data.id;
+      mkdirSync(join(root, "docs"), { recursive: true });
+
+      const saved = { ...process.env };
+      delete process.env.LORE_QUEST_ACTOR;
+      delete process.env.LORE_QUEST_ACTOR_KIND;
+      delete process.env.LORE_QUEST_ACCOUNTABLE_HUMAN;
+      try {
+        const real = createQuestAdapter(root); // no actor anywhere
+        const revisions: string[] = [];
+        const adapter: BacklogAdapter = {
+          ...real,
+          async editTask(id: string, patch: EditTaskPatch): Promise<void> {
+            revisions.push(patch.ifRevision ?? "");
+            quest(["task", "edit", t2Id, "--add-label", `bump-${revisions.length}`, ...HUMAN, "--json"]);
+            await real.editTask(id, patch);
+          },
+        };
+
+        const err = await runUnlink({
+          root,
+          output: { mode: "json", color: false },
+          args: ["stories/gone", t1Id, "--allow-missing"],
+          stdout: capture(),
+          stderr: capture(),
+          adapter,
+          gitSpawn: cleanGitSpawn(),
+          backend: "quest",
+        }).then(
+          () => null,
+          (e: unknown) => e,
+        );
+
+        expect(err).toBeInstanceOf(LoreError);
+        expect((err as LoreError).type).toBe("validation");
+        expect((err as LoreError).message).toContain("explicit actor declaration");
+        expect(revisions).toHaveLength(1); // one attempt: not retried
+        // Positive control: T-1's viewed revision really did move under the T-2 write.
+        const after = (JSON.parse(quest(["task", "view", t1Id, "--json"]).stdout) as { data: { revision: string } })
+          .data.revision;
+        expect(after).not.toBe(revisions[0]);
+      } finally {
+        process.env = saved;
+      }
     },
     30_000,
   );

@@ -20,6 +20,7 @@ import type { BacklogAdapter, BacklogTaskDetail, EditTaskPatch } from "../src/ad
 import { TASK_DETAILS_CONCURRENCY } from "../src/commands/concurrency";
 import {
   assertNoLabelCaseCollision,
+  conflictRetryBackoff,
   type LinkedTask,
   type LinkOptions,
   type LinkReport,
@@ -43,12 +44,22 @@ const PLAIN_CTX: OutputContext = { mode: "plain", color: false };
 
 let root: string;
 
+// The conflict-retry backoff (LCLI-614 N2) never sleeps here; the requested delays are recorded
+// instead, so a test can assert them.
+const realBackoff = { ...conflictRetryBackoff };
+let backoffDelays: number[] = [];
+
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "lore-link-"));
   mkdirSync(join(root, "docs"), { recursive: true });
+  backoffDelays = [];
+  conflictRetryBackoff.sleep = async (ms) => {
+    backoffDelays.push(ms);
+  };
 });
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
+  Object.assign(conflictRetryBackoff, realBackoff);
 });
 
 function writeDoc(rel: string, contents: string): void {
@@ -463,13 +474,29 @@ describe("lore unlink — removal (AC#2)", () => {
     expect(adapter.calls[0]?.patch.doc).toEqual(["docs/other/y.md"]);
   });
 
-  test("sends an empty --doc array when the remaining set would be empty (Backlog treats [] and undefined identically, contract §2.4)", async () => {
+  test("sends no edit when there is no label to remove and the doc entry cannot be cleared (LCLI-614 N1)", async () => {
+    // With no label, the only field left is `--doc`, and an empty remaining list sends no flag
+    // (Backlog treats [] and undefined identically, contract §2.4) — a write that changes nothing
+    // but still reports `removed`. The back-reference label is already gone: `already-absent`.
     writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
     const adapter = fakeAdapter([makeTask("LORE-1", { documentation: ["docs/stories/x.md"] })]);
 
+    const { code, report } = await unlinkCmd(["stories/x", "lore-1"], adapter);
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks).toEqual([{ task: "lore-1", status: "removed", backRef: "already-absent" }]);
+    expect(adapter.calls).toEqual([]);
+  });
+
+  test("still sends an empty --doc array alongside a label removal (contract §2.4)", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    const adapter = fakeAdapter([
+      makeTask("LORE-1", { labels: ["doc:stories/x"], documentation: ["docs/stories/x.md"] }),
+    ]);
+
     await unlinkCmd(["stories/x", "lore-1"], adapter);
 
-    expect(adapter.calls[0]?.patch.doc).toEqual([]);
+    expect(adapter.calls[0]?.patch).toEqual({ removeLabels: ["doc:stories/x"], doc: [] });
   });
 
   test("tolerates a task id no longer present in Backlog: doc-side cleaned, back-ref skipped, no throw", async () => {
@@ -1690,8 +1717,10 @@ describe("lore link/unlink under a non-backlog tracker: a reported file never tr
 // Quest 0.10.0 answers a STALE --if-revision whose removal target is already gone with exit-6
 // `validation` ("no entry matches") instead of the exit-5 `conflict` its contract promises, so the
 // LCLI-522 retry never fired and opum-cli-e2e's "same-value competing removal" row failed 5 of 5.
-// `guardedEditTask` re-reads on a guarded `validation` and converts it to `conflict` ONLY when the
-// revision moved. Measured against the real harness shape, though, the losing interleaving is
+// `guardedEditTask` re-reads on a guarded `validation` and converts it to `conflict` ONLY when THIS
+// task's labels or documentation moved — not its revision, which Quest keeps workspace-wide (see
+// the review-fixes block below). "Unchanged revision" in these titles means nothing moved at all.
+// Measured against the real harness shape, though, the losing interleaving is
 // usually NOT a stale revision: lore's read lands after the competitor, sees the `--doc` entry but
 // no label, and used to ask Quest to remove the absent label anyway — a loud exit-6 miss with a
 // perfectly current revision. So unlink now removes only a label its own read found.
@@ -1699,6 +1728,8 @@ describe("lore link/unlink under a non-backlog tracker: a reported file never tr
 //   never convert        -> red: the unlink/move/link race tests and the exhaustion test;
 //                           green: both "unchanged revision" tests, failed re-read, both "label-absent".
 //   always convert       -> red: both "unchanged revision" tests; green: everything else.
+// (The "label-absent" pair keep their names; after N1 the doc-only case they test still edits,
+// because another doc entry remains to be written.)
 //   always send the label -> red: both "label-absent" tests; green: everything else.
 describe("guarded tracker edits: a race quest reports as validation is retried (LCLI-614)", () => {
   const noEntryMatches = (label: string) =>
@@ -1815,9 +1846,15 @@ describe("guarded tracker edits: a race quest reports as validation is retried (
     writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
     const adapter = fakeAdapter(
       [makeTask("LORE-1", { labels: ["doc:stories/x"], documentation: ["docs/stories/x.md"], revision: "r1" })],
-      // The competitor bumps the revision every time but never removes the label, so each re-read
-      // still decides an edit is needed.
-      { editTaskValidation: { times: 99, error: noEntryMatches("doc:stories/x"), competingWrite: (t) => t } },
+      // The competitor changes THIS task every time (a fresh unrelated label) but never removes
+      // doc:stories/x, so each attempt genuinely lost a race and each re-read still needs an edit.
+      {
+        editTaskValidation: {
+          times: 99,
+          error: noEntryMatches("doc:stories/x"),
+          competingWrite: (t) => ({ ...t, labels: [...t.labels, `other-${t.labels.length}`] }),
+        },
+      },
     );
 
     const err = (await unlinkCmd(["stories/x", "lore-1"], adapter).then(
@@ -1899,5 +1936,142 @@ describe("guarded tracker edits: a race quest reports as validation is retried (
 
     expect((err.input as { tasks: { error?: string }[] }).tasks[0]?.error).toBe(original.message);
     expect(base.calls).toHaveLength(1);
+  });
+});
+
+// ── LCLI-614 review fixes (SF1–SF3, N1–N3) ────────────────────────────────────────────────────
+//
+// Mutation map (predicted from this block before running):
+//   convert on revision alone (SF1 reverted)  -> red: "unrelated write" only.
+//   convert actor-context failures (SF1)      -> red: "actor-context ... never converted" only.
+//   link retries any conflict (SF2 reverted)  -> red: "link: an unguarded conflict" only.
+//   remove only the first case-variant (SF3)  -> red: "every case-variant" only.
+describe("guarded tracker edits: review fixes (LCLI-614)", () => {
+  const noEntryMatches = (label: string) =>
+    new LoreError("validation", `no entry matches "${label}"`, "check the value", { code: "quest.no-match" });
+  const linkedTask = (overrides: Partial<BacklogTaskDetail> = {}) =>
+    makeTask("LORE-1", {
+      labels: ["doc:stories/x"],
+      documentation: ["docs/stories/x.md"],
+      revision: "r1",
+      ...overrides,
+    });
+
+  test("SF1: an unrelated write that only moves the workspace-wide revision does not turn a genuine refusal into a retry", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    const original = noEntryMatches("doc:stories/x");
+    // `(t) => t`: some OTHER task was written, so this task's revision moved but its content did not.
+    const adapter = fakeAdapter([linkedTask()], {
+      editTaskValidation: { times: 99, error: original, competingWrite: (t) => t },
+    });
+
+    const err = (await unlinkCmd(["stories/x", "lore-1"], adapter).then(
+      () => null,
+      (e: unknown) => e,
+    )) as LoreError;
+
+    expect(err).toBeInstanceOf(LoreError);
+    expect(adapter.calls).toHaveLength(1); // not retried
+    expect((err.input as { tasks: { error?: string }[] }).tasks[0]?.error).toBe(original.message);
+    expect((await adapter.viewTask("LORE-1"))?.revision).not.toBe("r1"); // the revision DID move
+  });
+
+  test("SF1: an actor-context failure is never converted, even when this task's content moved", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    const original = new LoreError("validation", "Quest write requires an explicit actor declaration", "set it", {
+      code: "quest.actor-context-required",
+    });
+    const adapter = fakeAdapter([linkedTask()], {
+      editTaskValidation: {
+        times: 99,
+        error: original,
+        competingWrite: (t) => ({ ...t, labels: [...t.labels, "unrelated"] }),
+      },
+    });
+
+    const err = await runUnlink(opts(["stories/x", "lore-1"], adapter, cleanGitSpawn(), "quest")).then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+    expect(err).toBe(original);
+    expect(adapter.calls).toHaveLength(1);
+  });
+
+  test("SF2: link: an unguarded conflict (a Jira 429 or timeout) fails once, never retried — as before", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    const adapter = fakeAdapter([makeTask("LORE-1")], { editTaskConflictsFirst: 99 }); // no revision: unguarded
+
+    const err = await expectLinkError(["stories/x", "lore-1"], adapter);
+
+    expect(err.type).toBe("drift");
+    expect(adapter.calls).toHaveLength(1);
+    expect(adapter.calls[0]?.patch.ifRevision).toBeUndefined();
+    expect(backoffDelays).toEqual([]);
+  });
+
+  test("SF2: link: a conflict from a guarded edit is retried and converges", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    const adapter = fakeAdapter([makeTask("LORE-1", { revision: "r1" })], { editTaskConflictsFirst: 2 });
+
+    const { code, report } = await linkCmd(["stories/x", "lore-1"], adapter);
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks).toEqual([{ task: "lore-1", status: "added", backRef: "added" }]);
+    expect(adapter.calls).toHaveLength(3);
+  });
+
+  test("SF2: unlink and move keep retrying an unguarded conflict, exactly as before", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    const unlinkAdapter = fakeAdapter([makeTask("LORE-1", { labels: ["doc:stories/x"] })], {
+      editTaskConflictsFirst: 2,
+    });
+    expect((await unlinkCmd(["stories/x", "lore-1"], unlinkAdapter)).code).toBe(EXIT_OK);
+    expect(unlinkAdapter.calls).toHaveLength(3);
+
+    const moveAdapter = fakeAdapter(
+      [makeTask("LORE-1", { labels: ["doc:stories/old"], documentation: ["docs/stories/old.md"] })],
+      { editTaskConflictsFirst: 2 },
+    );
+    const { outcomes } = await moveBackRefs(
+      moveAdapter,
+      ["lore-1"],
+      "stories/old",
+      "stories/new",
+      "docs/stories/old.md",
+      "docs/stories/new.md",
+      "jira",
+    );
+    expect(outcomes).toEqual([{ task: "lore-1", backRef: "moved" }]);
+    expect(moveAdapter.calls).toHaveLength(3);
+  });
+
+  test("SF3: unlink removes EVERY case-variant of the label, by stored spelling", async () => {
+    writeDoc("stories/dup.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    const adapter = fakeAdapter(
+      [makeTask("LORE-1", { labels: ["doc:stories/Dup", "doc:stories/dup", "keep"], revision: "r1" })],
+      { strictRemovals: true },
+    );
+
+    const { code } = await unlinkCmd(["stories/dup", "lore-1"], adapter);
+
+    expect(code).toBe(EXIT_OK);
+    expect(adapter.calls[0]?.patch.removeLabels).toEqual(["doc:stories/Dup", "doc:stories/dup"]);
+    expect((await adapter.viewTask("LORE-1"))?.labels).toEqual(["keep"]);
+  });
+
+  test("N2: each retry waits a bounded, jittered, growing backoff", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    conflictRetryBackoff.random = () => 0.99;
+    const adapter = fakeAdapter([makeTask("LORE-1", { labels: ["doc:stories/x"] })], { editTaskConflictsFirst: 99 });
+
+    await unlinkCmd(["stories/x", "lore-1"], adapter).catch(() => undefined);
+
+    expect(adapter.calls).toHaveLength(4);
+    expect(backoffDelays).toEqual([19, 29, 49]); // 10·2ⁿ + floor(0.99·10)
+    conflictRetryBackoff.random = () => 0;
+    backoffDelays = [];
+    await unlinkCmd(["stories/x", "lore-1"], adapter).catch(() => undefined);
+    expect(backoffDelays).toEqual([10, 20, 40]);
   });
 });
