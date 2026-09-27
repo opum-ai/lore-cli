@@ -19,6 +19,13 @@ export interface Observed {
   commitSource?: string;
   commitError?: string;
   gitHead?: string | null;
+  peel?: string[];
+}
+
+export interface Peeled {
+  commit: string | null;
+  chain: string[];
+  error?: string;
 }
 
 export interface PairVerdict {
@@ -63,6 +70,9 @@ export declare function observeRelease(
   packages?: readonly string[],
   options?: { execFile?: ExecFile },
 ): Promise<Observed>;
+export declare const MAX_PEEL_DEPTH: number;
+export declare function ownRepoReadArgs(path: string): string[];
+export declare function resolveTagCommit(version: string, options?: { execFile?: ExecFile }): Promise<Peeled>;
 export declare function requirePairQualification(args: {
   version: string;
   packages?: readonly string[];

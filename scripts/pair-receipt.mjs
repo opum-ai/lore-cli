@@ -38,7 +38,11 @@
 // peeled to a commit -- the same derivation opum-cli-e2e's receipts/README.md
 // "Fields" row gives for a lore receipt's `commit` ("re-derived by peeling the
 // v<version> tag"). If npm ever does record a gitHead for the version, it must
-// agree as well.
+// agree as well. Accepted by opum-agent on 2026-09-27 with three conditions, all
+// implemented in resolveTagCommit(): peel ALL the way through annotated (and
+// nested) tag objects to a commit; fail closed on a missing tag and on a peel
+// that ends on anything but a commit, with no fallback to a branch head; and
+// keep the npm-gitHead agreement rule.
 //
 // Every read is pinned: host github.com (GH_HOST cannot redirect it),
 // repository and ref are constants, never inputs. A 403, a 404, a network
@@ -239,27 +243,74 @@ export async function observeRelease(version, packages = RELEASE_PACKAGES, { exe
       // Left absent on purpose: see above.
     }
   }
-  const commitSource = `${OWN_REPOSITORY} tag v${version}`;
+  const peeled = await resolveTagCommit(version, { execFile: execFileFn });
+  return {
+    integrities,
+    gitHead,
+    commit: peeled.commit,
+    commitSource: `${OWN_REPOSITORY} tag v${version}`,
+    ...(peeled.error ? { commitError: peeled.error } : {}),
+    peel: peeled.chain,
+  };
+}
+
+/** Annotated tags can in principle point at other tags; nothing legitimate nests this deep. */
+export const MAX_PEEL_DEPTH = 8;
+const SHA1_HEX = /^[0-9a-f]{40}$/;
+
+/** The argv that reads one git object on lore-cli, pinned to github.com. Exported so a test can pin it. */
+export function ownRepoReadArgs(path) {
+  return ["api", "--hostname", RECEIPT_HOST, `repos/${OWN_REPOSITORY}/${path}`];
+}
+
+/**
+ * The commit `v<version>` peels to on lore-cli, dereferenced EXPLICITLY (opum-agent ruling on
+ * LCLI-613, 2026-09-27). lore's release tags are ANNOTATED: refs/tags/v0.9.3 names a tag object
+ * (c07b0ea4), which names the commit (819a682c) -- measured 2026-09-26. Comparing the receipt with
+ * the ref's own sha would therefore never match, and is the mistake this function exists to rule
+ * out. So: read the exact ref (`git/ref/tags/...`, singular, which matches exactly -- `v0.9`
+ * answers 404, not a prefix match), then follow `git/tags/<sha>` while the object is a tag, up to
+ * MAX_PEEL_DEPTH, and accept ONLY a commit at the end.
+ *
+ * FAILS CLOSED, with `commit: null` and the reason, on: no such tag (404), a ref that is not
+ * exactly refs/tags/v<version>, a malformed answer, a sha that is not 40 hex, a peel that ends on
+ * anything but a commit (a tree, a blob), or a chain deeper than MAX_PEEL_DEPTH (a cycle included).
+ * There is NO fallback to a branch head or to any other ref: the only paths read are the tag ref
+ * and tag objects. `chain` records every object visited, for the refusal message and for tests.
+ */
+export async function resolveTagCommit(version, { execFile: execFileFn = execFile } = {}) {
+  const ref = `refs/tags/v${version}`;
+  /** @type {string[]} */
+  const chain = [];
+  const fail = (/** @type {string} */ error) => ({ commit: null, chain, error });
+  const read = async (/** @type {string} */ path) => {
+    const { stdout } = await execFileFn("gh", ownRepoReadArgs(path));
+    return JSON.parse(stdout);
+  };
+  let object;
   try {
-    const { stdout } = await execFileFn("gh", [
-      "api",
-      "--hostname",
-      RECEIPT_HOST,
-      `repos/${OWN_REPOSITORY}/commits/refs/tags/v${version}`,
-      "--jq",
-      ".sha",
-    ]);
-    const sha = stdout.trim();
-    if (/^[0-9a-f]{40}$/.test(sha)) return { integrities, gitHead, commit: sha, commitSource };
-    return {
-      integrities,
-      gitHead,
-      commit: null,
-      commitSource,
-      commitError: `not a commit SHA: ${JSON.stringify(sha)}`,
-    };
+    const answer = await read(`git/${ref.replace(/^refs\//, "ref/")}`);
+    if (!isObject(answer) || answer.ref !== ref)
+      return fail(`asked for ${ref}, the API answered ${JSON.stringify(isObject(answer) ? answer.ref : answer)}`);
+    object = answer.object;
   } catch (error) {
-    return { integrities, gitHead, commit: null, commitSource, commitError: firstLine(error) };
+    return fail(`${ref} could not be read (${firstLine(error)})`);
+  }
+  for (let depth = 0; ; depth++) {
+    if (!isObject(object) || typeof object.type !== "string" || !SHA1_HEX.test(String(object.sha)))
+      return fail(`${ref} resolves to a malformed object ${JSON.stringify(object)}`);
+    chain.push(`${object.type} ${object.sha}`);
+    if (object.type === "commit") return { commit: object.sha, chain };
+    if (object.type !== "tag")
+      return fail(`${ref} peels to a ${object.type} ${object.sha}, not a commit (chain: ${chain.join(" -> ")})`);
+    if (depth >= MAX_PEEL_DEPTH)
+      return fail(`${ref} is still a tag after ${MAX_PEEL_DEPTH} dereferences (chain: ${chain.join(" -> ")})`);
+    try {
+      const tag = await read(`git/tags/${object.sha}`);
+      object = isObject(tag) ? tag.object : tag;
+    } catch (error) {
+      return fail(`tag object ${object.sha} under ${ref} could not be read (${firstLine(error)})`);
+    }
   }
 }
 

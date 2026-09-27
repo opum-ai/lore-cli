@@ -19,6 +19,8 @@ import { main, type PromotionRecord, RECORD_KIND, tokenShape } from "../scripts/
 const V = "5.6.7";
 const PRIOR = "5.6.6";
 const COMMIT = "a".repeat(40);
+const TAG_OBJECT = "9".repeat(40);
+const GIT = "git";
 const integrity = (name: string) => `sha512-${Buffer.from(name).toString("base64")}==`;
 const FAST = { attempts: 1, delayMs: 0, sleep: async () => {} };
 
@@ -74,14 +76,16 @@ function world(
         throw Object.assign(new Error("Command failed"), { stderr: "gh: Not Found (HTTP 404)" });
       return { stdout: typeof receipt === "string" ? receipt : JSON.stringify(receipt) };
     }
-    if (
-      command === "gh" &&
-      line === `gh api --hostname github.com repos/opum-ai/lore-cli/commits/refs/tags/v${V} --jq .sha`
-    ) {
+    // lore's release tags are ANNOTATED: the ref names a tag object, which names the commit. The
+    // world serves that shape, so the reader must peel through the tag object to reach `tagCommit`.
+    if (command === "gh" && line === `gh api --hostname github.com repos/opum-ai/lore-cli/${GIT}/ref/tags/v${V}`) {
       const commit = "tagCommit" in options ? options.tagCommit : COMMIT;
-      if (commit === null)
-        throw Object.assign(new Error("Command failed"), { stderr: "gh: No commit found (HTTP 422)" });
-      return { stdout: `${commit}\n` };
+      if (commit === null) throw Object.assign(new Error("Command failed"), { stderr: "gh: Not Found (HTTP 404)" });
+      return { stdout: JSON.stringify({ ref: `refs/tags/v${V}`, object: { type: "tag", sha: TAG_OBJECT } }) };
+    }
+    if (command === "gh" && line === `gh api --hostname github.com repos/opum-ai/lore-cli/${GIT}/tags/${TAG_OBJECT}`) {
+      const commit = "tagCommit" in options ? options.tagCommit : COMMIT;
+      return { stdout: JSON.stringify({ sha: TAG_OBJECT, object: { type: "commit", sha: commit } }) };
     }
     if (command === "npm" && args[0] === "view" && args[2] === "dist-tags") {
       const t = tags[args[1] as string];
@@ -247,7 +251,7 @@ describe("scripts/promote-latest.mjs refuses without a verifying pair receipt", 
       'pair.quest.version is "5.6.8"',
     ],
     ["step 3: a commit the tag does not peel to", { tagCommit: "e".repeat(40) }, `resolves to "${"e".repeat(40)}"`],
-    ["step 3: no v<version> tag", { tagCommit: null }, "gh: No commit found (HTTP 422)"],
+    ["step 3: no v<version> tag", { tagCommit: null }, `refs/tags/v${V} could not be read (gh: Not Found (HTTP 404))`],
     [
       "installedFrom not the registry",
       { receipt: { ...goodReceipt(), installedFrom: { lore: { source: "candidate" } } } },

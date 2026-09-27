@@ -12,12 +12,14 @@ import {
   evaluatePairReceipt,
   expectedTarballNames,
   fetchPairReceipt,
+  MAX_PEEL_DEPTH,
   type Observed,
   observeRelease,
   PAIR_RECEIPT_KIND,
   RELEASE_PACKAGES,
   receiptReadArgs,
   requirePairQualification,
+  resolveTagCommit,
   tarballName,
 } from "../scripts/pair-receipt.mjs";
 
@@ -67,6 +69,38 @@ function goodObserved(): Observed {
 
 const evaluate = (doc: unknown, observed: Observed = goodObserved()) =>
   evaluatePairReceipt(doc, { version: V, observed });
+
+type GitObject = { type: string; sha: string };
+
+/**
+ * lore-cli's git objects as GitHub's API serves them: `ref` is what refs/tags/v<version> points at
+ * ("missing" answers 404), `tags` maps a tag object's sha to what IT points at. The stub accepts
+ * only the exact pinned argv, so a reader that read any other path (a branch head, the commits
+ * endpoint) fails loudly rather than being answered.
+ */
+function gitObjects(
+  version: string,
+  ref: GitObject | "missing",
+  tags: Record<string, GitObject> = {},
+  refName?: string,
+) {
+  const calls: string[][] = [];
+  const execFile = async (file: string, args: string[]) => {
+    calls.push([file, ...args]);
+    expect([file, ...args.slice(0, 3)]).toEqual(["gh", "api", "--hostname", "github.com"]);
+    expect(args.length).toBe(4);
+    const path = args[3] as string;
+    if (path === `repos/opum-ai/lore-cli/git/ref/tags/v${version}`) {
+      if (ref === "missing") throw Object.assign(new Error("Command failed"), { stderr: "gh: Not Found (HTTP 404)" });
+      return { stdout: JSON.stringify({ ref: refName ?? `refs/tags/v${version}`, object: ref }) };
+    }
+    const tag = /^repos\/opum-ai\/lore-cli\/git\/tags\/([0-9a-f]{40})$/.exec(path);
+    const target = tag ? tags[tag[1] as string] : undefined;
+    if (target) return { stdout: JSON.stringify({ sha: tag?.[1], tag: `v${version}`, object: target }) };
+    throw Object.assign(new Error("Command failed"), { stderr: `gh: Not Found (HTTP 404) for ${path}` });
+  };
+  return { execFile, calls };
+}
 
 describe("scripts/pair-receipt.mjs: a good receipt", () => {
   test("names the seven archives npm pack produces, platforms and launcher", () => {
@@ -336,10 +370,12 @@ describe("scripts/pair-receipt.mjs: the reads", () => {
 
   test("observeRelease reads each package's served integrity and peels v<version> on lore-cli", async () => {
     const calls: string[][] = [];
+    const tagSha = "9".repeat(40);
+    const git = gitObjects(V, { type: "tag", sha: tagSha }, { [tagSha]: { type: "commit", sha: LORE_COMMIT } });
     const observed = await observeRelease(V, RELEASE_PACKAGES, {
       execFile: async (file, args) => {
         calls.push([file, ...args]);
-        if (file === "gh") return { stdout: `${LORE_COMMIT}\n` };
+        if (file === "gh") return git.execFile(file, args);
         const [name] = (args[1] as string).split(/@(?=[^@]*$)/);
         const meta = { name, version: V, dist: { integrity: integrity(tarballName(name as string, V)) } };
         // npm 12 answers an exact-version view with a one-element array; an older npm, the object.
@@ -353,14 +389,16 @@ describe("scripts/pair-receipt.mjs: the reads", () => {
       RELEASE_PACKAGES.map((name) => ["npm", "view", `${name}@${V}`, "--json", "--prefer-online"]),
     );
     expect(calls.filter((c) => c[0] === "gh")).toEqual([
-      ["gh", "api", "--hostname", "github.com", `repos/opum-ai/lore-cli/commits/refs/tags/v${V}`, "--jq", ".sha"],
+      ["gh", "api", "--hostname", "github.com", `repos/opum-ai/lore-cli/git/ref/tags/v${V}`],
+      ["gh", "api", "--hostname", "github.com", `repos/opum-ai/lore-cli/git/tags/${tagSha}`],
     ]);
+    expect(observed.peel).toEqual([`tag ${tagSha}`, `commit ${LORE_COMMIT}`]);
   });
 
   test("observeRelease never guesses: an unreadable package is absent, a missing tag is null", async () => {
     const observed = await observeRelease(V, RELEASE_PACKAGES, {
       execFile: async (file, args) => {
-        if (file === "gh") throw Object.assign(new Error("x"), { stderr: "gh: No commit found (HTTP 422)" });
+        if (file === "gh") return gitObjects(V, "missing").execFile(file, args);
         if ((args[1] as string).startsWith("@opum-ai/lore-win32-x64@")) throw new Error("E404");
         if ((args[1] as string).startsWith("@opum-ai/lore-linux-x64@")) return { stdout: "[1, 2]" };
         const [name] = (args[1] as string).split(/@(?=[^@]*$)/);
@@ -369,11 +407,131 @@ describe("scripts/pair-receipt.mjs: the reads", () => {
     });
     expect(Object.keys(observed.integrities).length).toBe(5);
     expect(observed.commit).toBeNull();
-    expect(observed.commitError).toBe("gh: No commit found (HTTP 422)");
+    expect(observed.commitError).toBe(`refs/tags/v${V} could not be read (gh: Not Found (HTTP 404))`);
     expect(observed.gitHead).toBeNull();
     const verdict = evaluate(goodReceipt(), observed);
     expect(verdict.ok).toBe(false);
     expect(verdict.problems.join("\n")).toContain(`opum-ai-lore-win32-x64-${V}.tgz: qualified`);
     expect(verdict.problems.join("\n")).toContain(`opum-ai-lore-linux-x64-${V}.tgz: qualified`);
+  });
+});
+
+// ── The tag peel (opum-agent ruling on LCLI-613, 2026-09-27) ───────────────────────────────────
+// Accepted with three conditions: peel ALL the way through annotated and nested tag objects to a
+// commit; fail closed on a missing tag and on a peel ending on anything but a commit, with no
+// fallback to a branch head; keep the npm-gitHead agreement rule. The first case uses the object
+// ids actually measured on lore-cli for v0.9.3 on 2026-09-26: refs/tags/v0.9.3 -> tag c07b0ea4
+// -> commit 819a682c. Comparing a receipt with the ref's own sha (c07b0ea4) would never match.
+describe("scripts/pair-receipt.mjs: resolveTagCommit peels to a commit or refuses", () => {
+  const TAG_093 = "c07b0ea48a1fd236b436293b20ac34a767c8a8e8";
+  const COMMIT_093 = "819a682c6050dc780ec8919910d4aa5c235a2878";
+
+  test("an ANNOTATED tag (lore's real v0.9.3 shape) peels through the tag object to its commit", async () => {
+    const git = gitObjects("0.9.3", { type: "tag", sha: TAG_093 }, { [TAG_093]: { type: "commit", sha: COMMIT_093 } });
+    const peeled = await resolveTagCommit("0.9.3", { execFile: git.execFile });
+    expect(peeled).toEqual({ commit: COMMIT_093, chain: [`tag ${TAG_093}`, `commit ${COMMIT_093}`] });
+    expect(peeled.commit).not.toBe(TAG_093);
+    expect(git.calls.map((c) => c[4])).toEqual([
+      "repos/opum-ai/lore-cli/git/ref/tags/v0.9.3",
+      `repos/opum-ai/lore-cli/git/tags/${TAG_093}`,
+    ]);
+  });
+
+  test("through the whole gate: a receipt naming the commit verifies, one naming the tag object refuses", async () => {
+    const git = gitObjects(V, { type: "tag", sha: TAG_093 }, { [TAG_093]: { type: "commit", sha: LORE_COMMIT } });
+    const peeled = await resolveTagCommit(V, { execFile: git.execFile });
+    const observed = { ...goodObserved(), commit: peeled.commit };
+    expect(evaluate(goodReceipt(), observed).ok).toBe(true);
+    const namingTheTag = goodReceipt();
+    namingTheTag.pair.lore.commit = TAG_093;
+    const refused = evaluate(namingTheTag, observed);
+    expect(refused.ok).toBe(false);
+    expect(refused.problems.join("\n")).toContain(`pair.lore.commit is "${TAG_093}"`);
+  });
+
+  test("a NESTED tag (a tag of a tag) peels through both tag objects", async () => {
+    const outer = "1".repeat(40);
+    const inner = "2".repeat(40);
+    const git = gitObjects(
+      V,
+      { type: "tag", sha: outer },
+      {
+        [outer]: { type: "tag", sha: inner },
+        [inner]: { type: "commit", sha: LORE_COMMIT },
+      },
+    );
+    const peeled = await resolveTagCommit(V, { execFile: git.execFile });
+    expect(peeled).toEqual({ commit: LORE_COMMIT, chain: [`tag ${outer}`, `tag ${inner}`, `commit ${LORE_COMMIT}`] });
+  });
+
+  test("a lightweight tag (the ref names the commit directly) needs no dereference", async () => {
+    const git = gitObjects(V, { type: "commit", sha: LORE_COMMIT });
+    expect(await resolveTagCommit(V, { execFile: git.execFile })).toEqual({
+      commit: LORE_COMMIT,
+      chain: [`commit ${LORE_COMMIT}`],
+    });
+    expect(git.calls.length).toBe(1);
+  });
+
+  const refusals: Array<[string, () => ReturnType<typeof gitObjects>, string]> = [
+    [
+      "a MISSING v<version> tag (404)",
+      () => gitObjects(V, "missing"),
+      `refs/tags/v${V} could not be read (gh: Not Found (HTTP 404))`,
+    ],
+    [
+      "a peel that ends on a TREE",
+      () =>
+        gitObjects(
+          V,
+          { type: "tag", sha: "3".repeat(40) },
+          { ["3".repeat(40)]: { type: "tree", sha: "4".repeat(40) } },
+        ),
+      `peels to a tree ${"4".repeat(40)}, not a commit`,
+    ],
+    [
+      "a ref that names a BLOB",
+      () => gitObjects(V, { type: "blob", sha: "5".repeat(40) }),
+      `peels to a blob ${"5".repeat(40)}, not a commit`,
+    ],
+    [
+      "an answer for a DIFFERENT ref (no near-match accepted)",
+      () => gitObjects(V, { type: "commit", sha: LORE_COMMIT }, {}, `refs/tags/v${V}-rc.1`),
+      `asked for refs/tags/v${V}, the API answered "refs/tags/v${V}-rc.1"`,
+    ],
+    [
+      "a tag object that cannot be read",
+      () => gitObjects(V, { type: "tag", sha: "6".repeat(40) }),
+      `tag object ${"6".repeat(40)} under refs/tags/v${V} could not be read`,
+    ],
+    ["a malformed sha", () => gitObjects(V, { type: "commit", sha: "not-a-sha" }), "resolves to a malformed object"],
+    [
+      "a CYCLE of tags",
+      () =>
+        gitObjects(V, { type: "tag", sha: "7".repeat(40) }, { ["7".repeat(40)]: { type: "tag", sha: "7".repeat(40) } }),
+      `is still a tag after ${MAX_PEEL_DEPTH} dereferences`,
+    ],
+  ];
+  for (const [label, world, reason] of refusals) {
+    test(`fails closed on ${label}, and the gate refuses`, async () => {
+      const git = world();
+      const peeled = await resolveTagCommit(V, { execFile: git.execFile });
+      expect(peeled.commit).toBeNull();
+      expect(peeled.error).toContain(reason);
+      // Never a fallback: nothing but the tag ref and tag objects was ever read.
+      for (const c of git.calls) expect(c[4]).toMatch(/^repos\/opum-ai\/lore-cli\/git\/(ref\/tags\/v|tags\/)/);
+      const verdict = evaluate(goodReceipt(), { ...goodObserved(), commit: peeled.commit, commitError: peeled.error });
+      expect(verdict.ok).toBe(false);
+      expect(verdict.problems.join("\n")).toContain(reason);
+    });
+  }
+
+  test("the npm-gitHead rule still holds beside a good peel: a disagreeing gitHead refuses", async () => {
+    const git = gitObjects(V, { type: "tag", sha: TAG_093 }, { [TAG_093]: { type: "commit", sha: LORE_COMMIT } });
+    const { commit } = await resolveTagCommit(V, { execFile: git.execFile });
+    expect(evaluate(goodReceipt(), { ...goodObserved(), commit, gitHead: LORE_COMMIT }).ok).toBe(true);
+    const verdict = evaluate(goodReceipt(), { ...goodObserved(), commit, gitHead: "8".repeat(40) });
+    expect(verdict.ok).toBe(false);
+    expect(verdict.problems.join("\n")).toContain(`npm records gitHead "${"8".repeat(40)}"`);
   });
 });

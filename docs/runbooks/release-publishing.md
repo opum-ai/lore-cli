@@ -954,6 +954,16 @@ previous release.
    receipt contract uses for a lore commit. If npm ever does record a `gitHead`,
    it must agree as well.
 
+   **The tag is peeled all the way, explicitly.** opum-agent accepted this design
+   on 2026-09-27 with that condition. lore's release tags are annotated:
+   `refs/tags/v0.9.3` names a tag object (`c07b0ea4`), and that tag object names
+   the commit (`819a682c`). A receipt compared with the ref's own sha would never
+   match. So the script reads the exact ref, follows each tag object until it
+   reaches a commit (nested tags included, up to eight deep), and compares that
+   commit. It refuses when the tag is missing, when the chain ends on a tree or
+   a blob, when the API answers for a different ref, and when the chain is too
+   deep or cycles. It never falls back to a branch head.
+
    `--promote` writes every package's prior `latest` to `<file>` **before** any
    tag moves. It then runs `npm dist-tag add @opum-ai/<pkg>@<version> latest`
    for the six platform packages and then the launcher, and re-reads the
