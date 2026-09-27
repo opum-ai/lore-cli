@@ -42,6 +42,14 @@
 # operator was stopped three separate times by steps this script had already worked out.
 #
 # Safety properties, in order of how much they matter:
+#   - REFUSES UNLESS quest-cli's package.json on its `main` names this same version, before
+#     anything else, dry run included (constitution Article 3 clause 6, LCLI-613). The rule is
+#     quest-cli's version-parity.mjs, mirrored in scripts/version-parity.mjs. No flag or env
+#     var bypasses it; a read that fails refuses exactly like a mismatch.
+#   - STAGES ONLY: every `npm publish` carries `--tag release-candidate`, and nothing here
+#     moves `latest` (Article 3 clause 5, LCLI-613). `latest` moves in a separate step,
+#     scripts/promote-latest.mjs, only once opum-cli-e2e's pair receipt for this version
+#     verifies -- quest first, then lore, on opum-agent's go.
 #   - Verifies every tarball's sha256 BEFORE publishing anything, six of them against a
 #     digest CI recorded independently. Read "DIGEST PROVENANCE" below for what that does
 #     and does not prove -- the distinction is the whole point and it is easy to overstate.
@@ -113,7 +121,7 @@
 #   scripts/publish-release.sh <version> <release-run-id> [--dry-run|--verify-only]
 #
 #   scripts/publish-release.sh <version> <run-id> --dry-run   # rehearse; touches nothing
-#   scripts/publish-release.sh <version> <run-id>             # publish + move latest dist-tags
+#   scripts/publish-release.sh <version> <run-id>             # stage under release-candidate
 #   scripts/publish-release.sh <version> <run-id> --verify-only   # registry state only
 #
 # Refuses to publish without receipts/lore/<version>.json on opum-ai/opum-cli-e2e main (read with
@@ -121,6 +129,10 @@
 # QUALIFIED or a complete override {by, reason, task, adr} in that file. No flag or env var this
 # script reads bypasses it; the host is pinned to github.com even if GH_HOST is set. --dry-run
 # reports the receipt verdict, and stops non-zero if it would refuse.
+#
+# Refuses first, dry run included, unless quest-cli main's package.json names <version>
+# (Article 3 clause 6). Publishes ONLY under the release-candidate dist-tag and never moves
+# latest (clause 5); scripts/promote-latest.mjs moves latest once the pair receipt verifies.
 #
 # --verify-only reads the REGISTRY and nothing else: no artifacts, no gh, no network beyond
 # npm. It is what the propagation-timeout message tells you to run, so it must stay reachable
@@ -220,7 +232,16 @@ print_closing_checklist() {
   # moment that version ships (LCLI-483). Keep perishable references OUT of here:
   # no task ids, no session addresses, no version literals.
   cat <<DONE
-  PUBLISHED $VERSION. Remaining, in order:
+  PUBLISHED $VERSION under the release-candidate dist-tag. latest has NOT moved.
+  Remaining, in order (docs/runbooks/release-publishing.md section 3):
+
+    0. STAGED IS NOT RELEASED. opum-cli-e2e qualifies the staged pair (lore $VERSION with
+       quest $VERSION) from registry installs and lands receipts/pair/$VERSION.json on its
+       main. Then, on opum-agent's go and AFTER quest's latest has moved:
+           node scripts/promote-latest.mjs --record <file> --version $VERSION --dry-run
+           node scripts/promote-latest.mjs --record <file> --version $VERSION --promote
+       It refuses without a verifying pair receipt, writes every prior latest to <file>
+       first, and --rollback <file> restores them. Steps 1 to 4 below follow the latest move.
 
     1. Update the release-truth doc so it states $VERSION is released. REPLACE the
        current-state claim, do not merely add alongside it:
@@ -272,7 +293,7 @@ print_closing_checklist() {
        published until told. Resolve each one with ListAgents and match on repository —
        session names change on every restart, so never reuse a previously seen address:
            opum-cli-e2e       re-run the qualification matrix against the published release
-           quest-cli          lore $VERSION is live
+           quest-cli          lore $VERSION is live (latest moved)
            opum-marketplace   the resolved skills/ tree SHA for this tag, or its
                               federated-content check goes red:
                                   git ls-tree v$VERSION skills
@@ -287,6 +308,37 @@ DONE
 hr()  { printf '%s\n' "────────────────────────────────────────────────────────────"; }
 
 [ "$PRINT_CHECKLIST" -eq 1 ] && { print_closing_checklist; exit 0; }
+
+# ── Version parity with quest (constitution Article 3 clause 6, LCLI-613) ─────────────────
+# FIRST, before any artifact, digest, receipt, credential or registry step, and in a --dry-run
+# too: a lore release whose version quest-cli main does not also carry is a release that must not
+# happen, whatever else is in order, and a rehearsal that passed over it would read as a green
+# light. The rule is quest-cli's scripts/qualification/version-parity.mjs (QCLI-386), mirrored in
+# scripts/version-parity.mjs; that file names the respects in which the READ differs.
+#
+# $VERSION, not this checkout's package.json, is the lore side: this script publishes a Release
+# run's tarballs named by $VERSION, from whatever checkout it happens to be run in.
+#
+# TWO EXEMPTIONS, both because they write nothing. --print-checklist prints text and exits above
+# (a test pins that it needs no stub at all). --verify-only reads the registry after a publish and
+# nothing else; the propagation-timeout message sends an operator to it seconds after the
+# irreversible step, so it must not need gh or GitHub to answer. Neither can publish.
+#
+# No flag or environment variable this script reads bypasses the gate. Any non-zero exit from the
+# checker -- a mismatch (1), or a checker that could not run (2) -- refuses.
+STAGE_TAG="release-candidate"
+if [ "$VERIFY_ONLY" -eq 0 ]; then
+  say "checking lore/quest version parity (constitution Article 3 clause 6)"
+  parity_out="$(node "$SCRIPT_DIR/version-parity.mjs" --require --version "$VERSION" 2>&1)"
+  parity_rc=$?
+  if [ "$parity_rc" -ne 0 ]; then
+    die "lore/quest VERSION PARITY refused -- nothing has been downloaded, checked or published (LCLI-613).
+$(printf '%s\n' "$parity_out" | sed 's#^#    #')
+The only way past this is quest-cli main carrying $VERSION in its package.json. No flag or env var
+this script reads bypasses it (constitution Article 3 clause 6)."
+  fi
+  say "  $parity_out"
+fi
 
 # ── Artifacts ───────────────────────────────────────────────────────────────
 # This whole section used to be four `die`s that printed the command the operator should run
@@ -905,12 +957,14 @@ say "A 404 on PUT below means the token lacks publish rights on that package -- 
 published() { npm view "$1@$VERSION" version >/dev/null 2>&1; }
 
 report_state() {
+  local rc_tag
   hr; say "registry state for $VERSION:"
   for entry in "${PLATFORM_PKGS[@]}" "$ROOT_PKG"; do
     pkg="${entry%%:*}"
     if published "$pkg"; then
+      rc_tag="$(npm view "$pkg" dist-tags.release-candidate 2>/dev/null)"
       tag="$(npm view "$pkg" dist-tags.latest 2>/dev/null)"
-      printf '  %-34s present   latest=%s\n' "$pkg" "${tag:-?}"
+      printf '  %-34s present   release-candidate=%s latest=%s\n' "$pkg" "${rc_tag:-?}" "${tag:-?}"
     else
       printf '  %-34s ABSENT\n' "$pkg"
     fi
@@ -1120,10 +1174,19 @@ looks_like_2fa_or_staging() {
   esac
 }
 
+# THE ONE ARGUMENT LIST FOR EVERY `npm publish` THIS SCRIPT MAKES (LCLI-613). `--tag
+# release-candidate` is not optional decoration: a publish with no --tag moves `latest` as a side
+# effect, which is exactly the move Article 3 clause 5 reserves for scripts/promote-latest.mjs.
+# The dry run prints this same list, so a rehearsal shows the tag it would publish under.
+STAGED_SKIPPED=""
 publish_one() {
   local pkg="$1" tarball="$ARTIFACTS/$2" out rc
+  local npm_args=(publish "$tarball" --tag "$STAGE_TAG")
   if published "$pkg"; then
     say "  skip     $pkg@$VERSION (already on the registry)"
+    # Resumed, not published by this run: its dist-tags are whatever the earlier run left, so the
+    # release-candidate check below re-reads it rather than assuming this run's --tag applied.
+    STAGED_SKIPPED="$STAGED_SKIPPED $pkg"
     return 0
   fi
   [ -f "$tarball" ] || { say "  MISSING  $tarball"; return 1; }
@@ -1132,11 +1195,11 @@ publish_one() {
   # that waits, or the window it closes reopens.
   recheck_against_receipt "$tarball"
   if [ "$DRY_RUN" -eq 1 ]; then
-    say "  would    npm publish $tarball"
+    say "  would    npm ${npm_args[*]}"
     return 0
   fi
-  say "  publish  $pkg@$VERSION"
-  out="$(npm publish "$tarball" 2>&1)"; rc=$?
+  say "  publish  $pkg@$VERSION  (dist-tag $STAGE_TAG; latest is not moved)"
+  out="$(npm "${npm_args[@]}" 2>&1)"; rc=$?
   [ -n "$out" ] && printf '%s\n' "$out"
   if looks_like_2fa_or_staging "$out"; then
     die "npm publish for $pkg@$VERSION printed text this script recognises as a 2FA challenge
@@ -1192,16 +1255,29 @@ fi
 
 publish_one "${ROOT_PKG%%:*}" "${ROOT_PKG#*:}" || die "root launcher failed to publish"
 
-# ── dist-tags ───────────────────────────────────────────────────────────────
+# ── dist-tags: release-candidate ONLY (constitution Article 3 clause 5, LCLI-613) ──────────
+# THIS SCRIPT NEVER MOVES `latest`. It used to, here, as the last step of every publish. Article 3
+# clause 5 moves `latest` only after opum-cli-e2e has qualified the STAGED pair from clean
+# registry installs, quest first and then lore, and that is scripts/promote-latest.mjs, gated on
+# the pair receipt. A test over every npm argv this script builds pins that `latest` never
+# appears as a tag it writes.
+#
+# What this section does do: a package this run SKIPPED as already published was not published
+# with this run's --tag, so it may not carry release-candidate = $VERSION (an earlier attempt from
+# an older script, or the OIDC job). promote-latest.mjs refuses unless all seven do, which is safe
+# but stops the release; so the tag is pointed here, for skipped packages only. Packages this run
+# published got the tag from `npm publish --tag` itself.
+# $STAGED_SKIPPED is a space-separated string, split on purpose (bash 3.2; see
+# wait_for_all_visible): package names contain no spaces.
 hr
-say "moving 'latest' dist-tags to $VERSION"
-for entry in "${PLATFORM_PKGS[@]}" "$ROOT_PKG"; do
-  pkg="${entry%%:*}"
-  cur="$(npm view "$pkg" dist-tags.latest 2>/dev/null)"
-  if [ "$cur" = "$VERSION" ]; then say "  ok       $pkg latest already $VERSION"; continue; fi
-  if [ "$DRY_RUN" -eq 1 ]; then say "  would    npm dist-tag add $pkg@$VERSION latest  (currently $cur)"; continue; fi
-  say "  tag      $pkg  $cur -> $VERSION"
-  npm dist-tag add "$pkg@$VERSION" latest || die "dist-tag move failed for $pkg"
+say "dist-tags: '$STAGE_TAG' names $VERSION on every package; 'latest' is NOT moved here"
+say "  (scripts/promote-latest.mjs moves latest once opum-cli-e2e's pair receipt for $VERSION verifies)"
+for pkg in $STAGED_SKIPPED; do
+  cur="$(npm view "$pkg" "dist-tags.$STAGE_TAG" 2>/dev/null)"
+  if [ "$cur" = "$VERSION" ]; then say "  ok       $pkg $STAGE_TAG already $VERSION"; continue; fi
+  if [ "$DRY_RUN" -eq 1 ]; then say "  would    npm dist-tag add $pkg@$VERSION $STAGE_TAG  (currently ${cur:-none})"; continue; fi
+  say "  tag      $pkg  $STAGE_TAG ${cur:-none} -> $VERSION  (skipped above, so not tagged by a publish)"
+  npm dist-tag add "$pkg@$VERSION" "$STAGE_TAG" || die "could not point $STAGE_TAG at $VERSION for $pkg"
 done
 
 # ── Verify ──────────────────────────────────────────────────────────────────
@@ -1219,6 +1295,9 @@ for entry in "${PLATFORM_PKGS[@]}" "$ROOT_PKG"; do all_pkgs="$all_pkgs ${entry%%
 say "confirming the registry read API serves $VERSION before smoking the install path"
 if wait_for_all_visible "${all_pkgs# }"; then
   say "clean-registry install smoke (a fresh temp dir, nothing from this machine's caches)"
+  # BY EXACT VERSION, and that is load-bearing since LCLI-613: the bare name resolves `latest`,
+  # which this script no longer moves, so `npx @opum-ai/lore` would smoke the PREVIOUS release
+  # and pass. A test pins the spec.
   SMOKE="$(mktemp -d)"
   ( cd "$SMOKE" && npm init -y >/dev/null 2>&1 && npx --yes "@opum-ai/lore@$VERSION" --version )
   rc=$?

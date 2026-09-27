@@ -42,3 +42,20 @@ bun test/support/record-backlog-goldens.ts
 No redaction step is needed: unlike the retired fork's shape, upstream's envelope carries no
 absolute, host-specific field — `task view`'s `path` is already project-relative. The recorder
 canonicalizes to 2-space JSON, so regeneration against the same backlog state is byte-identical.
+
+## `quest-cli/` — quest-cli's own version-parity rule, verbatim (LCLI-613)
+
+`version-parity.mjs` is quest-cli's `scripts/qualification/version-parity.mjs` exactly as it stands
+at quest-cli `main` `eb1d9f46` (introduced by commit `481f4654`, opum-ai/quest-cli#308): git blob
+`249c28dc19525d17f799cfd0ec9d0481998d62a6`. `test/version-parity.test.ts` re-derives that blob id
+from these bytes, so an edit here fails the suite instead of quietly changing the oracle, and then
+runs quest's rule and lore's `scripts/version-parity.mjs` side by side over the same inputs:
+Article 3 clause 6 says the two publishers enforce ONE rule, and this is what measures it.
+
+**Do not hand-edit.** To refresh after quest-cli changes its rule, fetch the file by ref and update
+the blob id in the test in the same commit:
+
+```sh
+gh api 'repos/opum-ai/quest-cli/contents/scripts/qualification/version-parity.mjs?ref=main' \
+  -H 'Accept: application/vnd.github.raw' > test/fixtures/quest-cli/version-parity.mjs
+```
