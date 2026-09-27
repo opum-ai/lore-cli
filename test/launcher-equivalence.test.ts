@@ -144,16 +144,26 @@ describe("launcher equivalence (LCLI-621)", () => {
   });
 
   test("RED: an entry whose TYPE differs, with the same path, mode and (empty) content", () => {
-    // A symlink carries no data, so an empty regular file at the same path with the same mode matches
-    // it on content and mode: only the type comparison can see it. node-tar would install one as a
-    // file and the other as a link.
+    // A directory carries no data, so an empty regular file at the same path with the same mode
+    // matches it on content and mode: only the type comparison can see it. Both types are allowed,
+    // so this is the type comparison alone (a symlink would also trip the allowed-types check).
     const asFile: Partial<Entry> = { path: "package/bin/lore.cjs", content: "", mode: 0o755, type: "0" };
-    const asLink: Partial<Entry> = { ...asFile, type: "2", linkname: "lore-real.cjs" };
-    const result = compare(launcher(RC, { change: asFile }), launcher(X, { change: asLink }));
+    const asDir: Partial<Entry> = { ...asFile, type: "5" };
+    const result = compare(launcher(RC, { change: asFile }), launcher(X, { change: asDir }));
     expect(result.ok).toBe(false);
-    expect(result.problems).toEqual(["package/bin/lore.cjs: type file in the rc, symlink in the final"]);
+    expect(result.problems).toEqual(["package/bin/lore.cjs: type file in the rc, directory in the final"]);
     // The same two entries, same type on both sides, compare equal: the difference above is the type.
     expect(compare(launcher(RC, { change: asFile }), launcher(X, { change: asFile })).ok).toBe(true);
+  });
+
+  test("RED: a symlink is refused on either side, since its target (which differs here) is never compared", () => {
+    const link: Entry = { path: "package/bin/lore", content: "", mode: 0o755, type: "2", linkname: "lore.cjs" };
+    const result = compare(launcher(RC, { add: link }), launcher(X, { add: { ...link, linkname: "elsewhere.cjs" } }));
+    expect(result.ok).toBe(false);
+    expect(result.problems).toEqual([
+      "package/bin/lore: a symlink entry in the rc tarball; a launcher may carry only regular files and directories",
+      "package/bin/lore: a symlink entry in the final tarball; a launcher may carry only regular files and directories",
+    ]);
   });
 
   test("RED: an rc tarball whose package.json version is not X-rc.N", () => {
@@ -236,6 +246,15 @@ describe("launcher equivalence (LCLI-621)", () => {
       Buffer.concat([tarBlocks(LAUNCHER_ENTRIES(RC)), Buffer.alloc(1024), tarBlocks([hidden]), Buffer.alloc(1024)]),
     );
     expect(() => readTarEntries(rc)).toThrow("after a zero block");
+  });
+
+  test("RED: a trailing PARTIAL block is refused, even one holding a header whose checksum is valid", () => {
+    // The first 300 bytes of a zero-size entry's header: the checksum, name, size and magic all sit in
+    // that prefix and the rest of a header is zero, so without the whole-block guard this would read
+    // as one more (empty) entry rather than as a truncated archive.
+    const phantom = tarBlocks([{ path: "package/phantom", content: "" }]).subarray(0, 300);
+    const rc = gzipSync(Buffer.concat([tarBlocks(LAUNCHER_ENTRIES(RC)), phantom]));
+    expect(() => readTarEntries(rc)).toThrow("300 trailing bytes at offset");
   });
 
   test("GREEN: zero record padding after the end marker, as tar writers emit, is accepted", () => {

@@ -1131,8 +1131,20 @@ jobs:
             fi
             # `npm view` exits non-zero for a name@version that has never been published —
             # that is the expected/common case, hence the explicit guard rather than
-            # letting `bash -e` treat it as a failure.
-            if npm view "${name}@${version}" version >/dev/null 2>&1; then
+            # letting `bash -e` treat it as a failure. But ONLY npm's own not-found (E404) means
+            # absent (LCLI-621 review): a timeout or a 5xx read as absent would let the pre-flight
+            # pass a taken X-rc.N and refuse only after six platform publishes. Any other failure,
+            # or an exit 0 that printed nothing, fails the step.
+            local probe probe_rc=0 present=false
+            probe="$(npm view "${name}@${version}" version 2>&1)" || probe_rc=$?
+            if [ "$probe_rc" -eq 0 ] && [ -n "${probe//[[:space:]]/}" ]; then
+              present=true
+            elif [ "$probe_rc" -eq 0 ] || ! grep -qE 'E404|No match found for version' <<< "$probe"; then
+              printf '%s\n' "$probe"
+              echo "::error::could not tell whether ${name}@${version} is already on the registry: npm view exited ${probe_rc} without npm's not-found (E404); its output is above. Whether it is skipped rests on that answer, so the step stops. Re-run once npm view answers; publishing is resumable."
+              exit 1
+            fi
+            if [ "$present" = true ]; then
               # ALREADY PUBLISHED IS A RESUME ONLY AS THESE BYTES (LCLI-621 review). Anything else
               # was published outside this run -- an earlier Release run, a hand publish -- and a
               # skip would stage it under THIS run's qualification. For a platform package that is
@@ -1144,7 +1156,7 @@ jobs:
               want="sha512-$(node -e 'process.stdout.write(require("crypto").createHash("sha512").update(require("fs").readFileSync(process.argv[1])).digest("base64"))' "$tgz")"
               got="$(npm view "${name}@${version}" dist.integrity | tr -d '[:space:]')"
               if [ -z "$got" ] || [ "$got" != "$want" ]; then
-                echo "::error::${name}@${version} is already on the registry with different bytes (registry dist.integrity '${got}', this run's ${tgz} ${want}). It was published outside this run. npm versions are immutable: for the X-rc.N launcher, re-dispatch with launcher_rc set to the next N; for an X platform package a new rc cannot help (every rc pins X), so re-run the failed publish job of the Release run whose platform tarballs are the registry's ('Re-run failed jobs' reuses that run's artifact; a re-dispatch rebuilds and may not match), or cut a new version. Do NOT run npm unpublish."
+                echo "::error::${name}@${version} is already on the registry with different bytes (registry dist.integrity '${got}', this run's ${tgz} ${want}). It was published outside this run. npm versions are immutable: for the X-rc.N launcher, re-dispatch with launcher_rc set to the next N; for an X platform package a new rc cannot help (every rc pins X), so re-run the failed publish job of the Release run whose platform tarballs are the registry's ('Re-run failed jobs', NOT 'Re-run all jobs', which re-runs package and overwrites npm-packages; a re-dispatch rebuilds and may not match), or, if those platforms were staged by scripts/publish-release.sh from a publish: false run that has no failed publish job, run 'scripts/publish-release.sh ${version} <that run id>'; otherwise cut a new version. Do NOT run npm unpublish."
                 exit 1
               fi
               if [ "$mode" = check ]; then

@@ -1010,8 +1010,40 @@ say "A 404 on PUT below means the token lacks publish rights on that package -- 
 # ── Registry state ──────────────────────────────────────────────────────────
 # A spec is name@version. The platform packages are at $VERSION; the staged launcher is at
 # $LAUNCHER_VERSION (X-rc.N, LCLI-621), so every read names the version it means.
+#
+# TWO READS, ON PURPOSE (LCLI-621 review). spec_visible is the propagation POLL's read: any failure
+# there means "not visible yet" and is retried until the shared window runs out, so it stays
+# tolerant. published is the read a SKIP or a pre-flight PASS rests on, and there "unreadable" is
+# not "absent": a flaky or lagging `npm view` read as absent would let the pre-flight pass a taken
+# X-rc.N, publish all six platforms, wait out the visibility window, and only then refuse. So
+# registry_probe reports absent ONLY for npm's own not-found (E404, "No match found for version"),
+# and published dies on anything else.
 spec_visible() { npm view "$1" version >/dev/null 2>&1; }
-published() { spec_visible "$1@${2:-$VERSION}"; }
+
+# Prints present, absent or unreadable. An unreadable probe's npm output goes to stderr.
+registry_probe() {
+  local out rc
+  out="$(npm view "$1" version 2>&1)"; rc=$?
+  if [ "$rc" -eq 0 ] && [ -n "${out//[[:space:]]/}" ]; then echo present; return 0; fi
+  if [ "$rc" -ne 0 ]; then
+    case "$out" in *E404*|*"No match found for version"*) echo absent; return 0 ;; esac
+  fi
+  printf '%s\n' "$out" >&2
+  echo unreadable
+}
+
+published() {
+  local spec="$1@${2:-$VERSION}" state
+  state="$(registry_probe "$spec")"
+  case "$state" in
+    present) return 0 ;;
+    absent) return 1 ;;
+  esac
+  die "could not tell whether $spec is already on the registry: \`npm view\` failed with something
+other than npm's not-found (E404); its output is above. Whether this package is skipped,
+and whether the pre-flight passes, rests on that answer, so an unreadable registry is not taken to
+mean \"not published\". Re-run once \`npm view $spec version\` answers; publishing is resumable."
+}
 
 report_state() {
   local rc_tag ver
@@ -1023,13 +1055,16 @@ report_state() {
       ver="$LAUNCHER_VERSION"
       if [ -z "$ver" ]; then printf '  %-34s no %s-rc.N named by release-candidate\n' "$pkg" "$VERSION"; continue; fi
     fi
-    if published "$pkg" "$ver"; then
-      rc_tag="$(npm view "$pkg" dist-tags.release-candidate 2>/dev/null)"
-      tag="$(npm view "$pkg" dist-tags.latest 2>/dev/null)"
-      printf '  %-34s %s present   release-candidate=%s latest=%s\n' "$pkg" "$ver" "${rc_tag:-?}" "${tag:-?}"
-    else
-      printf '  %-34s %s ABSENT\n' "$pkg" "$ver"
-    fi
+    # A report, not a gate, and it also runs after the irreversible publish: an unreadable read is
+    # printed as such rather than dying, so it neither passes for ABSENT nor fails a good release.
+    case "$(registry_probe "$pkg@$ver")" in
+      present)
+        rc_tag="$(npm view "$pkg" dist-tags.release-candidate 2>/dev/null)"
+        tag="$(npm view "$pkg" dist-tags.latest 2>/dev/null)"
+        printf '  %-34s %s present   release-candidate=%s latest=%s\n' "$pkg" "$ver" "${rc_tag:-?}" "${tag:-?}" ;;
+      absent) printf '  %-34s %s ABSENT\n' "$pkg" "$ver" ;;
+      *) printf '  %-34s %s UNREADABLE (npm view failed other than not-found; its output is above)\n' "$pkg" "$ver" ;;
+    esac
   done
 }
 

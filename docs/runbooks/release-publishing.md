@@ -377,6 +377,8 @@ this one job ever gets the token. It:
   `name@version` is already on the registry (`npm view`) and skips it only
   if the registry holds this run's bytes, compared by `dist.integrity`. A
   package already there with other bytes fails the job and is never skipped.
+  Only npm's own not-found (E404) counts as "not published": any other
+  `npm view` failure fails the job rather than being read as absent.
   Resuming after a partial failure therefore finishes the remaining packages
   instead of 403ing (`EPUBLISHCONFLICT`) on the ones already published — see
   [Rollback](#rollback)'s "Publish job failed partway" entry for which run to
@@ -468,7 +470,12 @@ works like this:
 - **`N` is the `launcher_rc` dispatch input.** It is a positive integer with
   no leading zero, and it defaults to `1`, because the first staging of any
   `X` is `rc.1`. A re-stage of the same `X` must pass the next `N`: an
-  `X-rc.N` already on the registry cannot carry new bytes. The script reads
+  `X-rc.N` already on the registry cannot carry new bytes. A re-stage works
+  only if the new run's platform tarballs are byte-identical to the `X`
+  platforms already on the registry (see the next item). That has been
+  measured once: two Release dispatches on the same commit `20a1d24b` (0.6.1,
+  runs 34783940117 and 34786808767) produced seven byte-identical tarballs.
+  From a different commit it is unmeasured. The script reads
   `N` from the artifact, where the run holds exactly one `X-rc.N` launcher. It
   refuses to resume past an `X-rc.N` whose registry bytes differ from the
   run's, and names the next `N` as the remedy. Both staging paths make that
@@ -1264,12 +1271,18 @@ version-bump item has happened.
   published last, so a platform-package failure leaves nothing installable.
 - **A later OIDC publish job failed partway**: do **not** bump the version —
   fix the cause (usually a missing or mistyped Trusted Publisher) and
-  resume. Prefer **Re-run failed jobs** on the same Release run: it reuses that
-  run's `npm-packages` artifact, so the packages already on the registry are
-  this run's bytes. The publish step skips those and completes the rest. A
-  fresh dispatch on the same commit rebuilds the tarballs, and the publish step
-  refuses any package already on the registry with other bytes rather than
-  skipping it.
+  resume. Prefer **Re-run failed jobs**, NOT **Re-run all jobs**, on the same
+  Release run. Re-run failed jobs reuses that run's `npm-packages` artifact, so
+  the packages already on the registry are this run's bytes; the publish step
+  skips those and completes the rest. Re-run all jobs re-runs `package`, which
+  overwrites `npm-packages` with a rebuild. GitHub only allows a re-run within
+  30 days of the original run, and the artifact expires under its retention
+  (`npm-packages` sets no `retention-days`, so the repository default applies).
+  If the registry's platforms were staged by `scripts/publish-release.sh` from
+  a `publish: false` run, that run has no failed publish job to re-run: run
+  `scripts/publish-release.sh X <that run id>` instead. A fresh dispatch on the
+  same commit rebuilds the tarballs, and the publish step refuses any package
+  already on the registry with other bytes rather than skipping it.
   The launcher (`@opum-ai/lore`) is published last precisely so a
   partial failure leaves nothing installable and the same version stays
   retryable. If the launcher itself published and something is still wrong,

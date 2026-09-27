@@ -39,6 +39,9 @@ const PLATFORMS = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "wi
 const LAUNCHER_RC = `${VERSION}-rc.1`;
 
 const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+// What `npm view` does for a name@version that is not on the registry: exit 1 with npm's E404 on
+// stderr. The script reads "absent" ONLY from that (LCLI-621 review); a silent failure is unreadable.
+const NPM_404 = `{ echo "npm error code E404" >&2; echo "npm error 404 No match found for version" >&2; exit 1; }`;
 // What npm serves as dist.integrity for a tarball: the SRI sha512 of its bytes.
 const integrity = (bytes: Buffer) => `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
 
@@ -290,7 +293,7 @@ exit 1
     `#!/usr/bin/env bash
 case "\${1:-}" in
   ping) exit 0 ;;
-  view) exit 1 ;;
+  view) ${NPM_404} ;;
   publish) echo "STUB PUBLISH $2"; exit 0 ;;
   *) exit 0 ;;
 esac
@@ -829,7 +832,7 @@ case "\${1:-}" in
     esac
     if [ ! -f "$STATE/published-$(safe "$name")" ]; then
       echo "VIEW-MISS $name (not yet published)" >> "$LOG"
-      exit 1
+      ${NPM_404}
     fi
     if [ "$name" = "$DELAYED" ]; then
       n=0
@@ -838,7 +841,7 @@ case "\${1:-}" in
       echo "$n" > "$STATE/delayed-count"
       if [ "$n" -le 1 ]; then
         echo "VIEW-MISS $name (staged-visibility-lag #$n)" >> "$LOG"
-        exit 1
+        ${NPM_404}
       fi
       echo "VIEW-HIT $name (#$n)" >> "$LOG"
       echo "$VERSION"
@@ -1201,8 +1204,10 @@ describeOnPosix("scripts/publish-release.sh re-hash before publish (LCLI-586)", 
     writeFileSync(replacement, swap.bytes);
     // `on` is "publish:<basename>" (swap while that tarball is being published) or
     // "view-root-3" (swap on the third `npm view @opum-ai/lore@<v> version`: the first is
-    // report_state's, the second the pre-flight's byte check (LCLI-621 review), the third
-    // publish_one's resumability check for the root).
+    // report_state's, the second the pre-flight's `published` probe (LCLI-621 review), the third
+    // publish_one's own `published` probe for the root, the last read before its re-hash). The count
+    // is kept, and the dry-run case asserts it ends at exactly 3, so a read added anywhere before the
+    // root's re-hash goes red rather than silently moving the swap earlier.
     writeFileSync(
       resolve(ws.bin, "npm"),
       `#!/usr/bin/env bash
@@ -1224,7 +1229,7 @@ case "\${1:-}" in
       n=$(( $(cat "$STATE/root-views" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$STATE/root-views"
       [ "$n" -eq 3 ] && do_swap
     fi
-    [ -f "$STATE/published-$(safe "$name")" ] || exit 1
+    [ -f "$STATE/published-$(safe "$name")" ] || ${NPM_404}
     echo "${VERSION}"; exit 0 ;;
   publish)
     tarball="$2"; base="$(basename "$tarball")"
@@ -1241,7 +1246,11 @@ esac
     // The real path ends with an npx install smoke; it must never reach the network.
     writeFileSync(resolve(ws.bin, "npx"), "#!/usr/bin/env bash\nexit 0\n");
     chmodSync(resolve(ws.bin, "npx"), 0o755);
-    return { published: () => readFileSync(log, "utf8").split("\n").filter(Boolean) };
+    const rootViews = resolve(state, "root-views");
+    return {
+      published: () => readFileSync(log, "utf8").split("\n").filter(Boolean),
+      rootViews: () => (existsSync(rootViews) ? Number(readFileSync(rootViews, "utf8").trim()) : 0),
+    };
   }
 
   // Different BYTES, same tar stream: re-gzip at another level. Still a valid tgz, so nothing
@@ -1344,6 +1353,8 @@ esac
 
       expect(r.code).toBe(1);
       expect(npm.published()).toEqual([`SWAPPED ${ws.rootTarball}`]);
+      // Exactly three root reads, so the swap fired on publish_one's, the last before the re-hash.
+      expect(npm.rootViews()).toBe(3);
       // All six platform rehearsals re-hashed and passed; the root's did not.
       for (const p of PLATFORMS) {
         expect(r.out).toContain(`rehash   ${platformFile(p)} matches the receipt`);
@@ -1777,7 +1788,7 @@ case "\${1:-}" in
     case "$field" in
       dist-tags.*) f="$STATE/tag-$(safe "$spec")-\${field#dist-tags.}"; [ -f "$f" ] && cat "$f"; exit 0 ;;
       dist.integrity) cat "$STATE/integrity-$(safe "\${spec%@*}")" 2>/dev/null; exit 0 ;;
-      *) [ -f "$STATE/published-$(safe "\${spec%@*}")" ] || exit 1; echo "${VERSION}"; exit 0 ;;
+      *) [ -f "$STATE/published-$(safe "\${spec%@*}")" ] || ${NPM_404}; echo "${VERSION}"; exit 0 ;;
     esac ;;
   publish)
     tarball="$2"; shift 2; tag="latest"
@@ -1910,10 +1921,28 @@ esac
 // Constitution Article 3 clause 5 as amended by ODOC-302. Every refusal runs the REAL path and
 // asserts no publish happened, for the reason given above the LCLI-578 block.
 describeOnPosix("scripts/publish-release.sh stages the X-rc.N launcher and carries X (LCLI-621)", () => {
-  /** An npm whose registry holds `preexisting` (name@version -> dist.integrity) and logs publishes. */
-  function registryNpm(ws: ReturnType<typeof makeWorkspace>, preexisting: Record<string, string> = {}) {
+  /**
+   * An npm whose registry holds `preexisting` (name@version -> dist.integrity) and logs publishes.
+   * `broken` answers `npm view <spec> version` for each listed spec with a NON-404 failure (or, for
+   * "empty", exit 0 with no output). `flaky` fails a spec's FIRST read after this stub published
+   * it with a non-404 error, as a registry blip during the visibility poll would.
+   */
+  function registryNpm(
+    ws: ReturnType<typeof makeWorkspace>,
+    preexisting: Record<string, string> = {},
+    options: { broken?: Record<string, "etimedout" | "empty">; flaky?: string } = {},
+  ) {
     const log = resolve(ws.root, "npm-publish.log");
+    const flakyMarker = resolve(ws.root, "flaky-fired");
     writeFileSync(log, "");
+    rmSync(flakyMarker, { force: true });
+    const broken = Object.entries(options.broken ?? {})
+      .map(([spec, how]) =>
+        how === "empty"
+          ? `    "${spec}") [ "$field" = version ] && exit 0 ;;`
+          : `    "${spec}") [ "$field" = version ] && { echo "npm error code ETIMEDOUT" >&2; echo "npm error network request to registry.npmjs.org timed out" >&2; exit 1; } ;;`,
+      )
+      .join("\n");
     const cases = Object.entries(preexisting)
       .map(
         ([spec, sri]) =>
@@ -1928,12 +1957,21 @@ case "\${1:-}" in
   view)
     spec="$2"; field="\${3:-}"
     case "$spec" in
+${broken}
+    esac
+    case "$spec" in
 ${cases}
     esac
     # Visible once THIS stub has published it: name@version maps back to its tarball's basename.
     n="\${spec%@*}"; f="opum-ai-\${n#@opum-ai/}-\${spec##*@}.tgz"
-    while IFS= read -r line; do [ "$(basename "$line")" = "$f" ] && { echo "\${spec##*@}"; exit 0; }; done < "${log}"
-    exit 1 ;;
+    while IFS= read -r line; do
+      [ "$(basename "$line")" = "$f" ] || continue
+      if [ "$spec" = "${options.flaky ?? ""}" ] && [ ! -f "${flakyMarker}" ]; then
+        touch "${flakyMarker}"; echo "npm error code ECONNRESET" >&2; exit 1
+      fi
+      echo "\${spec##*@}"; exit 0
+    done < "${log}"
+    ${NPM_404} ;;
   publish) echo "$2" >> "${log}"; echo "STUB PUBLISH $2"; exit 0 ;;
   *) exit 0 ;;
 esac
@@ -2158,6 +2196,71 @@ esac
     }
   });
 
+  // "Is it already published?" reads absent ONLY from npm's own not-found (LCLI-621 review). A flaky
+  // or lagging read taken as absent would let the pre-flight pass a taken X-rc.N, publish all six
+  // platforms, wait out the visibility window, and only refuse at the launcher.
+  test("a NON-404 failure on the pre-flight's probe refuses with zero publishes, and the report says UNREADABLE", () => {
+    const ws = makeWorkspace();
+    try {
+      const spec = `@opum-ai/lore@${LAUNCHER_RC}`;
+      const published = registryNpm(ws, {}, { broken: { [spec]: "etimedout" } });
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(1);
+      expect(r.out).toMatch(new RegExp(`@opum-ai/lore +${LAUNCHER_RC.replaceAll(".", "\\.")} UNREADABLE`));
+      expect(r.out).toContain(`could not tell whether ${spec} is already on the registry`);
+      expect(r.out).toContain("npm error code ETIMEDOUT");
+      expect(r.out).not.toContain("publishing platform packages first");
+      expect(published()).toEqual([]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("an exit-0 probe that prints nothing is unreadable too, not present and not absent", () => {
+    const ws = makeWorkspace();
+    try {
+      const spec = `@opum-ai/lore-darwin-x64@${VERSION}`;
+      const published = registryNpm(ws, {}, { broken: { [spec]: "empty" } });
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain(`could not tell whether ${spec} is already on the registry`);
+      expect(published()).toEqual([]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("npm's own 404 still counts as unpublished: reported ABSENT, and all seven stage", () => {
+    const ws = makeWorkspace();
+    try {
+      const published = registryNpm(ws);
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(0);
+      expect(r.out).toMatch(new RegExp(`@opum-ai/lore-darwin-arm64 +${VERSION.replaceAll(".", "\\.")} ABSENT`));
+      expect(r.out).not.toContain("could not tell whether");
+      expect(published()).toHaveLength(7);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("the visibility POLL still retries a non-404 failure rather than dying (its semantics are unchanged)", () => {
+    const ws = makeWorkspace();
+    try {
+      const spec = `@opum-ai/lore-linux-arm64@${VERSION}`;
+      const published = registryNpm(ws, {}, { flaky: spec });
+      // A real window, so the poll has room to retry once (one 5s backoff).
+      const r = runScript(ws, ws.root, ws.artifacts, { ...REAL_RUN, REGISTRY_WINDOW_SECONDS: "60" }, []);
+      expect(r.code).toBe(0);
+      expect(existsSync(resolve(ws.root, "flaky-fired"))).toBe(true);
+      expect(r.out).toContain("waiting  1 package(s) not visible yet");
+      expect(r.out).not.toContain("could not tell whether");
+      expect(published()).toHaveLength(7);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
   test("--verify-only reports the launcher at the X-rc.N release-candidate names, with no artifacts", () => {
     const ws = makeWorkspace();
     try {
@@ -2168,7 +2271,7 @@ esac
 case "$2 \${3:-}" in
   "@opum-ai/lore dist-tags.release-candidate") echo "${LAUNCHER_RC}" ;;
   "@opum-ai/lore@${LAUNCHER_RC} version") echo "${LAUNCHER_RC}" ;;
-  *) exit 1 ;;
+  *) ${NPM_404} ;;
 esac
 `,
       );

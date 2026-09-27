@@ -16,15 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `scripts/publish-release.sh`, publishes seven of them under `release-candidate`: the platforms
   at `X` and the launcher at `X-rc.N`, which pins the platforms at exactly `X`. The `X` launcher
   is carried and never staged. `N` is the new `launcher_rc` dispatch input, which defaults to `1`.
-  A re-stage of the same `X` takes the next `N`. The final `X` launcher's publish to `latest` is
-  not part of this change.
+  A re-stage of the same `X` takes the next `N`, and works only if the new run's platform tarballs
+  are byte-identical to the ones already on the registry. That has been measured once: two Release
+  dispatches on the same commit, `20a1d24b` (0.6.1, runs 34783940117 and 34786808767), produced
+  seven byte-identical tarballs. From a different commit it is unmeasured. The final `X`
+  launcher's publish to `latest` is not part of this change.
 - **A resumed staging skips a package only if the registry holds this run's bytes** (LCLI-621).
   Both `release.yml`'s `publish` job and `scripts/publish-release.sh` compare an already-published
   package's `dist.integrity` with the run's tarball, platforms included, and refuse on a difference
   or an unreadable value. The comparison runs for all seven in a pre-flight before the first write,
-  so a refusal leaves nothing published and never waits out the registry-visibility window. Before this, a platform package already on the registry was skipped
-  unchecked, so an `X-rc.N` staged from a new Release run could install an older run's `X`
-  platform bytes.
+  so a refusal leaves nothing published and never waits out the registry-visibility window. Before
+  this, a platform package already on the registry was skipped unchecked, so an `X-rc.N` staged
+  from a new Release run could install an older run's `X` platform bytes. Whether a package is
+  already published is read as absent only from npm's own not-found (E404); any other `npm view`
+  failure refuses, while the registry-visibility poll still retries it.
 
 ### Added
 
@@ -34,8 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mode per entry, and byte-identical content after every `X-rc.N` is replaced with `X`. It also
   refuses an rc whose own `package.json` is not `X-rc.N`, and an rc pinning a platform at
   anything but `X`. It reads each archive to its end and refuses non-zero data after a zero
-  block, because node-tar installs an entry placed after a lone zero block. It runs in `release.yml`'s `package` job and in `scripts/publish-release.sh`,
-  and both launchers get the LCLI-510 shipped-README assertion and install-sanity.
+  block, because node-tar installs an entry placed after a lone zero block. It refuses any entry
+  that is not a regular file or a directory, since a link's target is never compared (npm pack
+  emits none). It runs in `release.yml`'s `package` job and in `scripts/publish-release.sh`, and
+  both launchers get the LCLI-510 shipped-README assertion and install-sanity.
 
 ## [0.11.0] - 2026-09-27
 

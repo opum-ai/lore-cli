@@ -16,6 +16,8 @@
 // appears in, so no whole-archive comparison could ever pass. Per entry:
 //
 //   - the two archives hold the SAME SET of paths: none missing, none extra, none twice;
+//   - every entry is a regular file or a directory, never a link or device (a link's target is not
+//     content, so it could differ unseen);
 //   - each entry has the same type and the same permission bits (mode & 0o7777);
 //   - each entry's content is byte-identical once every X-rc.N in the rc entry is replaced
 //     with X. Paths are compared as they stand, with no substitution, which is stricter.
@@ -230,6 +232,21 @@ export function compareLauncherTarballs(rcTarball, finalTarball, { version, rcVe
   };
   const rcByPath = index(rc, "rc");
   const finalByPath = index(final, "final");
+
+  // ONLY REGULAR FILES AND DIRECTORIES (LCLI-621 review). A link's target is a header field
+  // (linkname) that the content comparison never reads, so two symlinks aimed at different files
+  // would compare equal. npm pack never emits one -- measured on npm 12.1.0, npm-packlist drops a
+  // symlink even when `files` names it -- so refusing every other entry type costs nothing and
+  // leaves nothing the comparison below cannot see.
+  const refuseLinks = (entries, label) => {
+    for (const entry of entries)
+      if (entry.type !== "file" && entry.type !== "directory")
+        problems.push(
+          `${entry.path}: a ${entry.type} entry in the ${label} tarball; a launcher may carry only regular files and directories`,
+        );
+  };
+  refuseLinks(rc, "rc");
+  refuseLinks(final, "final");
 
   for (const path of [...rcByPath.keys()].sort())
     if (!finalByPath.has(path)) problems.push(`${path} is in the rc tarball and missing from the final`);

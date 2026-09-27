@@ -514,6 +514,8 @@ describeOnPosix("release.yml's publish step stages seven of eight tarballs (LCLI
       rcManifestVersion?: string;
       /** Tarball file -> what the registry already holds for its name@version: its own bytes or others. */
       preexisting?: Record<string, "same" | "other">;
+      /** Tarball file whose `npm view <name@version> version` fails with a NON-404 error. */
+      broken?: string;
     } = {},
   ) {
     const root = mkdtempSync(join(tmpdir(), "release-publish-step-"));
@@ -538,16 +540,23 @@ describeOnPosix("release.yml's publish step stages seven of eight tarballs (LCLI
     const log = join(root, "npm.log");
     writeFileSync(log, "");
     const sri = (bytes: Buffer) => `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
-    const cases = Object.entries(options.preexisting ?? {}).map(([file, held]) => {
+    const specOf = (file: string) => {
       const m = /^opum-ai-lore-(?:([a-z0-9]+-[a-z0-9]+)-)?(\d+\.\d+\.\d+(?:-rc\.\d+)?)\.tgz$/.exec(file);
       if (!m) throw new Error(`unrecognised tarball name ${file}`);
-      const spec = `@opum-ai/lore${m[1] ? `-${m[1]}` : ""}@${m[2]}`;
+      return { spec: `@opum-ai/lore${m[1] ? `-${m[1]}` : ""}@${m[2]}`, version: m[2] as string };
+    };
+    const cases: string[] = [];
+    if (options.broken)
+      cases.push(`  "${specOf(options.broken).spec}") echo "npm error code ETIMEDOUT" >&2; exit 1 ;;`);
+    for (const [file, held] of Object.entries(options.preexisting ?? {})) {
+      const { spec, version } = specOf(file);
       const value = held === "same" ? sri(readFileSync(join(dist, file))) : sri(Buffer.from("other bytes"));
-      return `  "${spec}") [ "\${3:-}" = dist.integrity ] && echo "${value}" || echo "${m[2]}"; exit 0 ;;`;
-    });
+      cases.push(`  "${spec}") [ "\${3:-}" = dist.integrity ] && echo "${value}" || echo "${version}"; exit 0 ;;`);
+    }
+    // Anything else is not on the registry, answered as npm does: exit 1 with its E404.
     writeFileSync(
       join(bin, "npm"),
-      `#!/usr/bin/env bash\necho "$*" >> "${log}"\n[ "$1" = view ] || exit 0\ncase "$2" in\n${cases.join("\n")}\nesac\nexit 1\n`,
+      `#!/usr/bin/env bash\necho "$*" >> "${log}"\n[ "$1" = view ] || exit 0\ncase "$2" in\n${cases.join("\n")}\nesac\necho "npm error code E404" >&2\necho "npm error 404 No match found for version" >&2\nexit 1\n`,
     );
     chmodSync(join(bin, "npm"), 0o755);
     const run = (launcherRc = String(options.rc ?? 1)) => {
@@ -639,6 +648,14 @@ describeOnPosix("release.yml's publish step stages seven of eight tarballs (LCLI
     "the pre-flight refuses an X-rc.N launcher already on the registry with other bytes before anything publishes",
     { rc: 2, preexisting: { [`opum-ai-lore-${X}-rc.2.tgz`]: "other" } },
     `::error::@opum-ai/lore@${X}-rc.2 is already on the registry with different bytes`,
+  );
+
+  // Only npm's own not-found (E404) is "absent" (LCLI-621 review); the positive control above is
+  // the 404 case, where every package still publishes.
+  refuses(
+    "a NON-404 failure on the pre-flight's probe of the X-rc.N launcher fails the step before anything publishes",
+    { broken: `opum-ai-lore-${X}-rc.1.tgz` },
+    `::error::could not tell whether @opum-ai/lore@${X}-rc.1 is already on the registry`,
   );
 
   test("the pre-flight runs the publish step's own comparison, in check mode, before the publish loop", () => {
