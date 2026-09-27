@@ -374,11 +374,13 @@ this one job ever gets the token. It:
   mid-loop failure leaves nothing installable yet, rather than a launcher
   live at a version whose binaries never arrived.
 - The publish loop is **resumable**: before each package, it checks whether
-  `name@version` is already on the registry (`npm view`) and skips it if so.
-  Re-dispatching `Release` with `publish: true` on the same commit after a
-  partial failure therefore finishes the remaining packages instead of
-  403ing (`EPUBLISHCONFLICT`) on the ones already published — see
-  [Rollback](#rollback)'s "Publish job failed partway" entry.
+  `name@version` is already on the registry (`npm view`) and skips it only
+  if the registry holds this run's bytes, compared by `dist.integrity`. A
+  package already there with other bytes fails the job and is never skipped.
+  Resuming after a partial failure therefore finishes the remaining packages
+  instead of 403ing (`EPUBLISHCONFLICT`) on the ones already published — see
+  [Rollback](#rollback)'s "Publish job failed partway" entry for which run to
+  resume from.
 - Runs `npm publish` against each release tarball — no `NPM_TOKEN`/secret
   needed once Step 1's Trusted Publisher setup exists for that package; until
   then, that package's `npm publish` call fails with an auth/403 error, which
@@ -470,6 +472,14 @@ works like this:
   `N` from the artifact, where the run holds exactly one `X-rc.N` launcher. It
   refuses to resume past an `X-rc.N` whose registry bytes differ from the
   run's, and names the next `N` as the remedy.
+- **A new `N` does not fix a platform package.** Every `X-rc.N` pins the
+  platforms at exactly `X`, and `X` platform packages are immutable. Both
+  staging paths compare an already-published platform package's
+  `dist.integrity` with the run's tarball and refuse on a difference, because
+  a re-stage from a new Release run rebuilds the platforms and the rebuild is
+  not proven byte-identical. The remedy is to publish from the Release run
+  whose platform tarballs the registry holds, or to cut a new version. Never
+  unpublish.
 - **How the rc launcher is built.** The `package` job rewrites only
   `package.json`'s own `version` line to `X-rc.N`, so the six
   `optionalDependencies` still pin exactly `X`. It re-renders README's
@@ -1253,8 +1263,12 @@ version-bump item has happened.
   published last, so a platform-package failure leaves nothing installable.
 - **A later OIDC publish job failed partway**: do **not** bump the version —
   fix the cause (usually a missing or mistyped Trusted Publisher) and
-  re-dispatch `Release` with `publish: true` on the **same commit**. The
-  publish step skips packages already on the registry and completes the rest.
+  resume. Prefer **Re-run failed jobs** on the same Release run: it reuses that
+  run's `npm-packages` artifact, so the packages already on the registry are
+  this run's bytes. The publish step skips those and completes the rest. A
+  fresh dispatch on the same commit rebuilds the tarballs, and the publish step
+  refuses any package already on the registry with other bytes rather than
+  skipping it.
   The launcher (`@opum-ai/lore`) is published last precisely so a
   partial failure leaves nothing installable and the same version stays
   retryable. If the launcher itself published and something is still wrong,

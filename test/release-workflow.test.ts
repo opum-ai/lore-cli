@@ -26,6 +26,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -165,6 +166,18 @@ describe("release.yml publish job stays safely gated", () => {
     // Resumable: a run that fails partway through must be safe to re-dispatch without
     // 403ing (EPUBLISHCONFLICT) on packages already published.
     expect(script).toMatch(/npm view/);
+
+    // ...but only past THIS run's bytes (LCLI-621 review): the skip compares the registry's
+    // dist.integrity with the tarball's and fails before it can return. Pinned statically as well as
+    // executed below, because the executed cases are POSIX-only.
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal bash parameter expansion from release.yml's own script, not a JS template placeholder.
+    const integrityRead = script.indexOf('npm view "${name}@${version}" dist.integrity');
+    const refusal = script.indexOf("is already on the registry with different bytes", integrityRead);
+    const skip = script.indexOf("already published as this run's bytes", integrityRead);
+    expect(integrityRead).toBeGreaterThan(-1);
+    expect(refusal).toBeGreaterThan(integrityRead);
+    expect(skip).toBeGreaterThan(refusal);
+    expect(script.slice(refusal, skip)).toContain("exit 1");
   });
 
   test("the publish step refuses to publish the pre-release placeholder version 0.0.0, before publishing anything", () => {
@@ -493,7 +506,16 @@ describeOnPosix("release.yml's publish step stages seven of eight tarballs (LCLI
   }
 
   /** A workspace the publish step's run block can execute in: dist-npm, parity/, a stub npm. */
-  function workspace(options: { rc?: number; omit?: string; extra?: string; rcManifestVersion?: string } = {}) {
+  function workspace(
+    options: {
+      rc?: number;
+      omit?: string;
+      extra?: string;
+      rcManifestVersion?: string;
+      /** Tarball file -> what the registry already holds for its name@version: its own bytes or others. */
+      preexisting?: Record<string, "same" | "other">;
+    } = {},
+  ) {
     const root = mkdtempSync(join(tmpdir(), "release-publish-step-"));
     const dist = join(root, "dist-npm");
     const bin = join(root, "bin");
@@ -515,7 +537,18 @@ describeOnPosix("release.yml's publish step stages seven of eight tarballs (LCLI
     if (options.omit) rmSync(join(dist, options.omit));
     const log = join(root, "npm.log");
     writeFileSync(log, "");
-    writeFileSync(join(bin, "npm"), `#!/usr/bin/env bash\necho "$*" >> "${log}"\n[ "$1" = view ] && exit 1\nexit 0\n`);
+    const sri = (bytes: Buffer) => `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
+    const cases = Object.entries(options.preexisting ?? {}).map(([file, held]) => {
+      const m = /^opum-ai-lore-(?:([a-z0-9]+-[a-z0-9]+)-)?(\d+\.\d+\.\d+(?:-rc\.\d+)?)\.tgz$/.exec(file);
+      if (!m) throw new Error(`unrecognised tarball name ${file}`);
+      const spec = `@opum-ai/lore${m[1] ? `-${m[1]}` : ""}@${m[2]}`;
+      const value = held === "same" ? sri(readFileSync(join(dist, file))) : sri(Buffer.from("other bytes"));
+      return `  "${spec}") [ "\${3:-}" = dist.integrity ] && echo "${value}" || echo "${m[2]}"; exit 0 ;;`;
+    });
+    writeFileSync(
+      join(bin, "npm"),
+      `#!/usr/bin/env bash\necho "$*" >> "${log}"\n[ "$1" = view ] || exit 0\ncase "$2" in\n${cases.join("\n")}\nesac\nexit 1\n`,
+    );
     chmodSync(join(bin, "npm"), 0o755);
     const run = (launcherRc = String(options.rc ?? 1)) => {
       const result = Bun.spawnSync({
@@ -570,6 +603,30 @@ describeOnPosix("release.yml's publish step stages seven of eight tarballs (LCLI
         ws.cleanup();
       }
     });
+
+  // LCLI-621 review: a skip is a resume only when the registry holds THIS run's bytes, platforms included.
+  test("an already-published package holding this run's bytes is skipped, and the rest still stage", () => {
+    const ws = workspace({ preexisting: { [`opum-ai-lore-darwin-arm64-${X}.tgz`]: "same" } });
+    try {
+      const r = ws.run();
+      expect(r.code).toBe(0);
+      expect(r.out).toContain(`@opum-ai/lore-darwin-arm64@${X} already published as this run's bytes`);
+      expect(r.publishes).toEqual([
+        ...PLATFORMS.filter((p) => p !== "darwin-arm64").map(
+          (p) => `publish ./dist-npm/opum-ai-lore-${p}-${X}.tgz --tag release-candidate`,
+        ),
+        `publish ./dist-npm/opum-ai-lore-${X}-rc.1.tgz --tag release-candidate`,
+      ]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  refuses(
+    "refuses an X platform package already on the registry with other bytes",
+    { preexisting: { [`opum-ai-lore-darwin-arm64-${X}.tgz`]: "other" } },
+    `::error::@opum-ai/lore-darwin-arm64@${X} is already on the registry with different bytes`,
+  );
 
   refuses("refuses when the carried X launcher is absent", { omit: `opum-ai-lore-${X}.tgz` }, "expected 8 tarballs");
   refuses("refuses an unexpected ninth tarball", { extra: `opum-ai-lore-freebsd-x64-${X}.tgz` }, "expected 8 tarballs");

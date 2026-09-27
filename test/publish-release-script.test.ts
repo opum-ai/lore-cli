@@ -39,6 +39,8 @@ const PLATFORMS = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "wi
 const LAUNCHER_RC = `${VERSION}-rc.1`;
 
 const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+// What npm serves as dist.integrity for a tarball: the SRI sha512 of its bytes.
+const integrity = (bytes: Buffer) => `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
 
 /**
  * Builds a workspace holding: a source of truth for the seven tarballs, per-platform
@@ -1753,6 +1755,12 @@ describeOnPosix("scripts/publish-release.sh stages under release-candidate only 
     for (const [name, rc] of Object.entries(preexisting)) {
       writeFileSync(resolve(state, `published-${safe(name)}`), "");
       if (rc !== null) writeFileSync(resolve(state, `tag-${safe(name)}-release-candidate`), rc);
+      // A resume: the registry holds exactly this run's bytes (LCLI-621 review), so the skip is one.
+      const file =
+        name === "@opum-ai/lore"
+          ? ws.rootTarball
+          : `opum-ai-lore-${name.slice("@opum-ai/lore-".length)}-${VERSION}.tgz`;
+      writeFileSync(resolve(state, `integrity-${safe(name)}`), integrity(readFileSync(resolve(ws.source, file))));
     }
     writeFileSync(
       resolve(ws.bin, "npm"),
@@ -1767,6 +1775,7 @@ case "\${1:-}" in
     spec="$2"; field="\${3:-}"
     case "$field" in
       dist-tags.*) f="$STATE/tag-$(safe "$spec")-\${field#dist-tags.}"; [ -f "$f" ] && cat "$f"; exit 0 ;;
+      dist.integrity) cat "$STATE/integrity-$(safe "\${spec%@*}")" 2>/dev/null; exit 0 ;;
       *) [ -f "$STATE/published-$(safe "\${spec%@*}")" ] || exit 1; echo "${VERSION}"; exit 0 ;;
     esac ;;
   publish)
@@ -1900,14 +1909,14 @@ esac
 // Constitution Article 3 clause 5 as amended by ODOC-302. Every refusal runs the REAL path and
 // asserts no publish happened, for the reason given above the LCLI-578 block.
 describeOnPosix("scripts/publish-release.sh stages the X-rc.N launcher and carries X (LCLI-621)", () => {
-  /** An npm whose registry holds `preexisting` (name@version -> dist.shasum) and logs publishes. */
+  /** An npm whose registry holds `preexisting` (name@version -> dist.integrity) and logs publishes. */
   function registryNpm(ws: ReturnType<typeof makeWorkspace>, preexisting: Record<string, string> = {}) {
     const log = resolve(ws.root, "npm-publish.log");
     writeFileSync(log, "");
     const cases = Object.entries(preexisting)
       .map(
-        ([spec, shasum]) =>
-          `    "${spec}") [ "$field" = dist.shasum ] && echo "${shasum}" || echo "\${spec##*@}"; exit 0 ;;`,
+        ([spec, sri]) =>
+          `    "${spec}") [ "$field" = dist.integrity ] && echo "${sri}" || echo "\${spec##*@}"; exit 0 ;;`,
       )
       .join("\n");
     writeFileSync(
@@ -1934,8 +1943,6 @@ esac
     chmodSync(resolve(ws.bin, "npx"), 0o755);
     return () => readFileSync(log, "utf8").split("\n").filter(Boolean);
   }
-
-  const sha1 = (bytes: Buffer) => createHash("sha1").update(bytes).digest("hex");
 
   test("positive control: stages the six platforms and the X-rc.N launcher, never the carried X one", () => {
     const ws = makeWorkspace();
@@ -2035,18 +2042,75 @@ esac
     const ws = makeWorkspace();
     try {
       const spec = `@opum-ai/lore@${LAUNCHER_RC}`;
-      let published = registryNpm(ws, { [spec]: "f".repeat(40) });
+      let published = registryNpm(ws, { [spec]: integrity(Buffer.from("an earlier run's launcher")) });
       const taken = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
       expect(taken.code).toBe(1);
       expect(taken.out).toContain(`${spec} is ALREADY on the registry with different bytes`);
       expect(taken.out).toContain("launcher_rc set to the next N");
+      expect(taken.out).toContain("Do NOT run npm unpublish");
       expect(published()).not.toContain(resolve(ws.artifacts, ws.rootTarball));
 
-      published = registryNpm(ws, { [spec]: sha1(readFileSync(resolve(ws.source, ws.rootTarball))) });
+      published = registryNpm(ws, { [spec]: integrity(readFileSync(resolve(ws.source, ws.rootTarball))) });
       const resumed = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
       expect(resumed.code).toBe(0);
-      expect(resumed.out).toContain(`skip     ${spec} (already on the registry)`);
+      expect(resumed.out).toContain(`skip     ${spec} (already on the registry as this run's bytes)`);
       expect(published()).not.toContain(resolve(ws.artifacts, ws.rootTarball));
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  // A re-stage as rc.N+1 comes from a NEW Release run, which rebuilds the platforms: its digests and
+  // receipt verify against ITS tarballs while the registry keeps an older run's X platform bytes.
+  // The skip must compare bytes for platforms exactly as for the launcher (LCLI-621 review).
+  test("an X platform package already on the registry with OTHER bytes refuses, and names why a new rc cannot fix it", () => {
+    const ws = makeWorkspace();
+    try {
+      const spec = `@opum-ai/lore-darwin-arm64@${VERSION}`;
+      const published = registryNpm(ws, { [spec]: integrity(Buffer.from("an earlier Release run's platform")) });
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain(`${spec} is ALREADY on the registry with different bytes`);
+      expect(r.out).toContain("A new launcher_rc\ndoes NOT fix this");
+      expect(r.out).toContain(`or by a different Release run than ${RUN_ID}`);
+      expect(r.out).toContain("Do NOT run npm unpublish");
+      expect(r.out).not.toContain("launcher_rc set to the next N");
+      expect(r.out).not.toContain(`skip     ${spec}`);
+      expect(published()).toEqual([]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("an X platform package already on the registry as THIS run's bytes is skipped, and the rest stage", () => {
+    const ws = makeWorkspace();
+    try {
+      const file = `opum-ai-lore-darwin-arm64-${VERSION}.tgz`;
+      const spec = `@opum-ai/lore-darwin-arm64@${VERSION}`;
+      const published = registryNpm(ws, { [spec]: integrity(readFileSync(resolve(ws.source, file))) });
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(0);
+      expect(r.out).toContain(`skip     ${spec} (already on the registry as this run's bytes)`);
+      expect(published()).toEqual([
+        ...PLATFORMS.filter((p) => p !== "darwin-arm64").map((p) =>
+          resolve(ws.artifacts, `opum-ai-lore-${p}-${VERSION}.tgz`),
+        ),
+        resolve(ws.artifacts, ws.rootTarball),
+      ]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("an already-published package whose integrity cannot be read refuses rather than skipping unverified", () => {
+    const ws = makeWorkspace();
+    try {
+      const spec = `@opum-ai/lore-darwin-arm64@${VERSION}`;
+      const published = registryNpm(ws, { [spec]: "" });
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("registry dist.integrity <unreadable>");
+      expect(published()).toEqual([]);
     } finally {
       ws.cleanup();
     }

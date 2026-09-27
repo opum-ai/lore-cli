@@ -1131,7 +1131,21 @@ jobs:
             # that is the expected/common case, hence the explicit guard rather than
             # letting `bash -e` treat it as a failure.
             if npm view "${name}@${version}" version >/dev/null 2>&1; then
-              echo "${name}@${version} already published — skipping (resuming a partially-failed publish)"
+              # ALREADY PUBLISHED IS A RESUME ONLY AS THESE BYTES (LCLI-621 review). Anything else
+              # was published outside this run -- an earlier Release run, a hand publish -- and a
+              # skip would stage it under THIS run's qualification. For a platform package that is
+              # the bad case: an X-rc.N launcher pins the platforms at exactly X, so it would
+              # install the registry's bytes, not this run's. Compared by dist.integrity (sha512,
+              # what npm verifies installs against), the same field scripts/publish-release.sh
+              # compares; an unreadable integrity fails too, since that match was never observed.
+              local want got
+              want="sha512-$(node -e 'process.stdout.write(require("crypto").createHash("sha512").update(require("fs").readFileSync(process.argv[1])).digest("base64"))' "$tgz")"
+              got="$(npm view "${name}@${version}" dist.integrity | tr -d '[:space:]')"
+              if [ -z "$got" ] || [ "$got" != "$want" ]; then
+                echo "::error::${name}@${version} is already on the registry with different bytes (registry dist.integrity '${got}', this run's ${tgz} ${want}). It was published outside this run. npm versions are immutable: for the X-rc.N launcher, re-dispatch with launcher_rc set to the next N; for an X platform package a new rc cannot help (every rc pins X), so re-run the failed publish job of the Release run whose platform tarballs are the registry's ('Re-run failed jobs' reuses that run's artifact; a re-dispatch rebuilds and may not match), or cut a new version. Do NOT run npm unpublish."
+                exit 1
+              fi
+              echo "${name}@${version} already published as this run's bytes — skipping (resuming a partially-failed publish)"
               return 0
             fi
             echo "::group::npm publish $tgz ($name@$version)"
