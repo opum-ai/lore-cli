@@ -25,6 +25,14 @@ export declare const STAGE_TAG: string;
 export declare const PROMOTE_TAG: string;
 export declare const RECORD_KIND: string;
 export declare const KEYCHAIN_SERVICE: string;
+export declare const QUEST_PACKAGE: string;
+export declare const SEMVER: RegExp;
+export declare const RELEASE_VERSION: RegExp;
+export declare function distTagReadArgs(name: string): string[];
+export declare function checkRollbackState(args: {
+  record: PromotionRecord;
+  readTags: (name: string) => Promise<Record<string, string>>;
+}): Promise<{ ok: boolean; problems: string[] }>;
 export declare const defaultRun: Run;
 export declare function distTagAddArgs(name: string, target: string, tag: string, options?: { otp?: string }): string[];
 export declare function readDistTags(name: string, options?: { run?: Run }): Promise<Record<string, string>>;

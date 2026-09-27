@@ -361,7 +361,9 @@ describe("release.yml enforces constitution Article 3 (LCLI-613)", () => {
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean);
-    expect(sparse.sort()).toEqual(["package.json", "scripts/version-parity.mjs"]);
+    // Anchored: in non-cone mode an unanchored "package.json" matches at every depth.
+    expect(sparse.sort()).toEqual(["/package.json", "/scripts/version-parity.mjs"]);
+    expect(checkout?.with?.["sparse-checkout-cone-mode"]).toBe(false);
     // The file the gate runs exists at that path in this repository.
     expect(readFileSync(join(import.meta.dir, "..", "scripts", "version-parity.mjs"), "utf8")).toContain(
       "export function checkVersionParity",

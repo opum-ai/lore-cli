@@ -83,6 +83,7 @@ function gitObjects(
   ref: GitObject | "missing",
   tags: Record<string, GitObject> = {},
   refName?: string,
+  answerSha?: (asked: string) => string,
 ) {
   const calls: string[][] = [];
   const execFile = async (file: string, args: string[]) => {
@@ -96,7 +97,14 @@ function gitObjects(
     }
     const tag = /^repos\/opum-ai\/lore-cli\/git\/tags\/([0-9a-f]{40})$/.exec(path);
     const target = tag ? tags[tag[1] as string] : undefined;
-    if (target) return { stdout: JSON.stringify({ sha: tag?.[1], tag: `v${version}`, object: target }) };
+    if (target)
+      return {
+        stdout: JSON.stringify({
+          sha: answerSha?.(tag?.[1] as string) ?? tag?.[1],
+          tag: `v${version}`,
+          object: target,
+        }),
+      };
     throw Object.assign(new Error("Command failed"), { stderr: `gh: Not Found (HTTP 404) for ${path}` });
   };
   return { execFile, calls };
@@ -533,5 +541,42 @@ describe("scripts/pair-receipt.mjs: resolveTagCommit peels to a commit or refuse
     const verdict = evaluate(goodReceipt(), { ...goodObserved(), commit, gitHead: "8".repeat(40) });
     expect(verdict.ok).toBe(false);
     expect(verdict.problems.join("\n")).toContain(`npm records gitHead "${"8".repeat(40)}"`);
+  });
+});
+
+describe("scripts/pair-receipt.mjs: resolveTagCommit review nits (N5, N6)", () => {
+  test("N5: a tag-object answer about a DIFFERENT object is refused", async () => {
+    const asked = "1".repeat(40);
+    const git = gitObjects(
+      V,
+      { type: "tag", sha: asked },
+      { [asked]: { type: "commit", sha: LORE_COMMIT } },
+      undefined,
+      () => "2".repeat(40),
+    );
+    const peeled = await resolveTagCommit(V, { execFile: git.execFile });
+    expect(peeled.commit).toBeNull();
+    expect(peeled.error).toContain(
+      `asked for tag object ${asked} under refs/tags/v${V}, the API answered for "${"2".repeat(40)}"`,
+    );
+  });
+
+  /** A chain of `n` nested tag objects ending on the commit. */
+  function nested(n: number) {
+    const sha = (i: number) => (i + 10).toString(16).padStart(40, "a");
+    const tags: Record<string, GitObject> = {};
+    for (let i = 0; i < n; i++)
+      tags[sha(i)] = i + 1 < n ? { type: "tag", sha: sha(i + 1) } : { type: "commit", sha: LORE_COMMIT };
+    return gitObjects(V, { type: "tag", sha: sha(0) }, tags);
+  }
+
+  test(`N6: MAX_PEEL_DEPTH is ${MAX_PEEL_DEPTH}; a chain of exactly that many tags peels, one more refuses`, async () => {
+    expect(MAX_PEEL_DEPTH).toBe(8);
+    const atBound = await resolveTagCommit(V, { execFile: nested(MAX_PEEL_DEPTH).execFile });
+    expect(atBound.commit).toBe(LORE_COMMIT);
+    expect(atBound.chain.length).toBe(MAX_PEEL_DEPTH + 1);
+    const pastBound = await resolveTagCommit(V, { execFile: nested(MAX_PEEL_DEPTH + 1).execFile });
+    expect(pastBound.commit).toBeNull();
+    expect(pastBound.error).toContain(`is still a tag after ${MAX_PEEL_DEPTH} dereferences`);
   });
 });

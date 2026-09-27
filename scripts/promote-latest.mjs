@@ -42,7 +42,7 @@
 
 import { execFile as execFileCallback } from "node:child_process";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { devNull, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -62,6 +62,19 @@ export const STAGE_TAG = "release-candidate";
 export const PROMOTE_TAG = "latest";
 export const RECORD_KIND = "lore.promotion-record.v1";
 export const KEYCHAIN_SERVICE = "npm-opum-ai-publish";
+/** Article 3 clause 5 moves quest's `latest` first; this is the package whose tag says it has. */
+export const QUEST_PACKAGE = "@opum-ai/quest";
+
+/** Strict semver 2.0.0, the grammar from semver.org. A dist-tag name or a `v` prefix is not a version. */
+export const SEMVER =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/;
+
+/**
+ * A recorded prior `latest`: a plain release version, X.Y.Z with no prerelease or build metadata.
+ * The exact grammar quest-cli's promote-release.mjs uses for the same field (QCLI-390,
+ * opum-ai/quest-cli#316), so the pair enforces one rule.
+ */
+export const RELEASE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
 /** The one process runner. Tests replace it; nothing below spawns anything else. */
 export const defaultRun = (command, args, options = {}) =>
@@ -77,11 +90,30 @@ export function distTagAddArgs(name, target, tag, { otp } = {}) {
 }
 
 /**
+ * The one argv every dist-tag READ uses. ANONYMOUS, as quest-cli's anonymous registry fetch is
+ * (QCLI-390): an empty user config (so no ~/.npmrc token is sent) against the public registry
+ * (so a configured mirror cannot answer for npm). A read the public registry serves to anyone is
+ * the fact every check here is about. Exported so a test can pin it.
+ * @param {string} name
+ */
+export function distTagReadArgs(name) {
+  return [
+    "view",
+    name,
+    "dist-tags",
+    "--json",
+    "--prefer-online",
+    `--userconfig=${devNull}`,
+    "--registry=https://registry.npmjs.org/",
+  ];
+}
+
+/**
  * One package's dist-tags. Throws on anything but an object: an unreadable
  * tag set is not an empty one. npm 12 wraps the answer in a one-element array.
  */
 export async function readDistTags(name, { run = defaultRun } = {}) {
-  const { stdout } = await run("npm", ["view", name, "dist-tags", "--json", "--prefer-online"]);
+  const { stdout } = await run("npm", distTagReadArgs(name));
   const parsed = JSON.parse(stdout);
   const tags = Array.isArray(parsed) ? (parsed.length === 1 ? parsed[0] : null) : parsed;
   if (!tags || typeof tags !== "object" || Array.isArray(tags))
@@ -154,8 +186,50 @@ export function validateRecord(record, { version, packages = RELEASE_PACKAGES } 
   const names = (record?.packages ?? []).map((entry) => entry?.name);
   if (JSON.stringify(names) !== JSON.stringify(packages))
     problems.push(`record names ${JSON.stringify(names)}, expected ${JSON.stringify(packages)}`);
-  for (const entry of record?.packages ?? [])
-    if (typeof entry?.priorLatest !== "string") problems.push(`record has no prior ${PROMOTE_TAG} for ${entry?.name}`);
+  // LCLI-613 review S1, with quest-cli's exact rule (QCLI-390, opum-ai/quest-cli#316) so the pair
+  // enforces one mechanism. A record is the ONLY input --rollback moves `latest` with, and
+  // --rollback is deliberately not gated on a receipt, so every prior value must be a plain
+  // X.Y.Z release (a hand-written "release-candidate", "v0.9.3" or "0.9.3-rc.1" is refused) and
+  // must differ from the record's own version. checkRollbackState below is the other half.
+  for (const entry of record?.packages ?? []) {
+    const prior = entry?.priorLatest;
+    if (typeof prior !== "string") problems.push(`record has no prior ${PROMOTE_TAG} for ${entry?.name}`);
+    else if (!RELEASE_VERSION.test(prior))
+      problems.push(
+        `${entry?.name}: recorded prior ${PROMOTE_TAG} ${JSON.stringify(prior)} is not a plain X.Y.Z release version`,
+      );
+    else if (prior === record?.version)
+      problems.push(
+        `${entry?.name}: recorded prior ${PROMOTE_TAG} is the release itself (${prior}); rolling back to it restores nothing`,
+      );
+  }
+  return { ok: problems.length === 0, problems };
+}
+
+/**
+ * LCLI-613 review S1: what --rollback may touch NOW. Every package's current `latest` must read
+ * either this record's release (it was promoted and not moved since) or its recorded prior value
+ * (it was already restored; a rerun is idempotent). Anything else means `latest` has moved on
+ * since this record was written -- typically a LATER release was promoted -- and rolling back
+ * from this record would silently downgrade it. An unreadable tag set refuses too.
+ * @param {{ record: PromotionRecord, readTags: (name: string) => Promise<Record<string, string>> }} args
+ */
+export async function checkRollbackState({ record, readTags }) {
+  /** @type {string[]} */
+  const problems = [];
+  for (const { name, priorLatest } of record.packages) {
+    let current;
+    try {
+      current = (await readTags(name))[PROMOTE_TAG];
+    } catch (error) {
+      problems.push(`${name}: dist-tags unreadable (${reason(error)})`);
+      continue;
+    }
+    if (current !== record.version && current !== priorLatest)
+      problems.push(
+        `${name}: ${PROMOTE_TAG} reads ${JSON.stringify(current ?? null)}, neither this record's release ${record.version} nor its recorded prior ${priorLatest}; ${PROMOTE_TAG} has moved on since the record was written, and rolling back from it would move ${PROMOTE_TAG} somewhere this record never saw`,
+      );
+  }
   return { ok: problems.length === 0, problems };
 }
 
@@ -175,8 +249,12 @@ export async function promote({ record, setTag, log = () => {} }) {
       log(`${name}: ${PROMOTE_TAG} -> ${record.version}`);
     } catch (error) {
       log(`${name}: FAILED to move ${PROMOTE_TAG} (${reason(error)})`);
+      // LCLI-613 review S2: the FAILED package is restored too. A write can fail on the client
+      // after the registry applied it (a timeout), so "it failed" does not mean "it did not
+      // move". Restoring its recorded prior value is idempotent either way.
+      const toRestore = [...moved, name];
       const restored = await rollback({
-        record: { ...record, packages: record.packages.filter((entry) => moved.includes(entry.name)) },
+        record: { ...record, packages: record.packages.filter((entry) => toRestore.includes(entry.name)) },
         setTag,
         log,
       });
@@ -303,6 +381,11 @@ export async function main(
     if (args.dryRun === args.promoteRequested)
       throw new Error("say --dry-run (read and report, change nothing) or --promote (move latest); exactly one");
   }
+  // LCLI-613 review N4: a version that is not strict semver is refused before anything is read.
+  if (args.version !== undefined && !SEMVER.test(args.version))
+    throw new Error(
+      `--version ${JSON.stringify(args.version)} is not a semver version (no "v" prefix, no dist-tag name)`,
+    );
   const readTags = (name) => readDistTags(name, { run });
 
   let record;
@@ -314,8 +397,16 @@ export async function main(
       for (const problem of valid.problems) err(`  - ${problem}`);
       return 1;
     }
+    const state = await checkRollbackState({ record, readTags });
+    if (!state.ok) {
+      err(`Refusing to roll back from ${args.rollbackPath} (release ${record.version}); nothing has moved:`);
+      for (const problem of state.problems) err(`  - ${problem}`);
+      return 1;
+    }
   } else {
     const version = args.version ?? (await readPackageVersion());
+    if (typeof version !== "string" || !SEMVER.test(version))
+      throw new Error(`this checkout's package.json version ${JSON.stringify(version)} is not a semver version`);
     out(`Promoting @opum-ai/lore ${version}${args.version ? " (--version)" : " (this checkout's package.json)"}.`);
     const existing = await readFile(args.recordPath, "utf8").catch(() => null);
     if (existing) {
@@ -355,6 +446,24 @@ export async function main(
     out(
       `Pair receipt ${pair.source} qualifies lore ${version} with quest ${version}, and all ${RELEASE_PACKAGES.length} tarballs npm serves match it.`,
     );
+
+    // LCLI-613 review S4, Article 3 clause 5: "`latest` moves ... Quest first and then Lore."
+    // Read from the registry through the same runner, not remembered: refuse unless
+    // @opum-ai/quest's `latest` already reads this version. Dry runs too.
+    let questLatest = null;
+    let questError = "";
+    try {
+      questLatest = (await readTags(QUEST_PACKAGE))[PROMOTE_TAG] ?? null;
+    } catch (error) {
+      questError = ` (${reason(error)})`;
+    }
+    if (questLatest !== version) {
+      err(
+        `Refusing to promote ${version}: ${QUEST_PACKAGE}'s ${PROMOTE_TAG} is ${JSON.stringify(questLatest)}${questError}, not ${version}. Article 3 clause 5 moves quest's ${PROMOTE_TAG} first, then lore's: promote quest (quest-cli scripts/promote-release.mjs) and re-run. Nothing has moved.`,
+      );
+      return 1;
+    }
+    out(`${QUEST_PACKAGE} ${PROMOTE_TAG} reads ${version}: quest has moved first (Article 3 clause 5).`);
     if (args.dryRun) {
       out(`\nThe record --promote would write to ${args.recordPath} before moving anything:`);
       out(JSON.stringify(record, null, 2));
@@ -418,7 +527,7 @@ export async function main(
     const outcome = await promote({ record, setTag, log });
     if (!outcome.ok) {
       err(
-        `\nPROMOTION FAILED at ${outcome.failed}. The ${outcome.moved.length} tag(s) this run moved were ` +
+        `\nPROMOTION FAILED at ${outcome.failed}. The ${outcome.moved.length} tag(s) this run moved, and ${outcome.failed} itself (its write may have landed), were ` +
           (outcome.restored.ok
             ? "restored to their recorded prior values."
             : `NOT all restored (${outcome.restored.failed.join(", ")}); run --rollback ${args.recordPath}.`) +

@@ -307,7 +307,12 @@ export async function resolveTagCommit(version, { execFile: execFileFn = execFil
       return fail(`${ref} is still a tag after ${MAX_PEEL_DEPTH} dereferences (chain: ${chain.join(" -> ")})`);
     try {
       const tag = await read(`git/tags/${object.sha}`);
-      object = isObject(tag) ? tag.object : tag;
+      // LCLI-613 review N5: the answer must be about the object asked for.
+      if (!isObject(tag) || tag.sha !== object.sha)
+        return fail(
+          `asked for tag object ${object.sha} under ${ref}, the API answered for ${JSON.stringify(isObject(tag) ? tag.sha : tag)}`,
+        );
+      object = tag.object;
     } catch (error) {
       return fail(`tag object ${object.sha} under ${ref} could not be read (${firstLine(error)})`);
     }

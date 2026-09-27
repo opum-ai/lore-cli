@@ -946,6 +946,11 @@ previous release.
    The receipt is read with the host, repository and ref pinned. A 403 or 404
    means no receipt, and it refuses.
 
+   **Quest first is enforced, not remembered.** Before moving anything, dry run
+   included, it reads `@opum-ai/quest`'s dist-tags. It refuses unless quest's
+   `latest` already reads `<version>`. `--version` must be strict semver: a `v`
+   prefix or a dist-tag name is refused.
+
    **The commit in step 3 comes from the tag, not from npm, and that is the one
    place this cannot mirror quest.** quest checks npm's recorded `gitHead`.
    npm records **no** `gitHead` for any `@opum-ai/lore` package, because a
@@ -1198,12 +1203,23 @@ version-bump item has happened.
   you cannot republish that version — cut `X.Y.Z+1` and `npm deprecate` the
   bad one (see below).
 - **A `latest` move failed or must be undone** (LCLI-613): nothing is
-  unpublished. `scripts/promote-latest.mjs` has already restored any tags
-  its own failed run moved. To restore all seven from the record, run
-  `node scripts/promote-latest.mjs --rollback <file>`, which is idempotent and
-  not gated on the pair receipt. Then retry at the **same** version (Article 3
-  clause 5). If quest's side failed after lore's moved, roll lore back from
-  its record too, so the pair's `latest` values never disagree.
+  unpublished. `scripts/promote-latest.mjs` has already restored every tag its
+  own failed run moved, including the package whose write failed, since a
+  timed-out write may still have landed. To restore all seven from the record,
+  run `node scripts/promote-latest.mjs --rollback <file>`. It is idempotent and
+  not gated on the pair receipt. It refuses a record whose prior values are
+  not plain `X.Y.Z` releases or equal the record's own release. It first reads
+  every package's dist-tags anonymously, and it refuses if any `latest` reads
+  anything other than the record's release or its prior value, or cannot be
+  read, so an old record cannot silently downgrade a later release. These are
+  quest-cli's rules exactly (QCLI-390, opum-ai/quest-cli#316). Then retry at
+  the **same** version (Article 3 clause 5).
+
+  Quest moves first, so the pair goes out of step when **lore's** move fails
+  after quest's `latest` has already moved. Retry lore at the same version.
+  If the pair has to go back instead, roll lore back from its record (a no-op
+  if nothing moved), then have quest-cli roll quest back from its own record,
+  so the two `latest` values end up agreeing.
 - **After a bad publish**: npm allows `npm unpublish` only within 72 hours and
   only if no other package depends on the version; prefer publishing a patched
   version and deprecating the bad one (`npm deprecate @opum-ai/lore@X.Y.Z

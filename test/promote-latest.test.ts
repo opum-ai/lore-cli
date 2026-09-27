@@ -14,7 +14,18 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { expectedTarballNames, PAIR_RECEIPT_KIND, RELEASE_PACKAGES, tarballName } from "../scripts/pair-receipt.mjs";
-import { main, type PromotionRecord, RECORD_KIND, tokenShape } from "../scripts/promote-latest.mjs";
+import {
+  checkRollbackState,
+  distTagReadArgs,
+  main,
+  type PromotionRecord,
+  RECORD_KIND,
+  RELEASE_VERSION,
+  rollback,
+  SEMVER,
+  tokenShape,
+  validateRecord,
+} from "../scripts/promote-latest.mjs";
 
 const V = "5.6.7";
 const PRIOR = "5.6.6";
@@ -53,6 +64,12 @@ function world(
     tags?: Record<string, Record<string, string>>;
     tagCommit?: string | null;
     failAdd?: string;
+    /** The move to V for this package is APPLIED by the registry, then the client call fails. */
+    failAfterApply?: string;
+    /** Restoring this package to its prior value fails. */
+    failRestore?: string;
+    /** @opum-ai/quest's latest; defaults to V (quest has moved first). null: unreadable. */
+    questLatest?: string | null;
     onAdd?: () => void;
   } = {},
 ) {
@@ -87,6 +104,11 @@ function world(
       const commit = "tagCommit" in options ? options.tagCommit : COMMIT;
       return { stdout: JSON.stringify({ sha: TAG_OBJECT, object: { type: "commit", sha: commit } }) };
     }
+    if (command === "npm" && args[0] === "view" && args[1] === "@opum-ai/quest" && args[2] === "dist-tags") {
+      const questLatest = "questLatest" in options ? options.questLatest : V;
+      if (questLatest === null) throw new Error("E503 registry unreachable");
+      return { stdout: JSON.stringify([{ latest: questLatest, "release-candidate": V }]) };
+    }
     if (command === "npm" && args[0] === "view" && args[2] === "dist-tags") {
       const t = tags[args[1] as string];
       if (!t) throw new Error("E404");
@@ -104,7 +126,10 @@ function world(
       writes.push(args.join(" "));
       envs.push((opts.env ?? {}) as Record<string, string | undefined>);
       if (options.failAdd === name && spec.endsWith(`@${V}`)) throw new Error("E403 Forbidden");
+      if (options.failRestore === name && !spec.endsWith(`@${V}`)) throw new Error("ETIMEDOUT restoring");
       (tags[name] as Record<string, string>)[args[3] as string] = spec.slice(at + 1);
+      if (options.failAfterApply === name && spec.endsWith(`@${V}`))
+        throw new Error("ETIMEDOUT (the registry applied the write; the client never heard back)");
       return { stdout: "" };
     }
     throw new Error(`unexpected command in test: ${line}`);
@@ -341,6 +366,8 @@ describe("scripts/promote-latest.mjs: the staging precondition and the record", 
         `dist-tag add @opum-ai/lore-linux-arm64@${V} latest`,
         `dist-tag add @opum-ai/lore-darwin-arm64@${PRIOR} latest`,
         `dist-tag add @opum-ai/lore-darwin-x64@${PRIOR} latest`,
+        // S2: the failed package is restored too; idempotent when its write did not land.
+        `dist-tag add @opum-ai/lore-linux-arm64@${PRIOR} latest`,
       ]);
       for (const name of RELEASE_PACKAGES) expect(w.tags[name]?.latest).toBe(PRIOR);
       expect(h.err.join("\n")).toContain("PROMOTION FAILED at @opum-ai/lore-linux-arm64");
@@ -496,4 +523,257 @@ describe("scripts/promote-latest.mjs as a command", () => {
       expect(r.stderr.toString()).toContain("--record <path> is required");
     });
   });
+});
+
+// ── LCLI-613 adversarial review: S1-S4 and N4 ───────────────────────────────────────────────────
+describe("scripts/promote-latest.mjs: --rollback moves latest only to what the record legitimately saw (review S1)", () => {
+  function recordFile(h: ReturnType<typeof harness>, mutate: (r: PromotionRecord) => void = () => {}) {
+    const record: PromotionRecord = {
+      schemaVersion: 1,
+      kind: RECORD_KIND,
+      version: V,
+      recordedAt: "2026-09-27T00:00:00.000Z",
+      packages: RELEASE_PACKAGES.map((name) => ({ name, priorLatest: PRIOR })),
+    };
+    mutate(record);
+    writeFileSync(h.record, JSON.stringify(record));
+  }
+  const promotedTags = () => Object.fromEntries(RELEASE_PACKAGES.map((n) => [n, { latest: V }]));
+
+  for (const [label, prior, reason] of [
+    ["a dist-tag NAME", "release-candidate", 'recorded prior latest "release-candidate" is not a plain X.Y.Z'],
+    ["a v-prefixed tag", `v${PRIOR}`, `recorded prior latest "v${PRIOR}" is not a plain X.Y.Z`],
+    // quest-cli's grammar (QCLI-390): no prerelease, so a staged candidate cannot be "restored" to.
+    ["a PRERELEASE", `${PRIOR}-rc.1`, `recorded prior latest "${PRIOR}-rc.1" is not a plain X.Y.Z`],
+    ["the release itself", V, "is the release itself"],
+  ] as const) {
+    test(`a hand-written record whose prior is ${label} is refused, and nothing moves`, async () => {
+      const h = harness();
+      const w = world({ receipt: undefined, tags: promotedTags() });
+      try {
+        recordFile(h, (r) => {
+          (r.packages[3] as { priorLatest: string }).priorLatest = prior;
+        });
+        expect(await h.go(["--rollback", h.record], w)).toBe(1);
+        expect(h.err.join("\n")).toContain(reason);
+        expect(w.writes).toEqual([]);
+      } finally {
+        h.cleanup();
+      }
+    });
+  }
+
+  test("an OLD release's record, rolled back after a later promotion, refuses instead of downgrading", async () => {
+    const h = harness();
+    // The record is for V (prior PRIOR); since then 5.6.8 was promoted everywhere.
+    const w = world({
+      receipt: undefined,
+      tags: Object.fromEntries(RELEASE_PACKAGES.map((n) => [n, { latest: "5.6.8" }])),
+    });
+    try {
+      recordFile(h);
+      expect(await h.go(["--rollback", h.record], w)).toBe(1);
+      expect(h.err.join("\n")).toContain(
+        `@opum-ai/lore-darwin-arm64: latest reads "5.6.8", neither this record's release ${V} nor its recorded prior ${PRIOR}`,
+      );
+      expect(w.writes).toEqual([]);
+      for (const name of RELEASE_PACKAGES) expect(w.tags[name]?.latest).toBe("5.6.8");
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("ONE package moved on is enough to refuse the whole rollback", async () => {
+    const h = harness();
+    const tags = { ...promotedTags(), "@opum-ai/lore": { latest: "5.6.8" } };
+    const w = world({ receipt: undefined, tags });
+    try {
+      recordFile(h);
+      expect(await h.go(["--rollback", h.record], w)).toBe(1);
+      expect(w.writes).toEqual([]);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("a rerun after a PARTIAL rollback is allowed: each package reads the release or its prior", async () => {
+    const h = harness();
+    const tags = { ...promotedTags(), "@opum-ai/lore-darwin-arm64": { latest: PRIOR } };
+    const w = world({ receipt: undefined, tags });
+    try {
+      recordFile(h);
+      expect(await h.go(["--rollback", h.record], w)).toBe(0);
+      for (const name of RELEASE_PACKAGES) expect(w.tags[name]?.latest).toBe(PRIOR);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("checkRollbackState refuses an unreadable tag set rather than assuming it", async () => {
+    const record = {
+      schemaVersion: 1 as const,
+      kind: RECORD_KIND,
+      version: V,
+      recordedAt: "x",
+      packages: [{ name: "@opum-ai/lore", priorLatest: PRIOR }],
+    };
+    const state = await checkRollbackState({
+      record,
+      readTags: async () => {
+        throw new Error("E503");
+      },
+    });
+    expect(state.ok).toBe(false);
+    expect(state.problems).toEqual(["@opum-ai/lore: dist-tags unreadable (E503)"]);
+  });
+
+  test("the prior-value grammar is quest-cli's, exactly (QCLI-390): plain X.Y.Z only", () => {
+    expect(RELEASE_VERSION.source).toBe("^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$");
+    for (const good of ["0.11.0", "1.0.0", "10.20.30"])
+      expect([good, RELEASE_VERSION.test(good)]).toEqual([good, true]);
+    for (const bad of ["v0.11.0", "0.11", "01.0.0", "0.11.0-rc.1", "0.11.0+b", "latest", "release-candidate", ""])
+      expect([bad, RELEASE_VERSION.test(bad)]).toEqual([bad, false]);
+    // --version (N4) takes full semver, prereleases included; that is a different field.
+    expect(SEMVER.test("1.0.0-rc.1+build.5")).toBe(true);
+    expect(SEMVER.test("v1.0.0")).toBe(false);
+    const record = { kind: RECORD_KIND, version: V, packages: [{ name: "@opum-ai/lore", priorLatest: V }] };
+    expect(validateRecord(record, { packages: ["@opum-ai/lore"] }).problems).toEqual([
+      `@opum-ai/lore: recorded prior latest is the release itself (${V}); rolling back to it restores nothing`,
+    ]);
+  });
+
+  test("every dist-tag read --rollback makes is ANONYMOUS, against the public registry", async () => {
+    const h = harness();
+    const w = world({ receipt: undefined, tags: promotedTags() });
+    try {
+      recordFile(h);
+      expect(await h.go(["--rollback", h.record], w)).toBe(0);
+      const reads = w.calls.filter((c) => c[0] === "npm" && c[1] === "view");
+      expect(reads.length).toBe(2 * RELEASE_PACKAGES.length); // the state check, then the verify
+      for (const c of reads) expect(c.slice(1)).toEqual(distTagReadArgs(c[2] as string));
+      expect(distTagReadArgs("x")).toContain("--registry=https://registry.npmjs.org/");
+      expect(distTagReadArgs("x").some((a) => a.startsWith("--userconfig="))).toBe(true);
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+describe("scripts/promote-latest.mjs: the failed package is restored too (review S2)", () => {
+  // The case quest-cli's QCLI-390 test uses: setTag APPLIES the write, then throws ETIMEDOUT.
+  test("a write the registry APPLIED before the client failed is still put back, so no package stays moved", async () => {
+    const h = harness();
+    const w = world({ failAfterApply: "@opum-ai/lore-linux-arm64" });
+    try {
+      expect(await h.go(["--record", h.record, "--promote"], w)).toBe(1);
+      // Without S2 linux-arm64 would read V here while the output said "restored".
+      for (const name of RELEASE_PACKAGES) expect(w.tags[name]?.latest).toBe(PRIOR);
+      expect(w.writes).toContain(`dist-tag add @opum-ai/lore-linux-arm64@${PRIOR} latest`);
+      expect(h.err.join("\n")).toContain(
+        "and @opum-ai/lore-linux-arm64 itself (its write may have landed), were restored",
+      );
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+describe("scripts/promote-latest.mjs: rollback() keeps going past a failed restore (review S3)", () => {
+  test("unit: a failing restore in the MIDDLE is reported, and every package after it is still attempted", async () => {
+    const record: PromotionRecord = {
+      schemaVersion: 1,
+      kind: RECORD_KIND,
+      version: V,
+      recordedAt: "x",
+      packages: RELEASE_PACKAGES.map((name) => ({ name, priorLatest: PRIOR })),
+    };
+    const attempted: string[] = [];
+    const outcome = await rollback({
+      record,
+      setTag: async (name) => {
+        attempted.push(name);
+        if (name === "@opum-ai/lore-linux-x64") throw new Error("ETIMEDOUT");
+      },
+    });
+    expect(attempted).toEqual([...RELEASE_PACKAGES]);
+    expect(outcome).toEqual({ ok: false, failed: ["@opum-ai/lore-linux-x64"] });
+  });
+
+  test("command: --rollback with one restore failing restores the other six and exits 1 naming it", async () => {
+    const h = harness();
+    try {
+      expect(await h.go(["--record", h.record, "--promote"], world())).toBe(0);
+      const w = world({
+        receipt: undefined,
+        failRestore: "@opum-ai/lore-linux-x64",
+        tags: Object.fromEntries(RELEASE_PACKAGES.map((n) => [n, { latest: V }])),
+      });
+      expect(await h.go(["--rollback", h.record], w)).toBe(1);
+      for (const name of RELEASE_PACKAGES)
+        expect([name, w.tags[name]?.latest]).toEqual([name, name === "@opum-ai/lore-linux-x64" ? V : PRIOR]);
+      expect(h.err.join("\n")).toContain("NOT restored: @opum-ai/lore-linux-x64. Re-run --rollback; it is idempotent.");
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+describe("scripts/promote-latest.mjs: quest first, read not remembered (review S4)", () => {
+  for (const mode of ["--promote", "--dry-run"] as const) {
+    test(`${mode}: refuses while @opum-ai/quest's latest is not the version, before any record or move`, async () => {
+      const h = harness();
+      const w = world({ questLatest: PRIOR });
+      try {
+        expect(await h.go(["--record", h.record, mode], w)).toBe(1);
+        expect(h.err.join("\n")).toContain(
+          `Refusing to promote ${V}: @opum-ai/quest's latest is "${PRIOR}", not ${V}. Article 3 clause 5 moves quest's latest first`,
+        );
+        expect(w.writes).toEqual([]);
+        expect(existsSync(h.record)).toBe(false);
+        // Read through the runner, as a registry read.
+        expect(w.calls).toContainEqual(["npm", ...distTagReadArgs("@opum-ai/quest")]);
+      } finally {
+        h.cleanup();
+      }
+    });
+  }
+
+  test("an unreadable quest tag set refuses rather than assuming quest moved", async () => {
+    const h = harness();
+    const w = world({ questLatest: null });
+    try {
+      expect(await h.go(["--record", h.record, "--promote"], w)).toBe(1);
+      expect(h.err.join("\n")).toContain("@opum-ai/quest's latest is null (E503 registry unreachable)");
+      expect(w.writes).toEqual([]);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("with quest already at the version, the success path says so", async () => {
+    const h = harness();
+    try {
+      expect(await h.go(["--record", h.record, "--dry-run"], world())).toBe(0);
+      expect(h.text()).toContain(`@opum-ai/quest latest reads ${V}: quest has moved first (Article 3 clause 5).`);
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+describe("scripts/promote-latest.mjs: --version is strict semver (review N4)", () => {
+  for (const bad of [`v${V}`, "latest", "release-candidate", "5.6", "05.6.7"]) {
+    test(`--version ${bad} is refused before anything is read`, async () => {
+      const h = harness();
+      const w = world();
+      try {
+        await expect(h.go(["--record", h.record, "--dry-run", "--version", bad], w)).rejects.toThrow(
+          "is not a semver version",
+        );
+        expect(w.calls).toEqual([]);
+      } finally {
+        h.cleanup();
+      }
+    });
+  }
 });

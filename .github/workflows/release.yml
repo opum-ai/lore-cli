@@ -805,9 +805,11 @@ jobs:
           path: parity
           persist-credentials: false
           sparse-checkout-cone-mode: false
+          # Anchored with a leading "/": in non-cone mode a bare "package.json" matches at ANY
+          # depth (7 tracked here, measured with git ls-files --ignored), not just the root (LCLI-613 N1).
           sparse-checkout: |
-            package.json
-            scripts/version-parity.mjs
+            /package.json
+            /scripts/version-parity.mjs
       # Refuse unless quest-cli's package.json on its main names this same version. The rule is
       # quest-cli's scripts/qualification/version-parity.mjs (QCLI-386), mirrored in
       # scripts/version-parity.mjs; quest-cli's release.yml runs the mirror against lore-cli.
