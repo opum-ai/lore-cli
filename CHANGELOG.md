@@ -37,8 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `X` is already on npm as the artifact's bytes, it moves the tag instead. Other bytes refuse
   before anything moves. Afterwards it verifies `latest` on all seven packages and npm's `X`
   integrity. It then prints the byte count of the package-level `readme` (OPAG-474 AC3), with a
-  loud warning, not a failure, on `0`. A failure, and `--rollback`, restore every moved `latest` by
-  dist-tag, the launcher's included. Nothing is unpublished. The spec is quest-cli's promote clause
+  loud warning, not a failure, on `0`. A failed platform move or launcher publish restores every
+  `latest` that run moved, the launcher's included, by dist-tag. A failure in the step-7 checks
+  afterwards restores nothing by itself, by design, and names `--rollback <record>` as the remedy.
+  `--rollback` restores every recorded `latest`. Nothing is unpublished. Every registry write names
+  the public registry, and every read is anonymous against it. The Release run must be a
+  `workflow_dispatch` run built from `opum-ai/lore-cli`. The spec is quest-cli's promote clause
   (QCLI-399, `e3c59d7b`) and opum-cli-e2e's `receipts/README.md` steps 5 to 7 (`4f078e6b`).
 - **A resumed staging skips a package only if the registry holds this run's bytes** (LCLI-621).
   Both `release.yml`'s `publish` job and `scripts/publish-release.sh` compare an already-published
@@ -56,6 +60,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `node -e` checker that had never learned opum-cli-e2e's TASK-126 fields. A receipt must now name
   this run's `X-rc.N` as `launcherVersion`. It must also carry a `launcherSubstitution` of `MATCH`
   whose `finalTarball` names the basename `opum-ai-lore-<X>.tgz` at the carried launcher's sha256.
+  Its `tarballs` must name exactly the seven staged packages. The carried `X` launcher is no longer
+  accepted there even at its true digest, per opum-cli-e2e's `receipts/README.md` at `e0021c7`.
   Before this, staging accepted receipts that promotion then refused. The closing checklist's
   promote commands now pass `--release-run <run-id>`, without which `promote-latest.mjs` exits 2.
 

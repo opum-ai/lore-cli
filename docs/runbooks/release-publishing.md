@@ -810,15 +810,18 @@ the promotion half, item 7. It is not part of staging.
    `receipts/lore/<version>.json` from `opum-ai/opum-cli-e2e` `main` with your
    `gh` login. The contract for that file is `receipts/README.md` in the same
    repository. It refuses unless the receipt's `kind`, `product`, `version` and
-   `releaseRunId` match, its `tarballs` name all seven files being staged, the
-   `X-rc.N` launcher among them, and each sha256 matches the file handed to
-   `npm publish`. The receipt may also name the carried `X` launcher. If it
-   does, that digest must match too, and it may name nothing else. Since
-   LCLI-621 it must also carry the fields opum-cli-e2e requires from TASK-126
-   on (its `receipts/README.md` at `4f078e6b`). `launcherVersion` must be this
+   `releaseRunId` match, its `tarballs` name exactly the seven files being
+   staged, the `X-rc.N` launcher among them, and each sha256 matches the file
+   handed to `npm publish`. The receipt must never name the carried `X`
+   launcher in `tarballs`, even at its true digest. Its identity lives only in
+   `launcherSubstitution.finalTarball`, and an eight-entry receipt refuses
+   (opum-cli-e2e `receipts/README.md` at `e0021c7`, which superseded
+   `4f078e6b` on this point). Since LCLI-621 the receipt must also carry the
+   fields opum-cli-e2e requires from TASK-126 on. `launcherVersion` must be this
    run's `X-rc.N`. `launcherSubstitution` must be `MATCH` with no mismatches,
-   and its `finalTarball` must name the basename `opum-ai-lore-<X>.tgz` at the
-   carried launcher's sha256. A receipt without them refuses. The rule is
+   and no `override` waives a `MISMATCH`. Its `finalTarball` must name the
+   bare basename `opum-ai-lore-<X>.tgz`, never a path, at the carried
+   launcher's sha256. A receipt without them refuses. The rule is
    `scripts/pair-receipt.mjs`'s `evaluateReleaseReceipt`, the same one
    `scripts/promote-latest.mjs` re-runs at promotion, so a receipt that stages
    cannot then be refused at promotion for these fields. Only promotion binds
@@ -1029,23 +1032,34 @@ the promotion half, item 7. It is not part of staging.
    `e3c59d7b`), adopted. Steps 5 to 7 are opum-cli-e2e's `receipts/README.md`
    "What a reader must do" (at `4f078e6b`, TASK-126).
 
+   **An OIDC `publish: true` Release run cannot be promoted yet (LCLI-616).**
+   Step 1 below requires the run to have concluded `success`. Every
+   `publish: true` run concludes `failure` today, because the `publish` job's
+   README read-back step runs `bash scripts/readme-readback.sh`, and that
+   script is not in the job's sparse checkout. That is LCLI-616's to fix, and
+   the check stays. Today's path is unaffected: stage from a `publish: false`
+   run with `scripts/publish-release.sh`, which concludes `success`, and pass
+   that run to `--release-run`.
+
    Before anything moves, dry run included, it checks each of these in order
    and refuses on the first that fails:
 
    1. **The tag and the run.** `v<version>` peels to a commit, and
-      `--release-run` is `release.yml`'s successful run of exactly that commit.
+      `--release-run` is a successful `workflow_dispatch` run of `release.yml`,
+      built from `opum-ai/lore-cli` at exactly that commit.
    2. **The artifact.** It downloads `npm-packages` afresh into a private
       directory. It must hold exactly eight tarballs: six platforms at `X`,
       one launcher at `X-rc.N` (`N` is read from its name) and the launcher at
       `X`. The two launchers must pass `scripts/launcher-equivalence.mjs`.
    3. **The pass-1 receipt.** `receipts/lore/<version>.json` is read again,
-      with the staging gate's rules plus three more. Its `commit` must be what
-      the tag peels to. Its `launcherVersion` must be the artifact's `X-rc.N`,
+      with the staging gate's rules, so its `tarballs` hold exactly the seven
+      staged packages and never the `X` launcher. It adds three more checks.
+      Its `commit` must be what the tag peels to. Its `launcherVersion` must be the artifact's `X-rc.N`,
       in the form `^<X>-rc\.[1-9][0-9]*$`. Its `launcherSubstitution` must be
-      `MATCH` with no mismatches, and its `finalTarball` must name the basename
-      `opum-ai-lore-<X>.tgz` at the artifact `X` launcher's sha256. A receipt
-      without `launcherVersion` predates the amendment and refuses, as
-      quest-cli's reader refuses it.
+      `MATCH` with no mismatches, and no override waives that. Its
+      `finalTarball` must name the basename `opum-ai-lore-<X>.tgz` at the
+      artifact `X` launcher's sha256. A receipt without `launcherVersion`
+      predates the amendment and refuses, as quest-cli's reader refuses it.
    4. **Staging.** `release-candidate` reads `X` on the six platforms and
       `X-rc.N` on the launcher. Every package's prior `latest`, the
       launcher's included, goes into the record.
