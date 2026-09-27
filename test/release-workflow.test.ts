@@ -631,7 +631,7 @@ describe("release.yml enforces constitution Article 3 (LCLI-613)", () => {
     ["a publish after &&", { path: "scripts/x.sh", text: "build && npm publish out.tgz\n" }],
     // biome-ignore lint/suspicious/noTemplateCurlyInString: exact text of a tracked file the scanner reads, not a JS template.
     ["a JS template string", { path: "scripts/x.mjs", text: "await sh(`npm publish ${tarball}`);\n" }],
-    ["a JS argv built by concat", { path: "scripts/x.mjs", text: 'await run("npm", ["publish"].concat(args));\n' }],
+    ["a JS argv built by concat", { path: "scripts/x.mjs", text: 'const argv = ["publish"].concat(args);\n' }],
     ["a run: step in another workflow", { path: ".github/workflows/other.yml", text: "      - run: npm publish\n" }],
     ["pnpm", { path: "scripts/x.sh", text: "pnpm publish --no-git-checks\n" }],
     ["bun", { path: "scripts/x.sh", text: "bun publish\n" }],
