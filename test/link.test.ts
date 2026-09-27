@@ -1063,7 +1063,9 @@ describe("lore unlink --allow-missing", () => {
     const { report } = await unlinkCmd(["stories/foo", "lore-1", "--allow-missing"], adapter);
 
     expect(report.tasks).toEqual([{ task: "lore-1", status: "not-linked", backRef: "removed" }]);
-    expect(adapter.calls).toEqual([{ id: "lore-1", patch: { removeLabels: ["doc:stories/foo"], doc: [] } }]);
+    // The removal names the label as STORED (LCLI-614): Quest matches a removal exactly and fails
+    // loud on a miss (QCLI-297), so the typed lowercase guess would be refused there.
+    expect(adapter.calls).toEqual([{ id: "lore-1", patch: { removeLabels: ["doc:stories/Foo"], doc: [] } }]);
   });
 
   test("without --allow-missing, the same id still fails loud (not_found)", async () => {
@@ -1680,5 +1682,222 @@ describe("lore link/unlink under a non-backlog tracker: a reported file never tr
     // cannot land.
     expect(readDoc("stories/quest-actor-unlink.md")).toBe(before);
     expect(adapter.calls).toEqual([]);
+  });
+});
+
+// ── LCLI-614: a guarded edit that lost a race quest misreports as `validation` ─────────────────
+//
+// Quest 0.10.0 answers a STALE --if-revision whose removal target is already gone with exit-6
+// `validation` ("no entry matches") instead of the exit-5 `conflict` its contract promises, so the
+// LCLI-522 retry never fired and opum-cli-e2e's "same-value competing removal" row failed 5 of 5.
+// `guardedEditTask` re-reads on a guarded `validation` and converts it to `conflict` ONLY when the
+// revision moved. Measured against the real harness shape, though, the losing interleaving is
+// usually NOT a stale revision: lore's read lands after the competitor, sees the `--doc` entry but
+// no label, and used to ask Quest to remove the absent label anyway — a loud exit-6 miss with a
+// perfectly current revision. So unlink now removes only a label its own read found.
+// Mutation map (predicted from this block, AC#2):
+//   never convert        -> red: the unlink/move/link race tests and the exhaustion test;
+//                           green: both "unchanged revision" tests, failed re-read, both "label-absent".
+//   always convert       -> red: both "unchanged revision" tests; green: everything else.
+//   always send the label -> red: both "label-absent" tests; green: everything else.
+describe("guarded tracker edits: a race quest reports as validation is retried (LCLI-614)", () => {
+  const noEntryMatches = (label: string) =>
+    new LoreError("validation", `no entry matches "${label}"`, "check the value", { code: "quest.no-match" });
+
+  test("label-absent: a competitor that removed only the label leaves no absent-label removal to fail on", async () => {
+    // The harness's real interleaving: `lore link` wrote label + --doc, the competitor removed the
+    // label, and lore's read landed after it. Nothing raced, so the revision is current.
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    const adapter = fakeAdapter(
+      [makeTask("LORE-1", { documentation: ["docs/stories/x.md", "docs/other/y.md"], revision: "r1" })],
+      { strictRemovals: true },
+    );
+
+    const { code, report } = await unlinkCmd(["stories/x", "lore-1"], adapter);
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks).toEqual([{ task: "lore-1", status: "removed", backRef: "removed" }]);
+    expect(adapter.calls).toEqual([{ id: "lore-1", patch: { doc: ["docs/other/y.md"], ifRevision: "r1" } }]);
+  });
+
+  test("label-absent: a stored label differing only by case is removed by its stored spelling", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    const adapter = fakeAdapter([makeTask("LORE-1", { labels: ["doc:Stories/X"], revision: "r1" })], {
+      strictRemovals: true,
+    });
+
+    const { code } = await unlinkCmd(["stories/x", "lore-1"], adapter);
+
+    expect(code).toBe(EXIT_OK);
+    expect(adapter.calls[0]?.patch.removeLabels).toEqual(["doc:Stories/X"]);
+  });
+
+  test("unlink: a same-value competing removal is retried and ends already-absent, exit 0", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    const adapter = fakeAdapter(
+      [makeTask("LORE-1", { labels: ["doc:stories/x"], documentation: ["docs/stories/x.md"], revision: "r1" })],
+      {
+        editTaskValidation: {
+          times: 1,
+          error: noEntryMatches("doc:stories/x"),
+          // The competing writer removes the SAME label lore is removing, and wins.
+          competingWrite: (t) => ({ ...t, labels: t.labels.filter((l) => l !== "doc:stories/x"), documentation: [] }),
+        },
+      },
+    );
+
+    const { code, report } = await unlinkCmd(["stories/x", "lore-1"], adapter);
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks).toEqual([{ task: "lore-1", status: "removed", backRef: "already-absent" }]);
+    // One edit, carrying the precondition from the read that decided it; the retry re-read, found
+    // the label gone, and made no second edit.
+    expect(adapter.calls).toHaveLength(1);
+    expect(adapter.calls[0]?.patch.ifRevision).toBe("r1");
+  });
+
+  test("move (rename): a competing writer that already moved the back-reference is retried to already-current", async () => {
+    const adapter = fakeAdapter(
+      [makeTask("LORE-1", { labels: ["doc:stories/old"], documentation: ["docs/stories/old.md"], revision: "r1" })],
+      {
+        editTaskValidation: {
+          times: 1,
+          error: noEntryMatches("doc:stories/old"),
+          competingWrite: (t) => ({ ...t, labels: ["doc:stories/new"], documentation: ["docs/stories/new.md"] }),
+        },
+      },
+    );
+
+    const { outcomes } = await moveBackRefs(
+      adapter,
+      ["lore-1"],
+      "stories/old",
+      "stories/new",
+      "docs/stories/old.md",
+      "docs/stories/new.md",
+      "quest",
+    );
+
+    expect(outcomes).toEqual([{ task: "lore-1", backRef: "already-current" }]);
+    expect(adapter.calls).toHaveLength(1);
+    expect(adapter.calls[0]?.patch.ifRevision).toBe("r1");
+  });
+
+  test("link: the edit is now guarded with ifRevision, and a competing same-value add retries to already-present", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\n---\nBody.\n");
+    const adapter = fakeAdapter([makeTask("LORE-1", { documentation: ["docs/other/y.md"], revision: "r1" })], {
+      editTaskValidation: {
+        times: 1,
+        error: new LoreError("validation", "task edit refused", "", {}),
+        competingWrite: (t) => ({
+          ...t,
+          labels: ["doc:stories/x"],
+          documentation: [...t.documentation, "docs/stories/x.md"],
+        }),
+      },
+    });
+
+    const { code, report } = await linkCmd(["stories/x", "lore-1"], adapter);
+
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks).toEqual([{ task: "lore-1", status: "added", backRef: "already-present" }]);
+    expect(adapter.calls).toHaveLength(1);
+    // The whole-list --doc is sent only under the precondition from the same read (LCLI-522's
+    // exposure on this path): without it, a competing --doc writer's entry would be dropped.
+    expect(adapter.calls[0]?.patch).toEqual({
+      addLabels: ["doc:stories/x"],
+      doc: ["docs/other/y.md", "docs/stories/x.md"],
+      ifRevision: "r1",
+    });
+  });
+
+  test("a race lost on every attempt stays bounded and keeps the tracker's own error diagnosable", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    const adapter = fakeAdapter(
+      [makeTask("LORE-1", { labels: ["doc:stories/x"], documentation: ["docs/stories/x.md"], revision: "r1" })],
+      // The competitor bumps the revision every time but never removes the label, so each re-read
+      // still decides an edit is needed.
+      { editTaskValidation: { times: 99, error: noEntryMatches("doc:stories/x"), competingWrite: (t) => t } },
+    );
+
+    const err = (await unlinkCmd(["stories/x", "lore-1"], adapter).then(
+      () => null,
+      (e: unknown) => e,
+    )) as LoreError;
+
+    expect(err).toBeInstanceOf(LoreError);
+    expect(err.type).toBe("drift");
+    expect(adapter.calls).toHaveLength(4); // first try + CONFLICT_RETRY_LIMIT, never more
+    const tasks = (err.input as { tasks: { error?: string }[] }).tasks;
+    expect(tasks[0]?.error).toContain('no entry matches "doc:stories/x"');
+  });
+
+  test("unchanged revision: a validation error is not retried and reaches the report with its own message", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    const original = noEntryMatches("doc:stories/x");
+    const adapter = fakeAdapter(
+      [makeTask("LORE-1", { labels: ["doc:stories/x"], documentation: ["docs/stories/x.md"], revision: "r1" })],
+      { editTaskValidation: { times: 99, error: original } },
+    );
+
+    const err = (await unlinkCmd(["stories/x", "lore-1"], adapter).then(
+      () => null,
+      (e: unknown) => e,
+    )) as LoreError;
+
+    expect(err).toBeInstanceOf(LoreError);
+    expect(adapter.calls).toHaveLength(1); // no retry: nothing moved, so it was not a race
+    const tasks = (err.input as { tasks: { error?: string }[] }).tasks;
+    expect(tasks[0]?.error).toBe(original.message); // exact, not wrapped
+  });
+
+  test("unchanged revision: the original error object is rethrown unchanged (same type and message)", async () => {
+    // An actor-context failure is a `validation` LoreError the command surfaces BY IDENTITY
+    // (LCLI-459), so it proves the rethrow is the same object, not a lookalike. Injected at the edit
+    // rather than via assertWriteReady, so it reaches guardedEditTask itself.
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    const original = new LoreError("validation", "Quest write requires an explicit actor declaration", "set it", {
+      code: "quest.actor-context-required",
+    });
+    const adapter = fakeAdapter(
+      [makeTask("LORE-1", { labels: ["doc:stories/x"], documentation: ["docs/stories/x.md"], revision: "r1" })],
+      { editTaskValidation: { times: 99, error: original } },
+    );
+
+    const err = await runUnlink(opts(["stories/x", "lore-1"], adapter, cleanGitSpawn(), "quest")).then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+    expect(err).toBe(original);
+    expect((err as LoreError).type).toBe("validation");
+    expect((err as LoreError).message).toBe("Quest write requires an explicit actor declaration");
+    expect(adapter.calls).toHaveLength(1);
+  });
+
+  test("a failed re-read rethrows the original error rather than guessing", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntasks:\n  - lore-1\n---\nBody.\n");
+    const original = noEntryMatches("doc:stories/x");
+    const base = fakeAdapter(
+      [makeTask("LORE-1", { labels: ["doc:stories/x"], documentation: ["docs/stories/x.md"], revision: "r1" })],
+      { editTaskValidation: { times: 99, error: original } },
+    );
+    let views = 0;
+    const adapter = {
+      ...base,
+      async viewTask(id: string) {
+        views += 1;
+        if (views > 1) throw new Error("simulated read failure");
+        return base.viewTask(id);
+      },
+    };
+
+    const err = (await unlinkCmd(["stories/x", "lore-1"], adapter).then(
+      () => null,
+      (e: unknown) => e,
+    )) as LoreError;
+
+    expect((err.input as { tasks: { error?: string }[] }).tasks[0]?.error).toBe(original.message);
+    expect(base.calls).toHaveLength(1);
   });
 });

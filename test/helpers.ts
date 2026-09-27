@@ -249,6 +249,23 @@ export function fakeAdapter(
      * which is the only way to tell a retry that converges from one that does not.
      */
     editTaskConflictsFirst?: number;
+    /**
+     * Reject the first `times` `editTask` calls PER TASK with `error` (a `validation` LoreError),
+     * the way quest 0.10.0 answers a stale `--if-revision` whose removal target is already gone
+     * (LCLI-614). With `competingWrite`, the competing writer lands first: the stored record is
+     * replaced by `competingWrite(record)` and its `revision` bumped, so a re-read sees the race.
+     * Without it the record and its revision are untouched — a genuine, non-race refusal.
+     */
+    /**
+     * Fail a `removeLabels` entry that matches no stored label EXACTLY with a `validation`
+     * LoreError, as Quest has since QCLI-297 (0.8.0) — a loud miss, not a no-op (LCLI-614).
+     */
+    strictRemovals?: boolean;
+    editTaskValidation?: {
+      readonly times: number;
+      readonly error: LoreError;
+      readonly competingWrite?: (task: BacklogTaskDetail) => BacklogTaskDetail;
+    };
   } = {},
 ): BacklogAdapter & { calls: EditCall[] } {
   const tasks = new Map<string, BacklogTaskDetail>();
@@ -260,6 +277,7 @@ export function fakeAdapter(
   const bulkListDrops = new Set((opts.bulkListDrops ?? []).map((id) => id.toLowerCase()));
   const calls: EditCall[] = [];
   const conflictsServed = new Map<string, number>();
+  const validationsServed = new Map<string, number>();
   const notImplemented = (name: string) => (): never => {
     throw new Error(`fakeAdapter: ${name} is not implemented`);
   };
@@ -339,12 +357,39 @@ export function fakeAdapter(
           });
         }
       }
+      const race = opts.editTaskValidation;
+      if (race !== undefined) {
+        const seen = validationsServed.get(id.toLowerCase()) ?? 0;
+        if (seen < race.times) {
+          validationsServed.set(id.toLowerCase(), seen + 1);
+          const current = tasks.get(id.toLowerCase());
+          if (race.competingWrite !== undefined && current !== undefined) {
+            tasks.set(id.toLowerCase(), {
+              ...race.competingWrite(current),
+              revision: `${current.revision ?? "r"}+${seen + 1}`,
+            });
+          }
+          throw race.error;
+        }
+      }
       if (poison.has(id.toLowerCase())) {
         throw new Error(`simulated Backlog failure editing ${id}`);
       }
       const existing = tasks.get(id.toLowerCase());
       if (existing === undefined) {
         throw new LoreError("not_found", `task "${id}" not found`, "");
+      }
+      const unmatched = (patch.removeLabels ?? []).filter((l) => !existing.labels.includes(l));
+      if (opts.strictRemovals === true && unmatched.length > 0) {
+        throw new LoreError(
+          "validation",
+          `${id} --remove-label: no entry matches ${JSON.stringify(unmatched[0])}`,
+          "",
+          {
+            record: id,
+            unmatched,
+          },
+        );
       }
       const labels = new Set(existing.labels.map((l) => l.toLowerCase()));
       const byLower = new Map(existing.labels.map((l) => [l.toLowerCase(), l]));
