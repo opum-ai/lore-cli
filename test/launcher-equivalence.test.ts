@@ -3,8 +3,8 @@
  * clause 5 as amended by ODOC-302).
  *
  * One pair that differs only by the version string is GREEN. Each mutant below breaks exactly one
- * property the gate names (content beyond the version, an extra entry, a missing entry, a mode, the
- * rc's own version, the rc's platform pins) and must turn red NAMING that property, so a gate that
+ * property the gate names (content beyond the version, an extra entry, a missing entry, a mode, a type,
+ * the rc's own version, the rc's platform pins) and must turn red NAMING that property, so a gate that
  * stopped checking one of them fails exactly that case rather than all of them.
  *
  * The tarballs are written here by a minimal ustar writer rather than by `tar` or `npm pack`, so the
@@ -34,7 +34,9 @@ interface Entry {
   path: string;
   content: string | Buffer;
   mode?: number;
-  type?: "0" | "5";
+  type?: "0" | "2" | "5";
+  /** A symlink's target (header field linkname). */
+  linkname?: string;
 }
 
 /** The uncompressed ustar blocks for these entries, in this order, with NO end-of-archive marker. */
@@ -54,6 +56,7 @@ function tarBlocks(entries: Entry[]): Buffer {
     num(499162500, 136, 12);
     header.fill(32, 148, 156);
     put(entry.type ?? "0", 156, 1);
+    if (entry.linkname) put(entry.linkname, 157, 100);
     put("ustar\0", 257, 6);
     put("00", 263, 2);
     let sum = 0;
@@ -138,6 +141,19 @@ describe("launcher equivalence (LCLI-621)", () => {
     const result = compare(rc);
     expect(result.ok).toBe(false);
     expect(result.problems).toEqual(["package/bin/lore.cjs: mode 0644 in the rc, 0755 in the final"]);
+  });
+
+  test("RED: an entry whose TYPE differs, with the same path, mode and (empty) content", () => {
+    // A symlink carries no data, so an empty regular file at the same path with the same mode matches
+    // it on content and mode: only the type comparison can see it. node-tar would install one as a
+    // file and the other as a link.
+    const asFile: Partial<Entry> = { path: "package/bin/lore.cjs", content: "", mode: 0o755, type: "0" };
+    const asLink: Partial<Entry> = { ...asFile, type: "2", linkname: "lore-real.cjs" };
+    const result = compare(launcher(RC, { change: asFile }), launcher(X, { change: asLink }));
+    expect(result.ok).toBe(false);
+    expect(result.problems).toEqual(["package/bin/lore.cjs: type file in the rc, symlink in the final"]);
+    // The same two entries, same type on both sides, compare equal: the difference above is the type.
+    expect(compare(launcher(RC, { change: asFile }), launcher(X, { change: asFile })).ok).toBe(true);
   });
 
   test("RED: an rc tarball whose package.json version is not X-rc.N", () => {
