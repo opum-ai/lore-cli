@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Release prep refuses a patch-level bump when the notes for the version being released carry a
+  breaking-change marker** (LCLI-632, paired with quest-cli QCLI-328; ADR in opum-doc).
+  `scripts/check-breaking-bump.mjs` compares the checked section with the previous version heading
+  and refuses a patch bump when that section carries a `### ... (breaking)` heading, or lore's
+  legacy bold behaviour-change marker, whose refusal names the canonical `### Changed (breaking)`
+  spelling. Because lore and quest share one version (constitution Article 3 clause 1), the gate
+  also reads quest-cli's `CHANGELOG.md` by ref and applies the same rule, and an unreadable quest
+  changelog is a refusal, not a pass. `release.yml`'s new `breaking-bump` job gates the publish job.
 - **`lore` reads quest's terminal statuses from `quest task status-flow` instead of treating only
   `Done` as complete** (LCLI-633, paired with quest-cli QCLI-331 and its later QCLI-406). A task in
   quest's `closedStatus` is now complete for Story/Task coupling and `lore check`, and the adapter
