@@ -1118,6 +1118,21 @@ the promotion half, item 7. It is not part of staging.
       bytes refuse: npm versions are immutable, so that needs a new version.
       A registry read that fails with anything but npm's not-found also
       refuses.
+   9. **The GitHub Release can be cut (LCLI-622).** `CHANGELOG.md` in this
+      checkout must have a non-empty `## [<version>]` section: the release's
+      notes are that section, trimmed, heading excluded. Then
+      `scripts/github-release.mjs` reads `v<version>` with
+      `gh release view v<version> -R github.com/opum-ai/lore-cli --json tagName,body,isDraft,isPrerelease`,
+      writing nothing. It refuses when gh cannot read the repository (not
+      installed, logged out, offline, no access). It also refuses when
+      `v<version>` already exists as a draft or a prerelease, or with notes
+      that differ from the section. Notes are compared after CRLF becomes LF
+      and outer whitespace is trimmed, on both sides. An existing release is
+      never edited: publishing a draft or rewriting published notes is a
+      decision for a person, so reconcile it by hand and re-run. This check
+      reads, so it proves gh can see the repository, not that its token may
+      create a release. A token that cannot is found only at the cut, after
+      `latest` has moved, and is reported there.
 
    The receipts are read with the host, repository and ref pinned. A 403 or
    404 means no receipt, and it refuses. `--version` must be strict semver.
@@ -1130,6 +1145,28 @@ the promotion half, item 7. It is not part of staging.
    run it runs step 7. It re-reads `latest` on all seven packages until each
    reads `<version>`. It also checks that npm serves `@opum-ai/lore@<version>`
    with the artifact `X` launcher's `dist.integrity`.
+
+   **Then it cuts the GitHub Release (LCLI-622, paired with quest-cli QCLI-398
+   and QCLI-401).** It first deletes the private npmrc that held the npm token,
+   so gh never runs while the token is on disk. If `v<version>` does not exist,
+   it creates it with `gh release create v<version> -R github.com/opum-ai/lore-cli
+   --verify-tag --title "Lore CLI <version>" --notes-file <the section> --latest=true`.
+   The result is a non-draft, non-prerelease release marked latest, and
+   `--verify-tag` means it never creates a tag. If `v<version>` already
+   exists, published and with the same notes, it only marks it latest
+   (`gh release edit v<version> --latest`), and never recreates or re-notes it.
+   A failure here does not undo anything. Promote prints `!!! THE GITHUB
+   RELEASE FOR v<version> WAS NOT CUT ... !!!` with gh's reason, still runs
+   the README read-back, and exits `3`. Fix the cause, then cut it by hand
+   with the same code path:
+
+   ```
+   node scripts/github-release.mjs --version <version>            # read and report only
+   node scripts/github-release.mjs --version <version> --create   # cut it, marked latest
+   ```
+
+   That command exits `0` when done, `1` when it refuses or fails, and `2` on
+   bad arguments. `--not-latest` cuts a backfill without marking it latest.
 
    **Then it reads the README back, and asserts it (OPAG-474 AC3, LCLI-616).**
    It runs `scripts/readme-readback.sh` with its working directory set to a
@@ -1156,8 +1193,10 @@ the promotion half, item 7. It is not part of staging.
      packument that already lists `<version>` (OPAG-474), or a page that
      matches no release. Promote exits `3`.
 
-   **Exit `3` means the promotion is complete, and the readme is not
-   established.** Exit `3` is used for nothing else. By then `latest` reads
+   **Exit `3` means the promotion is complete, and a post-latest step did not
+   complete:** the readme is not established, or the GitHub Release was not
+   cut (LCLI-622), or both. The messages and checklist item 2 say which. Exit
+   `3` is used for nothing else. By then `latest` reads
    `<version>` on all seven packages and step 7 has verified npm's `X` bytes,
    so nothing is rolled back and nothing more is written. **Do not run
    `--rollback`**: the page is immutable, and restoring the old `latest` undoes
@@ -1199,8 +1238,8 @@ the promotion half, item 7. It is not part of staging.
    irreversible, so what rolls back is the dist-tags. A published `X` stays
    published and a rerun at the same version finds it. Never unpublish, and
    never skip a failed side to a different number (clause 5). `--dry-run`
-   reads everything, runs step 6 once, prints the record it would write and
-   each move, and changes nothing.
+   reads everything, runs step 6 once, prints the record it would write, each
+   move and the GitHub Release it would cut, and changes nothing.
 8. **After `latest` moves: the post-latest checklist (LCLI-618).**
    `scripts/promote-latest.mjs --promote` prints this list when it finishes,
    whether or not the README read-back passed, because the promotion is
@@ -1214,10 +1253,13 @@ the promotion half, item 7. It is not part of staging.
       it PASSED, NOT CONFIRMED or DID NOT PASS, and repeats the script's
       `A4 VERDICT:` line. Record that line in the release-truth record. If it
       is not PASSED, re-read it by hand, and do not roll back.
-   2. **GitHub Release.** Cut a non-draft, non-prerelease GitHub Release for
-      `v<version>`, with `CHANGELOG.md`'s `[<version>]` section as its body:
-      `gh release create v<version> --title "Lore CLI <version>" --notes-file <notes>`.
-      It is still a manual step (LCLI-622 tracks making it an executed one).
+   2. **GitHub Release.** It has already run (item 7, LCLI-622): promote cut
+      `v<version>` from `CHANGELOG.md`'s `[<version>]` section, or marked an
+      existing identical one latest. The checklist says DONE or NOT CUT and
+      repeats the outcome. Nothing is asked of you when it is DONE. If it is
+      NOT CUT, do not roll back. Fix the cause, then cut it by hand with
+      `node scripts/github-release.mjs --version <version> --create`, and
+      record in the release-truth record that you did.
    3. **Tell quest-cli that lore is live on `latest`.** Tell opum-cli-e2e the
       same, for information, and opum-agent, whose go it was. Resolve each
       session with `ListAgents` and match on repository.
@@ -1563,6 +1605,14 @@ version-bump item has happened.
   read, so an old record cannot silently downgrade a later release. These are
   quest-cli's rules exactly (QCLI-390, opum-ai/quest-cli#316). Then retry at
   the **same** version (Article 3 clause 5).
+
+  **`--rollback` does not touch the GitHub Release.** A promotion that got as
+  far as the cut leaves `v<version>` on GitHub, marked latest, after its npm
+  `latest` has been rolled back. Delete nothing. Mark the prior release
+  latest again by hand:
+  `gh release edit v<prior> -R github.com/opum-ai/lore-cli --latest`. When the
+  same version is promoted again, promote finds `v<version>` with the same
+  notes and only marks it latest.
 
   Quest moves first, so the pair goes out of step when **lore's** move fails
   after quest's `latest` has already moved. Retry lore at the same version.

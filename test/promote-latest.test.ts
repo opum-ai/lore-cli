@@ -306,6 +306,14 @@ type WorldOptions = {
   onAdd?: () => void;
   /** Runs once, when the LAST platform's latest move to V lands. */
   afterPlatforms?: (w: World) => void;
+  /**
+   * How `gh release view v<V>` answers (LCLI-622): absent by default ("release not found"), "fail"
+   * for a gh that cannot read the repository, or the JSON of an existing release (a string is
+   * served verbatim, for unparseable or non-object output).
+   */
+  release?: string | { tagName?: string; body?: unknown; isDraft?: unknown; isPrerelease?: unknown };
+  /** `gh release create` / `gh release edit` fail with this stderr. */
+  failReleaseWrite?: string;
 };
 
 type World = ReturnType<typeof world>;
@@ -356,11 +364,17 @@ function world(options: WorldOptions = {}) {
     xPublished: Buffer | "unreadable" | null;
     downloadDir: string | null;
     platformsMoved: number;
+    /** LCLI-622: the notes file's bytes, read while `gh release create` ran. */
+    releaseNotes: string | null;
+    /** LCLI-622: whether any private npmrc a write used still existed when a gh release write ran. */
+    npmrcAtReleaseWrite: boolean | null;
   } = {
     servedRc: options.servedRc ?? (files.get(RC_FILE) as Buffer),
     xPublished: options.xPublished ?? null,
     downloadDir: null,
     platformsMoved: 0,
+    releaseNotes: null,
+    npmrcAtReleaseWrite: null,
   };
   const self = {
     run: async (command: string, args: string[], opts: Record<string, unknown> = {}) => {
@@ -427,6 +441,33 @@ function world(options: WorldOptions = {}) {
         const real = realReadback(options.readback ?? "pass");
         if (real.code !== 0) throw Object.assign(new Error(`Command failed: bash ${README_READBACK_SCRIPT}`), real);
         return { stdout: real.stdout, stderr: real.stderr };
+      }
+      // LCLI-622: the GitHub Release, host and repository pinned on every call.
+      if (command === "gh" && args[0] === "release") {
+        expect(args.slice(2, 5)).toEqual([`v${V}`, "-R", "github.com/opum-ai/lore-cli"]);
+        if (args[1] === "view") {
+          expect(args.slice(5)).toEqual(["--json", "tagName,body,isDraft,isPrerelease"]);
+          const release = options.release;
+          if (release === undefined)
+            throw Object.assign(new Error("Command failed: gh release view"), { stderr: "release not found\n" });
+          if (release === "fail")
+            throw Object.assign(new Error("Command failed: gh release view"), {
+              stderr: "error connecting to api.github.com\ncheck your internet connection",
+            });
+          return { stdout: typeof release === "string" ? release : JSON.stringify({ tagName: `v${V}`, ...release }) };
+        }
+        if (args[1] === "create" || args[1] === "edit") {
+          state.npmrcAtReleaseWrite = envs.some(
+            (e) => typeof e.npm_config_userconfig === "string" && existsSync(e.npm_config_userconfig),
+          );
+          if (args[1] === "create")
+            state.releaseNotes = readFileSync(args[args.indexOf("--notes-file") + 1] as string, "utf8");
+          if (options.failReleaseWrite)
+            throw Object.assign(new Error(`Command failed: gh release ${args[1]}`), {
+              stderr: options.failReleaseWrite,
+            });
+          return { stdout: "" };
+        }
       }
       if (command === "gh" && line === `gh ${commitReadArgs(COMMIT).join(" ")}`) {
         if (options.skills === "fail") throw Object.assign(new Error("Command failed"), { stderr: "HTTP 502" });
@@ -514,9 +555,32 @@ function world(options: WorldOptions = {}) {
   return self;
 }
 
+/** The CHANGELOG.md section the v<V> GitHub Release is cut from (LCLI-622), as the harness writes it. */
+const V_NOTES = `### Added\n\n- **Something** (LCLI-0): shipped in ${V}.`;
+const CHANGELOG_FIXTURE = [
+  "# Changelog",
+  "",
+  "## [Unreleased]",
+  "",
+  "- Not in any release yet.",
+  "",
+  `## [${V}] - 2026-09-28`,
+  "",
+  V_NOTES,
+  "",
+  `## [${PRIOR}] - 2026-09-01`,
+  "",
+  "- The prior release.",
+  "",
+  "[Unreleased]: https://github.com/opum-ai/lore-cli/commits/dev",
+  "",
+].join("\n");
+
 function harness() {
   const dir = mkdtempSync(resolve(tmpdir(), "lore-promote-"));
   const record = join(dir, "promotion-record.json");
+  const changelog = join(dir, "CHANGELOG.md");
+  writeFileSync(changelog, CHANGELOG_FIXTURE);
   const out: string[] = [];
   const err: string[] = [];
   const go = (
@@ -532,11 +596,13 @@ function harness() {
       err: (l) => err.push(l),
       readPackageVersion: async () => V,
       verifyOptions: FAST,
+      changelogPath: changelog,
       ...extra,
     });
   return {
     dir,
     record,
+    changelog,
     out,
     err,
     go,
@@ -617,7 +683,12 @@ describe("scripts/promote-latest.mjs: the clean case (LCLI-621)", () => {
       );
       expect(checklist.length).toBeGreaterThan(10);
       expect(checklist.join("\n")).toContain("1. README read-back: PASSED. It ran automatically; its verdict:");
-      expect(checklist.join("\n")).toContain(`gh release create v${V} --title "Lore CLI ${V}" --notes-file <notes>`);
+      // LCLI-622 AC4: the GitHub Release is executed, not printed as an instruction.
+      expect(checklist.join("\n")).not.toContain("gh release create v");
+      expect(checklist).toContain(
+        `  2. GitHub Release for v${V}: DONE. It ran automatically, from CHANGELOG.md's [${V}] section; its outcome:`,
+      );
+      expect(checklist).toContain(`         created release v${V} "Lore CLI ${V}", marked latest`);
       // LCLI-616 review F4: the four handshake values, RESOLVED, the skills/ tree through gh api.
       expect(checklist).toContain(`         tag object     ${TAG_OBJECT}`);
       expect(checklist).toContain(`         peeled commit  ${COMMIT}`);
@@ -1181,7 +1252,9 @@ describe("scripts/promote-latest.mjs: step 7 and the README read-back (LCLI-621,
       expect(h.out).toContain(
         "  1. README read-back: DID NOT PASS (see above; do NOT roll back). It ran automatically; its verdict:",
       );
-      expect(h.out.join("\n")).toContain(`gh release create v${V}`);
+      // LCLI-622: the release was cut before the read-back, and is reported DONE beside its failure.
+      expect(h.out.join("\n")).toContain(`2. GitHub Release for v${V}: DONE.`);
+      expect(h.out.join("\n")).not.toContain("gh release create v");
     } finally {
       h.cleanup();
     }
@@ -1551,6 +1624,12 @@ describe("scripts/promote-latest.mjs: the post-latest checklist (LCLI-618)", () 
     commit: COMMIT,
     skillsTree: { sha: SKILLS_TREE },
     readback: { state: READBACK_PASSED, verdict: PASSED_VERDICT },
+    githubRelease: { ok: true, action: "created", detail: 'created release v1.2.3 "Lore CLI 1.2.3", marked latest' },
+  };
+  const notCut = {
+    ok: false,
+    action: "none",
+    detail: "could not create release v1.2.3: HTTP 403: Resource not accessible by integration",
   };
 
   test("pinned: the five steps, in order, naming this version, run, record and the four handshake values", () => {
@@ -1560,8 +1639,8 @@ describe("scripts/promote-latest.mjs: the post-latest checklist (LCLI-618)", () 
       "  1. README read-back: PASSED. It ran automatically; its verdict:",
       `         ${PASSED_VERDICT}`,
       "     Record that line in the release-truth record (item 5).",
-      "  2. Cut a non-draft, non-prerelease GitHub Release for v1.2.3, with CHANGELOG.md's [1.2.3] section as its body:",
-      '         gh release create v1.2.3 --title "Lore CLI 1.2.3" --notes-file <notes>',
+      "  2. GitHub Release for v1.2.3: DONE. It ran automatically, from CHANGELOG.md's [1.2.3] section; its outcome:",
+      '         created release v1.2.3 "Lore CLI 1.2.3", marked latest',
       "  3. Tell quest-cli that lore 1.2.3 is live on latest; tell opum-cli-e2e the same, for information; and",
       "     opum-agent, whose go this was. Resolve each session with ListAgents and match on repository;",
       "     session names change on every restart.",
@@ -1592,6 +1671,23 @@ describe("scripts/promote-latest.mjs: the post-latest checklist (LCLI-618)", () 
     );
   });
 
+  test("LCLI-622: item 2 reports a release that was NOT cut, with the repair command, and never gh release create", () => {
+    const lines = postLatestChecklist({ ...args, githubRelease: notCut });
+    const at = lines.indexOf(
+      "  2. GitHub Release for v1.2.3: NOT CUT (see above; do NOT roll back). It ran automatically, from CHANGELOG.md's [1.2.3] section; its outcome:",
+    );
+    expect(at).toBeGreaterThan(-1);
+    expect(lines.slice(at + 1, at + 4)).toEqual([
+      `         ${notCut.detail}`,
+      "     Fix the cause, then cut it by hand and record that you did:",
+      "         node scripts/github-release.mjs --version 1.2.3 --create",
+    ]);
+    expect(lines[at + 4]).toStartWith("  3. ");
+    // Neither shape prints the old by-hand instruction (AC4).
+    for (const githubRelease of [args.githubRelease, notCut])
+      expect(postLatestChecklist({ ...args, githubRelease }).join("\n")).not.toContain("gh release create");
+  });
+
   // "The runbook item it cites must match": the item exists where the header says, and carries each
   // of the five steps the script prints, by the same names. The item is found by its number at
   // column 0 inside section 3, so an item that moves or is renumbered fails here.
@@ -1615,7 +1711,7 @@ describe("scripts/promote-latest.mjs: the post-latest checklist (LCLI-618)", () 
       "README read-back",
       "NOT CONFIRMED",
       "GitHub Release",
-      "gh release create v",
+      "scripts/github-release.mjs --version",
       "quest-cli",
       "opum-cli-e2e",
       "LCLI-469 marketplace handshake",
@@ -1626,7 +1722,11 @@ describe("scripts/promote-latest.mjs: the post-latest checklist (LCLI-618)", () 
     ]) {
       const inChecklist =
         printed.includes(step) ||
-        postLatestChecklist({ ...args, readback: { state: READBACK_NOT_CONFIRMED, verdict: "" } })
+        postLatestChecklist({
+          ...args,
+          readback: { state: READBACK_NOT_CONFIRMED, verdict: "" },
+          githubRelease: notCut,
+        })
           .join("\n")
           .includes(step);
       expect({ step, inChecklist }).toEqual({ step, inChecklist: true });
@@ -2397,4 +2497,245 @@ describe("scripts/promote-latest.mjs: --version is strict semver (review N4)", (
       }
     });
   }
+});
+
+// ── LCLI-622: the GitHub Release, an executed and refusing step ─────────────────────────────────
+// Paired with quest-cli QCLI-398/QCLI-401. Pinned by the OBSERVED call order through main(), not by
+// source layout: the preflight refuses before the record and every registry write, dry run and
+// --promote alike; the cut comes after step 7's last read, after the private npmrc is gone, and
+// before the README read-back; a failed cut is exit 3, never a rollback.
+describe("scripts/promote-latest.mjs: the GitHub Release (LCLI-622)", () => {
+  const releaseCalls = (w: World) => w.calls.filter((c) => c[0] === "gh" && c[1] === "release").map((c) => c[2]);
+  const MODES = ["--promote", "--dry-run"] as const;
+
+  for (const [label, changelog] of [
+    ["no ## [X] section", CHANGELOG_FIXTURE.replace(`## [${V}] - 2026-09-28`, "## [5.6.8] - 2026-09-28")],
+    ["an EMPTY ## [X] section", CHANGELOG_FIXTURE.replace(V_NOTES, "")],
+    ["an unbracketed ## X heading", CHANGELOG_FIXTURE.replace(`## [${V}]`, `## ${V}`)],
+  ] as const)
+    for (const mode of MODES)
+      test(`CHANGELOG.md with ${label} (${mode}): exit 1 before any write, no record, no gh release call (AC2)`, async () => {
+        const h = harness();
+        const w = world();
+        try {
+          writeFileSync(h.changelog, changelog);
+          expect(await h.go(["--record", h.record, mode], w)).toBe(1);
+          expect(h.err.join("\n")).toContain(
+            `Refusing to promote ${V}: CHANGELOG.md has no non-empty "## [${V}]" section, and the v${V} GitHub Release is cut from it`,
+          );
+          expect(h.err.join("\n")).toContain("Nothing has moved.");
+          expectRefusedBeforeAnyWrite(h, w);
+          expect(releaseCalls(w)).toEqual([]);
+          // Positive control: it got as far as step 8 (the X probe), so this is the step-9 refusal.
+          expect(w.calls.some((c) => c[0] === "npm" && c[1] === "view" && c[2] === `${LAUNCHER}@${V}`)).toBe(true);
+        } finally {
+          h.cleanup();
+        }
+      });
+
+  for (const mode of MODES)
+    test(`an unreadable CHANGELOG.md (${mode}): exit 1 before any write`, async () => {
+      const h = harness();
+      const w = world();
+      try {
+        rmSync(h.changelog);
+        expect(await h.go(["--record", h.record, mode], w)).toBe(1);
+        expect(h.err.join("\n")).toContain(`${h.changelog} could not be read`);
+        expectRefusedBeforeAnyWrite(h, w);
+      } finally {
+        h.cleanup();
+      }
+    });
+
+  for (const [label, release, reason] of [
+    ["gh cannot read the repository", "fail", "could not read release v5.6.7: error connecting to api.github.com"],
+    ["an existing DRAFT v<X>", { body: V_NOTES, isDraft: true, isPrerelease: false }, "is a draft"],
+    ["an existing PRERELEASE v<X>", { body: V_NOTES, isDraft: false, isPrerelease: true }, "is a prerelease"],
+    [
+      "an existing v<X> with OTHER notes",
+      { body: "Hand-edited.", isDraft: false, isPrerelease: false },
+      "its notes differ from the CHANGELOG section",
+    ],
+    ["unparseable gh output", "not json", "gh release view did not return its state"],
+    ["an existing v<X> with no isDraft key", { body: V_NOTES, isPrerelease: false }, "is a draft"],
+  ] as const)
+    for (const mode of MODES)
+      test(`${label} (${mode}): exit 1 before the record and any write; the view is the only release call`, async () => {
+        const h = harness();
+        const w = world({ release });
+        try {
+          expect(await h.go(["--record", h.record, mode], w)).toBe(1);
+          expect(h.err.join("\n")).toContain(`Refusing to promote ${V}: the v${V} GitHub Release could not be cut`);
+          expect(h.err.join("\n")).toContain(reason);
+          expect(h.err.join("\n")).toContain("Nothing has moved.");
+          expectRefusedBeforeAnyWrite(h, w);
+          expect(releaseCalls(w)).toEqual(["view"]);
+        } finally {
+          h.cleanup();
+        }
+      });
+
+  test("--dry-run: the view is the only release call, and it prints the release it would cut", async () => {
+    const h = harness();
+    const w = world();
+    try {
+      expect(await h.go(["--record", h.record, "--dry-run"], w)).toBe(0);
+      expect(releaseCalls(w)).toEqual(["view"]);
+      const planned = `would create release v${V} "Lore CLI ${V}" (${Buffer.byteLength(V_NOTES)} bytes of notes), marked latest`;
+      expect(h.out).toContain(`GitHub Release (checked, read-only): ${planned}.`);
+      expect(h.out).toContain(
+        `  would    cut the GitHub Release after step 7, once the private npmrc is removed: ${planned}`,
+      );
+      expect(w.writes).toEqual([]);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("--promote: the preflight view precedes the record and every write; the create follows step 7 and precedes the read-back", async () => {
+    const h = harness();
+    const token = `npm_${"z".repeat(36)}`;
+    const seen: { recordAtFirstWrite: boolean | null; npmrcAtFirstWrite: boolean | null } = {
+      recordAtFirstWrite: null,
+      npmrcAtFirstWrite: null,
+    };
+    const w: World = world({
+      onAdd: () => {
+        seen.recordAtFirstWrite ??= existsSync(h.record);
+      },
+    });
+    try {
+      expect(await h.go(["--record", h.record, "--promote"], w, { NPM_TOKEN: token })).toBe(0);
+      const at = (predicate: (c: string[]) => boolean) => w.calls.findIndex(predicate);
+      const lastAt = (predicate: (c: string[]) => boolean) => w.calls.findLastIndex(predicate);
+      const view = at((c) => c[0] === "gh" && c[1] === "release" && c[2] === "view");
+      const create = at((c) => c[0] === "gh" && c[1] === "release" && c[2] === "create");
+      const firstWrite = at((c) => c[0] === "npm" && (c[1] === "dist-tag" || c[1] === "publish"));
+      const lastWrite = lastAt((c) => c[0] === "npm" && (c[1] === "dist-tag" || c[1] === "publish"));
+      // Step 7's reads: every latest re-read, and verifyFinalLauncher's read of X's integrity.
+      const lastStep7Read = lastAt((c) => c[0] === "npm" && c[1] === "view");
+      const readback = at((c) => c[0] === "bash");
+      // Two views: the preflight's, before any write, and the cut's own re-read, just before the create.
+      expect(releaseCalls(w)).toEqual(["view", "view", "create"]);
+      expect(view).toBeGreaterThan(-1);
+      expect(view).toBeLessThan(firstWrite);
+      expect(lastAt((c) => c[0] === "gh" && c[1] === "release" && c[2] === "view")).toBe(create - 1);
+      expect(seen.recordAtFirstWrite).toBe(true);
+      expect(create).toBeGreaterThan(lastWrite);
+      expect(create).toBeGreaterThan(lastStep7Read);
+      expect(w.calls[lastStep7Read]?.slice(0, 3)).toEqual(["npm", "view", `${LAUNCHER}@${V}`]);
+      expect(create).toBeLessThan(readback);
+      // The npm credential was on disk for the writes (positive control) and gone before gh ran.
+      expect(w.envs.length).toBe(RELEASE_PACKAGES.length);
+      expect(w.envs.every((e) => typeof e.npm_config_userconfig === "string")).toBe(true);
+      expect(w.state.npmrcAtReleaseWrite).toBe(false);
+      // The created release's shape: the CHANGELOG section as its notes, "Lore CLI X", latest.
+      const argv = w.calls[create] as string[];
+      expect(argv.slice(1)).toEqual([
+        "release",
+        "create",
+        `v${V}`,
+        "-R",
+        "github.com/opum-ai/lore-cli",
+        "--verify-tag",
+        "--title",
+        `Lore CLI ${V}`,
+        "--notes-file",
+        argv[argv.indexOf("--notes-file") + 1] as string,
+        "--latest=true",
+      ]);
+      expect(w.state.releaseNotes).toBe(`${V_NOTES}\n`);
+      expect(h.out).toContain(`\nGitHub Release: created release v${V} "Lore CLI ${V}", marked latest.`);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("an existing, published v<X> with the same notes (CRLF as GitHub may store it) is marked latest, never recreated", async () => {
+    const h = harness();
+    const w = world({
+      release: { body: `${V_NOTES.replace(/\n/g, "\r\n")}\r\n`, isDraft: false, isPrerelease: false },
+    });
+    try {
+      expect(await h.go(["--record", h.record, "--promote"], w)).toBe(0);
+      expect(releaseCalls(w)).toEqual(["view", "view", "edit"]);
+      expect(w.calls.find((c) => c[1] === "release" && c[2] === "edit")).toEqual([
+        "gh",
+        "release",
+        "edit",
+        `v${V}`,
+        "-R",
+        "github.com/opum-ai/lore-cli",
+        "--latest",
+      ]);
+      expect(h.out).toContain(`         release v${V} already existed; marked latest`);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("a failed cut: exit 3, do NOT roll back, the repair command, and the README read-back still runs", async () => {
+    const h = harness();
+    const w = world({ failReleaseWrite: "HTTP 403: Resource not accessible by integration\nmore" });
+    try {
+      expect(await h.go(["--record", h.record, "--promote"], w)).toBe(README_READBACK_EXIT);
+      // Exactly the promotion's writes: no rollback, latest stays moved.
+      expect(w.writes).toEqual([...platformMoves(V), publishLine(w)]);
+      for (const name of RELEASE_PACKAGES) expect(w.tags[name]?.latest).toBe(V);
+      expect(w.readbacks).toHaveLength(1);
+      const errText = h.err.join("\n");
+      expect(errText).toContain(
+        `!!! THE GITHUB RELEASE FOR v${V} WAS NOT CUT. THIS PROMOTION IS COMPLETE AND VERIFIED. !!!`,
+      );
+      expect(errText).toContain(`  could not create release v${V}: HTTP 403: Resource not accessible by integration`);
+      expect(errText).toContain("do NOT roll back for this");
+      expect(errText).toContain(`    node scripts/github-release.mjs --version ${V} --create`);
+      expect(errText).toContain(
+        `Exit 3: the promotion is complete and verified, but the v${V} GitHub Release was NOT cut (see above, and checklist item 2). Do NOT roll back.`,
+      );
+      expect(errText).not.toContain(`--rollback ${h.record}`);
+      // The read-back passed, and the checklist says so beside the release's NOT CUT.
+      expect(h.out).toContain("  1. README read-back: PASSED. It ran automatically; its verdict:");
+      expect(h.out).toContain(
+        `  2. GitHub Release for v${V}: NOT CUT (see above; do NOT roll back). It ran automatically, from CHANGELOG.md's [${V}] section; its outcome:`,
+      );
+      expect(h.out).toContain(`         node scripts/github-release.mjs --version ${V} --create`);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("a failed cut AND a read-back that did not pass: one exit 3, both said", async () => {
+    const h = harness();
+    const w = world({ failReleaseWrite: "HTTP 502", readback: "empty-listed" });
+    try {
+      expect(await h.go(["--record", h.record, "--promote"], w)).toBe(README_READBACK_EXIT);
+      const errText = h.err.join("\n");
+      expect(errText).toContain(`!!! THE GITHUB RELEASE FOR v${V} WAS NOT CUT.`);
+      expect(errText).toContain("!!! THE README READ-BACK DID NOT PASS.");
+      expect(h.out.join("\n")).toContain(`2. GitHub Release for v${V}: NOT CUT`);
+      expect(w.writes).toEqual([...platformMoves(V), publishLine(w)]);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("--rollback makes no gh release call, before or after a promotion that cut one", async () => {
+    const h = harness();
+    try {
+      const promoted = world();
+      expect(await h.go(["--record", h.record, "--promote"], promoted)).toBe(0);
+      expect(releaseCalls(promoted)).toEqual(["view", "view", "create"]);
+      const w = world({
+        receipt: undefined,
+        pass1: undefined,
+        tags: Object.fromEntries(RELEASE_PACKAGES.map((n) => [n, { latest: V }])),
+      });
+      rmSync(h.changelog);
+      expect(await h.go(["--rollback", h.record], w)).toBe(0);
+      expect(releaseCalls(w)).toEqual([]);
+    } finally {
+      h.cleanup();
+    }
+  });
 });

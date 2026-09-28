@@ -1,4 +1,4 @@
-// Types for scripts/promote-latest.mjs (LCLI-613, LCLI-621), so test/ can import it under strict tsc.
+// Types for scripts/promote-latest.mjs (LCLI-613, LCLI-621, LCLI-622), so test/ can import it under strict tsc.
 
 export type Run = (
   command: string,
@@ -136,6 +136,7 @@ export declare function postLatestChecklist(args: {
   commit: string;
   skillsTree: { sha: string } | { error: string };
   readback: { state: string; verdict: string };
+  githubRelease: { ok: boolean; action: string; detail: string };
 }): string[];
 export declare function checkRollbackState(args: {
   record: PromotionRecord;
@@ -193,5 +194,6 @@ export declare function main(
     readPackageVersion?: () => Promise<string>;
     verifyOptions?: { attempts?: number; delayMs?: number; sleep?: (ms: number) => Promise<void> };
     readbackTempRoot?: string;
+    changelogPath?: string;
   },
 ): Promise<number>;

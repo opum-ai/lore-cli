@@ -243,6 +243,10 @@ function world({ version: V, latest, latestFor = {} }: WorldOptions) {
       (tags[spec.slice(0, at)] as Record<string, string>)[args[3] as string] = spec.slice(at + 1);
       return { stdout: "" };
     }
+    // LCLI-622: no v<V> GitHub Release yet, so the preflight passes and the cut creates it.
+    if (command === "gh" && args[0] === "release" && args[1] === "view")
+      throw Object.assign(new Error("Command failed: gh release view"), { stderr: "release not found" });
+    if (command === "gh" && args[0] === "release" && args[1] === "create") return { stdout: "" };
     // The read-back's verdict is platform-independent here: this file is about the gate before it.
     if (command === "bash" && args[0] === README_READBACK_SCRIPT)
       return { stdout: "A4 VERDICT: PASSED (stand-in: LCLI-631 tests the gate before the first write)\n", stderr: "" };
@@ -256,6 +260,9 @@ type World = ReturnType<typeof world>;
 async function go(w: World, mode: "--dry-run" | "--promote", setup?: (recordPath: string) => void) {
   const dir = mkdtempSync(resolve(tmpdir(), "lore-lcli631-"));
   const record = join(dir, "promotion-record.json");
+  // LCLI-622: the GitHub Release is cut from CHANGELOG.md's ## [V] section, so the release has one.
+  const changelogPath = join(dir, "CHANGELOG.md");
+  writeFileSync(changelogPath, `# Changelog\n\n## [${w.V}] - 2026-09-28\n\n- Released.\n`);
   setup?.(record);
   const out: string[] = [];
   const err: string[] = [];
@@ -267,6 +274,7 @@ async function go(w: World, mode: "--dry-run" | "--promote", setup?: (recordPath
       err: (l) => err.push(l),
       readPackageVersion: async () => "0.0.0-not-read",
       verifyOptions: FAST,
+      changelogPath,
     });
     const recordText = existsSync(record) ? readFileSync(record, "utf8") : null;
     return { code, out, err, text: [...out, ...err].join("\n"), errText: err.join("\n"), recordText };
