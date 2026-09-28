@@ -18,22 +18,35 @@
 //   1. One parser tolerates both heading families: lore's Keep-a-Changelog
 //      form ("## [Unreleased]", "## [0.11.0] - date") and quest's bare form
 //      ("## Unreleased", "## 0.11.0 - date").
-//   2. The notes section checked is the one for the version being released
-//      (orchestrator ruling, 2026-09-28, recorded on LCLI-632): the
-//      [Unreleased] section while it holds the notes, and the version's own
-//      "## [X]" section once the bump is in. Released sections are history and
-//      are never scanned — so lore's released 0.11.0 section, which still
-//      carries a legacy marker, does not bind the next bump.
+//   2. The notes section checked is chosen by quest's own rule, verbatim: if a
+//      "## [X]" section equals the checked version, THAT section is checked
+//      against the versioned section below it; otherwise the Unreleased
+//      section is checked against the FIRST versioned section. (An earlier
+//      revision of this file let a non-empty Unreleased section beat the
+//      version's own section; a reviewer pass found that certified a patch
+//      bump over a breaking "## [X]" section whenever Unreleased held one
+//      clean leftover note, and redded with a misleading "X -> X" self-patch
+//      when Unreleased held the NEXT release's breaking notes — fixed to quest
+//      parity, 2026-09-28, recorded on LCLI-632.)
 //   3. lore's legacy bold "**BEHAVIOUR CHANGE:**" bullet marker is refused at
 //      ANY bump level, with a message naming the canonical spelling
 //      (orchestrator ruling, 2026-09-28, recorded on LCLI-632). quest-cli's
 //      file knows only the canonical "### ... (breaking)" heading; without
 //      this, lore's existing style would read as "no breaking change" and the
 //      gate would certify what it exists to catch.
+//   4. Stale-tree window: with no --next, a package.json that still names a
+//      released version checks that released section (rule 2) — so on lore's
+//      real bytes, where the released 0.11.0 section carries the legacy
+//      marker, a no-flag run in the window right after a release cut exits 1
+//      naming the canonical spelling. That is the documented consequence of
+//      the legacy-marker ruling applied to the checked section. It is NOT
+//      reachable at a CI dispatch (package.json names the bumped version by
+//      then), and release prep runs --next before the bump.
 //
 //   node scripts/check-breaking-bump.mjs                         # the package.json version
 //   node scripts/check-breaking-bump.mjs --next 0.12.0           # release prep, before the bump
 //   node scripts/check-breaking-bump.mjs --quest-ref main        # the ref release.yml reads
+//   node scripts/check-breaking-bump.mjs --quest-ref=main        # same ref, equals form
 
 import { execFile as execFileCallback } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -109,33 +122,29 @@ function sections(changelog) {
 export function breakingBumpProblems(changelog, version, label = "CHANGELOG.md") {
   const all = sections(changelog);
   const versioned = all.filter((section) => section.version !== null);
-  const top = versioned[0];
-  const unreleased = all.find((section) => section.unreleased);
   const problems = [];
+  const own = versioned.findIndex((section) => section.version === version);
   let notes = null;
   let previous = null;
   let source = null;
-  if (unreleased && unreleased.body.trim() !== "") {
-    // The notes for the version being released still sit under Unreleased
-    // (the bump PR, before the entries move). Released sections below it are
-    // history and are never scanned (orchestrator ruling B).
-    notes = unreleased;
-    previous = top?.version ?? null;
-    source = unreleased.heading;
-  } else if (top && top.version === version) {
-    // The bump is in: the version's own section holds its notes, and the
-    // heading below it is the previous release.
-    notes = top;
-    previous = versioned[1]?.version ?? null;
-    source = top.heading;
+  if (own !== -1) {
+    // quest's rule verbatim: the version's own section is checked against the
+    // versioned section BELOW it. A leftover note still under Unreleased does
+    // not redirect the check.
+    notes = versioned[own] ?? null;
+    previous = versioned[own + 1]?.version ?? null;
+    source = notes?.heading ?? null;
   } else {
-    problems.push(
-      `${label} has no section holding ${version}'s notes: ${
-        unreleased
-          ? `${unreleased.heading} is empty and no "## ${version}" section exists`
-          : `no Unreleased section and no "## ${version}" section exist`
-      }`,
-    );
+    // The bump PR, before the entries move: no section names the checked
+    // version yet, so Unreleased is checked against the first versioned
+    // section.
+    notes = all.find((section) => section.unreleased) ?? null;
+    previous = versioned[0]?.version ?? null;
+    if (!notes)
+      problems.push(
+        `${label} has neither a "## ${version}" section nor a "## Unreleased" section to hold ${version}'s notes`,
+      );
+    else source = notes.heading;
   }
   const breaking = notes ? BREAKING_HEADING.test(notes.body) : false;
   const legacy = notes ? LEGACY_BREAKING_MARKER.test(notes.body) : false;
@@ -150,9 +159,7 @@ export function breakingBumpProblems(changelog, version, label = "CHANGELOG.md")
     );
   if (breaking && level === "patch")
     problems.push(
-      `${source} carries a breaking heading, but ${previous} -> ${version} is a patch bump; a breaking change needs at least a minor bump (QCLI-328; 0.6.2 shipped this way)${
-        previous === version ? `; package.json still names ${version} — pass --next <x.y.z> to name the bump` : ""
-      }`,
+      `${source} carries a breaking heading, but ${previous} -> ${version} is a patch bump; a breaking change needs at least a minor bump (QCLI-328; 0.6.2 shipped this way)`,
     );
   return {
     problems,
@@ -269,11 +276,16 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     console.error("usage: check-breaking-bump.mjs [--next <x.y.z>] [--quest-ref <ref>]");
     process.exit(2);
   }
-  const atRef = argv.indexOf("--quest-ref");
-  const questRef = atRef === -1 ? QUEST.ref : argv[atRef + 1];
-  if (atRef !== -1 && (!questRef || questRef.startsWith("--"))) {
-    console.error("usage: check-breaking-bump.mjs [--next <x.y.z>] [--quest-ref <ref>]");
-    process.exit(2);
+  const atRef = argv.findIndex((arg) => arg === "--quest-ref" || arg.startsWith("--quest-ref="));
+  let questRef = QUEST.ref;
+  if (atRef !== -1) {
+    const arg = argv.at(atRef) ?? "";
+    const value = arg === "--quest-ref" ? argv.at(atRef + 1) : arg.slice("--quest-ref=".length);
+    if (!value || value.startsWith("--")) {
+      console.error("usage: check-breaking-bump.mjs [--next <x.y.z>] [--quest-ref <ref>]");
+      process.exit(2);
+    }
+    questRef = value;
   }
   const result = await checkBreakingBump({ next, questRef });
   if (result.problems.length) {

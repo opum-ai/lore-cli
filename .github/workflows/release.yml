@@ -142,9 +142,11 @@ jobs:
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
-      # No --next: the dispatched commit's package.json already names the bumped version, and
-      # its "## [X]" section is what gets checked. Any read failure refuses, like the parity
-      # gate above: no continue-on-error, and no input or variable skips it.
+      # No --next: the dispatched commit's package.json already names the bumped version, so its
+      # "## [X]" section is the one checked, against the versioned section below it (quest-cli's
+      # own rule, QCLI-328); a leftover note still under [Unreleased] does not redirect the check.
+      # Any read failure refuses, like the parity gate above: no continue-on-error, and no input
+      # or variable skips it.
       - name: Gate on breaking CHANGELOG entries vs the bump (QCLI-328)
         env:
           GH_TOKEN: ${{ github.token }}

@@ -15,10 +15,12 @@
  * patch bump and accepted at a minor/major bump. The orchestrator's AC2
  * rulings are proven too: quest's `### ... (breaking)` heading is canonical
  * (byte-for-byte the same regex), lore's legacy bold `**BEHAVIOUR CHANGE:**`
- * marker fails at ANY bump level naming the canonical spelling, and only the
- * section for the version being released is scanned — released sections are
- * history. The quest-side fetch is injected or stubbed everywhere, so no test
- * here hits the network.
+ * marker fails at ANY bump level naming the canonical spelling, and the notes
+ * section is chosen by quest's own rule, verbatim: the version's own
+ * "## [X]" section when it exists (checked against the section below it),
+ * otherwise the Unreleased section (checked against the first versioned
+ * section). The quest-side fetch is injected or stubbed everywhere, so no
+ * test here hits the network.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -138,10 +140,79 @@ test("no breaking heading: a patch bump passes", () => {
   expect(result.problems).toEqual([]);
 });
 
-test("ruling B: a breaking or legacy marker in an OLDER section does not bind the current bump", () => {
-  // Between releases, package.json names the last release and its own section
-  // is what gets checked (or the [Unreleased] above it). Earlier sections are
-  // history and are never scanned — the released legacy marker included.
+describe("the version's own section wins over [Unreleased] (quest parity; reviewer findings)", () => {
+  test("a breaking own section refuses a patch bump even when [Unreleased] holds a clean leftover note", () => {
+    // The certification hole: package.json names the bumped version, its
+    // "## [X]" section carries the breaking heading, and one clean note is
+    // still under [Unreleased]. quest's rule checks the own section, so the
+    // patch bump must refuse — [Unreleased] must not redirect the check.
+    const hybrid = [
+      "# Changelog",
+      "",
+      "## [Unreleased]",
+      "",
+      "### Changed",
+      "",
+      "- A clean leftover note.",
+      "",
+      "## [1.4.1] - 2026-09-02",
+      "",
+      "### Changed (breaking)",
+      "",
+      "- An envelope moved.",
+      "",
+      "## [1.4.0] - 2026-09-01",
+    ].join("\n");
+    const patch = breakingBumpProblems(hybrid, "1.4.1");
+    expect(patch).toMatchObject({
+      source: "## [1.4.1] - 2026-09-02",
+      previous: "1.4.0",
+      level: "patch",
+      breaking: true,
+    });
+    expect(patch.problems).toHaveLength(1);
+    expect(patch.problems[0]).toContain("1.4.0 -> 1.4.1 is a patch bump");
+    const minor = hybrid.replace("## [1.4.1] -", "## [1.5.0] -");
+    expect(breakingBumpProblems(minor, "1.5.0").problems).toEqual([]);
+  });
+
+  test("a breaking [Unreleased] does not bind once the bump is in with a clean own section, and previous is the section below", () => {
+    // The inverse false positive: the NEXT release's breaking notes are still
+    // under [Unreleased] while the checked version's own section is clean. The
+    // gate must pass with no self-patch problem ("1.4.1 -> 1.4.1") and
+    // previous naming the section BELOW the own one, never the own version.
+    const hybrid = [
+      "# Changelog",
+      "",
+      "## [Unreleased]",
+      "",
+      "### Changed (breaking)",
+      "",
+      "- The next release's note.",
+      "",
+      "## [1.4.1] - 2026-09-02",
+      "",
+      "### Fixed",
+      "",
+      "- Something.",
+      "",
+      "## [1.4.0] - 2026-09-01",
+    ].join("\n");
+    const result = breakingBumpProblems(hybrid, "1.4.1");
+    expect(result).toMatchObject({
+      source: "## [1.4.1] - 2026-09-02",
+      previous: "1.4.0",
+      level: "patch",
+      breaking: false,
+      legacyMarker: false,
+    });
+    expect(result.problems).toEqual([]);
+  });
+});
+
+test("an older section's breaking or legacy markers do not bind the current bump, and previous is the section below it", () => {
+  // The checked version's own section is what gets scanned (quest's rule), so
+  // markers in sections further down the file are never consulted.
   const history = [
     "## [Unreleased]",
     "",
@@ -158,7 +229,12 @@ test("ruling B: a breaking or legacy marker in an OLDER section does not bind th
     "## [1.4.0] - 2026-09-01",
   ].join("\n");
   const result = breakingBumpProblems(history, "1.5.1");
-  expect(result).toMatchObject({ source: "## [1.5.1] - 2026-09-03", breaking: false, legacyMarker: false });
+  expect(result).toMatchObject({
+    source: "## [1.5.1] - 2026-09-03",
+    previous: "1.5.0",
+    breaking: false,
+    legacyMarker: false,
+  });
   expect(result.problems).toEqual([]);
 });
 
@@ -314,28 +390,35 @@ describe("the quest-side read (AC3, enforced)", () => {
   });
 });
 
-test("the real CHANGELOG: [Unreleased] carries the LCLI-612 (breaking) entry, and the released legacy marker does not bind", () => {
+test("the real CHANGELOG: --next checks [Unreleased] against the current version; a no-flag run checks the released section (stale-tree window)", () => {
   const real = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
   const version = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
-  const current = breakingBumpProblems(real, version);
-  expect(current.sectionsRead).toBeGreaterThan(10);
-  expect(current).toMatchObject({
-    source: "## [Unreleased]",
-    previous: version,
-    level: "patch",
-    breaking: true,
-    legacyMarker: false,
-  });
-  expect(current.problems).toHaveLength(1);
-  expect(current.problems[0]).toContain(`${version} -> ${version} is a patch bump`);
-  expect(current.problems[0]).toContain("--next");
-  // Ruling B: the released [0.11.0] section still carries the legacy bold
-  // marker, and it is history — no problem may name it.
-  for (const problem of current.problems) expect(problem).not.toContain("BEHAVIOUR CHANGE");
-  // And the next bump is minor over that breaking entry: clean.
+  // Pre-bump: --next names a version with no section of its own, so
+  // [Unreleased] (which carries the LCLI-612 canonical breaking heading) is
+  // checked against the first versioned section.
+  const patch = breakingBumpProblems(real, "0.11.1");
+  expect(patch).toMatchObject({ source: "## [Unreleased]", previous: version, level: "patch", breaking: true });
+  expect(patch.problems).toEqual([expect.stringContaining(`${version} -> 0.11.1 is a patch bump`)]);
   const next = breakingBumpProblems(real, "0.12.0");
   expect(next).toMatchObject({ previous: version, level: "minor", breaking: true });
   expect(next.problems).toEqual([]);
+  // Stale-tree window: with no --next, package.json still names the released
+  // 0.11.0, so its own section is the checked one — and that released section
+  // carries the legacy marker, so the run reds naming the canonical spelling.
+  // Documented in the script header (item 4); release prep runs --next and a
+  // CI dispatch has the bump in by then.
+  const stale = breakingBumpProblems(real, "0.11.0");
+  expect(stale.sectionsRead).toBeGreaterThan(10);
+  expect(stale).toMatchObject({
+    source: "## [0.11.0] - 2026-09-27",
+    previous: "0.9.3",
+    level: "minor",
+    breaking: false,
+    legacyMarker: true,
+  });
+  expect(stale.problems).toHaveLength(1);
+  expect(stale.problems[0]).toContain("**BEHAVIOUR CHANGE:**");
+  expect(stale.problems[0]).toContain("### Changed (breaking)");
 });
 
 describe("the command, with a stubbed gh (no network)", () => {
@@ -448,6 +531,24 @@ describe("the command, with a stubbed gh (no network)", () => {
       });
       expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain("usage: check-breaking-bump.mjs");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("the --quest-ref=main equals form is honored, and an empty one exits 2", async () => {
+    const { dir, bin } = withStubGh(QUEST_CLEAN_UNRELEASED);
+    try {
+      await makeTreeInto(dir, "1.4.0", BREAKING_UNRELEASED.replace("### Changed (breaking)", "### Changed"));
+      const env = { BIN: bin, FAKE_GH_CHANGELOG: join(dir, "quest-changelog.md") };
+      // The readSource names the ref the flag carried: had the equals form
+      // been silently ignored, the default dev would appear instead of main.
+      const main = await run(dir, ["--next", "1.5.0", "--quest-ref=main"], env);
+      expect(main.exitCode).toBe(0);
+      expect(main.stdout).toContain("quest read 2 CHANGELOG sections from opum-ai/quest-cli@main:CHANGELOG.md");
+      const empty = await run(dir, ["--next", "1.5.0", "--quest-ref="], env);
+      expect(empty.exitCode).toBe(2);
+      expect(empty.stderr).toContain("usage: check-breaking-bump.mjs");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
