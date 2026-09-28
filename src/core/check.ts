@@ -95,8 +95,11 @@ export type CheckSeverity = Severity;
  * for a registered built-in type. `type-shape` is that type's own content rules failing (error), or
  * its one advisory (warning, e.g. an over-long Constitution Principles section). `frontmatter` and
  * `required-section` are `lore validate`'s own profile-shape errors for the same document, under
- * validate's rule names. `singleton-type` is a second document of a type a bundle may hold only one
- * of (error), counted per selected bundle root.
+ * validate's rule names — for every type since LCLI-606. `quote-safety` (LCLI-612) is likewise
+ * validate's own error-tier finding for an unquoted frontmatter scalar YAML-1.1 consumers read
+ * differently, same rule name and message; validate's warning-tier quote-safety (a bare date) is not
+ * reported. `singleton-type` is a second document of a type a bundle may hold only one of (error),
+ * counted per selected bundle root.
  *
  * `source-of-truth`, `zero-entries-read` and `deprecated-reference` (LCLI-596) come from a
  * registered type's BUNDLE rules (`TypeRule.bundle`), today only the built-in Constants type:
@@ -112,6 +115,7 @@ export type CheckRule =
   | "deprecated-reference"
   | "frontmatter"
   | "required-section"
+  | "quote-safety"
   | "broken-link"
   | "broken-anchor"
   | "broken-source"

@@ -199,11 +199,31 @@ describe("Constitution — lore check fails each missing required section (AC#1)
 });
 
 describe("Constitution — lore check reports only what it reports for every type (review finding 8)", () => {
-  test("a quote-safety warning validate raises is NOT reported by check for a Constitution", () => {
-    // `summary: yes` is a YAML 1.1 boolean hazard: validate warns, check reports nothing, as for any type.
+  // Until LCLI-612 check reported no quote-safety finding for any type, and this block pinned that
+  // with `summary: yes` -- which validate raises at ERROR tier, not as a warning. Check now reports
+  // validate's error-tier quote-safety findings for every type, and still none of its warning-tier
+  // ones, so the invariant this block guards (a Constitution gets what every type gets) is kept by
+  // the two halves below.
+  test("an error-tier quote-safety finding validate raises IS reported by check for a Constitution, as for every type", () => {
+    // `summary: yes` is a YAML 1.1 boolean hazard: validate's error tier.
     const hazard = mutate("summary: The project's durable principles and how they change.", "summary: yes");
     const validate = validateConceptText("docs/constitution/project.md", hazard).findings;
-    expect(validate.map((finding) => finding.rule)).toContain("quote-safety");
+    const errors = validate.filter((finding) => finding.rule === "quote-safety" && finding.severity === "error");
+    expect(errors).toHaveLength(1);
+    expectCheckError(hazard, /unquoted "yes" is a boolean to YAML 1\.1 consumers/, "quote-safety");
+    const mine = check().findings.filter((finding) => finding.rule === "quote-safety");
+    expect(mine.map(({ severity, message }) => ({ severity, message }))).toEqual(
+      errors.map(({ severity, message }) => ({ severity, message })),
+    );
+  });
+
+  test("a warning-tier quote-safety finding validate raises is NOT reported by check for a Constitution", () => {
+    // A bare date is validate's warning tier; check reports nothing, even under --strict, as for any type.
+    const hazard = mutate('ratified: "2026-01-10"', "ratified: 2026-01-10");
+    const validate = validateConceptText("docs/constitution/project.md", hazard).findings;
+    expect(validate.map(({ severity, rule }) => ({ severity, rule }))).toEqual([
+      { severity: "warning", rule: "quote-safety" },
+    ]);
     expectCheckClean(hazard);
   });
 });

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BEHAVIOUR CHANGE: `lore check` fails on every error-tier `quote-safety` finding that `lore
+  validate` reports** (LCLI-612, ADR-0007). It uses the same rule name and byte-identical messages,
+  for every type. The findings cover an unquoted YAML-1.1 boolean (`yes`/`no`/`on`/`off`/`y`/`n`),
+  a value that starts with a YAML indicator character, and a value containing `: `. Before this,
+  such a file failed `validate` and passed `check`. Run `lore validate` to preview what `check`
+  will now fail on. A bare `YYYY-MM-DD` date stays a validate-only warning. Frontmatter that is not
+  valid YAML still stops `check` at the parse error, before per-file rules run. A fleet measurement
+  by ref found 0 such findings in 396 files across 11 repositories. This ships in a minor release.
 - **`scripts/promote-latest.mjs` refuses a `--version` that would move `latest` backwards, or is
   not plain `X.Y.Z`** (LCLI-631, paired with quest-cli QCLI-402). On a fresh `--dry-run` or
   `--promote`, before any registry write, it refuses a `--version` older (numerically) than any

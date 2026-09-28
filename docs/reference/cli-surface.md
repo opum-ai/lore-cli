@@ -333,9 +333,18 @@ The **drift gate** — read-only, never writes. Aggregates:
   second frontmatter fence is reported once, under `check`'s own
   `double-frontmatter` rule (LCLI-372), not also as `frontmatter`. A file
   without frontmatter is skipped here, as `validate` skips it. Run
-  `lore validate` to preview these findings. `validate`'s error-tier `quote-safety`
-  findings, resource drift, and extra-key and summary warnings stay
-  `validate`-only.
+  `lore validate` to preview these findings. Resource drift, and extra-key and
+  summary warnings stay `validate`-only.
+- **Frontmatter quote-safety** (LCLI-612) — for **every** type, every
+  error-tier `quote-safety` finding [`validate`](#validate) reports → **error**,
+  under the same rule name and message, judged the same way as the rules above:
+  an unquoted YAML-1.1 boolean (`yes`/`no`/`on`/`off`/`y`/`n`), a value starting
+  with a YAML indicator character, or a value containing `: `. `validate`'s
+  warning-tier `quote-safety` finding (a bare `YYYY-MM-DD` date) is not reported,
+  not even under `--strict`. A frontmatter block that is not valid YAML ends the
+  file's judgement at the parse error (`complete: false`, exit `6`), so its
+  `quote-safety` finding appears only in `validate`. Run `lore validate` to
+  preview these findings.
 - **Bundle-scoped link + heading-anchor validation** — whole-bundle pure-JS
   pass: every `.md` cross-link whose resolved target stays inside the selected
   bundle root must resolve, and every such `#anchor` must hit a real heading.
@@ -376,7 +385,7 @@ The **drift gate** — read-only, never writes. Aggregates:
 | **Args** | optional `[paths…]` (default: whole bundle) |
 | **Key flags** | `--strict` (treat deterministic warnings as failures for the exit code) · `--as-of YYYY-MM-DD` (pin date-sensitive rules; default HEAD commit date) · `--external` (also probe external-URL liveness — advisory, never gates) |
 | **Output** | `kind: check.report` — `findings`, `errorCount`, `warningCount`, `fileCount`, `skippedOutOfBundleLinkCount`, `complete`; plus optional `externalFindings` when `--external` ran, and optional `readCounts` when the bundle holds a Constants document (per type: `entries`, `comparableSources`, `notComparableSources`, `references`; LCLI-596). The skipped and read counts are informational and never affect severity counts or exit status. |
-| **Exit** | `0` no broken bundle-scoped links/anchors, no status/managed-block drift, and no error-tier `required-section` or `frontmatter` finding · `2` invalid/non-calendar `--as-of` · `3` a linked task id no longer exists, or a date-sensitive rule needs the absent HEAD commit date · `6` any broken bundle-scoped link/anchor, any status/managed-block drift, any `required-section` or error-tier `frontmatter` finding (or any deterministic warning under `--strict`, or an unknown type under `strict_types`), or any `missing`/`stale`/`orphaned` committed schema · `7` an `unattributable` committed schema (indeterminate — never auto-repair); a run with both `6`- and `7`-class findings exits `7` and still reports every finding. Skipped out-of-bundle links and external-liveness results never affect the exit. |
+| **Exit** | `0` no broken bundle-scoped links/anchors, no status/managed-block drift, and no error-tier `required-section`, `frontmatter` or `quote-safety` finding · `2` invalid/non-calendar `--as-of` · `3` a linked task id no longer exists, or a date-sensitive rule needs the absent HEAD commit date · `6` any broken bundle-scoped link/anchor, any status/managed-block drift, any `required-section` or error-tier `frontmatter` or `quote-safety` finding (or any deterministic warning under `--strict`, or an unknown type under `strict_types`), or any `missing`/`stale`/`orphaned` committed schema · `7` an `unattributable` committed schema (indeterminate — never auto-repair); a run with both `6`- and `7`-class findings exits `7` and still reports every finding. Skipped out-of-bundle links and external-liveness results never affect the exit. |
 
 ---
 
