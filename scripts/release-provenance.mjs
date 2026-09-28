@@ -644,6 +644,34 @@ const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const firstLine = (text) => String(text).replace(/\s+/g, " ").slice(0, 200);
 const describeError = (error) => (error instanceof Error ? `${error.name}: ${error.message}` : String(error));
 
+/**
+ * Escape text for the DATA part of a workflow command (`::error::<data>`), per GitHub's
+ * workflow-command rules: `%` -> `%25`, CR -> `%0D`, LF -> `%0A`. `%` goes first, or the `%`
+ * the other two introduce would itself be escaped. The runner reads the log line by line
+ * BEFORE it parses a command, so an unescaped interior line break ends this command and lets
+ * whatever follows print as a new one (LCLI-636). Property values (`title=`, `file=`) would
+ * also need `:` and `,` escaped; nothing in this script prints a property, so this helper
+ * deliberately does not claim to cover them.
+ * @param {string} text
+ */
+const workflowCommandData = (text) => String(text).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+
+/**
+ * Characters an `--acknowledge` reference may not contain: `%`, every C0 control (CR and LF
+ * among them) and DEL. See parseArgs for why these are refused rather than escaped.
+ */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point.
+const UNSAFE_REFERENCE_CHARACTER = /[%\u0000-\u001f\u007f]/;
+
+/**
+ * Render a refused value so that none of its unsafe characters appears raw. JSON escapes CR,
+ * LF and every other C0 control as a visible `\n` / `\uXXXX`; DEL, which JSON leaves raw, is
+ * spelled out too. `%` stays a `%` here and becomes `%25` when the message is printed through
+ * workflowCommandData, so the annotation shows it literally and the runner decodes nothing.
+ * @param {string} value
+ */
+const renderRefusedValue = (value) => JSON.stringify(value).replace(/\u007f/g, "\\u007f");
+
 function resetAt(response) {
   const reset = Number.parseInt(response.headers.get("x-ratelimit-reset") || "", 10);
   return Number.isFinite(reset) ? new Date(reset * 1000).toISOString() : "unknown";
@@ -1054,6 +1082,8 @@ function report(checked, mode, options) {
     );
   }
   if (waived.length > 0) {
+    // options.acknowledge is safe raw here only because parseArgs refuses %, CR, LF and every
+    // other control character in it (LCLI-636). Relax that refusal and this line must escape.
     console.log(
       `::warning::${waived.length} DANGLING provenance finding(s) were waived for this dispatch against reference "${options.acknowledge}": ${waived.map((r) => r.spec).join(", ")}. The commits they pin are still gone and this waiver does not persist — the next run fails again unless KNOWN_DANGLING_THROUGH is raised in a commit citing that reference.`,
     );
@@ -1171,6 +1201,20 @@ function parseArgs(argv) {
       // record it is accountable to.
       options.acknowledge = (argv[++i] ?? "").trim();
       if (!options.acknowledge) throw new Error("--acknowledge needs a reference (the task id tracking the loss)");
+      // REFUSED, NOT ESCAPED (LCLI-636). This is the `acknowledge_dangling_provenance` dispatch
+      // input, echoed inside `::warning::` lines and the job summary. An API dispatch can carry
+      // an interior line break, which would end that command and let the rest of the value print
+      // as a forged `::error::` (or any other) workflow command, and a literal `%0A` would be
+      // decoded by the runner into the same break. A reference is a task id: no legitimate one
+      // contains any of these characters. Refusing here, before any request is made or any
+      // annotation printed, makes every later print site safe by construction instead of relying
+      // on each one remembering to escape. The refusal itself shows the value escaped. Only the
+      // ENDS are trimmed above, so a shell's trailing newline is still accepted.
+      if (UNSAFE_REFERENCE_CHARACTER.test(options.acknowledge)) {
+        throw new Error(
+          `--acknowledge must be a single-line reference (the task id tracking the loss) containing no '%' and no control characters such as CR or LF; got ${renderRefusedValue(options.acknowledge)}`,
+        );
+      }
     } else {
       throw new Error(`unknown argument: ${arg}`);
     }
@@ -1193,7 +1237,9 @@ async function main() {
   try {
     options = parseArgs(process.argv.slice(2));
   } catch (error) {
-    console.error(`::error::${describeError(error)}`);
+    // Escaped: a usage error can quote an argument back (--acknowledge, --launcher-rc), and an
+    // argument is caller-controlled text (LCLI-636).
+    console.error(`::error::${workflowCommandData(describeError(error))}`);
     console.error(
       "usage: node scripts/release-provenance.mjs (--pre [--limit N] | --post --launcher-rc N [--wait-seconds N] [--version V]) [--package NAME]... [--acknowledge REF]",
     );
@@ -1213,6 +1259,8 @@ async function main() {
     .replace(/\.git$/, "");
 
   if (options.acknowledge) {
+    // Interpolated raw on purpose: parseArgs has already refused %, CR, LF and every other
+    // control character in it (LCLI-636), and the same holds for report()'s waiver line.
     console.log(
       `::warning::running with a dangling-provenance waiver for this dispatch: "${options.acknowledge}". Any dangling finding below is reported and then waived rather than failing the run.`,
     );

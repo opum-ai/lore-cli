@@ -455,6 +455,128 @@ describe("release-provenance acknowledgement (the escape hatch)", () => {
   });
 });
 
+/**
+ * LCLI-636. `--acknowledge` carries the `acknowledge_dangling_provenance` dispatch input, and an
+ * API dispatch can put anything in it. The runner reads the log line by line before it parses a
+ * workflow command, so an interior line break inside a `::warning::` would end that command and
+ * print the rest of the value as a forged one; a literal `%0A` would be decoded into the same
+ * break. The script refuses such a value outright rather than escaping it at each print site.
+ *
+ * Every run here is `--post` on 0.7.1, the dangling fixture, so if the refusal were missing the
+ * value would reach BOTH print sites that echo it — the "running with a waiver" line in main()
+ * and the "waived for this dispatch" line in report() — and the forged line would be visible.
+ */
+describe("release-provenance refuses an --acknowledge value that could forge a workflow command (LCLI-636)", () => {
+  const waiverArgs = (reference: string) => [
+    "--post",
+    "--launcher-rc",
+    "1",
+    "--version",
+    "0.7.1",
+    "--package",
+    LAUNCHER,
+    "--acknowledge",
+    reference,
+  ];
+
+  /** Lines as the runner sees them: it breaks on LF and on a bare CR alike. */
+  const logLines = (out: string) => out.split(/\r\n|\r|\n/);
+
+  /** Every line that the runner would parse as a workflow command. */
+  const commandLines = (out: string) => logLines(out).filter((line) => line.startsWith("::"));
+
+  const hostile: Array<{ name: string; value: string; shownAs: string }> = [
+    {
+      name: "an interior LF",
+      value: "LCLI-481\n::error::forged",
+      shownAs: '"LCLI-481\\n::error::forged"',
+    },
+    {
+      name: "an interior CR",
+      value: "LCLI-481\r::error::forged",
+      shownAs: '"LCLI-481\\r::error::forged"',
+    },
+    {
+      // The encoded form: no raw break at all, but the runner decodes %0A in command data.
+      name: "a literal %0A",
+      value: "LCLI-481%0A::error::forged",
+      shownAs: '"LCLI-481%250A::error::forged"',
+    },
+    {
+      name: "a bare percent sign",
+      value: "LCLI-481 at 100%",
+      shownAs: '"LCLI-481 at 100%25"',
+    },
+    {
+      name: "a DEL character",
+      value: "LCLI-481\u007f",
+      shownAs: '"LCLI-481\\u007f"',
+    },
+    {
+      // The other C0 controls, which the refusal covers as a class: no legitimate task id
+      // contains any of them, and each is JSON-escaped to visible text in the refusal.
+      name: "an interior TAB",
+      value: "LCLI-481\t::error::forged",
+      shownAs: '"LCLI-481\\t::error::forged"',
+    },
+    {
+      name: "an ESC character",
+      value: "LCLI-481\x1b::error::forged",
+      shownAs: '"LCLI-481\\u001b::error::forged"',
+    },
+    {
+      name: "a vertical TAB",
+      value: "LCLI-481\x0b::error::forged",
+      shownAs: '"LCLI-481\\u000b::error::forged"',
+    },
+  ];
+
+  for (const { name, value, shownAs } of hostile) {
+    test(`${name} is refused as a usage error before anything runs, and shown escaped`, async () => {
+      const { code, out } = await runGate(waiverArgs(value));
+      expect(code).toBe(2);
+
+      // No forged command: the only command line is the refusal itself.
+      expect(logLines(out).some((line) => line.startsWith("::error::forged"))).toBe(false);
+      const commands = commandLines(out);
+      expect(commands).toHaveLength(1);
+      expect(commands[0]).toStartWith("::error::Error: --acknowledge must be a single-line reference");
+
+      // Shown escaped, so the reader can see exactly what was refused and nothing is decoded.
+      expect(commands[0]).toContain(`got ${shownAs}`);
+
+      // Refused before anything ran: no waiver was announced and no package was reported.
+      expect(out).not.toContain("running with a dangling-provenance waiver");
+      expect(outcomeOf(out, `${LAUNCHER}@0.7.1-rc.1`)).toBeUndefined();
+    });
+  }
+
+  test("CONTROL: a trailing newline is trimmed, not refused — a shell-supplied value still waives", async () => {
+    const { code, out } = await runGate(waiverArgs("LCLI-481\n"));
+    expect(code).toBe(0);
+    expect(outcomeOf(out, `${LAUNCHER}@0.7.1-rc.1`)).toBe("acknowledged");
+  });
+
+  test("CONTROL: ordinary punctuation, colons and commas included, is not refused", async () => {
+    const reference = "LCLI-481 (accepted: operator, 2026-09-28)";
+    const { code, out } = await runGate(waiverArgs(reference));
+    expect(code).toBe(0);
+    expect(outcomeOf(out, `${LAUNCHER}@0.7.1-rc.1`)).toBe("acknowledged");
+    expect(out).toContain(`against reference "${reference}"`);
+  });
+
+  test("any usage error that quotes an argument back is escaped, not only --acknowledge's", async () => {
+    // --launcher-rc echoes its rejected value inside the ::error:: line. The escaping at that
+    // print site is what keeps an interior LF there from forging a command.
+    const { code, out } = await runGate(["--post", "--launcher-rc", "1\n::error::forged"]);
+    expect(code).toBe(2);
+    expect(logLines(out).some((line) => line.startsWith("::error::forged"))).toBe(false);
+    const commands = commandLines(out);
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toContain("got '1%0A::error::forged'");
+  });
+});
+
 describe("release-provenance --pre over the published history", () => {
   test("EVERY package of a scanned release is checked, not just the launcher", async () => {
     // 0.7.4 is a release whose packages were published from two commits (possible when

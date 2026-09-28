@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   spelling. Because lore and quest share one version (constitution Article 3 clause 1), the gate
   also reads quest-cli's `CHANGELOG.md` by ref and applies the same rule, and an unreadable quest
   changelog is a refusal, not a pass. `release.yml`'s new `breaking-bump` job gates the publish job.
+- **`scripts/release-provenance.mjs` refuses an `acknowledge_dangling_provenance` dispatch input
+  that could forge workflow commands** (LCLI-636). The value previously printed raw inside
+  `::warning::` lines, so an API dispatch with an interior CR/LF could have forged runner commands
+  and annotations. The input is now refused (exit 2) when it still contains `%`, a newline, any
+  other control character, or DEL after trimming, with the value shown escaped.
 - **`lore` reads quest's terminal statuses from `quest task status-flow` instead of treating only
   `Done` as complete** (LCLI-633, paired with quest-cli QCLI-331 and its later QCLI-406). A task in
   quest's `closedStatus` is now complete for Story/Task coupling and `lore check`, and the adapter
