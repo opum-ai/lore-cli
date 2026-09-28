@@ -105,6 +105,14 @@ export interface ReconcileConfig {
    * `backlog/config.yml` unconditionally.
    */
   readonly hints: StatusFlowHints;
+  /**
+   * The ACTIVE backend's explicit terminal statuses, when it declares them (LCLI-633 —
+   * `TrackerAdapter.terminalStatuses()`; Quest's `terminalStatuses` plus its optional `closedStatus`,
+   * quest-cli QCLI-331's second terminal status). Absent for backends that omit the method (Backlog,
+   * Jira): reconciliation then keeps the positional "last status-flow entry is terminal" contract
+   * unchanged.
+   */
+  readonly terminalStatuses?: readonly string[];
 }
 
 /**
@@ -118,8 +126,15 @@ export interface ReconcileConfig {
 export async function readReconcileConfig(root: string, adapter = defaultAdapter(root)): Promise<ReconcileConfig> {
   const flow = await adapter.statusFlow();
   const pausedStatus = await adapter.pausedStatus?.();
+  const terminalStatuses = await adapter.terminalStatuses?.();
   const config = loadConfig({ root });
-  return { flow, overrides: config.reconcile.overrides, pausedStatus, hints: adapter.statusFlowHints };
+  return {
+    flow,
+    overrides: config.reconcile.overrides,
+    pausedStatus,
+    terminalStatuses,
+    hints: adapter.statusFlowHints,
+  };
 }
 
 /**
@@ -190,7 +205,7 @@ export async function gatherReconciliation(
   if (configOverride === undefined && configErrorOverride !== undefined) {
     throw configErrorOverride;
   }
-  const { flow, overrides, pausedStatus, hints } =
+  const { flow, overrides, pausedStatus, terminalStatuses, hints } =
     configOverride ?? (await resolveReconcileConfig(root, adapterOverride ?? defaultAdapter(root)));
 
   const allTaskIds = dedupeTaskIds(eligible.flatMap((e) => e.linked));
@@ -209,6 +224,7 @@ export async function gatherReconciliation(
       overrides,
       pausedStatus,
       hints,
+      terminalStatuses,
     );
     const rows: ManagedTaskRow[] = detailList.map((d) => ({
       id: d.id,
