@@ -625,14 +625,19 @@ the promotion half, item 7. It is not part of staging.
    distinction. `scripts/promote-latest.mjs` runs it once, after the final `X`
    launcher is published to `latest` (item 7), against that tarball's own
    `package.json` and `README.md` (LCLI-616). It retries for
-   `REGISTRY_WINDOW_SECONDS` (default 1800). It fails when the served page
-   satisfies neither this release's assertions nor the previous release's. It
-   also fails when npm serves no `readme` at all after the whole window: after a
-   fresh publish to `latest` that is the OPAG-474 defect, not lag, because a
-   lagging replica serves the previous README rather than an empty one. Record
-   the package and the time you read, never "the page for version X" — naming
-   an object you did not read is the defect class this whole gate exists to
-   close.
+   `REGISTRY_WINDOW_SECONDS` (default 1800). It ends in one of three verdicts,
+   printed as its last line (`A4 VERDICT: PASSED|NOT-CONFIRMED|FAILED
+   <reason>`). It is FAILED when the served page satisfies neither this
+   release's assertions nor the previous release's. An empty `readme` after the
+   whole window is settled by one packument read of `readme` and `versions`. A
+   lagging replica serves the packument as it stood before the publish, and
+   that can be empty: `@opum-ai/lore`'s has had no `readme` since 0.11.0
+   (OPAG-474), so the next release will lag through an empty field. So empty is
+   FAILED (the OPAG-474 defect) only when the same read already lists this
+   version. Otherwise lag is not ruled out, and the verdict is NOT-CONFIRMED.
+   Record the package and the time you read, never "the page for version X" —
+   naming an object you did not read is the defect class this whole gate exists
+   to close.
 
    Keep the README's copyable install commands versionless (`npx
    @opum-ai/lore`, `bunx @opum-ai/lore`, and package-manager installs without
@@ -1110,24 +1115,40 @@ the promotion half, item 7. It is not part of staging.
    It runs `scripts/readme-readback.sh` with its working directory set to a
    private directory holding the `X` tarball's own `package/package.json` and
    `package/README.md`, so "byte-equal" means equal to the bytes that shipped.
-   The npm registry pins travel in its environment, and `REGISTRY_WINDOW_SECONDS`
-   passes through. On a pass it prints the script's verdict line and exits `0`.
-   A `--dry-run` never runs it.
+   The npm registry pins travel in its environment, and every npm config
+   variable the caller had, in either case, is dropped first. `REGISTRY_WINDOW_SECONDS`
+   passes through. Its output prints when it finishes. A `--dry-run` never runs
+   it. Promote classifies the result by the script's `A4 VERDICT:` line, never
+   by its last line of output, as one of three states:
 
-   **If the read-back does not pass, it exits `3`, and the promotion is still
-   complete.** Exit `3` is used for nothing else. It covers an empty `readme`
-   after the window, a page that matches no release, and a read-back that could
-   not run. By then `latest` reads `<version>` on all seven packages and step 7
-   has verified npm's `X` bytes, so nothing is rolled back and nothing more is
-   written. **Do not run `--rollback`**: the page is immutable, and restoring
-   the old `latest` undoes a correct release without giving the page a readme.
-   The fix is the next release. Re-read it by hand
-   (`npm view @opum-ai/lore readme | wc -c`) and record the result in the
-   release-truth record. A non-zero exit here replaces LCLI-621's warn-only
-   read-back. That design warned rather than failed because a failure "invites
-   the wrong remedy". The distinct code and the explicit do-not-roll-back
-   message answer that concern without letting a pipeline exit `0` over the
-   defect.
+   - **PASSED**: the verdict line says `PASSED` and the script exited `0`.
+     Promote exits `0`.
+   - **NOT CONFIRMED**: nothing was proven either way. That covers the
+     previous release's README still served, an empty `readme` on a packument
+     that does not list `<version>` yet, and a checker that could not read its
+     input. It also covers a tooling failure: no verdict line at all, because
+     the temp directory, the extraction or the script itself failed. A tooling
+     failure is labelled as one, never as OPAG-474. Promote exits `3`.
+   - **DID NOT PASS**: a finding about the page. Either an empty `readme` on a
+     packument that already lists `<version>` (OPAG-474), or a page that
+     matches no release. Promote exits `3`.
+
+   **Exit `3` means the promotion is complete, and the readme is not
+   established.** Exit `3` is used for nothing else. By then `latest` reads
+   `<version>` on all seven packages and step 7 has verified npm's `X` bytes,
+   so nothing is rolled back and nothing more is written. **Do not run
+   `--rollback`**: the page is immutable, and restoring the old `latest` undoes
+   a correct release without giving the page a readme. For DID NOT PASS the fix
+   is the next release. For NOT CONFIRMED, re-read once propagation is plainly
+   done. Either way, re-read it by hand (`npm view @opum-ai/lore readme | wc -c`)
+   and record the result in the release-truth record. The message also prints
+   the command that re-runs the whole read-back against the served tarball.
+   NOT CONFIRMED exits `3` rather than `0` because both states leave the readme
+   unproven, and the operator's remedy is the same; the printed label says
+   which it was. A non-zero exit here replaces LCLI-621's warn-only read-back.
+   That design warned rather than failed because a failure "invites the wrong
+   remedy". The distinct code and the explicit do-not-roll-back message answer
+   that concern without letting a pipeline exit `0` over an unproven readme.
 
    **The commit comes from the tag, not from npm, and that is the one
    place this cannot mirror quest.** quest checks npm's recorded `gitHead`.
@@ -1166,23 +1187,27 @@ the promotion half, item 7. It is not part of staging.
    `readme` and `latest` had not moved, so its closing checklist now stops at
    the promotion.
 
-   1. **README read-back.** It has already run (item 7), and the checklist
-      repeats its verdict line. Record that line in the release-truth record.
-      If it did not pass, do not roll back.
+   1. **README read-back.** It has already run (item 7). The checklist labels
+      it PASSED, NOT CONFIRMED or DID NOT PASS, and repeats the script's
+      `A4 VERDICT:` line. Record that line in the release-truth record. If it
+      is not PASSED, re-read it by hand, and do not roll back.
    2. **GitHub Release.** Cut a non-draft, non-prerelease GitHub Release for
       `v<version>`, with `CHANGELOG.md`'s `[<version>]` section as its body:
       `gh release create v<version> --title "Lore CLI <version>" --notes-file <notes>`.
       It is still a manual step (LCLI-622 tracks making it an executed one).
-   3. **Tell quest-cli that lore is live on `latest`**, and opum-agent, whose
-      go it was. Resolve each session with `ListAgents` and match on
-      repository.
+   3. **Tell quest-cli that lore is live on `latest`.** Tell opum-cli-e2e the
+      same, for information, and opum-agent, whose go it was. Resolve each
+      session with `ListAgents` and match on repository.
    4. **The LCLI-469 marketplace handshake, second message.**
       `opum-marketplace` holds its `opum-lore` pin until `dist-tags.latest`
       moves, and clause 4 has it bump `opum-lore` and `opum-quest` together.
       Tell it `latest` has moved. Send the tag name, tag object SHA, peeled
       commit and `skills/` tree SHA from item 4 again, to be re-resolved rather
-      than trusted. The checklist prints the tag chain the promotion resolved,
-      and the three `git` commands from item 4.
+      than trusted. The checklist prints all four, resolved: the tag chain the
+      promotion peeled, and the `skills/` tree read through the same `gh api`
+      chain (the commit, its root tree, the tree's `skills` entry). If that
+      read fails it says NOT RESOLVED and gives the command to resolve it by
+      hand.
    5. **The release-truth record.** Update
       `docs/reference/lore-cli-release-truth.md`: replace its current-state
       claim so it says `<version>` is released. Record the Release run, the

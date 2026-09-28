@@ -42,13 +42,24 @@
 # from the generator, because it IS the generator.
 #
 # WHY IT RETRIES, AND WHAT IT CALLS A FAILURE. The read API lags a publish (LCLI-460: 0.4.5 ~15s,
-# 0.4.6 ~35s, 0.5.0 ~25min). A lagging replica of an established package does not serve an EMPTY
-# readme -- it serves the PREVIOUS release's README, which is byte-for-byte the thing A4 flags. So
-# a served README that satisfies the previous release's assertions is a warning, not a failure.
-# AN EMPTY README AFTER THE WHOLE WINDOW IS A FAILURE (LCLI-616, OPAG-474 AC3). This runs after a
-# fresh publish onto `latest`, and that publish is what makes npm derive the field; still empty
-# after the window is the OPAG-474 defect, not lag. It used to be a warning, from a time when this
-# ran after a staging publish that could legitimately leave it empty.
+# 0.4.6 ~35s, 0.5.0 ~25min). A lagging replica serves whatever the packument held BEFORE this
+# publish: on an established package that is the PREVIOUS release's README, which is byte-for-byte
+# the thing A4 flags, so a served README that satisfies the previous release's assertions is NOT
+# CONFIRMED, not a failure. But a lagging replica can also serve an EMPTY readme, when the packument
+# had none before -- as @opum-ai/lore's has none today (0 bytes since 0.11.0's dist-tag promotion,
+# OPAG-474), so the first fresh publish onto `latest` will lag through an empty field. Empty alone
+# therefore proves nothing. So an empty readme after the whole window is settled by ONE packument
+# read of both fields (`npm view <name> readme versions --json`): if that packument already lists
+# this version and still carries no readme, it is the OPAG-474 defect and FAILED (LCLI-616); if it
+# does not list the version yet, lag is not ruled out and it is NOT CONFIRMED.
+#
+# EVERY EXIT PATH ENDS IN ONE MACHINE-READABLE LINE, the last line it prints on stdout:
+#
+#     A4 VERDICT: <PASSED|NOT-CONFIRMED|FAILED> <one-line reason>
+#
+# scripts/promote-latest.mjs reads that line, never "the last line", because the paths above it
+# print checker findings and multi-line prose in varying order. An EXIT trap prints a NOT-CONFIRMED
+# verdict for any path that stops without reaching one, so the line is always there.
 #
 # WHY THIS IS A SCRIPT AND NOT AN INLINE `run:` BLOCK. It was inline, and it shipped two defects
 # that inspection caught only because someone went looking: it named a version-specific page it had
@@ -62,12 +73,35 @@
 # whatever registry pins the caller's environment carries. Honours REGISTRY_WINDOW_SECONDS
 # (default 1800).
 #
-# Exit 0 = confirmed, or a served README that is not this release's but is explained without a
-# defect (the previous release's, during lag; or the checker could not read its input), and it
-# says which. Exit 1 = no readme at all after the window (OPAG-474), or a served page that matches
-# no release we published, with propagation positively ruled out.
+# Exit 0 = PASSED, or NOT-CONFIRMED (nothing proven either way, and it says why: the previous
+# release's README still served, an empty readme on a packument that does not list this version
+# yet, or the checker could not read its input). Exit 1 = FAILED: an empty readme on a packument
+# that already lists this version (OPAG-474), or a served page that matches no release we
+# published, with propagation positively ruled out. The verdict line says which.
 
 : "${REGISTRY_WINDOW_SECONDS:=1800}"
+
+VERDICT_SENT=0
+# The one machine-readable line (see the header), then the exit. Every path below ends here.
+finish() {
+  VERDICT_SENT=1
+  printf 'A4 VERDICT: %s %s\n' "$1" "$3"
+  exit "$2"
+}
+# A path that stops without a verdict (a failed node, a signal) still ends in one, and keeps its
+# own exit status: an EXIT trap that does not call `exit` leaves the status alone.
+# $? is captured FIRST: the `[` test would otherwise replace it with its own 0.
+on_exit() {
+  local rc=$?
+  if [ "$VERDICT_SENT" -eq 0 ]; then
+    printf 'A4 VERDICT: NOT-CONFIRMED the read-back stopped (exit %s) before reaching a verdict; nothing was verified\n' "$rc"
+  fi
+}
+trap on_exit EXIT
+# bash 3.2 runs the EXIT trap on an untrapped signal but reports its status as 0 there, so a signal
+# exits explicitly, with the conventional 128+N, and the trap above reports that.
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # Resolve the checker relative to THIS script, not the cwd: the cwd is the release being read back
 # (it owns ./package.json and ./README.md), which in a test is a fixture tree that has no scripts/.
@@ -134,28 +168,58 @@ done
 case "$verdict" in
   byte-equal)
     echo "A4 OK: the readme npm serves for '${name}' is BYTE-EQUAL to the README.md this release packed, read $(date -u +%FT%TZ) after ${attempt} attempt(s). Subject recorded: package '${name}', release '${version}'."
-    exit 0
+    finish PASSED 0 "the package readme for ${name} is byte-equal to ${version}'s packed README.md (${attempt} read(s))"
     ;;
   assertions-hold)
     echo "A4 OK: the readme npm serves for '${name}' is not byte-equal to what we packed, but it satisfies every assertion against ${version}'s own package.json, read $(date -u +%FT%TZ) after ${attempt} attempt(s). Subject recorded: package '${name}', release '${version}'."
-    exit 0
+    finish PASSED 0 "the package readme for ${name} satisfies every assertion against ${version} (${attempt} read(s); not byte-equal)"
     ;;
 esac
 
 # The window is exhausted. Decide WHICH hypothesis the bytes support rather than
 # assuming the alarming one.
 if [ -z "$served" ]; then
-  echo "::error::A4 FAILED for package '${name}', release '${version}', read $(date -u +%FT%TZ) after ${attempt} attempt(s) over ${REGISTRY_WINDOW_SECONDS}s: the registry served NO readme field at all (OPAG-474)."
-  echo "This runs after a fresh release onto latest, which is what makes the registry derive the package-level readme."
-  echo "A lagging replica of an established package serves the PREVIOUS readme, not an empty one, so an empty field"
-  echo "after the whole window is the OPAG-474 defect, not propagation lag. This page is IMMUTABLE: the fix is the"
-  echo "next release, never an unpublish. Re-read it by hand to confirm: npm view ${name} readme | wc -c"
-  exit 1
+  # Empty alone proves nothing (see the header): settle it with ONE packument read of both fields.
+  # npm 12 answers `view <name> readme versions --json` as [{readme, versions}]; older npm, the object.
+  listing="$(npm view "$name" readme versions --json 2>/dev/null | node -e "
+    let s = '';
+    process.stdin.on('data', d => s += d).on('end', () => {
+      let doc = null;
+      try { doc = JSON.parse(s); } catch {}
+      if (Array.isArray(doc)) doc = doc.length === 1 ? doc[0] : null;
+      if (!doc || typeof doc !== 'object') { console.log('unreadable'); return; }
+      const versions = Array.isArray(doc.versions) ? doc.versions : typeof doc.versions === 'string' ? [doc.versions] : null;
+      if (!versions) { console.log('unreadable'); return; }
+      if (typeof doc.readme === 'string' && doc.readme.length > 0) { console.log('late'); return; }
+      console.log(versions.includes(process.argv[1]) ? 'listed' : 'unlisted');
+    });
+  " "$version" || true)"
+  case "$listing" in
+    listed)
+      echo "::error::A4 FAILED for package '${name}', release '${version}', read $(date -u +%FT%TZ) after ${attempt} attempt(s) over ${REGISTRY_WINDOW_SECONDS}s: the registry served NO readme field at all, and the same packument read already lists ${version} (OPAG-474)."
+      echo "A packument that lists ${version} but carries no readme is not a replica catching up on ${version}: it has it, without the"
+      echo "readme a release onto latest should have written. This page is IMMUTABLE: the fix is the next release, never an"
+      echo "unpublish. Re-read it by hand to confirm: npm view ${name} readme | wc -c"
+      finish FAILED 1 "no readme for ${name} after ${REGISTRY_WINDOW_SECONDS}s, and the packument already lists ${version} (OPAG-474)"
+      ;;
+    unlisted)
+      echo "::warning::${name}: the registry served no readme field within ${REGISTRY_WINDOW_SECONDS}s, and the same packument read does not list ${version} yet. Lag is NOT ruled out: a replica that has not caught up on ${version} serves the packument as it was before, and ${name}'s had no readme (OPAG-474). Nothing was verified either way. Re-read it by hand later: npm view ${name} readme | wc -c"
+      finish NOT-CONFIRMED 0 "lag not ruled out: ${version} not yet in the packument, which serves no readme for ${name} after ${REGISTRY_WINDOW_SECONDS}s"
+      ;;
+    late)
+      echo "::warning::${name}: the registry served no readme field within ${REGISTRY_WINDOW_SECONDS}s, but one appeared on the read made after the window closed. It was not compared. Re-read and check it by hand: npm view ${name} readme"
+      finish NOT-CONFIRMED 0 "a readme for ${name} appeared only after the ${REGISTRY_WINDOW_SECONDS}s window closed; it was not compared"
+      ;;
+    *)
+      echo "::warning::${name}: the registry served no readme field within ${REGISTRY_WINDOW_SECONDS}s, and the packument could not be read to tell whether it lists ${version} yet, so lag is NOT ruled out. Nothing was verified either way. Re-read it by hand: npm view ${name} readme | wc -c"
+      finish NOT-CONFIRMED 0 "no readme for ${name} after ${REGISTRY_WINDOW_SECONDS}s, and the packument could not be read to rule out lag"
+      ;;
+  esac
 fi
 
 if [ "$check_rc" -eq 2 ]; then
   echo "::warning::${name}: the checker could not read its input (exit 2), so A4 verified NOTHING. This is a tooling failure, not evidence about the published page. Re-run the check by hand against 'npm view ${name} readme'."
-  exit 0
+  finish NOT-CONFIRMED 0 "the checker could not read its input (exit 2); nothing was verified"
 fi
 
 # Is what the registry is serving simply the PREVIOUS release's README? If it satisfies
@@ -186,10 +250,10 @@ if [ -n "$prev" ]; then
 
   if node "$CHECKER" --check --dir "$prevdir" > /dev/null 2>&1; then
     echo "::warning::${name}: after ${REGISTRY_WINDOW_SECONDS}s the registry is still serving the README of the PREVIOUS release (${prev}), not ${version}'s. It satisfies ${prev}'s assertions exactly, which is what propagation lag looks like on an established package -- npm's readme field is package-level and updates when the publish finishes propagating (LCLI-460: 0.5.0 took ~25min). This is NOT a confirmed defect and NOT a reason to unpublish. Re-read 'npm view ${name} readme' later; if it still shows ${prev} once propagation is plainly done, THAT is the defect, and the fix is the next release."
-    exit 0
+    finish NOT-CONFIRMED 0 "${name} still serves the previous release ${prev}'s README after ${REGISTRY_WINDOW_SECONDS}s; lag not ruled out"
   fi
 fi
 
 echo "::error::A4 FAILED for package '${name}', release '${version}', read $(date -u +%FT%TZ) after ${attempt} attempt(s) over ${REGISTRY_WINDOW_SECONDS}s. The readme npm serves satisfies NEITHER ${version}'s assertions NOR ${prev:-the previous release}'s, so propagation lag has been ruled out -- this is not a replica catching up, it is a page that matches no release we published. The packed tarball passed the gate, so the divergence was introduced at or after publish. This page is IMMUTABLE: the fix is the next release, never an unpublish. Findings against ${version}:"
 node "$CHECKER" --check --dir "$workdir" || true
-exit 1
+finish FAILED 1 "the package readme for ${name} satisfies neither ${version}'s assertions nor ${prev:-the previous release}'s"

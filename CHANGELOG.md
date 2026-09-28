@@ -48,23 +48,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read also passes `--userconfig=/dev/null`, so no token is sent. The Release run must be a
   `workflow_dispatch` run built from `opum-ai/lore-cli`. The spec is quest-cli's promote clause
   (QCLI-399, `e3c59d7b`) and opum-cli-e2e's `receipts/README.md` steps 5 to 7 (`4f078e6b`).
-- **The README read-back runs after the final `latest` publish, and an empty `readme` fails it**
-  (LCLI-616, OPAG-474 AC3). `scripts/promote-latest.mjs --promote` runs `scripts/readme-readback.sh`
-  once, after step 7, in a private directory holding the `X` launcher tarball's own `package.json`
-  and `README.md`. The registry pins travel in its environment, and `REGISTRY_WINDOW_SECONDS`
-  passes through. `--dry-run` does not run it. If the read-back does not pass, promote exits `3`, a
-  code nothing else uses. The message says the promotion is complete and verified, says not to run
-  `--rollback` (an immutable page cannot be given a readme), names the next release as the fix, and
-  gives the command that re-reads the readme. Nothing is rolled back or written after it. The
-  script itself now fails (exit 1, naming OPAG-474) when npm serves no `readme` after the whole
-  window. After a fresh publish onto `latest`, an empty field is the defect: lag on an established
-  package serves the previous README, not an empty one. The script's choice of "the previous
-  release" also skips `X-rc.N` versions now. Those sort just below `X` and never set the field, so
-  choosing one would have turned a lag warning into a failure from the second release under
-  LCLI-621 onwards. `release.yml`'s staging `publish` job no longer runs the read-back. A staged rc
-  never sets the field, and the job's sparse checkout never carried the script, so every
-  `publish: true` run concluded `failure` and could not be promoted. `test/release-workflow.test.ts`
-  now requires every `scripts/` file a job runs to be in that job's own checkout.
+- **The README read-back runs after the final `latest` publish, with three verdicts** (LCLI-616,
+  OPAG-474 AC3). `scripts/promote-latest.mjs --promote` runs `scripts/readme-readback.sh` once,
+  after step 7, in a private directory holding the `X` launcher tarball's own `package.json` and
+  `README.md`. The registry pins travel in its environment. Every inherited npm config variable,
+  in either case, is dropped first, because an uppercase `NPM_CONFIG_@OPUM-AI:REGISTRY` beat the
+  lowercase pin. `REGISTRY_WINDOW_SECONDS` passes through, and `--dry-run` does not run it. The
+  script now ends every path, an interrupted one included, with one line:
+  `A4 VERDICT: PASSED|NOT-CONFIRMED|FAILED <reason>`. Promote reads that line, not the last line
+  printed. An empty `readme` after the window is settled by one packument read of `readme` and
+  `versions`. If that read already lists the version, the verdict is FAILED (OPAG-474). If not, it
+  is NOT-CONFIRMED, because lag is not ruled out: the packument had no `readme` before this
+  publish. The previous-release pick skips `X-rc.N` versions, which sort just below `X` and never
+  set the field. PASSED exits `0`. NOT CONFIRMED and DID NOT PASS both exit `3`, a code nothing
+  else uses. The message says the promotion is complete and verified, says not to run `--rollback`,
+  and gives the commands that re-read the readme or re-run the read-back by hand. A temp
+  directory, extraction or script that fails is a NOT CONFIRMED tooling failure, never an OPAG-474
+  claim. `release.yml`'s staging `publish` job no longer runs the read-back. A staged rc never sets
+  the field, and the job's sparse checkout never carried the script, so every `publish: true` run
+  concluded `failure` and could not be promoted. `test/release-workflow.test.ts` now requires every
+  `scripts/` file a job runs to be in that job's own checkout, and states what it cannot see.
 - **The post-latest steps are printed after the promotion, not after staging** (LCLI-618).
   `scripts/publish-release.sh`'s closing checklist, from `--print-checklist` and at the end of a
   real run, now lists only what applies before the final `latest` publish. It tells opum-cli-e2e
@@ -73,8 +76,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read-back, the GitHub Release, the "lore is live" notices, the LCLI-469 marketplace handshake
   and the release-truth record are gone from it. `promote-latest.mjs --promote` now prints them as
   a post-latest checklist when it finishes, whether or not the read-back passed. The checklist
-  carries the read-back's verdict, the `gh release create` command, the tag chain the promotion
-  resolved, and the run id and record path. It cites runbook section 3 item 8, which carries the
+  carries the read-back's state (PASSED, NOT CONFIRMED or DID NOT PASS) and verdict line, and the
+  `gh release create` command. It lists the "lore is live" notices for quest-cli, opum-cli-e2e
+  and opum-agent. It gives the four LCLI-469 handshake values, resolved: the tag object and
+  peeled commit, and the `skills/` tree SHA read through `gh api`. It also gives the run id and
+  record path. It cites runbook section 3 item 8, which carries the
   same five steps, and a test holds the two together. publish-release.sh's post-publish
   registry-state table is now printed after the registry-visibility wait, not before it. On the
   0.11.0 staging it read the launcher as `ABSENT` through propagation lag, and the poll after it

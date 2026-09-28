@@ -970,8 +970,17 @@ describeOnPosix("release.yml's publish step stages seven of eight tarballs (LCLI
 // which files a checkout brings, and the step only ever executed inside a real publish. This reads
 // every job, collects each `scripts/<path>` a `run:` invokes by direct path (through bash, sh, node
 // or bun, or as the command itself), and requires an EARLIER checkout step in the same job to bring
-// it: a full checkout, or a sparse one that lists it. A job with no checkout at all brings nothing.
-
+// it: a full checkout, or a sparse one that lists it. A job with no checkout at all brings nothing,
+// and neither does a checkout whose `repository:` names another repository.
+//
+// WHAT IT DOES NOT SEE (LCLI-616 review F6), so a green here is not a proof about these:
+//   - a path held in a variable (`s=scripts/x.sh; bash "$s"`), or built from $GITHUB_WORKSPACE or
+//     ${{ github.workspace }};
+//   - runners it does not name: `bun run <script>`, `npx tsx`, `python3`, `.`/`source`, or anything
+//     a composite or JavaScript action runs on the step's behalf;
+//   - `working-directory:` or a `cd` before the invocation: a path is resolved against the
+//     workspace root, so a relative path that only works from a subdirectory is misjudged;
+//   - any workflow but release.yml.
 /** One `scripts/` file a step runs, as written (relative to the workspace), and where it runs. */
 interface ScriptInvocation {
   job: string;
@@ -1014,6 +1023,10 @@ function scriptInvocations(jobs: Record<string, WorkflowJob>): ScriptInvocation[
  * match -- a leading "/" anchors to the checkout root, an unanchored pattern matches at any depth.
  */
 function checkoutBrings(step: WorkflowStep, path: string): boolean {
+  // A checkout of ANOTHER repository brings none of this repository's files.
+  const repository = String(step.with?.repository ?? "").trim();
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: the GitHub Actions expression, not a JS template.
+  if (repository && repository !== "opum-ai/lore-cli" && repository !== "${{ github.repository }}") return false;
   const root = String(step.with?.path ?? "")
     .replace(/^\.\/?/, "")
     .replace(/\/$/, "");
@@ -1135,6 +1148,14 @@ describe("release.yml: every scripts/ file a job runs is in that job's checkout 
     ).toHaveLength(1);
     // Cone mode (the default) brings listed directories and root files, not a file under an unlisted one.
     const cone = (listing: string): WorkflowStep => ({ uses: CHECKOUT, with: { "sparse-checkout": listing } });
+    // A checkout of another repository brings nothing of this one's; naming this one is a checkout.
+    const other = (repository: string): WorkflowStep => ({ uses: CHECKOUT, with: { repository } });
+    expect(uncheckedOutScripts(withSteps([other("opum-ai/quest-cli"), { run: "bash scripts/x.sh" }]))).toHaveLength(1);
+    expect(uncheckedOutScripts(withSteps([other("opum-ai/lore-cli"), { run: "bash scripts/x.sh" }]))).toEqual([]);
+    expect(
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: the GitHub Actions expression, not a JS template.
+      uncheckedOutScripts(withSteps([other("${{ github.repository }}"), { run: "bash scripts/x.sh" }])),
+    ).toEqual([]);
     expect(uncheckedOutScripts(withSteps([cone("scripts\n"), { run: "bash scripts/x.sh" }]))).toEqual([]);
     expect(uncheckedOutScripts(withSteps([cone("src\n"), { run: "bash scripts/x.sh" }]))).toHaveLength(1);
   });

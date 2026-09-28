@@ -21,8 +21,9 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { devNull, tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -38,6 +39,7 @@ import {
   checkReleaseRun,
   checkRollbackState,
   checkServedLauncher,
+  commitReadArgs,
   distTagAddArgs,
   distTagReadArgs,
   downloadServedTarball,
@@ -47,16 +49,21 @@ import {
   type PromotionRecord,
   postLatestChecklist,
   publishFinalLauncher,
+  READBACK_FAILED,
+  READBACK_NOT_CONFIRMED,
+  READBACK_PASSED,
   README_READBACK_EXIT,
   README_READBACK_SCRIPT,
   RECORD_KIND,
   RELEASE_VERSION,
   readbackEnv,
   releaseRunReadArgs,
+  resolveSkillsTree,
   rollback,
   runReadmeReadback,
   SEMVER,
   tokenShape,
+  treeReadArgs,
   validateRecord,
   verifyFinalLauncher,
 } from "../scripts/promote-latest.mjs";
@@ -75,8 +82,9 @@ const integrity = (name: string) => `sha512-${Buffer.from(name).toString("base64
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const sri = (bytes: Uint8Array) => `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
 const FAST = { attempts: 1, delayMs: 0, sleep: async () => {} };
-/** The verdict line the stubbed read-back prints on a pass. */
-const READBACK_OK = `A4 OK: the readme npm serves for '@opum-ai/lore' is BYTE-EQUAL to the README.md this release packed.`;
+/** The root tree of COMMIT and its skills/ entry, as the world's gh api serves them (LCLI-616 review F4). */
+const ROOT_TREE = "b".repeat(40);
+const SKILLS_TREE = "c".repeat(40);
 /** The README.md inside the X launcher tarball, as launcher() below writes it. */
 const X_README = `# lore\n\n> **Status: ${V} released.** Tag \`v${V}\`\n`;
 const REGISTRY = "https://registry.npmjs.org/";
@@ -150,6 +158,66 @@ function artifact(): Map<string, Buffer> {
   return files;
 }
 
+// ── The REAL read-back's output (LCLI-616 review F1) ─────────────────────────────────────────────
+// Promote classifies a read-back by the script's verdict line, and an earlier revision took "the
+// last line" instead and passed its tests only because a hand-written stub happened to end on the
+// right line. So every read-back outcome the world serves here is the REAL scripts/readme-readback.sh
+// run once against the X launcher's own package.json and README.md with a stub `npm` on PATH, and
+// its real stdout, stderr and exit code are what promote receives.
+type ReadbackKind = "pass" | "empty-listed" | "empty-unlisted" | "mismatch";
+type ReadbackOutput = { code: number; stdout: string; stderr: string };
+const realReadbacks = new Map<ReadbackKind, ReadbackOutput>();
+/** On win32 the script is not run (see describeOnPosix); the world's clean-case default is this. */
+const WIN32_PASS: ReadbackOutput = {
+  code: 0,
+  stdout: "A4 VERDICT: PASSED (win32: the real script is POSIX-only and not run here)\n",
+  stderr: "",
+};
+function realReadback(kind: ReadbackKind): ReadbackOutput {
+  const cached = realReadbacks.get(kind);
+  if (cached) return cached;
+  if (process.platform === "win32") return WIN32_PASS;
+  const dir = mkdtempSync(resolve(tmpdir(), "lore-real-readback-"));
+  const bin = join(dir, "bin");
+  const cwd = join(dir, "x");
+  for (const d of [bin, cwd]) mkdirSync(d, { recursive: true });
+  const x = launcher(V);
+  const manifest = JSON.parse(
+    // The launcher's own manifest, not a restatement of it.
+    String(spawnSync("tar", ["-xzO", "-f", "-", "package/package.json"], { input: x }).stdout),
+  );
+  writeFileSync(join(cwd, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  writeFileSync(join(cwd, "README.md"), X_README);
+  const served = {
+    pass: { readme: X_README.trimEnd(), versions: [PRIOR, V] },
+    "empty-listed": { readme: "", versions: [PRIOR, V] },
+    "empty-unlisted": { readme: "", versions: [PRIOR] },
+    mismatch: { readme: "# lore, but not the README this release packed", versions: [PRIOR, V] },
+  }[kind];
+  writeFileSync(join(dir, "readme.txt"), served.readme);
+  writeFileSync(join(dir, "versions.json"), JSON.stringify(served.versions));
+  writeFileSync(join(dir, "packument.json"), JSON.stringify([{ readme: served.readme, versions: served.versions }]));
+  writeFileSync(
+    join(bin, "npm"),
+    [
+      "#!/usr/bin/env bash",
+      `case " $* " in *" readme versions "*) cat "${join(dir, "packument.json")}"; exit 0 ;; esac`,
+      `for a in "$@"; do [ "$a" = versions ] && { cat "${join(dir, "versions.json")}"; exit 0; }; done`,
+      `printf '%s' "$(cat "${join(dir, "readme.txt")}")"`,
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  const r = spawnSync("bash", [README_READBACK_SCRIPT], {
+    cwd,
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`, REGISTRY_WINDOW_SECONDS: "0" },
+  });
+  rmSync(dir, { recursive: true, force: true });
+  const output = { code: r.status ?? -1, stdout: r.stdout, stderr: r.stderr };
+  realReadbacks.set(kind, output);
+  return output;
+}
+
 function goodPass1(files: Map<string, Buffer>, commit = COMMIT): Record<string, unknown> {
   // An artifact case may have removed a file; the receipt still names what the release should carry.
   const digest = (name: string) => sha256(files.get(name) ?? Buffer.alloc(0));
@@ -214,11 +282,13 @@ type WorldOptions = {
   failPublishAfterApply?: boolean;
   questLatest?: string | null;
   /**
-   * How `bash scripts/readme-readback.sh` answers: exit 0 with its verdict line by default, `code`
-   * to fail as execFile does (an Error carrying the exit code and the output), or "spawn" for a
-   * script that could not start at all.
+   * How `bash scripts/readme-readback.sh` answers: the REAL script's output for that outcome
+   * (default "pass"), delivered as execFile delivers it -- resolved on exit 0, else an Error carrying
+   * the exit code, stdout and stderr -- or "spawn" for a script that could not start at all.
    */
-  readback?: { code: number; stdout: string } | "spawn";
+  readback?: ReadbackKind | "spawn";
+  /** How gh answers the skills/ tree reads: "fail" throws, "missing" serves a root tree without it. */
+  skills?: "fail" | "missing";
   onAdd?: () => void;
   /** Runs once, when the LAST platform's latest move to V lands. */
   afterPlatforms?: (w: World) => void;
@@ -340,13 +410,21 @@ function world(options: WorldOptions = {}) {
         });
         if (options.readback === "spawn")
           throw Object.assign(new Error("spawn bash ENOENT"), { code: "ENOENT", stdout: "", stderr: "" });
-        if (options.readback)
-          throw Object.assign(new Error(`Command failed: bash ${README_READBACK_SCRIPT}`), {
-            code: options.readback.code,
-            stdout: options.readback.stdout,
-            stderr: "",
-          });
-        return { stdout: `A4 subject: package '${LAUNCHER}', this release '${V}'.\n${READBACK_OK}\n`, stderr: "" };
+        const real = realReadback(options.readback ?? "pass");
+        if (real.code !== 0) throw Object.assign(new Error(`Command failed: bash ${README_READBACK_SCRIPT}`), real);
+        return { stdout: real.stdout, stderr: real.stderr };
+      }
+      if (command === "gh" && line === `gh ${commitReadArgs(COMMIT).join(" ")}`) {
+        if (options.skills === "fail") throw Object.assign(new Error("Command failed"), { stderr: "HTTP 502" });
+        return { stdout: JSON.stringify({ sha: COMMIT, tree: { sha: ROOT_TREE } }) };
+      }
+      if (command === "gh" && line === `gh ${treeReadArgs(ROOT_TREE).join(" ")}`) {
+        const entries = [
+          { path: "README.md", type: "blob", sha: "d".repeat(40) },
+          { path: "scripts", type: "tree", sha: "e".repeat(40) },
+          ...(options.skills === "missing" ? [] : [{ path: "skills", type: "tree", sha: SKILLS_TREE }]),
+        ];
+        return { stdout: JSON.stringify({ sha: ROOT_TREE, tree: entries }) };
       }
       if (command === "npm" && args[0] === "view" && args[2] === "--json") {
         // Every version read is ANONYMOUS against the public registry (review F6), the pair
@@ -427,7 +505,12 @@ function harness() {
   const record = join(dir, "promotion-record.json");
   const out: string[] = [];
   const err: string[] = [];
-  const go = (argv: string[], w: World, env: Record<string, string | undefined> = { NPM_TOKEN: "" }) =>
+  const go = (
+    argv: string[],
+    w: World,
+    env: Record<string, string | undefined> = { NPM_TOKEN: "" },
+    extra: { readbackTempRoot?: string } = {},
+  ) =>
     main(argv.includes("--rollback") || argv.includes("--release-run") ? argv : [...argv, "--release-run", RUN], {
       run: w.run,
       env,
@@ -435,6 +518,7 @@ function harness() {
       err: (l) => err.push(l),
       readPackageVersion: async () => V,
       verifyOptions: FAST,
+      ...extra,
     });
   return {
     dir,
@@ -511,15 +595,21 @@ describe("scripts/promote-latest.mjs: the clean case (LCLI-621)", () => {
       const readbackAt = w.calls.findIndex((c) => c[0] === "bash");
       expect(readbackAt).toBeGreaterThan(publish);
       expect(readbackAt).toBeGreaterThan(w.calls.findLastIndex((c) => c[0] === "npm"));
-      expect(h.out).toContain(`  ${READBACK_OK}`);
+      // The script's own verdict line, printed as it wrote it.
+      expect(h.out.some((line) => /^ {2}A4 VERDICT: PASSED /.test(line))).toBe(true);
       // LCLI-618 AC2: the post-latest checklist follows, naming this run, this record and this tag.
       const checklist = h.out.slice(
         h.out.indexOf(`Post-latest checklist for lore ${V} (${POST_LATEST_RUNBOOK_ITEM}):`),
       );
       expect(checklist.length).toBeGreaterThan(10);
-      expect(checklist.join("\n")).toContain("1. README read-back: PASSED. It ran automatically:");
+      expect(checklist.join("\n")).toContain("1. README read-back: PASSED. It ran automatically; its verdict:");
       expect(checklist.join("\n")).toContain(`gh release create v${V} --title "Lore CLI ${V}" --notes-file <notes>`);
-      expect(checklist.join("\n")).toContain(`This run resolved v${V} as: tag ${TAG_OBJECT} -> commit ${COMMIT}.`);
+      // LCLI-616 review F4: the four handshake values, RESOLVED, the skills/ tree through gh api.
+      expect(checklist).toContain(`         tag object     ${TAG_OBJECT}`);
+      expect(checklist).toContain(`         peeled commit  ${COMMIT}`);
+      expect(checklist).toContain(`         skills/ tree   ${SKILLS_TREE}`);
+      expect(w.calls).toContainEqual(["gh", ...commitReadArgs(COMMIT)]);
+      expect(w.calls).toContainEqual(["gh", ...treeReadArgs(ROOT_TREE)]);
       expect(checklist.join("\n")).toContain(`record Release run ${RUN}, the promotion record ${h.record}`);
     } finally {
       h.cleanup();
@@ -1034,13 +1124,9 @@ describe("scripts/promote-latest.mjs: step 7 and the README read-back (LCLI-621,
   // LCLI-616, OPAG-474 AC3. The read-back failing is NOT a failed promotion: everything above it is
   // complete and verified. So it exits with a code of its own (3, never a refusal's 1), rolls
   // nothing back, writes nothing after it, and says in as many words not to roll back.
-  test("a read-back that fails exits 3, rolls NOTHING back, writes nothing after it, and says do NOT roll back", async () => {
+  test("DID NOT PASS (the real script: empty, packument lists X): exit 3, nothing rolled back or written after, do NOT roll back", async () => {
     const h = harness();
-    const failure = [
-      "attempt 1: the registry served no readme field yet.",
-      "::error::A4 FAILED for package '@opum-ai/lore', release '5.6.7': the registry served NO readme field at all (OPAG-474).",
-    ].join("\n");
-    const w = world({ readback: { code: 1, stdout: `${failure}\n` } });
+    const w = world({ readback: "empty-listed" });
     try {
       const code = await h.go(["--record", h.record, "--promote"], w);
       expect(README_READBACK_EXIT).toBe(3);
@@ -1052,17 +1138,27 @@ describe("scripts/promote-latest.mjs: step 7 and the README read-back (LCLI-621,
       expect(w.calls.slice(readbackAt + 1).filter((c) => c[1] === "dist-tag" || c[1] === "publish")).toEqual([]);
       for (const name of RELEASE_PACKAGES) expect(w.tags[name]?.latest).toBe(V);
       const errText = h.err.join("\n");
-      // The script's own words come through, then the plain statement of what to do and not do.
-      expect(errText).toContain("NO readme field at all (OPAG-474)");
-      expect(errText).toContain("THIS PROMOTION IS COMPLETE AND VERIFIED");
-      expect(errText).toContain("(exit 1; OPAG-474)");
+      expect(errText).toContain("!!! THE README READ-BACK DID NOT PASS. THIS PROMOTION IS COMPLETE AND VERIFIED. !!!");
       expect(errText).toContain("Do NOT run --rollback, and do NOT unpublish");
       expect(errText).toContain("The fix is the NEXT release.");
       expect(errText).toContain(`npm view ${LAUNCHER} readme | wc -c`);
-      expect(h.text()).toContain(`Promoted: latest reads ${V} on all 7 packages`);
-      // The promotion is complete, so the post-latest checklist still follows, saying the read-back did not pass.
-      expect(h.out.join("\n")).toContain(
-        "1. README read-back: DID NOT PASS (exit 1; see above, and do NOT roll back). It ran automatically:",
+      // F8e: the read-back's own re-run command, since re-running --promote is not the way back to it.
+      expect(errText).toContain(
+        `npm pack ${LAUNCHER}@${V} && tar -xzf ${X_FILE} && cd package && bash ${README_READBACK_SCRIPT}`,
+      );
+      // F8b: the Promoted line no longer offers --rollback as a remedy right above "Do NOT run --rollback".
+      expect(h.out.join("\n")).not.toContain("Rollback: node scripts/promote-latest.mjs --rollback");
+      expect(h.out.join("\n")).toContain("a README read-back result is never a reason to use it");
+      // F1: the verdict carried into the checklist is the script's VERDICT line -- not its last line,
+      // which on this path is "... | wc -c" prose.
+      const verdict =
+        "A4 VERDICT: FAILED no readme for @opum-ai/lore after 0s, and the packument already lists 5.6.7 (OPAG-474)";
+      if (process.platform !== "win32") {
+        expect(realReadback("empty-listed").stdout.trimEnd().split("\n").at(-1)).toBe(verdict);
+        expect(h.out).toContain(`         ${verdict}`);
+      }
+      expect(h.out).toContain(
+        "  1. README read-back: DID NOT PASS (see above; do NOT roll back). It ran automatically; its verdict:",
       );
       expect(h.out.join("\n")).toContain(`gh release create v${V}`);
     } finally {
@@ -1070,14 +1166,94 @@ describe("scripts/promote-latest.mjs: step 7 and the README read-back (LCLI-621,
     }
   });
 
-  test("a read-back that could not run at all is a read-back that did not pass: exit 3, nothing rolled back", async () => {
+  // F1's other path: the checker's findings print (on stderr) AFTER the ::error:: line, so "the last
+  // line of the output" is a checker finding. The verdict line is still what reaches the checklist.
+  test("DID NOT PASS (the real script: a page matching no release): the verdict is the VERDICT line, not a checker finding", async () => {
+    const h = harness();
+    const w = world({ readback: "mismatch" });
+    try {
+      expect(await h.go(["--record", h.record, "--promote"], w)).toBe(README_READBACK_EXIT);
+      if (process.platform !== "win32") {
+        const real = realReadback("mismatch");
+        expect(real.code).toBe(1);
+        // Positive control on the premise: the combined output's last line is NOT the verdict.
+        expect(`${real.stdout}${real.stderr}`.trimEnd().split("\n").at(-1)).not.toMatch(/^A4 VERDICT: /);
+        expect(h.out).toContain(
+          `         A4 VERDICT: FAILED the package readme for @opum-ai/lore satisfies neither 5.6.7's assertions nor ${PRIOR}'s`,
+        );
+      }
+      expect(h.out.join("\n")).toContain("1. README read-back: DID NOT PASS");
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  // F2 and F3: an empty readme on a packument that does not list X yet is lag not ruled out -- NOT
+  // CONFIRMED, never a PASSED, and not an OPAG-474 claim. It exits 3 as DID NOT PASS does: the
+  // readme is unproven, and the remedy is the same (see README_READBACK_EXIT).
+  test("NOT CONFIRMED (the real script: empty, X not in the packument yet): exit 3, labelled NOT CONFIRMED, re-read by hand", async () => {
+    const h = harness();
+    const w = world({ readback: "empty-unlisted" });
+    try {
+      expect(await h.go(["--record", h.record, "--promote"], w)).toBe(README_READBACK_EXIT);
+      const errText = h.err.join("\n");
+      expect(errText).toContain(
+        "!!! THE README READ-BACK DID NOT CONFIRM THE README. THIS PROMOTION IS COMPLETE AND VERIFIED. !!!",
+      );
+      expect(errText).toContain("Nothing was proven either way. Re-read it by hand");
+      expect(errText).not.toContain("DID NOT PASS");
+      expect(h.out).toContain(
+        "  1. README read-back: NOT CONFIRMED (see above: re-read it by hand; do NOT roll back). It ran automatically; its verdict:",
+      );
+      if (process.platform !== "win32")
+        expect(h.out).toContain(
+          "         A4 VERDICT: NOT-CONFIRMED lag not ruled out: 5.6.7 not yet in the packument, which serves no readme for @opum-ai/lore after 0s",
+        );
+      expect(w.writes).toEqual([...platformMoves(V), publishLine(w)]);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  // F8c: a script that could not start is a tooling failure, NOT CONFIRMED, never an OPAG-474 claim.
+  test("a read-back that could not run at all: NOT CONFIRMED, a tooling failure, exit 3, and no OPAG-474 claim", async () => {
     const h = harness();
     const w = world({ readback: "spawn" });
     try {
       expect(await h.go(["--record", h.record, "--promote"], w)).toBe(README_READBACK_EXIT);
-      expect(h.err.join("\n")).toContain("(exit ENOENT; OPAG-474)");
-      expect(h.err.join("\n")).toContain("spawn bash ENOENT");
+      const errText = h.err.join("\n");
+      expect(errText).toContain("(A TOOLING FAILURE, NOT A FINDING ABOUT THE PAGE)");
+      expect(errText).toContain(
+        "tooling failure, nothing was verified: the read-back printed no verdict line (exit ENOENT)",
+      );
+      expect(errText).toContain("spawn bash ENOENT");
+      expect(errText).not.toContain("OPAG-474");
+      expect(h.out.join("\n")).toContain("1. README read-back: NOT CONFIRMED");
       expect(w.writes).toEqual([...platformMoves(V), publishLine(w)]);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  // F8d: a temp directory that cannot be made used to throw out of main as exit 2, after the
+  // promotion, with no do-not-roll-back message and no checklist. It is the same tooling path now.
+  test("a read-back whose temp directory cannot be made: NOT CONFIRMED, exit 3, the message and the checklist", async () => {
+    const h = harness();
+    const w = world();
+    try {
+      const code = await h.go(
+        ["--record", h.record, "--promote"],
+        w,
+        { NPM_TOKEN: "" },
+        {
+          readbackTempRoot: join(h.dir, "does", "not", "exist"),
+        },
+      );
+      expect(code).toBe(README_READBACK_EXIT);
+      expect(w.readbacks).toEqual([]);
+      expect(h.err.join("\n")).toContain("tooling failure, nothing was verified: the read-back could not be set up (");
+      expect(h.err.join("\n")).toContain("Do NOT run --rollback");
+      expect(h.out.join("\n")).toContain(`Post-latest checklist for lore ${V}`);
     } finally {
       h.cleanup();
     }
@@ -1087,19 +1263,35 @@ describe("scripts/promote-latest.mjs: step 7 and the README read-back (LCLI-621,
     const h = harness();
     const w = world();
     try {
-      const env = { NPM_TOKEN: "", REGISTRY_WINDOW_SECONDS: "7", npm_config_registry: "http://127.0.0.1:9/" };
+      const env = {
+        NPM_TOKEN: "",
+        REGISTRY_WINDOW_SECONDS: "7",
+        npm_config_registry: "http://127.0.0.1:9/",
+        "NPM_CONFIG_@OPUM-AI:REGISTRY": "http://127.0.0.1:9/",
+      };
       expect(await h.go(["--record", h.record, "--promote"], w, env)).toBe(0);
       const readback = w.readbacks[0] as (typeof w.readbacks)[number];
       expect(readback.env.REGISTRY_WINDOW_SECONDS).toBe("7");
       expect(readback.env.npm_config_registry).toBe(REGISTRY);
-      expect(h.out.join("\n")).toContain("re-reading for up to 7s");
+      expect(readback.env["NPM_CONFIG_@OPUM-AI:REGISTRY"]).toBeUndefined();
+      expect(h.out.join("\n")).toContain("It re-reads for up to 7s; its output prints when it finishes.");
     } finally {
       h.cleanup();
     }
   });
 
-  test("unit: readbackEnv pins the public registry for the scope and sends no token", () => {
-    expect(readbackEnv({ KEEP: "1", "npm_config_@opum-ai:registry": "http://mirror/" })).toEqual({
+  // F7: npm reads NPM_CONFIG_* as well as npm_config_*, and the uppercase scope key beat the pin.
+  test("unit: readbackEnv drops every inherited npm config variable, in any case, then pins", () => {
+    expect(
+      readbackEnv({
+        KEEP: "1",
+        "npm_config_@opum-ai:registry": "http://mirror/",
+        "NPM_CONFIG_@OPUM-AI:REGISTRY": "http://mirror/",
+        NPM_CONFIG_REGISTRY: "http://mirror/",
+        Npm_Config_Userconfig: "/home/me/.npmrc",
+        npm_config_cache: "/x",
+      }),
+    ).toEqual({
       KEEP: "1",
       npm_config_userconfig: devNull,
       npm_config_registry: REGISTRY,
@@ -1107,20 +1299,24 @@ describe("scripts/promote-latest.mjs: step 7 and the README read-back (LCLI-621,
     });
   });
 
-  // The runner-injected tests above prove what promote does with an exit code; this one runs the REAL
-  // scripts/readme-readback.sh through the real runner, against a stub `npm` on PATH, so the wiring
-  // itself -- the script's path, its cwd holding the tarball's own files, the env pins reaching npm,
-  // and the script's exit 1 arriving as a failed read-back -- is measured rather than assumed.
+  // The runner-injected tests above prove what promote does with the real script's output; these
+  // run the REAL script through the REAL runner, against a stub `npm` on PATH, so the wiring itself
+  // -- the script's path, its cwd holding the tarball's own files, the env pins reaching npm, and the
+  // script's exit code and verdict line arriving intact -- is measured rather than assumed.
   describeOnPosix("the real read-back script, through the real runner", () => {
-    function stubNpm(readme: string) {
+    function stubNpm(readme: string, versions: string[]) {
       const dir = mkdtempSync(resolve(tmpdir(), "lore-readback-npm-"));
+      writeFileSync(join(dir, "packument.json"), JSON.stringify([{ readme, versions }]));
+      writeFileSync(join(dir, "versions.json"), JSON.stringify(versions));
+      writeFileSync(join(dir, "readme.txt"), readme);
       writeFileSync(
         join(dir, "npm"),
         [
           "#!/usr/bin/env bash",
-          `env | grep '^npm_config_' | sort > "${join(dir, "seen-env")}"`,
-          'for a in "$@"; do [ "$a" = versions ] && { echo \'["5.6.7"]\'; exit 0; }; done',
-          `printf '%s' '${readme}'`,
+          `env | grep -i '^npm_config_' | sort > "${join(dir, "seen-env")}"`,
+          `case " $* " in *" readme versions "*) cat "${join(dir, "packument.json")}"; exit 0 ;; esac`,
+          `for a in "$@"; do [ "$a" = versions ] && { cat "${join(dir, "versions.json")}"; exit 0; }; done`,
+          `printf '%s' "$(cat "${join(dir, "readme.txt")}")"`,
         ].join("\n"),
         { mode: 0o755 },
       );
@@ -1132,30 +1328,116 @@ describe("scripts/promote-latest.mjs: step 7 and the README read-back (LCLI-621,
       writeFileSync(path, launcher(V));
       return { filename: X_FILE, path, sha256: "", integrity: "" };
     };
-
-    test("the X tarball's own README served back byte-equal passes", async () => {
-      const bin = stubNpm(X_README.trimEnd());
-      const result = await runReadmeReadback({
-        final: await final(),
-        env: { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`, REGISTRY_WINDOW_SECONDS: "0" },
-      });
-      expect(result.ok).toBe(true);
-      expect(result.verdict).toContain("BYTE-EQUAL");
-      const seen = readFileSync(join(bin, "seen-env"), "utf8");
-      expect(seen).toContain(`npm_config_@opum-ai:registry=${REGISTRY}`);
-      expect(seen).toContain(`npm_config_userconfig=${devNull}`);
+    const env = (bin: string, extra: Record<string, string> = {}) => ({
+      PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+      REGISTRY_WINDOW_SECONDS: "0",
+      ...extra,
     });
 
-    test("an empty served readme arrives as the script's exit 1: not ok, and the verdict names OPAG-474", async () => {
-      const bin = stubNpm("");
+    test("the X tarball's own README served back byte-equal: PASSED, and only the pins reach npm", async () => {
+      const bin = stubNpm(X_README.trimEnd(), [PRIOR, V]);
       const result = await runReadmeReadback({
         final: await final(),
-        env: { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`, REGISTRY_WINDOW_SECONDS: "0" },
+        env: env(bin, { "NPM_CONFIG_@OPUM-AI:REGISTRY": "http://127.0.0.1:9/" }),
       });
-      expect(result.ok).toBe(false);
+      expect(result.state).toBe(READBACK_PASSED);
+      expect(result.verdict).toMatch(
+        /^A4 VERDICT: PASSED the package readme for @opum-ai\/lore is byte-equal to 5\.6\.7's/,
+      );
+      const seen = readFileSync(join(bin, "seen-env"), "utf8").trim().split("\n");
+      expect(seen).toEqual([
+        `npm_config_@opum-ai:registry=${REGISTRY}`,
+        `npm_config_registry=${REGISTRY}`,
+        `npm_config_userconfig=${devNull}`,
+      ]);
+    });
+
+    test("empty, on a packument listing X: DID NOT PASS with the script's exit 1 and its VERDICT line", async () => {
+      const bin = stubNpm("", [PRIOR, V]);
+      const result = await runReadmeReadback({ final: await final(), env: env(bin) });
+      expect(result.state).toBe(READBACK_FAILED);
       expect(result.code).toBe(1);
-      expect(result.output).toContain("NO readme field at all (OPAG-474)");
+      expect(result.verdict).toBe(
+        "A4 VERDICT: FAILED no readme for @opum-ai/lore after 0s, and the packument already lists 5.6.7 (OPAG-474)",
+      );
     });
+
+    test("empty, on a packument not listing X yet: NOT CONFIRMED with the script's exit 0", async () => {
+      const bin = stubNpm("", [PRIOR]);
+      const result = await runReadmeReadback({ final: await final(), env: env(bin) });
+      expect(result.state).toBe(READBACK_NOT_CONFIRMED);
+      expect(result.code).toBe(0);
+      expect(result.tooling).toBe(false);
+      expect(result.verdict).toMatch(/^A4 VERDICT: NOT-CONFIRMED lag not ruled out: 5\.6\.7 not yet in the packument/);
+    });
+  });
+});
+
+// ── The skills/ tree for the LCLI-469 handshake (LCLI-616 review F4) ─────────────────────────────
+describe("scripts/promote-latest.mjs: resolveSkillsTree", () => {
+  const through = (answers: Record<string, unknown>) => {
+    const calls: string[] = [];
+    const run = async (command: string, args: string[]) => {
+      const line = [command, ...args].join(" ");
+      calls.push(line);
+      if (!(line in answers))
+        throw Object.assign(new Error("Command failed"), { stderr: `gh: Not Found (HTTP 404) ${line}` });
+      return { stdout: JSON.stringify(answers[line]) };
+    };
+    return { run, calls };
+  };
+  const commitLine = `gh ${commitReadArgs(COMMIT).join(" ")}`;
+  const treeLine = `gh ${treeReadArgs(ROOT_TREE).join(" ")}`;
+
+  test("resolves commit -> root tree -> the skills entry, through the pinned gh api reads", async () => {
+    const { run, calls } = through({
+      [commitLine]: { tree: { sha: ROOT_TREE } },
+      [treeLine]: {
+        tree: [
+          { path: "skills.md", type: "blob", sha: "1".repeat(40) },
+          { path: "skills", type: "tree", sha: SKILLS_TREE },
+        ],
+      },
+    });
+    expect(await resolveSkillsTree(COMMIT, { run })).toEqual({ sha: SKILLS_TREE });
+    expect(calls).toEqual([commitLine, treeLine]);
+    expect(commitReadArgs(COMMIT)).toEqual([
+      "api",
+      "--hostname",
+      "github.com",
+      `repos/opum-ai/lore-cli/git/commits/${COMMIT}`,
+    ]);
+  });
+
+  test("a root tree without a skills/ TREE, an unreadable read, or a malformed answer is an error, never a guess", async () => {
+    const noSkills = through({
+      [commitLine]: { tree: { sha: ROOT_TREE } },
+      [treeLine]: { tree: [{ path: "skills", type: "blob", sha: SKILLS_TREE }] },
+    });
+    expect(await resolveSkillsTree(COMMIT, { run: noSkills.run })).toEqual({
+      error: `root tree ${ROOT_TREE} of ${COMMIT} has no skills/ tree entry`,
+    });
+    const unreadable = through({});
+    expect(await resolveSkillsTree(COMMIT, { run: unreadable.run })).toEqual({
+      error: `gh: Not Found (HTTP 404) ${commitLine}`,
+    });
+    const malformed = through({ [commitLine]: { tree: {} } });
+    expect(await resolveSkillsTree(COMMIT, { run: malformed.run })).toEqual({
+      error: `commit ${COMMIT} did not read as a commit with a tree`,
+    });
+  });
+
+  test("promote prints an unresolved skills/ tree as NOT RESOLVED with the by-hand command, and still exits 0", async () => {
+    const h = harness();
+    const w = world({ skills: "missing" });
+    try {
+      expect(await h.go(["--record", h.record, "--promote"], w)).toBe(0);
+      expect(h.out).toContain(
+        `         skills/ tree   NOT RESOLVED (root tree ${ROOT_TREE} of ${COMMIT} has no skills/ tree entry); resolve it by hand: git rev-parse '${COMMIT}:skills'`,
+      );
+    } finally {
+      h.cleanup();
+    }
   });
 });
 
@@ -1163,32 +1445,36 @@ describe("scripts/promote-latest.mjs: step 7 and the README read-back (LCLI-621,
 // What is due once `latest` reads X used to be printed by publish-release.sh after STAGING. It is
 // printed here now, when --promote finishes, and the runbook item it cites must carry the same list.
 describe("scripts/promote-latest.mjs: the post-latest checklist (LCLI-618)", () => {
-  const readback = { ok: true, code: 0, verdict: READBACK_OK };
+  const PASSED_VERDICT =
+    "A4 VERDICT: PASSED the package readme for @opum-ai/lore is byte-equal to 1.2.3's packed README.md (1 read(s))";
   const args = {
     version: "1.2.3",
     releaseRunId: "777",
     recordPath: "/tmp/rec.json",
-    peeledChain: [`tag ${TAG_OBJECT}`, `commit ${COMMIT}`],
-    readback,
+    tagObject: TAG_OBJECT,
+    commit: COMMIT,
+    skillsTree: { sha: SKILLS_TREE },
+    readback: { state: READBACK_PASSED, verdict: PASSED_VERDICT },
   };
 
-  test("pinned: the five steps, in order, naming this version, run, record and tag chain", () => {
+  test("pinned: the five steps, in order, naming this version, run, record and the four handshake values", () => {
     expect(postLatestChecklist(args)).toEqual([
       "",
       "Post-latest checklist for lore 1.2.3 (docs/runbooks/release-publishing.md, section 3, item 8):",
-      "  1. README read-back: PASSED. It ran automatically:",
-      `         ${READBACK_OK}`,
+      "  1. README read-back: PASSED. It ran automatically; its verdict:",
+      `         ${PASSED_VERDICT}`,
       "     Record that line in the release-truth record (item 5).",
       "  2. Cut a non-draft, non-prerelease GitHub Release for v1.2.3, with CHANGELOG.md's [1.2.3] section as its body:",
       '         gh release create v1.2.3 --title "Lore CLI 1.2.3" --notes-file <notes>',
-      "  3. Tell quest-cli that lore 1.2.3 is live on latest, and opum-agent, whose go this was. Resolve each",
-      "     session with ListAgents and match on repository; session names change on every restart.",
+      "  3. Tell quest-cli that lore 1.2.3 is live on latest; tell opum-cli-e2e the same, for information; and",
+      "     opum-agent, whose go this was. Resolve each session with ListAgents and match on repository;",
+      "     session names change on every restart.",
       "  4. The LCLI-469 marketplace handshake, second message: tell opum-marketplace that dist-tags.latest now reads",
-      "     1.2.3, and send the tag name, tag object SHA, peeled commit and skills/ tree SHA again, to be",
-      `     re-resolved rather than trusted. This run resolved v1.2.3 as: tag ${TAG_OBJECT} -> commit ${COMMIT}.`,
-      "         git rev-parse v1.2.3              # the tag object SHA",
-      "         git rev-parse 'v1.2.3^{commit}'   # the commit it peels to",
-      "         git ls-tree v1.2.3 skills         # the resolved skills/ tree SHA",
+      "     1.2.3, and send these four values again, to be re-resolved rather than trusted:",
+      "         tag            v1.2.3",
+      `         tag object     ${TAG_OBJECT}`,
+      `         peeled commit  ${COMMIT}`,
+      `         skills/ tree   ${SKILLS_TREE}`,
       "  5. Update docs/reference/lore-cli-release-truth.md: REPLACE its current-state claim so it states",
       "     1.2.3 is released, and record Release run 777, the promotion record /tmp/rec.json, the",
       "     read-back verdict above, and HOW the release was staged. A staging by scripts/publish-release.sh",
@@ -1196,12 +1482,18 @@ describe("scripts/promote-latest.mjs: the post-latest checklist (LCLI-618)", () 
     ]);
   });
 
-  test("a read-back that did not pass is reported as such, with its exit code and the do-not-roll-back rule", () => {
-    const lines = postLatestChecklist({ ...args, readback: { ok: false, code: 1, verdict: "::error::A4 FAILED ..." } });
-    expect(lines[2]).toBe(
-      "  1. README read-back: DID NOT PASS (exit 1; see above, and do NOT roll back). It ran automatically:",
+  test("three read-back states, three labels; a lightweight tag says so", () => {
+    const label = (state: string) => postLatestChecklist({ ...args, readback: { state, verdict: "v" } })[2];
+    expect(label(READBACK_PASSED)).toBe("  1. README read-back: PASSED. It ran automatically; its verdict:");
+    expect(label(READBACK_NOT_CONFIRMED)).toBe(
+      "  1. README read-back: NOT CONFIRMED (see above: re-read it by hand; do NOT roll back). It ran automatically; its verdict:",
     );
-    expect(lines[3]).toBe("         ::error::A4 FAILED ...");
+    expect(label(READBACK_FAILED)).toBe(
+      "  1. README read-back: DID NOT PASS (see above; do NOT roll back). It ran automatically; its verdict:",
+    );
+    expect(postLatestChecklist({ ...args, tagObject: null })).toContain(
+      "         tag object     none: v1.2.3 is a lightweight tag",
+    );
   });
 
   // "The runbook item it cites must match": the item exists where the header says, and carries each
@@ -1225,16 +1517,23 @@ describe("scripts/promote-latest.mjs: the post-latest checklist (LCLI-618)", () 
     const printed = postLatestChecklist(args).join("\n");
     for (const step of [
       "README read-back",
+      "NOT CONFIRMED",
       "GitHub Release",
       "gh release create v",
       "quest-cli",
+      "opum-cli-e2e",
       "LCLI-469 marketplace handshake",
       "opum-marketplace",
       "skills/",
       "docs/reference/lore-cli-release-truth.md",
       "provenance",
     ]) {
-      expect({ step, inChecklist: printed.includes(step) }).toEqual({ step, inChecklist: true });
+      const inChecklist =
+        printed.includes(step) ||
+        postLatestChecklist({ ...args, readback: { state: READBACK_NOT_CONFIRMED, verdict: "" } })
+          .join("\n")
+          .includes(step);
+      expect({ step, inChecklist }).toEqual({ step, inChecklist: true });
       expect({ step, inRunbook: item.includes(step) }).toEqual({ step, inRunbook: true });
     }
   });

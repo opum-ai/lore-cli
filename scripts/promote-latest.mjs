@@ -92,8 +92,9 @@
 //   1  refused or failed; what moved, if anything, and the remedy are printed
 //   2  bad arguments, or an unexpected error
 //   3  --promote only: the promotion is COMPLETE and verified, but the README read-back did not
-//      pass (OPAG-474). Do NOT run --rollback: it cannot give an immutable page a readme. The fix
-//      is the next release. The message gives the command that re-reads the readme by hand.
+//      establish the readme: DID NOT PASS (a finding, e.g. OPAG-474) or NOT CONFIRMED (lag not
+//      ruled out, or a tooling failure). Do NOT run --rollback: it cannot give an immutable page a
+//      readme. The message says which, and gives the commands that re-read it by hand.
 
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -751,15 +752,29 @@ export async function verifyFinalLauncher({
 export const README_READBACK_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "readme-readback.sh");
 
 /**
- * The exit code for "promoted, but the README read-back did not pass". DISTINCT from 1 on purpose.
- * LCLI-621's review argued the read-back should only warn, because a non-zero exit "invites the
- * wrong remedy": the promotion is complete, npm pages are immutable, and --rollback cannot give a
- * page a readme. That argument is about the REMEDY, not about whether to say it failed, and a
- * warning a pipeline exits 0 on is one nobody acts on. So the answer here is a code no refusal or
- * failed move uses, paired with a message that says in as many words: complete, verified, do NOT
- * roll back, the fix is the next release, and how to re-read the readme by hand.
+ * The exit code for "promoted, but the README read-back did not establish the readme": its verdict
+ * was DID NOT PASS or NOT CONFIRMED. DISTINCT from 1 on purpose. LCLI-621's review argued the
+ * read-back should only warn, because a non-zero exit "invites the wrong remedy": the promotion is
+ * complete, npm pages are immutable, and --rollback cannot give a page a readme. That argument is
+ * about the REMEDY, not about whether to say it failed, and a warning a pipeline exits 0 on is one
+ * nobody acts on. So the answer here is a code no refusal or failed move uses, paired with a message
+ * that says in as many words: complete, verified, do NOT roll back, and how to re-read by hand.
+ *
+ * NOT CONFIRMED exits 3 too, not 0 (LCLI-616 review F2). Its cases -- the previous release's README
+ * still served, an empty readme on a packument that does not list X yet, a checker or a script that
+ * could not run -- all end with the readme unproven, and the operator's remedy is the same as for
+ * DID NOT PASS: do not roll back, re-read by hand, record what was read. Exit 0 there would report
+ * "verified nothing" as done. The label printed beside it says which of the two it was.
  */
 export const README_READBACK_EXIT = 3;
+
+/** The three read-back outcomes, as printed. */
+export const READBACK_PASSED = "PASSED";
+export const READBACK_NOT_CONFIRMED = "NOT CONFIRMED";
+export const READBACK_FAILED = "DID NOT PASS";
+
+/** scripts/readme-readback.sh's last-line contract: `A4 VERDICT: <PASSED|NOT-CONFIRMED|FAILED> <reason>`. */
+export const VERDICT_LINE = /^A4 VERDICT: (PASSED|NOT-CONFIRMED|FAILED) (.+)$/;
 
 /**
  * The environment the read-back runs npm under. The script calls `npm view` with no flags, so the
@@ -767,12 +782,17 @@ export const README_READBACK_EXIT = 3;
  * registry set in any npmrc (review F6), `npm_config_userconfig` sends no token, exactly as the
  * ANONYMOUS reads above. Measured on npm 12.1.0 from a directory whose .npmrc sets
  * `@opum-ai:registry=http://127.0.0.1:9/`: these three reach the public registry, and
- * `npm_config_registry` alone does not. REGISTRY_WINDOW_SECONDS passes through from `env`.
+ * `npm_config_registry` alone does not. REGISTRY_WINDOW_SECONDS passes through from `env`; every
+ * other npm config variable, in either case, is dropped.
  * @param {Record<string, string | undefined>} env
  */
 export function readbackEnv(env) {
+  // Every inherited npm config variable goes first, in ANY case: npm reads NPM_CONFIG_* as well as
+  // npm_config_*, and an uppercase `NPM_CONFIG_@OPUM-AI:REGISTRY` beat the lowercase pin below
+  // (LCLI-616 review F7, measured). The read-back needs none of the caller's npm configuration.
+  const inherited = Object.fromEntries(Object.entries(env).filter(([key]) => !/^npm_config_/i.test(key)));
   return {
-    ...env,
+    ...inherited,
     npm_config_userconfig: devNull,
     npm_config_registry: PUBLIC_REGISTRY,
     "npm_config_@opum-ai:registry": PUBLIC_REGISTRY,
@@ -795,23 +815,37 @@ export async function extractReadbackInputs(tarball, into) {
 }
 
 /**
- * Runs the read-back through the injectable runner. `ok` only on the script's exit 0; anything else
- * -- its exit 1, or a script that could not run at all -- is a read-back that did not pass. Returns
- * everything it printed, and the verdict line: the last line, which is where the script says what it
- * concluded (an "A4 OK", a "::warning::" naming why nothing was proven, or an "::error::").
- * @param {{ run?: Function, final: ArtifactFile, env: Record<string, string | undefined> }} args
- * @returns {Promise<{ ok: boolean, code: number | string | null, output: string, verdict: string }>}
+ * @typedef {{ state: string, code: number | string | null, output: string, verdict: string, tooling: boolean }} Readback
  */
-export async function runReadmeReadback({ run = defaultRun, final, env }) {
-  const dir = await mkdtemp(join(tmpdir(), "lore-readme-readback-"));
+
+/**
+ * Runs the read-back through the injectable runner and classifies it by the script's VERDICT LINE,
+ * never by "the last line it printed" (LCLI-616 review F1): the script's paths print checker findings
+ * and multi-line prose in varying order, and stderr lands after stdout here. PASSED needs the
+ * PASSED line AND exit 0. Anything that produced no verdict line -- a temp directory that could not
+ * be made, an X tarball without its README, a script that could not start or died -- is a TOOLING
+ * failure and NOT CONFIRMED, never a claim about the registry. Never throws.
+ * @param {{ run?: Function, final: ArtifactFile, env: Record<string, string | undefined>, tempRoot?: string }} args
+ * @returns {Promise<Readback>}
+ */
+export async function runReadmeReadback({ run = defaultRun, final, env, tempRoot = undefined }) {
+  /** @param {string} why @param {number | string | null} code @param {string} output */
+  const tooling = (why, code, output) => ({
+    state: READBACK_NOT_CONFIRMED,
+    code,
+    output,
+    verdict: `tooling failure, nothing was verified: ${why}`,
+    tooling: true,
+  });
+  let dir;
   try {
-    try {
-      await extractReadbackInputs(final.path, dir);
-    } catch (error) {
-      const output = `the read-back could not be set up: ${reason(error)}`;
-      return { ok: false, code: null, output, verdict: output };
-    }
-    let ok = true;
+    dir = await mkdtemp(join(tempRoot ?? tmpdir(), "lore-readme-readback-"));
+    await extractReadbackInputs(final.path, dir);
+  } catch (error) {
+    if (dir) await rm(dir, { recursive: true, force: true });
+    return tooling(`the read-back could not be set up (${reason(error)})`, null, "");
+  }
+  try {
     let code = /** @type {number | string | null} */ (0);
     let output;
     try {
@@ -819,7 +853,6 @@ export async function runReadmeReadback({ run = defaultRun, final, env }) {
       output = `${done.stdout ?? ""}${done.stderr ?? ""}`;
     } catch (error) {
       const any = /** @type {any} */ (error);
-      ok = false;
       code = any?.code ?? null;
       output = `${any?.stdout ?? ""}${any?.stderr ?? ""}` || reason(error);
     }
@@ -827,9 +860,57 @@ export async function runReadmeReadback({ run = defaultRun, final, env }) {
       .split("\n")
       .map((line) => line.trimEnd())
       .filter(Boolean);
-    return { ok, code, output: lines.join("\n"), verdict: lines.at(-1) ?? "(the read-back printed nothing)" };
+    const text = lines.join("\n");
+    const verdict = lines.findLast((line) => VERDICT_LINE.test(line));
+    if (!verdict) return tooling(`the read-back printed no verdict line (exit ${code ?? "none"})`, code, text);
+    const kind = /** @type {RegExpExecArray} */ (VERDICT_LINE.exec(verdict))[1];
+    if (kind === "FAILED") return { state: READBACK_FAILED, code, output: text, verdict, tooling: false };
+    if (kind === "PASSED" && code !== 0)
+      return tooling(`the read-back said PASSED but exited ${code ?? "none"}`, code, text);
+    return {
+      state: kind === "PASSED" ? READBACK_PASSED : READBACK_NOT_CONFIRMED,
+      code,
+      output: text,
+      verdict,
+      tooling: false,
+    };
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/** The one argv a commit object is read with, host and repository pinned. @param {string} sha */
+export function commitReadArgs(sha) {
+  return ["api", "--hostname", RECEIPT_HOST, `repos/${OWN_REPOSITORY}/git/commits/${sha}`];
+}
+
+/** The one argv a tree object is read with, host and repository pinned. @param {string} sha */
+export function treeReadArgs(sha) {
+  return ["api", "--hostname", RECEIPT_HOST, `repos/${OWN_REPOSITORY}/git/trees/${sha}`];
+}
+
+/**
+ * The `skills/` tree SHA of `commit`, resolved through the same gh api chain the tag was peeled
+ * with (commit -> root tree -> its `skills` entry), for the LCLI-469 handshake. opum-marketplace
+ * records this value as its federation baseline. Never throws: an unresolved value is reported,
+ * because the promotion before it is already complete.
+ * @param {string} commit @param {{ run?: Function }} [options]
+ * @returns {Promise<{ sha: string } | { error: string }>}
+ */
+export async function resolveSkillsTree(commit, { run = defaultRun } = {}) {
+  try {
+    const commitDoc = JSON.parse((await run("gh", commitReadArgs(commit))).stdout);
+    const root = commitDoc?.tree?.sha;
+    if (typeof root !== "string" || !/^[0-9a-f]{40}$/.test(root))
+      return { error: `commit ${commit} did not read as a commit with a tree` };
+    const treeDoc = JSON.parse((await run("gh", treeReadArgs(root))).stdout);
+    const entries = Array.isArray(treeDoc?.tree) ? treeDoc.tree : [];
+    const skills = entries.find((entry) => entry?.path === "skills" && entry?.type === "tree");
+    if (!skills || typeof skills.sha !== "string" || !/^[0-9a-f]{40}$/.test(skills.sha))
+      return { error: `root tree ${root} of ${commit} has no skills/ tree entry` };
+    return { sha: skills.sha };
+  } catch (error) {
+    return { error: firstLine(error) || "the gh api read failed with no message" };
   }
 }
 
@@ -838,32 +919,39 @@ export const POST_LATEST_RUNBOOK_ITEM = "docs/runbooks/release-publishing.md, se
 
 /**
  * THE POST-LATEST CHECKLIST (LCLI-618): what is due once `latest` reads X, printed when --promote
- * finishes, whether or not the read-back passed, because either way the promotion is complete. It
- * used to be publish-release.sh's closing checklist, printed after STAGING, when npm's
- * package-level readme had not been written and `latest` had not moved. The GitHub Release is
- * still a manual step here; LCLI-622 tracks making it an executed one, as quest-cli's is.
- * @param {{ version: string, releaseRunId: string, recordPath: string, peeledChain: string[],
- *   readback: { ok: boolean, code: number | string | null, verdict: string } }} args
+ * finishes, whatever the read-back said, because either way the promotion is complete. It used to
+ * be publish-release.sh's closing checklist, printed after STAGING, when npm's package-level readme
+ * had not been written and `latest` had not moved. The GitHub Release is still a manual step here;
+ * LCLI-622 tracks making it an executed one, as quest-cli's is.
+ * @param {{ version: string, releaseRunId: string, recordPath: string, tagObject: string | null,
+ *   commit: string, skillsTree: { sha: string } | { error: string },
+ *   readback: { state: string, verdict: string } }} args
  * @returns {string[]}
  */
-export function postLatestChecklist({ version, releaseRunId, recordPath, peeledChain, readback }) {
+export function postLatestChecklist({ version, releaseRunId, recordPath, tagObject, commit, skillsTree, readback }) {
   const tag = `v${version}`;
+  const label = {
+    [READBACK_PASSED]: "PASSED",
+    [READBACK_NOT_CONFIRMED]: "NOT CONFIRMED (see above: re-read it by hand; do NOT roll back)",
+    [READBACK_FAILED]: "DID NOT PASS (see above; do NOT roll back)",
+  }[readback.state];
   return [
     "",
     `Post-latest checklist for lore ${version} (${POST_LATEST_RUNBOOK_ITEM}):`,
-    `  1. README read-back: ${readback.ok ? "PASSED" : `DID NOT PASS (exit ${readback.code ?? "none"}; see above, and do NOT roll back)`}. It ran automatically:`,
+    `  1. README read-back: ${label ?? readback.state}. It ran automatically; its verdict:`,
     `         ${readback.verdict}`,
     "     Record that line in the release-truth record (item 5).",
     `  2. Cut a non-draft, non-prerelease GitHub Release for ${tag}, with CHANGELOG.md's [${version}] section as its body:`,
     `         gh release create ${tag} --title "Lore CLI ${version}" --notes-file <notes>`,
-    `  3. Tell quest-cli that lore ${version} is live on latest, and opum-agent, whose go this was. Resolve each`,
-    "     session with ListAgents and match on repository; session names change on every restart.",
+    `  3. Tell quest-cli that lore ${version} is live on latest; tell opum-cli-e2e the same, for information; and`,
+    "     opum-agent, whose go this was. Resolve each session with ListAgents and match on repository;",
+    "     session names change on every restart.",
     "  4. The LCLI-469 marketplace handshake, second message: tell opum-marketplace that dist-tags.latest now reads",
-    `     ${version}, and send the tag name, tag object SHA, peeled commit and skills/ tree SHA again, to be`,
-    `     re-resolved rather than trusted. This run resolved ${tag} as: ${peeledChain.join(" -> ")}.`,
-    `         git rev-parse ${tag}              # the tag object SHA`,
-    `         git rev-parse '${tag}^{commit}'   # the commit it peels to`,
-    `         git ls-tree ${tag} skills         # the resolved skills/ tree SHA`,
+    `     ${version}, and send these four values again, to be re-resolved rather than trusted:`,
+    `         tag            ${tag}`,
+    `         tag object     ${tagObject ?? `none: ${tag} is a lightweight tag`}`,
+    `         peeled commit  ${commit}`,
+    `         skills/ tree   ${"sha" in skillsTree ? skillsTree.sha : `NOT RESOLVED (${skillsTree.error}); resolve it by hand: git rev-parse '${commit}:skills'`}`,
     "  5. Update docs/reference/lore-cli-release-truth.md: REPLACE its current-state claim so it states",
     `     ${version} is released, and record Release run ${releaseRunId}, the promotion record ${recordPath}, the`,
     "     read-back verdict above, and HOW the release was staged. A staging by scripts/publish-release.sh",
@@ -930,6 +1018,7 @@ export async function main(
     err = (line) => console.error(line),
     readPackageVersion = async () => JSON.parse(await readFile(join(root, "package.json"), "utf8")).version,
     verifyOptions = {},
+    readbackTempRoot = undefined,
   } = {},
 ) {
   const args = parseArgs(argv);
@@ -1295,39 +1384,62 @@ export async function main(
       return 1;
     }
     out(
-      `\nPromoted: ${PROMOTE_TAG} reads ${record.version} on all ${record.packages.length} packages, and npm serves ${LAUNCHER}@${record.version} as ${final.filename} (${final.integrity}). Rollback: node scripts/promote-latest.mjs --rollback ${args.recordPath}`,
+      `\nPromoted: ${PROMOTE_TAG} reads ${record.version} on all ${record.packages.length} packages, and npm serves ${LAUNCHER}@${record.version} as ${final.filename} (${final.integrity}).`,
+    );
+    // Worded so it cannot read as a remedy for anything below (LCLI-616 review F8b).
+    out(
+      `The record ${args.recordPath} is what --rollback would restore from if the RELEASE itself had to be undone; a README read-back result is never a reason to use it.`,
     );
 
     // THE README READ-BACK (step 12; LCLI-616). Once, here, and never in a dry run: npm derives the
-    // package-level readme from the publish above, and from nothing before it.
+    // package-level readme from the publish above, and from nothing before it. The runner buffers
+    // the script's output, so the wait is announced before it starts rather than streamed.
     const windowSeconds = env.REGISTRY_WINDOW_SECONDS || "1800";
     const readCommand = `npm view ${LAUNCHER} readme`;
     out(
-      `\nREADME read-back (A4, OPAG-474 AC3): scripts/readme-readback.sh against ${final.filename}'s own package.json and README.md, re-reading for up to ${windowSeconds}s:`,
+      `\nREADME read-back (A4, OPAG-474 AC3): scripts/readme-readback.sh against ${final.filename}'s own package.json and README.md.`,
     );
-    const readback = await runReadmeReadback({ run, final, env });
+    out(`  It re-reads for up to ${windowSeconds}s; its output prints when it finishes.`);
+    const readback = await runReadmeReadback({ run, final, env, tempRoot: readbackTempRoot });
+    const skillsTree = await resolveSkillsTree(peeled.commit, { run });
     const checklist = postLatestChecklist({
       version: record.version,
       releaseRunId: /** @type {string} */ (args.releaseRun),
       recordPath: /** @type {string} */ (args.recordPath),
-      peeledChain: peeled.chain,
+      tagObject: peeled.chain.find((/** @type {string} */ link) => link.startsWith("tag "))?.slice(4) ?? null,
+      commit: peeled.commit,
+      skillsTree,
       readback,
     });
-    if (readback.ok) {
-      out(`  ${readback.verdict}`);
+    if (readback.state === READBACK_PASSED) {
+      for (const line of readback.output.split("\n")) out(`  ${line}`);
       for (const line of checklist) out(line);
       return 0;
     }
-    for (const line of readback.output.split("\n")) err(`  ${line}`);
+    for (const line of readback.output.split("\n")) if (line) err(`  ${line}`);
+    const headline =
+      readback.state === READBACK_FAILED
+        ? "!!! THE README READ-BACK DID NOT PASS. THIS PROMOTION IS COMPLETE AND VERIFIED. !!!"
+        : `!!! THE README READ-BACK DID NOT CONFIRM THE README${readback.tooling ? " (A TOOLING FAILURE, NOT A FINDING ABOUT THE PAGE)" : ""}. THIS PROMOTION IS COMPLETE AND VERIFIED. !!!`;
+    const meaning =
+      readback.state === READBACK_FAILED
+        ? "The verdict below is a finding about the page npm serves (OPAG-474 when it names it). The fix is the NEXT release."
+        : "Nothing was proven either way. Re-read it by hand once propagation is plainly done; if it is still wrong, that is the defect, and the fix is the NEXT release.";
     for (const line of [
       "",
-      `!!! THE README READ-BACK DID NOT PASS (exit ${readback.code ?? "none"}; OPAG-474). THIS PROMOTION IS COMPLETE AND VERIFIED. !!!`,
+      headline,
+      `  ${readback.verdict}`,
       `latest reads ${record.version} on all ${record.packages.length} packages and npm serves ${LAUNCHER}@${record.version} as the artifact's bytes (step 7 above).`,
       "Do NOT run --rollback, and do NOT unpublish: the readme is on an immutable page, and restoring the",
-      "old latest cannot give it one. It would undo a correct release and fix nothing. The fix is the NEXT release.",
-      "Re-read it by hand, and record the result on the release-truth record:",
+      "old latest cannot give it one. It would undo a correct release and fix nothing.",
+      meaning,
+      // Re-running --promote is not the way back to this check (LCLI-616 review F8e): it would redo
+      // tag writes to re-reach it. These are the read-back's own commands.
+      "Re-read it by hand, and record the result in the release-truth record:",
       `    ${readCommand} | wc -c`,
       `    ${readCommand}`,
+      "Or re-run the whole read-back against the served tarball's own package.json and README.md:",
+      `    d="$(mktemp -d)" && cd "$d" && npm pack ${LAUNCHER}@${record.version} && tar -xzf ${final.filename} && cd package && bash ${README_READBACK_SCRIPT}`,
       "",
     ])
       err(line);
