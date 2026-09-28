@@ -523,7 +523,7 @@ describe("release-provenance refuses an --acknowledge value that could forge a w
       expect(logLines(out).some((line) => line.startsWith("::error::forged"))).toBe(false);
       const commands = commandLines(out);
       expect(commands).toHaveLength(1);
-      expect(commands[0]).toStartWith("::error::--acknowledge must be a single-line reference");
+      expect(commands[0]).toStartWith("::error::Error: --acknowledge must be a single-line reference");
 
       // Shown escaped, so the reader can see exactly what was refused and nothing is decoded.
       expect(commands[0]).toContain(`got ${shownAs}`);
