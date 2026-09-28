@@ -114,6 +114,42 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node parity/scripts/version-parity.mjs --require
 
+  # LCLI-632, mirror of quest-cli QCLI-328 (opum-ai/quest-cli#367, bee16361): a breaking
+  # CHANGELOG entry needs at least a minor bump. Because lore and quest share one version
+  # (constitution Article 3 clause 1), the gate checks BOTH changelogs on every dispatch:
+  # lore's from the dispatched commit (its package.json version, after the bump is in), and
+  # quest-cli's BY REF through the GitHub API on main -- the same ref the version-parity gate
+  # above reads (the checker's CLI default is dev; release prep passes --next before the bump).
+  # Same shape as version-parity: no `if:`, no `needs:`, `publish` lists it, any read failure
+  # refuses (an unreadable quest changelog is not a clean one), and the sparse checkout carries
+  # exactly the files the checker reads, at the workspace root so test/release-workflow.test.ts's
+  # LCLI-616 scan (which strips only a parity/ prefix) sees them where the job runs them.
+  breaking-bump:
+    name: breaking CHANGELOG entry vs the bump (lore and quest, QCLI-328)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the breaking-bump gate (package.json, CHANGELOG.md and its checker only)
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          # Anchored (LCLI-613 N1): in non-cone mode a bare "package.json" matches at ANY depth.
+          sparse-checkout: |
+            /package.json
+            /CHANGELOG.md
+            /scripts/check-breaking-bump.mjs
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+      # No --next: the dispatched commit's package.json already names the bumped version, and
+      # its "## [X]" section is what gets checked. Any read failure refuses, like the parity
+      # gate above: no continue-on-error, and no input or variable skips it.
+      - name: Gate on breaking CHANGELOG entries vs the bump (QCLI-328)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/check-breaking-bump.mjs --quest-ref main
+
   verify-versions:
     name: assert release package versions + metadata are consistent
     needs: setup
@@ -881,7 +917,7 @@ jobs:
     if: ${{ inputs.publish == true }}
     # provenance-pre gates this job: a rewrite that dangled an already-published version's
     # attestation must stop the release rather than be added to (LCLI-481).
-    needs: [setup, version-parity, package, provenance-pre]
+    needs: [setup, version-parity, breaking-bump, package, provenance-pre]
     runs-on: ubuntu-latest
     # LCLI-268: an OUT-OF-FILE gate, on top of (not instead of) the `if:` guard above.
     # npm Trusted Publishing (LCLI-255) matches OIDC tokens on repo + WORKFLOW FILENAME,
