@@ -161,9 +161,11 @@
  *           WHICH CAUSE THE NOT-PUBLISHED WARNING LEADS WITH IS AN INPUT, NOT A GUESS (LCLI-635).
  *           A `not-published` result has two explanations, and which of them is possible is decided
  *           by an event this script cannot observe: whether the publish job succeeded. It succeeded
- *           -> every package went out, so the registry read API is lagging (LCLI-460) and there is
- *           nothing to resume. It did not -> a publish that stopped partway is the likely cause, and
- *           "Re-run failed jobs" is the sanctioned move. The warning used to lead with the partial
+ *           -> every package is on the registry, so the read API is lagging (LCLI-460) and there is
+ *           nothing to resume. It did not -> a publish that stopped partway is the likely cause and
+ *           "Re-run failed jobs" is the sanctioned move, but the result does NOT settle it: a job
+ *           can go red after its last package went out, which is why the failure wording sends the
+ *           reader to the publish job's log rather than asserting the cause. The warning used to lead with the partial
  *           publish in BOTH cases because it could not tell them apart, so on the run where lag was
  *           the only possibility it named a cause that was not true and prescribed a resume that
  *           could not help (LCLI-628's reviewer, F4). release.yml now passes needs.publish.result as
@@ -1159,8 +1161,8 @@ function report(checked, mode, options) {
     const specs = notPublished.map((r) => r.spec).join(", ");
     const publishSucceeded = options.publishResult === "success";
     const cause = publishSucceeded
-      ? `The cause is the registry read API lagging a publish that did succeed (LCLI-460). needs.publish.result: success is what settles that: this run's own publish steps put every one of these versions on the registry, so a PARTIAL PUBLISH is NOT the explanation — a resume would find each package already there. The publish job's read-back step reports the same lag when a package is not yet visible inside its window, and re-reading the registry later is what clears this, not re-running the job.`
-      : `The likely cause is a PARTIAL PUBLISH — the publish job did not succeed (needs.publish.result: ${options.publishResult}), so it stopped before these went out. release.yml publishes the platform packages first and the launcher X-rc.N last, so a publish that died partway leaves the launcher unpublished. The one other explanation is the registry read API lagging a publish that did succeed (LCLI-460): a job can still fail after its last package went out — the read-back step reports a lagging package and exits 0, but a content mismatch fails it, and so does any step after it — so the publish job's log is where the two are told apart. The sanctioned resume is "Re-run failed jobs" on the same run.`;
+      ? `The cause is the registry read API lagging a publish that did succeed (LCLI-460). needs.publish.result: success is what settles that: the publish job finished green, so every one of these versions is on the registry — published by this run, or found there with matching bytes by its own skip check — and no PARTIAL PUBLISH can leave a version a green publish job put there. The publish job's read-back step reports the same lag when a package is not yet visible inside its window, and re-reading the registry later is what clears this: re-running the publish job cannot, because its skip check either finds each package and does nothing, or hits the same lag and fails on the publish conflict.`
+      : `The likely cause is a PARTIAL PUBLISH — the publish job did not succeed (needs.publish.result: ${options.publishResult}), and a publish that stops partway leaves exactly this. release.yml publishes the platform packages first and the launcher X-rc.N last, so a job that dies partway leaves the launcher unpublished. The one other explanation is the registry read API lagging a publish that did succeed (LCLI-460): a job can still go red after its last package went out, because the read-back step reports a lagging package and exits 0 but a content mismatch there fails it, so the publish job's log is where the two are told apart. The sanctioned resume is "Re-run failed jobs" on the same run.`;
     console.log(
       `::warning::${notPublished.length} package version(s) this ${mode} check expected are NOT ON THE REGISTRY: ${specs}. This is not a missing attestation, and LCLI-482 does not explain it: each package's packument answered and does not list that version. ${cause} No propagation window was spent waiting on these: there is no attestation to wait for on a version the registry does not list. This check does not fail the run.`,
     );

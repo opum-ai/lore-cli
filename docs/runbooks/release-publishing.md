@@ -1523,14 +1523,17 @@ a launcher that did not exist yet, and never checking the rc the run did
 publish.
 
 `R` decides which cause a **not-published** finding — a version this release
-expected that the registry's read API does not list — leads with. That result
-has two explanations, and only one of them can be true on a given run: the
-publish job stopped partway, or the read API is lagging a publish that
-succeeded (LCLI-460). When `R` is `success`, every package went out with this
-run's own publish steps, so the warning leads with the lag and does **not**
-prescribe "Re-run failed jobs"; otherwise it leads with the partial publish
-and does. The same choice orders the job summary's verdict, and the log names
-`R` on every run so the choice can be checked rather than trusted.
+expected that the registry's read API does not list — leads with. That finding
+has two explanations: the publish job stopped partway, or the read API is
+lagging a publish that succeeded (LCLI-460). When `R` is `success`, every
+package is on the registry — published by this run, or found there with
+matching bytes by its own skip check — so the warning leads with the lag and
+does **not** prescribe "Re-run failed jobs". Otherwise a partial publish is
+the likely cause and the warning says so, while naming the other explanation
+and sending the reader to the publish job's log, which is what tells them
+apart: `success` is the only result that rules a partial publish out. The same
+choice orders the job summary's verdict, and the log names `R` on every run so
+the choice can be checked rather than trusted.
 
 **What `provenance-pre` checks (LCLI-627).** `release.yml`'s `provenance-pre`
 job runs `scripts/release-provenance.mjs --pre` before `publish`. It

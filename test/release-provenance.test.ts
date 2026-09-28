@@ -1218,6 +1218,15 @@ describe("release-provenance --post tells a version that was never published fro
    */
   const lineWith = (out: string, needle: string) => out.split("\n").find((line) => line.includes(needle)) ?? "";
 
+  /**
+   * Where one of the two CAUSES first appears in a warning, by concept rather than by one spelling
+   * (LCLI-635). Case-insensitive on purpose: the uppercase marker is a style, and a wording that
+   * opened with "a partial publish is one way to reach this" would otherwise read as leading with
+   * the lag. -1 when the cause is not named at all, which the callers assert against.
+   */
+  const causeIndex = (warning: string, cause: "lag" | "partial") =>
+    warning.search(cause === "lag" ? /read api lagging/i : /partial publish/i);
+
   function reset() {
     attestationRequests.length = 0;
     versionDocRequests.length = 0;
@@ -1292,9 +1301,19 @@ describe("release-provenance --post tells a version that was never published fro
    * as --publish-result; these two tests pin the resulting order in BOTH wordings.
    *
    * Both assert the INDEX of one cause against the other, not merely presence: a warning naming
-   * both causes in the wrong order is exactly the defect. Mutant: restoring the old single wording
-   * puts the partial publish first in both runs, reddening the succeeded one and leaving the other
-   * green — and the two runs differ only in the flag, so nothing else can explain either result.
+   * both causes in the wrong order is exactly the defect. The causes are matched CASE-INSENSITIVELY
+   * on their concepts (`/read api lagging/i`, `/partial publish/i`), because a wording that opened
+   * with a partial-publish narrative in lowercase would satisfy an uppercase-literal comparison
+   * while leading with exactly the wrong cause (LCLI-635's reviewer, F2's mutant).
+   *
+   * The two runs are NOT otherwise identical: the succeeded one sets GITHUB_STEP_SUMMARY and the
+   * not-succeeded ones are looped over three results, because an earlier version exercised only
+   * `success` and `failure` and a classifier written as `!== "failure"` — which prints the success
+   * wording for `cancelled` and `skipped` — passed the entire suite (F1). Only `success` may take
+   * the lag branch, so all three other values are run.
+   *
+   * Mutant: restoring the old single wording puts the partial publish first in both runs,
+   * reddening the succeeded one and leaving the others green.
    */
   test("a not-published finding leads with read-API lag when the publish job SUCCEEDED", async () => {
     reset();
@@ -1321,8 +1340,8 @@ describe("release-provenance --post tells a version that was never published fro
 
       const warning = lineWith(out, "NOT ON THE REGISTRY");
       expect(warning).toStartWith("::warning::");
-      const lag = warning.indexOf("read API lagging");
-      const partial = warning.indexOf("PARTIAL PUBLISH");
+      const lag = causeIndex(warning, "lag");
+      const partial = causeIndex(warning, "partial");
       expect(lag).toBeGreaterThan(-1);
       expect(partial).toBeGreaterThan(-1);
       expect(lag).toBeLessThan(partial);
@@ -1343,33 +1362,56 @@ describe("release-provenance --post tells a version that was never published fro
     }
   });
 
-  test("a not-published finding leads with the PARTIAL PUBLISH when the publish job did not succeed", async () => {
-    reset();
-    const { code, out } = await runGate([
-      "--post",
-      "--publish-result",
-      "failure",
-      "--launcher-rc",
-      "1",
-      "--version",
-      PARTIAL_VERSION,
-      "--package",
-      LAUNCHER,
-    ]);
-    expect(code).toBe(0);
-    expect(outcomeOf(out, `${LAUNCHER}@${PARTIAL_VERSION}-rc.1`)).toBe("not-published");
+  // Every value that is NOT `success`. All three, not just `failure`: the discriminator is
+  // "succeeded", and a classifier written as `!= "failure"` would print the success wording --
+  // including the sentence naming `success` -- into a run whose own log line one line above says
+  // the result was `cancelled` (LCLI-635's reviewer, F1).
+  for (const result of ["failure", "cancelled", "skipped"]) {
+    test(`a not-published finding leads with the PARTIAL PUBLISH when the publish job reports ${result}`, async () => {
+      reset();
+      const dir = mkdtempSync(join(tmpdir(), "lore-provenance-partial-lead-"));
+      const summaryPath = join(dir, "summary.md");
+      writeFileSync(summaryPath, "");
+      try {
+        const { code, out } = await runGate(
+          [
+            "--post",
+            "--publish-result",
+            result,
+            "--launcher-rc",
+            "1",
+            "--version",
+            PARTIAL_VERSION,
+            "--package",
+            LAUNCHER,
+          ],
+          { GITHUB_STEP_SUMMARY: summaryPath },
+        );
+        expect(code).toBe(0);
+        expect(outcomeOf(out, `${LAUNCHER}@${PARTIAL_VERSION}-rc.1`)).toBe("not-published");
 
-    const warning = lineWith(out, "NOT ON THE REGISTRY");
-    const lag = warning.indexOf("read API lagging");
-    const partial = warning.indexOf("PARTIAL PUBLISH");
-    expect(lag).toBeGreaterThan(-1);
-    expect(partial).toBeGreaterThan(-1);
-    expect(partial).toBeLessThan(lag);
-    // The result is named, so a reader can tell a failed publish from a cancelled one, and the
-    // sanctioned resume is prescribed — on this branch it is the move that can help.
-    expect(warning).toContain("needs.publish.result: failure");
-    expect(warning).toContain("Re-run failed jobs");
-  });
+        const warning = lineWith(out, "NOT ON THE REGISTRY");
+        const lag = causeIndex(warning, "lag");
+        const partial = causeIndex(warning, "partial");
+        expect(lag).toBeGreaterThan(-1);
+        expect(partial).toBeGreaterThan(-1);
+        expect(partial).toBeLessThan(lag);
+        // The result is named, so a reader can tell a failed publish from a cancelled one — and
+        // never reads `success` in a run that reported otherwise — and the sanctioned resume is
+        // prescribed, because on this branch it is the move that can help.
+        expect(warning).toContain(`needs.publish.result: ${result}`);
+        expect(warning).not.toContain("needs.publish.result: success");
+        expect(warning).toContain("Re-run failed jobs");
+        expect(out).toContain(`needs.publish.result was '${result}'`);
+
+        const summary = readFileSync(summaryPath, "utf8");
+        expect(summary).toContain(`the publish job did not succeed (needs.publish.result: ${result})`);
+        expect(summary).not.toContain("the publish job succeeded");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }
 
   test("AC2: an unpublished launcher gets NO propagation wait although a platform is attested (bounded time)", async () => {
     // A 30s window: a regression to waiting on the launcher costs 30s, so a 3s bound cannot be
