@@ -195,7 +195,7 @@ the [dependency boundary audit](dependency-boundary-audit.md).
 
 | | |
 |---|---|
-| **Packages** | `mdast-util-from-markdown` and the `@types/mdast` types |
+| **Packages** | `mdast-util-from-markdown` and the `@types/mdast` types; for `lore read`'s pretty rendering only, `mdast-util-gfm` + `micromark-extension-gfm` (GFM tables, task lists, strikethrough; LCLI-615) |
 | **Role** | A real markdown AST for **locating** managed blocks and links; writes are string-splice, never AST re-serialization |
 
 **Rationale.** Several lore operations are *surgical edits to existing prose* and
@@ -214,7 +214,8 @@ makes *locating* the right span safe and idempotent:
   link/text nodes, not raw bytes.
 
 **Parse-only, deliberately.** lore ships **only** the parser
-(`mdast-util-from-markdown`) — not the full `unified`/`remark` pipeline and not
+(`mdast-util-from-markdown`, plus the GFM parse extensions `lore read` uses to
+render for a terminal, LCLI-615) — not the full `unified`/`remark` pipeline and not
 `remark-stringify`/`mdast-util-to-markdown`. Every write is **parse-to-locate,
 then string-splice** the original bytes at the located offsets, never
 "re-serialize the whole AST." This is a load-bearing choice, not an oversight:
@@ -497,6 +498,7 @@ adoption are described in
 | CLI parsing | Commander (§3); Lore owns lifecycle, errors, and output | exact `15.0.0` | yes |
 | Frontmatter parse/serialize | Lore fence boundary + `js-yaml` | exact `5.2.2` | yes |
 | Markdown AST surgery & links | `mdast-util-from-markdown` (mdast), parse-only | exact `2.0.3` | yes |
+| Terminal markdown rendering (`lore read`, pretty only) | `mdast-util-gfm` + `micromark-extension-gfm` over the same parser; Lore-owned mdast-to-ANSI renderer (`LCLI-615`) | exact `3.1.0` / `3.0.0` | yes |
 | Internal link validation | Lore-owned over parsed mdast; slug and per-document duplicate primitive via `github-slugger` (`LCLI-287`) | exact `2.0.0` | yes |
 | Terminal display width | `string-width`; Lore retains field sanitization, padding, and row/output policy (`LCLI-285`) | exact `8.2.2` | yes |
 | SSRF address parsing and CIDR match | `ipaddr.js`; Lore retains explicit block policy, DNS, redirect, timeout, fail-closed, and error behavior (`LCLI-286`) | exact `2.4.0` | yes |

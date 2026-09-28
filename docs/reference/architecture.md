@@ -123,7 +123,9 @@ the machine contract — see [CLI contract](cli-contract.md) and
 
 `output.ts` is the shared rendering seam. Exact-pinned `string-width` owns
 Unicode grapheme segmentation and terminal display-column measurement for the
-task-summary rows shared by `tasks` and `orphans`. Lore sanitizes fields before
+task-summary rows shared by `tasks` and `orphans`, and for `lore read`'s pretty
+rendering (`core/markdown-render.ts`, LCLI-615), which wraps and cuts to the
+terminal's width. Lore sanitizes fields before
 measurement, retains the column-padding and row-composition policy, and owns
 all JSON/plain/pretty, stream, color, exit, and ordering contracts.
 
