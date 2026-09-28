@@ -320,6 +320,22 @@ describe("release.yml keeps the provenance gate ENFORCING, not merely present (L
     for (const pattern of NEUTERING_RUN_PATTERNS) expect(run).not.toMatch(pattern);
   });
 
+  test("the post-publish check is told which X-rc.N launcher this dispatch staged (LCLI-625)", () => {
+    // A Release run publishes the launcher at X-rc.N, never at X, and the script refuses --post
+    // without --launcher-rc. N must come from THIS dispatch's launcher_rc input — the same input
+    // the package and publish jobs stage with — never from a literal, which would check rc.1 on
+    // every re-stage that published rc.2.
+    const doc = loadWorkflow();
+    const step = provenanceStep(doc.jobs["provenance-post"]);
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal GitHub Actions expression syntax from release.yml, not a JS template placeholder.
+    expect(step?.env?.LAUNCHER_RC).toBe("${{ inputs.launcher_rc }}");
+    const run = step?.run ?? "";
+    expect(run).toContain('--launcher-rc "$LAUNCHER_RC"');
+    expect(run.replace('--launcher-rc "$LAUNCHER_RC"', "")).not.toContain("--launcher-rc");
+    // --pre scans published history and must not be handed an rc (the script refuses it).
+    expect(provenanceStep(doc.jobs["provenance-pre"])?.run ?? "").not.toContain("--launcher-rc");
+  });
+
   test("both provenance jobs are time-bounded", () => {
     const doc = loadWorkflow();
     // provenance-pre gates publish, so a hung connection would otherwise hold a runner for the
