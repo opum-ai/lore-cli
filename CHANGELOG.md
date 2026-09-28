@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   will now fail on. A bare `YYYY-MM-DD` date stays a validate-only warning. Frontmatter that is not
   valid YAML still stops `check` at the parse error, before per-file rules run. A fleet measurement
   by ref found 0 such findings in 396 files across 11 repositories. This ships in a minor release.
+- **`scripts/promote-latest.mjs` refuses a `--version` that would move `latest` backwards, or is
+  not plain `X.Y.Z`** (LCLI-631, paired with quest-cli QCLI-402). On a fresh `--dry-run` or
+  `--promote`, before any registry write, it refuses a `--version` older (numerically) than any
+  package's current `latest`, naming both versions, and it refuses when a current `latest` is not
+  a plain release. Before this, such a run wrote a record that both resume and `--rollback` then
+  refused, which stranded the promotion. A prerelease `--version` was already refused earlier, by
+  the equivalence check, and a test now holds that end to end. Backports and prereleases are not
+  a promote use case. A resumed run is not re-checked against a current `latest` (LCLI-638).
 - **The root launcher stages as `X-rc.N`; the platform packages still stage as `X`** (LCLI-621,
   constitution Article 3 clause 5 as amended by ODOC-302). The Release run's `npm-packages`
   artifact now carries eight tarballs: the six platform packages at `X`, the launcher at `X-rc.N`
