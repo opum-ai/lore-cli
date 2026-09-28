@@ -151,6 +151,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release, rcs run in numeric `N` order and `X` comes last. The defect was latent: no
   prerelease of `@opum-ai/lore` is on the registry yet. It had to be fixed before the first
   `publish: true` Release run under LCLI-621 puts one there.
+- **`scripts/publish-release.sh` refuses a malformed registry window or propagation cushion before
+  it reads anything remote** (LCLI-629). Both `REGISTRY_WINDOW_SECONDS` and
+  `PROPAGATION_CUSHION_SECONDS` were first read after all six platform packages were published,
+  and neither was checked. Measured on the real script under macOS `/bin/bash` 3.2.57, a window of
+  `30m` or `08` skipped the visibility gate and the cushion together, so the launcher was staged
+  over a platform package that never became visible, and the run exited 0. A window of `abc`
+  exited 0 after six platform publishes, with the launcher never published and no error. A cushion
+  of `abc` was skipped, and `30m` became a real 30-minute wait, because macOS `sleep` accepts unit
+  suffixes. Both variables now have to be whole seconds, 0 to 999999999 with no leading zero. That
+  is the grammar `scripts/readme-readback.sh` and `scripts/promote-latest.mjs` already use, and
+  tests hold all three to one pattern. Anything else exits 2 before the version-parity read, any
+  download, or any registry call, dry run included. The value is shown `printf %q` escaped on one
+  line. `--verify-only` and `--print-checklist` read neither variable and are exempt. Unset or
+  empty keeps the defaults, 1800 and 20.
 
 ## [0.11.0] - 2026-09-27
 
