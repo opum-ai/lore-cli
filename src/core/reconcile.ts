@@ -17,7 +17,8 @@
  * {@link reconcileStatus}'s `overrides` parameter).
  *
  * Per the core contract (lore-design §2.1) this module is pure: two string arrays (plus an optional
- * overrides map) in, a derived status (or `null`) or a typed {@link LoreError} out — no filesystem,
+ * overrides map and an optional explicit terminal-status set) in, a derived status (or `null`) or a
+ * typed {@link LoreError} out — no filesystem,
  * no spawn, no clock. Reading the backend's status flow and resolving each task's live status are
  * command-layer concerns, kept out of this engine so it stays a single deterministic function over
  * already-resolved data.
@@ -162,12 +163,22 @@ export type StatusFlow = readonly string[];
  *   (contributes `"in-progress"`) instead of falling through to the "not in the flow" throw below
  *   — checked only as a fallback when the status is not itself found in `statusFlow`, so an
  *   `overrides` entry for the same status still wins.
+ * @param terminalStatuses the active backend's explicit terminal statuses, when it declares them
+ *   (`TrackerAdapter.terminalStatuses()`, LCLI-633 — Quest's `terminalStatuses` plus its optional
+ *   `closedStatus`, the second terminal status quest-cli QCLI-331 adds). `undefined` by default:
+ *   backends without the method (Backlog, Jira) keep the positional last-entry contract unchanged.
+ *   When supplied, membership in this set is the ONLY way a status classifies terminal — positional
+ *   terminality is suspended, so a flow's last entry NOT in the set classifies by position like any
+ *   other in-flow status. A terminal status need not appear in `statusFlow` at all: that is exactly
+ *   `closedStatus`, a terminal status the backend deliberately keeps out of the ladder.
  * @returns the rolled-up status, or `null` when there are no linked tasks.
  * @throws LoreError `validation` when `statusFlow` has fewer than two entries, is empty, or
  *   carries a duplicate entry (an ambiguous flow lore cannot classify against — ADR-0009 "must
- *   report rather than guess"), when an override's target is not one of `todo`/`in-progress`/
- *   `done`, or when a task's status is not present in `statusFlow`, does not match `pausedStatus`,
- *   and has no override (a config/task drift lore refuses to guess past).
+ *   report rather than guess"), when a supplied `terminalStatuses` set is empty (a rollup could
+ *   never reach `"done"`, which is a silent wrong answer, not a loud one), when an override's
+ *   target is not one of `todo`/`in-progress`/`done`, or when a task's status is not present in
+ *   `statusFlow`, does not match `pausedStatus`, and has no override (a config/task drift lore
+ *   refuses to guess past).
  */
 export function reconcileStatus(
   taskStatuses: readonly string[],
@@ -175,13 +186,25 @@ export function reconcileStatus(
   overrides: StatusOverrides = {},
   pausedStatus?: string,
   hints: StatusFlowHints = BACKLOG_STATUS_FLOW_HINTS,
+  terminalStatuses?: readonly string[],
 ): ReconciledStatus | null {
   if (taskStatuses.length === 0) {
     return null;
   }
   validateStatusFlow(statusFlow, hints);
+  if (terminalStatuses !== undefined && terminalStatuses.length === 0) {
+    throw new LoreError(
+      "validation",
+      "cannot reconcile status: the backend reported an empty terminal status set",
+      'the active tracker must declare at least one terminal status for lore to distinguish "done" from "not done"',
+      { statusFlow, terminalStatuses },
+    );
+  }
   const validatedOverrides = validateOverrides(overrides);
-  const positions = taskStatuses.map((status) => classify(status, statusFlow, validatedOverrides, pausedStatus, hints));
+  const terminalSet = terminalStatuses === undefined ? undefined : new Set(terminalStatuses);
+  const positions = taskStatuses.map((status) =>
+    classify(status, statusFlow, validatedOverrides, pausedStatus, hints, terminalSet),
+  );
   if (positions.every((position) => position === "terminal")) {
     return "done";
   }
@@ -274,10 +297,12 @@ function isReconciledStatus(value: string): value is ReconciledStatus {
 }
 
 /**
- * Classify one task's raw `status` string, checking `overrides` before falling back to its index in
- * `statusFlow`: the first entry is not-started, the last is terminal, everything between is active.
- * Matching is exact-string (Backlog status labels are canonical configured strings, verbatim in the
- * `--json` payload — not user-typed free text lore case-folds elsewhere).
+ * Classify one task's raw `status` string: `overrides` first, then the backend's explicit terminal
+ * set (when supplied — LCLI-633), then its index in `statusFlow`: the first entry is not-started,
+ * the last is terminal (positional terminality only when no explicit terminal set was supplied),
+ * everything between is active. Matching is exact-string (Backlog status labels are canonical
+ * configured strings, verbatim in the `--json` payload — not user-typed free text lore case-folds
+ * elsewhere).
  *
  * A status absent from `statusFlow` is not automatically an error: when it exactly matches
  * `pausedStatus` (a backend's non-terminal side status excluded from the ladder by design, e.g.
@@ -285,8 +310,8 @@ function isReconciledStatus(value: string): value is ReconciledStatus {
  * throw below. Checked only once the `statusFlow` lookup itself misses, so an `overrides` entry for
  * the same status still takes precedence, exactly as it does for any other status.
  *
- * @throws LoreError `validation` when `status` has no override, is absent from `statusFlow`, and does
- *   not match `pausedStatus` either.
+ * @throws LoreError `validation` when `status` has no override, is absent from `statusFlow`, does
+ *   not match the explicit terminal set, and does not match `pausedStatus` either.
  */
 function classify(
   status: string,
@@ -294,10 +319,17 @@ function classify(
   overrides: ReadonlyMap<string, ReconciledStatus>,
   pausedStatus: string | undefined,
   hints: StatusFlowHints,
+  terminalStatuses: ReadonlySet<string> | undefined,
 ): StatusPosition {
   const override = overrides.get(status);
   if (override !== undefined) {
     return positionForOverride(override);
+  }
+  // The explicit terminal set is checked before the flow index and does not require membership in
+  // `statusFlow` at all: `closedStatus` (LCLI-633) is terminal precisely while living outside the
+  // ladder. When supplied it is authoritative — a flow's last entry NOT in the set is not terminal.
+  if (terminalStatuses?.has(status)) {
+    return "terminal";
   }
   const index = statusFlow.indexOf(status);
   if (index === -1) {
@@ -311,7 +343,7 @@ function classify(
       { status, statusFlow },
     );
   }
-  if (index === statusFlow.length - 1) {
+  if (terminalStatuses === undefined && index === statusFlow.length - 1) {
     return "terminal";
   }
   if (index === 0) {
