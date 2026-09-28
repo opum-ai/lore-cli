@@ -430,8 +430,7 @@ const PUBLISH_SITE_ALLOWLIST: PublishSite[] = [
   // RUNS: the ONE publish without release-candidate -- the X launcher, --tag latest.
   {
     path: "scripts/promote-latest.mjs",
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: exact text of a tracked file the scanner reads, not a JS template.
-    text: 'return ["publish", tarball, "--tag", PROMOTE_TAG, `--registry=${PUBLIC_REGISTRY}`, ...(otp ? ["--otp", otp] : [])];',
+    text: 'return ["publish", tarball, "--tag", PROMOTE_TAG, ...REGISTRY_PINS, ...(otp ? ["--otp", otp] : [])];',
   },
   {
     path: "scripts/promote-latest.mjs",
@@ -621,6 +620,7 @@ describe("release.yml enforces constitution Article 3 (LCLI-613)", () => {
       "--tag",
       "latest",
       "--registry=https://registry.npmjs.org/",
+      "--@opum-ai:registry=https://registry.npmjs.org/",
     ]);
   });
 

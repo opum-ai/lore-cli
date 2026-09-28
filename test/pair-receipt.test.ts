@@ -30,6 +30,7 @@ import {
   PAIR_RECEIPT_KIND,
   PLATFORMS,
   parseCheckArgs,
+  REGISTRY_PINS,
   RELEASE_PACKAGES,
   RELEASE_RECEIPT_KIND,
   receiptReadArgs,
@@ -1016,6 +1017,12 @@ describe("scripts/pair-receipt.mjs --check-release-receipt (the staging gate)", 
       "--prefer-online",
       expect.stringMatching(/^--userconfig=/),
       "--registry=https://registry.npmjs.org/",
+      // A scope registry in any npmrc outranks --registry for @opum-ai/ packages (review F6).
+      "--@opum-ai:registry=https://registry.npmjs.org/",
+    ]);
+    expect(REGISTRY_PINS).toEqual([
+      "--registry=https://registry.npmjs.org/",
+      "--@opum-ai:registry=https://registry.npmjs.org/",
     ]);
   });
 

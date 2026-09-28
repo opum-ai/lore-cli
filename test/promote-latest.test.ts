@@ -69,6 +69,9 @@ const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest(
 const sri = (bytes: Uint8Array) => `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
 const FAST = { attempts: 1, delayMs: 0, sleep: async () => {} };
 const REGISTRY = "https://registry.npmjs.org/";
+/** Both flags every npm call must carry (review F6): `--registry` alone loses to an `@opum-ai:registry` in any npmrc. */
+const PINS = [`--registry=${REGISTRY}`, `--@opum-ai:registry=${REGISTRY}`];
+const PINS_TEXT = PINS.join(" ");
 const PLATFORM_PACKAGES = RELEASE_PACKAGES.filter((name) => name !== LAUNCHER);
 
 // ── Launcher tarballs: a minimal ustar writer (as test/launcher-equivalence.test.ts), so the bytes
@@ -219,11 +222,13 @@ function world(options: WorldOptions = {}) {
     };
   const calls: string[][] = [];
   const writes: string[] = [];
-  /** Every registry write must name the public registry (review F6); recorded without the flag. */
+  /**
+   * EVERY npm call, read or write, must carry both registry pins (review F6); one that does not is
+   * recorded here. Writes are recorded without the pins, so the expectations below stay readable.
+   */
   const unpinned: string[] = [];
   const write = (args: string[]) => {
-    if (!args.includes(`--registry=${REGISTRY}`)) unpinned.push(args.join(" "));
-    writes.push(args.filter((a) => a !== `--registry=${REGISTRY}`).join(" "));
+    writes.push(args.filter((a) => !PINS.includes(a)).join(" "));
   };
   const envs: Array<Record<string, string | undefined>> = [];
   const files = artifact();
@@ -251,6 +256,7 @@ function world(options: WorldOptions = {}) {
     run: async (command: string, args: string[], opts: Record<string, unknown> = {}) => {
       calls.push([command, ...args]);
       const line = [command, ...args].join(" ");
+      if (command === "npm" && !PINS.every((pin) => args.includes(pin))) unpinned.push(line);
       if (command === "security") throw Object.assign(new Error("no keychain item"), { code: 44 });
       const receiptAt = (path: string) =>
         `gh api --hostname github.com -H Accept: application/vnd.github.raw repos/opum-ai/opum-cli-e2e/contents/${path}?ref=main`;
@@ -305,7 +311,7 @@ function world(options: WorldOptions = {}) {
       if (command === "npm" && args[0] === "view" && args[2] === "--json") {
         // Every version read is ANONYMOUS against the public registry (review F6), the pair
         // receipt's observeRelease as much as probeVersion.
-        expect(args.slice(3)).toEqual(["--prefer-online", `--userconfig=${devNull}`, `--registry=${REGISTRY}`]);
+        expect(args.slice(3)).toEqual(["--prefer-online", `--userconfig=${devNull}`, ...PINS]);
       }
       if (command === "npm" && args[0] === "view" && args[2] === "--json" && args[1] === `${LAUNCHER}@${V}`) {
         // probeVersion: the X launcher, the only version this script ever reads at X for the launcher.
@@ -419,7 +425,9 @@ describe("scripts/promote-latest.mjs: the clean case (LCLI-621)", () => {
       // Exactly one publish, the X launcher from the artifact, with --tag latest, after all six moves.
       expect(w.writes).toEqual([...platformMoves(V), publishLine(w)]);
       expect(w.writes.filter((line) => line.startsWith("publish "))).toEqual([publishLine(w)]);
-      // Every write, six dist-tag moves and the publish, named the public registry (review F6).
+      // Every npm call -- every read, the six dist-tag moves, the npm pack and the publish -- carried
+      // BOTH registry pins (review F6). Positive control: there were npm calls to check.
+      expect(w.calls.filter((c) => c[0] === "npm").length).toBeGreaterThan(20);
       expect(w.unpinned).toEqual([]);
       // The bytes npm now holds for X are the artifact's X launcher, not a repack.
       expect(sha256(w.state.xPublished as Buffer)).toBe(sha256(w.files.get(X_FILE) as Buffer));
@@ -468,14 +476,15 @@ describe("scripts/promote-latest.mjs: the clean case (LCLI-621)", () => {
       expect(existsSync(h.record)).toBe(false);
       for (const name of PLATFORM_PACKAGES)
         expect(h.out.join("\n")).toContain(
-          `would    npm dist-tag add ${name}@${V} latest --registry=${REGISTRY}   (now ${PRIOR})`,
+          `would    npm dist-tag add ${name}@${V} latest ${PINS_TEXT}   (now ${PRIOR})`,
         );
       expect(h.out.join("\n")).toContain(
-        `would    npm publish ${join(w.state.downloadDir as string, X_FILE)} --tag latest --registry=${REGISTRY}`,
+        `would    npm publish ${join(w.state.downloadDir as string, X_FILE)} --tag latest ${PINS_TEXT}`,
       );
       for (const name of RELEASE_PACKAGES) expect(w.tags[name]?.latest).toBe(PRIOR);
       expect(h.text()).toContain('"priorLatest": "5.6.6"');
       expect(h.text()).toContain("Dry run only: nothing was written, published or tag-moved.");
+      expect(w.unpinned).toEqual([]);
       expect(w.calls.filter((c) => c[1] === "pack").length).toBe(1);
       // No credential is even looked up.
       expect(w.calls.some((c) => c[0] === "security")).toBe(false);
@@ -972,7 +981,7 @@ describe("scripts/promote-latest.mjs: step 7 and the readme read-back (LCLI-621)
         "readme",
         "--prefer-online",
         `--userconfig=${devNull}`,
-        "--registry=https://registry.npmjs.org/",
+        ...PINS,
       ]);
     } finally {
       h.cleanup();
@@ -1095,6 +1104,7 @@ describe("scripts/promote-latest.mjs: the staging precondition, the record, and 
       // Nothing is ever unpublished: no npm unpublish, and no publish, on the rollback path.
       expect(w.calls.some((c) => c[0] === "npm" && (c[1] === "unpublish" || c[1] === "publish"))).toBe(false);
       expect(h.text()).toContain("Nothing was unpublished.");
+      expect(w.unpinned).toEqual([]);
     } finally {
       h.cleanup();
     }
@@ -1244,14 +1254,14 @@ describe("scripts/promote-latest.mjs: arguments and credentials", () => {
       "/a/opum-ai-lore-1.2.3.tgz",
       "--tag",
       "latest",
-      `--registry=${REGISTRY}`,
+      ...PINS,
     ]);
     expect(launcherPublishArgs("/a/x.tgz", { otp: "1" })).toEqual([
       "publish",
       "/a/x.tgz",
       "--tag",
       "latest",
-      `--registry=${REGISTRY}`,
+      ...PINS,
       "--otp",
       "1",
     ]);
@@ -1260,7 +1270,7 @@ describe("scripts/promote-latest.mjs: arguments and credentials", () => {
       "add",
       "@opum-ai/lore@1.2.3",
       "latest",
-      `--registry=${REGISTRY}`,
+      ...PINS,
     ]);
   });
 });
@@ -1583,7 +1593,7 @@ describe("scripts/promote-latest.mjs: --rollback moves latest only to what the r
       const reads = w.calls.filter((c) => c[0] === "npm" && c[1] === "view");
       expect(reads.length).toBe(2 * RELEASE_PACKAGES.length); // the state check, then the verify
       for (const c of reads) expect(c.slice(1)).toEqual(distTagReadArgs(c[2] as string));
-      expect(distTagReadArgs("x")).toContain("--registry=https://registry.npmjs.org/");
+      for (const pin of PINS) expect(distTagReadArgs("x")).toContain(pin);
       expect(distTagReadArgs("x").some((a) => a.startsWith("--userconfig="))).toBe(true);
     } finally {
       h.cleanup();

@@ -81,6 +81,17 @@ export const RECEIPT_REPOSITORY = "opum-ai/opum-cli-e2e";
 export const RECEIPT_REF = "main";
 export const OWN_REPOSITORY = "opum-ai/lore-cli";
 
+/**
+ * The public npm registry, and the flags that pin every npm call these scripts make to it (LCLI-621
+ * final review F6, measured on npm 12.1.0). BOTH are needed: `--registry` alone does not win for a
+ * scoped package, because npm-registry-fetch's pickRegistry and libnpmpublish prefer a configured
+ * `@<scope>:registry`, so a `@opum-ai:registry=` in ANY npmrc -- user, project or global;
+ * `--userconfig=/dev/null` only drops the user one -- redirects the call. A command-line
+ * `--@opum-ai:registry=` outranks every npmrc. Every package these scripts touch is @opum-ai/.
+ */
+export const PUBLIC_REGISTRY = "https://registry.npmjs.org/";
+export const REGISTRY_PINS = Object.freeze([`--registry=${PUBLIC_REGISTRY}`, `--@opum-ai:registry=${PUBLIC_REGISTRY}`]);
+
 export const PLATFORMS = Object.freeze([
   "darwin-arm64",
   "darwin-x64",
@@ -441,14 +452,7 @@ export function evaluateReleaseReceipt(
  * @param {string} spec
  */
 export function viewVersionArgs(spec) {
-  return [
-    "view",
-    spec,
-    "--json",
-    "--prefer-online",
-    `--userconfig=${devNull}`,
-    "--registry=https://registry.npmjs.org/",
-  ];
+  return ["view", spec, "--json", "--prefer-online", `--userconfig=${devNull}`, ...REGISTRY_PINS];
 }
 
 /** Reads one version's registry metadata as an object, or null. npm 12 wraps it in a one-element array. */

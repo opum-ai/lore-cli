@@ -101,6 +101,7 @@ import {
   OWN_REPOSITORY,
   observeRelease,
   RECEIPT_HOST,
+  REGISTRY_PINS,
   RELEASE_PACKAGES,
   requirePairQualification,
   resolveTagCommit,
@@ -119,7 +120,6 @@ export const QUEST_PACKAGE = "@opum-ai/quest";
 /** The workflow whose run --release-run must name, and the artifact it uploads the eight tarballs as. */
 export const RELEASE_WORKFLOW = ".github/workflows/release.yml";
 export const ARTIFACT_NAME = "npm-packages";
-const PUBLIC_REGISTRY = "https://registry.npmjs.org/";
 
 /** Strict semver 2.0.0, the grammar from semver.org. A dist-tag name or a `v` prefix is not a version. */
 export const SEMVER =
@@ -137,16 +137,18 @@ export const defaultRun = (command, args, options = {}) =>
   execFileAsync(command, args, { maxBuffer: 64 * 1024 * 1024, ...options });
 
 /**
- * The one argv a `latest` (or rollback) move is made with. The registry is PINNED to the public
- * one, as every read is, so an operator's configured mirror or scope registry cannot receive the
- * write (LCLI-621 review F6). Auth still resolves: npm keys a token by the registry's nerf-dart,
- * and both the private npmrc this script writes and a web-login ~/.npmrc key it
+ * The one argv a `latest` (or rollback) move is made with. Pinned by REGISTRY_PINS, as every read
+ * is: `--registry=https://registry.npmjs.org/` AND `--@opum-ai:registry=https://registry.npmjs.org/`,
+ * because npm prefers a configured `@opum-ai:registry` over `--registry` for a scoped package, so
+ * the first flag alone would let a scope registry in any npmrc receive the write (LCLI-621 review
+ * F6, measured on npm 12.1.0). Auth still resolves: npm keys a token by the chosen registry's
+ * nerf-dart, and both the private npmrc this script writes and a web-login ~/.npmrc key it
  * `//registry.npmjs.org/`, which is exactly this registry.
  * @param {string} name @param {string} target @param {string} tag
  * @param {{ otp?: string }} [options]
  */
 export function distTagAddArgs(name, target, tag, { otp } = {}) {
-  return ["dist-tag", "add", `${name}@${target}`, tag, `--registry=${PUBLIC_REGISTRY}`, ...(otp ? ["--otp", otp] : [])];
+  return ["dist-tag", "add", `${name}@${target}`, tag, ...REGISTRY_PINS, ...(otp ? ["--otp", otp] : [])];
 }
 
 /**
@@ -158,11 +160,15 @@ export function distTagAddArgs(name, target, tag, { otp } = {}) {
  * @param {string} tarball @param {{ otp?: string }} [options]
  */
 export function launcherPublishArgs(tarball, { otp } = {}) {
-  return ["publish", tarball, "--tag", PROMOTE_TAG, `--registry=${PUBLIC_REGISTRY}`, ...(otp ? ["--otp", otp] : [])];
+  return ["publish", tarball, "--tag", PROMOTE_TAG, ...REGISTRY_PINS, ...(otp ? ["--otp", otp] : [])];
 }
 
-/** An anonymous read against the public registry: no ~/.npmrc token is sent, no mirror answers. */
-const ANONYMOUS = Object.freeze([`--userconfig=${devNull}`, `--registry=${PUBLIC_REGISTRY}`]);
+/**
+ * An anonymous read against the public registry: no ~/.npmrc token is sent (`--userconfig`), and
+ * no mirror or scope registry in any npmrc answers (REGISTRY_PINS). Every npm READ uses this --
+ * dist-tags, a version view, the readme, and `npm pack` of the served rc.
+ */
+const ANONYMOUS = Object.freeze([`--userconfig=${devNull}`, ...REGISTRY_PINS]);
 
 /**
  * The one argv every dist-tag READ uses. ANONYMOUS, as quest-cli's anonymous registry fetch is

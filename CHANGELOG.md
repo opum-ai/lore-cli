@@ -40,8 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   loud warning, not a failure, on `0`. A failed platform move or launcher publish restores every
   `latest` that run moved, the launcher's included, by dist-tag. A failure in the step-7 checks
   afterwards restores nothing by itself, by design, and names `--rollback <record>` as the remedy.
-  `--rollback` restores every recorded `latest`. Nothing is unpublished. Every registry write names
-  the public registry, and every read is anonymous against it. The Release run must be a
+  `--rollback` restores every recorded `latest`. Nothing is unpublished. Every npm call the promotion
+  and pair-receipt scripts make passes both `--registry=https://registry.npmjs.org/` and
+  `--@opum-ai:registry=https://registry.npmjs.org/`. That covers the dist-tag moves, the publish,
+  every `npm view`, and the `npm pack` of the served rc. `--registry` alone does not beat an
+  `@opum-ai:registry` set in a user, project or global npmrc, as measured on npm 12.1.0. Every
+  read also passes `--userconfig=/dev/null`, so no token is sent. The Release run must be a
   `workflow_dispatch` run built from `opum-ai/lore-cli`. The spec is quest-cli's promote clause
   (QCLI-399, `e3c59d7b`) and opum-cli-e2e's `receipts/README.md` steps 5 to 7 (`4f078e6b`).
 - **A resumed staging skips a package only if the registry holds this run's bytes** (LCLI-621).

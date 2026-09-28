@@ -45,6 +45,8 @@ export declare const RECEIPT_HOST: string;
 export declare const RECEIPT_REPOSITORY: string;
 export declare const RECEIPT_REF: string;
 export declare const OWN_REPOSITORY: string;
+export declare const PUBLIC_REGISTRY: string;
+export declare const REGISTRY_PINS: readonly string[];
 export declare const PLATFORMS: readonly string[];
 export declare const LAUNCHER: string;
 export declare const RELEASE_PACKAGES: readonly string[];
