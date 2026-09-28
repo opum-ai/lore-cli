@@ -423,6 +423,11 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
     async statusFlow() {
       return statusFlow(await data(["task", "status-flow", "--json"], "task status-flow --json", "task.status-flow"));
     },
+    async terminalStatuses() {
+      return terminalStatusesField(
+        await data(["task", "status-flow", "--json"], "task status-flow --json", "task.status-flow"),
+      );
+    },
     async pausedStatus() {
       return pausedStatusField(
         await data(["task", "status-flow", "--json"], "task status-flow --json", "task.status-flow"),
@@ -673,13 +678,75 @@ function strings(v: unknown, name: string): string[] {
     throw new LoreError("drift", `Quest returned invalid ${name}`, QUEST_VERSION_SET_HINT);
   return [...v];
 }
-function statusFlow(value: unknown): string[] {
+function statusFlow(value: unknown): readonly string[] {
+  return parseStatusFlow(value).statuses;
+}
+/** A parsed, validated `quest task status-flow --json` payload (LCLI-633 extended the parse). */
+interface ParsedStatusFlow {
+  /** The ordered ladder, exactly as Quest reports it. */
+  readonly statuses: readonly string[];
+  /**
+   * The set reconciliation should treat as terminal ("done"): Quest's `terminalStatuses` plus, when
+   * the payload carries a `closedStatus` (QCLI-331's second terminal status), that status.
+   */
+  readonly terminalStatuses: readonly string[];
+}
+/**
+ * The Quest terminal set backing `TrackerAdapter.terminalStatuses()` (LCLI-633): Quest's own
+ * `terminalStatuses` plus its `closedStatus`, when reported.
+ *
+ * `closedStatus` is DETECTED BY KEY PRESENCE, never by a version comparison (the fleet rule — one
+ * version string has repeatedly named two byte-sets): a newer Quest that adds the field is accepted
+ * on its own declaration, and a Quest that omits the key falls back to `terminalStatuses` alone.
+ * Both fields together are accepted exactly when `terminalStatuses` is a subset of `statuses` plus
+ * `closedStatus` — quest-cli QCLI-331 shape B (`["Done"]` + `closedStatus: "Closed"`) and QCLI-406's
+ * later shape A (`["Done", "Closed"]`). A terminal status outside both is a Quest reporting a
+ * status-flow shape THIS lore adapter is not qualified against, so the diagnostic says version
+ * MISMATCH rather than pointing at a Quest-version floor the too-new Quest already exceeds.
+ */
+function terminalStatusesField(value: unknown): readonly string[] {
+  return parseStatusFlow(value).terminalStatuses;
+}
+function parseStatusFlow(value: unknown): ParsedStatusFlow {
   if (!record(value)) throw new LoreError("drift", "Quest returned invalid task status flow", QUEST_VERSION_SET_HINT);
   const statuses = strings(value.statuses, "task status-flow statuses");
   const terminalStatuses = strings(value.terminalStatuses, "task status-flow terminalStatuses");
-  if (terminalStatuses.some((status) => !statuses.includes(status)))
-    throw new LoreError("drift", "Quest returned terminal statuses outside its status flow", QUEST_VERSION_SET_HINT);
-  return statuses;
+  let closedStatus: string | undefined;
+  if (Object.hasOwn(value, "closedStatus")) {
+    const reported = value.closedStatus;
+    if (typeof reported !== "string" || reported.length === 0) {
+      throw statusFlowShapeDrift(`a closedStatus of ${JSON.stringify(reported)} rather than a status name`);
+    }
+    closedStatus = reported;
+  }
+  const accepted = new Set<string>(closedStatus !== undefined ? [...statuses, closedStatus] : statuses);
+  for (const terminal of terminalStatuses) {
+    if (!accepted.has(terminal)) {
+      throw statusFlowShapeDrift(
+        `terminal status ${JSON.stringify(terminal)}, which is neither in its status flow nor its closedStatus`,
+      );
+    }
+  }
+  return {
+    statuses,
+    terminalStatuses: [...new Set(closedStatus !== undefined ? [...terminalStatuses, closedStatus] : terminalStatuses)],
+  };
+}
+/**
+ * A `task status-flow --json` payload whose shape this adapter does not accept (LCLI-633): Quest
+ * declaring a terminal status outside `statuses` with no matching `closedStatus` (or a malformed
+ * `closedStatus`) — the signature of a Quest reporting a status-flow contract NEWER than the one
+ * this lore adapter is qualified against. The diagnostic must name that mismatch: the old wording
+ * ("Quest 0.2.7 or newer is required") told the operator to install a NEWER Quest, which is the
+ * opposite of the fix for a too-new Quest.
+ */
+function statusFlowShapeDrift(detail: string): LoreError {
+  return new LoreError(
+    "drift",
+    `Quest returned ${detail} — the installed lore and quest versions are mismatched`,
+    "update @opum-ai/lore to a version qualified against this quest's status-flow shape, or install a quest this lore version is qualified against",
+    { detail },
+  );
 }
 /**
  * Quest 0.4.0's optional `pausedStatus` field (QCLI-229, LCLI-455): a non-terminal "paused" status
