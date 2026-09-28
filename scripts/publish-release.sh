@@ -42,8 +42,10 @@
 # operator was stopped three separate times by steps this script had already worked out.
 #
 # Safety properties, in order of how much they matter:
-#   - REFUSES UNLESS quest-cli's package.json on its `main` names this same version, before
-#     anything else, dry run included (constitution Article 3 clause 6, LCLI-613). The rule is
+#   - REFUSES UNLESS quest-cli's package.json on its `main` names this same version, before any
+#     download, digest, receipt, credential or registry step, dry run included (constitution
+#     Article 3 clause 6, LCLI-613). Only argument validation and the window/cushion check
+#     (LCLI-629) come before it, and neither reads anything remote. The rule is
 #     quest-cli's version-parity.mjs, mirrored in scripts/version-parity.mjs. No flag or env
 #     var bypasses it; a read that fails refuses exactly like a mismatch.
 #   - STAGES ONLY: every `npm publish` carries `--tag release-candidate`, and nothing here
@@ -143,7 +145,8 @@
 # script reads bypasses it; the host is pinned to github.com even if GH_HOST is set. --dry-run
 # reports the receipt verdict, and stops non-zero if it would refuse.
 #
-# Refuses first, dry run included, unless quest-cli main's package.json names <version>
+# After checking its arguments and the two Env durations below, refuses before any download
+# or registry call, dry run included, unless quest-cli main's package.json names <version>
 # (Article 3 clause 6). Publishes ONLY under the release-candidate dist-tag and never moves
 # latest (clause 5); scripts/promote-latest.mjs moves latest once the pair receipt verifies.
 #
@@ -157,8 +160,9 @@
 #      REPO_SLUG   owner/name, if the origin remote cannot be parsed.
 #      REGISTRY_WINDOW_SECONDS, PROPAGATION_CUSHION_SECONDS   the registry-visibility window
 #                  (default 1800) and the cushion after it (default 20). Whole seconds only,
-#                  0 to 999999999, no leading zero; anything else is refused before anything is
-#                  read. Unset or empty means the default.
+#                  0 to 999999999, no leading zero; anything else is refused (exit 2) before
+#                  the version-parity read, any download, or any registry call. Unset or empty
+#                  means the default. --verify-only and --print-checklist read neither.
 # USAGE-END
 
 set -uo pipefail
@@ -318,7 +322,9 @@ hr()  { printf '%s\n' "───────────────────
 # nine-digit cap is a sanity bound, not an overflow guard.
 #
 # The value is shown only through printf %q, so a newline or control character in it prints as an
-# escape on the one ERROR line and cannot print a line of its own. Exit 2, like every other refusal
+# escape on the one ERROR line and cannot print a line of its own. The line is written by printf,
+# never echo: run as `sh`, bash is in POSIX mode, where macOS's /bin/sh `echo` expands the `\n`
+# inside %q's `$'...'` back into a real newline (LCLI-629 review). Exit 2, like every other refusal
 # of this script's inputs.
 #
 # WHICH MODES IT COVERS. --print-checklist exits above, before this, as it exits before parity: it
@@ -333,7 +339,7 @@ PROPAGATION_CUSHION_SECONDS="${PROPAGATION_CUSHION_SECONDS:-20}"
 window_re='^(0|[1-9][0-9]{0,8})$'
 refuse_unless_whole_seconds() {
   [[ $2 =~ $window_re ]] && return 0
-  echo "ERROR: $1 must be a whole number of seconds (0 to 999999999, no leading zero); got $(printf '%q' "$2"). Nothing has been read, downloaded or published (LCLI-629)." >&2
+  printf 'ERROR: %s must be a whole number of seconds (0 to 999999999, no leading zero); got %q. No version-parity read, download or registry call was made (LCLI-629).\n' "$1" "$2" >&2
   exit 2
 }
 if [ "$VERIFY_ONLY" -eq 0 ]; then
@@ -342,8 +348,9 @@ if [ "$VERIFY_ONLY" -eq 0 ]; then
 fi
 
 # ── Version parity with quest (constitution Article 3 clause 6, LCLI-613) ─────────────────
-# FIRST, before any artifact, digest, receipt, credential or registry step, and in a --dry-run
-# too: a lore release whose version quest-cli main does not also carry is a release that must not
+# Before any artifact, digest, receipt, credential or registry step, and in a --dry-run too. Only
+# argument validation and the window/cushion check above precede it, and neither reads anything
+# remote (LCLI-629). A lore release whose version quest-cli main does not also carry is a release that must not
 # happen, whatever else is in order, and a rehearsal that passed over it would read as a green
 # light. The rule is quest-cli's scripts/qualification/version-parity.mjs (QCLI-386), mirrored in
 # scripts/version-parity.mjs; that file names the respects in which the READ differs.

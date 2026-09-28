@@ -336,20 +336,23 @@ function runScript(
   ws: ReturnType<typeof makeWorkspace>,
   cwd: string,
   artifacts: string,
-  extraEnv: Record<string, string> = {},
+  // An `undefined` value UNSETS that variable, including one inherited from process.env.
+  extraEnv: Record<string, string | undefined> = {},
   flags: string[] = ["--dry-run"],
   bash = "bash",
 ) {
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    PATH: `${ws.bin}${delimiter}${process.env.PATH}`,
+    ARTIFACTS: artifacts,
+    NPM_TOKEN: "",
+    ...extraEnv,
+  };
+  for (const [key, value] of Object.entries(env)) if (value === undefined) delete env[key];
   const result = Bun.spawnSync({
     cmd: [bash, SCRIPT, VERSION, RUN_ID, ...flags],
     cwd,
-    env: {
-      ...process.env,
-      PATH: `${ws.bin}${delimiter}${process.env.PATH}`,
-      ARTIFACTS: artifacts,
-      NPM_TOKEN: "",
-      ...extraEnv,
-    },
+    env: env as Record<string, string>,
   });
   return {
     code: result.exitCode,
@@ -2498,10 +2501,15 @@ esac
 // the REAL publish path under /bin/bash and asserts, from an npm stub that logs EVERY call, that npm
 // was never invoked at all: no ping, no read, no publish.
 describeOnPosix("scripts/publish-release.sh registry window and cushion (LCLI-629)", () => {
-  /** Every npm argv is logged; a package is visible once this stub has published its tarball. */
-  function loggedNpm(ws: ReturnType<typeof makeWorkspace>) {
+  /**
+   * Every npm argv is logged; a package is visible once this stub has published its tarball.
+   * `lagOnce` names one name@version whose FIRST read after its publish is still a 404, so the
+   * visibility gate prints one "waiting" line, which carries the window it is counting down.
+   */
+  function loggedNpm(ws: ReturnType<typeof makeWorkspace>, lagOnce = "") {
     const log = resolve(ws.root, "npm-argv.log");
     const published = resolve(ws.root, "npm-published.log");
+    const lagged = resolve(ws.root, "npm-lagged");
     writeFileSync(log, "");
     writeFileSync(published, "");
     writeFileSync(
@@ -2512,7 +2520,10 @@ case "\${1:-}" in
   ping) exit 0 ;;
   view)
     spec="$2"; n="\${spec%@*}"; f="opum-ai-\${n#@opum-ai/}-\${spec##*@}.tgz"
-    grep -qxF "$f" "${published}" && { echo "\${spec##*@}"; exit 0; }
+    if grep -qxF "$f" "${published}"; then
+      if [ "$spec" = "${lagOnce}" ] && [ ! -f "${lagged}" ]; then touch "${lagged}"; ${NPM_404}; fi
+      echo "\${spec##*@}"; exit 0
+    fi
     ${NPM_404} ;;
   publish) basename "$2" >> "${published}"; echo "STUB PUBLISH $2"; exit 0 ;;
   *) exit 0 ;;
@@ -2548,7 +2559,7 @@ esac
         const r = runScript(ws, ws.root, ws.artifacts, { [name]: value, [other]: "0" }, flags, BASH);
         expect({ name, value, code: r.code }).toEqual({ name, value, code: 2 });
         expect(r.stderr).toContain(refusal(name));
-        expect(r.stderr).toContain("Nothing has been read, downloaded or published (LCLI-629)");
+        expect(r.stderr).toContain("No version-parity read, download or registry call was made (LCLI-629)");
         // Nothing read and nothing written: npm never ran, no artifact was downloaded, and the
         // version-parity read (the first thing the script reads) was never attempted.
         expect({ value, calls: npm.calls() }).toEqual({ value, calls: [] });
@@ -2603,6 +2614,29 @@ esac
     }
   });
 
+  // Run as `sh script`, bash is in POSIX mode, and macOS's /bin/sh (bash 3.2) `echo` then expands
+  // the `\n` inside %q's `$'...'` back into a real newline, so an `echo` of the escaped value printed
+  // the injected lines after all. The line is written by printf. Only where /bin/sh IS bash: dash
+  // (Ubuntu's /bin/sh) has no `[[` or `printf %q` and is not a shell this script supports.
+  const SH_IS_BASH =
+    process.platform !== "win32" &&
+    execFileSync("/bin/sh", ["-c", 'printf %s "${BASH_VERSION:-}"'], { encoding: "utf8" }) !== "";
+  test.skipIf(!SH_IS_BASH)("under /bin/sh (bash in POSIX mode) the escaped value still stays on one line", () => {
+    const ws = makeWorkspace();
+    try {
+      const npm = loggedNpm(ws);
+      const injected = "30m\nERROR: injected\nPUBLISHED 9.9.9";
+      const r = runScript(ws, ws.root, ws.artifacts, { REGISTRY_WINDOW_SECONDS: injected }, [], "/bin/sh");
+      expect(r.code).toBe(2);
+      const lines = r.stderr.split("\n").filter(Boolean);
+      expect(lines).toEqual([expect.stringContaining(String.raw`got $'30m\nERROR: injected\nPUBLISHED 9.9.9'.`)]);
+      expect(lines[0]).toStartWith("ERROR: REGISTRY_WINDOW_SECONDS must be a whole number of seconds");
+      expect(npm.calls()).toEqual([]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
   // --print-checklist reads neither and must need nothing; --verify-only reads neither and is the
   // recovery command the propagation-timeout message sends an operator to, so a stale value left in
   // their shell must not block it. Both still work with the worst value in both variables.
@@ -2626,7 +2660,35 @@ esac
     }
   });
 
-  test("unset or empty keeps the defaults, and a valid value reaches the gate and publishes all seven", () => {
+  // UNSET, not empty: runScript spreads process.env, so each variable is deleted from what the
+  // script receives. The dry run prints the cushion's default; on the real path one lagging read
+  // makes the gate print the window it is counting down, which is the window's default.
+  test("unset keeps the defaults: a 1800s window and a 20s cushion", () => {
+    const unset = { REGISTRY_WINDOW_SECONDS: undefined, PROPAGATION_CUSHION_SECONDS: undefined };
+    const dry = makeWorkspace();
+    try {
+      const npm = loggedNpm(dry);
+      const r = runScript(dry, dry.root, dry.artifacts, unset, ["--dry-run"], BASH);
+      expect(r.code).toBe(0);
+      expect(r.out).toContain("20s more, before publishing the root launcher");
+      expect(npm.calls().length).toBeGreaterThan(0);
+    } finally {
+      dry.cleanup();
+    }
+    const ws = makeWorkspace();
+    try {
+      const npm = loggedNpm(ws, `@opum-ai/lore-linux-arm64@${VERSION}`);
+      // The cushion is zeroed here so the run does not sleep its 20s default; the window stays unset.
+      const r = runScript(ws, ws.root, ws.artifacts, { ...unset, PROPAGATION_CUSHION_SECONDS: "0" }, [], BASH);
+      expect(r.code).toBe(0);
+      expect(r.out).toContain("waiting  1 package(s) not visible yet; 1800s of the shared window left");
+      expect(npm.published()).toEqual([...PLATFORMS.map((p) => `opum-ai-lore-${p}-${VERSION}.tgz`), ws.rootTarball]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("empty keeps the defaults, and a valid value reaches the gate and publishes all seven", () => {
     // Empty cushion: the dry run prints the default it would wait, 20s.
     const dry = makeWorkspace();
     try {
@@ -2659,9 +2721,12 @@ esac
   });
 });
 
-// One grammar across the three places that read a registry window (LCLI-629 AC3): this script's
+// One grammar across the three places that VALIDATE a registry window (LCLI-629 AC3): this script's
 // `window_re`, scripts/readme-readback.sh's (held by test/promote-latest.test.ts) and
 // promote-latest.mjs's exported REGISTRY_WINDOW. A plain file read, so it runs on every platform.
+// There is a FOURTH reader, and it is out of scope here: .github/workflows/release.yml feeds
+// `${{ vars.REGISTRY_WINDOW_SECONDS || 1800 }}` into `$(( ))` unvalidated in its post-publish steps.
+// It gates no publish and is unmeasured; LCLI-630 carries it.
 describe("scripts/publish-release.sh window grammar (LCLI-629)", () => {
   test("one grammar: publish-release.sh's window_re is REGISTRY_WINDOW's source, byte for byte", () => {
     const script = readFileSync(SCRIPT, "utf8");

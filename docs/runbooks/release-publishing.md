@@ -786,7 +786,9 @@ the promotion half, item 7. It is not part of staging.
    scripts/publish-release.sh <version> <run-id>
    ```
 
-   **Its first act is the lore/quest version-parity gate (LCLI-613).** It runs
+   **Its first remote read is the lore/quest version-parity gate (LCLI-613).**
+   Only argument validation and the window/cushion check below precede it,
+   and neither reads anything remote. It runs
    before any artifact, digest, receipt, credential or registry step, and in a
    `--dry-run` too, so a rehearsal cannot read green over a mismatched pair. The
    lore side is the `<version>` argument, because the script publishes a Release
@@ -794,6 +796,15 @@ the promotion half, item 7. It is not part of staging.
    to read quest-cli `main`. Two paths are exempt, because neither writes
    anything: `--print-checklist`, and `--verify-only`, which must still answer
    when GitHub is unreachable.
+
+   **`REGISTRY_WINDOW_SECONDS` and `PROPAGATION_CUSHION_SECONDS` must be whole
+   seconds (LCLI-629):** 0 to 999999999, no leading zero, and no unit suffix
+   such as `30m`. `scripts/publish-release.sh` refuses anything else with exit
+   2 before the version-parity read, any download, or any registry call, dry
+   run included, while `--verify-only` and `--print-checklist` ignore both.
+   Unset or empty means the defaults, 1800 and 20. Unchecked, a window of `30m`
+   skipped the visibility gate and staged the launcher over a platform package
+   that never became visible, and `abc` exited 0 after six platform publishes.
 
    **It stages, and it never moves `latest` (LCLI-613).** Every `npm publish`
    carries `--tag release-candidate`. A publish with no `--tag` moves `latest`
