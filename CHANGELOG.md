@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`lore` reads quest's terminal statuses from `quest task status-flow` instead of treating only
+  `Done` as complete** (LCLI-633, paired with quest-cli QCLI-331 and its later QCLI-406). A task in
+  quest's `closedStatus` is now complete for Story/Task coupling and `lore check`, and the adapter
+  accepts a terminal status set within the status flow plus `closedStatus`. A genuinely foreign
+  terminal status is still drift, and its message names a lore/quest version mismatch rather than a
+  too-old quest.
 - **`lore read` renders the markdown body when stdout is a terminal** (LCLI-615). It renders
   headings, emphasis, lists and task lists, block quotes, fenced code, links (as `text (url)`) and
   GFM tables, word-wrapped to the terminal's width. `--plain`, piped output and `--json` are

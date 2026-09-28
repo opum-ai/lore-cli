@@ -78,6 +78,18 @@ export interface TrackerAdapter {
    */
   pausedStatus?(): Promise<string | undefined>;
   /**
+   * The backend's explicit terminal ("done") statuses (LCLI-633): the set whose members classify a
+   * task as terminal in {@link core/reconcile.ts}'s rollup, superseding positional last-entry
+   * terminality whenever the backend supplies it. Quest derives it from `quest task status-flow`'s
+   * `terminalStatuses` plus its optional `closedStatus` (quest-cli QCLI-331's second terminal
+   * status, detected by key PRESENCE, never by a version comparison). A member need not appear in
+   * {@link statusFlow}'s ladder at all — `closedStatus` deliberately lives beside it, which is the
+   * whole point of the explicit set. Optional: a backend with no explicit terminal set (Backlog,
+   * Jira) omits the method entirely, and reconciliation keeps the positional "last status-flow
+   * entry is terminal" contract it has always had — same shape as {@link pausedStatus}.
+   */
+  terminalStatuses?(): Promise<readonly string[]>;
+  /**
    * Throw the error a write would throw when that error is caller configuration rather than a
    * per-task failure, so a command can refuse BEFORE it writes anything of its own (LCLI-582).
    * Quest implements it as its actor-declaration check: a missing `LORE_QUEST_ACTOR` fails every
