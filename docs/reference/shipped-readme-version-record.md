@@ -59,7 +59,7 @@ built to the count rather than to the claim each line makes will either miss the
 | A3.1 — every region present | **exercised**, per region | same script, all three modes |
 | A3.2 — region byte-equal to generated | **exercised** — *and this repository is the only side that ever will* | same script, all three modes |
 | A3.3 — no name/version pair outside every region | **exercised**, as **block-scoped** adjacency | same script, all three modes |
-| A4 — post-publish read-back naming its object | **exercised** | `scripts/readme-readback.sh`, called by `release.yml`'s `publish` job, by re-running `--check` over the bytes the registry served; step 1a of `publish-release.sh`'s closing checklist for the manual path |
+| A4 — post-publish read-back naming its object | **exercised** | `scripts/readme-readback.sh`, run by `scripts/promote-latest.mjs --promote` after the final `X` launcher is published to `latest` (LCLI-616), by re-running `--check` over the bytes the registry served against that tarball's own `package.json` and `README.md`; one path for both the OIDC-staged and the script-staged release |
 | A5 — this record | **exercised** | this file |
 | *(local)* markers must be inline, never line-initial | **exercised** | same script, all three modes — not a contract clause; see below |
 | *(local)* clause 3 has a sanctioned exemption | **exercised** | hand-written allow spans; see below |
@@ -348,11 +348,16 @@ gate that had become always-red would be visible rather than reassuring.
   artifact.
 - `.github/workflows/release.yml`, `package` job — **the gate**, run immediately
   after `npm pack` against the tarball about to be published.
-- `scripts/readme-readback.sh` — the A4 read-back, called by `release.yml`'s
-  `publish` job, naming the package and version it read. It is a script rather
-  than an inline `run:` block so that `test/readme-readback.test.ts` can drive
-  every branch of it against a stubbed `npm`; see "A4 shipped two defects" below
-  for why that mattered.
+- `scripts/readme-readback.sh` — the A4 read-back, run by
+  `scripts/promote-latest.mjs --promote` after the final `X` launcher is
+  published to `latest`, naming the package and version it read. It ends with
+  one `A4 VERDICT: PASSED|NOT-CONFIRMED|FAILED <reason>` line, which promote
+  reads. It is a script rather than an inline `run:` block so that
+  `test/readme-readback.test.ts` can drive every branch of it against a stubbed
+  `npm`; see "A4 shipped two defects" below for why that mattered. It used to
+  run at the end of `release.yml`'s `publish` job, which only stages. A staged
+  `X-rc.N` never sets the package-level `readme` (OPAG-474), and that job's
+  sparse checkout never carried the script, so LCLI-616 moved it.
 - `scripts/publish-release.sh` — the same tarball gate before any registry
   write. Not redundant with the workflow's: this script publishes whatever is in
   its artifacts directory, which an operator may populate by hand, and the root
@@ -463,6 +468,20 @@ whether the served README satisfies the *previous* release's assertions. If it
 does, that is propagation lag wearing the costume of a defect, and it warns. It
 fails only when the page matches **no** release we published — when lag has been
 positively ruled out.
+
+**Corrected by LCLI-616 (2026-09-28): a lagging replica CAN serve an empty
+readme, and an empty readme can also be a defect.** A lagging replica serves
+the packument as it stood before the publish. On an established package that is
+the previous README, as above. But `@opum-ai/lore`'s packument has had no
+`readme` since 0.11.0's dist-tag promotion (OPAG-474), so the next release will
+lag through an empty field. And after a fresh publish onto `latest`, a field
+still empty once propagation is done is the OPAG-474 defect itself. So an empty
+readme after the window is now settled by one packument read of `readme` and
+`versions`. If that read already lists this version, empty is FAILED. If it does
+not, lag is not ruled out, and the verdict is NOT-CONFIRMED. The script now ends
+every path in a verdict line, and a verdict that is not PASSED makes
+`promote-latest.mjs` exit `3`: the promotion is complete, and nothing is rolled
+back.
 
 ### The one documented invariant with no test behind it
 

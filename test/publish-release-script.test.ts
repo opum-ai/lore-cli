@@ -1645,46 +1645,59 @@ describeOnPosix("the closing checklist", () => {
   const checklist = (version: string) =>
     execFileSync("bash", [SCRIPT, version, RUN_ID, "--print-checklist"], { encoding: "utf8" });
 
-  /** Step 1a's RUNNABLE command block — the indented lines an operator copies, not the prose. */
-  function stepOneACommands(out: string) {
-    const body = out.slice(out.indexOf("1a. Read the shipped README back off the registry"));
-    return body.slice(0, body.indexOf("\n\n"));
-  }
-
-  test("step 1a re-runs the assertions and does NOT tell the operator to grep for a sentence", () => {
-    // Asserted against the COMMAND BLOCK, not the whole checklist: the prose below it quotes the
-    // old grep on purpose, to say why it went. A naive `not.toContain` over the full text fails
-    // on the explanation and would push the next author to delete the reasoning to get green.
-    const commands = stepOneACommands(checklist(VERSION));
-    expect(commands).toContain("shipped-readme-version.mjs --check");
-    expect(commands).not.toContain("grep");
-    // And the prose keeps the reason, which is the thing that stops it being re-added.
-    expect(checklist(VERSION)).toContain("DO NOT GREP FOR A SENTENCE");
-  });
-
-  test("THE REASON step 1a changed: that grep genuinely matches nothing in the real README", () => {
-    // Guards the premise rather than the wording. If the generator ever stops splitting the
-    // literal, this fails and the instruction could honestly go back to being a grep.
-    const readme = readFileSync(resolve(import.meta.dir, "..", "README.md"), "utf8");
-    expect(readme).not.toMatch(/Status: .* released/);
-    expect(readme).toMatch(/Status:<!--lore-version:status:begin--> \d+\.\d+\.\d+ released/);
-  });
-
-  test("it names the package it tells you to read, and the name is DERIVED not hardcoded", () => {
+  // LCLI-618 AC1. This script STAGES; it does not release. The README read-back, the GitHub Release,
+  // the "lore is live" notices, the marketplace handshake and the release-truth record all follow the
+  // final latest publish, and scripts/promote-latest.mjs prints them (its post-latest checklist,
+  // pinned in test/promote-latest.test.ts). Step 1a's README read-back lived here and was pinned
+  // here; the premise that made it re-run the generator rather than grep is now pinned in
+  // test/readme-readback.test.ts, beside the script that does the reading.
+  test("it carries ONLY the steps before the final latest publish, and points at promote-latest.mjs for the rest", () => {
     const out = checklist(VERSION);
-    expect(out).toContain("npm view @opum-ai/lore readme");
-    // The packument-level fact is the thing an operator must carry into their write-up.
-    expect(out).toContain("package-level");
+    expect(out).toContain("STAGED IS NOT RELEASED. Only these steps apply before the final latest publish");
+    // 1: opum-cli-e2e is told, with the Release run id it binds the pair receipt to.
+    expect(out).toContain(`Tell opum-cli-e2e the staged pair is ready for qualification: lore ${VERSION}`);
+    expect(out).toContain(`from Release run ${RUN_ID}, with quest ${VERSION}`);
+    expect(out).toContain(`receipts/pair/${VERSION}.json`);
+    // 2 and 3: the dry run, then the promotion.
+    expect(out).toContain(`--version ${VERSION} --release-run ${RUN_ID} --dry-run`);
+    expect(out).toContain(`--version ${VERSION} --release-run ${RUN_ID} --promote`);
+    // The rest is promote-latest.mjs's, and the runbook items it cites.
+    expect(out).toContain("belongs to scripts/promote-latest.mjs, which prints the rest as its");
+    expect(out).toContain("post-latest checklist when --promote finishes (runbook section 3, items 7 and 8)");
+    // None of the post-latest steps. Positive control for the negatives: the text is the checklist.
+    expect(out).toContain(`PUBLISHED ${VERSION}`);
+    for (const absent of [
+      /readme/i,
+      /gh release/i,
+      /GitHub Release/i,
+      /opum-marketplace/i,
+      /is live/i,
+      /skills/i,
+      /release-truth/i,
+    ])
+      expect(out).not.toMatch(absent);
+  });
+
+  test("the runbook items it cites say what it says they do", () => {
+    const runbook = readFileSync(resolve(import.meta.dir, "..", "docs", "runbooks", "release-publishing.md"), "utf8");
+    const section = runbook.slice(runbook.indexOf("### 3. Cut a release"), runbook.indexOf("### 4. "));
+    const item = (n: number) => {
+      const start = section.search(new RegExp(`^${n}\\. `, "m"));
+      const rest = section.slice(start + 1);
+      const end = rest.search(/^\d+\. /m);
+      return end === -1 ? rest : rest.slice(0, end);
+    };
+    expect(item(7)).toContain("**Move `latest`, after the pair receipt and after quest");
+    expect(item(8)).toContain("**After `latest` moves: the post-latest checklist (LCLI-618).**");
   });
 
   test("nothing is left unexpanded — a shell artifact in an instruction is a broken instruction", () => {
     const out = checklist(VERSION);
     expect(out).not.toContain("${ROOT_PKG");
+    expect(out).not.toContain("${LAUNCHER_VERSION");
     expect(out).not.toContain("\\$");
     expect(out).not.toContain("$VERSION");
-    // `$(mktemp -d)` and `"$d/..."` are literal ON PURPOSE: they are shell for the operator to
-    // run, not values for this script to expand.
-    expect(out).toContain("$(mktemp -d)");
+    expect(out).not.toContain("$RUN_ID");
   });
 
   test("no version is hardcoded — LCLI-483 shipped a checklist naming v0.3.5 for months", () => {
@@ -2061,12 +2074,19 @@ describeOnPosix("scripts/publish-release.sh stages the X-rc.N launcher and carri
   function registryNpm(
     ws: ReturnType<typeof makeWorkspace>,
     preexisting: Record<string, string> = {},
-    options: { broken?: Record<string, "etimedout" | "empty">; flaky?: string } = {},
+    options: {
+      broken?: Record<string, "etimedout" | "empty">;
+      flaky?: string;
+      /** The first `reads` `npm view <spec> version` answers after the stub published `spec` are E404. */
+      lag?: { spec: string; reads: number };
+    } = {},
   ) {
     const log = resolve(ws.root, "npm-publish.log");
     const flakyMarker = resolve(ws.root, "flaky-fired");
+    const lagCount = resolve(ws.root, "lag-reads");
     writeFileSync(log, "");
     rmSync(flakyMarker, { force: true });
+    rmSync(lagCount, { force: true });
     const broken = Object.entries(options.broken ?? {})
       .map(([spec, how]) =>
         how === "empty"
@@ -2099,6 +2119,10 @@ ${cases}
       [ "$(basename "$line")" = "$f" ] || continue
       if [ "$spec" = "${options.flaky ?? ""}" ] && [ ! -f "${flakyMarker}" ]; then
         touch "${flakyMarker}"; echo "npm error code ECONNRESET" >&2; exit 1
+      fi
+      if [ "$spec" = "${options.lag?.spec ?? ""}" ] && [ "$field" = version ]; then
+        n=0; [ -f "${lagCount}" ] && n="$(cat "${lagCount}")"; n=$((n + 1)); echo "$n" > "${lagCount}"
+        [ "$n" -le ${options.lag?.reads ?? 0} ] && ${NPM_404}
       fi
       echo "\${spec##*@}"; exit 0
     done < "${log}"
@@ -2398,6 +2422,41 @@ esac
       expect(r.out).toContain("waiting  1 package(s) not visible yet");
       expect(r.out).not.toContain("could not tell whether");
       expect(published()).toHaveLength(7);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  // LCLI-618 AC3. On the 0.11.0 staging run the registry-state table was printed straight after the
+  // launcher's publish and read it as ABSENT through ordinary propagation lag, while the visibility
+  // poll and the smoke after it found the launcher. The table is now taken AFTER that gate. The stub
+  // makes the launcher's first read after its publish a 404, as a lagging replica answers.
+  test("the post-publish registry-state table is taken AFTER the visibility gate, so a lagging launcher is not ABSENT", () => {
+    const ws = makeWorkspace();
+    try {
+      const spec = `@opum-ai/lore@${LAUNCHER_RC}`;
+      const published = registryNpm(ws, {}, { lag: { spec, reads: 1 } });
+      // A real window, so the poll has room to re-read once (one 5s backoff).
+      const r = runScript(ws, ws.root, ws.artifacts, { ...REAL_RUN, REGISTRY_WINDOW_SECONDS: "60" }, []);
+      expect(r.code).toBe(0);
+      expect(published()).toHaveLength(7);
+      // Positive control: the lag really fired (the launcher was read at least twice after its publish).
+      expect(Number(readFileSync(resolve(ws.root, "lag-reads"), "utf8"))).toBeGreaterThanOrEqual(2);
+      // The property: the last table comes after the poll saw the launcher, and reports it present.
+      const visibleAt = r.out.indexOf(`visible  ${spec} after`);
+      const tableAt = r.out.lastIndexOf(`registry state for ${VERSION} (launcher ${LAUNCHER_RC})`);
+      const table = r.out.slice(tableAt, r.out.indexOf("────", tableAt + 1));
+      expect(table).not.toContain("ABSENT");
+      expect(table).toMatch(new RegExp(`@opum-ai/lore +${LAUNCHER_RC.replaceAll(".", "\\.")} present`));
+      expect(visibleAt).toBeGreaterThan(-1);
+      expect(tableAt).toBeGreaterThan(visibleAt);
+      // And the lag was the poll's to wait out, not the table's to absorb.
+      expect(r.out).toContain("waiting  1 package(s) not visible yet");
+      // The END-OF-RUN checklist is the staging one (LCLI-618 AC1), not only --print-checklist's.
+      const closing = r.out.slice(r.out.lastIndexOf(`PUBLISHED ${VERSION} under the release-candidate dist-tag`));
+      expect(closing).toContain("STAGED IS NOT RELEASED");
+      expect(closing).toContain(`--release-run ${RUN_ID} --promote`);
+      expect(closing).not.toMatch(/readme|gh release|opum-marketplace/i);
     } finally {
       ws.cleanup();
     }

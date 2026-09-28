@@ -46,7 +46,6 @@ export declare const SEMVER: RegExp;
 export declare const RELEASE_VERSION: RegExp;
 export declare function distTagReadArgs(name: string): string[];
 export declare function versionReadArgs(spec: string): string[];
-export declare function readmeReadArgs(name: string): string[];
 export declare function packArgs(spec: string, into: string): string[];
 export declare function releaseRunReadArgs(runId: string): string[];
 export declare function artifactDownloadArgs(runId: string, into: string): string[];
@@ -95,12 +94,43 @@ export declare function verifyFinalLauncher(args: {
   delayMs?: number;
   sleep?: (ms: number) => Promise<void>;
 }): Promise<{ ok: boolean; attempts: number; problems: string[] }>;
-export declare function readBackReadme(options?: {
+export declare const README_READBACK_SCRIPT: string;
+export declare const README_READBACK_EXIT: number;
+export declare function readbackEnv(env: Record<string, string | undefined>): Record<string, string | undefined>;
+export declare function extractReadbackInputs(tarball: string, into: string): Promise<void>;
+export declare const READBACK_PASSED: string;
+export declare const READBACK_NOT_CONFIRMED: string;
+export declare const READBACK_FAILED: string;
+export declare const VERDICT_LINE: RegExp;
+export interface Readback {
+  state: string;
+  code: number | string | null;
+  output: string;
+  verdict: string;
+  tooling: boolean;
+}
+export declare function runReadmeReadback(args: {
   run?: Run;
-  attempts?: number;
-  delayMs?: number;
-  sleep?: (ms: number) => Promise<void>;
-}): Promise<{ bytes: number | null; attempts: number; error?: string }>;
+  final: ArtifactFile;
+  env: Record<string, string | undefined>;
+  tempRoot?: string;
+}): Promise<Readback>;
+export declare function commitReadArgs(sha: string): string[];
+export declare function treeReadArgs(sha: string): string[];
+export declare function resolveSkillsTree(
+  commit: string,
+  options?: { run?: Run },
+): Promise<{ sha: string } | { error: string }>;
+export declare const POST_LATEST_RUNBOOK_ITEM: string;
+export declare function postLatestChecklist(args: {
+  version: string;
+  releaseRunId: string;
+  recordPath: string;
+  tagObject: string | null;
+  commit: string;
+  skillsTree: { sha: string } | { error: string };
+  readback: { state: string; verdict: string };
+}): string[];
 export declare function checkRollbackState(args: {
   record: PromotionRecord;
   readTags: (name: string) => Promise<Record<string, string>>;
@@ -156,5 +186,6 @@ export declare function main(
     err?: (line: string) => void;
     readPackageVersion?: () => Promise<string>;
     verifyOptions?: { attempts?: number; delayMs?: number; sleep?: (ms: number) => Promise<void> };
+    readbackTempRoot?: string;
   },
 ): Promise<number>;

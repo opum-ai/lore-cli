@@ -1378,49 +1378,15 @@ jobs:
             echo "::warning::still not visible on the registry read API after ${REGISTRY_WINDOW_SECONDS}s:${pending}. This is NOT proof the publish failed -- npm already confirmed it, and only the registry read API is behind (LCLI-460: 0.4.5 ~15s, 0.4.6 ~35s, 0.5.0 ~25min). Do NOT unpublish. Re-check before treating it as a failure."
           fi
           exit "$rc"
-      - name: "Read the shipped README back off the registry, naming what was read (LCLI-510, A4)"
-        # A4 of the shipped-README version contract (opum-doc main@ba3055d). This is a
-        # CONFIRMATION and explicitly NOT the gate -- the gate is the `--tarball` step in the
-        # `package` job. Published version pages are IMMUTABLE, so a read-back can only ever
-        # observe the defect, never prevent it; treating it as the gate would repeat exactly the
-        # failure the contract exists to catch.
-        #
-        # WHAT IT ACTUALLY READS, stated precisely because an earlier revision of this step got it
-        # wrong in the very way the contract is about. npm's `readme` is a PACKAGE-LEVEL field on
-        # the packument, NOT a per-version page. Measured 2026-09-15 against the live registry:
-        #
-        #     npm view @opum-ai/lore@0.7.0 readme  -> 14446 bytes, sha256 25b24c8dd262bb9c...
-        #     npm view @opum-ai/lore@0.6.2 readme  -> the SAME 14446 bytes
-        #     npm view @opum-ai/lore@0.6.1 readme  -> the SAME 14446 bytes
-        #
-        # The version in the spec is inert for this field: npm serves whatever the most recent
-        # publish carried. The previous revision wrote `spec="@opum-ai/lore@${version}"` and then
-        # reported "the README the registry serves for ${spec}", which names a version-specific
-        # object it had not read. That is the same defect class as the stale README itself, so it
-        # is fixed here rather than described.
-        #
-        # NOT REDUNDANT with the dist.shasum comparison above, which is about the tarball's bytes.
-        # npm extracts the `readme` field at publish time -- a separate copy from the one inside
-        # the tarball. This step is the only thing that compares that copy to what we packed.
-        #
-        # IT RE-RUNS THE SAME ASSERTIONS rather than grepping for a sentence. A literal-string
-        # check here was written first and was WRONG: the region markers split the rendered text,
-        # so `**Status: 0.7.0 released.**` does not appear contiguously in the source the registry
-        # serves, and the step would have gone red on a CORRECT release. Running `--check` over the
-        # served bytes cannot drift from the generator, because it IS the generator.
-        #
-        # WHY IT RETRIES, AND WHAT IT REFUSES TO CALL A FAILURE. Because the field is
-        # package-level and the read API lags (LCLI-460: 0.4.5 ~15s, 0.4.6 ~35s, 0.5.0 ~25min), a
-        # lagging replica does not serve an EMPTY readme -- it serves the PREVIOUS release's
-        # README, which is byte-for-byte the thing this step exists to flag. An earlier revision
-        # guarded only the empty case and would have gone red on a correct release during any lag:
-        # a false alarm seconds after the one irreversible action in the whole process. So this
-        # step discriminates the two hypotheses instead of assuming one. It fails ONLY when the
-        # served README satisfies neither this release's assertions nor the previous release's --
-        # i.e. when "the registry is still catching up" has been positively ruled out.
-        env:
-          REGISTRY_WINDOW_SECONDS: ${{ vars.REGISTRY_WINDOW_SECONDS || 1800 }}
-        run: bash scripts/readme-readback.sh
+      # NO README READ-BACK HERE (LCLI-616). This job only STAGES, and a staged X-rc.N never sets
+      # npm's package-level `readme`: only the final X launcher's fresh publish onto `latest` does
+      # (OPAG-474). So A4 of the shipped-README contract (LCLI-510) runs in
+      # scripts/promote-latest.mjs, after that publish, as scripts/readme-readback.sh against the X
+      # tarball's own package.json and README.md; the rationale lives in that script's header. It
+      # used to be this job's last step, and this job's sparse checkout never carried the script,
+      # so every `publish: true` run concluded failure and promote-latest.mjs, which requires
+      # `success`, could not take it. test/release-workflow.test.ts now pins that every scripts/
+      # file a job runs is in that job's checkout.
 
   provenance-post:
     name: verify this release's own provenance (LCLI-481)

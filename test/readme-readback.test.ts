@@ -12,8 +12,13 @@ import { delimiter, resolve } from "node:path";
 // CORRECT RELEASE during ordinary propagation lag. Neither was reachable by any test while the
 // logic sat inline in release.yml. Stubbing `npm` is what makes the branches observable.
 //
+// Since LCLI-616 it runs in scripts/promote-latest.mjs, after the final X launcher's fresh
+// publish onto `latest`, against the X tarball's own package.json and README.md; an empty served
+// readme after the window is now a FAILURE there (OPAG-474), not a warning.
+//
 // Nothing here touches the network. REGISTRY_WINDOW_SECONDS=0 collapses the retry loop to a single
-// attempt, so no test sleeps.
+// attempt, so no test sleeps -- except the one case that proves a readme appearing INSIDE the window
+// passes, which needs a window with room for one re-read.
 
 const SCRIPT = resolve(import.meta.dir, "..", "scripts", "readme-readback.sh");
 const CHECKER = resolve(import.meta.dir, "..", "scripts", "shipped-readme-version.mjs");
@@ -24,13 +29,28 @@ const REPO_PKG = resolve(import.meta.dir, "..", "package.json");
 // the ubuntu publish runner. Skipping is honest; stubbing the platform away would not be.
 const describeOnPosix = process.platform === "win32" ? describe.skip : describe;
 
-type Served = { readme?: string; versions?: string[]; fail?: boolean };
+/**
+ * `readmes` serves one answer per `npm view <name> readme` call, in order, repeating the last: a
+ * registry whose field is empty and then appears, as a publish propagating does.
+ */
+type Served = {
+  readme?: string;
+  readmes?: string[];
+  versions?: string[];
+  fail?: boolean;
+  /**
+   * The raw answer to `npm view <name> readme versions --json`, the one packument read the empty
+   * branch makes. Default: npm 12's real shape, `[{readme, versions}]`, carrying the LAST readme
+   * served and `versions` (measured against the registry, 2026-09-28).
+   */
+  packument?: string;
+};
 
 /**
  * A release workspace: the README/package.json pair being "published", plus an `npm` stub that
  * answers the two reads the script makes (`view <name> readme`, `view <name> versions --json`).
  */
-function makeWorkspace(options: { version: string; readme: string; served: Served }) {
+function makeWorkspace(options: { version: string; readme: string; served: Served; checker?: string }) {
   const root = mkdtempSync(resolve(tmpdir(), "lore-a4-test-"));
   const bin = resolve(root, "bin");
   const scripts = resolve(root, "scripts");
@@ -40,6 +60,8 @@ function makeWorkspace(options: { version: string; readme: string; served: Serve
   // The script resolves the checker relative to itself, so both must travel together.
   copyFileSync(SCRIPT, resolve(scripts, "readme-readback.sh"));
   copyFileSync(CHECKER, resolve(scripts, "shipped-readme-version.mjs"));
+  // A substitute checker reaches the paths the real one only takes on a broken input.
+  if (options.checker) writeFileSync(resolve(scripts, "shipped-readme-version.mjs"), options.checker);
 
   const pkg = JSON.parse(readFileSync(REPO_PKG, "utf8"));
   pkg.version = options.version;
@@ -47,8 +69,14 @@ function makeWorkspace(options: { version: string; readme: string; served: Serve
   writeFileSync(resolve(root, "README.md"), options.readme);
 
   const { readme = "", versions = [], fail = false } = options.served;
-  writeFileSync(resolve(root, "served-readme.txt"), readme);
+  const readmes = options.served.readmes ?? [readme];
+  for (const [i, text] of readmes.entries()) writeFileSync(resolve(root, `served-readme-${i}.txt`), text);
+  writeFileSync(resolve(root, "served-readme-count"), String(readmes.length));
   writeFileSync(resolve(root, "served-versions.json"), JSON.stringify(versions));
+  writeFileSync(
+    resolve(root, "served-packument.json"),
+    options.served.packument ?? JSON.stringify([{ readme: readmes.at(-1) ?? "", versions }]),
+  );
   writeFileSync(
     resolve(bin, "npm"),
     [
@@ -56,15 +84,19 @@ function makeWorkspace(options: { version: string; readme: string; served: Serve
       fail ? "exit 1" : "",
       // `npm view <name> versions --json` puts the field at $3, not $2 -- matching on the wrong
       // position made the stub answer every read with the readme and the lag branch unreachable.
+      // The empty branch's one packument read asks for BOTH fields: `view <name> readme versions --json`.
+      'case " $* " in *" readme versions "*) cat "$(dirname "$0")/../served-packument.json"; exit 0 ;; esac',
       'for a in "$@"; do if [ "$a" = "versions" ]; then cat "$(dirname "$0")/../served-versions.json"; exit 0; fi; done',
-      'printf "%s" "$(cat "$(dirname "$0")/../served-readme.txt")"',
+      'd="$(dirname "$0")/.."; n=0; [ -f "$d/reads" ] && n="$(cat "$d/reads")"; echo $((n + 1)) > "$d/reads"',
+      'last=$(( $(cat "$d/served-readme-count") - 1 )); [ "$n" -gt "$last" ] && n="$last"',
+      'printf "%s" "$(cat "$d/served-readme-$n.txt")"',
     ].join("\n"),
   );
   chmodSync(resolve(bin, "npm"), 0o755);
   return { root, bin };
 }
 
-function run(ws: { root: string; bin: string }) {
+function run(ws: { root: string; bin: string }, windowSeconds = "0") {
   try {
     const out = execFileSync("bash", [resolve(ws.root, "scripts", "readme-readback.sh")], {
       cwd: ws.root,
@@ -73,14 +105,26 @@ function run(ws: { root: string; bin: string }) {
       env: {
         ...process.env,
         PATH: `${ws.bin}${delimiter}${process.env.PATH ?? ""}`,
-        REGISTRY_WINDOW_SECONDS: "0",
+        REGISTRY_WINDOW_SECONDS: windowSeconds,
       },
     });
-    return { code: 0, out };
+    return { code: 0, out, stdout: out };
   } catch (error) {
     const e = error as { status?: number; stdout?: string; stderr?: string };
-    return { code: e.status ?? -1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+    return { code: e.status ?? -1, out: `${e.stdout ?? ""}${e.stderr ?? ""}`, stdout: e.stdout ?? "" };
   }
+}
+
+/**
+ * The machine-readable verdict, asserted to be the LAST line of stdout and the only verdict line:
+ * scripts/promote-latest.mjs reads it, so it must exist on every path and be unambiguous.
+ */
+function verdictOf(r: { stdout: string }) {
+  const lines = r.stdout.split("\n").filter(Boolean);
+  const verdicts = lines.filter((line) => line.startsWith("A4 VERDICT: "));
+  expect(verdicts).toHaveLength(1);
+  expect(lines.at(-1)).toBe(verdicts[0]);
+  return verdicts[0] as string;
 }
 
 /** The real README, with its generated regions rewritten for `version`. */
@@ -100,6 +144,9 @@ describeOnPosix("A4 registry read-back", () => {
     const r = run(makeWorkspace({ version: "9.9.9", readme, served: { readme, versions: ["9.9.8", "9.9.9"] } }));
     expect(r.code).toBe(0);
     expect(r.out).toContain("BYTE-EQUAL");
+    expect(verdictOf(r)).toMatch(
+      /^A4 VERDICT: PASSED the package readme for @opum-ai\/lore is byte-equal to 9\.9\.9's/,
+    );
     // The whole defect class is a claim that does not name its object.
     expect(r.out).toContain("@opum-ai/lore");
     expect(r.out).toContain("9.9.9");
@@ -117,6 +164,7 @@ describeOnPosix("A4 registry read-back", () => {
     );
     expect(r.code).toBe(0);
     expect(r.out).toContain("satisfies every assertion");
+    expect(verdictOf(r)).toMatch(/^A4 VERDICT: PASSED .* satisfies every assertion against 9\.9\.9/);
   });
 
   // THE REGRESSION THIS SCRIPT EXISTS FOR. A lagging replica does not serve an empty readme --
@@ -134,6 +182,9 @@ describeOnPosix("A4 registry read-back", () => {
     expect(r.out).toContain("::warning::");
     expect(r.out).toContain("PREVIOUS release (9.9.8)");
     expect(r.out).not.toContain("::error::");
+    expect(verdictOf(r)).toBe(
+      "A4 VERDICT: NOT-CONFIRMED @opum-ai/lore still serves the previous release 9.9.8's README after 0s; lag not ruled out",
+    );
   });
 
   test("a README matching NO published release is a hard failure naming both ruled-out versions", () => {
@@ -147,16 +198,153 @@ describeOnPosix("A4 registry read-back", () => {
     expect(r.code).toBe(1);
     expect(r.out).toContain("::error::A4 FAILED");
     expect(r.out).toContain("propagation lag has been ruled out");
+    // The checker's findings print AFTER the ::error:: line; the verdict still comes last (LCLI-616 F1).
+    expect(r.out).toContain("shipped-README version assertion(s) failed");
+    expect(verdictOf(r)).toBe(
+      "A4 VERDICT: FAILED the package readme for @opum-ai/lore satisfies neither 9.9.9's assertions nor 9.9.8's",
+    );
   });
 
-  test("an empty readme field is 'nothing was verified', never a pass claim", () => {
+  // LCLI-616, OPAG-474 AC3. Empty alone proves nothing: a replica lagging on X serves the
+  // packument as it was before, and @opum-ai/lore's had no readme (0 bytes since 0.11.0). So the
+  // empty branch settles it with ONE packument read of readme AND versions. Four outcomes.
+  test("empty across the window, on a packument that already LISTS the version: FAILED, naming OPAG-474", () => {
     const r = run(
-      makeWorkspace({ version: "9.9.9", readme: readmeFor("9.9.9"), served: { readme: "", versions: ["9.9.9"] } }),
+      makeWorkspace({
+        version: "9.9.9",
+        readme: readmeFor("9.9.9"),
+        served: { readme: "", versions: ["9.9.8", "9.9.9"] },
+      }),
+    );
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("::error::A4 FAILED for package '@opum-ai/lore', release '9.9.9'");
+    expect(r.out).toContain("the same packument read already lists 9.9.9 (OPAG-474)");
+    expect(r.out).toContain("npm view @opum-ai/lore readme | wc -c");
+    expect(r.out).not.toContain("A4 OK");
+    expect(verdictOf(r)).toBe(
+      "A4 VERDICT: FAILED no readme for @opum-ai/lore after 0s, and the packument already lists 9.9.9 (OPAG-474)",
+    );
+  });
+
+  test("empty across the window, on a packument that does NOT list the version yet: NOT-CONFIRMED, lag not ruled out", () => {
+    const r = run(
+      makeWorkspace({ version: "9.9.9", readme: readmeFor("9.9.9"), served: { readme: "", versions: ["9.9.8"] } }),
     );
     expect(r.code).toBe(0);
-    expect(r.out).toContain("::warning::");
-    expect(r.out).toContain("Nothing was verified");
+    expect(r.out).toContain("does not list 9.9.9 yet. Lag is NOT ruled out");
+    expect(r.out).not.toContain("::error::");
     expect(r.out).not.toContain("A4 OK");
+    expect(verdictOf(r)).toBe(
+      "A4 VERDICT: NOT-CONFIRMED lag not ruled out: 9.9.9 not yet in the packument, which serves no readme for @opum-ai/lore after 0s",
+    );
+  });
+
+  test("empty across the window, then a readme on the packument read: NOT-CONFIRMED, it was never compared", () => {
+    const r = run(
+      makeWorkspace({
+        version: "9.9.9",
+        readme: readmeFor("9.9.9"),
+        served: {
+          readme: "",
+          versions: ["9.9.9"],
+          packument: JSON.stringify([{ readme: "# late\n", versions: ["9.9.9"] }]),
+        },
+      }),
+    );
+    expect(r.code).toBe(0);
+    expect(verdictOf(r)).toMatch(/^A4 VERDICT: NOT-CONFIRMED a readme for @opum-ai\/lore appeared only after/);
+  });
+
+  test("empty across the window, and the packument unreadable: NOT-CONFIRMED, never a FAILED claim", () => {
+    for (const packument of ["", "not json", "[]", JSON.stringify([{ readme: "" }])]) {
+      const r = run(
+        makeWorkspace({
+          version: "9.9.9",
+          readme: readmeFor("9.9.9"),
+          served: { readme: "", versions: ["9.9.9"], packument },
+        }),
+      );
+      expect({ packument, code: r.code }).toEqual({ packument, code: 0 });
+      expect(verdictOf(r)).toMatch(
+        /^A4 VERDICT: NOT-CONFIRMED no readme for @opum-ai\/lore after 0s, and the packument could not be read/,
+      );
+    }
+  });
+
+  test("the checker unable to read its input: NOT-CONFIRMED, 'nothing was verified'", () => {
+    const r = run(
+      makeWorkspace({
+        version: "9.9.9",
+        readme: readmeFor("9.9.9"),
+        served: { readme: "# lore, different\n", versions: ["9.9.9"] },
+        checker: "process.exit(2);\n",
+      }),
+    );
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("A4 verified NOTHING");
+    expect(verdictOf(r)).toBe(
+      "A4 VERDICT: NOT-CONFIRMED the checker could not read its input (exit 2); nothing was verified",
+    );
+  });
+
+  test("a read-back stopped before any verdict still ends in one, NOT-CONFIRMED, and keeps its exit status", () => {
+    const r = run(
+      makeWorkspace({
+        version: "9.9.9",
+        readme: readmeFor("9.9.9"),
+        served: { readme: "# lore, different\n", versions: ["9.9.9"] },
+        // Stops the script from inside, as an operator's Ctrl-C or a runner's cancel would.
+        checker: "process.kill(process.ppid, 'SIGTERM'); process.exit(1);\n",
+      }),
+    );
+    expect(r.code).toBe(143);
+    expect(verdictOf(r)).toBe(
+      "A4 VERDICT: NOT-CONFIRMED the read-back stopped (exit 143) before reaching a verdict; nothing was verified",
+    );
+  });
+
+  // The other half of the same change: the window still does its job. Empty on the first read and
+  // the release's README on the second is propagation finishing, and it passes. A 2s window leaves
+  // room for exactly one re-read (the first backoff is capped by the deadline).
+  test("a readme that appears WITHIN the window passes: empty first, then the release's README", () => {
+    const readme = readmeFor("9.9.9");
+    const ws = makeWorkspace({ version: "9.9.9", readme, served: { readmes: ["", readme], versions: ["9.9.9"] } });
+    const r = run(ws, "2");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("attempt 1: the registry served no readme field yet.");
+    expect(r.out).toContain("A4 OK");
+    expect(r.out).toContain("BYTE-EQUAL");
+    expect(r.out).toContain("after 2 attempt(s)");
+    expect(verdictOf(r)).toMatch(/^A4 VERDICT: PASSED .*\(2 read\(s\)\)$/);
+    // Positive control on the stub: it really was read twice.
+    expect(readFileSync(resolve(ws.root, "reads"), "utf8").trim()).toBe("2");
+  });
+
+  // Since LCLI-621 every release leaves an X-rc.N on the registry, sorted just below X. It never set
+  // the package-level readme, so it is not "the previous release" whose README a lagging replica
+  // serves; taking it as one checks the lagging README against the wrong assertions and fails.
+  test("an X-rc.N in the version list is not taken as the previous release", () => {
+    const r = run(
+      makeWorkspace({
+        version: "9.9.9",
+        readme: readmeFor("9.9.9"),
+        served: { readme: readmeFor("9.9.8"), versions: ["9.9.8", "9.9.9-rc.1", "9.9.9"] },
+      }),
+    );
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("PREVIOUS release (9.9.8)");
+    expect(r.out).not.toContain("9.9.9-rc.1");
+    expect(verdictOf(r)).toMatch(/^A4 VERDICT: NOT-CONFIRMED .* previous release 9\.9\.8's README/);
+    expect(r.out).not.toContain("::error::");
+  });
+
+  // Moved here from the staging checklist's tests (LCLI-618), which no longer carries a read-back
+  // step: this guards the premise behind re-running the generator rather than grepping. If the
+  // generator ever stops splitting the literal, this fails and a grep could honestly come back.
+  test("THE REASON it re-runs the assertions: a grep for the status sentence matches nothing in the real README", () => {
+    const readme = readFileSync(REPO_README, "utf8");
+    expect(readme).not.toMatch(/Status: .* released/);
+    expect(readme).toMatch(/Status:<!--lore-version:status:begin--> \d+\.\d+\.\d+ released/);
   });
 
   test("the package name is DERIVED, not hardcoded — a rename must not silently warn-and-pass", () => {
