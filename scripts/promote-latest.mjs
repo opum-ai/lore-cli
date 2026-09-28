@@ -148,6 +148,25 @@ export const SEMVER =
  */
 export const RELEASE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
+/**
+ * Orders two RELEASE_VERSION strings: negative, zero or positive, as `a` is older than, equal to or
+ * newer than `b`. Each of the three components compares by length first, then lexically. That is
+ * exact numeric order because the grammar forbids leading zeros, and it stays exact past 2^53, where
+ * Number() does not (LCLI-617). The same comparison as quest-cli's compareReleaseVersions
+ * (QCLI-391, opum-ai/quest-cli#353), so the pair's verdicts cannot diverge on a large component.
+ * Only defined for inputs RELEASE_VERSION accepts; callers check the grammar first.
+ * @param {string} a @param {string} b
+ */
+export function compareReleaseVersions(a, b) {
+  const [left, right] = [a.split("."), b.split(".")];
+  for (let i = 0; i < 3; i++) {
+    const [l, r] = [/** @type {string} */ (left[i]), /** @type {string} */ (right[i])];
+    if (l.length !== r.length) return l.length - r.length;
+    if (l !== r) return l < r ? -1 : 1;
+  }
+  return 0;
+}
+
 /** The one process runner. Tests replace it; nothing below spawns anything else. */
 export const defaultRun = (command, args, options = {}) =>
   execFileAsync(command, args, { maxBuffer: 64 * 1024 * 1024, ...options });
@@ -346,6 +365,15 @@ export function validateRecord(record, { version, packages = RELEASE_PACKAGES } 
   // --rollback is deliberately not gated on a receipt, so every prior value must be a plain
   // X.Y.Z release (a hand-written "release-candidate", "v0.9.3" or "0.9.3-rc.1" is refused) and
   // must differ from the record's own version. checkRollbackState below is the other half.
+  //
+  // LCLI-617 (paired with quest-cli QCLI-391, opum-ai/quest-cli#353): every prior must also be
+  // OLDER than the release, and that comparison needs record.version to be a plain X.Y.Z. --rollback
+  // validates with no {version}, so the record's own version is checked here rather than assumed;
+  // a malformed one is refused and nothing is compared against it. The typeof guard is lore's own:
+  // RegExp.test coerces, so without it a JSON array ["9.9.9"] would pass and crash the comparison.
+  const comparable = typeof record?.version === "string" && RELEASE_VERSION.test(record.version);
+  if (!comparable)
+    problems.push(`record's version ${JSON.stringify(record?.version)} is not a plain X.Y.Z release version`);
   for (const entry of record?.packages ?? []) {
     const prior = entry?.priorLatest;
     if (typeof prior !== "string") problems.push(`record has no prior ${PROMOTE_TAG} for ${entry?.name}`);
@@ -356,6 +384,18 @@ export function validateRecord(record, { version, packages = RELEASE_PACKAGES } 
     else if (prior === record?.version)
       problems.push(
         `${entry?.name}: recorded prior ${PROMOTE_TAG} is the release itself (${prior}); rolling back to it restores nothing`,
+      );
+    // LCLI-617: promotion is meant never to move `latest` backwards, so a record's prior should be
+    // older than its release. A newer one ("5.7.0" in a 5.6.7 record) passes every check above and
+    // checkRollbackState, and --rollback, which no receipt gates, would move `latest` onto it.
+    // planPromotion does NOT itself refuse an older --version, so a backport promoted over a newer
+    // `latest` writes a record this refuses on resume and on --rollback (quest-cli alike).
+    // Compared against record.version, never launcherVersion: the launcher's prior is its own
+    // `latest` before the promotion, held to a plain X.Y.Z above like every other package's, and a
+    // rollback restores it by dist-tag, not to the X-rc.N it was staged as.
+    else if (comparable && compareReleaseVersions(prior, record.version) > 0)
+      problems.push(
+        `${entry?.name}: recorded prior ${PROMOTE_TAG} ${prior} is newer than the release ${record.version}; a rollback may only move ${PROMOTE_TAG} backwards`,
       );
   }
   return { ok: problems.length === 0, problems };
