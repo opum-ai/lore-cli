@@ -141,6 +141,9 @@ describeOnPosix("release.yml's visibility wait, executed (LCLI-630)", () => {
     ["-5", "-5"],
     [" 3", "\\ 3"],
     ["5\n", "$'5\\n'"],
+    // A lone CR: per the #358 review the runner splits workflow-command lines on CR as well as LF
+    // (not measured here), so an escaper that handled only \n would let this through as a line break.
+    ["a\rb", "$'a\\rb'"],
     ["1234567890", "1234567890"],
     ["5%0A::warning::x", "5%250A::warning::x"],
   ];
@@ -150,7 +153,8 @@ describeOnPosix("release.yml's visibility wait, executed (LCLI-630)", () => {
       () => {
         const r = run(value, "lag");
         expect(r.code).toBe(2);
-        const lines = r.out.split("\n").filter(Boolean);
+        // Split on CR as well as LF, as the runner is reported to: one refusal line, one annotation.
+        const lines = r.out.split(/\r\n|\r|\n/).filter(Boolean);
         expect(lines).toHaveLength(1);
         expect(lines[0]).toStartWith(`${REFUSAL}${shown}. `);
         expect(r.npm).toEqual([]);

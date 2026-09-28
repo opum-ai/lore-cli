@@ -1328,7 +1328,7 @@ jobs:
           window_re='^(0|[1-9][0-9]{0,8})$'
           if ! [[ $REGISTRY_WINDOW_SECONDS =~ $window_re ]]; then
             shown="$(printf '%q' "$REGISTRY_WINDOW_SECONDS")"
-            printf '::error::REGISTRY_WINDOW_SECONDS must be a whole number of seconds (0 to 999999999, no leading zero); got %s. It comes from vars.REGISTRY_WINDOW_SECONDS, a repository or release-environment variable: correct it, or delete it for the 1800s default. Nothing was verified: the registry was not read and no dist.shasum was compared (LCLI-630). The publish itself is not in question -- do NOT unpublish.\n' "${shown//%/%25}"
+            printf '::error::REGISTRY_WINDOW_SECONDS must be a whole number of seconds (0 to 999999999, no leading zero); got %s. It comes from vars.REGISTRY_WINDOW_SECONDS, which can be set as a release-environment, repository or organisation variable, the most specific one winning: correct it there, or delete it at every level for the 1800s default. Nothing was verified: the registry was not read and no dist.shasum was compared (LCLI-630). The publish itself is not in question -- do NOT unpublish.\n' "${shown//%/%25}"
             exit 2
           fi
 
