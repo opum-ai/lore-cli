@@ -791,11 +791,43 @@ export function readbackEnv(env) {
   // npm_config_*, and an uppercase `NPM_CONFIG_@OPUM-AI:REGISTRY` beat the lowercase pin below
   // (LCLI-616 review F7, measured). The read-back needs none of the caller's npm configuration.
   const inherited = Object.fromEntries(Object.entries(env).filter(([key]) => !/^npm_config_/i.test(key)));
+  return { ...inherited, ...READBACK_NPM_PINS };
+}
+
+/** The three npm config variables readbackEnv pins, shared with the printed re-read command. */
+const READBACK_NPM_PINS = Object.freeze({
+  npm_config_userconfig: devNull,
+  npm_config_registry: PUBLIC_REGISTRY,
+  "npm_config_@opum-ai:registry": PUBLIC_REGISTRY,
+});
+
+/** A POSIX-shell word: bare when it is plainly safe, single-quoted otherwise. @param {string} word */
+function shellWord(word) {
+  return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
+}
+
+/**
+ * The by-hand re-read commands printed when the read-back does not pass (LCLI-626 N2). Pinned
+ * exactly as this script's own reads are, or an operator whose ~/.npmrc sets an `@opum-ai` scope
+ * registry would read a mirror and record it as the public page: every `npm` word carries ANONYMOUS
+ * (`--userconfig=<devNull>` and both REGISTRY_PINS), and the script, which calls `npm view` with no
+ * flags, runs under `env` with readbackEnv's three variables. `env` because
+ * `npm_config_@opum-ai:registry` is not a shell identifier, so a bare `NAME=value cmd` prefix
+ * cannot set it. What `env` cannot do is drop an operator's own UPPERCASE NPM_CONFIG_* (F7);
+ * readbackEnv drops those for the automatic run, and the hand command is the operator's shell.
+ * @param {string} version @param {string} tarballFilename
+ * @returns {{ size: string, view: string, rerun: string }}
+ */
+export function readbackRereadCommands(version, tarballFilename) {
+  const flags = ANONYMOUS.map(shellWord).join(" ");
+  const pins = Object.entries(READBACK_NPM_PINS)
+    .map(([key, value]) => shellWord(`${key}=${value}`))
+    .join(" ");
+  const view = `npm view ${LAUNCHER} readme ${flags}`;
   return {
-    ...inherited,
-    npm_config_userconfig: devNull,
-    npm_config_registry: PUBLIC_REGISTRY,
-    "npm_config_@opum-ai:registry": PUBLIC_REGISTRY,
+    size: `${view} | wc -c`,
+    view,
+    rerun: `d="$(mktemp -d)" && cd "$d" && npm pack ${LAUNCHER}@${version} ${flags} && tar -xzf ${shellWord(tarballFilename)} && cd package && env ${pins} bash ${shellWord(README_READBACK_SCRIPT)}`,
   };
 }
 
@@ -900,10 +932,24 @@ export function treeReadArgs(sha) {
 export async function resolveSkillsTree(commit, { run = defaultRun } = {}) {
   try {
     const commitDoc = JSON.parse((await run("gh", commitReadArgs(commit))).stdout);
+    // LCLI-626 N3, as resolveTagCommit's LCLI-613 review N5: each answer must be about the object
+    // asked for, or a value resolved from some other commit or tree reaches the handshake.
+    if (commitDoc?.sha !== commit)
+      return { error: `asked for commit ${commit}, the API answered for ${JSON.stringify(commitDoc?.sha ?? null)}` };
     const root = commitDoc?.tree?.sha;
     if (typeof root !== "string" || !/^[0-9a-f]{40}$/.test(root))
       return { error: `commit ${commit} did not read as a commit with a tree` };
     const treeDoc = JSON.parse((await run("gh", treeReadArgs(root))).stdout);
+    if (treeDoc?.sha !== root)
+      return {
+        error: `asked for root tree ${root} of ${commit}, the API answered for ${JSON.stringify(treeDoc?.sha ?? null)}`,
+      };
+    // A truncated listing cannot say an entry is absent, so it is named as what it is, never as "no
+    // skills/ entry". Refused even when the entry IS listed: one rule, and never a guess.
+    if (treeDoc.truncated === true)
+      return {
+        error: `root tree ${root} of ${commit} came back truncated from the API, so its skills/ entry was not read`,
+      };
     const entries = Array.isArray(treeDoc?.tree) ? treeDoc.tree : [];
     const skills = entries.find((entry) => entry?.path === "skills" && entry?.type === "tree");
     if (!skills || typeof skills.sha !== "string" || !/^[0-9a-f]{40}$/.test(skills.sha))
@@ -1395,7 +1441,7 @@ export async function main(
     // package-level readme from the publish above, and from nothing before it. The runner buffers
     // the script's output, so the wait is announced before it starts rather than streamed.
     const windowSeconds = env.REGISTRY_WINDOW_SECONDS || "1800";
-    const readCommand = `npm view ${LAUNCHER} readme`;
+    const reread = readbackRereadCommands(record.version, final.filename);
     out(
       `\nREADME read-back (A4, OPAG-474 AC3): scripts/readme-readback.sh against ${final.filename}'s own package.json and README.md.`,
     );
@@ -1436,10 +1482,10 @@ export async function main(
       // Re-running --promote is not the way back to this check (LCLI-616 review F8e): it would redo
       // tag writes to re-reach it. These are the read-back's own commands.
       "Re-read it by hand, and record the result in the release-truth record:",
-      `    ${readCommand} | wc -c`,
-      `    ${readCommand}`,
+      `    ${reread.size}`,
+      `    ${reread.view}`,
       "Or re-run the whole read-back against the served tarball's own package.json and README.md:",
-      `    d="$(mktemp -d)" && cd "$d" && npm pack ${LAUNCHER}@${record.version} && tar -xzf ${final.filename} && cd package && bash ${README_READBACK_SCRIPT}`,
+      `    ${reread.rerun}`,
       "",
     ])
       err(line);

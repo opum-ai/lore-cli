@@ -51,7 +51,8 @@
 # therefore proves nothing. So an empty readme after the whole window is settled by ONE packument
 # read of both fields (`npm view <name> readme versions --json`): if that packument already lists
 # this version and still carries no readme, it is the OPAG-474 defect and FAILED (LCLI-616); if it
-# does not list the version yet, lag is not ruled out and it is NOT CONFIRMED.
+# does not list the version yet, lag is not ruled out and it is NOT CONFIRMED. If that read DOES
+# carry a readme, it is compared exactly as an in-window one is (LCLI-626 N4).
 #
 # EVERY EXIT PATH ENDS IN ONE MACHINE-READABLE LINE, the last line it prints on stdout:
 #
@@ -71,13 +72,14 @@
 # Contract: run from a directory holding the release's package.json and README.md (promote-latest.mjs
 # extracts both from the X tarball). Reads ./package.json and ./README.md, and `npm` from PATH, with
 # whatever registry pins the caller's environment carries. Honours REGISTRY_WINDOW_SECONDS
-# (default 1800).
+# (default 1800; a whole number of seconds, refused up front otherwise).
 #
 # Exit 0 = PASSED, or NOT-CONFIRMED (nothing proven either way, and it says why: the previous
 # release's README still served, an empty readme on a packument that does not list this version
 # yet, or the checker could not read its input). Exit 1 = FAILED: an empty readme on a packument
 # that already lists this version (OPAG-474), or a served page that matches no release we
-# published, with propagation positively ruled out. The verdict line says which.
+# published, with propagation positively ruled out. Exit 2 = NOT-CONFIRMED, refused before reading:
+# REGISTRY_WINDOW_SECONDS is not a whole number of seconds (LCLI-626 N1). The verdict line says which.
 
 : "${REGISTRY_WINDOW_SECONDS:=1800}"
 
@@ -102,6 +104,19 @@ trap on_exit EXIT
 # exits explicitly, with the conventional 128+N, and the trap above reports that.
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+# The window must be a whole number of seconds, checked HERE, before anything is read (LCLI-626 N1).
+# Unchecked, a non-digit value reaches $(( )) below as a variable NAME, and under bash 3.2 -- macOS's
+# /bin/bash, where the release operator runs this -- `set -u` tripping inside $(( )) EXITS 0: the
+# trap above then reported "stopped (exit 0)" on a read-back that never read anything. Leading zeros
+# are refused too (bash reads 08 as bad octal), and so is anything past nine digits (~31 years),
+# which would overflow the deadline instead of meaning a longer wait. Exit 2: a usage refusal, not a
+# finding about the registry, and promote-latest.mjs classifies it by the NOT-CONFIRMED line.
+window_re='^(0|[1-9][0-9]{0,8})$'
+if ! [[ $REGISTRY_WINDOW_SECONDS =~ $window_re ]]; then
+  echo "::error::REGISTRY_WINDOW_SECONDS must be a whole number of seconds (0 to 999999999, no leading zero); got '${REGISTRY_WINDOW_SECONDS}'. Nothing was read."
+  finish NOT-CONFIRMED 2 "REGISTRY_WINDOW_SECONDS='${REGISTRY_WINDOW_SECONDS}' is not a whole number of seconds; the read-back refused to start and nothing was read"
+fi
 
 # Resolve the checker relative to THIS script, not the cwd: the cwd is the release being read back
 # (it owns ./package.json and ./README.md), which in a test is a fixture tree that has no scripts/.
@@ -181,6 +196,9 @@ esac
 if [ -z "$served" ]; then
   # Empty alone proves nothing (see the header): settle it with ONE packument read of both fields.
   # npm 12 answers `view <name> readme versions --json` as [{readme, versions}]; older npm, the object.
+  # A readme on this read is written to $workdir/README.md BEFORE 'late' is printed, normalised as
+  # the in-window read's is: `$(npm view ...)` strips every trailing newline and printf adds one back.
+  # A write that fails throws, prints nothing, and lands in the unreadable arm below.
   listing="$(npm view "$name" readme versions --json 2>/dev/null | node -e "
     let s = '';
     process.stdin.on('data', d => s += d).on('end', () => {
@@ -190,10 +208,14 @@ if [ -z "$served" ]; then
       if (!doc || typeof doc !== 'object') { console.log('unreadable'); return; }
       const versions = Array.isArray(doc.versions) ? doc.versions : typeof doc.versions === 'string' ? [doc.versions] : null;
       if (!versions) { console.log('unreadable'); return; }
-      if (typeof doc.readme === 'string' && doc.readme.length > 0) { console.log('late'); return; }
+      if (typeof doc.readme === 'string' && doc.readme.length > 0) {
+        require('fs').writeFileSync(process.argv[2], doc.readme.replace(/\n+\$/, '') + '\n');
+        console.log('late');
+        return;
+      }
       console.log(versions.includes(process.argv[1]) ? 'listed' : 'unlisted');
     });
-  " "$version" || true)"
+  " "$version" "$workdir/README.md" || true)"
   case "$listing" in
     listed)
       echo "::error::A4 FAILED for package '${name}', release '${version}', read $(date -u +%FT%TZ) after ${attempt} attempt(s) over ${REGISTRY_WINDOW_SECONDS}s: the registry served NO readme field at all, and the same packument read already lists ${version} (OPAG-474)."
@@ -207,8 +229,23 @@ if [ -z "$served" ]; then
       finish NOT-CONFIRMED 0 "lag not ruled out: ${version} not yet in the packument, which serves no readme for ${name} after ${REGISTRY_WINDOW_SECONDS}s"
       ;;
     late)
-      echo "::warning::${name}: the registry served no readme field within ${REGISTRY_WINDOW_SECONDS}s, but one appeared on the read made after the window closed. It was not compared. Re-read and check it by hand: npm view ${name} readme"
-      finish NOT-CONFIRMED 0 "a readme for ${name} appeared only after the ${REGISTRY_WINDOW_SECONDS}s window closed; it was not compared"
+      # COMPARED, not waved through (LCLI-626 N4). The packument's `readme` is the very field
+      # `npm view <name> readme` prints, read from the same pinned registry, so a copy that first
+      # appears on this read is as much evidence as one read inside the window and gets the same
+      # tests: byte-equal or every assertion against this release is PASSED; anything else falls
+      # through to the same lag-or-defect discrimination below (previous release's README =
+      # NOT-CONFIRMED, neither = FAILED). It used to be NOT-CONFIRMED unread, which asked an
+      # operator to do by hand exactly the comparison the next ten lines make.
+      echo "the registry served no readme field within ${REGISTRY_WINDOW_SECONDS}s, but the packument read made after the window carries one; comparing it."
+      if cmp -s "$workdir/README.md" README.md; then
+        echo "A4 OK: the readme npm serves for '${name}', first seen on the packument read after the ${REGISTRY_WINDOW_SECONDS}s window, is BYTE-EQUAL to the README.md this release packed, read $(date -u +%FT%TZ). Subject recorded: package '${name}', release '${version}'."
+        finish PASSED 0 "the package readme for ${name} is byte-equal to ${version}'s packed README.md (first seen on the packument read after the ${REGISTRY_WINDOW_SECONDS}s window)"
+      fi
+      node "$CHECKER" --check --dir "$workdir" && check_rc=0 || check_rc=$?
+      if [ "$check_rc" -eq 0 ]; then
+        echo "A4 OK: the readme npm serves for '${name}', first seen on the packument read after the ${REGISTRY_WINDOW_SECONDS}s window, is not byte-equal to what we packed, but it satisfies every assertion against ${version}'s own package.json, read $(date -u +%FT%TZ). Subject recorded: package '${name}', release '${version}'."
+        finish PASSED 0 "the package readme for ${name} satisfies every assertion against ${version} (first seen on the packument read after the ${REGISTRY_WINDOW_SECONDS}s window; not byte-equal)"
+      fi
       ;;
     *)
       echo "::warning::${name}: the registry served no readme field within ${REGISTRY_WINDOW_SECONDS}s, and the packument could not be read to tell whether it lists ${version} yet, so lag is NOT ruled out. Nothing was verified either way. Re-read it by hand: npm view ${name} readme | wc -c"
