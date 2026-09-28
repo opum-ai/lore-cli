@@ -335,11 +335,16 @@ describe("ensureGitHubRelease: the QCLI-401 AC6 verdict table (LCLI-622)", () =>
     const none = gh(absent);
     await ensureGitHubRelease({ version: "1.2.3", notes: "Notes.", latest: false, execFile: none.execFile });
     expect(none.calls.find((a) => a[1] === "create")).toContain("--latest=false");
-    // A refusal does not depend on `latest`: a draft is refused in a backfill too.
+    // A refusal does not depend on `latest`: a draft is refused in a backfill too. Same notes, so the
+    // draft is the ONLY reason (M4 found an earlier revision passing "N", masked by notes-differ).
     const draft = gh(published({ isDraft: true }));
-    expect(
-      (await ensureGitHubRelease({ version: "1.2.3", notes: "N", latest: false, execFile: draft.execFile })).ok,
-    ).toBe(false);
+    const refused = await ensureGitHubRelease({
+      version: "1.2.3",
+      notes: "Notes.",
+      latest: false,
+      execFile: draft.execFile,
+    });
+    expect({ ok: refused.ok, draft: refused.detail.includes("is a draft") }).toEqual({ ok: false, draft: true });
   });
 });
 
