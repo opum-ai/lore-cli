@@ -584,6 +584,20 @@ the promotion half, item 7. It is not part of staging.
      passing against the OLD baselines. If it does not, something other than
      the version moved the digest. Restore the new version afterward.
 
+   **Choose the bump with the breaking-bump gate (LCLI-632, mirror of
+   quest-cli QCLI-328).** A breaking CHANGELOG entry needs at least a minor
+   bump, and because lore and quest share one version, a break in either
+   changelog forces the pair's. Run `bun run check:breaking-bump -- --next
+   <new-version>` before the bump: it checks `CHANGELOG.md`'s `[Unreleased]`
+   section (or the `## [<new-version>]` section once the entries move below)
+   for a `### ... (breaking)` heading and for the legacy bold
+   `**BEHAVIOUR CHANGE:**` marker, which fails at any bump level and names the
+   canonical heading, and it reads quest-cli's `CHANGELOG.md` by ref
+   (default `dev`) the same way — an unreadable quest changelog refuses too.
+   `release.yml` runs the same checker as its `breaking-bump` job on every
+   dispatch, reading quest-cli `main`; the `publish` job needs it, like the
+   version-parity job.
+
 3. Regenerate the README's version-bearing lines **in the same commit as the
    version bump, before the tag**:
 
