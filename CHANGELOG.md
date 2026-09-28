@@ -165,6 +165,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   download, or any registry call, dry run included. The value is shown `printf %q` escaped on one
   line. `--verify-only` and `--print-checklist` read neither variable and are exempt. Unset or
   empty keeps the defaults, 1800 and 20.
+- **`provenance-post` tells a never-published version from one published without an attestation**
+  (LCLI-628). npm's attestation endpoint answers a 404 in both cases. It was measured returning the
+  same `{"error":"Not found"}` for `@opum-ai/lore@0.11.0` and for the never-published
+  `9.9.9-rc.1`. So a Release run whose `publish` job died before the launcher reported the rc
+  launcher as unattested and blamed LCLI-482. It also spent the propagation window on a version
+  that did not exist. `--post` still reads the attestation first, so a readable one is judged
+  exactly as before. Only after a 404 does it ask whether the version exists. It believes a
+  version-document 404 only when the packument also answers without that version, and reports
+  that as `not-published`: its own verdict, with no propagation wait, and a warning that names a
+  partial publish or read-API lag (LCLI-460). Any other answer to the existence read, such as an
+  outage or a whole-package 404, is `inconclusive`, never `not-published`.
+- **`promote-latest --rollback` refuses a recorded prior `latest` newer than the release**
+  (LCLI-617, paired with quest-cli QCLI-391). A hand-edited record whose `priorLatest` was newer
+  than its `version` (`5.7.0` in a `5.6.7` record) passed every earlier check. `--rollback` then
+  moved `latest` onto a version no receipt qualified, because `--rollback` is not receipt-gated.
+  Every `priorLatest` must now compare below `record.version`, each component compared by length
+  and then lexically. That is exact numeric order past 2^53, so `0.10.0` is newer than `0.9.0`.
+  `record.version` itself must be a plain `X.Y.Z` string. The two repositories give identical
+  verdicts, measured by each reading the other's rule by ref: 0 differences over 2583 inputs, with
+  a positive control.
 
 ## [0.11.0] - 2026-09-27
 
