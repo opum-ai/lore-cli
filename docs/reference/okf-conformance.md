@@ -213,7 +213,10 @@ reconciliation, managed blocks, portability, provenance paths, computation
 paths, and staleness. It also fails on `lore validate`'s error-tier
 `frontmatter` and `required-section` findings for every type (LCLI-606):
 missing required sections, a missing `type`, missing or mistyped fields, and
-invalid enum values, under `validate`'s own rule names. Those are `validate`'s
+invalid enum values, under `validate`'s own rule names. It fails on
+`validate`'s error-tier `quote-safety` findings too (LCLI-612): an unquoted
+YAML-1.1 boolean, a leading YAML indicator character, or a value containing
+`: `. A bare date stays a `validate`-only warning. Those are `validate`'s
 judgement of each file, made with the same repository-relative path and the
 `docs/` root's OKF version and profile, not a second one, because `lore check`
 exiting 0 is the gate a repository actually runs.

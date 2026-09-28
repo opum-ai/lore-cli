@@ -113,6 +113,25 @@ document uses the bundle's own profile, while `validate` judges the bundle-root 
 built-in profile. So `check` can still abort on a root index that `validate` accepts. This ADR's
 original text is not rewritten.
 
+Amended — 2026-09-28 (LCLI-612): **`lore check` now also fails on `lore validate`'s error-tier
+`quote-safety` findings, for every type.** The LCLI-606 amendment above left them `validate`-only,
+and that let the two gates disagree on one file: an unquoted YAML-1.1 boolean such as `archived:
+yes` failed `validate` (exit `6`) and passed `check` (exit `0`). opum-agent's ratification of
+LCLI-606 asked for exactly that case to be filed as a follow-up. `check` now keeps every
+error-tier `quote-safety` finding `validate` reports: a bare `yes`/`no`/`on`/`off`/`y`/`n`, a
+value starting with a YAML indicator character, or a value containing `: `. It reports them under
+the same rule name, with byte-identical messages, judged the same way as the LCLI-606 rules. No
+other `check` rule reads frontmatter quoting, so each defect is still one finding. Two things stay
+out. First, `validate`'s warning-tier `quote-safety` finding, a bare `YYYY-MM-DD` date, is not
+reported by `check`, not even under `--strict`, because `check` does not carry `validate`'s
+warnings. Second, a frontmatter block that is not valid YAML never reaches the per-file rules:
+`check` carries that parse error (`complete: false`, exit `6`, the same exit as `validate`), so
+`validate`'s `quote-safety` finding beside its YAML error is not in the `check` report. Resource
+drift and the other Tier-3 findings stay `validate`-only. This is a behaviour change. Before it
+landed, a fleet-wide measurement by ref found no error-tier `quote-safety` finding in any of 396
+files across 11 repositories, with a positive control. `lore validate` previews what `check` will
+now fail on.
+
 ## Context
 
 lore must answer two distinct questions about a docs bundle, and conflating
