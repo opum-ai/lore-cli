@@ -36,8 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in the repository without `--tag release-candidate`, and a test holds it to that one site. If
   `X` is already on npm as the artifact's bytes, it moves the tag instead. Other bytes refuse
   before anything moves. Afterwards it verifies `latest` on all seven packages and npm's `X`
-  integrity. It then prints the byte count of the package-level `readme` (OPAG-474 AC3), with a
-  loud warning, not a failure, on `0`. A failed platform move or launcher publish restores every
+  integrity. It then reads the package-level `readme` back; the next entry says how (LCLI-616
+  replaced a warn-only byte count). A failed platform move or launcher publish restores every
   `latest` that run moved, the launcher's included, by dist-tag. A failure in the step-7 checks
   afterwards restores nothing by itself, by design, and names `--rollback <record>` as the remedy.
   `--rollback` restores every recorded `latest`. Nothing is unpublished. Every npm call the promotion
@@ -48,6 +48,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read also passes `--userconfig=/dev/null`, so no token is sent. The Release run must be a
   `workflow_dispatch` run built from `opum-ai/lore-cli`. The spec is quest-cli's promote clause
   (QCLI-399, `e3c59d7b`) and opum-cli-e2e's `receipts/README.md` steps 5 to 7 (`4f078e6b`).
+- **The README read-back runs after the final `latest` publish, and an empty `readme` fails it**
+  (LCLI-616, OPAG-474 AC3). `scripts/promote-latest.mjs --promote` runs `scripts/readme-readback.sh`
+  once, after step 7, in a private directory holding the `X` launcher tarball's own `package.json`
+  and `README.md`. The registry pins travel in its environment, and `REGISTRY_WINDOW_SECONDS`
+  passes through. `--dry-run` does not run it. If the read-back does not pass, promote exits `3`, a
+  code nothing else uses. The message says the promotion is complete and verified, says not to run
+  `--rollback` (an immutable page cannot be given a readme), names the next release as the fix, and
+  gives the command that re-reads the readme. Nothing is rolled back or written after it. The
+  script itself now fails (exit 1, naming OPAG-474) when npm serves no `readme` after the whole
+  window. After a fresh publish onto `latest`, an empty field is the defect: lag on an established
+  package serves the previous README, not an empty one. The script's choice of "the previous
+  release" also skips `X-rc.N` versions now. Those sort just below `X` and never set the field, so
+  choosing one would have turned a lag warning into a failure from the second release under
+  LCLI-621 onwards. `release.yml`'s staging `publish` job no longer runs the read-back. A staged rc
+  never sets the field, and the job's sparse checkout never carried the script, so every
+  `publish: true` run concluded `failure` and could not be promoted. `test/release-workflow.test.ts`
+  now requires every `scripts/` file a job runs to be in that job's own checkout.
 - **A resumed staging skips a package only if the registry holds this run's bytes** (LCLI-621).
   Both `release.yml`'s `publish` job and `scripts/publish-release.sh` compare an already-published
   package's `dist.integrity` with the run's tarball, platforms included, and refuse on a difference

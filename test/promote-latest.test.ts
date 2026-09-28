@@ -14,8 +14,10 @@
  * clean case promotes -- record first, six platforms by dist-tag, then exactly one
  * `npm publish <X> --tag latest`, last; step 6 re-runs after the platform move and a change there
  * rolls every moved tag back, the launcher's included; a resume moves the tag instead of
- * republishing; step 7 verifies all seven tags and npm's X integrity; the readme read-back reports
- * a byte count and warns on 0; --rollback restores all seven by dist-tag and unpublishes nothing.
+ * republishing; step 7 verifies all seven tags and npm's X integrity; the README read-back runs
+ * scripts/readme-readback.sh once, after step 7, against the X tarball's own package.json and
+ * README.md, and a read-back that does not pass exits 3 with no rollback and no further write
+ * (LCLI-616); --rollback restores all seven by dist-tag and unpublishes nothing.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -43,11 +45,14 @@ import {
   main,
   type PromotionRecord,
   publishFinalLauncher,
+  README_READBACK_EXIT,
+  README_READBACK_SCRIPT,
   RECORD_KIND,
   RELEASE_VERSION,
-  readBackReadme,
+  readbackEnv,
   releaseRunReadArgs,
   rollback,
+  runReadmeReadback,
   SEMVER,
   tokenShape,
   validateRecord,
@@ -68,11 +73,17 @@ const integrity = (name: string) => `sha512-${Buffer.from(name).toString("base64
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const sri = (bytes: Uint8Array) => `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
 const FAST = { attempts: 1, delayMs: 0, sleep: async () => {} };
+/** The verdict line the stubbed read-back prints on a pass. */
+const READBACK_OK = `A4 OK: the readme npm serves for '@opum-ai/lore' is BYTE-EQUAL to the README.md this release packed.`;
+/** The README.md inside the X launcher tarball, as launcher() below writes it. */
+const X_README = `# lore\n\n> **Status: ${V} released.** Tag \`v${V}\`\n`;
 const REGISTRY = "https://registry.npmjs.org/";
 /** Both flags every npm call must carry (review F6): `--registry` alone loses to an `@opum-ai:registry` in any npmrc. */
 const PINS = [`--registry=${REGISTRY}`, `--@opum-ai:registry=${REGISTRY}`];
 const PINS_TEXT = PINS.join(" ");
 const PLATFORM_PACKAGES = RELEASE_PACKAGES.filter((name) => name !== LAUNCHER);
+// The real read-back script is bash with mktemp and cmp; it runs on the release operator's Mac.
+const describeOnPosix = process.platform === "win32" ? describe.skip : describe;
 
 // ── Launcher tarballs: a minimal ustar writer (as test/launcher-equivalence.test.ts), so the bytes
 // are exactly what each case says on every platform and the real equivalence gate reads them.
@@ -200,7 +211,12 @@ type WorldOptions = {
   failPublish?: boolean;
   failPublishAfterApply?: boolean;
   questLatest?: string | null;
-  readme?: string | "fail";
+  /**
+   * How `bash scripts/readme-readback.sh` answers: exit 0 with its verdict line by default, `code`
+   * to fail as execFile does (an Error carrying the exit code and the output), or "spawn" for a
+   * script that could not start at all.
+   */
+  readback?: { code: number; stdout: string } | "spawn";
   onAdd?: () => void;
   /** Runs once, when the LAST platform's latest move to V lands. */
   afterPlatforms?: (w: World) => void;
@@ -231,6 +247,14 @@ function world(options: WorldOptions = {}) {
     writes.push(args.filter((a) => !PINS.includes(a)).join(" "));
   };
   const envs: Array<Record<string, string | undefined>> = [];
+  /** Every read-back run: where, under what environment, and the two files its cwd held THEN. */
+  const readbacks: Array<{
+    args: string[];
+    cwd: string;
+    env: Record<string, string | undefined>;
+    packageJson: string;
+    readme: string;
+  }> = [];
   const files = artifact();
   options.artifact?.(files);
   const commit = "tagCommit" in options ? options.tagCommit : COMMIT;
@@ -303,10 +327,24 @@ function world(options: WorldOptions = {}) {
         if (!t) throw new Error("E404");
         return { stdout: JSON.stringify([t]) };
       }
-      if (command === "npm" && args[0] === "view" && args[2] === "readme") {
-        if (options.readme === "fail") throw new Error("E503 registry unreachable");
-        const text = options.readme ?? "# lore\n\nThe README.\n";
-        return { stdout: text ? `${text}\n` : "" };
+      if (command === "bash" && args[0] === README_READBACK_SCRIPT) {
+        const cwd = String(opts.cwd);
+        readbacks.push({
+          args,
+          cwd,
+          env: (opts.env ?? {}) as Record<string, string | undefined>,
+          packageJson: readFileSync(join(cwd, "package.json"), "utf8"),
+          readme: readFileSync(join(cwd, "README.md"), "utf8"),
+        });
+        if (options.readback === "spawn")
+          throw Object.assign(new Error("spawn bash ENOENT"), { code: "ENOENT", stdout: "", stderr: "" });
+        if (options.readback)
+          throw Object.assign(new Error(`Command failed: bash ${README_READBACK_SCRIPT}`), {
+            code: options.readback.code,
+            stdout: options.readback.stdout,
+            stderr: "",
+          });
+        return { stdout: `A4 subject: package '${LAUNCHER}', this release '${V}'.\n${READBACK_OK}\n`, stderr: "" };
       }
       if (command === "npm" && args[0] === "view" && args[2] === "--json") {
         // Every version read is ANONYMOUS against the public registry (review F6), the pair
@@ -375,6 +413,7 @@ function world(options: WorldOptions = {}) {
     writes,
     unpinned,
     envs,
+    readbacks,
     files,
     state,
   };
@@ -458,10 +497,19 @@ describe("scripts/promote-latest.mjs: the clean case (LCLI-621)", () => {
       expect(firstPack).toBeLessThan(firstMove);
       expect(lastPlatformMove).toBeLessThan(lastPack);
       expect(lastPack).toBeLessThan(publish);
-      // OPAG-474 AC3: the readme's byte count is read back and printed.
-      expect(h.text()).toContain(
-        `npm's package-level readme for ${LAUNCHER} is ${Buffer.byteLength("# lore\n\nThe README.\n")} bytes`,
-      );
+      // LCLI-616: the README read-back ran ONCE, after the publish and after step 7's last read,
+      // against the X tarball's OWN package.json and README.md, with the registry pins in its env.
+      expect(w.readbacks).toHaveLength(1);
+      const readback = w.readbacks[0] as (typeof w.readbacks)[number];
+      expect(JSON.parse(readback.packageJson).version).toBe(V);
+      expect(readback.readme).toBe(X_README);
+      expect(readback.env.npm_config_userconfig).toBe(devNull);
+      expect(readback.env.npm_config_registry).toBe(REGISTRY);
+      expect(readback.env["npm_config_@opum-ai:registry"]).toBe(REGISTRY);
+      const readbackAt = w.calls.findIndex((c) => c[0] === "bash");
+      expect(readbackAt).toBeGreaterThan(publish);
+      expect(readbackAt).toBeGreaterThan(w.calls.findLastIndex((c) => c[0] === "npm"));
+      expect(h.out).toContain(`  ${READBACK_OK}`);
     } finally {
       h.cleanup();
     }
@@ -474,6 +522,10 @@ describe("scripts/promote-latest.mjs: the clean case (LCLI-621)", () => {
       expect(await h.go(["--record", h.record, "--dry-run"], w)).toBe(0);
       expect(w.writes).toEqual([]);
       expect(existsSync(h.record)).toBe(false);
+      // LCLI-616: the README read-back is not run in a dry run, only named.
+      expect(w.calls.filter((c) => c[0] === "bash")).toEqual([]);
+      expect(w.readbacks).toEqual([]);
+      expect(h.out.join("\n")).toContain(`would    bash ${README_READBACK_SCRIPT} against ${X_FILE}'s own`);
       for (const name of PLATFORM_PACKAGES)
         expect(h.out.join("\n")).toContain(
           `would    npm dist-tag add ${name}@${V} latest ${PINS_TEXT}   (now ${PRIOR})`,
@@ -943,7 +995,7 @@ describe("scripts/promote-latest.mjs: step 6 re-runs after the platform move (LC
   });
 });
 
-describe("scripts/promote-latest.mjs: step 7 and the readme read-back (LCLI-621)", () => {
+describe("scripts/promote-latest.mjs: step 7 and the README read-back (LCLI-621, LCLI-616)", () => {
   test("npm serving X as other bytes after the publish fails, without rolling back or unpublishing", async () => {
     const h = harness();
     const w = world({ publishedIntegrity: "sha512-somethingelse" });
@@ -959,55 +1011,133 @@ describe("scripts/promote-latest.mjs: step 7 and the readme read-back (LCLI-621)
         "restore every latest with `node scripts/promote-latest.mjs --rollback <record>`",
       );
       expect(w.writes).toEqual([...platformMoves(V), publishLine(w)]);
+      // A step-7 failure is a real failure (exit 1), and the read-back never runs after one.
+      expect(w.readbacks).toEqual([]);
     } finally {
       h.cleanup();
     }
   });
 
-  test("a 0-byte readme WARNS loudly and names the re-measure command, but the verified promotion exits 0", async () => {
+  // LCLI-616, OPAG-474 AC3. The read-back failing is NOT a failed promotion: everything above it is
+  // complete and verified. So it exits with a code of its own (3, never a refusal's 1), rolls
+  // nothing back, writes nothing after it, and says in as many words not to roll back.
+  test("a read-back that fails exits 3, rolls NOTHING back, writes nothing after it, and says do NOT roll back", async () => {
     const h = harness();
-    const w = world({ readme: "" });
+    const failure = [
+      "attempt 1: the registry served no readme field yet.",
+      "::error::A4 FAILED for package '@opum-ai/lore', release '5.6.7': the registry served NO readme field at all (OPAG-474).",
+    ].join("\n");
+    const w = world({ readback: { code: 1, stdout: `${failure}\n` } });
     try {
-      expect(await h.go(["--record", h.record, "--promote"], w)).toBe(0);
+      const code = await h.go(["--record", h.record, "--promote"], w);
+      expect(README_READBACK_EXIT).toBe(3);
+      expect(code).toBe(README_READBACK_EXIT);
+      // Exactly the promotion's writes, and nothing after the read-back: no rollback, no tag move.
+      expect(w.writes).toEqual([...platformMoves(V), publishLine(w)]);
+      const readbackAt = w.calls.findIndex((c) => c[0] === "bash");
+      expect(readbackAt).toBeGreaterThan(-1);
+      expect(w.calls.slice(readbackAt + 1).filter((c) => c[1] === "dist-tag" || c[1] === "publish")).toEqual([]);
+      for (const name of RELEASE_PACKAGES) expect(w.tags[name]?.latest).toBe(V);
       const errText = h.err.join("\n");
-      expect(errText).toContain("!!! WARNING: npm SERVES NO README FOR THE LAUNCHER YET (OPAG-474 AC3) !!!");
-      expect(errText).toContain(`npm's package-level readme for ${LAUNCHER} is 0 bytes after 1 read(s).`);
+      // The script's own words come through, then the plain statement of what to do and not do.
+      expect(errText).toContain("NO readme field at all (OPAG-474)");
+      expect(errText).toContain("THIS PROMOTION IS COMPLETE AND VERIFIED");
+      expect(errText).toContain("(exit 1; OPAG-474)");
+      expect(errText).toContain("Do NOT run --rollback, and do NOT unpublish");
+      expect(errText).toContain("The fix is the NEXT release.");
       expect(errText).toContain(`npm view ${LAUNCHER} readme | wc -c`);
-      expect(errText).toContain("do NOT roll back or unpublish for this");
-      expect(w.calls).toContainEqual([
-        "npm",
-        "view",
-        LAUNCHER,
-        "readme",
-        "--prefer-online",
-        `--userconfig=${devNull}`,
-        ...PINS,
-      ]);
+      expect(h.text()).toContain(`Promoted: latest reads ${V} on all 7 packages`);
     } finally {
       h.cleanup();
     }
   });
 
-  test("an unreadable readme is reported as unreadable, never as 0 bytes", async () => {
+  test("a read-back that could not run at all is a read-back that did not pass: exit 3, nothing rolled back", async () => {
     const h = harness();
-    const w = world({ readme: "fail" });
+    const w = world({ readback: "spawn" });
     try {
-      expect(await h.go(["--record", h.record, "--promote"], w)).toBe(0);
-      expect(h.err.join("\n")).toContain("is unreadable (E503 registry unreachable)");
+      expect(await h.go(["--record", h.record, "--promote"], w)).toBe(README_READBACK_EXIT);
+      expect(h.err.join("\n")).toContain("(exit ENOENT; OPAG-474)");
+      expect(h.err.join("\n")).toContain("spawn bash ENOENT");
+      expect(w.writes).toEqual([...platformMoves(V), publishLine(w)]);
     } finally {
       h.cleanup();
     }
   });
 
-  test("unit: readBackReadme re-reads through lag and stops at the first non-empty answer", async () => {
-    const answers = ["", "", "# lore\n"];
-    let reads = 0;
-    const result = await readBackReadme({
-      run: async () => ({ stdout: answers[reads++] ?? "" }),
-      attempts: 5,
-      sleep: async () => {},
+  test("REGISTRY_WINDOW_SECONDS passes through to the read-back, and the registry pins are forced over the caller's", async () => {
+    const h = harness();
+    const w = world();
+    try {
+      const env = { NPM_TOKEN: "", REGISTRY_WINDOW_SECONDS: "7", npm_config_registry: "http://127.0.0.1:9/" };
+      expect(await h.go(["--record", h.record, "--promote"], w, env)).toBe(0);
+      const readback = w.readbacks[0] as (typeof w.readbacks)[number];
+      expect(readback.env.REGISTRY_WINDOW_SECONDS).toBe("7");
+      expect(readback.env.npm_config_registry).toBe(REGISTRY);
+      expect(h.out.join("\n")).toContain("re-reading for up to 7s");
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("unit: readbackEnv pins the public registry for the scope and sends no token", () => {
+    expect(readbackEnv({ KEEP: "1", "npm_config_@opum-ai:registry": "http://mirror/" })).toEqual({
+      KEEP: "1",
+      npm_config_userconfig: devNull,
+      npm_config_registry: REGISTRY,
+      "npm_config_@opum-ai:registry": REGISTRY,
     });
-    expect(result).toEqual({ bytes: "# lore".length, attempts: 3 });
+  });
+
+  // The runner-injected tests above prove what promote does with an exit code; this one runs the REAL
+  // scripts/readme-readback.sh through the real runner, against a stub `npm` on PATH, so the wiring
+  // itself -- the script's path, its cwd holding the tarball's own files, the env pins reaching npm,
+  // and the script's exit 1 arriving as a failed read-back -- is measured rather than assumed.
+  describeOnPosix("the real read-back script, through the real runner", () => {
+    function stubNpm(readme: string) {
+      const dir = mkdtempSync(resolve(tmpdir(), "lore-readback-npm-"));
+      writeFileSync(
+        join(dir, "npm"),
+        [
+          "#!/usr/bin/env bash",
+          `env | grep '^npm_config_' | sort > "${join(dir, "seen-env")}"`,
+          'for a in "$@"; do [ "$a" = versions ] && { echo \'["5.6.7"]\'; exit 0; }; done',
+          `printf '%s' '${readme}'`,
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      return dir;
+    }
+    const final = async () => {
+      const dir = mkdtempSync(resolve(tmpdir(), "lore-readback-x-"));
+      const path = join(dir, X_FILE);
+      writeFileSync(path, launcher(V));
+      return { filename: X_FILE, path, sha256: "", integrity: "" };
+    };
+
+    test("the X tarball's own README served back byte-equal passes", async () => {
+      const bin = stubNpm(X_README.trimEnd());
+      const result = await runReadmeReadback({
+        final: await final(),
+        env: { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`, REGISTRY_WINDOW_SECONDS: "0" },
+      });
+      expect(result.ok).toBe(true);
+      expect(result.verdict).toContain("BYTE-EQUAL");
+      const seen = readFileSync(join(bin, "seen-env"), "utf8");
+      expect(seen).toContain(`npm_config_@opum-ai:registry=${REGISTRY}`);
+      expect(seen).toContain(`npm_config_userconfig=${devNull}`);
+    });
+
+    test("an empty served readme arrives as the script's exit 1: not ok, and the verdict names OPAG-474", async () => {
+      const bin = stubNpm("");
+      const result = await runReadmeReadback({
+        final: await final(),
+        env: { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`, REGISTRY_WINDOW_SECONDS: "0" },
+      });
+      expect(result.ok).toBe(false);
+      expect(result.code).toBe(1);
+      expect(result.output).toContain("NO readme field at all (OPAG-474)");
+    });
   });
 });
 

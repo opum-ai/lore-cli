@@ -621,10 +621,17 @@ the promotion half, item 7. It is not part of staging.
    read-back that disagrees within the propagation window (LCLI-460: 0.5.0 took
    ~25 minutes) is most likely the registry still serving the *previous*
    release, not a defect. `scripts/readme-readback.sh` automates that
-   distinction in CI: it retries, and fails only when the served page satisfies
-   neither this release's assertions nor the previous one's. Record the package
-   and the time you read, never "the page for version X" — naming an object you
-   did not read is the defect class this whole gate exists to close.
+   distinction. `scripts/promote-latest.mjs` runs it once, after the final `X`
+   launcher is published to `latest` (item 7), against that tarball's own
+   `package.json` and `README.md` (LCLI-616). It retries for
+   `REGISTRY_WINDOW_SECONDS` (default 1800). It fails when the served page
+   satisfies neither this release's assertions nor the previous release's. It
+   also fails when npm serves no `readme` at all after the whole window: after a
+   fresh publish to `latest` that is the OPAG-474 defect, not lag, because a
+   lagging replica serves the previous README rather than an empty one. Record
+   the package and the time you read, never "the page for version X" — naming
+   an object you did not read is the defect class this whole gate exists to
+   close.
 
    Keep the README's copyable install commands versionless (`npx
    @opum-ai/lore`, `bunx @opum-ai/lore`, and package-manager installs without
@@ -1032,14 +1039,14 @@ the promotion half, item 7. It is not part of staging.
    `e3c59d7b`), adopted. Steps 5 to 7 are opum-cli-e2e's `receipts/README.md`
    "What a reader must do" (at `4f078e6b`, TASK-126).
 
-   **An OIDC `publish: true` Release run cannot be promoted yet (LCLI-616).**
-   Step 1 below requires the run to have concluded `success`. Every
-   `publish: true` run concludes `failure` today, because the `publish` job's
-   README read-back step runs `bash scripts/readme-readback.sh`, and that
-   script is not in the job's sparse checkout. That is LCLI-616's to fix, and
-   the check stays. Today's path is unaffected: stage from a `publish: false`
-   run with `scripts/publish-release.sh`, which concludes `success`, and pass
-   that run to `--release-run`.
+   **An OIDC `publish: true` Release run can be promoted (LCLI-616).** Step 1
+   below requires the run to have concluded `success`. Until LCLI-616 every
+   `publish: true` run concluded `failure`: the `publish` job's last step ran
+   `bash scripts/readme-readback.sh`, which its sparse checkout did not carry.
+   That step is gone, because a staged `X-rc.N` never sets the package-level
+   `readme`, and the read-back now runs here, after the final publish.
+   `test/release-workflow.test.ts` pins that every `scripts/` file a
+   `release.yml` job runs is in that job's own checkout.
 
    Before anything moves, dry run included, it checks each of these in order
    and refuses on the first that fails:
@@ -1098,16 +1105,28 @@ the promotion half, item 7. It is not part of staging.
    reads `<version>`. It also checks that npm serves `@opum-ai/lore@<version>`
    with the artifact `X` launcher's `dist.integrity`.
 
-   **Then it reads the README back and prints its size (OPAG-474 AC3).** It
-   prints the byte count of the package-level `readme` npm serves for
-   `@opum-ai/lore`, and the command it used
-   (`npm view @opum-ai/lore readme | wc -c`). On `0` bytes it prints a loud
-   warning and still exits `0`. That is a warning and not a failure for three
-   reasons. The promotion is already complete and verified. npm pages are
-   immutable, so a rollback cannot give the page a readme. And the field lags a
-   publish (LCLI-460 measured about 25 minutes), so a `0` inside the read
-   window is more often lag than a defect. Re-measure after the lag window,
-   and record the byte count and the command on LCLI-621 and OPAG-474.
+   **Then it reads the README back, and asserts it (OPAG-474 AC3, LCLI-616).**
+   It runs `scripts/readme-readback.sh` with its working directory set to a
+   private directory holding the `X` tarball's own `package/package.json` and
+   `package/README.md`, so "byte-equal" means equal to the bytes that shipped.
+   The npm registry pins travel in its environment, and `REGISTRY_WINDOW_SECONDS`
+   passes through. On a pass it prints the script's verdict line and exits `0`.
+   A `--dry-run` never runs it.
+
+   **If the read-back does not pass, it exits `3`, and the promotion is still
+   complete.** Exit `3` is used for nothing else. It covers an empty `readme`
+   after the window, a page that matches no release, and a read-back that could
+   not run. By then `latest` reads `<version>` on all seven packages and step 7
+   has verified npm's `X` bytes, so nothing is rolled back and nothing more is
+   written. **Do not run `--rollback`**: the page is immutable, and restoring
+   the old `latest` undoes a correct release without giving the page a readme.
+   The fix is the next release. Re-read it by hand
+   (`npm view @opum-ai/lore readme | wc -c`) and record the result in the
+   release-truth record. A non-zero exit here replaces LCLI-621's warn-only
+   read-back. That design warned rather than failed because a failure "invites
+   the wrong remedy". The distinct code and the explicit do-not-roll-back
+   message answer that concern without letting a pipeline exit `0` over the
+   defect.
 
    **The commit comes from the tag, not from npm, and that is the one
    place this cannot mirror quest.** quest checks npm's recorded `gitHead`.

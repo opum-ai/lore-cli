@@ -960,3 +960,196 @@ describeOnPosix("release.yml's publish step stages seven of eight tarballs (LCLI
     "names version '7.8.9', not '7.8.9-rc.1'",
   );
 });
+
+// ── Every scripts/ file a job runs is in that job's checkout (LCLI-616) ──────────────────────────
+//
+// The `publish` job's last step ran `bash scripts/readme-readback.sh`, but the job's only checkout
+// was a sparse one of package.json and the parity checker, so the file was never there and every
+// `publish: true` run concluded failure -- which scripts/promote-latest.mjs then refuses, because it
+// requires the Release run to have concluded `success`. Nothing caught it: actionlint cannot know
+// which files a checkout brings, and the step only ever executed inside a real publish. This reads
+// every job, collects each `scripts/<path>` a `run:` invokes by direct path (through bash, sh, node
+// or bun, or as the command itself), and requires an EARLIER checkout step in the same job to bring
+// it: a full checkout, or a sparse one that lists it. A job with no checkout at all brings nothing.
+
+/** One `scripts/` file a step runs, as written (relative to the workspace), and where it runs. */
+interface ScriptInvocation {
+  job: string;
+  step: number;
+  path: string;
+}
+
+/**
+ * Every `scripts/<path>` a `run:` block invokes by direct path. Full-line shell comments are
+ * skipped; a path that only appears inside a string or a `node -e` program is not an invocation,
+ * because it is not in command or interpreter-argument position.
+ */
+function scriptInvocations(jobs: Record<string, WorkflowJob>): ScriptInvocation[] {
+  const found: ScriptInvocation[] = [];
+  const path = String.raw`["']?((?:\.\/)?(?:[\w.-]+\/)*scripts\/[\w./-]+)`;
+  // An interpreter, any flags, then the path: `node scripts/x.mjs`, `bash -eu scripts/x.sh`.
+  const viaInterpreter = new RegExp(
+    String.raw`(?:^|[\s;&|(])(?:bash|sh|node|bun)\s+(?:-[\w-]+(?:=\S+)?\s+)*${path}`,
+    "g",
+  );
+  // The path as the command itself: `scripts/x.sh`, `./scripts/x.sh`, after a separator or keyword.
+  const asCommand = new RegExp(String.raw`(?:^|[;&|(]\s*|\b(?:then|do|else|exec)\s+)${path}`, "g");
+  for (const [job, spec] of Object.entries(jobs))
+    (spec.steps ?? []).forEach((step, index) => {
+      for (const raw of (step.run ?? "").split("\n")) {
+        const line = raw.trim();
+        if (line.startsWith("#")) continue;
+        const paths = new Set<string>();
+        for (const re of [viaInterpreter, asCommand]) for (const m of line.matchAll(re)) paths.add(m[1] as string);
+        for (const p of paths) found.push({ job, step: index, path: p.replace(/^\.\//, "") });
+      }
+    });
+  return found;
+}
+
+/**
+ * Does this checkout step bring `path` (workspace-relative)? `with.path` roots the checkout; no
+ * `sparse-checkout` means everything; otherwise cone mode (actions/checkout's default) brings the
+ * listed directories plus root files, and non-cone mode brings what its gitignore-style patterns
+ * match -- a leading "/" anchors to the checkout root, an unanchored pattern matches at any depth.
+ */
+function checkoutBrings(step: WorkflowStep, path: string): boolean {
+  const root = String(step.with?.path ?? "")
+    .replace(/^\.\/?/, "")
+    .replace(/\/$/, "");
+  if (root && !path.startsWith(`${root}/`)) return false;
+  const rel = root ? path.slice(root.length + 1) : path;
+  const sparse = step.with?.["sparse-checkout"];
+  if (sparse === undefined || String(sparse).trim() === "") return true;
+  const entries = String(sparse)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"));
+  if (step.with?.["sparse-checkout-cone-mode"] !== false)
+    return !rel.includes("/") || entries.some((dir) => rel.startsWith(`${dir.replace(/^\/|\/$/g, "")}/`));
+  // `**` spans directories, `*` and `?` do not; everything else is literal.
+  const glob = (text: string) =>
+    text
+      .split("**")
+      .map((part) =>
+        part
+          .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+          .replace(/\*/g, "[^/]*")
+          .replace(/\?/g, "[^/]"),
+      )
+      .join(".*");
+  return entries.some((pattern) => {
+    const anchored = pattern.startsWith("/");
+    const body = glob(pattern.replace(/^\//, "").replace(/\/$/, ""));
+    // A pattern naming a directory brings everything beneath it.
+    return new RegExp(`^${anchored ? "" : "(?:.*/)?"}${body}(?:/.*)?$`).test(rel);
+  });
+}
+
+/** Every invocation no earlier checkout in its job brings, as a readable problem. */
+function uncheckedOutScripts(jobs: Record<string, WorkflowJob>): string[] {
+  const problems: string[] = [];
+  for (const { job, step, path } of scriptInvocations(jobs)) {
+    const earlier = (jobs[job]?.steps ?? []).slice(0, step).filter((s) => s.uses?.startsWith("actions/checkout@"));
+    if (!earlier.some((checkout) => checkoutBrings(checkout, path)))
+      problems.push(
+        `${job} step ${step} runs ${path}, but ${earlier.length ? "no earlier checkout in the job brings it" : "the job has no checkout before it"}`,
+      );
+  }
+  return problems;
+}
+
+describe("release.yml: every scripts/ file a job runs is in that job's checkout (LCLI-616)", () => {
+  const withSteps = (steps: WorkflowStep[]): Record<string, WorkflowJob> => ({ j: { steps } });
+  const CHECKOUT = "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803";
+
+  test("every scripts/ invocation in release.yml is brought by an earlier checkout in its own job", () => {
+    const jobs = loadWorkflow().jobs;
+    const invocations = scriptInvocations(jobs);
+    // Positive control: the scan finds the invocations known today -- the parity checker in two jobs
+    // through a sparse checkout rooted at parity/, and the full-checkout jobs' own scripts -- so an
+    // empty result cannot pass for a clean one.
+    expect(invocations.length).toBeGreaterThanOrEqual(8);
+    expect(invocations).toContainEqual({
+      job: "publish",
+      step: expect.any(Number),
+      path: "parity/scripts/version-parity.mjs",
+    });
+    expect(invocations).toContainEqual({
+      job: "package",
+      step: expect.any(Number),
+      path: "scripts/launcher-equivalence.mjs",
+    });
+    expect(uncheckedOutScripts(jobs)).toEqual([]);
+    // Each file is really in the repository at the path the checkout brings it from.
+    const repo = join(import.meta.dir, "..");
+    for (const { path } of invocations) expect(existsSync(join(repo, path.replace(/^parity\//, "")))).toBe(true);
+  });
+
+  test("restoring the old read-back step in the publish job is caught: its sparse checkout never brought the script", () => {
+    const jobs = loadWorkflow().jobs;
+    const publish = jobs.publish as WorkflowJob;
+    const restored = {
+      ...jobs,
+      publish: { ...publish, steps: [...(publish.steps ?? []), { run: "bash scripts/readme-readback.sh" }] },
+    };
+    expect(uncheckedOutScripts(restored)).toEqual([
+      `publish step ${publish.steps?.length} runs scripts/readme-readback.sh, but no earlier checkout in the job brings it`,
+    ]);
+    // The tempting wrong fix: point the step into the parity/ checkout. The path root now matches,
+    // so only the sparse listing (package.json and the parity checker) can refuse it -- and does.
+    const repointed = {
+      ...jobs,
+      publish: { ...publish, steps: [...(publish.steps ?? []), { run: "bash parity/scripts/readme-readback.sh" }] },
+    };
+    expect(uncheckedOutScripts(repointed)).toEqual([
+      `publish step ${publish.steps?.length} runs parity/scripts/readme-readback.sh, but no earlier checkout in the job brings it`,
+    ]);
+  });
+
+  test("a job with NO checkout that runs a scripts/ file fails", () => {
+    expect(uncheckedOutScripts(withSteps([{ run: "node scripts/x.mjs --flag" }]))).toEqual([
+      "j step 0 runs scripts/x.mjs, but the job has no checkout before it",
+    ]);
+  });
+
+  test("a checkout AFTER the step does not count", () => {
+    expect(uncheckedOutScripts(withSteps([{ run: "bash scripts/x.sh" }, { uses: CHECKOUT }]))).toHaveLength(1);
+  });
+
+  test("a full checkout brings everything; a sparse one brings only what it lists", () => {
+    const sparse = (listing: string, extra: Record<string, string | boolean> = {}): WorkflowStep => ({
+      uses: CHECKOUT,
+      with: { "sparse-checkout-cone-mode": false, "sparse-checkout": listing, ...extra },
+    });
+    expect(uncheckedOutScripts(withSteps([{ uses: CHECKOUT }, { run: "bash scripts/x.sh" }]))).toEqual([]);
+    expect(uncheckedOutScripts(withSteps([sparse("/scripts/x.sh\n"), { run: "bash scripts/x.sh" }]))).toEqual([]);
+    expect(uncheckedOutScripts(withSteps([sparse("/scripts/\n"), { run: "bash scripts/x.sh" }]))).toEqual([]);
+    expect(uncheckedOutScripts(withSteps([sparse("/scripts/y.sh\n"), { run: "bash scripts/x.sh" }]))).toHaveLength(1);
+    // Rooted with `path:`, the invocation must go through that root.
+    expect(
+      uncheckedOutScripts(withSteps([sparse("/scripts/x.sh\n", { path: "p" }), { run: "node p/scripts/x.sh" }])),
+    ).toEqual([]);
+    expect(
+      uncheckedOutScripts(withSteps([sparse("/scripts/x.sh\n", { path: "p" }), { run: "node scripts/x.sh" }])),
+    ).toHaveLength(1);
+    // Cone mode (the default) brings listed directories and root files, not a file under an unlisted one.
+    const cone = (listing: string): WorkflowStep => ({ uses: CHECKOUT, with: { "sparse-checkout": listing } });
+    expect(uncheckedOutScripts(withSteps([cone("scripts\n"), { run: "bash scripts/x.sh" }]))).toEqual([]);
+    expect(uncheckedOutScripts(withSteps([cone("src\n"), { run: "bash scripts/x.sh" }]))).toHaveLength(1);
+  });
+
+  test("it sees the spellings a step runs a script with, and not a path merely mentioned", () => {
+    const seen = (run: string) => scriptInvocations(withSteps([{ run }])).map((i) => i.path);
+    expect(seen("bash scripts/a.sh")).toEqual(["scripts/a.sh"]);
+    expect(seen("sh -eu ./scripts/b.sh arg")).toEqual(["scripts/b.sh"]);
+    expect(seen('node "scripts/c.mjs" --x')).toEqual(["scripts/c.mjs"]);
+    expect(seen("./scripts/d.sh")).toEqual(["scripts/d.sh"]);
+    expect(seen("set -e; scripts/e.sh")).toEqual(["scripts/e.sh"]);
+    expect(seen("if true; then scripts/f.sh; fi")).toEqual(["scripts/f.sh"]);
+    expect(seen("x && bun scripts/g.ts")).toEqual(["scripts/g.ts"]);
+    // Mentions, not invocations: an echo, a comment, prose.
+    expect(seen('echo "run scripts/publish-release.sh by hand"')).toEqual([]);
+    expect(seen("# bash scripts/h.sh")).toEqual([]);
+  });
+});

@@ -56,8 +56,11 @@
 //      resume where X is already on npm as the artifact's bytes, the tag is
 //      moved instead of republishing.
 //  11. STEP 7: `latest` reads X on all seven, and npm's X dist.integrity is the
-//      artifact's; then the package-level readme's byte count is read back and
-//      reported (OPAG-474 AC3), warning loudly -- not failing -- on 0 bytes.
+//      artifact's.
+//  12. THE README READ-BACK (A4 of LCLI-510; OPAG-474 AC3; LCLI-616):
+//      scripts/readme-readback.sh, run against the X tarball's own package.json
+//      and README.md, asserts npm's package-level readme is this release's and is
+//      not empty. It fails with exit 3, not 1: see README_READBACK_EXIT.
 // A failure at 9 or 10 restores every `latest` this run moved by dist-tag, the
 // launcher's included. Nothing is unpublished; retry at the same version.
 //
@@ -80,6 +83,17 @@
 //   node scripts/promote-latest.mjs --record <path> --release-run <id> --promote     # move latest
 //   node scripts/promote-latest.mjs --rollback <path>                                # restore it
 // Optional: --version <v> (default: this checkout's package.json), --otp <code>.
+// Env: REGISTRY_WINDOW_SECONDS bounds the README read-back's wait (default 1800), as it does
+// scripts/readme-readback.sh's and publish-release.sh's.
+//
+// Exit codes:
+//   0  done: the dry run found nothing to refuse, the promotion is complete and its README
+//      read-back passed, or the rollback restored every latest
+//   1  refused or failed; what moved, if anything, and the remedy are printed
+//   2  bad arguments, or an unexpected error
+//   3  --promote only: the promotion is COMPLETE and verified, but the README read-back did not
+//      pass (OPAG-474). Do NOT run --rollback: it cannot give an immutable page a readme. The fix
+//      is the next release. The message gives the command that re-reads the readme by hand.
 
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -89,7 +103,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { compareLauncherTarballs } from "./launcher-equivalence.mjs";
+import { compareLauncherTarballs, readTarEntries } from "./launcher-equivalence.mjs";
 import {
   describeOverride,
   evaluateReleaseReceipt,
@@ -100,6 +114,7 @@ import {
   LAUNCHER,
   OWN_REPOSITORY,
   observeRelease,
+  PUBLIC_REGISTRY,
   RECEIPT_HOST,
   REGISTRY_PINS,
   RELEASE_PACKAGES,
@@ -184,11 +199,6 @@ export function distTagReadArgs(name) {
 /** The one argv a single version's registry metadata is read with, anonymously. @param {string} spec */
 export function versionReadArgs(spec) {
   return ["view", spec, "--json", "--prefer-online", ...ANONYMOUS];
-}
-
-/** The one argv npm's PACKAGE-LEVEL readme is read with (not per-version: see readBackReadme). */
-export function readmeReadArgs(name) {
-  return ["view", name, "readme", "--prefer-online", ...ANONYMOUS];
 }
 
 /**
@@ -730,36 +740,97 @@ export async function verifyFinalLauncher({
 }
 
 /**
- * OPAG-474 AC3's measurement: the byte count of npm's PACKAGE-LEVEL `readme` for the launcher, as
- * `npm view <pkg> readme` serves it (npm view takes `readme` from the packument's top level, not
- * from a version, which is why it is the field a dist-tag move never populated). Re-read until it
- * is non-empty or the attempts run out, because the field lags a publish (LCLI-460 measured ~25
- * minutes for 0.5.0). An unreadable read counts as unknown, never as 0.
- * @param {{ run?: Function, attempts?: number, delayMs?: number, sleep?: (ms: number) => Promise<void> }} [options]
- * @returns {Promise<{ bytes: number | null, attempts: number, error?: string }>}
+ * THE README READ-BACK (LCLI-616): A4 of the shipped-README version contract (LCLI-510) and
+ * OPAG-474 AC3, run once, here, after the final X launcher's fresh publish onto `latest` -- the
+ * publish that makes npm derive the package-level `readme`. It is scripts/readme-readback.sh, not a
+ * second implementation: that script re-runs the generator's own assertions over what npm serves,
+ * discriminates propagation lag from a defect, and is driven branch by branch by
+ * test/readme-readback.test.ts. It used to run at the end of release.yml's staging job, where a
+ * staged X-rc.N never sets the field (and the job's checkout lacked the script: LCLI-616).
  */
-export async function readBackReadme({
-  run = defaultRun,
-  attempts = 10,
-  delayMs = 15_000,
-  sleep = (ms) => new Promise((done) => setTimeout(done, ms)),
-} = {}) {
-  /** @type {number | null} */
-  let bytes = null;
-  let error;
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      const { stdout } = await run("npm", readmeReadArgs(LAUNCHER));
-      // npm prints the field followed by one newline, and nothing at all for an empty field.
-      bytes = Buffer.byteLength(String(stdout).replace(/\r?\n$/, ""), "utf8");
-      error = undefined;
-      if (bytes > 0) return { bytes, attempts: attempt };
-    } catch (failure) {
-      error = firstLine(failure);
-    }
-    if (attempt < attempts) await sleep(delayMs);
+export const README_READBACK_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "readme-readback.sh");
+
+/**
+ * The exit code for "promoted, but the README read-back did not pass". DISTINCT from 1 on purpose.
+ * LCLI-621's review argued the read-back should only warn, because a non-zero exit "invites the
+ * wrong remedy": the promotion is complete, npm pages are immutable, and --rollback cannot give a
+ * page a readme. That argument is about the REMEDY, not about whether to say it failed, and a
+ * warning a pipeline exits 0 on is one nobody acts on. So the answer here is a code no refusal or
+ * failed move uses, paired with a message that says in as many words: complete, verified, do NOT
+ * roll back, the fix is the next release, and how to re-read the readme by hand.
+ */
+export const README_READBACK_EXIT = 3;
+
+/**
+ * The environment the read-back runs npm under. The script calls `npm view` with no flags, so the
+ * pins travel as npm config variables: `npm_config_@opum-ai:registry` is the one that beats a scope
+ * registry set in any npmrc (review F6), `npm_config_userconfig` sends no token, exactly as the
+ * ANONYMOUS reads above. Measured on npm 12.1.0 from a directory whose .npmrc sets
+ * `@opum-ai:registry=http://127.0.0.1:9/`: these three reach the public registry, and
+ * `npm_config_registry` alone does not. REGISTRY_WINDOW_SECONDS passes through from `env`.
+ * @param {Record<string, string | undefined>} env
+ */
+export function readbackEnv(env) {
+  return {
+    ...env,
+    npm_config_userconfig: devNull,
+    npm_config_registry: PUBLIC_REGISTRY,
+    "npm_config_@opum-ai:registry": PUBLIC_REGISTRY,
+  };
+}
+
+/**
+ * Writes the X tarball's OWN package/package.json and package/README.md into `into`: the cwd the
+ * read-back reads ./package.json and ./README.md from, so "byte-equal" means equal to the bytes that
+ * shipped, not to this checkout's copies. Throws if either is absent.
+ * @param {string} tarball @param {string} into
+ */
+export async function extractReadbackInputs(tarball, into) {
+  const entries = readTarEntries(await readFile(tarball));
+  for (const name of ["package.json", "README.md"]) {
+    const entry = entries.find((e) => e.path === `package/${name}` && e.type === "file");
+    if (!entry) throw new Error(`${basename(tarball)} carries no package/${name}`);
+    await writeFile(join(into, name), entry.content);
   }
-  return { bytes, attempts, ...(error ? { error } : {}) };
+}
+
+/**
+ * Runs the read-back through the injectable runner. `ok` only on the script's exit 0; anything else
+ * -- its exit 1, or a script that could not run at all -- is a read-back that did not pass. Returns
+ * everything it printed, and the verdict line: the last line, which is where the script says what it
+ * concluded (an "A4 OK", a "::warning::" naming why nothing was proven, or an "::error::").
+ * @param {{ run?: Function, final: ArtifactFile, env: Record<string, string | undefined> }} args
+ * @returns {Promise<{ ok: boolean, code: number | string | null, output: string, verdict: string }>}
+ */
+export async function runReadmeReadback({ run = defaultRun, final, env }) {
+  const dir = await mkdtemp(join(tmpdir(), "lore-readme-readback-"));
+  try {
+    try {
+      await extractReadbackInputs(final.path, dir);
+    } catch (error) {
+      const output = `the read-back could not be set up: ${reason(error)}`;
+      return { ok: false, code: null, output, verdict: output };
+    }
+    let ok = true;
+    let code = /** @type {number | string | null} */ (0);
+    let output;
+    try {
+      const done = await run("bash", [README_READBACK_SCRIPT], { cwd: dir, env: readbackEnv(env) });
+      output = `${done.stdout ?? ""}${done.stderr ?? ""}`;
+    } catch (error) {
+      const any = /** @type {any} */ (error);
+      ok = false;
+      code = any?.code ?? null;
+      output = `${any?.stdout ?? ""}${any?.stderr ?? ""}` || reason(error);
+    }
+    const lines = String(output)
+      .split("\n")
+      .map((line) => line.trimEnd())
+      .filter(Boolean);
+    return { ok, code, output: lines.join("\n"), verdict: lines.at(-1) ?? "(the read-back printed nothing)" };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 /** Length, prefix and a whitespace flag: the only things ever reported about a credential. */
@@ -1082,6 +1153,9 @@ export async function main(
               : `  would    npm ${distTagAddArgs(entry.name, version, PROMOTE_TAG).join(" ")}   (now ${entry.priorLatest})`,
           );
         out(
+          `  would    bash ${README_READBACK_SCRIPT} against ${final.filename}'s own package.json and README.md, after step 7 (not run in a dry run)`,
+        );
+        out(
           `\nDry run only: nothing was written, published or tag-moved. Re-run with --promote to move ${PROMOTE_TAG}.`,
         );
         return 0;
@@ -1090,7 +1164,7 @@ export async function main(
         await writeFile(args.recordPath, `${JSON.stringify(record, null, 2)}\n`, { flag: "wx" });
         out(`Recorded every prior ${PROMOTE_TAG} to ${args.recordPath} before moving anything.`);
       }
-      release = { launcherVersion, final, servedCheck };
+      release = { launcherVersion, final, servedCheck, peeled };
     }
 
     const { token, source } = await resolveToken({ run, env });
@@ -1186,33 +1260,33 @@ export async function main(
       `\nPromoted: ${PROMOTE_TAG} reads ${record.version} on all ${record.packages.length} packages, and npm serves ${LAUNCHER}@${record.version} as ${final.filename} (${final.integrity}). Rollback: node scripts/promote-latest.mjs --rollback ${args.recordPath}`,
     );
 
-    // OPAG-474 AC3, measured and reported. A WARNING on 0 bytes, not a failure: the promotion above
-    // is complete and verified, npm pages are immutable, and a rollback cannot give the page a
-    // readme -- so a non-zero exit here would invite exactly the wrong remedy. The field also lags
-    // a publish, so 0 inside the read window is more often lag than defect.
-    const readme = await readBackReadme({ run, ...verifyOptions });
-    const readCommand = `npm view ${LAUNCHER} readme | wc -c`;
-    if (readme.bytes && readme.bytes > 0)
-      out(
-        `README read-back (OPAG-474 AC3): npm's package-level readme for ${LAUNCHER} is ${readme.bytes} bytes (read ${readme.attempts} time(s) with \`${readCommand}\`).`,
-      );
-    else {
-      const seen = readme.bytes === null ? `unreadable (${readme.error ?? "no answer"})` : "0 bytes";
-      for (const line of [
-        "",
-        "!!! WARNING: npm SERVES NO README FOR THE LAUNCHER YET (OPAG-474 AC3) !!!",
-        `npm's package-level readme for ${LAUNCHER} is ${seen} after ${readme.attempts} read(s).`,
-        "The promotion itself is complete and verified; do NOT roll back or unpublish for this. The field",
-        "lags a publish (LCLI-460 measured ~25 minutes), so re-measure before concluding anything:",
-        `    ${readCommand}`,
-        "Record the byte count and the command on LCLI-621 / OPAG-474. Still 0 after the lag window means",
-        `the fresh publish of ${record.version} did not populate the packument readme -- a defect to fix next release.`,
-        "",
-      ])
-        err(line);
+    // THE README READ-BACK (step 12; LCLI-616). Once, here, and never in a dry run: npm derives the
+    // package-level readme from the publish above, and from nothing before it.
+    const windowSeconds = env.REGISTRY_WINDOW_SECONDS || "1800";
+    const readCommand = `npm view ${LAUNCHER} readme`;
+    out(
+      `\nREADME read-back (A4, OPAG-474 AC3): scripts/readme-readback.sh against ${final.filename}'s own package.json and README.md, re-reading for up to ${windowSeconds}s:`,
+    );
+    const readback = await runReadmeReadback({ run, final, env });
+    if (readback.ok) {
+      out(`  ${readback.verdict}`);
+      out("Next: the LCLI-469 marketplace handshake (docs/runbooks/release-publishing.md, section 3).");
+      return 0;
     }
-    out("Next: the LCLI-469 marketplace handshake (docs/runbooks/release-publishing.md, section 3).");
-    return 0;
+    for (const line of readback.output.split("\n")) err(`  ${line}`);
+    for (const line of [
+      "",
+      `!!! THE README READ-BACK DID NOT PASS (exit ${readback.code ?? "none"}; OPAG-474). THIS PROMOTION IS COMPLETE AND VERIFIED. !!!`,
+      `latest reads ${record.version} on all ${record.packages.length} packages and npm serves ${LAUNCHER}@${record.version} as the artifact's bytes (step 7 above).`,
+      "Do NOT run --rollback, and do NOT unpublish: the readme is on an immutable page, and restoring the",
+      "old latest cannot give it one. It would undo a correct release and fix nothing. The fix is the NEXT release.",
+      "Re-read it by hand, and record the result on the release-truth record:",
+      `    ${readCommand} | wc -c`,
+      `    ${readCommand}`,
+      "",
+    ])
+      err(line);
+    return README_READBACK_EXIT;
   } finally {
     if (npmrcDir) await rm(npmrcDir, { recursive: true, force: true });
     if (artifactDir) await rm(artifactDir, { recursive: true, force: true });
