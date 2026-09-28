@@ -302,7 +302,7 @@ describe("LCLI-631 (a): a --version strictly older than a current latest is refu
     ["older by patch", "5.6.6", "5.6.7"],
     ["older by minor", "5.5.9", "5.6.0"],
     ["older by major", "4.9.9", "5.0.0"],
-    ["numeric, not lexical: 0.9.0 over 0.10.0", "0.9.0", "0.10.0"],
+    ["numeric, not lexical", "0.9.0", "0.10.0"],
     ["past 2^53, where Number() collapses the two", "0.0.9007199254740992", "0.0.9007199254740993"],
   ];
   for (const [label, version, latest] of cases)
