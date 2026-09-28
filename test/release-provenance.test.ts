@@ -512,6 +512,23 @@ describe("release-provenance refuses an --acknowledge value that could forge a w
       value: "LCLI-481\u007f",
       shownAs: '"LCLI-481\\u007f"',
     },
+    {
+      // The other C0 controls, which the refusal covers as a class: no legitimate task id
+      // contains any of them, and each is JSON-escaped to visible text in the refusal.
+      name: "an interior TAB",
+      value: "LCLI-481\t::error::forged",
+      shownAs: '"LCLI-481\\t::error::forged"',
+    },
+    {
+      name: "an ESC character",
+      value: "LCLI-481\x1b::error::forged",
+      shownAs: '"LCLI-481\\u001b::error::forged"',
+    },
+    {
+      name: "a vertical TAB",
+      value: "LCLI-481\x0b::error::forged",
+      shownAs: '"LCLI-481\\u000b::error::forged"',
+    },
   ];
 
   for (const { name, value, shownAs } of hostile) {
