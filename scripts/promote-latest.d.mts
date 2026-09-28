@@ -106,6 +106,7 @@ export declare const READBACK_PASSED: string;
 export declare const READBACK_NOT_CONFIRMED: string;
 export declare const READBACK_FAILED: string;
 export declare const VERDICT_LINE: RegExp;
+export declare const REGISTRY_WINDOW: RegExp;
 export interface Readback {
   state: string;
   code: number | string | null;

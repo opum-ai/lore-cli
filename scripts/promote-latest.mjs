@@ -773,6 +773,16 @@ export const READBACK_PASSED = "PASSED";
 export const READBACK_NOT_CONFIRMED = "NOT CONFIRMED";
 export const READBACK_FAILED = "DID NOT PASS";
 
+/**
+ * The grammar REGISTRY_WINDOW_SECONDS must match: a whole number of seconds, 0 to 999999999, no
+ * leading zero. main() refuses anything else before step 1, dry run included (LCLI-626 review 1),
+ * because scripts/readme-readback.sh refuses it too, and it runs only AFTER every latest move and the
+ * X publish -- so an unchecked `30m` completed a promotion and then read back nothing. That script
+ * carries the same pattern as its `window_re` literal; test/promote-latest.test.ts holds the two to
+ * one string. Unset or empty means the default, 1800, as the script's `:=` makes it.
+ */
+export const REGISTRY_WINDOW = /^(0|[1-9][0-9]{0,8})$/;
+
 /** scripts/readme-readback.sh's last-line contract: `A4 VERDICT: <PASSED|NOT-CONFIRMED|FAILED> <reason>`. */
 export const VERDICT_LINE = /^A4 VERDICT: (PASSED|NOT-CONFIRMED|FAILED) (.+)$/;
 
@@ -813,8 +823,11 @@ function shellWord(word) {
  * (`--userconfig=<devNull>` and both REGISTRY_PINS), and the script, which calls `npm view` with no
  * flags, runs under `env` with readbackEnv's three variables. `env` because
  * `npm_config_@opum-ai:registry` is not a shell identifier, so a bare `NAME=value cmd` prefix
- * cannot set it. What `env` cannot do is drop an operator's own UPPERCASE NPM_CONFIG_* (F7);
- * readbackEnv drops those for the automatic run, and the hand command is the operator's shell.
+ * cannot set it. `env` does not REMOVE an operator's own uppercase NPM_CONFIG_* either, but that
+ * leaves no gap here, as LCLI-626's reviewer measured on npm 12.1.0: the one uppercase key that beat
+ * the pin in F7, `NPM_CONFIG_@OPUM-AI:REGISTRY`, is not a shell identifier, so an operator's shell
+ * cannot export it in the first place; and an exported uppercase NPM_CONFIG_REGISTRY or
+ * NPM_CONFIG_USERCONFIG loses to the lowercase pins `env` adds.
  * @param {string} version @param {string} tarballFilename
  * @returns {{ size: string, view: string, rerun: string }}
  */
@@ -1088,6 +1101,13 @@ export async function main(
   if (args.version !== undefined && !SEMVER.test(args.version))
     throw new Error(
       `--version ${JSON.stringify(args.version)} is not a semver version (no "v" prefix, no dist-tag name)`,
+    );
+  // LCLI-626 review 1: the read-back's window, refused HERE rather than by the read-back after the
+  // promotion. --rollback runs no read-back, so it does not read the variable.
+  const window = env.REGISTRY_WINDOW_SECONDS;
+  if (!args.rollbackPath && window !== undefined && window !== "" && !REGISTRY_WINDOW.test(window))
+    throw new Error(
+      `REGISTRY_WINDOW_SECONDS ${JSON.stringify(window)} is not a whole number of seconds (0 to 999999999, no leading zero); nothing was read, moved or published`,
     );
   const readTags = (name) => readDistTags(name, { run });
   const execFile = (command, commandArgs, options) => run(command, commandArgs, options);

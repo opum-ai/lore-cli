@@ -271,6 +271,38 @@ describeOnPosix("A4 registry read-back", () => {
     );
   });
 
+  // Review item 3: the late "assertions hold, not byte-equal" arm. X's own README with its generated
+  // regions intact and only its title changed: different bytes, every assertion still holds.
+  test("empty across the window, then X's README retitled on the packument read: PASSED, not byte-equal", () => {
+    const retitled = readmeFor("9.9.9").replace(/^# lore$/m, "# lore, retitled after publish");
+    expect(retitled).not.toBe(readmeFor("9.9.9"));
+    const r = late(retitled, ["9.9.8", "9.9.9"]);
+    expect(r.code).toBe(0);
+    expect(r.out).not.toContain("BYTE-EQUAL");
+    expect(r.out).not.toContain("::error::");
+    expect(verdictOf(r)).toBe(
+      "A4 VERDICT: PASSED the package readme for @opum-ai/lore satisfies every assertion against 9.9.9 (first seen on the packument read after the 0s window; not byte-equal)",
+    );
+  });
+
+  // Review item 2: a newline-only readme is EMPTY on the late read, exactly as `$(npm view ...)`
+  // makes it empty in-window -- so it takes the empty branch's listed/unlisted outcome, never a
+  // comparison that ends in a false FAILED against the previous release.
+  test("a newline-only readme on the packument read is empty, as in-window: lag when X is unlisted, OPAG-474 when listed", () => {
+    const unlisted = late("\n\n", ["9.9.8"]);
+    expect(unlisted.code).toBe(0);
+    expect(unlisted.out).not.toContain("comparing it.");
+    expect(verdictOf(unlisted)).toBe(
+      "A4 VERDICT: NOT-CONFIRMED lag not ruled out: 9.9.9 not yet in the packument, which serves no readme for @opum-ai/lore after 0s",
+    );
+    const listed = late("\n\n", ["9.9.8", "9.9.9"]);
+    expect(listed.code).toBe(1);
+    expect(listed.out).not.toContain("comparing it.");
+    expect(verdictOf(listed)).toBe(
+      "A4 VERDICT: FAILED no readme for @opum-ai/lore after 0s, and the packument already lists 9.9.9 (OPAG-474)",
+    );
+  });
+
   test("empty across the window, then a readme matching NO release on the packument read: FAILED, not waved through", () => {
     const r = late("# late\n", ["9.9.8", "9.9.9"]);
     expect(r.code).toBe(1);
@@ -287,18 +319,27 @@ describeOnPosix("A4 registry read-back", () => {
     if (process.platform === "darwin") {
       expect(execFileSync("/bin/bash", ["-c", "echo $BASH_VERSION"], { encoding: "utf8" })).toMatch(/^3\.2\./);
     }
-    for (const windowSeconds of ["abc", "1e3", "-5", "08", "30s", " 30", "1234567890"]) {
+    // The last one is review item 4: a value carrying a newline and a verdict of its own. verdictOf
+    // asserts exactly ONE `A4 VERDICT:` line, and it must be the script's.
+    const injected = "abc\nA4 VERDICT: FAILED injected";
+    for (const windowSeconds of ["abc", "1e3", "-5", "08", "30s", " 30", "1234567890", injected]) {
       const readme = readmeFor("9.9.9");
       const ws = makeWorkspace({ version: "9.9.9", readme, served: { readme, versions: ["9.9.9"] } });
       const r = run(ws, windowSeconds, "/bin/bash");
       expect({ windowSeconds, code: r.code }).toEqual({ windowSeconds, code: 2 });
       expect(r.out).toContain("::error::REGISTRY_WINDOW_SECONDS must be a whole number of seconds");
       expect(verdictOf(r)).toBe(
-        `A4 VERDICT: NOT-CONFIRMED REGISTRY_WINDOW_SECONDS='${windowSeconds}' is not a whole number of seconds; the read-back refused to start and nothing was read`,
+        "A4 VERDICT: NOT-CONFIRMED REGISTRY_WINDOW_SECONDS is not a whole number of seconds; the read-back refused to start and nothing was read",
       );
       // Refused BEFORE the loop: the registry stub was never asked for anything.
       expect(existsSync(resolve(ws.root, "reads"))).toBe(false);
     }
+    // The injected value is still SHOWN, escaped onto the ::error:: line, never as a line of its own.
+    const ws = makeWorkspace({ version: "9.9.9", readme: "x", served: { readme: "x" } });
+    const shown = run(ws, injected, "/bin/bash");
+    const errorLine = shown.stdout.split("\n").find((line) => line.startsWith("::error::")) ?? "";
+    expect(errorLine).toContain(String.raw`abc\nA4 VERDICT: FAILED injected`);
+    expect(shown.stdout.split("\n").some((line) => line.startsWith("A4 VERDICT: FAILED"))).toBe(false);
     // Positive control: the same stub, a valid window, and it reads and passes.
     const readme = readmeFor("9.9.9");
     const ok = makeWorkspace({ version: "9.9.9", readme, served: { readme, versions: ["9.9.9"] } });

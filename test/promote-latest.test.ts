@@ -55,6 +55,7 @@ import {
   README_READBACK_EXIT,
   README_READBACK_SCRIPT,
   RECORD_KIND,
+  REGISTRY_WINDOW,
   RELEASE_VERSION,
   readbackEnv,
   readbackRereadCommands,
@@ -2321,6 +2322,63 @@ describe("scripts/promote-latest.mjs: quest first, read not remembered (review S
     } finally {
       h.cleanup();
     }
+  });
+});
+
+// LCLI-626 review 1. The read-back runs after every latest move and the X publish, so a window it
+// would refuse must be refused before step 1 -- or `30m --promote` completes a promotion, then reads
+// back nothing and reports NOT CONFIRMED as though propagation were the question.
+describe("scripts/promote-latest.mjs: REGISTRY_WINDOW_SECONDS is refused before anything is read (LCLI-626 review 1)", () => {
+  for (const mode of ["--promote", "--dry-run"]) {
+    for (const bad of ["30m", "abc", "08", "1234567890", "abc\nA4 VERDICT: FAILED injected"]) {
+      test(`${mode} with REGISTRY_WINDOW_SECONDS=${JSON.stringify(bad)}: refused, nothing read, moved, published or recorded`, async () => {
+        const h = harness();
+        const w = world();
+        try {
+          await expect(
+            h.go(["--record", h.record, mode], w, { NPM_TOKEN: "", REGISTRY_WINDOW_SECONDS: bad }),
+          ).rejects.toThrow("is not a whole number of seconds");
+          expect(w.calls).toEqual([]);
+          expect(w.writes).toEqual([]);
+          expect(existsSync(h.record)).toBe(false);
+        } finally {
+          h.cleanup();
+        }
+      });
+    }
+  }
+
+  test("positive control: unset, empty and a valid window all reach the end of a dry run", async () => {
+    for (const window of [undefined, "", "0", "1800", "999999999"]) {
+      const h = harness();
+      const w = world();
+      try {
+        expect(
+          await h.go(["--record", h.record, "--dry-run"], w, { NPM_TOKEN: "", REGISTRY_WINDOW_SECONDS: window }),
+        ).toBe(0);
+        expect(w.calls.length).toBeGreaterThan(0);
+      } finally {
+        h.cleanup();
+      }
+    }
+  });
+
+  test("--rollback runs no read-back, so it does not read the window", async () => {
+    const h = harness();
+    try {
+      // Refused for its missing record, not for the window: the window check never ran.
+      await expect(
+        h.go(["--rollback", join(h.dir, "absent.json")], world(), { NPM_TOKEN: "", REGISTRY_WINDOW_SECONDS: "30m" }),
+      ).rejects.toThrow("ENOENT");
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("one grammar: readme-readback.sh's window_re is REGISTRY_WINDOW's source, byte for byte", () => {
+    const script = readFileSync(README_READBACK_SCRIPT, "utf8");
+    const literals = [...script.matchAll(/^window_re='([^']*)'$/gm)].map((m) => m[1]);
+    expect(literals).toEqual([REGISTRY_WINDOW.source]);
   });
 });
 

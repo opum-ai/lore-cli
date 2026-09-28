@@ -109,13 +109,21 @@ trap 'exit 143' TERM
 # Unchecked, a non-digit value reaches $(( )) below as a variable NAME, and under bash 3.2 -- macOS's
 # /bin/bash, where the release operator runs this -- `set -u` tripping inside $(( )) EXITS 0: the
 # trap above then reported "stopped (exit 0)" on a read-back that never read anything. Leading zeros
-# are refused too (bash reads 08 as bad octal), and so is anything past nine digits (~31 years),
-# which would overflow the deadline instead of meaning a longer wait. Exit 2: a usage refusal, not a
-# finding about the registry, and promote-latest.mjs classifies it by the NOT-CONFIRMED line.
+# are refused too (bash reads 08 as bad octal), and so is anything past nine digits. That cap is a
+# sanity bound, NOT an overflow guard: bash arithmetic is 64-bit even in 3.2, so a ten-digit window
+# adds to the epoch without overflowing; 999999999s is already ~31.7 years, and a longer value is a
+# typo, not a wait anyone meant. Exit 2: a usage refusal, not a finding about the registry, and
+# promote-latest.mjs classifies it by the NOT-CONFIRMED line. promote-latest.mjs refuses the same
+# grammar (its REGISTRY_WINDOW) before step 1, so through --promote this arm is only a backstop;
+# test/promote-latest.test.ts holds the two literals to one.
+#
+# The value is NEVER interpolated into the verdict line (LCLI-626 review 4): one containing a newline
+# would print a second `A4 VERDICT:` line of the caller's choosing. The ::error:: line shows it
+# through printf %q, which renders any newline or non-printable as an escape on one line.
 window_re='^(0|[1-9][0-9]{0,8})$'
 if ! [[ $REGISTRY_WINDOW_SECONDS =~ $window_re ]]; then
-  echo "::error::REGISTRY_WINDOW_SECONDS must be a whole number of seconds (0 to 999999999, no leading zero); got '${REGISTRY_WINDOW_SECONDS}'. Nothing was read."
-  finish NOT-CONFIRMED 2 "REGISTRY_WINDOW_SECONDS='${REGISTRY_WINDOW_SECONDS}' is not a whole number of seconds; the read-back refused to start and nothing was read"
+  echo "::error::REGISTRY_WINDOW_SECONDS must be a whole number of seconds (0 to 999999999, no leading zero); got $(printf '%q' "$REGISTRY_WINDOW_SECONDS"). Nothing was read."
+  finish NOT-CONFIRMED 2 "REGISTRY_WINDOW_SECONDS is not a whole number of seconds; the read-back refused to start and nothing was read"
 fi
 
 # Resolve the checker relative to THIS script, not the cwd: the cwd is the release being read back
@@ -196,9 +204,11 @@ esac
 if [ -z "$served" ]; then
   # Empty alone proves nothing (see the header): settle it with ONE packument read of both fields.
   # npm 12 answers `view <name> readme versions --json` as [{readme, versions}]; older npm, the object.
-  # A readme on this read is written to $workdir/README.md BEFORE 'late' is printed, normalised as
-  # the in-window read's is: `$(npm view ...)` strips every trailing newline and printf adds one back.
-  # A write that fails throws, prints nothing, and lands in the unreadable arm below.
+  # A readme on this read is normalised FIRST, exactly as the in-window read's is -- `$(npm view ...)`
+  # strips every trailing newline, THEN the -z test runs, THEN printf adds one back -- so a
+  # newline-only readme is empty here too, as it is in-window, never 'late' (LCLI-626 review 2). A
+  # non-empty one is written to $workdir/README.md BEFORE 'late' is printed. A write that fails
+  # throws, prints nothing, and lands in the unreadable arm below.
   listing="$(npm view "$name" readme versions --json 2>/dev/null | node -e "
     let s = '';
     process.stdin.on('data', d => s += d).on('end', () => {
@@ -208,8 +218,9 @@ if [ -z "$served" ]; then
       if (!doc || typeof doc !== 'object') { console.log('unreadable'); return; }
       const versions = Array.isArray(doc.versions) ? doc.versions : typeof doc.versions === 'string' ? [doc.versions] : null;
       if (!versions) { console.log('unreadable'); return; }
-      if (typeof doc.readme === 'string' && doc.readme.length > 0) {
-        require('fs').writeFileSync(process.argv[2], doc.readme.replace(/\n+\$/, '') + '\n');
+      const text = typeof doc.readme === 'string' ? doc.readme.replace(/\n+\$/, '') : '';
+      if (text.length > 0) {
+        require('fs').writeFileSync(process.argv[2], text + '\n');
         console.log('late');
         return;
       }
