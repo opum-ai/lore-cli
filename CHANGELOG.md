@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`scripts/promote-latest.mjs` cuts lore's GitHub Release itself, and refuses before anything
+  moves if it could not** (LCLI-622, paired with quest-cli QCLI-398 and QCLI-401). On `--dry-run`
+  and `--promote` alike, before the record or any registry write, it refuses when `CHANGELOG.md`
+  has no non-empty `## [X]` section, when `gh` cannot read the repository, or when `vX` already
+  exists as a draft, a prerelease or with different notes. An existing release is never edited.
+  Once `latest` is verified it removes the private npmrc, then creates `vX` from that section
+  (non-draft, non-prerelease, `--verify-tag`, marked latest), or only marks an identical existing
+  release latest. A failed cut exits `3` with "do NOT roll back" and the repair command
+  `node scripts/github-release.mjs --version X --create`, and the README read-back still runs. The
+  post-latest checklist reports the outcome instead of printing `gh release create`. The first
+  live cut is the next promotion.
 - **BEHAVIOUR CHANGE: `lore check` fails on every error-tier `quote-safety` finding that `lore
   validate` reports** (LCLI-612, ADR-0007). It uses the same rule name and byte-identical messages,
   for every type. The findings cover an unquoted YAML-1.1 boolean (`yes`/`no`/`on`/`off`/`y`/`n`),
@@ -76,8 +87,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `versions`. If that read already lists the version, the verdict is FAILED (OPAG-474). If not, it
   is NOT-CONFIRMED, because lag is not ruled out: the packument had no `readme` before this
   publish. The previous-release pick skips `X-rc.N` versions, which sort just below `X` and never
-  set the field. PASSED exits `0`. NOT CONFIRMED and DID NOT PASS both exit `3`, a code nothing
-  else uses. The message says the promotion is complete and verified, says not to run `--rollback`,
+  set the field. PASSED exits `0`. NOT CONFIRMED and DID NOT PASS both exit `3`, which since
+  LCLI-622 also means the GitHub Release was not cut: a post-latest step did not complete. The message says the promotion is complete and verified, says not to run `--rollback`,
   and gives the commands that re-read the readme or re-run the read-back by hand. A temp
   directory, extraction or script that fails is a NOT CONFIRMED tooling failure, never an OPAG-474
   claim. `release.yml`'s staging `publish` job no longer runs the read-back. A staged rc never sets
@@ -92,8 +103,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read-back, the GitHub Release, the "lore is live" notices, the LCLI-469 marketplace handshake
   and the release-truth record are gone from it. `promote-latest.mjs --promote` now prints them as
   a post-latest checklist when it finishes, whether or not the read-back passed. The checklist
-  carries the read-back's state (PASSED, NOT CONFIRMED or DID NOT PASS) and verdict line, and the
-  `gh release create` command. It lists the "lore is live" notices for quest-cli, opum-cli-e2e
+  carries the read-back's state (PASSED, NOT CONFIRMED or DID NOT PASS) and verdict line, and
+  the GitHub Release's outcome, which LCLI-622 made an executed step rather than a printed command. It lists the "lore is live" notices for quest-cli, opum-cli-e2e
   and opum-agent. It gives the four LCLI-469 handshake values, resolved: the tag object and
   peeled commit, and the `skills/` tree SHA read through `gh api`. It also gives the run id and
   record path. It cites runbook section 3 item 8, which carries the

@@ -265,6 +265,11 @@ print_closing_checklist() {
   # launcher's publish onto latest, and scripts/promote-latest.mjs prints that checklist when it
   # finishes. Listing them here told operators to do them after staging, when npm's package-level
   # readme had not been written and latest had not moved.
+  #
+  # The GitHub Release is not a printed step anywhere now (LCLI-622): promote-latest.mjs refuses
+  # before anything moves when CHANGELOG.md has no section for the version, and cuts the release
+  # itself (scripts/github-release.mjs) once latest is verified. Do not add a `gh release create`
+  # line back here; test/publish-release-script.test.ts asserts this checklist carries none.
   cat <<DONE
   PUBLISHED $VERSION under the release-candidate dist-tag. latest has NOT moved.
   The launcher ${ROOT_PKG%%:*} was staged as ${LAUNCHER_VERSION:-$VERSION-rc.N}; the $VERSION launcher is
