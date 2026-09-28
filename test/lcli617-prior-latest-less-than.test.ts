@@ -119,11 +119,14 @@ describe("validateRecord: a prior newer than the release is refused (R2)", () =>
 });
 
 describe("validateRecord: a record whose own version is not a plain X.Y.Z is refused, and nothing is compared (R1)", () => {
-  // The prior is newer than any reading of these versions, so a comparison that ran would add a
-  // second problem -- or throw, on "latest" and undefined, which split into fewer than three parts.
+  // compareReleaseVersions settles at the first component whose lengths differ. The prior's first
+  // component, "1000000" (7 characters), is longer than every version's first part here ("latest"
+  // is 6, "v9" 2, "9" 1), so a comparison that ran unguarded would return positive at once and add
+  // a second, "newer than" problem. On undefined it would throw instead, at `.split`. Either way,
+  // the one-problem assertion goes red if the `comparable` guard is dropped.
   for (const version of ["latest", "v9.9.9", "9.9.9-rc.1", undefined]) {
     test(`[R1] record.version ${JSON.stringify(version)} is refused with one problem and no comparison`, () => {
-      const result = validateRecord(record(version, "100.0.0"));
+      const result = validateRecord(record(version, "1000000.0.0"));
       expect(result.ok).toBe(false);
       expect(result.problems).toEqual([
         `record's version ${JSON.stringify(version)} is not a plain X.Y.Z release version`,
