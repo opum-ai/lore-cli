@@ -228,6 +228,31 @@ const GITHUB_TOKEN = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "";
  */
 const REQUEST_TIMEOUT_MS = Number.parseInt(process.env.LORE_PROVENANCE_TIMEOUT_MS || "20000", 10);
 
+/**
+ * The grammar `--wait-seconds` accepts: a whole number of seconds, 0 to 999999999, no leading
+ * zero. ONE GRAMMAR with REGISTRY_WINDOW, which scripts/promote-latest.mjs exports, and with the
+ * `window_re` literals in scripts/publish-release.sh, scripts/readme-readback.sh and
+ * `.github/workflows/release.yml`: the same duration, and the fifth of the five places in this
+ * repository that read it.
+ * test/lcli634-release-window-preflight.test.ts holds this literal to REGISTRY_WINDOW.source and
+ * runs the refusal, so a drift here is caught rather than read.
+ *
+ * WHY IT REPLACES parseInt (LCLI-634). Number.parseInt reads a PREFIX, so `--wait-seconds 30m`
+ * silently waited 30 seconds, `08` silently waited 8, and `1e3` silently waited 1 — three
+ * different windows, none of them reported, on the one input that decides how long a lagging
+ * attestation is given before it is called unattested. `abc` did throw, but only after the
+ * release had already published, from a job whose whole purpose is to report on bytes that are
+ * already on the registry. The value arrives from vars.PROVENANCE_WAIT_SECONDS via release.yml,
+ * so the workflow refuses it before the publish as well (LCLI-634); this is the same refusal at
+ * the reader, where it cannot be bypassed by a hand-run command.
+ *
+ * Deliberately a literal copy rather than an import of promote-latest.mjs: that module pulls in
+ * its own graph (github-release.mjs, launcher-equivalence.mjs, pair-receipt.mjs) for one regex,
+ * and importing it here would also import a script that runs main() at module scope. The pin is
+ * the test, the same arrangement publish-release.sh already uses.
+ */
+const WAIT_SECONDS_GRAMMAR = /^(0|[1-9][0-9]{0,8})$/;
+
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_JSON = join(SCRIPT_DIR, "..", "package.json");
 
@@ -1175,10 +1200,17 @@ function parseArgs(argv) {
       options.limit = Number.parseInt(argv[++i] ?? "", 10);
       if (!Number.isFinite(options.limit) || options.limit < 1) throw new Error("--limit needs a positive integer");
     } else if (arg === "--wait-seconds") {
-      options.waitSeconds = Number.parseInt(argv[++i] ?? "", 10);
-      if (!Number.isFinite(options.waitSeconds) || options.waitSeconds < 0) {
-        throw new Error("--wait-seconds needs a non-negative integer");
+      // REFUSED BY GRAMMAR, NOT PARSED (LCLI-634). See WAIT_SECONDS_GRAMMAR: parseInt turned
+      // 30m, 08 and 1e3 into 30, 8 and 1 without a word. The refusal names the grammar and shows
+      // the value escaped, before any request is made, and is applied here rather than only in
+      // release.yml so a hand-run `--wait-seconds` cannot reintroduce the silent misread.
+      const raw = argv[++i] ?? "";
+      if (!WAIT_SECONDS_GRAMMAR.test(raw)) {
+        throw new Error(
+          `--wait-seconds must be a whole number of seconds (0 to 999999999, no leading zero); got ${renderRefusedValue(raw)}`,
+        );
       }
+      options.waitSeconds = Number(raw);
     } else if (arg === "--version") {
       options.version = argv[++i] ?? "";
       if (!options.version) throw new Error("--version needs a value");

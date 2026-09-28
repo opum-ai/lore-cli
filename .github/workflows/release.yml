@@ -114,6 +114,62 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node parity/scripts/version-parity.mjs --require
 
+  # LCLI-634, and the same shape as version-parity above: no `if:` on inputs.publish, and the
+  # publish job lists this one in `needs:`, so a malformed window variable cannot reach a publish
+  # and a publish:false rehearsal refuses exactly what a real publish would.
+  #
+  # WHY THIS EXISTS AT ALL. Both window variables are release-path inputs whose only checks used to
+  # run AFTER the irreversible step. REGISTRY_WINDOW_SECONDS was first checked by the visibility
+  # wait inside the publish job (LCLI-630, which stays), so a bad value failed a release that had
+  # already published; PROVENANCE_WAIT_SECONDS was never checked anywhere -- release.yml handed it
+  # to scripts/release-provenance.mjs, which read it with parseInt, so 30m was silently 30, 08 was
+  # 8 and 1e3 was 1 (LCLI-634 gave that script the grammar too), and abc threw only after the
+  # publish. A rehearsal, which never reaches the publish job at all, saw neither.
+  release-window:
+    name: window variables are whole seconds (LCLI-634)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Refuse a malformed REGISTRY_WINDOW_SECONDS or PROVENANCE_WAIT_SECONDS (LCLI-634)
+        # SCOPE, because this job and the publish job do not resolve `vars` the same way. A job sees
+        # a release-ENVIRONMENT variable only if it declares `environment:`, and this one
+        # deliberately does not: the `release` environment carries a required reviewer (measured
+        # 2026-09-28 with `gh api repos/opum-ai/lore-cli/environments`), so declaring it here would
+        # make every publish:false rehearsal wait for a human before a single check could run. The
+        # scopes refused here are therefore the repository and organisation ones, on every dispatch;
+        # the publish job refuses the environment-resolved value before its first publish, and the
+        # LCLI-630 refusal nearest the irreversible step stays as the third layer.
+        # PROVENANCE_WAIT_SECONDS has no environment-level reader to miss: provenance-post declares
+        # no environment, so the scope checked here is exactly the scope that job reads.
+        env:
+          REGISTRY_WINDOW_SECONDS: ${{ vars.REGISTRY_WINDOW_SECONDS || 1800 }}
+          PROVENANCE_WAIT_SECONDS: ${{ vars.PROVENANCE_WAIT_SECONDS || 180 }}
+        run: |
+          # ONE GRAMMAR, the one scripts/publish-release.sh and scripts/readme-readback.sh refuse by
+          # the same `window_re` literal and scripts/promote-latest.mjs exports as REGISTRY_WINDOW:
+          # 0 to 999999999, no leading zero, nothing but digits.
+          # test/lcli634-release-window-preflight.test.ts holds this literal to REGISTRY_WINDOW.source
+          # and runs this block.
+          #
+          # The value is shown only through printf %q, so a newline or control character prints as an
+          # escape on the one ::error:: line, and every % in that is then written %25, because
+          # workflow-command escaping decodes %0A, %0D and %25 in a message. One line, one annotation:
+          # an unescaped line break in the value would end this command and print the rest of the
+          # value as a forged one (the same rule release-provenance.mjs applies to --acknowledge).
+          #
+          # Exit 2, like the scripts' refusals. Nothing was published: this job gates the publish job,
+          # so a red here means the publish never started.
+          window_re='^(0|[1-9][0-9]{0,8})$'
+          refuse_unless_whole_seconds() {
+            if ! [[ $2 =~ $window_re ]]; then
+              shown="$(printf '%q' "$2")"
+              printf '::error::%s must be a whole number of seconds (0 to 999999999, no leading zero); got %s. %s Nothing was published (LCLI-634).\n' "$1" "${shown//%/%25}" "$3"
+              exit 2
+            fi
+          }
+          refuse_unless_whole_seconds REGISTRY_WINDOW_SECONDS "$REGISTRY_WINDOW_SECONDS" "It comes from vars.REGISTRY_WINDOW_SECONDS, which can be set as a release-environment, repository or organisation variable, the most specific one winning: correct it there, or delete it at every level for the 1800s default. The publish job checks the release-environment value it resolves, before it publishes."
+          refuse_unless_whole_seconds PROVENANCE_WAIT_SECONDS "$PROVENANCE_WAIT_SECONDS" "It comes from vars.PROVENANCE_WAIT_SECONDS, read at the repository or organisation level: provenance-post declares no environment, so an environment-level value is never read. Correct it where it is set, or delete it for the 180s default."
+
   verify-versions:
     name: assert release package versions + metadata are consistent
     needs: setup
@@ -881,7 +937,7 @@ jobs:
     if: ${{ inputs.publish == true }}
     # provenance-pre gates this job: a rewrite that dangled an already-published version's
     # attestation must stop the release rather than be added to (LCLI-481).
-    needs: [setup, version-parity, package, provenance-pre]
+    needs: [setup, version-parity, release-window, package, provenance-pre]
     runs-on: ubuntu-latest
     # LCLI-268: an OUT-OF-FILE gate, on top of (not instead of) the `if:` guard above.
     # npm Trusted Publishing (LCLI-255) matches OIDC tokens on repo + WORKFLOW FILENAME,
@@ -956,6 +1012,35 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node parity/scripts/version-parity.mjs --require
+      # LCLI-634. THIS JOB'S OWN COPY OF THE WINDOW REFUSAL, and it is here rather than only in the
+      # always-run release-window job because of variable SCOPE, not for want of trust in that job.
+      # This job declares `environment: release` (LCLI-268), so it is the only place the
+      # environment-resolved value exists; a job without that declaration cannot see it at all. That
+      # is the scope LCLI-630's own refusal message names FIRST as a place this variable can be set,
+      # so a pre-publish check that skipped it would have a hole exactly where its message points.
+      # Placed before the first publish, not after it: the visibility wait near the end of this job
+      # refuses the same value (LCLI-630) and that refusal STAYS as defence in depth, but it fires
+      # once the bytes are already on the registry, which is the failure LCLI-634 exists to remove.
+      # PROVENANCE_WAIT_SECONDS is deliberately NOT checked here: this job is not its reader, and its
+      # reader (provenance-post) declares no environment, so a release-environment value for it is
+      # never read at all -- refusing one here would be a red X for a value that changes nothing.
+      - name: Refuse a malformed window before the first publish (LCLI-634)
+        env:
+          REGISTRY_WINDOW_SECONDS: ${{ vars.REGISTRY_WINDOW_SECONDS || 1800 }}
+        run: |
+          # ONE GRAMMAR, the one scripts/publish-release.sh and scripts/readme-readback.sh refuse by
+          # the same `window_re` literal and scripts/promote-latest.mjs exports as REGISTRY_WINDOW:
+          # 0 to 999999999, no leading zero, nothing but digits. Checked before `npm install -g npm`
+          # and before any registry call, so a bad value costs seconds rather than a finished
+          # release. The visibility wait's own refusal (LCLI-630) still runs later, unchanged.
+          # test/lcli634-release-window-preflight.test.ts holds this literal to REGISTRY_WINDOW.source,
+          # runs this block, and pins that it runs before the first publish.
+          window_re='^(0|[1-9][0-9]{0,8})$'
+          if ! [[ $REGISTRY_WINDOW_SECONDS =~ $window_re ]]; then
+            shown="$(printf '%q' "$REGISTRY_WINDOW_SECONDS")"
+            printf '::error::REGISTRY_WINDOW_SECONDS must be a whole number of seconds (0 to 999999999, no leading zero); got %s. It comes from vars.REGISTRY_WINDOW_SECONDS, which can be set as a release-environment, repository or organisation variable, the most specific one winning: correct it there, or delete it at every level for the 1800s default. Nothing was published: this refused before the first publish of this job (LCLI-634).\n' "${shown//%/%25}"
+            exit 2
+          fi
       - name: Upgrade npm to meet the OIDC trusted-publishing floor
         # Trusted publishing needs npm >= 11.5.1. `node-version: 24` above resolves to
         # whatever the latest 24.x ships, which is not guaranteed to bundle a new-enough

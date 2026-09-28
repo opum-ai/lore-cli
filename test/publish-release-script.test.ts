@@ -2724,12 +2724,14 @@ esac
   });
 });
 
-// One grammar across the three places that VALIDATE a registry window (LCLI-629 AC3): this script's
+// One grammar across the places that VALIDATE a registry window (LCLI-629 AC3): this script's
 // `window_re`, scripts/readme-readback.sh's (held by test/promote-latest.test.ts) and
 // promote-latest.mjs's exported REGISTRY_WINDOW. A plain file read, so it runs on every platform.
-// There is a FOURTH reader, and it is out of scope here: .github/workflows/release.yml feeds
-// `${{ vars.REGISTRY_WINDOW_SECONDS || 1800 }}` into `$(( ))` unvalidated in its post-publish steps.
-// It gates no publish and is unmeasured; LCLI-630 carries it.
+// Two further readers are held to the same source by their own files rather than here, so this
+// comment does not go stale with them: .github/workflows/release.yml's post-publish visibility wait
+// (LCLI-630) and its pre-publish refusal (LCLI-634), both in
+// test/lcli634-release-window-preflight.test.ts, and scripts/release-provenance.mjs's
+// `--wait-seconds`, which was a parseInt until LCLI-634 gave it the same literal.
 describe("scripts/publish-release.sh window grammar (LCLI-629)", () => {
   test("one grammar: publish-release.sh's window_re is REGISTRY_WINDOW's source, byte for byte", () => {
     const script = readFileSync(SCRIPT, "utf8");
