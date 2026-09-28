@@ -44,6 +44,7 @@ export declare const RELEASE_WORKFLOW: string;
 export declare const ARTIFACT_NAME: string;
 export declare const SEMVER: RegExp;
 export declare const RELEASE_VERSION: RegExp;
+export declare function compareReleaseVersions(a: string, b: string): number;
 export declare function distTagReadArgs(name: string): string[];
 export declare function versionReadArgs(spec: string): string[];
 export declare function packArgs(spec: string, into: string): string[];
