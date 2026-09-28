@@ -48,21 +48,32 @@
 //      still hashes to the receipt's finalTarball.sha256
 //   8. X is not on npm yet, or is on npm as exactly the artifact's bytes (a
 //      resume); any other bytes refuse here, before anything moves
+//   9. THE GITHUB RELEASE PREFLIGHT (LCLI-622): CHANGELOG.md has a non-empty
+//      `## [X]` section, and scripts/github-release.mjs, read-only, can cut v<X>
+//      from it later -- gh can read the repository, and any existing v<X> is
+//      published (not a draft or prerelease) and carries exactly those notes
 //   -- --dry-run stops here; --promote writes the record, then:
-//   9. the six platforms move `latest` by dist-tag
-//  10. STEP 6 again, then `npm publish <X> --tag latest`, LAST: the one publish
+//  10. the six platforms move `latest` by dist-tag
+//  11. STEP 6 again, then `npm publish <X> --tag latest`, LAST: the one publish
 //      in this repository without --tag release-candidate
 //      (test/release-workflow.test.ts holds it to exactly this site). On a
 //      resume where X is already on npm as the artifact's bytes, the tag is
 //      moved instead of republishing.
-//  11. STEP 7: `latest` reads X on all seven, and npm's X dist.integrity is the
+//  12. STEP 7: `latest` reads X on all seven, and npm's X dist.integrity is the
 //      artifact's.
-//  12. THE README READ-BACK (A4 of LCLI-510; OPAG-474 AC3; LCLI-616):
+//  13. THE GITHUB RELEASE (LCLI-622, paired with quest-cli QCLI-398/QCLI-401):
+//      the private npmrc is removed first, then v<X> is created from the
+//      CHANGELOG section, non-draft, non-prerelease, marked latest -- or, when it
+//      already exists with those notes, only marked latest. A failure here exits
+//      3, not 1: see README_READBACK_EXIT.
+//  14. THE README READ-BACK (A4 of LCLI-510; OPAG-474 AC3; LCLI-616):
 //      scripts/readme-readback.sh, run against the X tarball's own package.json
 //      and README.md, asserts npm's package-level readme is this release's and is
 //      not empty. It fails with exit 3, not 1: see README_READBACK_EXIT.
-// A failure at 9 or 10 restores every `latest` this run moved by dist-tag, the
+// A failure at 10 or 11 restores every `latest` this run moved by dist-tag, the
 // launcher's included. Nothing is unpublished; retry at the same version.
+// --rollback never reaches 9 or 13: it makes no gh release call, so a rolled-back
+// release leaves GitHub marking v<X> latest (see the runbook for the remedy).
 //
 // Registry publication is irreversible, so a failed promotion is never
 // repaired by unpublishing. What rolls back is the dist-tags: every prior
@@ -87,14 +98,15 @@
 // scripts/readme-readback.sh's and publish-release.sh's.
 //
 // Exit codes:
-//   0  done: the dry run found nothing to refuse, the promotion is complete and its README
-//      read-back passed, or the rollback restored every latest
+//   0  done: the dry run found nothing to refuse, the promotion is complete, its GitHub Release is
+//      cut and its README read-back passed, or the rollback restored every latest
 //   1  refused or failed; what moved, if anything, and the remedy are printed
 //   2  bad arguments, or an unexpected error
-//   3  --promote only: the promotion is COMPLETE and verified, but the README read-back did not
-//      establish the readme: DID NOT PASS (a finding, e.g. OPAG-474) or NOT CONFIRMED (lag not
-//      ruled out, or a tooling failure). Do NOT run --rollback: it cannot give an immutable page a
-//      readme. The message says which, and gives the commands that re-read it by hand.
+//   3  --promote only: the promotion is COMPLETE and verified, but a post-latest step did not
+//      complete: the GitHub Release was NOT cut (LCLI-622), or the README read-back did not
+//      establish the readme -- DID NOT PASS (a finding, e.g. OPAG-474) or NOT CONFIRMED (lag not
+//      ruled out, or a tooling failure) -- or both. Do NOT run --rollback: it cannot cut a release
+//      or give an immutable page a readme. The messages say which, and give the repair commands.
 
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -104,6 +116,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { ensureGitHubRelease, REPAIR_COMMAND, releaseNotesFor } from "./github-release.mjs";
 import { compareLauncherTarballs, readTarEntries } from "./launcher-equivalence.mjs";
 import {
   describeOverride,
@@ -851,6 +864,14 @@ export const README_READBACK_SCRIPT = join(dirname(fileURLToPath(import.meta.url
  * could not run -- all end with the readme unproven, and the operator's remedy is the same as for
  * DID NOT PASS: do not roll back, re-read by hand, record what was read. Exit 0 there would report
  * "verified nothing" as done. The label printed beside it says which of the two it was.
+ *
+ * WIDENED BY LCLI-622 to "promotion complete and verified, a post-latest step did not complete":
+ * a GitHub Release that was not cut exits 3 as well. Same reasoning, same remedy class: `latest`
+ * is right, rolling it back would undo a correct release and cut nothing, and the fix is the
+ * repair command the message prints. quest-cli exits 1 here, because its read-back is report-only
+ * and it has no such code; lore's 1 is the class that can call for --rollback, so a complete
+ * promotion never uses it. One code for both needs no precedence rule when both fail: the
+ * messages and the checklist say which.
  */
 export const README_READBACK_EXIT = 3;
 
@@ -1066,14 +1087,25 @@ export const POST_LATEST_RUNBOOK_ITEM = "docs/runbooks/release-publishing.md, se
  * THE POST-LATEST CHECKLIST (LCLI-618): what is due once `latest` reads X, printed when --promote
  * finishes, whatever the read-back said, because either way the promotion is complete. It used to
  * be publish-release.sh's closing checklist, printed after STAGING, when npm's package-level readme
- * had not been written and `latest` had not moved. The GitHub Release is still a manual step here;
- * LCLI-622 tracks making it an executed one, as quest-cli's is.
+ * had not been written and `latest` had not moved. Item 2, the GitHub Release, is an executed step
+ * since LCLI-622: it reports what ensureGitHubRelease did, and names the repair command only when
+ * the release was NOT cut. Nothing here asks a person to run `gh release create`.
  * @param {{ version: string, releaseRunId: string, recordPath: string, tagObject: string | null,
  *   commit: string, skillsTree: { sha: string } | { error: string },
- *   readback: { state: string, verdict: string } }} args
+ *   readback: { state: string, verdict: string },
+ *   githubRelease: { ok: boolean, action: string, detail: string } }} args
  * @returns {string[]}
  */
-export function postLatestChecklist({ version, releaseRunId, recordPath, tagObject, commit, skillsTree, readback }) {
+export function postLatestChecklist({
+  version,
+  releaseRunId,
+  recordPath,
+  tagObject,
+  commit,
+  skillsTree,
+  readback,
+  githubRelease,
+}) {
   const tag = `v${version}`;
   const label = {
     [READBACK_PASSED]: "PASSED",
@@ -1086,8 +1118,11 @@ export function postLatestChecklist({ version, releaseRunId, recordPath, tagObje
     `  1. README read-back: ${label ?? readback.state}. It ran automatically; its verdict:`,
     `         ${readback.verdict}`,
     "     Record that line in the release-truth record (item 5).",
-    `  2. Cut a non-draft, non-prerelease GitHub Release for ${tag}, with CHANGELOG.md's [${version}] section as its body:`,
-    `         gh release create ${tag} --title "Lore CLI ${version}" --notes-file <notes>`,
+    `  2. GitHub Release for ${tag}: ${githubRelease.ok ? "DONE" : "NOT CUT (see above; do NOT roll back)"}. It ran automatically, from CHANGELOG.md's [${version}] section; its outcome:`,
+    `         ${githubRelease.detail}`,
+    ...(githubRelease.ok
+      ? []
+      : ["     Fix the cause, then cut it by hand and record that you did:", `         ${REPAIR_COMMAND(version)}`]),
     `  3. Tell quest-cli that lore ${version} is live on latest; tell opum-cli-e2e the same, for information; and`,
     "     opum-agent, whose go this was. Resolve each session with ListAgents and match on repository;",
     "     session names change on every restart.",
@@ -1164,6 +1199,7 @@ export async function main(
     readPackageVersion = async () => JSON.parse(await readFile(join(root, "package.json"), "utf8")).version,
     verifyOptions = {},
     readbackTempRoot = undefined,
+    changelogPath = join(root, "CHANGELOG.md"),
   } = {},
 ) {
   const args = parseArgs(argv);
@@ -1426,6 +1462,36 @@ export async function main(
           ? `npm ${distTagAddArgs(LAUNCHER, version, PROMOTE_TAG).join(" ")}   (${version} is already on npm as the artifact's bytes; a resume)`
           : `npm ${launcherPublishArgs(final.path).join(" ")}`;
 
+      // 9. THE GITHUB RELEASE PREFLIGHT (LCLI-622). Once latest moves, nothing may refuse, so every
+      // reason the cut at step 13 could be refused is found here, read-only, dry run and --promote
+      // alike: no notes to cut it from, a gh that cannot read the repository, or an existing v<X>
+      // that is a draft, a prerelease, or carries other notes. Its honest limit: a read proves gh
+      // can SEE the repository, not that its token may create a release; that is found at step 13
+      // and reported there.
+      let releaseNotes;
+      try {
+        releaseNotes = await releaseNotesFor(version, { changelogPath });
+      } catch (error) {
+        err(
+          `Refusing to promote ${version}: ${changelogPath} could not be read (${reason(error)}), and the v${version} GitHub Release is cut from it. Nothing has moved.`,
+        );
+        return 1;
+      }
+      if (!releaseNotes) {
+        err(
+          `Refusing to promote ${version}: CHANGELOG.md has no non-empty "## [${version}]" section, and the v${version} GitHub Release is cut from it once latest moves (LCLI-622). Add the section, land it, and re-run from a checkout that has it. Nothing has moved.`,
+        );
+        return 1;
+      }
+      const plannedRelease = await ensureGitHubRelease({ version, ...releaseNotes, dryRun: true, execFile });
+      if (!plannedRelease.ok) {
+        err(
+          `Refusing to promote ${version}: the v${version} GitHub Release could not be cut after latest moves: ${plannedRelease.detail}. Nothing has moved.`,
+        );
+        return 1;
+      }
+      out(`GitHub Release (checked, read-only): ${plannedRelease.detail}.`);
+
       if (args.dryRun) {
         out(`\nThe record --promote would write to ${args.recordPath} before moving anything:`);
         out(JSON.stringify(record, null, 2));
@@ -1435,6 +1501,9 @@ export async function main(
               ? `  would    ${launcherMove}   (now ${entry.priorLatest}; step 6 re-runs first)`
               : `  would    npm ${distTagAddArgs(entry.name, version, PROMOTE_TAG).join(" ")}   (now ${entry.priorLatest})`,
           );
+        out(
+          `  would    cut the GitHub Release after step 7, once the private npmrc is removed: ${plannedRelease.detail}`,
+        );
         out(
           `  would    bash ${README_READBACK_SCRIPT} against ${final.filename}'s own package.json and README.md, after step 7 (not run in a dry run)`,
         );
@@ -1447,7 +1516,7 @@ export async function main(
         await writeFile(args.recordPath, `${JSON.stringify(record, null, 2)}\n`, { flag: "wx" });
         out(`Recorded every prior ${PROMOTE_TAG} to ${args.recordPath} before moving anything.`);
       }
-      release = { launcherVersion, final, servedCheck, peeled };
+      release = { launcherVersion, final, servedCheck, peeled, releaseNotes };
     }
 
     const { token, source } = await resolveToken({ run, env });
@@ -1491,7 +1560,7 @@ export async function main(
       return 0;
     }
 
-    const { final, servedCheck, peeled } = /** @type {any} */ (release);
+    const { final, servedCheck, peeled, releaseNotes } = /** @type {any} */ (release);
     const publishLauncher = () =>
       publishFinalLauncher({
         version: record.version,
@@ -1544,10 +1613,35 @@ export async function main(
     );
     // Worded so it cannot read as a remedy for anything below (LCLI-616 review F8b).
     out(
-      `The record ${args.recordPath} is what --rollback would restore from if the RELEASE itself had to be undone; a README read-back result is never a reason to use it.`,
+      `The record ${args.recordPath} is what --rollback would restore from if the RELEASE itself had to be undone; a README read-back result is never a reason to use it, and neither is an uncut GitHub Release.`,
     );
 
-    // THE README READ-BACK (step 12; LCLI-616). Once, here, and never in a dry run: npm derives the
+    // THE GITHUB RELEASE (step 13; LCLI-622). The npm credential is gone before gh runs: every npm
+    // write is done, so the private npmrc is removed here rather than left for the finally, which
+    // stays as the backstop for every earlier return. (The cut cannot move below the finally, as
+    // quest's does: the README read-back after it needs `final.path` inside artifactDir, which the
+    // same finally removes.) The npmrc path reaches only
+    // npmEnv, never gh. gh does inherit process.env, so an NPM_TOKEN the operator exported is in its
+    // environment, as it is for every earlier gh call in this script; gh does not read that variable.
+    if (npmrcDir) {
+      await rm(npmrcDir, { recursive: true, force: true });
+      npmrcDir = undefined;
+    }
+    const githubRelease = await ensureGitHubRelease({ version: record.version, ...releaseNotes, execFile });
+    if (githubRelease.ok) out(`\nGitHub Release: ${githubRelease.detail}.`);
+    else
+      for (const line of [
+        "",
+        `!!! THE GITHUB RELEASE FOR v${record.version} WAS NOT CUT. THIS PROMOTION IS COMPLETE AND VERIFIED. !!!`,
+        `  ${githubRelease.detail}`,
+        "latest moved and is verified -- do NOT roll back for this: --rollback cannot cut a release, and it would undo a correct one.",
+        "Fix the cause, then cut it by hand (it refuses a draft, a prerelease, or other notes, and never edits one):",
+        `    ${REPAIR_COMMAND(record.version)}`,
+        "The README read-back still runs below.",
+      ])
+        err(line);
+
+    // THE README READ-BACK (step 14; LCLI-616). Once, here, and never in a dry run: npm derives the
     // package-level readme from the publish above, and from nothing before it. The runner buffers
     // the script's output, so the wait is announced before it starts rather than streamed.
     const windowSeconds = env.REGISTRY_WINDOW_SECONDS || "1800";
@@ -1566,11 +1660,16 @@ export async function main(
       commit: peeled.commit,
       skillsTree,
       readback,
+      githubRelease,
     });
+    /** The one-line reason a complete promotion still exits 3 for the release alone. */
+    const releaseNotCut = `Exit ${README_READBACK_EXIT}: the promotion is complete and verified, but the v${record.version} GitHub Release was NOT cut (see above, and checklist item 2). Do NOT roll back.`;
     if (readback.state === READBACK_PASSED) {
       for (const line of readback.output.split("\n")) out(`  ${line}`);
       for (const line of checklist) out(line);
-      return 0;
+      if (githubRelease.ok) return 0;
+      err(`\n${releaseNotCut}`);
+      return README_READBACK_EXIT;
     }
     for (const line of readback.output.split("\n")) if (line) err(`  ${line}`);
     const headline =
@@ -1600,6 +1699,7 @@ export async function main(
     ])
       err(line);
     for (const line of checklist) out(line);
+    if (!githubRelease.ok) err(`\n${releaseNotCut}`);
     return README_READBACK_EXIT;
   } finally {
     if (npmrcDir) await rm(npmrcDir, { recursive: true, force: true });
