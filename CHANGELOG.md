@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BEHAVIOUR CHANGE: `lore check` fails on every error-tier `quote-safety` finding that `lore
+  validate` reports** (LCLI-612, ADR-0007). It uses the same rule name and byte-identical messages,
+  for every type. The findings cover an unquoted YAML-1.1 boolean (`yes`/`no`/`on`/`off`/`y`/`n`),
+  a value that starts with a YAML indicator character, and a value containing `: `. Before this,
+  such a file failed `validate` and passed `check`. Run `lore validate` to preview what `check`
+  will now fail on. A bare `YYYY-MM-DD` date stays a validate-only warning. Frontmatter that is not
+  valid YAML still stops `check` at the parse error, before per-file rules run. A fleet measurement
+  by ref found 0 such findings in 396 files across 11 repositories. This ships in a minor release.
 - **The root launcher stages as `X-rc.N`; the platform packages still stage as `X`** (LCLI-621,
   constitution Article 3 clause 5 as amended by ODOC-302). The Release run's `npm-packages`
   artifact now carries eight tarballs: the six platform packages at `X`, the launcher at `X-rc.N`
