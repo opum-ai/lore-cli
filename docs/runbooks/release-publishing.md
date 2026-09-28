@@ -1510,15 +1510,27 @@ publish into CI on its own.
 
 **What `provenance-post` checks (LCLI-625).** `release.yml`'s
 `provenance-post` job runs `scripts/release-provenance.mjs --post
---launcher-rc N`, with `N` from this dispatch's `launcher_rc` input. It checks
+--launcher-rc N --publish-result R`. `N` comes from this dispatch's
+`launcher_rc` input, `R` from `needs.publish.result` (LCLI-635). It checks
 what the Release run published: the six platform packages at `X` and the
 launcher at `X-rc.N`. It never checks `@opum-ai/lore@X`, which the run did not
-publish. The script refuses `--post` without a well-formed `--launcher-rc`
-(exit 2) rather than guessing `N`. Each run prints, in the log and the job
-summary, that the `X` launcher was not checked and why. Before LCLI-625 it
-checked every package at `X`. On a `publish: true` run that meant asking for
+publish. The script refuses `--post` without a well-formed `--launcher-rc` or a
+`--publish-result` drawn from GitHub's own result vocabulary (exit 2) rather
+than guessing `N`, or guessing the cause below. Each run prints, in the log and
+the job summary, that the `X` launcher was not checked and why. Before LCLI-625
+it checked every package at `X`. On a `publish: true` run that meant asking for
 a launcher that did not exist yet, and never checking the rc the run did
 publish.
+
+`R` decides which cause a **not-published** finding — a version this release
+expected that the registry's read API does not list — leads with. That result
+has two explanations, and only one of them can be true on a given run: the
+publish job stopped partway, or the read API is lagging a publish that
+succeeded (LCLI-460). When `R` is `success`, every package went out with this
+run's own publish steps, so the warning leads with the lag and does **not**
+prescribe "Re-run failed jobs"; otherwise it leads with the partial publish
+and does. The same choice orders the job summary's verdict, and the log names
+`R` on every run so the choice can be checked rather than trusted.
 
 **What `provenance-pre` checks (LCLI-627).** `release.yml`'s `provenance-pre`
 job runs `scripts/release-provenance.mjs --pre` before `publish`. It
