@@ -1620,7 +1620,9 @@ export async function main(
     // write is done, so the private npmrc is removed here rather than left for the finally, which
     // stays as the backstop for every earlier return. (The cut cannot move below the finally, as
     // quest's does: the README read-back after it needs `final.path` inside artifactDir, which the
-    // same finally removes.) gh never received the credential either way -- only npmEnv carries it.
+    // same finally removes.) The npmrc path reaches only
+    // npmEnv, never gh. gh does inherit process.env, so an NPM_TOKEN the operator exported is in its
+    // environment, as it is for every earlier gh call in this script; gh does not read that variable.
     if (npmrcDir) {
       await rm(npmrcDir, { recursive: true, force: true });
       npmrcDir = undefined;

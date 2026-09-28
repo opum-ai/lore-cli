@@ -1154,7 +1154,7 @@ the promotion half, item 7. It is not part of staging.
    The result is a non-draft, non-prerelease release marked latest, and
    `--verify-tag` means it never creates a tag. If `v<version>` already
    exists, published and with the same notes, it only marks it latest
-   (`gh release edit v<version> --latest`), and never recreates or re-notes it.
+   (`gh release edit v<version> -R github.com/opum-ai/lore-cli --latest`), and never recreates or re-notes it.
    A failure here does not undo anything. Promote prints `!!! THE GITHUB
    RELEASE FOR v<version> WAS NOT CUT ... !!!` with gh's reason, still runs
    the README read-back, and exits `3`. Fix the cause, then cut it by hand

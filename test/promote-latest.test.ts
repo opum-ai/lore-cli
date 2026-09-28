@@ -2720,7 +2720,7 @@ describe("scripts/promote-latest.mjs: the GitHub Release (LCLI-622)", () => {
     }
   });
 
-  test("--rollback makes no gh release call, before or after a promotion that cut one", async () => {
+  test("--rollback makes no gh release call after a promotion that cut one", async () => {
     const h = harness();
     try {
       const promoted = world();
