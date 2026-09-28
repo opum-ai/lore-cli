@@ -421,7 +421,18 @@ test("the real CHANGELOG: --next checks [Unreleased] against the current version
   expect(stale.problems[0]).toContain("### Changed (breaking)");
 });
 
-describe("the command, with a stubbed gh (no network)", () => {
+// A PATH stub named `gh` cannot shadow the runner's real gh.exe on Windows:
+// CreateProcess appends only `.exe` when resolving a bare name, so it walks
+// past both an extensionless stub and a `gh.cmd` (Node additionally refuses to
+// spawn a `.cmd` without shell:true), and release.yml's windows job would
+// exercise the real gh instead of the stub — measured twice on CI (runs
+// 36477182923 and 36490045542). version-parity.test.ts, whose script makes the
+// same gh-by-ref read, is posix-only for exactly this reason and is the
+// precedent followed here. Windows keeps the logic coverage through the
+// in-process tests above, which inject `execFile` directly.
+const describePosix = process.platform === "win32" ? describe.skip : describe;
+
+describePosix("the command, with a stubbed gh (no network)", () => {
   // A fake `gh` that answers with a fixture changelog or fails, so the CLI can
   // be exercised end to end exactly as release.yml runs it.
   function withStubGh(fixture: string | null) {
@@ -441,23 +452,9 @@ describe("the command, with a stubbed gh (no network)", () => {
       'cat "$FAKE_GH_CHANGELOG"',
       "",
     ].join("\n");
-    if (process.platform === "win32") {
-      // execFile's Windows PATH resolution (PATHEXT) never matches an
-      // extensionless file (the LCLI-632 windows-only CI red, run
-      // 36477182923): the search walked past the bare `gh` and executed the
-      // runner's real gh.exe, whose GH_TOKEN refusal reached the script. So
-      // the stub is a gh.cmd wrapper around the same sh body in a sibling
-      // gh.sh: execFile resolves gh.cmd via PATHEXT, cmd.exe runs the
-      // wrapper, and `%~dp0gh.sh %*` forwards the argv verbatim while the
-      // FAKE_GH_* environment is inherited through the chain. On posix the
-      // bare executable `gh` is found by exact-name resolution.
-      writeFileSync(join(bin, "gh.sh"), body);
-      writeFileSync(join(bin, "gh.cmd"), '@bash "%~dp0gh.sh" %*\r\n');
-    } else {
-      const stub = join(bin, "gh");
-      writeFileSync(stub, body);
-      chmodSync(stub, 0o755);
-    }
+    const stub = join(bin, "gh");
+    writeFileSync(stub, body);
+    chmodSync(stub, 0o755);
     if (fixture !== null) {
       writeFileSync(join(dir, "quest-changelog.md"), fixture);
     }
