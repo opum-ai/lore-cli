@@ -430,9 +430,10 @@ interface BundleRuleDoc {
  * (no Zod schema check). Its `type` is compared with the effective profile used by validation; the
  * structural root index keeps the built-in profile that wrote it. Every file with frontmatter then
  * gets `lore validate`'s own per-file judgement ({@link validateRuleCheckFindings}, LCLI-606): a
- * missing `type`, a missing or mistyped required field, or a missing required section is an
- * ordinary error finding under validate's rule name, for every type. A file with no `tasks:` link
- * (the vast majority of any bundle: ADRs, specs, index/log) is not parsed for reconciliation.
+ * missing `type`, a missing or mistyped required field, a missing required section, or an
+ * error-tier quote-safety hazard (LCLI-612) is an ordinary error finding under validate's rule name,
+ * for every type. A file with no `tasks:` link (the vast majority of any bundle: ADRs, specs,
+ * index/log) is not parsed for reconciliation.
  *
  * Only a file that DOES declare `tasks:` (including an empty list) is parsed for reconciliation
  * ({@link parseConcept}, which throws loud on a malformed mapping). A malformed linked file must
@@ -680,12 +681,20 @@ function validateJudgeFor(root: string, profile: Profile): ValidateJudge {
  * decides which file is the bundle-root index (judged by the built-in profile) and it is spelled
  * into the messages. Kept, each under validate's OWN rule name so a consumer can tell them apart:
  * every error-tier `frontmatter` finding (a missing `type`, a missing or mistyped field, an invalid
- * enum value) and `required-section`, for EVERY type (LCLI-606, OPAG-425 R11), and every
- * `type-shape` finding from a registered type's own content rules (LCLI-595, R3). Not kept:
- * quote-safety, resource drift, the unknown-type advisory (the per-file peek reports that itself)
- * and Tier-3 frontmatter warnings, which `check` does not report for any type; and validate's copy
- * of a second frontmatter fence, which `check` already reports under its own `double-frontmatter`
- * rule (LCLI-372) — one defect, one finding.
+ * enum value) and `required-section`, for EVERY type (LCLI-606, OPAG-425 R11); every error-tier
+ * `quote-safety` finding (an unquoted YAML-1.1 boolean, a leading YAML indicator, a `: ` inside a
+ * value — LCLI-612), so a file validate fails on quoting cannot pass check; and every `type-shape`
+ * finding from a registered type's own content rules (LCLI-595, R3). Not kept: warning-tier
+ * quote-safety (a bare `YYYY-MM-DD` date), resource drift, the unknown-type advisory (the per-file
+ * peek reports that itself) and Tier-3 frontmatter warnings, which `check` does not report for any
+ * type; and validate's copy of a second frontmatter fence, which `check` already reports under its
+ * own `double-frontmatter` rule (LCLI-372) — one defect, one finding. No other `check` rule reads
+ * frontmatter scalar quoting, so a kept quote-safety finding is never a second report of one defect.
+ *
+ * A file whose frontmatter is not valid YAML never reaches here: `check` cannot parse it, so the run
+ * carries that YAML error (`complete: false`, exit `6`, as validate's exit) and no per-file rule runs
+ * for the file — validate's quote-safety finding beside its YAML-syntax `frontmatter` error is not in
+ * the `check` report either. Unchanged by LCLI-612.
  *
  * A file `validate` skips — no frontmatter, an empty fence — yields nothing here either, so the two
  * gates judge the same file set. `file` on each finding stays bundle-relative, like every other
@@ -701,11 +710,13 @@ function validateRuleCheckFindings(
   const strayFence = hasStrayFrontmatterFence(bodyText(file.raw)) ? strayFenceMessage(repoPath) : undefined;
   for (const finding of validateConceptText(repoPath, file.raw, profile, state).findings) {
     const rule = finding.rule;
-    const profileShapeError = finding.severity === "error" && (rule === "frontmatter" || rule === "required-section");
+    const enforcedError =
+      finding.severity === "error" &&
+      (rule === "frontmatter" || rule === "required-section" || rule === "quote-safety");
     if (rule === "frontmatter" && finding.message === strayFence) {
       continue; // reported once, as `double-frontmatter`, by the link pass
     }
-    if (rule === TYPE_SHAPE_RULE || profileShapeError) {
+    if (rule === TYPE_SHAPE_RULE || enforcedError) {
       findings.push({ severity: finding.severity, rule, file: file.path, message: finding.message });
     }
   }
