@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A malformed window variable now fails the release BEFORE the first publish, and fails a
+  `publish:false` rehearsal too** (LCLI-634, extending LCLI-630). `vars.REGISTRY_WINDOW_SECONDS` and
+  `vars.PROVENANCE_WAIT_SECONDS` are refused unless they are a whole number of seconds (0 to
+  999999999, no leading zero), naming the variable and showing the value escaped. A new always-run
+  `release-window` job refuses the repository/organisation-scoped value on every dispatch; the
+  `publish` job refuses the environment-resolved one before its first publish. The LCLI-630
+  post-publish check stays as defence in depth. `scripts/release-provenance.mjs`'s `--wait-seconds`
+  now refuses `30m`, `08`, `1e3` and `abc` instead of reading them as 30, 8, 1 and a crash.
 - **Release prep refuses a patch-level bump when the notes for the version being released carry a
   breaking-change marker** (LCLI-632, paired with quest-cli QCLI-328; ADR in opum-doc).
   `scripts/check-breaking-bump.mjs` compares the checked section with the previous version heading

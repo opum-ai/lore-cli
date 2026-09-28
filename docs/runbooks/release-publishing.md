@@ -820,6 +820,28 @@ the promotion half, item 7. It is not part of staging.
    skipped the visibility gate and staged the launcher over a platform package
    that never became visible, and `abc` exited 0 after six platform publishes.
 
+   **The window is one grammar with five readers, and `.github/workflows/release.yml`
+   now refuses it before it publishes (LCLI-634).** The readers are
+   `scripts/publish-release.sh` (the window and the cushion),
+   `scripts/readme-readback.sh`, `scripts/promote-latest.mjs`, release.yml's own
+   post-publish visibility wait, and `scripts/release-provenance.mjs`, which
+   receives `PROVENANCE_WAIT_SECONDS` as `--wait-seconds`. Two release variables
+   drive them: `vars.REGISTRY_WINDOW_SECONDS` (default 1800) and
+   `vars.PROVENANCE_WAIT_SECONDS` (default 180), both 0 to 999999999, no leading
+   zero, no unit suffix. An always-running `release-window` job refuses a
+   malformed value with exit 2 — naming the variable and showing the value
+   escaped — and the `publish` job needs that job, so a `publish: false`
+   rehearsal refuses exactly what a real publish would and the refusal lands
+   before the first publish rather than after the last one. The `publish` job
+   refuses its own environment-resolved value as well, ahead of its first
+   publish: a job sees a release-environment variable only by declaring
+   `environment: release`, which only that job does. Set
+   `PROVENANCE_WAIT_SECONDS` at the repository or organisation level —
+   `provenance-post` declares no environment, so an environment-level value for
+   it is never read. Before LCLI-634 that variable reached `--wait-seconds` as a
+   `parseInt`, so `30m`, `08` and `1e3` were silently a 30, an 8 and a 1 second
+   window, and only `abc` was refused — after the release had published.
+
    **It stages, and it never moves `latest` (LCLI-613).** Every `npm publish`
    carries `--tag release-candidate`. A publish with no `--tag` moves `latest`
    as a side effect, which is why the flag lives in the one argument list every
