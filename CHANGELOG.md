@@ -135,6 +135,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `finalTarball.sha256` bind its bytes to the qualified rc, but they do not substitute for
   provenance. Restoring provenance on the final publish belongs to opum-agent's OPAG-127, for
   both CLIs.
+- **`provenance-pre` re-verifies releases, not launcher version strings** (LCLI-627). LCLI-625
+  left `scripts/release-provenance.mjs --pre` unchanged. It still checked all seven packages at
+  every version in the launcher's packument, which since LCLI-621 holds `X-rc.N` strings the
+  platform packages never have. Against a packument of `0.7.0`, `0.7.1` and `0.8.0-rc.1` to
+  `rc.3`, `--pre --limit 3` asked for 21 attestations, 18 of them for platform versions that can
+  never exist. It never reached `0.7.1`, never checked a platform at `0.8.0`, and exited 0.
+  `--pre` now groups the launcher's versions into releases by `X`, which is the version with only
+  a trailing `-rc.N` removed. `N` follows the `--launcher-rc` rule. For each release it checks the
+  platforms at `X` once, including a release whose launcher has only rcs, and the launcher at
+  each version it has, once each. Every other version is its own release, checked at that exact
+  string for every package. That includes a prerelease `X` such as `1.0.0-beta.1`, which is
+  separate from `1.0.0`. It also includes a version that is not semver-shaped, which sorts last.
+  `--limit` counts releases. A release at or below the baseline takes its rcs with it. Within a
+  release, rcs run in numeric `N` order and `X` comes last. The defect was latent: no
+  prerelease of `@opum-ai/lore` is on the registry yet. It had to be fixed before the first
+  `publish: true` Release run under LCLI-621 puts one there.
 
 ## [0.11.0] - 2026-09-27
 
