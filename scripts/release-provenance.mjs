@@ -86,9 +86,10 @@
  *           package when its registry integrity equals the resuming run's tarball, so a
  *           partially-failed publish finished by a different run (or by
  *           scripts/publish-release.sh) whose tarballs are byte-identical leaves packages
- *           published from two commits. That needs byte-identical rebuilds (measured once, on
- *           one commit), and usually a fresh dispatch conflicts instead, but when it happens a
- *           launcher-only probe sees one commit of two. Commit lookups are cached per repo+sha, so the
+ *           published from two commits. That needs byte-identical rebuilds: a same-commit
+ *           rebuild was byte-identical the one time it was measured, and a rebuild from a
+ *           different commit is unmeasured. When it happens a launcher-only probe sees one
+ *           commit of two. Commit lookups are cached per repo+sha, so the
  *           normal case (all seven pinning one commit) still costs a single GitHub call.
  *
  *           The package set comes from the CURRENT package.json, so a platform package added

@@ -1400,8 +1400,9 @@ jobs:
     # would skip it. `publish_or_skip` resumes it: it skips a package already on the registry
     # ONLY when the registry's dist.integrity equals this run's tarball. So the sanctioned
     # resume is "Re-run failed jobs" on the SAME run (same commit, same tarballs). A fresh
-    # dispatch rebuilds the platforms and normally conflicts on them; the publish step's
-    # "already on the registry with different bytes" error says so and names the remedies. A
+    # dispatch rebuilds the platforms, and conflicts on them unless the rebuild is
+    # byte-identical; the publish step's "already on the registry with different bytes"
+    # error names the remedies when it does conflict. A
     # resume by a different run, or by scripts/publish-release.sh, gets past that check only
     # when its tarballs are byte-identical (measured once, on one commit). Then one version
     # holds packages published by two different runs, and their pinned commits can differ.
