@@ -848,6 +848,13 @@ styling and keeps the layout. There is no flag for this: `--plain` is the opt-ou
 and pretty output is not a parsing target
 ([CLI contract §1.2](cli-contract.md#12-pretty)).
 
+**`--plain` is verbatim everywhere, terminal control sequences included.** It adds
+no styling of its own, but a document's own escape sequences, control bytes and
+bidi characters reach the terminal unchanged, exactly as `cat` would print them.
+Only pretty mode neutralises them. This holds even when stdout is a TTY, because
+agents also run under ptys and rely on `--plain` for exact reads, so its bytes do
+not depend on where they are sent (opum-agent ruling, 2026-09-28).
+
 It is a **separate operation** from [`context`](#context) rather than a flag on
 it, deliberately. `context` assembles and is lossy by design — it selects,
 orders, and enforces a ceiling. That is right for a caller feeding a model a

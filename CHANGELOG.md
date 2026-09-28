@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`lore read` renders the markdown body when stdout is a terminal** (LCLI-615). It renders
+  headings, emphasis, lists and task lists, block quotes, fenced code, links (as `text (url)`) and
+  GFM tables, word-wrapped to the terminal's width. `--plain`, piped output and `--json` are
+  unchanged and byte-for-byte, so `lore read <id> | tail -n +3` still recovers the body. Terminal
+  control sequences in a document are removed before rendering, including ones produced by
+  character references such as `&#x202E;`. `NO_COLOR` removes all styling and keeps the layout.
+  New exact-pinned build dependencies, compiled into the binary: `mdast-util-gfm` 3.1.0 and
+  `micromark-extension-gfm` 3.0.0 (MIT; the binary grows by about 66 KB).
 - **`scripts/promote-latest.mjs` cuts lore's GitHub Release itself, and refuses before anything
   moves if it could not** (LCLI-622, paired with quest-cli QCLI-398 and QCLI-401). On `--dry-run`
   and `--promote` alike, before the record or any registry write, it refuses when `CHANGELOG.md`

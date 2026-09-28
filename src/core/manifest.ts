@@ -212,7 +212,12 @@ const GLOBAL_FLAGS: readonly ManifestFlag[] = deepFreeze([
     takesValue: false,
     summary: "Machine-readable JSON output (the {schemaVersion, kind, data} envelope)",
   },
-  { name: "plain", takesValue: false, summary: "ANSI-free text output (auto-selected when stdout is piped)" },
+  {
+    name: "plain",
+    takesValue: false,
+    summary:
+      "Unstyled text output (auto-selected when stdout is piped); `read` prints the body verbatim, control sequences included",
+  },
   { name: "version", alias: "v", takesValue: false, summary: "Print the version and exit", kind: "version" },
   { name: "help", alias: "h", takesValue: false, summary: "Show help and exit" },
 ]);
