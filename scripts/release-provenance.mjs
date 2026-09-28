@@ -95,10 +95,25 @@
  *           alternative, reconstructing each historical release's package set, would infer it
  *           from the same registry data whose trustworthiness is the thing in question.
  *
- *   --post  Runs AFTER the publish job. Looks at what THIS release just produced: every
- *           package at the version being released. It cannot un-publish anything; what it
- *           does is put the verdict on the release run, so an attested release that pins an
- *           unreachable commit is known within minutes rather than after a user reports it.
+ *   --post  Runs AFTER the publish job. Looks at what THIS release just produced: the six
+ *           platform packages at X and the launcher at X-rc.N (LCLI-625). It cannot un-publish
+ *           anything; what it does is put the verdict on the release run, so an attested
+ *           release that pins an unreachable commit is known within minutes rather than after
+ *           a user reports it.
+ *
+ *           WHY THE LAUNCHER IS CHECKED AT X-rc.N AND NEVER AT X. Since LCLI-621 (constitution
+ *           Article 3 clause 5 as amended by ODOC-302) a Release run stages the launcher as
+ *           X-rc.N; the launcher at X reaches npm only later, when scripts/promote-latest.mjs
+ *           fresh-publishes it --tag latest from an operator's machine. An earlier revision
+ *           checked every package at X, so on a publish:true run it asked for a launcher
+ *           version that did not exist yet and never looked at the rc the run DID publish —
+ *           a check on the wrong object that still passed. N is release.yml's `launcher_rc`
+ *           input, passed as --launcher-rc and REQUIRED in this mode: a default here would
+ *           quietly check rc.1 on a re-stage that published rc.2. The version is assigned by
+ *           package NAME (the launcher is package.json's own `name`), so a --package override
+ *           cannot route the launcher back to X either. The X launcher carries no provenance
+ *           at all — "provenance-missing, byte-bound to the qualified rc" — and restoring it is
+ *           opum-agent's OPAG-127, for both CLIs; this mode says so on every run.
  *
  * THE BASELINE, AND WHY --pre WOULD OTHERWISE BE USELESS
  *
@@ -208,8 +223,10 @@ class RemoteUnavailableError extends Error {}
  * unsure, pass loudly", a version we cannot parse must be checked and reported, never
  * assumed harmless.
  *
- * A prerelease/build suffix is stripped rather than ordered: this project has never shipped
- * one, and treating `0.6.0-rc.1` as `0.6.0` is the conservative answer for a baseline test.
+ * A prerelease/build suffix is stripped rather than ordered, so `0.6.0-rc.1` compares as
+ * `0.6.0` — the conservative answer for a baseline test. Since LCLI-621 the launcher stages as
+ * X-rc.N, so its packument can now carry prerelease versions; --pre's handling of them was
+ * deliberately left unchanged by LCLI-625 (see that task's notes).
  *
  * @param {string} version
  * @returns {number[] | null}
@@ -560,6 +577,24 @@ function releasePackages(options, manifest) {
   return [manifest.name, ...Object.keys(manifest.optionalDependencies ?? {})];
 }
 
+/**
+ * The exact package@version set a Release run publishes (LCLI-625): every platform package at X
+ * and the launcher at X-rc.N. The version is chosen by NAME, not by position or by whether a
+ * --package override was given, so no path through --post can ask for the launcher at X.
+ *
+ * @param {{launcherRc: string, packages: string[]}} options
+ * @param {{name: string, optionalDependencies?: Record<string, string>}} manifest
+ * @param {string} version X
+ * @returns {{name: string, version: string}[]}
+ */
+function postReleaseSpecs(options, manifest, version) {
+  const rcVersion = `${version}-rc.${options.launcherRc}`;
+  return releasePackages(options, manifest).map((name) => ({
+    name,
+    version: name === manifest.name ? rcVersion : version,
+  }));
+}
+
 async function runPre(options, manifest) {
   const launcher = manifest.name;
   const packages = releasePackages(options, manifest);
@@ -592,21 +627,33 @@ async function runPre(options, manifest) {
       results.push(await checkOne(name, version, options.expectedRepo));
     }
   }
-  return { results, scannedVersions: scanned.length };
+  return { results, scannedVersions: scanned.length, notes: [] };
 }
 
 async function runPost(options, manifest) {
   const version = options.version || manifest.version;
-  // verify-versions has already asserted every manifest shares this version and that root's
-  // optionalDependencies pin it exactly, so this IS the set this release published.
-  const packages = releasePackages(options, manifest);
+  // verify-versions has already asserted every manifest shares X and that root's
+  // optionalDependencies pin it exactly. The Release run publishes those six platform packages
+  // at X and the launcher at X-rc.N (LCLI-621), so THAT is the set this release published —
+  // not the launcher at X, which scripts/promote-latest.mjs publishes later (LCLI-625).
+  const specs = postReleaseSpecs(options, manifest, version);
+  const rcVersion = `${version}-rc.${options.launcherRc}`;
+  const launcherFinal = `${manifest.name}@${version}`;
 
-  console.log(`--post checking the provenance this release just produced: ${packages.length} package(s) at ${version}`);
+  console.log(
+    `--post checking the provenance this release just produced: ${specs.length} package(s): ${specs.map((s) => `${s.name}@${s.version}`).join(", ")}`,
+  );
+  // Said on every run, in the log and the job summary, so the absence of a launcher@X row is
+  // never read as that launcher having been checked and found clean (OPAG-127 wording).
+  const notes = [
+    `${launcherFinal} is NOT checked here, because this run does not publish it: the Release run stages the launcher as ${rcVersion}, and scripts/promote-latest.mjs publishes ${launcherFinal} later with --tag latest, outside the CI OIDC path, so it carries no provenance. It is provenance-missing, byte-bound to the qualified rc: the equivalence gate and the pass-1 receipt's finalTarball.sha256 bind its bytes to the qualified ${rcVersion}, which says "same bytes as tested" and is not a substitute for provenance ("built where, from what"). Restoring provenance on that final publish is opum-agent's OPAG-127, for both CLIs.`,
+  ];
+  for (const note of notes) console.log(`       ${note}`);
 
   // PASS 1 — no waiting. Ask every package once.
   const results = [];
-  for (const name of packages) {
-    results.push(await checkOne(name, version, options.expectedRepo));
+  for (const spec of specs) {
+    results.push(await checkOne(spec.name, spec.version, options.expectedRepo));
   }
 
   // PASS 2 — propagation grace, but ONLY when it can possibly pay out. Attestations lag the
@@ -624,15 +671,17 @@ async function runPost(options, manifest) {
   if (options.waitSeconds > 0 && anyAttested) {
     for (let i = 0; i < results.length; i++) {
       if (results[i]?.outcome !== OUTCOME.ABSENT) continue;
+      // Each result carries its OWN version: the launcher's is X-rc.N, the platforms' X.
       const name = results[i]?.name ?? "";
+      const specVersion = results[i]?.version ?? "";
       const deadline = Date.now() + options.waitSeconds * 1000;
       while (Date.now() < deadline) {
         const remaining = Math.ceil((deadline - Date.now()) / 1000);
         console.log(
-          `       ${name}@${version}: no attestation yet, but other packages in this release have one; ${remaining}s of its propagation window left`,
+          `       ${name}@${specVersion}: no attestation yet, but other packages in this release have one; ${remaining}s of its propagation window left`,
         );
         await defaultSleep(Math.min(15000, Math.max(1000, deadline - Date.now())));
-        const retry = await checkOne(name, version, options.expectedRepo);
+        const retry = await checkOne(name, specVersion, options.expectedRepo);
         results[i] = retry;
         if (retry.outcome !== OUTCOME.ABSENT) break;
       }
@@ -643,7 +692,7 @@ async function runPost(options, manifest) {
     );
   }
 
-  return { results, scannedVersions: 1 };
+  return { results, scannedVersions: 1, notes };
 }
 
 // ---------------------------------------------------------------------------
@@ -651,7 +700,7 @@ async function runPost(options, manifest) {
 // ---------------------------------------------------------------------------
 
 /**
- * @param {{results: any[], scannedVersions: number}} checked
+ * @param {{results: any[], scannedVersions: number, notes: string[]}} checked
  * @param {string} mode
  * @param {{acknowledge: string}} options
  */
@@ -706,7 +755,14 @@ function report(checked, mode, options) {
     );
   }
 
-  writeStepSummary(mode, summary, { dangling, waived, absent, verifiedNothing, acknowledge: options.acknowledge });
+  writeStepSummary(mode, summary, {
+    dangling,
+    waived,
+    absent,
+    verifiedNothing,
+    acknowledge: options.acknowledge,
+    notes: checked.notes,
+  });
 
   return dangling.length > 0 ? 1 : 0;
 }
@@ -731,6 +787,7 @@ function writeStepSummary(mode, rows, state) {
     "",
     verdict,
     "",
+    ...state.notes.flatMap((note) => [note, ""]),
   ];
   try {
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join("\n")}\n`);
@@ -744,8 +801,17 @@ function writeStepSummary(mode, rows, state) {
 // ---------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  /** @type {{ mode: string, limit: number, waitSeconds: number, version: string, acknowledge: string, expectedRepo: string, packages: string[] }} */
-  const options = { mode: "", limit: 10, waitSeconds: 0, version: "", acknowledge: "", expectedRepo: "", packages: [] };
+  /** @type {{ mode: string, limit: number, waitSeconds: number, version: string, launcherRc: string, acknowledge: string, expectedRepo: string, packages: string[] }} */
+  const options = {
+    mode: "",
+    limit: 10,
+    waitSeconds: 0,
+    version: "",
+    launcherRc: "",
+    acknowledge: "",
+    expectedRepo: "",
+    packages: [],
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--pre" || arg === "--post") {
@@ -762,6 +828,15 @@ function parseArgs(argv) {
     } else if (arg === "--version") {
       options.version = argv[++i] ?? "";
       if (!options.version) throw new Error("--version needs a value");
+    } else if (arg === "--launcher-rc") {
+      // N in X-rc.N, the launcher version this Release run staged. Same rule as release.yml's
+      // own launcher_rc checks: a positive integer with no leading zero. Fail closed — a
+      // malformed N would otherwise check a launcher version nobody published (LCLI-625).
+      const rc = argv[++i] ?? "";
+      if (!/^[1-9][0-9]*$/.test(rc)) {
+        throw new Error(`--launcher-rc must be a positive integer with no leading zero (X-rc.N, N >= 1); got '${rc}'`);
+      }
+      options.launcherRc = rc;
     } else if (arg === "--package") {
       const name = argv[++i] ?? "";
       if (!name) throw new Error("--package needs a value");
@@ -777,6 +852,15 @@ function parseArgs(argv) {
     }
   }
   if (!options.mode) throw new Error("one of --pre or --post is required");
+  // Required, not defaulted, for --post: the launcher this run published is X-rc.N, and a
+  // silent default of 1 would check the wrong rc on every re-stage (LCLI-625). --pre scans
+  // published history and has no use for it, so passing it there is a mistake worth naming.
+  if (options.mode === "post" && !options.launcherRc) {
+    throw new Error("--post needs --launcher-rc N: the launcher a Release run publishes is X-rc.N, never X");
+  }
+  if (options.mode === "pre" && options.launcherRc) {
+    throw new Error("--launcher-rc applies only to --post");
+  }
   return options;
 }
 
@@ -787,7 +871,7 @@ async function main() {
   } catch (error) {
     console.error(`::error::${describeError(error)}`);
     console.error(
-      "usage: node scripts/release-provenance.mjs (--pre | --post) [--limit N] [--wait-seconds N] [--version V] [--package NAME]... [--acknowledge REF]",
+      "usage: node scripts/release-provenance.mjs (--pre [--limit N] | --post --launcher-rc N [--wait-seconds N] [--version V]) [--package NAME]... [--acknowledge REF]",
     );
     process.exit(2);
   }

@@ -24,7 +24,8 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const SCRIPT = join(import.meta.dir, "..", "scripts", "release-provenance.mjs");
@@ -101,6 +102,32 @@ const PINS: Record<string, Record<string, Pin | undefined>> = {
   "0.7.6": { [LAUNCHER]: { commit: GONE_SHA_IN_DARK_REPO, repo: DARK_REPO } },
 };
 
+/**
+ * --post checks the launcher at X-rc.N, never at X (LCLI-625), so the outcome tests below probe
+ * the launcher at `<X>-rc.1`. The stub serves each such rc with the same pin as that X's launcher,
+ * so every outcome the launcher at X exercised is exercised at its rc. The lookup stays exact:
+ * a --post that asked for the launcher at X would get X's answer under X's spec, and the tests
+ * assert on the rc spec, so they would not find their line.
+ */
+const STAGED_PINS: Record<string, Record<string, Pin | undefined>> = { ...PINS };
+for (const [version, pins] of Object.entries(PINS)) {
+  const launcherPin = pins[LAUNCHER];
+  if (launcherPin) STAGED_PINS[`${version}-rc.1`] = { [LAUNCHER]: launcherPin };
+}
+
+/**
+ * The release the package-set test runs --post against. Its launcher at X is attested with a
+ * DESTROYED commit, so a --post that checked the launcher at X would go red on it, and its
+ * launcher at X-rc.2 is attested with a live one. The platforms at X carry no attestation.
+ */
+const SET_VERSION = "0.8.0";
+const SET_RC = "2";
+STAGED_PINS[SET_VERSION] = { [LAUNCHER]: { commit: GONE_SHA, repo: REPO } };
+STAGED_PINS[`${SET_VERSION}-rc.${SET_RC}`] = { [LAUNCHER]: { commit: LIVE_SHA, repo: REPO } };
+
+/** Every `name@version` the stub's attestation endpoint was asked for, in order. */
+const attestationRequests: string[] = [];
+
 /** Versions the stub packument lists. Overridable per test (see `packumentVersions`). */
 let packumentVersions: string[] = Object.keys(PINS);
 /** Set to a status to make the packument endpoint fail, for the remote-outage path. */
@@ -156,7 +183,8 @@ beforeAll(() => {
       if (attestationMatch) {
         const name = attestationMatch[1] ?? "";
         const version = attestationMatch[2] ?? "";
-        const pin = PINS[version]?.[name];
+        attestationRequests.push(`${name}@${version}`);
+        const pin = STAGED_PINS[version]?.[name];
         if (!pin) return Response.json({ error: "Not found" }, { status: 404 });
         return new Response(attestationBody(pin.commit, pin.repo, `refs/tags/v${version}`), {
           headers: { "content-type": "application/json" },
@@ -225,9 +253,9 @@ function outcomeOf(out: string, spec: string): string | undefined {
 
 describe("release-provenance gate outcomes", () => {
   test("attestation ABSENT passes, loudly, naming the manual-publish cause (LCLI-482)", async () => {
-    const { code, out } = await runGate(["--post", "--version", "0.6.1", "--package", LAUNCHER]);
+    const { code, out } = await runGate(["--post", "--launcher-rc", "1", "--version", "0.6.1", "--package", LAUNCHER]);
     expect(code).toBe(0);
-    expect(outcomeOf(out, `${LAUNCHER}@0.6.1`)).toBe("absent");
+    expect(outcomeOf(out, `${LAUNCHER}@0.6.1-rc.1`)).toBe("absent");
     // Loud, not silent: the gap has to be a recorded fact on the run, every run.
     expect(out).toContain("::warning::");
     expect(out).toContain("LCLI-482");
@@ -235,17 +263,17 @@ describe("release-provenance gate outcomes", () => {
   });
 
   test("attestation PRESENT pinning a resolvable commit passes with no annotation", async () => {
-    const { code, out } = await runGate(["--post", "--version", "0.7.0", "--package", LAUNCHER]);
+    const { code, out } = await runGate(["--post", "--launcher-rc", "1", "--version", "0.7.0", "--package", LAUNCHER]);
     expect(code).toBe(0);
-    expect(outcomeOf(out, `${LAUNCHER}@0.7.0`)).toBe("ok");
+    expect(outcomeOf(out, `${LAUNCHER}@0.7.0-rc.1`)).toBe("ok");
     expect(out).not.toContain("::error::");
     expect(out).not.toContain("::warning::");
   });
 
   test("attestation PRESENT pinning a commit the API cannot resolve FAILS (the LCLI-481 defect)", async () => {
-    const { code, out } = await runGate(["--post", "--version", "0.7.1", "--package", LAUNCHER]);
+    const { code, out } = await runGate(["--post", "--launcher-rc", "1", "--version", "0.7.1", "--package", LAUNCHER]);
     expect(code).toBe(1);
-    expect(outcomeOf(out, `${LAUNCHER}@0.7.1`)).toBe("dangling");
+    expect(outcomeOf(out, `${LAUNCHER}@0.7.1-rc.1`)).toBe("dangling");
     expect(out).toContain("::error::");
     expect(out).toContain(GONE_SHA);
   });
@@ -254,7 +282,7 @@ describe("release-provenance gate outcomes", () => {
     // A gate whose only reachable remedy is deletion gets deleted. `--pre` re-checks published
     // history, so this finding never clears on its own and `publish` stays unreachable until
     // someone acts; the error text is where an operator finds out what the legitimate action is.
-    const { out } = await runGate(["--post", "--version", "0.7.1", "--package", LAUNCHER]);
+    const { out } = await runGate(["--post", "--launcher-rc", "1", "--version", "0.7.1", "--package", LAUNCHER]);
     expect(out).toContain("acknowledge_dangling_provenance");
     expect(out).toContain("KNOWN_DANGLING_THROUGH");
     expect(out).toContain("WILL NOT CLEAR ON ITS OWN");
@@ -265,40 +293,40 @@ describe("release-provenance gate outcomes", () => {
     // substring match were the deciding branch, this would pass silently and the gate would be
     // dead the day GitHub reworded its error. The verdict comes from 422 + the repository
     // itself resolving, so it still fails; the wording only labels the log line.
-    const { code, out } = await runGate(["--post", "--version", "0.7.5", "--package", LAUNCHER]);
+    const { code, out } = await runGate(["--post", "--launcher-rc", "1", "--version", "0.7.5", "--package", LAUNCHER]);
     expect(code).toBe(1);
-    expect(outcomeOf(out, `${LAUNCHER}@0.7.5`)).toBe("dangling");
+    expect(outcomeOf(out, `${LAUNCHER}@0.7.5-rc.1`)).toBe("dangling");
     expect(out).toContain("UNRECOGNISED wording");
   });
 
   test("a 422 whose repository is ALSO unreadable is inconclusive, not dangling", async () => {
     // Without being able to read the repo, a 422 corroborates nothing: it could be a token or
     // visibility problem rather than a destroyed commit.
-    const { code, out } = await runGate(["--post", "--version", "0.7.6", "--package", LAUNCHER]);
+    const { code, out } = await runGate(["--post", "--launcher-rc", "1", "--version", "0.7.6", "--package", LAUNCHER]);
     expect(code).toBe(0);
-    expect(outcomeOf(out, `${LAUNCHER}@0.7.6`)).toBe("inconclusive");
+    expect(outcomeOf(out, `${LAUNCHER}@0.7.6-rc.1`)).toBe("inconclusive");
     expect(out).toContain("is not readable");
   });
 
   test("a rate limit is inconclusive, never dangling, and never red", async () => {
-    const { code, out } = await runGate(["--post", "--version", "0.7.2", "--package", LAUNCHER]);
+    const { code, out } = await runGate(["--post", "--launcher-rc", "1", "--version", "0.7.2", "--package", LAUNCHER]);
     expect(code).toBe(0);
-    expect(outcomeOf(out, `${LAUNCHER}@0.7.2`)).toBe("inconclusive");
+    expect(outcomeOf(out, `${LAUNCHER}@0.7.2-rc.1`)).toBe("inconclusive");
     expect(out).toContain("rate limit");
     expect(out).not.toContain("::error::");
   });
 
   test("a 404 on the repository is inconclusive, not a missing commit", async () => {
-    const { code, out } = await runGate(["--post", "--version", "0.7.3", "--package", LAUNCHER]);
+    const { code, out } = await runGate(["--post", "--launcher-rc", "1", "--version", "0.7.3", "--package", LAUNCHER]);
     expect(code).toBe(0);
-    expect(outcomeOf(out, `${LAUNCHER}@0.7.3`)).toBe("inconclusive");
+    expect(outcomeOf(out, `${LAUNCHER}@0.7.3-rc.1`)).toBe("inconclusive");
     expect(out).toContain("NOT evidence about the commit");
   });
 
   test("a version at or below the baseline reports its pinned commit and does not fail", async () => {
-    const { code, out } = await runGate(["--post", "--version", "0.6.0", "--package", LAUNCHER]);
+    const { code, out } = await runGate(["--post", "--launcher-rc", "1", "--version", "0.6.0", "--package", LAUNCHER]);
     expect(code).toBe(0);
-    expect(outcomeOf(out, `${LAUNCHER}@0.6.0`)).toBe("baseline");
+    expect(outcomeOf(out, `${LAUNCHER}@0.6.0-rc.1`)).toBe("baseline");
     expect(out).toContain(GONE_SHA);
     expect(out).not.toContain("::error::");
   });
@@ -308,6 +336,8 @@ describe("release-provenance acknowledgement (the escape hatch)", () => {
   test("a waiver turns a dangling finding into a loud pass, naming the reference", async () => {
     const { code, out } = await runGate([
       "--post",
+      "--launcher-rc",
+      "1",
       "--version",
       "0.7.1",
       "--package",
@@ -316,7 +346,7 @@ describe("release-provenance acknowledgement (the escape hatch)", () => {
       "LCLI-481",
     ]);
     expect(code).toBe(0);
-    expect(outcomeOf(out, `${LAUNCHER}@0.7.1`)).toBe("acknowledged");
+    expect(outcomeOf(out, `${LAUNCHER}@0.7.1-rc.1`)).toBe("acknowledged");
     expect(out).toContain("LCLI-481");
     expect(out).toContain("does not persist");
     // Waived, not hidden: the commit is still named and the annotation is still loud.
@@ -331,7 +361,7 @@ describe("release-provenance acknowledgement (the escape hatch)", () => {
   });
 
   test("without a waiver the same finding is still red", async () => {
-    const { code } = await runGate(["--post", "--version", "0.7.1", "--package", LAUNCHER]);
+    const { code } = await runGate(["--post", "--launcher-rc", "1", "--version", "0.7.1", "--package", LAUNCHER]);
     expect(code).toBe(1);
   });
 });
@@ -449,6 +479,8 @@ describe("release-provenance propagation window", () => {
     const started = Date.now();
     const { code, out } = await runGate([
       "--post",
+      "--launcher-rc",
+      "1",
       "--version",
       "0.6.1",
       "--package",
@@ -464,11 +496,15 @@ describe("release-provenance propagation window", () => {
   });
 
   test("an attested release DOES give a lagging package its own window", async () => {
-    // 0.7.1's launcher is attested and the platform package is not, so the platform package is
-    // the lagging case. One second of window is enough to prove the branch is taken and that
-    // the window is per package rather than shared.
+    // 0.7.1-rc.1's launcher is attested and the platform package at 0.7.1 is not, so the
+    // platform package is the lagging case. One second of window is enough to prove the branch
+    // is taken and that the window is per package rather than shared. The retry must ask for
+    // the platform at X, its own version, not the launcher's rc.
+    attestationRequests.length = 0;
     const { out } = await runGate([
       "--post",
+      "--launcher-rc",
+      "1",
       "--version",
       "0.7.1",
       "--package",
@@ -480,6 +516,111 @@ describe("release-provenance propagation window", () => {
     ]);
     expect(out).toContain("propagation window left");
     expect(out).toContain(`${PLATFORM}@0.7.1`);
+    // Pass 1 plus at least one retry, each at the platform's own version.
+    expect(attestationRequests.filter((spec) => spec === `${PLATFORM}@0.7.1`).length).toBeGreaterThanOrEqual(2);
+    expect(attestationRequests).not.toContain(`${LAUNCHER}@0.7.1`);
+  });
+});
+
+describe("release-provenance --post checks what a Release run published (LCLI-625)", () => {
+  /**
+   * Since LCLI-621 a Release run publishes the six platform packages at X and the launcher at
+   * X-rc.N. The launcher at X is published later, by scripts/promote-latest.mjs. An earlier
+   * --post checked every package at X, so it asked for a launcher that did not exist yet and
+   * never looked at the rc the run did publish. These tests pin the exact set, read from the
+   * stub's request log rather than from the report, so a spec that was queried but not reported
+   * (or reported but not queried) cannot pass.
+   */
+  const manifest = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as {
+    name: string;
+    optionalDependencies?: Record<string, string>;
+  };
+  const platforms = Object.keys(manifest.optionalDependencies ?? {});
+
+  test("the default set is the six platforms at X and the launcher at X-rc.N, and nothing else", async () => {
+    // Guard the premise: the set is only "six platforms" while package.json pins six.
+    expect(manifest.name).toBe(LAUNCHER);
+    expect(platforms).toHaveLength(6);
+    expect(platforms).toContain(PLATFORM);
+
+    const expected = [...platforms.map((p) => `${p}@${SET_VERSION}`), `${LAUNCHER}@${SET_VERSION}-rc.${SET_RC}`].sort();
+
+    attestationRequests.length = 0;
+    const { code, out } = await runGate(["--post", "--version", SET_VERSION, "--launcher-rc", SET_RC]);
+
+    expect([...new Set(attestationRequests)].sort()).toEqual(expected);
+    expect(attestationRequests).toHaveLength(expected.length);
+    // The launcher at X is absent from the set: never queried, never reported.
+    expect(attestationRequests).not.toContain(`${LAUNCHER}@${SET_VERSION}`);
+    expect(outcomeOf(out, `${LAUNCHER}@${SET_VERSION}`)).toBeUndefined();
+
+    // The stub attests the launcher at X with a DESTROYED commit; a --post that asked for it
+    // would exit 1. The rc resolves and the platforms are unattested, so this passes.
+    expect(code).toBe(0);
+    expect(outcomeOf(out, `${LAUNCHER}@${SET_VERSION}-rc.${SET_RC}`)).toBe("ok");
+    for (const platform of platforms) expect(outcomeOf(out, `${platform}@${SET_VERSION}`)).toBe("absent");
+  });
+
+  test("the run says, in the log and the job summary, that the launcher at X was not checked and why", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lore-provenance-summary-"));
+    const summaryPath = join(dir, "summary.md");
+    writeFileSync(summaryPath, "");
+    try {
+      const { out } = await runGate(["--post", "--version", SET_VERSION, "--launcher-rc", SET_RC], {
+        GITHUB_STEP_SUMMARY: summaryPath,
+      });
+      const summary = readFileSync(summaryPath, "utf8");
+      for (const text of [out, summary]) {
+        expect(text).toContain(`${LAUNCHER}@${SET_VERSION} is NOT checked here`);
+        expect(text).toContain("provenance-missing, byte-bound to the qualified rc");
+        expect(text).toContain("is not a substitute for provenance");
+        expect(text).toContain("OPAG-127");
+      }
+      // The summary table names the rc launcher, not the launcher at X.
+      expect(summary).toContain(`\`${LAUNCHER}@${SET_VERSION}-rc.${SET_RC}\``);
+      expect(summary).not.toContain(`\`${LAUNCHER}@${SET_VERSION}\``);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a --package override cannot route the launcher back to X", async () => {
+    attestationRequests.length = 0;
+    const { code } = await runGate([
+      "--post",
+      "--version",
+      SET_VERSION,
+      "--launcher-rc",
+      SET_RC,
+      "--package",
+      LAUNCHER,
+    ]);
+    expect(code).toBe(0);
+    expect(attestationRequests).toEqual([`${LAUNCHER}@${SET_VERSION}-rc.${SET_RC}`]);
+  });
+
+  test("--post without --launcher-rc fails closed rather than guessing N", async () => {
+    attestationRequests.length = 0;
+    const { code, out } = await runGate(["--post", "--version", SET_VERSION]);
+    expect(code).toBe(2);
+    expect(out).toContain("--post needs --launcher-rc N");
+    expect(attestationRequests).toHaveLength(0);
+  });
+
+  for (const bad of ["0", "01", "-1", "1.5", "abc", "1 ", "rc.1", ""]) {
+    test(`a malformed --launcher-rc ${JSON.stringify(bad)} fails closed`, async () => {
+      attestationRequests.length = 0;
+      const { code, out } = await runGate(["--post", "--version", SET_VERSION, "--launcher-rc", bad]);
+      expect(code).toBe(2);
+      expect(out).toContain("--launcher-rc must be a positive integer with no leading zero");
+      expect(attestationRequests).toHaveLength(0);
+    });
+  }
+
+  test("--launcher-rc is refused on --pre, whose behaviour it does not change", async () => {
+    const { code, out } = await runGate(["--pre", "--launcher-rc", "1", "--package", LAUNCHER]);
+    expect(code).toBe(2);
+    expect(out).toContain("--launcher-rc applies only to --post");
   });
 });
 

@@ -1373,6 +1373,52 @@ check, and the root launcher only against a locally generated `SHA256SUMS.txt`,
 which is tamper-evidence on one download and not provenance. A consumer told
 "the checksums are verified" will assume more than is true for the seventh.
 
+### The `X` launcher on `latest` is provenance-missing, byte-bound to the qualified rc
+
+Since LCLI-621 the launcher reaches `latest` by a separate publish. A Release
+run stages the six platform packages at `X` and the launcher at `X-rc.N`.
+The launcher at `X` reaches npm later, when `scripts/promote-latest.mjs`
+publishes it with `--tag latest` from the operator's machine. That publish
+does not go through CI's OIDC trusted publishing, so it produces no
+attestation. This does not depend on LCLI-482: the launcher at `X` would stay
+unattested even with trusted publishing fixed. Record it in the release notes
+and the release-truth record as **provenance-missing, byte-bound to the
+qualified rc**. That is the wording opum-agent ruled on OPAG-127 (AC4).
+
+Two checks tie those bytes to what was tested. The equivalence gate,
+`scripts/launcher-equivalence.mjs`, proves the `X` launcher equals the
+qualified `X-rc.N` once `X-rc.N` is replaced with `X`. The pass-1 receipt's
+`finalTarball.sha256` pins the exact `X` tarball, and `promote-latest.mjs`
+re-checks both before it publishes. **They do not substitute for provenance,
+and they are not stronger than it.** They answer "are these the same bytes
+as the ones tested?" Provenance answers "where were these built, and from
+what?": the workflow, the commit and the runner. Neither answer contains the
+other. When a consumer asks whether the `X` launcher is attested, the answer
+is no. Do not offer the digest as if it were an attestation.
+
+This is not a lore-only gap. opum-agent's ruling on LCLI-625 (2026-09-27)
+reports that OPAG-127 read the packuments of quest 0.10.0 and 0.11.0, lore
+0.11.0, and both CLIs' `darwin-arm64` platform packages at 0.11.0, and found
+no attestations key on any of them. That was relayed to this repository, not
+re-measured here. The fix is to move the
+final publish into a CI job that holds `id-token: write`. It belongs to
+opum-agent's **OPAG-127**, for **both** CLIs: constitution Article 3.5
+requires lore and quest to promote the same way (quest-cli's mirror is
+QCLI-399). Do not file it as a lore-only task, and do not move lore's final
+publish into CI on its own.
+
+**What `provenance-post` checks (LCLI-625).** `release.yml`'s
+`provenance-post` job runs `scripts/release-provenance.mjs --post
+--launcher-rc N`, with `N` from this dispatch's `launcher_rc` input. It checks
+what the Release run published: the six platform packages at `X` and the
+launcher at `X-rc.N`. It never checks `@opum-ai/lore@X`, which the run did not
+publish. The script refuses `--post` without a well-formed `--launcher-rc`
+(exit 2) rather than guessing `N`. Each run prints, in the log and the job
+summary, that the `X` launcher was not checked and why. Before LCLI-625 it
+checked every package at `X`. On a `publish: true` run that meant asking for
+a launcher that did not exist yet, and never checking the rc the run did
+publish.
+
 ## Dry-run rehearsal (verified)
 
 The full dry-run path — everything up to but not including a real `npm
