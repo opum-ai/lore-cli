@@ -358,7 +358,10 @@ type PublishSite = { path: string; text: string };
  * text is scanned, whatever its directory or extension.
  */
 const PUBLISH_SCAN_EXCLUDED: RegExp[] = [
-  /\.md$/, // prose: runbooks, CHANGELOG, CLAUDE.md and ADRs describe `npm publish` by the dozen
+  // prose: runbooks, CHANGELOG, CLAUDE.md and ADRs describe `npm publish` by the dozen. ONE region of
+  // one .md file is EXECUTED, and is scanned anyway: README.md's quickstart block, which ci.yml runs
+  // with bash through scripts/readme-quickstart.sh (see readmeQuickstartBlock).
+  /\.md$/,
   /^\.quest\//, // tracker records: prose in JSON, never executed
   /^docs\//, // the documentation bundle, prose (its .md is excluded above; this covers any data beside it)
   /^archive\//, // retired material kept for history, never executed
@@ -369,7 +372,29 @@ const PUBLISH_SCAN_EXCLUDED: RegExp[] = [
   /^test\//,
 ];
 
-const SHELL_LIKE = /\.(sh|bash|zsh|ya?ml|toml)$/;
+const SHELL_LIKE = /(\.(sh|bash|zsh|ya?ml|toml)|#quickstart)$/;
+
+/** The path the README quickstart block is scanned under: shell, per SHELL_LIKE. */
+const QUICKSTART_PATH = "README.md#quickstart";
+
+/**
+ * README.md's executed region, sliced exactly as scripts/readme-quickstart.sh slices it: the lines
+ * strictly between `<!-- quickstart:start -->` and `<!-- quickstart:end -->`, code-fence lines
+ * dropped (its `awk ... | sed -e '/^```/d'`). That script runs the result with bash in ci.yml.
+ */
+function readmeQuickstartBlock(readme: string): string {
+  const kept: string[] = [];
+  let on = false;
+  for (const line of readme.split("\n")) {
+    if (line.includes("<!-- quickstart:start -->")) {
+      on = true;
+      continue;
+    }
+    if (line.includes("<!-- quickstart:end -->")) on = false;
+    if (on && !line.startsWith("```")) kept.push(line);
+  }
+  return kept.join("\n");
+}
 const JS_LIKE = /\.(js|mjs|cjs|ts|mts|cts|tsx|jsx)$/;
 
 /**
@@ -587,6 +612,10 @@ describe("release.yml enforces constitution Article 3 (LCLI-613)", () => {
       if (bytes.subarray(0, 8000).includes(0)) continue; // binary
       files.push({ path, text: bytes.toString("utf8") });
     }
+    // README.md is excluded as prose, but its quickstart block is executed, so it is scanned too.
+    const quickstart = readmeQuickstartBlock(readFileSync(join(repo, "README.md"), "utf8"));
+    expect(quickstart).toContain("quest init"); // positive control: the markers were found
+    files.push({ path: QUICKSTART_PATH, text: quickstart });
     // Positive control: the scan read every tracked non-excluded text file, the known sites' among them.
     expect(files.length).toBeGreaterThan(100);
     for (const path of [
@@ -650,6 +679,27 @@ describe("release.yml enforces constitution Article 3 (LCLI-613)", () => {
       expect(sites.length).toBe(1);
       expect(PUBLISH_SITE_ALLOWLIST).not.toContainEqual(sites[0]);
     });
+
+  test("a publish inside README.md's executed quickstart block is flagged; the same line as prose is not scanned", () => {
+    const readme = [
+      "# lore",
+      "Run `npm publish` yourself if you fork this.",
+      "<!-- quickstart:start -->",
+      "```sh",
+      "lore init",
+      "npm publish ./x.tgz",
+      "```",
+      "<!-- quickstart:end -->",
+      "",
+    ].join("\n");
+    const block = readmeQuickstartBlock(readme);
+    expect(block).toBe("lore init\nnpm publish ./x.tgz");
+    const sites = publishSites([{ path: QUICKSTART_PATH, text: block }]);
+    expect(sites).toEqual([{ path: QUICKSTART_PATH, text: "npm publish ./x.tgz" }]);
+    expect(PUBLISH_SITE_ALLOWLIST).not.toContainEqual(sites[0]);
+    // A shell comment inside the block is a comment to bash too.
+    expect(publishSites([{ path: QUICKSTART_PATH, text: "# npm publish x" }])).toEqual([]);
+  });
 
   test("the scanner skips full-line comments, and only full-line comments", () => {
     expect(publishSites([{ path: "scripts/x.sh", text: "# npm publish x.tgz\n" }])).toEqual([]);
