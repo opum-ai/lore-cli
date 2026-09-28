@@ -185,6 +185,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `record.version` itself must be a plain `X.Y.Z` string. The two repositories give identical
   verdicts, measured by each reading the other's rule by ref: 0 differences over 2583 inputs, with
   a positive control.
+- **`release.yml`'s post-publish visibility wait refuses a malformed `REGISTRY_WINDOW_SECONDS`
+  before it reads anything** (LCLI-630). The variable went into bash arithmetic unchecked. This was
+  measured by running the step's own `run:` block as `bash -e` in an `ubuntu:24.04` container,
+  bash 5.2.21, which is not a GitHub runner. There, `abc` or an empty value silently made the
+  window 0 seconds, so a lagging package got a green step and no content check. `30m` or `08`
+  left the deadline empty, and against a lagging registry the step looped until the job timeout.
+  An arithmetic subscript such as `x[$(cmd)]` ran `cmd` inside the `publish` job, which holds
+  `id-token: write`. No such variable is set today at repository, `release`-environment or
+  visible organisation level, so the hole has not been live. The step now refuses anything
+  outside the shared `REGISTRY_WINDOW` grammar, whole seconds from 0 to 999999999 with no leading
+  zero, with exit 2. It does this before any registry read, deadline or sleep. The value is shown
+  `%q`- and `%25`-escaped on one `::error::` line. A test pins the pattern to
+  `REGISTRY_WINDOW.source`. The guard still runs only after the publish; checking both window
+  variables before the first publish is LCLI-634.
 
 ## [0.11.0] - 2026-09-27
 
