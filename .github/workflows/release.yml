@@ -1395,11 +1395,17 @@ jobs:
     # itself was skipped (the dry-run dispatches, where nothing was published).
     #
     # THE FAILED CASE IS THE ONE THAT MATTERS MOST, which is why this is not a bare `needs:`.
-    # release.yml's `publish_or_skip` is resumable precisely so a release can complete across
-    # two dispatches: dispatch 1 publishes six platform packages from commit X and dies before
-    # the launcher, dispatch 2 publishes the launcher from commit Y. That partial failure is
-    # exactly when one version ends up carrying two different pinned commits — and the default
-    # `needs:`-only behaviour would skip this check on it.
+    # A publish can die partway, with some packages on the registry and the rest not. That
+    # partial state is when this check matters most, and the default `needs:`-only behaviour
+    # would skip it. `publish_or_skip` resumes it: it skips a package already on the registry
+    # ONLY when the registry's dist.integrity equals this run's tarball. So the sanctioned
+    # resume is "Re-run failed jobs" on the SAME run (same commit, same tarballs). A fresh
+    # dispatch rebuilds the platforms, and conflicts on them unless the rebuild is
+    # byte-identical; the publish step's "already on the registry with different bytes"
+    # error names the remedies when it does conflict. A
+    # resume by a different run, or by scripts/publish-release.sh, gets past that check only
+    # when its tarballs are byte-identical (measured once, on one commit). Then one version
+    # holds packages published by two different runs, and their pinned commits can differ.
     if: ${{ !cancelled() && needs.publish.result != 'skipped' }}
     runs-on: ubuntu-latest
     permissions:
@@ -1438,11 +1444,18 @@ jobs:
         # job in the workflow, so unlike provenance-pre a failure here blocks nothing; there is
         # deliberately no acknowledgement input for it.
         #
-        # The package set and version come from the checked-out package.json (root name +
-        # every optionalDependencies key). verify-versions has already asserted that those
-        # pins are exact and equal to the root version, so that IS this release's package set.
+        # WHAT IT CHECKS (LCLI-625): what this run actually published -- the six platform
+        # packages at X and the launcher at X-rc.N, never the launcher at X. The names and X
+        # come from the checked-out package.json (root name + every optionalDependencies key;
+        # verify-versions has already asserted those pins are exact and equal to X). N is this
+        # dispatch's launcher_rc, the same input the package and publish jobs stage with, passed
+        # explicitly because the script refuses --post without it and validates it itself. The
+        # launcher at X reaches npm later, through scripts/promote-latest.mjs, and carries no
+        # provenance ("provenance-missing, byte-bound to the qualified rc"; opum-agent's
+        # OPAG-127 owns restoring it); the script prints that on every run.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LAUNCHER_RC: ${{ inputs.launcher_rc }}
           # Attestations propagate on the registry's own schedule — the same read-API lag
           # LCLI-460 documents for tarballs (0.5.0 took ~25 minutes to become visible). Without
           # a bounded wait, a genuinely attested release would be reported as unattested purely
@@ -1452,4 +1465,4 @@ jobs:
           # the structural case, and spending 180s per package to re-learn it would make every
           # release slower for nothing.
           PROVENANCE_WAIT_SECONDS: ${{ vars.PROVENANCE_WAIT_SECONDS || 180 }}
-        run: node scripts/release-provenance.mjs --post --wait-seconds "$PROVENANCE_WAIT_SECONDS"
+        run: node scripts/release-provenance.mjs --post --launcher-rc "$LAUNCHER_RC" --wait-seconds "$PROVENANCE_WAIT_SECONDS"

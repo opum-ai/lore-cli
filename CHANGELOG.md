@@ -119,6 +119,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   emits none). It runs in `release.yml`'s `package` job and in `scripts/publish-release.sh`, and
   both launchers get the LCLI-510 shipped-README assertion and install-sanity.
 
+### Fixed
+
+- **`provenance-post` checks what a Release run published: the platforms at `X` and the launcher
+  at `X-rc.N`** (LCLI-625). Since LCLI-621 a Release run stages the launcher as `X-rc.N`, but
+  `scripts/release-provenance.mjs --post` still checked every package at `X`. On a
+  `publish: true` run it asked for `@opum-ai/lore@X`, which did not exist yet, and never checked
+  the rc the run did publish. `--post` now requires `--launcher-rc N`. `release.yml` passes it
+  from the `launcher_rc` input, and the script refuses a missing or malformed value with exit 2.
+  The launcher's version is chosen by package name, so a `--package` override cannot route it
+  back to `X`. `--pre` is unchanged, and refuses `--launcher-rc`. Each `--post` run says, in the
+  log and the job summary, that the `X` launcher was not checked. That launcher is published
+  later by `scripts/promote-latest.mjs` and carries no provenance. The release runbook now
+  records it as "provenance-missing, byte-bound to the qualified rc". The equivalence gate and
+  `finalTarball.sha256` bind its bytes to the qualified rc, but they do not substitute for
+  provenance. Restoring provenance on the final publish belongs to opum-agent's OPAG-127, for
+  both CLIs.
+
 ## [0.11.0] - 2026-09-27
 
 ### Upgrade notice: schema drift on every repository that commits `.lore/schemas/`
