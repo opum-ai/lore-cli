@@ -1298,6 +1298,40 @@ jobs:
         env:
           REGISTRY_WINDOW_SECONDS: ${{ vars.REGISTRY_WINDOW_SECONDS || 1800 }}
         run: |
+          # THE WINDOW IS CHECKED FIRST (LCLI-630), before any registry read or wait. Unchecked, the
+          # value went straight into $(( )) below, and on the runner's bash 5.2 (measured in an
+          # ubuntu:24.04 container, bash 5.2.21, this block run as `bash -e <file>`, which is how a
+          # step with no `shell:` runs): abc or an empty value is read as a variable name, so the
+          # window was silently 0s and a lagging package got a green step and no content check;
+          # 30m or 08 is an arithmetic error that aborts only its own line, bash -e carries on with
+          # `deadline` EMPTY, every deadline test fails with "integer expression expected", and
+          # against a lagging package the loop NEVER EXITS -- it sleeps 60s at a time until the
+          # job's own timeout, which this job does not set; and a value such as x[$(cmd)] is
+          # evaluated as an expression whose subscript RUNS cmd, in the one job holding
+          # id-token: write. The measurement is recorded on LCLI-630.
+          #
+          # ONE GRAMMAR, the one scripts/publish-release.sh and scripts/readme-readback.sh refuse by
+          # the same `window_re` literal and scripts/promote-latest.mjs exports as REGISTRY_WINDOW:
+          # 0 to 999999999, no leading zero, nothing but digits.
+          # test/lcli630-release-window-guard.test.ts holds this literal to REGISTRY_WINDOW.source
+          # and runs this block. An unset or empty variable never reaches here as empty: the `||
+          # 1800` in `env:` above is where the default lives, so an empty value is refused too.
+          #
+          # The value is shown only through printf %q, so a newline or control character prints as
+          # an escape on the one ::error:: line. Every % in that is then written %25, because
+          # workflow-command escaping, as documented, decodes %0A, %0D and %25 in a message, so an
+          # unescaped %0A in the value would render as a line break in the annotation. That
+          # decoding is GitHub's documented behaviour, not something measured for LCLI-630.
+          #
+          # Exit 2, like the scripts' refusals. The publish above has already happened, so this red
+          # X means "not verified", not "not published", and the message says so.
+          window_re='^(0|[1-9][0-9]{0,8})$'
+          if ! [[ $REGISTRY_WINDOW_SECONDS =~ $window_re ]]; then
+            shown="$(printf '%q' "$REGISTRY_WINDOW_SECONDS")"
+            printf '::error::REGISTRY_WINDOW_SECONDS must be a whole number of seconds (0 to 999999999, no leading zero); got %s. It comes from vars.REGISTRY_WINDOW_SECONDS, a repository or release-environment variable: correct it, or delete it for the 1800s default. Nothing was verified: the registry was not read and no dist.shasum was compared (LCLI-630). The publish itself is not in question -- do NOT unpublish.\n' "${shown//%/%25}"
+            exit 2
+          fi
+
           # No associative array on purpose: `declare -A` needs bash 4+, which the runner has
           # but a maintainer's macOS /bin/bash (3.2) does not -- and code in a release path
           # that cannot be run locally cannot be tested locally. The content loop below
