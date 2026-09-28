@@ -133,6 +133,31 @@
  *           at all — "provenance-missing, byte-bound to the qualified rc" — and restoring it is
  *           opum-agent's OPAG-127, for both CLIs; this mode says so on every run.
  *
+ *           NOT PUBLISHED IS NOT ABSENT (LCLI-628). npm's attestation endpoint answers a version
+ *           that was never published with the SAME 404 `{"error":"Not found"}` it gives a
+ *           published version with no attestation — measured 2026-09-28 (npm 12.1.0) against
+ *           @opum-ai/lore@0.11.0 (published, unattested) and @opum-ai/lore@9.9.9-rc.1 (never
+ *           published): identical status, identical body. So an attestation 404 alone cannot say
+ *           which one it is. That matters on the run this job exists for: release.yml publishes the
+ *           six platform packages first and the launcher X-rc.N LAST, and provenance-post still
+ *           runs when publish failed, so a publish that died before the launcher used to report the
+ *           launcher `absent` with the LCLI-482 manual-publish explanation — wrong cause — and, if
+ *           any platform package was attested, spend the whole propagation window polling for an
+ *           attestation on a version that does not exist.
+ *
+ *           So pass 1 of --post reads the attestation FIRST, exactly as before, and only when that
+ *           says `absent` asks whether the version exists at all (checkPublishedOne ->
+ *           versionOnRegistry). Version document 404 AND the package's packument answers without
+ *           it -> `not-published`: its own outcome and warning, naming a partial publish, never
+ *           `absent`, never waited on. Version present -> `absent`, as before. Anything short of
+ *           that (network, 5xx, a 404 for the whole package, no versions map) -> unknown, which is
+ *           NEVER read as not-published: "existence unknown AND attestation 404" is reported as
+ *           `inconclusive`. The existence read never runs in front of the attestation: the
+ *           registry's read API lags a publish (LCLI-460), and an existence-first order let a stale
+ *           packument report a readable, DANGLING attestation as `not-published` without reading
+ *           it (see checkPublishedOne). --pre does not take this read: every version it checks
+ *           comes from the packument it already read.
+ *
  * THE BASELINE, AND WHY --pre WOULD OTHERWISE BE USELESS
  *
  * Every attested version at or below KNOWN_DANGLING_THROUGH already dangles, permanently. A
@@ -164,8 +189,8 @@
  *   is how this gate becomes ceremony.
  *
  * EXIT CODES
- *   0  pass — including "no attestation", "could not determine", and "acknowledged", all
- *      annotated loudly
+ *   0  pass — including "no attestation", "not published", "could not determine", and
+ *      "acknowledged", all annotated loudly
  *   1  gate failure — an attestation pins a commit GitHub definitively does not have
  *   2  usage error
  *   3  this script itself failed (a bug here, not a finding about any artifact)
@@ -216,8 +241,13 @@ const OUTCOME = {
   ACKNOWLEDGED: "acknowledged",
   /** at or below KNOWN_DANGLING_THROUGH — the accepted, unrepairable 2026-09-10 loss */
   BASELINE: "baseline",
-  /** no attestation published for this package@version */
+  /** the version is on the registry, with no attestation published for it */
   ABSENT: "absent",
+  /**
+   * --post only: the package's packument answered and does not list this version, so there is
+   * no attestation to be missing — the version itself is (see NOT PUBLISHED IS NOT ABSENT).
+   */
+  NOT_PUBLISHED: "not-published",
   /** attestation present but not in a shape we can read a commit from */
   UNREADABLE: "unreadable",
   /** the network, not the artifact, is what could not be resolved */
@@ -430,7 +460,9 @@ async function readProvenance(name, version) {
     return { state: "error", detail: `registry request failed: ${describeError(error)}` };
   }
   // 404 is npm's answer for "this version has no attestations", which is the normal,
-  // expected answer for every manually published version.
+  // expected answer for every manually published version — AND, byte for byte, for a version
+  // that was never published (LCLI-628). `absent` here therefore means "no attestation"; it is
+  // checkPublishedOne's existence read, not this 404, that says whether the version is there.
   if (response.status === 404) return { state: "absent", detail: "registry has no attestations for this version" };
   if (!response.ok) return { state: "error", detail: `registry returned HTTP ${response.status}` };
 
@@ -677,6 +709,19 @@ async function checkOne(name, version, expectedRepo) {
  * @param {string} name
  */
 async function publishedVersions(name) {
+  return (await packumentVersions(name)).sort(compareVersions);
+}
+
+/**
+ * The version keys of a package's abbreviated packument, in the registry's key order. Throws
+ * RemoteUnavailableError for EVERY answer that is not "200 with a versions map" — including a
+ * 404 for the whole package — so a caller can never mistake a registry that did not answer for
+ * one that answered "no such version".
+ *
+ * @param {string} name
+ * @returns {Promise<string[]>}
+ */
+async function packumentVersions(name) {
   let response;
   try {
     response = await request(`${REGISTRY}/${encodeURIComponent(name)}`, {
@@ -694,7 +739,106 @@ async function publishedVersions(name) {
   if (!versions || typeof versions !== "object") {
     throw new RemoteUnavailableError(`the packument for ${name} carried no versions map`);
   }
-  return Object.keys(versions).sort(compareVersions);
+  return Object.keys(versions);
+}
+
+/**
+ * Is package@version on the registry at all? (LCLI-628; see NOT PUBLISHED IS NOT ABSENT.)
+ *
+ * Same shape as the GitHub side's "422 corroborated by the repository resolving": a VERSIONED
+ * 404 is never believed on its own, because it looks the same whether the version is missing or
+ * something between here and the registry is. It is believed only once a PACKAGE-level read has
+ * answered and does not list the version either.
+ *
+ *   version document 200                         -> published
+ *   version document 404, packument 200 without  -> not-published. The only way to get it.
+ *   version document 404, packument 200 with     -> published (the package-level answer wins;
+ *                                                   two reads of a propagating registry can
+ *                                                   disagree for a while)
+ *   version document 404, packument unreadable   -> unknown (thrown fetch, 5xx, a 404 for the
+ *                                                   whole package, no versions map)
+ *   version document anything else, or thrown    -> unknown
+ *
+ * `unknown` is NEVER not-published: see checkPublishedOne for what it does instead.
+ *
+ * @param {string} name
+ * @param {string} version
+ * @returns {Promise<{state: "published"|"not-published"|"unknown", detail: string}>}
+ */
+async function versionOnRegistry(name, version) {
+  let response;
+  try {
+    response = await request(`${REGISTRY}/${encodeURIComponent(name)}/${encodeURIComponent(version)}`, {
+      accept: "application/json",
+    });
+  } catch (error) {
+    return { state: "unknown", detail: `the registry did not answer for ${name}@${version}: ${describeError(error)}` };
+  }
+  if (response.ok) return { state: "published", detail: `the registry serves ${name}@${version}` };
+  if (response.status !== 404) {
+    return { state: "unknown", detail: `the registry answered HTTP ${response.status} for ${name}@${version}` };
+  }
+
+  let versions;
+  try {
+    versions = await packumentVersions(name);
+  } catch (error) {
+    if (!(error instanceof RemoteUnavailableError)) throw error;
+    return {
+      state: "unknown",
+      detail: `the registry answered 404 for ${name}@${version}, and a 404 alone is not proof of absence; the package-level read that would corroborate it failed: ${error.message}`,
+    };
+  }
+  if (versions.includes(version)) {
+    return {
+      state: "published",
+      detail: `the packument for ${name} lists ${version} (its version document did not answer yet)`,
+    };
+  }
+  return {
+    state: "not-published",
+    detail: `the registry answered 404 for ${name}@${version}, and ${name}'s packument answers without it (${versions.length} version(s) listed)`,
+  };
+}
+
+/**
+ * --post pass 1 for one package@version: the attestation FIRST, then — only when it says `absent`
+ * — whether the version exists at all (LCLI-628).
+ *
+ * WHY THIS ORDER, AND NOT EXISTENCE FIRST. An earlier revision of this fix asked for existence
+ * first and returned `not-published` without reading the attestation. But the version document
+ * and packument lag a publish (LCLI-460 measured the read API up to ~25 minutes behind), and a
+ * partial publish is exactly when --post runs soonest after one. So a stale packument could say
+ * "not listed" while the attestation was already readable — and a DANGLING pin was then reported
+ * `not-published`, exit 0, never having been looked at (the LCLI-628 reviewer's F1, measured in
+ * the stub; the pre-fix code said `dangling`, exit 1). The existence read can only ever REFINE an
+ * attestation 404; it must never stand in front of the one finding this script fails on.
+ *
+ * @param {string} name
+ * @param {string} version
+ * @param {string} expectedRepo
+ */
+async function checkPublishedOne(name, version, expectedRepo) {
+  const result = await checkOne(name, version, expectedRepo);
+  // Every answer other than `absent` stands as checkOne gave it: a readable attestation proves the
+  // version exists, and an unreadable or unreachable one is already reported as such.
+  if (result.outcome !== OUTCOME.ABSENT) return result;
+
+  const existence = await versionOnRegistry(name, version);
+  if (existence.state === "not-published") {
+    return { name, version, spec: `${name}@${version}`, outcome: OUTCOME.NOT_PUBLISHED, detail: existence.detail };
+  }
+  // Existence unknown, and the attestation endpoint's 404 cannot say whether the version exists
+  // either: neither `absent` (which asserts it is published) nor `not-published` (which asserts
+  // it is not) is warranted.
+  if (existence.state === "unknown") {
+    return {
+      ...result,
+      outcome: OUTCOME.INCONCLUSIVE,
+      detail: `could not confirm ${name}@${version} is on the registry (${existence.detail}), and the attestation endpoint's answer (${result.detail}) is the same for a version that was never published — so whether it is published without an attestation, or not published at all, is unknown`,
+    };
+  }
+  return result;
 }
 
 /** The launcher plus every platform package it pins — this release's full package set. */
@@ -813,10 +957,12 @@ async function runPost(options, manifest) {
   ];
   for (const note of notes) console.log(`       ${note}`);
 
-  // PASS 1 — no waiting. Ask every package once.
+  // PASS 1 — no waiting. Ask every package once: what does its attestation say, and, only when
+  // that is a 404, is it on the registry at all (LCLI-628). A `not-published` result is final here — pass 2 only ever
+  // revisits `absent`, which now means "published, no attestation yet" and nothing else.
   const results = [];
   for (const spec of specs) {
-    results.push(await checkOne(spec.name, spec.version, options.expectedRepo));
+    results.push(await checkPublishedOne(spec.name, spec.version, options.expectedRepo));
   }
 
   // PASS 2 — propagation grace, but ONLY when it can possibly pay out. Attestations lag the
@@ -827,6 +973,8 @@ async function runPost(options, manifest) {
   // whole window to re-learn what pass 1 already established. Each package that does wait
   // gets its OWN deadline; an earlier revision shared one across all seven, so the first
   // package could consume the entire window and leave the rest no grace at all.
+  // A version that is not on the registry gets no window at all (LCLI-628): there is no
+  // attestation propagating for a version nobody published, however many siblings are attested.
   // `commit` is absent on the early-return arms (provenance absent/unreadable/error), which
   // is precisely the case this asks about: no commit means not attested. Reading a property
   // that only some union arms carry is intentional here, not an oversight.
@@ -887,6 +1035,7 @@ function report(checked, mode, options) {
   const dangling = results.filter((r) => r.outcome === OUTCOME.DANGLING);
   const waived = results.filter((r) => r.outcome === OUTCOME.ACKNOWLEDGED);
   const absent = results.filter((r) => r.outcome === OUTCOME.ABSENT);
+  const notPublished = results.filter((r) => r.outcome === OUTCOME.NOT_PUBLISHED);
   const inconclusive = results.filter((r) => r.outcome === OUTCOME.INCONCLUSIVE || r.outcome === OUTCOME.UNREADABLE);
 
   // NOTHING CHECKED IS NOT A PASS. Reachable if the packument shape changes, the package is
@@ -914,6 +1063,13 @@ function report(checked, mode, options) {
       `::warning::${absent.length} package(s) in this ${mode} check have NO provenance attestation: ${absent.map((r) => r.spec).join(", ")}. This is expected and is not a gate failure — OIDC trusted publishing is broken for this repository (LCLI-482, still OPEN), so releases go out through the manual scripts/publish-release.sh path, which cannot mint an attestation. It is recorded on every release run rather than passed over silently: these versions ship without verifiable provenance, and that is a standing gap, not a resolved one.`,
     );
   }
+  if (notPublished.length > 0) {
+    // Deliberately NOT the LCLI-482 text above: that explains a published version with no
+    // attestation, and these versions are not published at all (LCLI-628).
+    console.log(
+      `::warning::${notPublished.length} package version(s) this ${mode} check expected are NOT ON THE REGISTRY: ${notPublished.map((r) => r.spec).join(", ")}. This is not a missing attestation, and LCLI-482 does not explain it: each package's packument answered and does not list that version. The likely cause is a PARTIAL PUBLISH — the publish job stopped before these went out. release.yml publishes the platform packages first and the launcher X-rc.N last, so a publish that died partway leaves the launcher unpublished. The one other explanation is the registry read API lagging a publish that did succeed (LCLI-460); the publish job's own read-back step is where that shows. No propagation window was spent waiting on these: there is no attestation to wait for on a version nobody published. The sanctioned resume is "Re-run failed jobs" on the same run. This check does not fail the run.`,
+    );
+  }
   for (const r of inconclusive) {
     console.log(
       `::warning::${r.spec}: provenance could NOT be determined — ${r.detail}. This is a failure to check, not a failed check: it is explicitly not being reported as a dangling commit, and it is not failing the run.`,
@@ -924,6 +1080,7 @@ function report(checked, mode, options) {
     dangling,
     waived,
     absent,
+    notPublished,
     verifiedNothing,
     acknowledge: options.acknowledge,
     notes: checked.notes,
@@ -940,9 +1097,11 @@ function writeStepSummary(mode, rows, state) {
       ? `**FAILED** — ${state.dangling.length} attestation(s) pin a commit GitHub cannot resolve (LCLI-481).`
       : state.waived.length > 0
         ? `**WAIVED for this dispatch** against "${state.acknowledge}" — ${state.waived.length} dangling finding(s) are still dangling.`
-        : state.absent.length > 0
-          ? `Passed, with ${state.absent.length} package(s) shipping no provenance at all (LCLI-482, open).`
-          : "Passed.";
+        : state.notPublished.length > 0
+          ? `Passed, but ${state.notPublished.length} package version(s) this release should have published are **NOT ON THE REGISTRY** — a partial publish, or read-API lag (LCLI-460); see the job log. That is not a missing attestation${state.absent.length > 0 ? `; separately, ${state.absent.length} published package(s) ship no provenance at all (LCLI-482, open)` : ""}.`
+          : state.absent.length > 0
+            ? `Passed, with ${state.absent.length} package(s) shipping no provenance at all (LCLI-482, open).`
+            : "Passed.";
   const lines = [
     `### Release provenance (${mode})`,
     "",
