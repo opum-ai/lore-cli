@@ -833,8 +833,20 @@ lore read adr/0021-typed-authored-relationships-and-claim-state
 |---|---|
 | **Args** | `<id>` (normalized like [`rename`](#rename), so path/`.md`/`./` forms resolve) |
 | **Key flags** | none |
-| **Output** | `kind: read.concept` — `id`, `path`, `type`, `frontmatter`, `body`, `tokenEstimate`. Plain/pretty is one header line, a blank line, then the body verbatim, so `lore read <id> \| tail -n +3` recovers the body byte-for-byte |
+| **Output** | `kind: read.concept` — `id`, `path`, `type`, `frontmatter`, `body`, `tokenEstimate`. **`--json` and plain** (`--plain`, or any non-TTY stdout) carry the body **verbatim**: plain is one header line, a blank line, then the body, so `lore read <id> \| tail -n +3` recovers it byte-for-byte. **Pretty** (a TTY with neither flag) prints the same header line and a blank line, then the body **rendered** for the terminal; the frontmatter is never rendered |
 | **Exit** | `0` ok · `2` bad usage (missing/extra `<id>`, unknown flag) · `3` `<id>` not found |
+
+Pretty rendering (LCLI-615) covers headings, emphasis, lists and task lists,
+block quotes, fenced code, links and GFM tables, word-wrapped to the terminal's
+width (80 columns when it reports none). Code blocks are never reflowed; an
+over-wide code line is cut and ends in `…`. Links print as `text (url)`, never as
+terminal hyperlinks. Every escape sequence, control byte and bidi or invisible
+format character in the body is removed before rendering, including ones that
+only appear once a character reference such as `&#x202E;` is decoded, so a
+document cannot drive the terminal it is read in. `NO_COLOR` removes all ANSI
+styling and keeps the layout. There is no flag for this: `--plain` is the opt-out,
+and pretty output is not a parsing target
+([CLI contract §1.2](cli-contract.md#12-pretty)).
 
 It is a **separate operation** from [`context`](#context) rather than a flag on
 it, deliberately. `context` assembles and is lossy by design — it selects,

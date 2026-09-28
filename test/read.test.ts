@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type RunContext, run } from "../src/cli";
 import { runContext } from "../src/commands/context";
 import { runRead } from "../src/commands/read";
 import type { OutputContext } from "../src/output";
@@ -140,5 +141,154 @@ describe("lore read — the exact, unbudgeted read (AC#3)", () => {
       runRead({ root, output: JSON_CTX, stdout: capture(), stderr: capture(), args }),
     );
     expect(error.message).toContain(message);
+  });
+});
+
+/**
+ * LCLI-615: pretty renders the markdown; plain (flag or non-TTY) and --json stay byte-for-byte.
+ *
+ * Driven through `run()` with an injected `isTTY`, so the mode is chosen by the real resolver
+ * (`output.ts`, cli-contract §1.1) rather than a hand-built context, and nothing depends on the test
+ * runner itself having a terminal.
+ */
+describe("lore read — pretty renders, plain and --json stay verbatim (LCLI-615)", () => {
+  /** Every construct AC1 names, plus a control-sequence payload AC2 names, in one body. */
+  const RICH_BODY = [
+    "# Rich heading",
+    "",
+    "Some *emphasis*, **strong** text and a [link](https://example.com).",
+    "",
+    "- bullet one",
+    "- [x] task done",
+    "",
+    "1. first",
+    "2. second",
+    "",
+    "> a quoted line",
+    "",
+    "```ts",
+    "const x = 1;",
+    "```",
+    "",
+    "| Col A | Col B |",
+    "|-------|------:|",
+    "| a     | 1     |",
+    "",
+    "Hostile: \x1b[2J\x1b[31mred\x1b[0m \x1b]0;title\x07 \x9b1A and &#x202E;bidi.",
+    "",
+  ].join("\n");
+
+  beforeEach(() => {
+    mkdirSync(join(root, "docs/guides"), { recursive: true });
+    writeFileSync(
+      join(root, "docs/guides/rich.md"),
+      `---\ntype: Reference\ntitle: Rich\nsummary: every construct\nsecret_field: frontmatter-only\n---\n${RICH_BODY}`,
+    );
+  });
+
+  async function lore(argv: readonly string[], over: Partial<RunContext> = {}): Promise<string> {
+    const stdout = capture();
+    const code = await run(["bun", "lore", ...argv], { cwd: root, stdout, stderr: capture(), ...over });
+    expect(code).toBe(0);
+    return stdout.text();
+  }
+
+  /** Everything after the header line and its blank line — the body as a pipe would see it. */
+  const bodyOf = (text: string): string => text.split("\n").slice(2).join("\n");
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: the renderer's own SGR sequences.
+  const SGR = /\x1b\[[0-9;]*m/g;
+
+  test("plain via the flag, even on a TTY, is the header then the body byte-for-byte", async () => {
+    const text = await lore(["read", "guides/rich", "--plain"], { isTTY: true });
+    expect(bodyOf(text)).toBe(RICH_BODY);
+  });
+
+  test("a non-TTY stdout (a pipe) with no flag is plain: the body survives `tail -n +3` byte-for-byte", async () => {
+    const text = await lore(["read", "guides/rich"], { isTTY: false });
+    expect(bodyOf(text)).toBe(RICH_BODY);
+  });
+
+  test("--json on a TTY carries the body byte-for-byte", async () => {
+    const data = JSON.parse(await lore(["read", "guides/rich", "--json"], { isTTY: true })).data as { body: string };
+    expect(data.body).toBe(RICH_BODY);
+  });
+
+  test("pretty renders headings, emphasis, lists, quotes, code, links and tables", async () => {
+    const text = await lore(["read", "guides/rich"], { isTTY: true, env: {} });
+    const lines = text.split("\n");
+    expect(lines[0]).toContain("read: guides/rich");
+    expect(lines[0]).toContain("[Reference]");
+    expect(lines[1]).toBe("");
+    const shown = bodyOf(text).replace(SGR, "");
+    expect(shown).not.toBe(RICH_BODY);
+    expect(shown).toContain("# Rich heading");
+    expect(shown).toContain("Some emphasis, strong text and a link (https://example.com).");
+    expect(shown).toContain("• bullet one\n• [x] task done");
+    expect(shown).toContain("1. first\n2. second");
+    expect(shown).toContain("│ a quoted line");
+    expect(shown).toContain("    const x = 1;");
+    expect(shown).not.toContain("```");
+    expect(shown).toContain("Col A │ Col B\n──────┼──────\na     │     1");
+    // Styled, because color is on: the emphasis is italic, not asterisks.
+    expect(text).toContain("\x1b[3memphasis\x1b[0m");
+  });
+
+  test("pretty wraps at the width the stdout stream itself reports, and at 80 when it reports none", async () => {
+    // Through run(), which hands the handler `context.stdout ?? process.stdout`: the width must come
+    // from that stream. An earlier draft read process.stdout.columns only when the handler's sink was
+    // absent, which it never is on the real path, so a real terminal always rendered at 80.
+    const prose = "word ".repeat(60).trim();
+    writeFileSync(join(root, "docs/guides/prose.md"), `---\ntype: Reference\ntitle: P\nsummary: s\n---\n${prose}\n`);
+    const narrow = capture();
+    const sized = Object.assign(narrow, { columns: 40 });
+    expect(
+      await run(["bun", "lore", "read", "guides/prose"], {
+        cwd: root,
+        stdout: sized,
+        stderr: capture(),
+        isTTY: true,
+        env: {},
+      }),
+    ).toBe(0);
+    const narrowBody = bodyOf(narrow.text()).trimEnd().split("\n");
+    expect(Math.max(...narrowBody.map((line) => line.length))).toBeLessThanOrEqual(40);
+    expect(Math.max(...narrowBody.map((line) => line.length))).toBeGreaterThan(30);
+
+    const unsized = bodyOf(await lore(["read", "guides/prose"], { isTTY: true, env: {} }))
+      .trimEnd()
+      .split("\n");
+    expect(Math.max(...unsized.map((line) => line.length))).toBeLessThanOrEqual(80);
+    expect(Math.max(...unsized.map((line) => line.length))).toBeGreaterThan(70);
+  });
+
+  test("pretty never renders the frontmatter", async () => {
+    const text = await lore(["read", "guides/rich"], { isTTY: true, env: {} });
+    expect(text).not.toContain("secret_field");
+    expect(text).not.toContain("frontmatter-only");
+  });
+
+  test("pretty neutralises the body's escape and control sequences; plain still carries them verbatim", async () => {
+    const pretty = await lore(["read", "guides/rich"], { isTTY: true, env: {} });
+    const shown = pretty.replace(SGR, "");
+    expect(shown).not.toContain("\x1b");
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting none survive.
+    expect(/[\x00-\x09\x0b-\x1f\x7f-\x9f‮]/.test(shown)).toBe(false);
+    expect(shown).toContain("Hostile: red");
+    // The exact-read contract is unchanged in plain: the bytes are the author's, escapes included.
+    const plain = await lore(["read", "guides/rich", "--plain"], { isTTY: true });
+    expect(plain).toContain("\x1b[2J");
+  });
+
+  test("NO_COLOR (even empty) removes every ANSI sequence and keeps the layout", async () => {
+    const colored = await lore(["read", "guides/rich"], { isTTY: true, env: {} });
+    const noColor = await lore(["read", "guides/rich"], { isTTY: true, env: { NO_COLOR: "" } });
+    expect(noColor).not.toContain("\x1b");
+    // Layout survives: the same heading marker, bullets, quote bar, code indent and table rule.
+    for (const layout of ["# Rich heading", "• bullet one", "│ a quoted line", "    const x = 1;", "──────┼──────"]) {
+      expect(noColor).toContain(layout);
+    }
+    // And it is the rendered view, not the verbatim body.
+    expect(bodyOf(noColor)).not.toBe(RICH_BODY);
+    expect(colored).toContain("\x1b[");
   });
 });
