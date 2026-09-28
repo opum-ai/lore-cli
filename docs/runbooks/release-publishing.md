@@ -447,9 +447,10 @@ numbered items after them are the lore side's detail.
    records every package's prior `latest` before it moves anything, and it
    restores them on a failure or on `--rollback`. The platforms move by
    dist-tag, and the launcher's `X` is published to `latest`, last. Item 7.
-6. **The LCLI-469 marketplace handshake follows the `latest` move.**
-   `opum-marketplace` holds its pins until `latest` moves, then bumps
-   `opum-lore` and `opum-quest` together in one change (clause 4). Item 8.
+6. **The post-latest checklist follows the `latest` move**, including the
+   LCLI-469 marketplace handshake: `opum-marketplace` holds its pins until
+   `latest` moves, then bumps `opum-lore` and `opum-quest` together in one
+   change (clause 4). `scripts/promote-latest.mjs` prints the list. Item 8.
 
 A staged version is **not released**. Until item 7 has run, `latest` still
 names the previous release, and a bare `npx @opum-ai/lore` installs that
@@ -1156,14 +1157,39 @@ the promotion half, item 7. It is not part of staging.
    never skip a failed side to a different number (clause 5). `--dry-run`
    reads everything, runs step 6 once, prints the record it would write and
    each move, and changes nothing.
-8. **Then send the LCLI-469 handshake's second message.** `opum-marketplace`
-   holds its `opum-lore` pin until `dist-tags.latest` moves, and clause 4 has it
-   bump `opum-lore` and `opum-quest` together. Tell it `latest` has moved, and
-   send the tag values from item 4 again so they can be re-resolved rather than
-   trusted. Steps 1 to 4 of `scripts/publish-release.sh`'s closing checklist
-   (release truth, README read-back, GitHub Release, downstream sessions) come
-   here too. The package-level `readme` npm serves is only worth reading back
-   once `latest` names this version.
+8. **After `latest` moves: the post-latest checklist (LCLI-618).**
+   `scripts/promote-latest.mjs --promote` prints this list when it finishes,
+   whether or not the README read-back passed, because the promotion is
+   complete either way. It cites this item, and `test/promote-latest.test.ts`
+   holds the two to the same five steps. `scripts/publish-release.sh` used to
+   print these after staging. By then npm had not written the package-level
+   `readme` and `latest` had not moved, so its closing checklist now stops at
+   the promotion.
+
+   1. **README read-back.** It has already run (item 7), and the checklist
+      repeats its verdict line. Record that line in the release-truth record.
+      If it did not pass, do not roll back.
+   2. **GitHub Release.** Cut a non-draft, non-prerelease GitHub Release for
+      `v<version>`, with `CHANGELOG.md`'s `[<version>]` section as its body:
+      `gh release create v<version> --title "Lore CLI <version>" --notes-file <notes>`.
+      It is still a manual step (LCLI-622 tracks making it an executed one).
+   3. **Tell quest-cli that lore is live on `latest`**, and opum-agent, whose
+      go it was. Resolve each session with `ListAgents` and match on
+      repository.
+   4. **The LCLI-469 marketplace handshake, second message.**
+      `opum-marketplace` holds its `opum-lore` pin until `dist-tags.latest`
+      moves, and clause 4 has it bump `opum-lore` and `opum-quest` together.
+      Tell it `latest` has moved. Send the tag name, tag object SHA, peeled
+      commit and `skills/` tree SHA from item 4 again, to be re-resolved rather
+      than trusted. The checklist prints the tag chain the promotion resolved,
+      and the three `git` commands from item 4.
+   5. **The release-truth record.** Update
+      `docs/reference/lore-cli-release-truth.md`: replace its current-state
+      claim so it says `<version>` is released. Record the Release run, the
+      promotion record, the read-back verdict, and how the release was staged.
+      A staging by `scripts/publish-release.sh` carries no provenance
+      attestation; say so rather than let a reader infer it from an earlier
+      version.
 
 ### 4. RC dist-tag publication (release-candidate, non-promoting)
 

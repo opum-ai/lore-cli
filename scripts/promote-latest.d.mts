@@ -98,6 +98,14 @@ export declare const README_READBACK_SCRIPT: string;
 export declare const README_READBACK_EXIT: number;
 export declare function readbackEnv(env: Record<string, string | undefined>): Record<string, string | undefined>;
 export declare function extractReadbackInputs(tarball: string, into: string): Promise<void>;
+export declare const POST_LATEST_RUNBOOK_ITEM: string;
+export declare function postLatestChecklist(args: {
+  version: string;
+  releaseRunId: string;
+  recordPath: string;
+  peeledChain: string[];
+  readback: { ok: boolean; code: number | string | null; verdict: string };
+}): string[];
 export declare function runReadmeReadback(args: {
   run?: Run;
   final: ArtifactFile;

@@ -43,7 +43,9 @@ import {
   downloadServedTarball,
   launcherPublishArgs,
   main,
+  POST_LATEST_RUNBOOK_ITEM,
   type PromotionRecord,
+  postLatestChecklist,
   publishFinalLauncher,
   README_READBACK_EXIT,
   README_READBACK_SCRIPT,
@@ -510,6 +512,15 @@ describe("scripts/promote-latest.mjs: the clean case (LCLI-621)", () => {
       expect(readbackAt).toBeGreaterThan(publish);
       expect(readbackAt).toBeGreaterThan(w.calls.findLastIndex((c) => c[0] === "npm"));
       expect(h.out).toContain(`  ${READBACK_OK}`);
+      // LCLI-618 AC2: the post-latest checklist follows, naming this run, this record and this tag.
+      const checklist = h.out.slice(
+        h.out.indexOf(`Post-latest checklist for lore ${V} (${POST_LATEST_RUNBOOK_ITEM}):`),
+      );
+      expect(checklist.length).toBeGreaterThan(10);
+      expect(checklist.join("\n")).toContain("1. README read-back: PASSED. It ran automatically:");
+      expect(checklist.join("\n")).toContain(`gh release create v${V} --title "Lore CLI ${V}" --notes-file <notes>`);
+      expect(checklist.join("\n")).toContain(`This run resolved v${V} as: tag ${TAG_OBJECT} -> commit ${COMMIT}.`);
+      expect(checklist.join("\n")).toContain(`record Release run ${RUN}, the promotion record ${h.record}`);
     } finally {
       h.cleanup();
     }
@@ -526,6 +537,8 @@ describe("scripts/promote-latest.mjs: the clean case (LCLI-621)", () => {
       expect(w.calls.filter((c) => c[0] === "bash")).toEqual([]);
       expect(w.readbacks).toEqual([]);
       expect(h.out.join("\n")).toContain(`would    bash ${README_READBACK_SCRIPT} against ${X_FILE}'s own`);
+      // Nothing moved, so nothing post-latest is due.
+      expect(h.out.join("\n")).not.toContain("Post-latest checklist");
       for (const name of PLATFORM_PACKAGES)
         expect(h.out.join("\n")).toContain(
           `would    npm dist-tag add ${name}@${V} latest ${PINS_TEXT}   (now ${PRIOR})`,
@@ -1047,6 +1060,11 @@ describe("scripts/promote-latest.mjs: step 7 and the README read-back (LCLI-621,
       expect(errText).toContain("The fix is the NEXT release.");
       expect(errText).toContain(`npm view ${LAUNCHER} readme | wc -c`);
       expect(h.text()).toContain(`Promoted: latest reads ${V} on all 7 packages`);
+      // The promotion is complete, so the post-latest checklist still follows, saying the read-back did not pass.
+      expect(h.out.join("\n")).toContain(
+        "1. README read-back: DID NOT PASS (exit 1; see above, and do NOT roll back). It ran automatically:",
+      );
+      expect(h.out.join("\n")).toContain(`gh release create v${V}`);
     } finally {
       h.cleanup();
     }
@@ -1138,6 +1156,87 @@ describe("scripts/promote-latest.mjs: step 7 and the README read-back (LCLI-621,
       expect(result.code).toBe(1);
       expect(result.output).toContain("NO readme field at all (OPAG-474)");
     });
+  });
+});
+
+// ── The post-latest checklist (LCLI-618 AC2) ─────────────────────────────────────────────────────
+// What is due once `latest` reads X used to be printed by publish-release.sh after STAGING. It is
+// printed here now, when --promote finishes, and the runbook item it cites must carry the same list.
+describe("scripts/promote-latest.mjs: the post-latest checklist (LCLI-618)", () => {
+  const readback = { ok: true, code: 0, verdict: READBACK_OK };
+  const args = {
+    version: "1.2.3",
+    releaseRunId: "777",
+    recordPath: "/tmp/rec.json",
+    peeledChain: [`tag ${TAG_OBJECT}`, `commit ${COMMIT}`],
+    readback,
+  };
+
+  test("pinned: the five steps, in order, naming this version, run, record and tag chain", () => {
+    expect(postLatestChecklist(args)).toEqual([
+      "",
+      "Post-latest checklist for lore 1.2.3 (docs/runbooks/release-publishing.md, section 3, item 8):",
+      "  1. README read-back: PASSED. It ran automatically:",
+      `         ${READBACK_OK}`,
+      "     Record that line in the release-truth record (item 5).",
+      "  2. Cut a non-draft, non-prerelease GitHub Release for v1.2.3, with CHANGELOG.md's [1.2.3] section as its body:",
+      '         gh release create v1.2.3 --title "Lore CLI 1.2.3" --notes-file <notes>',
+      "  3. Tell quest-cli that lore 1.2.3 is live on latest, and opum-agent, whose go this was. Resolve each",
+      "     session with ListAgents and match on repository; session names change on every restart.",
+      "  4. The LCLI-469 marketplace handshake, second message: tell opum-marketplace that dist-tags.latest now reads",
+      "     1.2.3, and send the tag name, tag object SHA, peeled commit and skills/ tree SHA again, to be",
+      `     re-resolved rather than trusted. This run resolved v1.2.3 as: tag ${TAG_OBJECT} -> commit ${COMMIT}.`,
+      "         git rev-parse v1.2.3              # the tag object SHA",
+      "         git rev-parse 'v1.2.3^{commit}'   # the commit it peels to",
+      "         git ls-tree v1.2.3 skills         # the resolved skills/ tree SHA",
+      "  5. Update docs/reference/lore-cli-release-truth.md: REPLACE its current-state claim so it states",
+      "     1.2.3 is released, and record Release run 777, the promotion record /tmp/rec.json, the",
+      "     read-back verdict above, and HOW the release was staged. A staging by scripts/publish-release.sh",
+      "     carries no provenance attestation; say so rather than let a reader infer it.",
+    ]);
+  });
+
+  test("a read-back that did not pass is reported as such, with its exit code and the do-not-roll-back rule", () => {
+    const lines = postLatestChecklist({ ...args, readback: { ok: false, code: 1, verdict: "::error::A4 FAILED ..." } });
+    expect(lines[2]).toBe(
+      "  1. README read-back: DID NOT PASS (exit 1; see above, and do NOT roll back). It ran automatically:",
+    );
+    expect(lines[3]).toBe("         ::error::A4 FAILED ...");
+  });
+
+  // "The runbook item it cites must match": the item exists where the header says, and carries each
+  // of the five steps the script prints, by the same names. The item is found by its number at
+  // column 0 inside section 3, so an item that moves or is renumbered fails here.
+  test("the runbook item it cites carries the same five steps", () => {
+    const runbook = readFileSync(join(import.meta.dir, "..", "docs", "runbooks", "release-publishing.md"), "utf8");
+    const cited = /section (\d+), item (\d+)$/.exec(POST_LATEST_RUNBOOK_ITEM);
+    expect(cited).not.toBeNull();
+    const [, sectionNo, itemNo] = cited as RegExpExecArray;
+    const section = runbook.slice(
+      runbook.indexOf(`### ${sectionNo}. `),
+      runbook.indexOf(`### ${Number(sectionNo) + 1}. `),
+    );
+    const start = section.search(new RegExp(`^${itemNo}\\. `, "m"));
+    expect(start).toBeGreaterThan(-1);
+    const rest = section.slice(start + 1);
+    const next = rest.search(/^\d+\. /m);
+    const item = next === -1 ? rest : rest.slice(0, next);
+    expect(item).toContain("the post-latest checklist");
+    const printed = postLatestChecklist(args).join("\n");
+    for (const step of [
+      "README read-back",
+      "GitHub Release",
+      "gh release create v",
+      "quest-cli",
+      "LCLI-469 marketplace handshake",
+      "opum-marketplace",
+      "skills/",
+      "docs/reference/lore-cli-release-truth.md",
+      "provenance",
+    ]) {
+      expect({ step, inChecklist: printed.includes(step) }).toEqual({ step, inChecklist: true });
+      expect({ step, inRunbook: item.includes(step) }).toEqual({ step, inRunbook: true });
+    }
   });
 });
 

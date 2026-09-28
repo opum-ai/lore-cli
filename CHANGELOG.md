@@ -65,6 +65,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never sets the field, and the job's sparse checkout never carried the script, so every
   `publish: true` run concluded `failure` and could not be promoted. `test/release-workflow.test.ts`
   now requires every `scripts/` file a job runs to be in that job's own checkout.
+- **The post-latest steps are printed after the promotion, not after staging** (LCLI-618).
+  `scripts/publish-release.sh`'s closing checklist, from `--print-checklist` and at the end of a
+  real run, now lists only what applies before the final `latest` publish. It tells opum-cli-e2e
+  the staged pair is ready, with the Release run id, and gives the promote `--dry-run` and
+  `--promote` commands. It then points at `scripts/promote-latest.mjs` for the rest. The README
+  read-back, the GitHub Release, the "lore is live" notices, the LCLI-469 marketplace handshake
+  and the release-truth record are gone from it. `promote-latest.mjs --promote` now prints them as
+  a post-latest checklist when it finishes, whether or not the read-back passed. The checklist
+  carries the read-back's verdict, the `gh release create` command, the tag chain the promotion
+  resolved, and the run id and record path. It cites runbook section 3 item 8, which carries the
+  same five steps, and a test holds the two together. publish-release.sh's post-publish
+  registry-state table is now printed after the registry-visibility wait, not before it. On the
+  0.11.0 staging it read the launcher as `ABSENT` through propagation lag, and the poll after it
+  then found the launcher.
 - **A resumed staging skips a package only if the registry holds this run's bytes** (LCLI-621).
   Both `release.yml`'s `publish` job and `scripts/publish-release.sh` compare an already-published
   package's `dist.integrity` with the run's tarball, platforms included, and refuse on a difference

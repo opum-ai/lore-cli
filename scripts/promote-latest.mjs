@@ -833,6 +833,44 @@ export async function runReadmeReadback({ run = defaultRun, final, env }) {
   }
 }
 
+/** Where the post-latest checklist lives in prose; test/promote-latest.test.ts holds the two to one list. */
+export const POST_LATEST_RUNBOOK_ITEM = "docs/runbooks/release-publishing.md, section 3, item 8";
+
+/**
+ * THE POST-LATEST CHECKLIST (LCLI-618): what is due once `latest` reads X, printed when --promote
+ * finishes, whether or not the read-back passed, because either way the promotion is complete. It
+ * used to be publish-release.sh's closing checklist, printed after STAGING, when npm's
+ * package-level readme had not been written and `latest` had not moved. The GitHub Release is
+ * still a manual step here; LCLI-622 tracks making it an executed one, as quest-cli's is.
+ * @param {{ version: string, releaseRunId: string, recordPath: string, peeledChain: string[],
+ *   readback: { ok: boolean, code: number | string | null, verdict: string } }} args
+ * @returns {string[]}
+ */
+export function postLatestChecklist({ version, releaseRunId, recordPath, peeledChain, readback }) {
+  const tag = `v${version}`;
+  return [
+    "",
+    `Post-latest checklist for lore ${version} (${POST_LATEST_RUNBOOK_ITEM}):`,
+    `  1. README read-back: ${readback.ok ? "PASSED" : `DID NOT PASS (exit ${readback.code ?? "none"}; see above, and do NOT roll back)`}. It ran automatically:`,
+    `         ${readback.verdict}`,
+    "     Record that line in the release-truth record (item 5).",
+    `  2. Cut a non-draft, non-prerelease GitHub Release for ${tag}, with CHANGELOG.md's [${version}] section as its body:`,
+    `         gh release create ${tag} --title "Lore CLI ${version}" --notes-file <notes>`,
+    `  3. Tell quest-cli that lore ${version} is live on latest, and opum-agent, whose go this was. Resolve each`,
+    "     session with ListAgents and match on repository; session names change on every restart.",
+    "  4. The LCLI-469 marketplace handshake, second message: tell opum-marketplace that dist-tags.latest now reads",
+    `     ${version}, and send the tag name, tag object SHA, peeled commit and skills/ tree SHA again, to be`,
+    `     re-resolved rather than trusted. This run resolved ${tag} as: ${peeledChain.join(" -> ")}.`,
+    `         git rev-parse ${tag}              # the tag object SHA`,
+    `         git rev-parse '${tag}^{commit}'   # the commit it peels to`,
+    `         git ls-tree ${tag} skills         # the resolved skills/ tree SHA`,
+    "  5. Update docs/reference/lore-cli-release-truth.md: REPLACE its current-state claim so it states",
+    `     ${version} is released, and record Release run ${releaseRunId}, the promotion record ${recordPath}, the`,
+    "     read-back verdict above, and HOW the release was staged. A staging by scripts/publish-release.sh",
+    "     carries no provenance attestation; say so rather than let a reader infer it.",
+  ];
+}
+
 /** Length, prefix and a whitespace flag: the only things ever reported about a credential. */
 export function tokenShape(token) {
   return {
@@ -1208,7 +1246,7 @@ export async function main(
       return 0;
     }
 
-    const { final, servedCheck } = /** @type {any} */ (release);
+    const { final, servedCheck, peeled } = /** @type {any} */ (release);
     const publishLauncher = () =>
       publishFinalLauncher({
         version: record.version,
@@ -1268,9 +1306,16 @@ export async function main(
       `\nREADME read-back (A4, OPAG-474 AC3): scripts/readme-readback.sh against ${final.filename}'s own package.json and README.md, re-reading for up to ${windowSeconds}s:`,
     );
     const readback = await runReadmeReadback({ run, final, env });
+    const checklist = postLatestChecklist({
+      version: record.version,
+      releaseRunId: /** @type {string} */ (args.releaseRun),
+      recordPath: /** @type {string} */ (args.recordPath),
+      peeledChain: peeled.chain,
+      readback,
+    });
     if (readback.ok) {
       out(`  ${readback.verdict}`);
-      out("Next: the LCLI-469 marketplace handshake (docs/runbooks/release-publishing.md, section 3).");
+      for (const line of checklist) out(line);
       return 0;
     }
     for (const line of readback.output.split("\n")) err(`  ${line}`);
@@ -1286,6 +1331,7 @@ export async function main(
       "",
     ])
       err(line);
+    for (const line of checklist) out(line);
     return README_READBACK_EXIT;
   } finally {
     if (npmrcDir) await rm(npmrcDir, { recursive: true, force: true });

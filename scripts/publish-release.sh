@@ -250,81 +250,38 @@ print_closing_checklist() {
   # exist. A closing message that names a fixed version is guaranteed to go stale the
   # moment that version ships (LCLI-483). Keep perishable references OUT of here:
   # no task ids, no session addresses, no version literals.
+  #
+  # ONLY WHAT APPLIES BEFORE THE FINAL LATEST PUBLISH (LCLI-618). This script stages; it does not
+  # release. The README read-back, the GitHub Release, the "lore is live" notices, the
+  # marketplace handshake's second message and the release-truth record all follow the final X
+  # launcher's publish onto latest, and scripts/promote-latest.mjs prints that checklist when it
+  # finishes. Listing them here told operators to do them after staging, when npm's package-level
+  # readme had not been written and latest had not moved.
   cat <<DONE
   PUBLISHED $VERSION under the release-candidate dist-tag. latest has NOT moved.
   The launcher ${ROOT_PKG%%:*} was staged as ${LAUNCHER_VERSION:-$VERSION-rc.N}; the $VERSION launcher is
   carried in the Release run's artifact and was NOT published (Article 3 clause 5, LCLI-621).
-  Remaining, in order (docs/runbooks/release-publishing.md section 3):
 
-    0. STAGED IS NOT RELEASED. opum-cli-e2e qualifies the staged pair (lore $VERSION with
-       quest $VERSION) from registry installs and lands receipts/pair/$VERSION.json on its
-       main. Then, on opum-agent's go and AFTER quest's latest has moved:
+  STAGED IS NOT RELEASED. Only these steps apply before the final latest publish, in order
+  (docs/runbooks/release-publishing.md section 3, item 7):
+
+    1. Tell opum-cli-e2e the staged pair is ready for qualification: lore $VERSION (launcher
+       ${LAUNCHER_VERSION:-$VERSION-rc.N}) from Release run $RUN_ID, with quest $VERSION. It installs the staged
+       pair from the registry and lands receipts/pair/$VERSION.json on its main. Resolve the
+       session with ListAgents and match on repository; session names change on every restart.
+
+    2. Once that receipt has landed, rehearse the promotion. It re-reads this run's artifact
+       and both receipts, refuses unless they verify, and changes nothing:
            node scripts/promote-latest.mjs --record <file> --version $VERSION --release-run $RUN_ID --dry-run
+
+    3. On opum-agent's go, and AFTER quest's latest has moved:
            node scripts/promote-latest.mjs --record <file> --version $VERSION --release-run $RUN_ID --promote
-       It re-reads this run's artifact and both receipts, refuses unless they verify, writes
-       every prior latest to <file> first, moves the platforms by dist-tag and then publishes
-       the carried $VERSION launcher to latest, last. --rollback <file> restores every latest.
-       Steps 1 to 4 below follow the latest move.
+       It writes every prior latest to <file> first, moves the platforms by dist-tag, then
+       releases the carried $VERSION launcher onto latest, last. --rollback <file> restores
+       every latest.
 
-    1. Update the release-truth doc so it states $VERSION is released. REPLACE the
-       current-state claim, do not merely add alongside it:
-           docs/reference/lore-cli-release-truth.md    (Current state section)
-
-       README.md IS NO LONGER ON THIS LIST, and that is the fix for LCLI-510 rather than
-       an omission. Its status block and npm line are GENERATED from package.json before
-       the tag, by scripts/shipped-readme-version.mjs, and the release refuses to publish
-       a tarball whose README disagrees. Bumping it here is what made every published
-       tarball's npm page advertise the PREVIOUS version: a sentence saying "$VERSION is
-       released" cannot honestly be written before it is, so the edit always landed after
-       the tag, and the tag always carried the older file. Do not restore the step.
-
-    1a. Read the shipped README back off the registry and record WHAT YOU READ:
-           d=\$(mktemp -d)
-           npm view ${ROOT_PKG%%:*} readme > "\$d/README.md"
-           cp package.json "\$d/package.json"
-           node scripts/shipped-readme-version.mjs --check --dir "\$d"
-
-        RE-RUN THE ASSERTIONS; DO NOT GREP FOR A SENTENCE. An earlier revision of this
-        step printed:
-           npm view ... readme | grep -n 'Status: .* released'
-        which matches NOTHING against the README this tool generates -- the region markers
-        split the literal, so the file reads \`**Status:<!--...--> $VERSION released.**\` and
-        there is no space after \`Status:\`. An operator running it verbatim gets empty output
-        and exit 1 seconds after the irreversible step, against an instruction telling them
-        the output must name the version. A check that re-runs the generator cannot drift
-        from it, because it IS the generator.
-
-        WHAT YOU ARE READING is npm's package-level \`readme\` field -- NOT a per-version
-        page. Measured 2026-09-15: \`npm view @opum-ai/lore@0.7.0 readme\`,
-        \`...@0.6.2 readme\` and \`...@0.6.1 readme\` all return the SAME 14446 bytes. The
-        version in the spec is inert for this field; npm serves whatever the most recent
-        publish carried. So record "the package-level readme for @opum-ai/lore, read at
-        <time>, which should now be $VERSION's" -- naming a version-specific page you did
-        not read is exactly the claim shape that produced this whole class of defect.
-
-        This is a confirmation, not a gate -- the page is already immutable -- so a
-        disagreement here is a defect to fix in the NEXT release, never a reason to
-        unpublish. And because the field is package-level and the read API lags (LCLI-460:
-        0.5.0 took ~25 minutes), a disagreement within that window is most likely the
-        registry still serving the PREVIOUS release's README. Re-read before concluding.
-
-    2. Cut a non-draft, non-prerelease GitHub Release for v$VERSION, using
-       CHANGELOG.md's [$VERSION] section as its body:
-           gh release create v$VERSION --title "Lore CLI $VERSION" --notes-file <notes>
-
-    3. Tell the downstream sessions. They deliberately do not describe a version as
-       published until told. Resolve each one with ListAgents and match on repository —
-       session names change on every restart, so never reuse a previously seen address:
-           opum-cli-e2e       re-run the qualification matrix against the published release
-           quest-cli          lore $VERSION is live (latest moved)
-           opum-marketplace   the resolved skills/ tree SHA for this tag, or its
-                              federated-content check goes red:
-                                  git ls-tree v$VERSION skills
-
-    4. Record HOW this shipped. If it was published by this script rather than by the
-       release workflow's OIDC job, say so in release-truth and state that the version
-       carries NO provenance attestation — a manual publish cannot produce one. Do not
-       let a reader infer provenance from an earlier version having it.
+  Everything after that belongs to scripts/promote-latest.mjs, which prints the rest as its
+  post-latest checklist when --promote finishes (runbook section 3, items 7 and 8).
 DONE
 }
 
@@ -1434,9 +1391,7 @@ for spec in $STAGED_SKIPPED; do
 done
 
 # ── Verify ──────────────────────────────────────────────────────────────────
-report_state
-hr
-if [ "$DRY_RUN" -eq 1 ]; then say "DRY RUN complete — nothing was written."; exit 0; fi
+if [ "$DRY_RUN" -eq 1 ]; then report_state; hr; say "DRY RUN complete — nothing was written."; exit 0; fi
 
 # WAIT FOR THE REGISTRY BEFORE SMOKING (LCLI-460). npx resolves the root launcher AND the
 # platform package for this machine, so running it while either is still propagating fails
@@ -1447,7 +1402,16 @@ all_pkgs=""
 for entry in "${PLATFORM_PKGS[@]}"; do all_pkgs="$all_pkgs ${entry%%:*}@$VERSION"; done
 all_pkgs="$all_pkgs ${ROOT_PKG%%:*}@$LAUNCHER_VERSION"
 say "confirming the registry read API serves $VERSION and $LAUNCHER_VERSION before smoking the install path"
-if wait_for_all_visible "${all_pkgs# }"; then
+all_visible=0
+wait_for_all_visible "${all_pkgs# }" && all_visible=1
+# THE REGISTRY-STATE TABLE IS TAKEN AFTER THE VISIBILITY GATE, NEVER BEFORE IT (LCLI-618). On the
+# 0.11.0 staging run it was printed straight after the root launcher's publish, read the launcher
+# as ABSENT through ordinary propagation lag, and the poll and the smoke below then found it. A
+# table printed after the gate reports what the registry serves once it has had the whole window;
+# its UNREADABLE and ABSENT semantics (report_state, LCLI-621) are unchanged.
+report_state
+hr
+if [ "$all_visible" -eq 1 ]; then
   say "clean-registry install smoke (a fresh temp dir, nothing from this machine's caches)"
   # BY EXACT VERSION, and that is load-bearing since LCLI-613: the bare name resolves `latest`,
   # which this script no longer moves, so `npx @opum-ai/lore` would smoke the PREVIOUS release
