@@ -175,6 +175,16 @@ const NEVER_PUBLISHED = new Set([
   `${LAUNCHER}@${PARTIAL_ATTESTED_VERSION}-rc.1`,
 ]);
 
+/**
+ * Specs whose VERSION DOCUMENT 404s while the package's packument already lists them (LCLI-628
+ * review F2): the two reads of a propagating registry disagreeing. Published, so the package-level
+ * answer must win. The platform packument lists every STAGED_PINS key, so 0.16.0 is registered
+ * there with no pins: published, unattested.
+ */
+const DOC_LAG_VERSION = "0.16.0";
+STAGED_PINS[DOC_LAG_VERSION] = {};
+const VERSION_DOC_LAGGING = new Set([`${PLATFORM}@${DOC_LAG_VERSION}`]);
+
 /** Every `name@version` the stub's version-document endpoint was asked for, in order. */
 const versionDocRequests: string[] = [];
 /** Set to a status to make the version-document endpoint fail (LCLI-628 outage paths). */
@@ -256,8 +266,9 @@ beforeAll(() => {
         versionDocRequests.push(spec);
         if (versionDocFailure !== null) return Response.json({ error: "unavailable" }, { status: versionDocFailure });
         // The real registry's body for a missing version is a bare JSON string.
-        if (NEVER_PUBLISHED.has(spec))
+        if (NEVER_PUBLISHED.has(spec) || VERSION_DOC_LAGGING.has(spec)) {
           return Response.json(`version not found: ${versionDocMatch[2]}`, { status: 404 });
+        }
         return Response.json({ name: versionDocMatch[1], version: versionDocMatch[2] });
       }
       const packumentMatch = /^\/(@[^/]+\/[^/]+)$/.exec(path);
@@ -902,7 +913,8 @@ describe("release-provenance --post tells a version that was never published fro
   /**
    * The mutation proof on the task removes the existence read (versionOnRegistry) from --post
    * pass 1. Each test says which of its assertions that removal must turn red, so the
-   * prediction is a reading of this file rather than of the run.
+   * prediction is a reading of this file rather than of the run. Since the review (F1) the
+   * attestation is read first and the existence read runs only when it 404s.
    */
   const lineWith = (out: string, needle: string) => out.split("\n").find((line) => line.includes(needle)) ?? "";
 
@@ -929,8 +941,10 @@ describe("release-provenance --post tells a version that was never published fro
       // The existence read happened for both, at each package's own version.
       expect(versionDocRequests).toContain(`${LAUNCHER}@${PARTIAL_VERSION}-rc.1`);
       expect(versionDocRequests).toContain(`${PLATFORM}@${PARTIAL_VERSION}`);
-      // A version that is not there has no attestation to read.
-      expect(attestationRequests).not.toContain(`${LAUNCHER}@${PARTIAL_VERSION}-rc.1`);
+      // The attestation is read FIRST, for every package (LCLI-628 review F1): not-published is
+      // concluded only from an attestation 404 plus a corroborated existence miss, never from the
+      // existence read alone — a stale packument must not be able to hide a readable attestation.
+      expect(attestationRequests).toContain(`${LAUNCHER}@${PARTIAL_VERSION}-rc.1`);
       expect(attestationRequests).toContain(`${PLATFORM}@${PARTIAL_VERSION}`);
 
       // AC3's wording half: the not-published warning names a partial publish and not LCLI-482,
@@ -956,7 +970,9 @@ describe("release-provenance --post tells a version that was never published fro
 
   test("AC2: an unpublished launcher gets NO propagation wait although a platform is attested (bounded time)", async () => {
     // A 30s window: a regression to waiting on the launcher costs 30s, so a 3s bound cannot be
-    // met by accident. Mutant: red on the elapsed bound and on the outcome.
+    // met by accident. Mutant: red on the elapsed bound, which is asserted FIRST and under an
+    // explicit 45s test timeout, so the failure is the bound itself and never bun's default 5s
+    // TimeoutError (LCLI-628 review F3).
     reset();
     const started = Date.now();
     const { code, out } = await runGate([
@@ -973,6 +989,7 @@ describe("release-provenance --post tells a version that was never published fro
       "30",
     ]);
     const elapsed = Date.now() - started;
+    expect(elapsed).toBeLessThan(3000);
     expect(code).toBe(0);
     // Premise: another package of this release IS attested, so the window is armed. Without this
     // the fast finish could come from "nothing attested, skip the window" instead.
@@ -980,8 +997,7 @@ describe("release-provenance --post tells a version that was never published fro
     expect(out).not.toContain("nothing propagating to wait for");
     expect(outcomeOf(out, `${LAUNCHER}@${PARTIAL_ATTESTED_VERSION}-rc.1`)).toBe("not-published");
     expect(out).not.toContain(`${LAUNCHER}@${PARTIAL_ATTESTED_VERSION}-rc.1: no attestation yet`);
-    expect(elapsed).toBeLessThan(3000);
-  });
+  }, 45_000);
 
   test("positive control: in the same release, a PUBLISHED unattested package still gets its window", async () => {
     // Proves the fast finish above is the launcher being skipped, not the window being broken:
@@ -1013,6 +1029,55 @@ describe("release-provenance --post tells a version that was never published fro
     expect(outcomeOf(out, `${LAUNCHER}@${PARTIAL_ATTESTED_VERSION}-rc.1`)).toBe("not-published");
     expect(elapsed).toBeGreaterThanOrEqual(1500);
     expect(elapsed).toBeLessThan(3500);
+  }, 20_000);
+
+  test("F1 probe: a readable attestation is resolved even when the registry's reads say not-published", async () => {
+    // The LCLI-628 reviewer's probe, kept as a regression test. Right after a partial publish the
+    // version document and packument can lag (LCLI-460) while the attestation is already readable.
+    // An existence-first check then called a DANGLING pin `not-published` and exited 0 without ever
+    // reading the attestation. The pre-fix code said `dangling`, exit 1, and so must this.
+    reset();
+    const spec = `${LAUNCHER}@0.7.1-rc.1`;
+    NEVER_PUBLISHED.add(spec);
+    try {
+      const { code, out } = await runGate([
+        "--post",
+        "--launcher-rc",
+        "1",
+        "--version",
+        "0.7.1",
+        "--package",
+        LAUNCHER,
+      ]);
+      expect(attestationRequests).toContain(spec);
+      expect(outcomeOf(out, spec)).toBe("dangling");
+      expect(code).toBe(1);
+      expect(out).not.toContain("NOT ON THE REGISTRY");
+    } finally {
+      NEVER_PUBLISHED.delete(spec);
+    }
+  });
+
+  test("F2: a version document 404 is overruled by a packument that lists the version", async () => {
+    // The two reads of a propagating registry disagree: /name/version says 404, the package-level
+    // packument already lists it. Published, with no attestation: `absent`, never not-published.
+    // Mutant M5 (ignore the packument's listing): red here, and nowhere else.
+    reset();
+    const spec = `${PLATFORM}@${DOC_LAG_VERSION}`;
+    const { code, out } = await runGate([
+      "--post",
+      "--launcher-rc",
+      "1",
+      "--version",
+      DOC_LAG_VERSION,
+      "--package",
+      PLATFORM,
+    ]);
+    // Premise: the version document really was asked and really said 404 (the stub's lagging set).
+    expect(versionDocRequests).toContain(spec);
+    expect(outcomeOf(out, spec)).toBe("absent");
+    expect(out).not.toContain("NOT ON THE REGISTRY");
+    expect(code).toBe(0);
   });
 
   test("AC3: a registry outage while checking existence is inconclusive, never not-published", async () => {

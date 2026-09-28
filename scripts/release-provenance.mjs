@@ -145,16 +145,18 @@
  *           any platform package was attested, spend the whole propagation window polling for an
  *           attestation on a version that does not exist.
  *
- *           So pass 1 of --post asks whether the version exists BEFORE reading the attestation
- *           (versionOnRegistry). Version present -> check the attestation as before. Version
- *           document 404 AND the package's packument answers without it -> `not-published`: its
- *           own outcome and warning, naming a partial publish, never `absent`, never waited on.
- *           Anything short of that (network, 5xx, a 404 for the whole package, no versions map)
- *           -> unknown, which is NEVER read as not-published: the
- *           attestation is still read, because a 200 there proves the version exists and a
- *           dangling pin must not go unchecked because a different endpoint was down; only
- *           "existence unknown AND attestation 404" is reported, as `inconclusive`. --pre does not
- *           take this read: every version it checks comes from the packument it already read.
+ *           So pass 1 of --post reads the attestation FIRST, exactly as before, and only when that
+ *           says `absent` asks whether the version exists at all (checkPublishedOne ->
+ *           versionOnRegistry). Version document 404 AND the package's packument answers without
+ *           it -> `not-published`: its own outcome and warning, naming a partial publish, never
+ *           `absent`, never waited on. Version present -> `absent`, as before. Anything short of
+ *           that (network, 5xx, a 404 for the whole package, no versions map) -> unknown, which is
+ *           NEVER read as not-published: "existence unknown AND attestation 404" is reported as
+ *           `inconclusive`. The existence read never runs in front of the attestation: the
+ *           registry's read API lags a publish (LCLI-460), and an existence-first order let a stale
+ *           packument report a readable, DANGLING attestation as `not-published` without reading
+ *           it (see checkPublishedOne). --pre does not take this read: every version it checks
+ *           comes from the packument it already read.
  *
  * THE BASELINE, AND WHY --pre WOULD OTHERWISE BE USELESS
  *
@@ -800,24 +802,36 @@ async function versionOnRegistry(name, version) {
 }
 
 /**
- * --post pass 1 for one package@version: existence first, then the attestation (LCLI-628).
+ * --post pass 1 for one package@version: the attestation FIRST, then — only when it says `absent`
+ * — whether the version exists at all (LCLI-628).
+ *
+ * WHY THIS ORDER, AND NOT EXISTENCE FIRST. An earlier revision of this fix asked for existence
+ * first and returned `not-published` without reading the attestation. But the version document
+ * and packument lag a publish (LCLI-460 measured the read API up to ~25 minutes behind), and a
+ * partial publish is exactly when --post runs soonest after one. So a stale packument could say
+ * "not listed" while the attestation was already readable — and a DANGLING pin was then reported
+ * `not-published`, exit 0, never having been looked at (the LCLI-628 reviewer's F1, measured in
+ * the stub; the pre-fix code said `dangling`, exit 1). The existence read can only ever REFINE an
+ * attestation 404; it must never stand in front of the one finding this script fails on.
  *
  * @param {string} name
  * @param {string} version
  * @param {string} expectedRepo
  */
 async function checkPublishedOne(name, version, expectedRepo) {
+  const result = await checkOne(name, version, expectedRepo);
+  // Every answer other than `absent` stands as checkOne gave it: a readable attestation proves the
+  // version exists, and an unreadable or unreachable one is already reported as such.
+  if (result.outcome !== OUTCOME.ABSENT) return result;
+
   const existence = await versionOnRegistry(name, version);
   if (existence.state === "not-published") {
     return { name, version, spec: `${name}@${version}`, outcome: OUTCOME.NOT_PUBLISHED, detail: existence.detail };
   }
-  const result = await checkOne(name, version, expectedRepo);
   // Existence unknown, and the attestation endpoint's 404 cannot say whether the version exists
   // either: neither `absent` (which asserts it is published) nor `not-published` (which asserts
-  // it is not) is warranted. Any other attestation answer stands on its own — a readable
-  // attestation proves the version exists, so a dangling pin is still caught during an outage
-  // of the packument endpoint.
-  if (existence.state === "unknown" && result.outcome === OUTCOME.ABSENT) {
+  // it is not) is warranted.
+  if (existence.state === "unknown") {
     return {
       ...result,
       outcome: OUTCOME.INCONCLUSIVE,
@@ -943,8 +957,8 @@ async function runPost(options, manifest) {
   ];
   for (const note of notes) console.log(`       ${note}`);
 
-  // PASS 1 — no waiting. Ask every package once: is it on the registry, then what does its
-  // attestation say (LCLI-628). A `not-published` result is final here — pass 2 only ever
+  // PASS 1 — no waiting. Ask every package once: what does its attestation say, and, only when
+  // that is a 404, is it on the registry at all (LCLI-628). A `not-published` result is final here — pass 2 only ever
   // revisits `absent`, which now means "published, no attestation yet" and nothing else.
   const results = [];
   for (const spec of specs) {
