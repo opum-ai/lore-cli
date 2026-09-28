@@ -167,16 +167,27 @@ function artifact(): Map<string, Buffer> {
 type ReadbackKind = "pass" | "empty-listed" | "empty-unlisted" | "mismatch";
 type ReadbackOutput = { code: number; stdout: string; stderr: string };
 const realReadbacks = new Map<ReadbackKind, ReadbackOutput>();
-/** On win32 the script is not run (see describeOnPosix); the world's clean-case default is this. */
-const WIN32_PASS: ReadbackOutput = {
-  code: 0,
-  stdout: "A4 VERDICT: PASSED (win32: the real script is POSIX-only and not run here)\n",
-  stderr: "",
+/**
+ * On win32 the script is not run (it is POSIX-only; see describeOnPosix). Promote's handling of
+ * each verdict is platform-independent, so each kind gets a stand-in with the SAME exit code and
+ * verdict class the real script produces for it; the verdict wording itself is asserted only on
+ * POSIX, where the real script runs. An earlier revision served PASSED for every kind, so the
+ * DID NOT PASS and NOT CONFIRMED tests received exit 0 on windows-latest (LCLI-616, #342).
+ */
+const WIN32_STAND_IN: Record<ReadbackKind, ReadbackOutput> = {
+  pass: { code: 0, stdout: "A4 VERDICT: PASSED (win32 stand-in: the real script is POSIX-only)\n", stderr: "" },
+  "empty-listed": { code: 1, stdout: "A4 VERDICT: FAILED (win32 stand-in: empty, packument lists X)\n", stderr: "" },
+  "empty-unlisted": {
+    code: 0,
+    stdout: "A4 VERDICT: NOT-CONFIRMED (win32 stand-in: empty, X not in the packument yet)\n",
+    stderr: "",
+  },
+  mismatch: { code: 1, stdout: "A4 VERDICT: FAILED (win32 stand-in: a page matching no release)\n", stderr: "" },
 };
 function realReadback(kind: ReadbackKind): ReadbackOutput {
   const cached = realReadbacks.get(kind);
   if (cached) return cached;
-  if (process.platform === "win32") return WIN32_PASS;
+  if (process.platform === "win32") return WIN32_STAND_IN[kind];
   const dir = mkdtempSync(resolve(tmpdir(), "lore-real-readback-"));
   const bin = join(dir, "bin");
   const cwd = join(dir, "x");
