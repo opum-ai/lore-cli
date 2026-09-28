@@ -55,8 +55,10 @@ import {
   README_READBACK_EXIT,
   README_READBACK_SCRIPT,
   RECORD_KIND,
+  REGISTRY_WINDOW,
   RELEASE_VERSION,
   readbackEnv,
+  readbackRereadCommands,
   releaseRunReadArgs,
   resolveSkillsTree,
   rollback,
@@ -66,6 +68,7 @@ import {
   treeReadArgs,
   validateRecord,
   verifyFinalLauncher,
+  versionReadArgs,
 } from "../scripts/promote-latest.mjs";
 
 const V = "5.6.7";
@@ -1152,11 +1155,18 @@ describe("scripts/promote-latest.mjs: step 7 and the README read-back (LCLI-621,
       expect(errText).toContain("!!! THE README READ-BACK DID NOT PASS. THIS PROMOTION IS COMPLETE AND VERIFIED. !!!");
       expect(errText).toContain("Do NOT run --rollback, and do NOT unpublish");
       expect(errText).toContain("The fix is the NEXT release.");
-      expect(errText).toContain(`npm view ${LAUNCHER} readme | wc -c`);
+      // LCLI-626 N2: every printed command is pinned as the script's own reads are.
+      const reread = readbackRereadCommands(V, X_FILE);
+      expect(h.err).toContain(`    ${reread.size}`);
+      expect(h.err).toContain(`    ${reread.view}`);
       // F8e: the read-back's own re-run command, since re-running --promote is not the way back to it.
-      expect(errText).toContain(
-        `npm pack ${LAUNCHER}@${V} && tar -xzf ${X_FILE} && cd package && bash ${README_READBACK_SCRIPT}`,
-      );
+      expect(h.err).toContain(`    ${reread.rerun}`);
+      if (devNull === "/dev/null") {
+        expect(errText).toContain(`npm view ${LAUNCHER} readme --userconfig=/dev/null ${PINS_TEXT} | wc -c`);
+        expect(errText).toContain(
+          `npm pack ${LAUNCHER}@${V} --userconfig=/dev/null ${PINS_TEXT} && tar -xzf ${X_FILE} && cd package && env npm_config_userconfig=/dev/null npm_config_registry=${REGISTRY} npm_config_@opum-ai:registry=${REGISTRY} bash `,
+        );
+      }
       // F8b: the Promoted line no longer offers --rollback as a remedy right above "Do NOT run --rollback".
       expect(h.out.join("\n")).not.toContain("Rollback: node scripts/promote-latest.mjs --rollback");
       expect(h.out.join("\n")).toContain("a README read-back result is never a reason to use it");
@@ -1310,6 +1320,31 @@ describe("scripts/promote-latest.mjs: step 7 and the README read-back (LCLI-621,
     });
   });
 
+  // LCLI-626 N2. The commands printed on exit 3 are what an operator pastes; unpinned, a ~/.npmrc
+  // `@opum-ai:registry` would answer them and the operator would record a mirror as the public page.
+  test("unit: the printed re-read commands carry the same pins as the script's own npm reads and the read-back's env", () => {
+    const reread = readbackRereadCommands(V, X_FILE);
+    // The npm flags the script's own anonymous reads end with, verbatim.
+    const anonymous = versionReadArgs("x").slice(-3);
+    expect(anonymous).toEqual([`--userconfig=${devNull}`, ...PINS]);
+    const quote = (word: string) => (/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word}'`);
+    const flags = anonymous.map(quote).join(" ");
+    expect(reread.view).toBe(`npm view ${LAUNCHER} readme ${flags}`);
+    expect(reread.size).toBe(`npm view ${LAUNCHER} readme ${flags} | wc -c`);
+    expect(reread.rerun).toContain(`npm pack ${LAUNCHER}@${V} ${flags} && tar -xzf ${X_FILE} && cd package && env `);
+    // The script itself calls `npm view` with no flags, so it gets readbackEnv's three variables.
+    const pins = Object.entries(readbackEnv({})).map(([key, value]) => quote(`${key}=${value}`));
+    expect(pins).toHaveLength(3);
+    expect(reread.rerun).toContain(`env ${pins.join(" ")} bash `);
+    expect(reread.rerun.endsWith(quote(README_READBACK_SCRIPT))).toBe(true);
+    if (devNull === "/dev/null") {
+      expect(reread.view).toBe(`npm view ${LAUNCHER} readme --userconfig=/dev/null ${PINS_TEXT}`);
+      expect(reread.rerun).toContain(
+        `env npm_config_userconfig=/dev/null npm_config_registry=${REGISTRY} npm_config_@opum-ai:registry=${REGISTRY} bash `,
+      );
+    }
+  });
+
   // The runner-injected tests above prove what promote does with the real script's output; these
   // run the REAL script through the REAL runner, against a stub `npm` on PATH, so the wiring itself
   // -- the script's path, its cwd holding the tarball's own files, the env pins reaching npm, and the
@@ -1402,8 +1437,10 @@ describe("scripts/promote-latest.mjs: resolveSkillsTree", () => {
 
   test("resolves commit -> root tree -> the skills entry, through the pinned gh api reads", async () => {
     const { run, calls } = through({
-      [commitLine]: { tree: { sha: ROOT_TREE } },
+      [commitLine]: { sha: COMMIT, tree: { sha: ROOT_TREE } },
       [treeLine]: {
+        sha: ROOT_TREE,
+        truncated: false,
         tree: [
           { path: "skills.md", type: "blob", sha: "1".repeat(40) },
           { path: "skills", type: "tree", sha: SKILLS_TREE },
@@ -1422,8 +1459,8 @@ describe("scripts/promote-latest.mjs: resolveSkillsTree", () => {
 
   test("a root tree without a skills/ TREE, an unreadable read, or a malformed answer is an error, never a guess", async () => {
     const noSkills = through({
-      [commitLine]: { tree: { sha: ROOT_TREE } },
-      [treeLine]: { tree: [{ path: "skills", type: "blob", sha: SKILLS_TREE }] },
+      [commitLine]: { sha: COMMIT, tree: { sha: ROOT_TREE } },
+      [treeLine]: { sha: ROOT_TREE, tree: [{ path: "skills", type: "blob", sha: SKILLS_TREE }] },
     });
     expect(await resolveSkillsTree(COMMIT, { run: noSkills.run })).toEqual({
       error: `root tree ${ROOT_TREE} of ${COMMIT} has no skills/ tree entry`,
@@ -1432,10 +1469,58 @@ describe("scripts/promote-latest.mjs: resolveSkillsTree", () => {
     expect(await resolveSkillsTree(COMMIT, { run: unreadable.run })).toEqual({
       error: `gh: Not Found (HTTP 404) ${commitLine}`,
     });
-    const malformed = through({ [commitLine]: { tree: {} } });
+    const malformed = through({ [commitLine]: { sha: COMMIT, tree: {} } });
     expect(await resolveSkillsTree(COMMIT, { run: malformed.run })).toEqual({
       error: `commit ${COMMIT} did not read as a commit with a tree`,
     });
+  });
+
+  // LCLI-626 N3, as resolveTagCommit's LCLI-613 review N5: an answer about another object, even one
+  // carrying a well-formed skills/ entry, never resolves the handshake value.
+  test("an answer about a DIFFERENT commit or tree is an error naming both, never the skills/ it lists", async () => {
+    const OTHER = "9".repeat(40);
+    const skillsTree = { tree: [{ path: "skills", type: "tree", sha: SKILLS_TREE }] };
+    const wrongCommit = through({
+      [commitLine]: { sha: OTHER, tree: { sha: ROOT_TREE } },
+      [treeLine]: { sha: ROOT_TREE, ...skillsTree },
+    });
+    expect(await resolveSkillsTree(COMMIT, { run: wrongCommit.run })).toEqual({
+      error: `asked for commit ${COMMIT}, the API answered for "${OTHER}"`,
+    });
+    expect(wrongCommit.calls).toEqual([commitLine]);
+    const noCommitSha = through({
+      [commitLine]: { tree: { sha: ROOT_TREE } },
+      [treeLine]: { sha: ROOT_TREE, ...skillsTree },
+    });
+    expect(await resolveSkillsTree(COMMIT, { run: noCommitSha.run })).toEqual({
+      error: `asked for commit ${COMMIT}, the API answered for null`,
+    });
+    const wrongTree = through({
+      [commitLine]: { sha: COMMIT, tree: { sha: ROOT_TREE } },
+      [treeLine]: { sha: OTHER, ...skillsTree },
+    });
+    expect(await resolveSkillsTree(COMMIT, { run: wrongTree.run })).toEqual({
+      error: `asked for root tree ${ROOT_TREE} of ${COMMIT}, the API answered for "${OTHER}"`,
+    });
+    const noTreeSha = through({ [commitLine]: { sha: COMMIT, tree: { sha: ROOT_TREE } }, [treeLine]: skillsTree });
+    expect(await resolveSkillsTree(COMMIT, { run: noTreeSha.run })).toEqual({
+      error: `asked for root tree ${ROOT_TREE} of ${COMMIT}, the API answered for null`,
+    });
+  });
+
+  test("a TRUNCATED root tree is named as truncated, never as 'has no skills/ tree entry', listed or not", async () => {
+    for (const tree of [
+      [{ path: "README.md", type: "blob", sha: "d".repeat(40) }],
+      [{ path: "skills", type: "tree", sha: SKILLS_TREE }],
+    ]) {
+      const truncated = through({
+        [commitLine]: { sha: COMMIT, tree: { sha: ROOT_TREE } },
+        [treeLine]: { sha: ROOT_TREE, truncated: true, tree },
+      });
+      expect(await resolveSkillsTree(COMMIT, { run: truncated.run })).toEqual({
+        error: `root tree ${ROOT_TREE} of ${COMMIT} came back truncated from the API, so its skills/ entry was not read`,
+      });
+    }
   });
 
   test("promote prints an unresolved skills/ tree as NOT RESOLVED with the by-hand command, and still exits 0", async () => {
@@ -2237,6 +2322,63 @@ describe("scripts/promote-latest.mjs: quest first, read not remembered (review S
     } finally {
       h.cleanup();
     }
+  });
+});
+
+// LCLI-626 review 1. The read-back runs after every latest move and the X publish, so a window it
+// would refuse must be refused before step 1 -- or `30m --promote` completes a promotion, then reads
+// back nothing and reports NOT CONFIRMED as though propagation were the question.
+describe("scripts/promote-latest.mjs: REGISTRY_WINDOW_SECONDS is refused before anything is read (LCLI-626 review 1)", () => {
+  for (const mode of ["--promote", "--dry-run"]) {
+    for (const bad of ["30m", "abc", "08", "1234567890", "abc\nA4 VERDICT: FAILED injected"]) {
+      test(`${mode} with REGISTRY_WINDOW_SECONDS=${JSON.stringify(bad)}: refused, nothing read, moved, published or recorded`, async () => {
+        const h = harness();
+        const w = world();
+        try {
+          await expect(
+            h.go(["--record", h.record, mode], w, { NPM_TOKEN: "", REGISTRY_WINDOW_SECONDS: bad }),
+          ).rejects.toThrow("is not a whole number of seconds");
+          expect(w.calls).toEqual([]);
+          expect(w.writes).toEqual([]);
+          expect(existsSync(h.record)).toBe(false);
+        } finally {
+          h.cleanup();
+        }
+      });
+    }
+  }
+
+  test("positive control: unset, empty and a valid window all reach the end of a dry run", async () => {
+    for (const window of [undefined, "", "0", "1800", "999999999"]) {
+      const h = harness();
+      const w = world();
+      try {
+        expect(
+          await h.go(["--record", h.record, "--dry-run"], w, { NPM_TOKEN: "", REGISTRY_WINDOW_SECONDS: window }),
+        ).toBe(0);
+        expect(w.calls.length).toBeGreaterThan(0);
+      } finally {
+        h.cleanup();
+      }
+    }
+  });
+
+  test("--rollback runs no read-back, so it does not read the window", async () => {
+    const h = harness();
+    try {
+      // Refused for its missing record, not for the window: the window check never ran.
+      await expect(
+        h.go(["--rollback", join(h.dir, "absent.json")], world(), { NPM_TOKEN: "", REGISTRY_WINDOW_SECONDS: "30m" }),
+      ).rejects.toThrow("ENOENT");
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("one grammar: readme-readback.sh's window_re is REGISTRY_WINDOW's source, byte for byte", () => {
+    const script = readFileSync(README_READBACK_SCRIPT, "utf8");
+    const literals = [...script.matchAll(/^window_re='([^']*)'$/gm)].map((m) => m[1]);
+    expect(literals).toEqual([REGISTRY_WINDOW.source]);
   });
 });
 

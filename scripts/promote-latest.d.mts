@@ -97,11 +97,16 @@ export declare function verifyFinalLauncher(args: {
 export declare const README_READBACK_SCRIPT: string;
 export declare const README_READBACK_EXIT: number;
 export declare function readbackEnv(env: Record<string, string | undefined>): Record<string, string | undefined>;
+export declare function readbackRereadCommands(
+  version: string,
+  tarballFilename: string,
+): { size: string; view: string; rerun: string };
 export declare function extractReadbackInputs(tarball: string, into: string): Promise<void>;
 export declare const READBACK_PASSED: string;
 export declare const READBACK_NOT_CONFIRMED: string;
 export declare const READBACK_FAILED: string;
 export declare const VERDICT_LINE: RegExp;
+export declare const REGISTRY_WINDOW: RegExp;
 export interface Readback {
   state: string;
   code: number | string | null;

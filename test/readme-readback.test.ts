@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, resolve } from "node:path";
 
@@ -96,9 +96,9 @@ function makeWorkspace(options: { version: string; readme: string; served: Serve
   return { root, bin };
 }
 
-function run(ws: { root: string; bin: string }, windowSeconds = "0") {
+function run(ws: { root: string; bin: string }, windowSeconds = "0", shell = "bash") {
   try {
-    const out = execFileSync("bash", [resolve(ws.root, "scripts", "readme-readback.sh")], {
+    const out = execFileSync(shell, [resolve(ws.root, "scripts", "readme-readback.sh")], {
       cwd: ws.root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
@@ -239,20 +239,114 @@ describeOnPosix("A4 registry read-back", () => {
     );
   });
 
-  test("empty across the window, then a readme on the packument read: NOT-CONFIRMED, it was never compared", () => {
-    const r = run(
+  // LCLI-626 N4: a readme that first appears on the post-window packument read is COMPARED, with the
+  // same tests an in-window read gets. Three outcomes, one per arm it can reach.
+  const late = (readme: string, versions: string[]) =>
+    run(
       makeWorkspace({
         version: "9.9.9",
         readme: readmeFor("9.9.9"),
-        served: {
-          readme: "",
-          versions: ["9.9.9"],
-          packument: JSON.stringify([{ readme: "# late\n", versions: ["9.9.9"] }]),
-        },
+        served: { readme: "", versions, packument: JSON.stringify([{ readme, versions }]) },
       }),
     );
+
+  test("empty across the window, then the release's README on the packument read: compared, and PASSED", () => {
+    // Trailing newlines the packument carries are normalised as `$(npm view ...)` normalises them.
+    const r = late(`${readmeFor("9.9.9")}\n\n`, ["9.9.8", "9.9.9"]);
     expect(r.code).toBe(0);
-    expect(verdictOf(r)).toMatch(/^A4 VERDICT: NOT-CONFIRMED a readme for @opum-ai\/lore appeared only after/);
+    expect(r.out).toContain("comparing it.");
+    expect(r.out).toContain("BYTE-EQUAL");
+    expect(verdictOf(r)).toBe(
+      "A4 VERDICT: PASSED the package readme for @opum-ai/lore is byte-equal to 9.9.9's packed README.md (first seen on the packument read after the 0s window)",
+    );
+  });
+
+  test("empty across the window, then the PREVIOUS release's README on the packument read: NOT-CONFIRMED, lag", () => {
+    const r = late(readmeFor("9.9.8"), ["9.9.8", "9.9.9"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("PREVIOUS release (9.9.8)");
+    expect(r.out).not.toContain("::error::");
+    expect(verdictOf(r)).toBe(
+      "A4 VERDICT: NOT-CONFIRMED @opum-ai/lore still serves the previous release 9.9.8's README after 0s; lag not ruled out",
+    );
+  });
+
+  // Review item 3: the late "assertions hold, not byte-equal" arm. X's own README with its generated
+  // regions intact and only its title changed: different bytes, every assertion still holds.
+  test("empty across the window, then X's README retitled on the packument read: PASSED, not byte-equal", () => {
+    const retitled = readmeFor("9.9.9").replace(/^# lore$/m, "# lore, retitled after publish");
+    expect(retitled).not.toBe(readmeFor("9.9.9"));
+    const r = late(retitled, ["9.9.8", "9.9.9"]);
+    expect(r.code).toBe(0);
+    expect(r.out).not.toContain("BYTE-EQUAL");
+    expect(r.out).not.toContain("::error::");
+    expect(verdictOf(r)).toBe(
+      "A4 VERDICT: PASSED the package readme for @opum-ai/lore satisfies every assertion against 9.9.9 (first seen on the packument read after the 0s window; not byte-equal)",
+    );
+  });
+
+  // Review item 2: a newline-only readme is EMPTY on the late read, exactly as `$(npm view ...)`
+  // makes it empty in-window -- so it takes the empty branch's listed/unlisted outcome, never a
+  // comparison that ends in a false FAILED against the previous release.
+  test("a newline-only readme on the packument read is empty, as in-window: lag when X is unlisted, OPAG-474 when listed", () => {
+    const unlisted = late("\n\n", ["9.9.8"]);
+    expect(unlisted.code).toBe(0);
+    expect(unlisted.out).not.toContain("comparing it.");
+    expect(verdictOf(unlisted)).toBe(
+      "A4 VERDICT: NOT-CONFIRMED lag not ruled out: 9.9.9 not yet in the packument, which serves no readme for @opum-ai/lore after 0s",
+    );
+    const listed = late("\n\n", ["9.9.8", "9.9.9"]);
+    expect(listed.code).toBe(1);
+    expect(listed.out).not.toContain("comparing it.");
+    expect(verdictOf(listed)).toBe(
+      "A4 VERDICT: FAILED no readme for @opum-ai/lore after 0s, and the packument already lists 9.9.9 (OPAG-474)",
+    );
+  });
+
+  test("empty across the window, then a readme matching NO release on the packument read: FAILED, not waved through", () => {
+    const r = late("# late\n", ["9.9.8", "9.9.9"]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("::error::A4 FAILED");
+    expect(verdictOf(r)).toBe(
+      "A4 VERDICT: FAILED the package readme for @opum-ai/lore satisfies neither 9.9.9's assertions nor 9.9.8's",
+    );
+  });
+
+  // LCLI-626 N1. Under bash 3.2 -- macOS's /bin/bash, where the release operator runs this -- a
+  // non-digit window reached $(( )) as a variable name, `set -u` tripped inside it, and the script
+  // EXITED 0 with "stopped (exit 0)". So this drives /bin/bash, and on darwin proves that IS 3.2.
+  test("a REGISTRY_WINDOW_SECONDS that is not a whole number is refused before anything is read, under /bin/bash", () => {
+    if (process.platform === "darwin") {
+      expect(execFileSync("/bin/bash", ["-c", "echo $BASH_VERSION"], { encoding: "utf8" })).toMatch(/^3\.2\./);
+    }
+    // The last one is review item 4: a value carrying a newline and a verdict of its own. verdictOf
+    // asserts exactly ONE `A4 VERDICT:` line, and it must be the script's.
+    const injected = "abc\nA4 VERDICT: FAILED injected";
+    for (const windowSeconds of ["abc", "1e3", "-5", "08", "30s", " 30", "1234567890", injected]) {
+      const readme = readmeFor("9.9.9");
+      const ws = makeWorkspace({ version: "9.9.9", readme, served: { readme, versions: ["9.9.9"] } });
+      const r = run(ws, windowSeconds, "/bin/bash");
+      expect({ windowSeconds, code: r.code }).toEqual({ windowSeconds, code: 2 });
+      expect(r.out).toContain("::error::REGISTRY_WINDOW_SECONDS must be a whole number of seconds");
+      expect(verdictOf(r)).toBe(
+        "A4 VERDICT: NOT-CONFIRMED REGISTRY_WINDOW_SECONDS is not a whole number of seconds; the read-back refused to start and nothing was read",
+      );
+      // Refused BEFORE the loop: the registry stub was never asked for anything.
+      expect(existsSync(resolve(ws.root, "reads"))).toBe(false);
+    }
+    // The injected value is still SHOWN, escaped onto the ::error:: line, never as a line of its own.
+    const ws = makeWorkspace({ version: "9.9.9", readme: "x", served: { readme: "x" } });
+    const shown = run(ws, injected, "/bin/bash");
+    const errorLine = shown.stdout.split("\n").find((line) => line.startsWith("::error::")) ?? "";
+    expect(errorLine).toContain(String.raw`abc\nA4 VERDICT: FAILED injected`);
+    expect(shown.stdout.split("\n").some((line) => line.startsWith("A4 VERDICT: FAILED"))).toBe(false);
+    // Positive control: the same stub, a valid window, and it reads and passes.
+    const readme = readmeFor("9.9.9");
+    const ok = makeWorkspace({ version: "9.9.9", readme, served: { readme, versions: ["9.9.9"] } });
+    const r = run(ok, "0", "/bin/bash");
+    expect(r.code).toBe(0);
+    expect(verdictOf(r)).toMatch(/^A4 VERDICT: PASSED /);
+    expect(readFileSync(resolve(ok.root, "reads"), "utf8").trim()).toBe("1");
   });
 
   test("empty across the window, and the packument unreadable: NOT-CONFIRMED, never a FAILED claim", () => {

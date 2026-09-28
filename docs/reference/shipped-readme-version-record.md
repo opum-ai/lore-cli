@@ -478,7 +478,15 @@ lag through an empty field. And after a fresh publish onto `latest`, a field
 still empty once propagation is done is the OPAG-474 defect itself. So an empty
 readme after the window is now settled by one packument read of `readme` and
 `versions`. If that read already lists this version, empty is FAILED. If it does
-not, lag is not ruled out, and the verdict is NOT-CONFIRMED. The script now ends
+not, lag is not ruled out, and the verdict is NOT-CONFIRMED. The third outcome
+was added by LCLI-626: that same read can carry a readme that the in-window
+reads never saw. It is then compared exactly as an in-window readme is, so it
+can PASS (byte-equal, or every assertion holds against this release). If it
+does not pass, it goes through the same lag-or-defect test: the previous
+release's README gives NOT-CONFIRMED, and a README matching no release we
+published gives FAILED. Before LCLI-626 it was reported NOT-CONFIRMED without
+being compared. A readme of nothing but newlines counts as empty on this read,
+as it does in-window. The script now ends
 every path in a verdict line, and a verdict that is not PASSED makes
 `promote-latest.mjs` exit `3`: the promotion is complete, and nothing is rolled
 back.
