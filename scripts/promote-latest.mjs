@@ -293,7 +293,9 @@ export const integrityOf = (bytes) => `sha512-${createHash("sha512").update(byte
  * the six platforms, X-rc.N on the launcher (LCLI-621): moving `latest` on a
  * subset would pair a qualified launcher with a platform package nobody staged.
  * The launcher's own prior `latest` is recorded like every other package's, so a
- * rollback restores it by dist-tag.
+ * rollback restores it by dist-tag. A fresh run (not `resuming`) also refuses a
+ * record validateRecord would refuse: a version older than a current `latest`, or
+ * not a plain X.Y.Z (LCLI-631).
  * @param {{ version: string, launcherVersion?: string, releaseRunId?: string, packages?: readonly string[],
  *   readTags?: (name: string) => Promise<Record<string, string>>, now?: () => Date, resuming?: boolean }} args
  */
@@ -333,18 +335,58 @@ export async function planPromotion({
     entries.push({ name, priorLatest: tags[PROMOTE_TAG] ?? null });
   }
   if (problems.length) return /** @type {{ ok: false, problems: string[] }} */ ({ ok: false, problems });
-  return /** @type {{ ok: true, record: PromotionRecord }} */ ({
-    ok: true,
-    record: {
-      schemaVersion: 1,
-      kind: RECORD_KIND,
-      version,
-      ...(launcherVersion ? { launcherVersion } : {}),
-      ...(releaseRunId ? { releaseRunId } : {}),
-      recordedAt: now().toISOString(),
-      packages: entries,
-    },
-  });
+  /** @type {PromotionRecord} */
+  const record = {
+    schemaVersion: 1,
+    kind: RECORD_KIND,
+    version,
+    ...(launcherVersion ? { launcherVersion } : {}),
+    ...(releaseRunId ? { releaseRunId } : {}),
+    recordedAt: now().toISOString(),
+    packages: entries,
+  };
+  // LCLI-631 (paired with quest-cli QCLI-402, opum-ai/quest-cli#369; opum-doc ADR
+  // refuse-a-lore-quest-promotion-that-would-move-npm-latest-backwards and its Amendment 1): a
+  // fresh record must be one that resume and --rollback would accept. Otherwise `latest` starts to
+  // move under a record that can be neither resumed nor rolled back. validateRecord is the one gate.
+  // It refuses a --version that is not a plain X.Y.Z, and a current `latest` newer than --version
+  // (compareReleaseVersions, numeric: 0.9.0 is older than 0.10.0). main() calls this before its
+  // first write, on --dry-run and --promote alike; through main(), a non-plain version is already
+  // refused one step earlier, by readArtifact's launcher-equivalence check, so this clause is the
+  // second line there, and the only one for any other caller. The headlines below only explain the refusal;
+  // they never refuse on their own. A resumed run keeps the record the first run wrote, which
+  // main() has already validated with {version}; equal-to-latest is the lost-record refusal above.
+  //
+  // DO NOT relax this to allow a backport or a prerelease. Neither is a promote use case: `latest`
+  // only ever moves forward, onto a release. An older or prerelease version belongs on a
+  // non-latest dist-tag, through a separate path that is not built. Build that path; do not
+  // teach this one to move `latest` backwards.
+  if (!resuming) {
+    const valid = validateRecord(record, { version, packages });
+    if (!valid.ok) {
+      const plain = typeof version === "string" && RELEASE_VERSION.test(version);
+      const headlines = plain
+        ? entries
+            .filter(
+              (entry) =>
+                typeof entry.priorLatest === "string" &&
+                RELEASE_VERSION.test(entry.priorLatest) &&
+                compareReleaseVersions(entry.priorLatest, version) > 0,
+            )
+            .map(
+              (entry) =>
+                `${entry.name}: ${version} is older than the current ${PROMOTE_TAG} ${entry.priorLatest}, so promoting it would move ${PROMOTE_TAG} backwards. Backports are not a promote use case: an older version belongs on a non-${PROMOTE_TAG} dist-tag through a separate path that is not built`,
+            )
+        : [
+            `${version} is not a plain X.Y.Z release, and ${PROMOTE_TAG} only ever takes a release. A prerelease, like a backport, is not a promote use case: it belongs on a non-${PROMOTE_TAG} dist-tag through a separate path that is not built`,
+          ];
+      return /** @type {{ ok: false, problems: string[] }} */ ({
+        ok: false,
+        problems: [...headlines, ...valid.problems],
+      });
+    }
+  }
+  return /** @type {{ ok: true, record: PromotionRecord }} */ ({ ok: true, record });
 }
 
 /**
@@ -388,8 +430,9 @@ export function validateRecord(record, { version, packages = RELEASE_PACKAGES } 
     // LCLI-617: promotion is meant never to move `latest` backwards, so a record's prior should be
     // older than its release. A newer one ("5.7.0" in a 5.6.7 record) passes every check above and
     // checkRollbackState, and --rollback, which no receipt gates, would move `latest` onto it.
-    // planPromotion does NOT itself refuse an older --version, so a backport promoted over a newer
-    // `latest` writes a record this refuses on resume and on --rollback (quest-cli alike).
+    // Since LCLI-631, planPromotion runs this same check on the record it is about to hand a fresh
+    // run, so such a record is no longer written; a hand-edited or pre-LCLI-631 one still is refused
+    // here on resume and on --rollback (quest-cli alike).
     // Compared against record.version, never launcherVersion: the launcher's prior is its own
     // `latest` before the promotion, held to a plain X.Y.Z above like every other package's, and a
     // rollback restores it by dist-tag, not to the X-rc.N it was staged as.
@@ -1274,6 +1317,10 @@ export async function main(
       }
       // The staging precondition is checked on every run, a reused record
       // included: it is a fact about the registry now, not about the record.
+      // On a fresh run, planPromotion also validates the record it builds (LCLI-631): a --version
+      // older than any package's current latest is refused here, before the first write below, on
+      // --dry-run and --promote alike. A --version that is not a plain X.Y.Z never gets this far:
+      // step 2's launcher-equivalence check refuses it first; planPromotion is its second line.
       const plan = await planPromotion({
         version,
         launcherVersion,
