@@ -634,7 +634,11 @@ the promotion half, item 7. It is not part of staging.
    that can be empty: `@opum-ai/lore`'s has had no `readme` since 0.11.0
    (OPAG-474), so the next release will lag through an empty field. So empty is
    FAILED (the OPAG-474 defect) only when the same read already lists this
-   version. Otherwise lag is not ruled out, and the verdict is NOT-CONFIRMED.
+   version. If that read carries a non-empty `readme`, it is compared exactly
+   as an in-window read would be: PASSED when it is byte-equal or satisfies
+   every assertion, NOT-CONFIRMED when it is the previous release's, FAILED
+   otherwise (LCLI-626). Otherwise lag is not ruled out, and the verdict is
+   NOT-CONFIRMED. A `readme` holding only newlines counts as empty.
    Record the package and the time you read, never "the page for version X" —
    naming an object you did not read is the defect class this whole gate exists
    to close.
@@ -1117,7 +1121,10 @@ the promotion half, item 7. It is not part of staging.
    `package/README.md`, so "byte-equal" means equal to the bytes that shipped.
    The npm registry pins travel in its environment, and every npm config
    variable the caller had, in either case, is dropped first. `REGISTRY_WINDOW_SECONDS`
-   passes through. Its output prints when it finishes. A `--dry-run` never runs
+   passes through, and promote validates it before step 1 (and in a `--dry-run`):
+   anything other than a whole number of seconds (`0`, or up to nine digits with
+   no leading zero; unset or empty means 1800) exits `2` before anything is read,
+   moved or published (LCLI-626). Its output prints when it finishes. A `--dry-run` never runs
    it. Promote classifies the result by the script's `A4 VERDICT:` line, never
    by its last line of output, as one of three states:
 
