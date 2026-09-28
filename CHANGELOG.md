@@ -148,8 +148,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   string for every package. That includes a prerelease `X` such as `1.0.0-beta.1`, which is
   separate from `1.0.0`. It also includes a version that is not semver-shaped, which sorts last.
   `--limit` counts releases. A release at or below the baseline takes its rcs with it. Within a
-  release, rcs run in numeric `N` order and `X` comes last. The defect was latent: no prerelease of `@opum-ai/lore` is on the registry yet. It had to be fixed
-  before the first `publish: true` Release run under LCLI-621 puts one there.
+  release, rcs run in numeric `N` order and `X` comes last. The defect was latent: no
+  prerelease of `@opum-ai/lore` is on the registry yet. It had to be fixed before the first
+  `publish: true` Release run under LCLI-621 puts one there.
 
 ## [0.11.0] - 2026-09-27
 
