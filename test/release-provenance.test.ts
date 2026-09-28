@@ -84,9 +84,10 @@ type Pin = { commit: string; repo: string };
  * What the stub registry serves, per package per version. `undefined` means "no attestation",
  * served as the 404 npm really answers with.
  *
- * 0.7.4 is the case that killed the launcher-only shortcut: release.yml's `publish_or_skip` is
- * resumable, so a release can legitimately be completed by a second dispatch from a second
- * commit. Here the launcher pins a live commit and the platform package pins a destroyed one —
+ * 0.7.4 is the case that killed the launcher-only shortcut: release.yml's `publish_or_skip` can
+ * resume a partial publish from a different run when its tarballs are byte-identical, so one
+ * version can hold packages published from two commits. Here the launcher pins a live commit and
+ * the platform package pins a destroyed one —
  * probing the launcher alone would report that release clean.
  */
 const PINS: Record<string, Record<string, Pin | undefined>> = {
@@ -124,6 +125,18 @@ const SET_VERSION = "0.8.0";
 const SET_RC = "2";
 STAGED_PINS[SET_VERSION] = { [LAUNCHER]: { commit: GONE_SHA, repo: REPO } };
 STAGED_PINS[`${SET_VERSION}-rc.${SET_RC}`] = { [LAUNCHER]: { commit: LIVE_SHA, repo: REPO } };
+
+/**
+ * A release whose LAUNCHER is the lagging package: its platform at X is attested, and its
+ * launcher at X-rc.1 has no attestation, so --post's propagation window retries the launcher.
+ * The launcher at X is attested here on purpose: a retry that asked for X instead of X-rc.1
+ * would find an answer and stop, which only the request log can tell apart (LCLI-625 review).
+ */
+const LAG_VERSION = "0.9.0";
+STAGED_PINS[LAG_VERSION] = {
+  [LAUNCHER]: { commit: LIVE_SHA, repo: REPO },
+  [PLATFORM]: { commit: LIVE_SHA, repo: REPO },
+};
 
 /** Every `name@version` the stub's attestation endpoint was asked for, in order. */
 const attestationRequests: string[] = [];
@@ -368,8 +381,8 @@ describe("release-provenance acknowledgement (the escape hatch)", () => {
 
 describe("release-provenance --pre over the published history", () => {
   test("EVERY package of a scanned release is checked, not just the launcher", async () => {
-    // 0.7.4 is a release completed across two dispatches from two commits (release.yml's
-    // publish_or_skip makes that a supported, documented flow): the launcher pins a live
+    // 0.7.4 is a release whose packages were published from two commits (possible when
+    // release.yml's publish_or_skip resumes from a byte-identical run): the launcher pins a live
     // commit, a platform package pins a destroyed one. A launcher-only probe would call this
     // release clean, which is exactly the false warrant the first revision of this gate shipped.
     const { code, out } = await runGate(["--pre", "--limit", "6", "--package", LAUNCHER, "--package", PLATFORM]);
@@ -519,6 +532,32 @@ describe("release-provenance propagation window", () => {
     // Pass 1 plus at least one retry, each at the platform's own version.
     expect(attestationRequests.filter((spec) => spec === `${PLATFORM}@0.7.1`).length).toBeGreaterThanOrEqual(2);
     expect(attestationRequests).not.toContain(`${LAUNCHER}@0.7.1`);
+  });
+
+  test("a lagging LAUNCHER is retried at X-rc.N, never at X", async () => {
+    // The platform at X is attested and the launcher at X-rc.1 is not, so the window is spent on
+    // the launcher. The previous test cannot catch a retry that uses the release's X instead of
+    // the package's own version, because for a platform the two are the same string.
+    attestationRequests.length = 0;
+    const { out } = await runGate([
+      "--post",
+      "--launcher-rc",
+      "1",
+      "--version",
+      LAG_VERSION,
+      "--package",
+      LAUNCHER,
+      "--package",
+      PLATFORM,
+      "--wait-seconds",
+      "1",
+    ]);
+    expect(out).toContain(`${LAUNCHER}@${LAG_VERSION}-rc.1: no attestation yet`);
+    expect(
+      attestationRequests.filter((spec) => spec === `${LAUNCHER}@${LAG_VERSION}-rc.1`).length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(attestationRequests).not.toContain(`${LAUNCHER}@${LAG_VERSION}`);
+    expect(outcomeOf(out, `${LAUNCHER}@${LAG_VERSION}-rc.1`)).toBe("absent");
   });
 });
 

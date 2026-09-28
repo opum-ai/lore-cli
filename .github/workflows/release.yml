@@ -1395,11 +1395,16 @@ jobs:
     # itself was skipped (the dry-run dispatches, where nothing was published).
     #
     # THE FAILED CASE IS THE ONE THAT MATTERS MOST, which is why this is not a bare `needs:`.
-    # release.yml's `publish_or_skip` is resumable precisely so a release can complete across
-    # two dispatches: dispatch 1 publishes six platform packages from commit X and dies before
-    # the launcher, dispatch 2 publishes the launcher from commit Y. That partial failure is
-    # exactly when one version ends up carrying two different pinned commits — and the default
-    # `needs:`-only behaviour would skip this check on it.
+    # A publish can die partway, with some packages on the registry and the rest not. That
+    # partial state is when this check matters most, and the default `needs:`-only behaviour
+    # would skip it. `publish_or_skip` resumes it: it skips a package already on the registry
+    # ONLY when the registry's dist.integrity equals this run's tarball. So the sanctioned
+    # resume is "Re-run failed jobs" on the SAME run (same commit, same tarballs). A fresh
+    # dispatch rebuilds the platforms and normally conflicts on them; the publish step's
+    # "already on the registry with different bytes" error says so and names the remedies. A
+    # resume by a different run, or by scripts/publish-release.sh, gets past that check only
+    # when its tarballs are byte-identical (measured once, on one commit). Then one version
+    # holds packages published by two different runs, and their pinned commits can differ.
     if: ${{ !cancelled() && needs.publish.result != 'skipped' }}
     runs-on: ubuntu-latest
     permissions:

@@ -81,12 +81,14 @@
  *           launcher alone, justified as "verify-versions asserts one version across every
  *           manifest, so they share a commit". That warrant was FALSE and is recorded here so
  *           it does not get reintroduced: verify-versions asserts version/license/author/
- *           os/cpu/pin equality and says nothing whatsoever about commits. Worse, release.yml's
- *           `publish_or_skip` exists precisely so a release CAN complete across two dispatches
- *           from two different commits — dispatch 1 publishes six platform packages from
- *           commit X and dies before the launcher, dispatch 2 publishes only the launcher from
- *           commit Y. One version then carries two distinct pinned commits, and a
- *           launcher-only probe sees only Y. Commit lookups are cached per repo+sha, so the
+ *           os/cpu/pin equality and says nothing whatsoever about commits. And one version CAN
+ *           be published by two runs: release.yml's `publish_or_skip` skips an already-published
+ *           package when its registry integrity equals the resuming run's tarball, so a
+ *           partially-failed publish finished by a different run (or by
+ *           scripts/publish-release.sh) whose tarballs are byte-identical leaves packages
+ *           published from two commits. That needs byte-identical rebuilds (measured once, on
+ *           one commit), and usually a fresh dispatch conflicts instead, but when it happens a
+ *           launcher-only probe sees one commit of two. Commit lookups are cached per repo+sha, so the
  *           normal case (all seven pinning one commit) still costs a single GitHub call.
  *
  *           The package set comes from the CURRENT package.json, so a platform package added
@@ -646,7 +648,7 @@ async function runPost(options, manifest) {
   // Said on every run, in the log and the job summary, so the absence of a launcher@X row is
   // never read as that launcher having been checked and found clean (OPAG-127 wording).
   const notes = [
-    `${launcherFinal} is NOT checked here, because this run does not publish it: the Release run stages the launcher as ${rcVersion}, and scripts/promote-latest.mjs publishes ${launcherFinal} later with --tag latest, outside the CI OIDC path, so it carries no provenance. It is provenance-missing, byte-bound to the qualified rc: the equivalence gate and the pass-1 receipt's finalTarball.sha256 bind its bytes to the qualified ${rcVersion}, which says "same bytes as tested" and is not a substitute for provenance ("built where, from what"). Restoring provenance on that final publish is opum-agent's OPAG-127, for both CLIs.`,
+    `${launcherFinal} is NOT checked here, because this run does not publish it: the Release run stages the launcher as ${rcVersion}, and scripts/promote-latest.mjs will publish ${launcherFinal} later with --tag latest, outside the CI OIDC path, so it will carry no provenance. It will be provenance-missing, byte-bound to the qualified rc: before that publish, promote-latest.mjs will require the equivalence gate to find it identical to the qualified ${rcVersion} once ${rcVersion} is substituted for ${version}, and its sha256 to equal finalTarball.sha256 in the pass-1 qualification receipt, which does not exist yet when this check runs. That binding is not a substitute for provenance, which attests where and from what the bytes were built (workflow, commit, runner). Restoring provenance on that final publish is opum-agent's OPAG-127, for both CLIs.`,
   ];
   for (const note of notes) console.log(`       ${note}`);
 
@@ -681,6 +683,8 @@ async function runPost(options, manifest) {
           `       ${name}@${specVersion}: no attestation yet, but other packages in this release have one; ${remaining}s of its propagation window left`,
         );
         await defaultSleep(Math.min(15000, Math.max(1000, deadline - Date.now())));
+        // specVersion, NOT the release's X: for the launcher that would retry a version this
+        // run never published. Pinned by the lagging-launcher test (LCLI-625 review).
         const retry = await checkOne(name, specVersion, options.expectedRepo);
         results[i] = retry;
         if (retry.outcome !== OUTCOME.ABSENT) break;
