@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A malformed window variable now fails the release BEFORE the first publish, and fails a
+  `publish:false` rehearsal too** (LCLI-634, extending LCLI-630). `vars.REGISTRY_WINDOW_SECONDS` and
+  `vars.PROVENANCE_WAIT_SECONDS` are refused unless they are a whole number of seconds (0 to
+  999999999, no leading zero), naming the variable and showing the value escaped. A new always-run
+  `release-window` job refuses the repository/organisation-scoped value on every dispatch; the
+  `publish` job refuses the environment-resolved one before its first publish. The LCLI-630
+  post-publish check stays as defence in depth. `scripts/release-provenance.mjs`'s `--wait-seconds`
+  now refuses `30m`, `08`, `1e3` and `abc` instead of reading them as 30, 8, 1 and a crash.
+- **Release prep refuses a patch-level bump when the notes for the version being released carry a
+  breaking-change marker** (LCLI-632, paired with quest-cli QCLI-328; ADR in opum-doc).
+  `scripts/check-breaking-bump.mjs` compares the checked section with the previous version heading
+  and refuses a patch bump when that section carries a `### ... (breaking)` heading, or lore's
+  legacy bold behaviour-change marker, whose refusal names the canonical `### Changed (breaking)`
+  spelling. Because lore and quest share one version (constitution Article 3 clause 1), the gate
+  also reads quest-cli's `CHANGELOG.md` by ref and applies the same rule, and an unreadable quest
+  changelog is a refusal, not a pass. `release.yml`'s new `breaking-bump` job gates the publish job.
 - **`scripts/release-provenance.mjs` refuses an `acknowledge_dangling_provenance` dispatch input
   that could forge workflow commands** (LCLI-636). The value previously printed raw inside
   `::warning::` lines, so an API dispatch with an interior CR/LF could have forged runner commands
@@ -39,14 +55,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `node scripts/github-release.mjs --version X --create`, and the README read-back still runs. The
   post-latest checklist reports the outcome instead of printing `gh release create`. The first
   live cut is the next promotion.
-- **BEHAVIOUR CHANGE: `lore check` fails on every error-tier `quote-safety` finding that `lore
-  validate` reports** (LCLI-612, ADR-0007). It uses the same rule name and byte-identical messages,
-  for every type. The findings cover an unquoted YAML-1.1 boolean (`yes`/`no`/`on`/`off`/`y`/`n`),
-  a value that starts with a YAML indicator character, and a value containing `: `. Before this,
-  such a file failed `validate` and passed `check`. Run `lore validate` to preview what `check`
-  will now fail on. A bare `YYYY-MM-DD` date stays a validate-only warning. Frontmatter that is not
-  valid YAML still stops `check` at the parse error, before per-file rules run. A fleet measurement
-  by ref found 0 such findings in 396 files across 11 repositories. This ships in a minor release.
 - **`scripts/promote-latest.mjs` refuses a `--version` that would move `latest` backwards, or is
   not plain `X.Y.Z`** (LCLI-631, paired with quest-cli QCLI-402). On a fresh `--dry-run` or
   `--promote`, before any registry write, it refuses a `--version` older (numerically) than any
@@ -151,6 +159,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   accepted there even at its true digest, per opum-cli-e2e's `receipts/README.md` at `e0021c7`.
   Before this, staging accepted receipts that promotion then refused. The closing checklist's
   promote commands now pass `--release-run <run-id>`, without which `promote-latest.mjs` exits 2.
+
+### Changed (breaking)
+
+- **`lore check` fails on every error-tier `quote-safety` finding that `lore
+  validate` reports** (LCLI-612, ADR-0007). It uses the same rule name and byte-identical messages,
+  for every type. The findings cover an unquoted YAML-1.1 boolean (`yes`/`no`/`on`/`off`/`y`/`n`),
+  a value that starts with a YAML indicator character, and a value containing `: `. Before this,
+  such a file failed `validate` and passed `check`. Run `lore validate` to preview what `check`
+  will now fail on. A bare `YYYY-MM-DD` date stays a validate-only warning. Frontmatter that is not
+  valid YAML still stops `check` at the parse error, before per-file rules run. A fleet measurement
+  by ref found 0 such findings in 396 files across 11 repositories. This ships in a minor release.
 
 ### Added
 

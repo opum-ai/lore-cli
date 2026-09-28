@@ -49,12 +49,14 @@ interface Step {
   uses?: string;
   env?: Record<string, string>;
   run?: string;
+  "continue-on-error"?: boolean;
 }
 interface Job {
   if?: string;
   needs?: string[] | string;
   environment?: string;
   steps?: Step[];
+  "continue-on-error"?: boolean;
 }
 interface Workflow {
   jobs: Record<string, Job>;
@@ -167,6 +169,22 @@ describe("release.yml: the new refusal is wired where it can act (LCLI-634)", ()
     for (const block of [jobStep().run ?? "", publishStep().run ?? ""]) {
       expect([...block.matchAll(/^window_re='([^']*)'$/gm)].map((m) => m[1])).toEqual([REGISTRY_WINDOW.source]);
     }
+  });
+
+  test("nothing can neuter either refusal: no continue-on-error, no step-level if", () => {
+    // LCLI-634 review finding 1. A gate that runs but cannot stop anything is not a gate:
+    // `continue-on-error` at either level converts it into a log message -- the job reports
+    // failure, GitHub treats it as success for `needs:` purposes, and publish runs anyway
+    // (the same mechanism test/release-workflow.test.ts:281 pins for other gates). A step-level
+    // `if:` is the quieter version of the same thing: the step simply does not run. Both sibling
+    // gates (LCLI-481, LCLI-620) carry these pins because review required them; this one must too.
+    const doc = loadWorkflow();
+    expect(doc.jobs[JOB]?.["continue-on-error"]).toBeUndefined();
+    for (const s of doc.jobs[JOB]?.steps ?? []) {
+      expect([s.name, s.if, s["continue-on-error"]]).toEqual([s.name, undefined, undefined]);
+    }
+    expect(publishStep().if).toBeUndefined();
+    expect(publishStep()["continue-on-error"]).toBeUndefined();
   });
 
   test("the LCLI-630 refusal nearest the publish is still there (defence in depth)", () => {

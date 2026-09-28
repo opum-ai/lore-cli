@@ -2727,7 +2727,7 @@ esac
 // One grammar across the places that VALIDATE a registry window (LCLI-629 AC3): this script's
 // `window_re`, scripts/readme-readback.sh's (held by test/promote-latest.test.ts) and
 // promote-latest.mjs's exported REGISTRY_WINDOW. A plain file read, so it runs on every platform.
-// Two further readers are held to the same source by their own files rather than here, so this
+// Three further sites are held to the same source by their own files rather than here, so this
 // comment does not go stale with them: .github/workflows/release.yml's post-publish visibility wait
 // (LCLI-630) and its pre-publish refusal (LCLI-634), both in
 // test/lcli634-release-window-preflight.test.ts, and scripts/release-provenance.mjs's
