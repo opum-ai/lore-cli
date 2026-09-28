@@ -428,24 +428,36 @@ describe("the command, with a stubbed gh (no network)", () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "lcli632-cli-")));
     const bin = join(dir, "bin");
     mkdirSync(bin);
-    const stub = join(bin, "gh");
-    writeFileSync(
-      stub,
-      [
-        "#!/bin/sh",
-        'if [ -n "$FAKE_GH_EXIT" ]; then',
-        '  echo "stub gh failing with $FAKE_GH_EXIT" >&2',
-        '  exit "$FAKE_GH_EXIT"',
-        "fi",
-        'if [ -z "$FAKE_GH_CHANGELOG" ]; then',
-        '  echo "stub gh: FAKE_GH_CHANGELOG is not set" >&2',
-        "  exit 1",
-        "fi",
-        'cat "$FAKE_GH_CHANGELOG"',
-        "",
-      ].join("\n"),
-    );
-    chmodSync(stub, 0o755);
+    const body = [
+      "#!/bin/sh",
+      'if [ -n "$FAKE_GH_EXIT" ]; then',
+      '  echo "stub gh failing with $FAKE_GH_EXIT" >&2',
+      '  exit "$FAKE_GH_EXIT"',
+      "fi",
+      'if [ -z "$FAKE_GH_CHANGELOG" ]; then',
+      '  echo "stub gh: FAKE_GH_CHANGELOG is not set" >&2',
+      "  exit 1",
+      "fi",
+      'cat "$FAKE_GH_CHANGELOG"',
+      "",
+    ].join("\n");
+    if (process.platform === "win32") {
+      // execFile's Windows PATH resolution (PATHEXT) never matches an
+      // extensionless file (the LCLI-632 windows-only CI red, run
+      // 36477182923): the search walked past the bare `gh` and executed the
+      // runner's real gh.exe, whose GH_TOKEN refusal reached the script. So
+      // the stub is a gh.cmd wrapper around the same sh body in a sibling
+      // gh.sh: execFile resolves gh.cmd via PATHEXT, cmd.exe runs the
+      // wrapper, and `%~dp0gh.sh %*` forwards the argv verbatim while the
+      // FAKE_GH_* environment is inherited through the chain. On posix the
+      // bare executable `gh` is found by exact-name resolution.
+      writeFileSync(join(bin, "gh.sh"), body);
+      writeFileSync(join(bin, "gh.cmd"), '@bash "%~dp0gh.sh" %*\r\n');
+    } else {
+      const stub = join(bin, "gh");
+      writeFileSync(stub, body);
+      chmodSync(stub, 0o755);
+    }
     if (fixture !== null) {
       writeFileSync(join(dir, "quest-changelog.md"), fixture);
     }
