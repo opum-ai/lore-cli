@@ -1434,19 +1434,33 @@ staged `X-rc.N`, then `X` once `promote-latest.mjs` has published it. The
 platform packages only ever hold `X`. So `--pre` groups the launcher's
 versions by `X` and checks each release this way:
 
-- Each platform package at `X`, once. It never asks for a platform at an rc
-  version. This includes a release whose launcher has only rcs, because it
-  was staged and not yet promoted, or abandoned.
+- Each platform package at `X`, once. It never asks for a platform at an
+  `X-rc.N` version. This includes a release whose launcher has only rcs,
+  because it was staged and not yet promoted, or abandoned.
 - The launcher at each version it has, once each.
+
+`X` is the launcher version with only a trailing `-rc.N` removed. `N` follows
+the `--launcher-rc` rule: a positive integer with no leading zero. Every
+other version is a release of its own, and every package is checked at that
+exact version. So `1.0.0-beta.1` is its own release, separate from `1.0.0`,
+and `1.0.0-beta.1-rc.1` is one of its rcs. `scripts/publish-release.sh`
+accepts any version that starts with a digit, so a prerelease `X` can occur.
+A string such as `X-rc.0` does not follow the rule, so it is also its own
+release. A version that is not semver-shaped at all is its own release too.
+The job warns about it, sorts it after every semver-shaped release, and
+checks it at every package.
 
 `--limit` (default 10) counts releases, so three rcs of one release take one
 slot. A release at or below the `KNOWN_DANGLING_THROUGH` baseline is listed
-with all its rcs and never fetched. The order is fixed by the script, not by
-the registry. Releases run by `X`, oldest first. Within a release the rcs
-run by numeric `N`, so `rc.2` comes before `rc.10`, and `X` comes last. A
-launcher version with a suffix other than `-rc.N` is not a shape this
-pipeline stages. The job warns about it and checks it as a launcher version,
-with the platforms at its `X`.
+with all its rcs and never fetched. That test reads the numbers of `X`, so a
+prerelease of the baseline's own version is at or below it. The order is
+fixed by the script, not by the registry:
+
+- Releases run oldest first by their numbers. A prerelease `X` comes before
+  the bare `X` with the same numbers. Two prereleases with the same numbers
+  are compared as plain strings, which is not full semver ordering.
+- Within a release the rcs run by numeric `N`, so `rc.2` comes before
+  `rc.10`, and `X` comes last.
 
 Before LCLI-627, `--pre` checked all seven packages at every launcher
 version. Each rc then asked for six platform versions that cannot exist, and

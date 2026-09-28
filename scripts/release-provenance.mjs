@@ -95,7 +95,9 @@
  *           RELEASES, NOT VERSION STRINGS (LCLI-627). Since LCLI-621 the launcher stages as
  *           X-rc.N, so its packument holds rc strings the platform packages never have: a
  *           Release run publishes the platforms at X only. --pre therefore groups the launcher's
- *           versions into releases by X (see groupReleases) and, per release, checks every
+ *           versions into releases by X — a version with ONLY a trailing -rc.N stripped, so a
+ *           prerelease X such as 1.0.0-beta.1 is a release of its own and every other string is
+ *           its own release too (see groupReleases) — and, per release, checks every
  *           platform package at X exactly once and the launcher at each version it actually
  *           has — each rc, and X once promote-latest.mjs has published it — exactly once. A
  *           release whose launcher packument holds only rcs (staged, not yet promoted, or
@@ -282,8 +284,55 @@ function isAtOrBelowBaseline(version) {
   return compareVersions(version, KNOWN_DANGLING_THROUGH) <= 0;
 }
 
-/** `X-rc.N` with N a positive integer and no leading zero — the only shape LCLI-621 stages. */
-const LAUNCHER_RC = /^(\d+\.\d+\.\d+)-rc\.([1-9][0-9]*)$/;
+/**
+ * A TRAILING `-rc.N`, N a positive integer with no leading zero. This is the same N grammar as
+ * --launcher-rc and release.yml's `launcher_rc`: the launcher at X-rc.N is the one shape LCLI-621
+ * stages that the platform packages never have. Group 1 is X, whatever X is.
+ */
+const LAUNCHER_RC = /^(.+)-rc\.([1-9][0-9]*)$/;
+
+/** Plain code-unit string order: deterministic, locale-free. */
+const byString = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+/**
+ * The release a launcher version belongs to: X for `X-rc.N` (when X is itself semver-shaped),
+ * and otherwise the version string itself. Only a trailing -rc.N is stripped — nothing else.
+ *
+ * @param {string} version
+ * @returns {{release: string, rc: number}} rc is N, or 0 for the release's own version
+ */
+function releaseOf(version) {
+  const rc = LAUNCHER_RC.exec(version);
+  const release = rc?.[1] ?? "";
+  if (rc && parseVersion(release)) return { release, rc: Number(rc[2]) };
+  return { release: version, rc: 0 };
+}
+
+/**
+ * Order two releases, oldest first. Decided here, NOT by compareVersions, which strips every
+ * suffix and so calls 1.0.0-beta.1 and 1.0.0 (and X-rc.N and X) equal, leaving their order to
+ * whatever key order the registry served.
+ *   1. semver-shaped releases before unparseable ones, which sort last by string — the same
+ *      place compareVersions puts them;
+ *   2. by numeric M.m.p core;
+ *   3. same core: a suffixed release (a prerelease X such as 1.0.0-beta.1) before the bare one,
+ *      as semver precedence has it; two suffixed releases of one core by plain string order.
+ *      That is NOT full semver prerelease precedence (beta.10 sorts before beta.2) — it is only
+ *      a deterministic tiebreak, and it matters only to where --limit cuts and to report order.
+ *
+ * @param {{release: string, parseable: boolean}} a
+ * @param {{release: string, parseable: boolean}} b
+ */
+function compareReleases(a, b) {
+  if (a.parseable !== b.parseable) return a.parseable ? -1 : 1;
+  if (!a.parseable) return byString(a.release, b.release);
+  const core = compareVersions(a.release, b.release);
+  if (core !== 0) return core;
+  const aSuffixed = /[-+]/.test(a.release);
+  const bSuffixed = /[-+]/.test(b.release);
+  if (aSuffixed !== bSuffixed) return aSuffixed ? -1 : 1;
+  return byString(a.release, b.release);
+}
 
 /**
  * Group the launcher's published versions into RELEASES, oldest release first (LCLI-627).
@@ -294,66 +343,51 @@ const LAUNCHER_RC = /^(\d+\.\d+\.\d+)-rc\.([1-9][0-9]*)$/;
  * platforms hold exactly one (X). Checking every package at every string asks for platform
  * versions that cannot exist and lets rcs crowd releases out of --limit.
  *
- * GROUPING. A parseable version belongs to the release named by its numeric core (the M.m.p
- * before any `-` or `+`), so X, X-rc.N and any other suffixed string of X share one group. The
- * platforms are checked at that core. A version that is not semver-shaped at all is its own
- * one-string group and every package is checked at that exact string, as before: nothing is
- * known about it, so nothing is assumed (see parseVersion).
+ * GROUPING. X is found by stripping ONLY a trailing -rc.N (see LAUNCHER_RC), and only when what
+ * is left is semver-shaped: X-rc.N and X share one group, and the platforms are checked at X.
+ * EVERY OTHER VERSION STRING IS ITS OWN RELEASE, checked at that exact string for every package.
+ * That includes a prerelease X — 1.0.0-beta.1 is a release of its own, distinct from 1.0.0, and
+ * 1.0.0-beta.1-rc.1 is its rc; scripts/publish-release.sh accepts any version that starts with a
+ * digit, so that shape is possible. An earlier revision of this fix grouped by numeric core, so it
+ * checked the platforms at 1.0.0 (which did not exist) instead of 1.0.0-beta.1 (which did), and
+ * merged the two releases into one --limit slot (LCLI-627 review). A string that does not match
+ * the rc grammar exactly (X-rc.0, X-rc.01) is also its own release. A version that is not
+ * semver-shaped at all is likewise its own release, checked at every package: nothing is known
+ * about it, so nothing is assumed (see parseVersion).
  *
- * ORDERING, DECIDED HERE AND NOT BY compareVersions (which calls X-rc.N and X equal, so their
- * relative order would otherwise be whatever key order the registry happened to serve):
- *   - releases: by numeric core, ascending; unparseable groups after every parseable one, by
- *     string — the same place compareVersions puts them.
- *   - within a release: X-rc.N ascending by NUMERIC N (rc.2 before rc.10), then any other
- *     suffixed string of X by plain string order, then X itself last, because X is published
- *     after its rcs. This fixes the report order; it never changes WHICH specs are checked.
- *
- * A suffix other than -rc.N is not a shape this pipeline stages, so it is returned in `odd` for
- * the caller to name loudly. It is still grouped under its X and still checked, launcher only.
+ * ORDER: releases by compareReleases; within a release, X-rc.N ascending by NUMERIC N (rc.2
+ * before rc.10), then X itself last, because X is published after its rcs. The in-release order
+ * fixes the report order only; it never changes WHICH specs are checked.
  *
  * @param {string[]} versions the launcher packument's version keys, in any order
- * @returns {{groups: {release: string, parseable: boolean, launcherVersions: string[]}[], odd: string[]}}
+ * @returns {{release: string, parseable: boolean, launcherVersions: string[]}[]}
  */
 function groupReleases(versions) {
-  /** @type {Map<string, {release: string, parseable: boolean, launcherVersions: string[]}>} */
+  /** @type {Map<string, {release: string, parseable: boolean, launcherVersions: string[], rcOf: Map<string, number>}>} */
   const byRelease = new Map();
-  /** @type {string[]} */
-  const odd = [];
   for (const version of new Set(versions)) {
-    const core = parseVersion(version);
-    const release = core ? core.join(".") : version;
-    const key = core ? `parsed:${release}` : `unparsed:${version}`;
-    let group = byRelease.get(key);
+    const { release, rc } = releaseOf(version);
+    let group = byRelease.get(release);
     if (!group) {
-      group = { release, parseable: Boolean(core), launcherVersions: [] };
-      byRelease.set(key, group);
+      group = { release, parseable: parseVersion(release) !== null, launcherVersions: [], rcOf: new Map() };
+      byRelease.set(release, group);
     }
     group.launcherVersions.push(version);
-    if (core && version !== release && !LAUNCHER_RC.test(version)) odd.push(version);
+    group.rcOf.set(version, rc);
   }
 
-  const rank = (version, release) => {
-    if (version === release) return [2, 0, ""];
-    const rc = LAUNCHER_RC.exec(version);
-    if (rc && rc[1] === release) return [0, Number(rc[2]), ""];
-    return [1, 0, version];
+  // X itself (rc 0) goes last; rcs by numeric N.
+  const inRelease = (group) => (version) => {
+    const n = group.rcOf.get(version) ?? 0;
+    return n === 0 ? Number.POSITIVE_INFINITY : n;
   };
-  for (const group of byRelease.values()) {
-    if (!group.parseable) continue;
-    group.launcherVersions.sort((a, b) => {
-      const [ca, na, sa] = rank(a, group.release);
-      const [cb, nb, sb] = rank(b, group.release);
-      if (ca !== cb) return ca < cb ? -1 : 1;
-      if (na !== nb) return na < nb ? -1 : 1;
-      return sa < sb ? -1 : sa > sb ? 1 : 0;
-    });
-  }
-
-  const groups = [...byRelease.values()].sort((a, b) => {
-    if (a.parseable !== b.parseable) return a.parseable ? -1 : 1;
-    return compareVersions(a.release, b.release);
-  });
-  return { groups, odd: odd.sort() };
+  return [...byRelease.values()]
+    .map((group) => {
+      const rank = inRelease(group);
+      const launcherVersions = [...group.launcherVersions].sort((a, b) => rank(a) - rank(b));
+      return { release: group.release, parseable: group.parseable, launcherVersions };
+    })
+    .sort(compareReleases);
 }
 
 // ---------------------------------------------------------------------------
@@ -689,11 +723,12 @@ function postReleaseSpecs(options, manifest, version) {
 
 /**
  * The exact package@version set --pre checks for one release group (LCLI-627). Platform packages
- * are checked at X ONLY — never at an rc string, which no platform is ever published at — and
+ * are checked at X ONLY — never at an X-rc.N string, which no platform is ever published at — and
  * exactly once per release however many launcher versions it has, including a release whose
  * launcher packument holds only rcs. The launcher is checked at each version it actually has,
- * once each; it is chosen by NAME, as in postReleaseSpecs. An unparseable group has no X, so every
- * package is checked at its one string, as before.
+ * once each; it is chosen by NAME, as in postReleaseSpecs. X is the exact string groupReleases
+ * derived (a prerelease X such as 1.0.0-beta.1 included), so a release with no rcs has every
+ * package checked at that one string. An unparseable group is checked at every package too.
  *
  * @param {{release: string, parseable: boolean, launcherVersions: string[]}} group
  * @param {string[]} packages
@@ -720,8 +755,10 @@ async function runPre(options, manifest) {
   const all = await publishedVersions(launcher);
 
   // Group first, then decide baseline and window on RELEASES (LCLI-627). A release is at or below
-  // the baseline exactly when its X is; every launcher string of it (rcs included) goes with it.
-  const { groups, odd } = groupReleases(all);
+  // the baseline exactly when its X is, and every launcher string of it (rcs included) goes with
+  // it. isAtOrBelowBaseline reads X's numeric core, so a prerelease X of the baseline's own core
+  // (0.6.0-beta.1) counts as at or below it, which is what semver precedence says too.
+  const groups = groupReleases(all);
   const baselineGroups = groups.filter((g) => g.parseable && isAtOrBelowBaseline(g.release));
   const baseline = baselineGroups.flatMap((g) => g.launcherVersions);
   const unparseable = all.filter((v) => parseVersion(v) === null);
@@ -735,7 +772,7 @@ async function runPre(options, manifest) {
     `       ${all.length} published version(s) in ${groups.length} release(s); ${baselineGroups.length} release(s) at or below the ${KNOWN_DANGLING_THROUGH} baseline; ${candidates.length} release(s) to re-verify, taking the most recent ${scanned.length}: ${scanned.map((g) => g.release).join(", ") || "none"} — ${specs.length} package version(s)`,
   );
   console.log(
-    "       per release: the platform packages at X only (never at an rc string), the launcher at each version it has (X-rc.N and/or X), each exactly once",
+    "       per release X: the platform packages at X only (never at an X-rc.N string), the launcher at each version it has (X-rc.N and/or X), each exactly once; X is a version with only a trailing -rc.N stripped",
   );
   if (baseline.length > 0) {
     console.log(
@@ -745,14 +782,7 @@ async function runPre(options, manifest) {
   if (unparseable.length > 0) {
     // Loudly, because the alternative is the silent skip an earlier revision had.
     console.log(
-      `::warning::the registry lists ${unparseable.length} version(s) that are not semver-shaped: ${unparseable.join(", ")}. They are NOT assumed to be below the baseline — they are checked like any other version.`,
-    );
-  }
-
-  if (odd.length > 0) {
-    // Not a shape LCLI-621 stages. Checked (launcher only, platforms at its X), and named.
-    console.log(
-      `::warning::the registry lists ${odd.length} launcher version(s) with a suffix other than -rc.N: ${odd.join(", ")}. This pipeline does not stage that shape. Each is grouped under its X release and checked as a launcher version; the platform packages are checked at X.`,
+      `::warning::the registry lists ${unparseable.length} version(s) that are not semver-shaped: ${unparseable.join(", ")}. They are NOT assumed to be below the baseline — each is its own release, sorted after every semver-shaped one, and checked at that exact string for every package.`,
     );
   }
 

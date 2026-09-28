@@ -552,13 +552,65 @@ describe("release-provenance --pre groups launcher rcs into releases (LCLI-627)"
     });
   });
 
-  test("a suffix other than -rc.N is named loudly and checked as a launcher version only", async () => {
-    await withPackument(["0.7.0", "0.7.0-beta.1"], async () => {
-      const { out } = await runGate(["--pre", "--package", LAUNCHER, "--package", PLATFORM]);
-      expect(out).toContain("suffix other than -rc.N: 0.7.0-beta.1");
-      expect(attestationRequests).toContain(`${LAUNCHER}@0.7.0-beta.1`);
-      expect(attestationRequests).not.toContain(`${PLATFORM}@0.7.0-beta.1`);
-      expect(attestationRequests.filter((spec) => spec === `${PLATFORM}@0.7.0`)).toHaveLength(1);
+  test("a prerelease X is its own release: the platforms are checked at 1.0.0-beta.1, never at 1.0.0", async () => {
+    // The LCLI-627 reviewer's packument. Only a trailing -rc.N is stripped to find X, so
+    // 1.0.0-beta.1-rc.1 is an rc of 1.0.0-beta.1 — and 1.0.0-beta.1 is where the platforms really
+    // are. An earlier revision of the fix grouped by numeric core and asked for them at 1.0.0,
+    // which does not exist (publish-release.sh accepts any version that starts with a digit).
+    await withPackument(["0.11.0", "1.0.0-beta.1-rc.1", "1.0.0-beta.1"], async () => {
+      const { out } = await runGate(["--pre"]);
+      expect(out).toContain("taking the most recent 2: 0.11.0, 1.0.0-beta.1");
+      const expected = [
+        ...[LAUNCHER, ...platforms].map((p) => `${p}@0.11.0`),
+        `${LAUNCHER}@1.0.0-beta.1-rc.1`,
+        `${LAUNCHER}@1.0.0-beta.1`,
+        ...platforms.map((p) => `${p}@1.0.0-beta.1`),
+      ].sort();
+      expect([...attestationRequests].sort()).toEqual(expected);
+      expect(attestationRequests.some((spec) => spec.endsWith("@1.0.0"))).toBe(false);
+    });
+  });
+
+  test("a prerelease X and the bare X are two releases, two --limit slots, prerelease first", async () => {
+    // Served bare-first on purpose: the order is semver's (1.0.0-beta.1 before 1.0.0), not the
+    // registry's key order, so --limit 1 takes 1.0.0 alone.
+    await withPackument(["1.0.0", "1.0.0-beta.1"], async () => {
+      const one = await runGate(["--pre", "--limit", "1", "--package", LAUNCHER, "--package", PLATFORM]);
+      expect(one.out).toContain("taking the most recent 1: 1.0.0 ");
+      expect([...attestationRequests].sort()).toEqual([`${LAUNCHER}@1.0.0`, `${PLATFORM}@1.0.0`].sort());
+
+      attestationRequests.length = 0;
+      const two = await runGate(["--pre", "--limit", "2", "--package", LAUNCHER, "--package", PLATFORM]);
+      expect(two.out).toContain("taking the most recent 2: 1.0.0-beta.1, 1.0.0 ");
+      expect(attestationRequests).toContain(`${PLATFORM}@1.0.0-beta.1`);
+    });
+  });
+
+  test("an rc string outside the -rc.N grammar (N = 0, a leading zero) is its own release", async () => {
+    // The grammar is --launcher-rc's: N is a positive integer with no leading zero. Anything else
+    // is not a staged rc, so nothing is assumed about it — every package at the exact string.
+    await withPackument(["0.12.0-rc.0", "0.12.0-rc.01"], async () => {
+      await runGate(["--pre", "--package", LAUNCHER, "--package", PLATFORM]);
+      expect([...attestationRequests].sort()).toEqual(
+        [
+          `${LAUNCHER}@0.12.0-rc.0`,
+          `${PLATFORM}@0.12.0-rc.0`,
+          `${LAUNCHER}@0.12.0-rc.01`,
+          `${PLATFORM}@0.12.0-rc.01`,
+        ].sort(),
+      );
+    });
+  });
+
+  test("an unparseable version is checked at EVERY package, not the launcher alone", async () => {
+    // The other unparseable test passes --package LAUNCHER only, so it cannot tell "every
+    // package" from "launcher only" (the reviewer's M5 turned 0 of 48 red). This one uses the
+    // default package set and reads the request log.
+    await withPackument(["abc"], async () => {
+      const { out } = await runGate(["--pre"]);
+      expect(out).toContain("not semver-shaped");
+      expect([...attestationRequests].sort()).toEqual([LAUNCHER, ...platforms].map((p) => `${p}@abc`).sort());
+      expect(attestationRequests).toContain(`${PLATFORM}@abc`);
     });
   });
 
