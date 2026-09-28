@@ -1426,6 +1426,33 @@ checked every package at `X`. On a `publish: true` run that meant asking for
 a launcher that did not exist yet, and never checking the rc the run did
 publish.
 
+**What `provenance-pre` checks (LCLI-627).** `release.yml`'s `provenance-pre`
+job runs `scripts/release-provenance.mjs --pre` before `publish`. It
+re-verifies provenance already on the registry, one *release* at a time. The
+launcher's packument can hold several versions for one release `X`: each
+staged `X-rc.N`, then `X` once `promote-latest.mjs` has published it. The
+platform packages only ever hold `X`. So `--pre` groups the launcher's
+versions by `X` and checks each release this way:
+
+- Each platform package at `X`, once. It never asks for a platform at an rc
+  version. This includes a release whose launcher has only rcs, because it
+  was staged and not yet promoted, or abandoned.
+- The launcher at each version it has, once each.
+
+`--limit` (default 10) counts releases, so three rcs of one release take one
+slot. A release at or below the `KNOWN_DANGLING_THROUGH` baseline is listed
+with all its rcs and never fetched. The order is fixed by the script, not by
+the registry. Releases run by `X`, oldest first. Within a release the rcs
+run by numeric `N`, so `rc.2` comes before `rc.10`, and `X` comes last. A
+launcher version with a suffix other than `-rc.N` is not a shape this
+pipeline stages. The job warns about it and checks it as a launcher version,
+with the platforms at its `X`.
+
+Before LCLI-627, `--pre` checked all seven packages at every launcher
+version. Each rc then asked for six platform versions that cannot exist, and
+rcs used up `--limit` slots on their own. The platforms at `X` were not
+re-checked until promotion, and never for an abandoned rc.
+
 ## Dry-run rehearsal (verified)
 
 The full dry-run path — everything up to but not including a real `npm

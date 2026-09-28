@@ -138,6 +138,19 @@ STAGED_PINS[LAG_VERSION] = {
   [PLATFORM]: { commit: LIVE_SHA, repo: REPO },
 };
 
+/**
+ * A release whose launcher packument holds ONLY an rc (LCLI-627): staged, never promoted. Its
+ * launcher at X-rc.1 resolves; its platform at X pins a DESTROYED commit. So --pre goes red only
+ * if it re-verifies the platforms at X for a release that has no launcher at X, and a --pre that
+ * asked for the platforms at the rc string would find nothing there and pass.
+ */
+const RC_ONLY_VERSION = "0.10.0";
+STAGED_PINS[`${RC_ONLY_VERSION}-rc.1`] = { [LAUNCHER]: { commit: LIVE_SHA, repo: REPO } };
+STAGED_PINS[RC_ONLY_VERSION] = { [PLATFORM]: { commit: GONE_SHA, repo: REPO } };
+
+/** The LCLI-625 reviewer's scratch packument, the one the pre-fix --pre never got past. */
+const REVIEWER_PACKUMENT = ["0.7.0", "0.7.1", "0.8.0-rc.1", "0.8.0-rc.2", "0.8.0-rc.3"];
+
 /** Every `name@version` the stub's attestation endpoint was asked for, in order. */
 const attestationRequests: string[] = [];
 
@@ -440,6 +453,124 @@ describe("release-provenance --pre over the published history", () => {
     } finally {
       packumentVersions = previous;
     }
+  });
+});
+
+describe("release-provenance --pre groups launcher rcs into releases (LCLI-627)", () => {
+  /**
+   * Since LCLI-621 the launcher stages as X-rc.N, so its packument holds rc strings the platform
+   * packages never have. These tests read the stub's request log, not only the report, so a spec
+   * that was queried but not reported (or the reverse) cannot pass. Each names the acceptance
+   * criterion it pins; the mutation proof on the task maps a revert of each part of the fix to
+   * the tests below that must go red.
+   */
+  const manifest = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as {
+    name: string;
+    optionalDependencies?: Record<string, string>;
+  };
+  const platforms = Object.keys(manifest.optionalDependencies ?? {});
+
+  async function withPackument<T>(versions: string[], body: () => Promise<T>): Promise<T> {
+    const previous = packumentVersions;
+    packumentVersions = versions;
+    attestationRequests.length = 0;
+    try {
+      return await body();
+    } finally {
+      packumentVersions = previous;
+    }
+  }
+
+  test("AC1: no platform package is ever requested at an X-rc.N version", async () => {
+    await withPackument(REVIEWER_PACKUMENT, async () => {
+      await runGate(["--pre"]);
+      // Positive control: the run did read the rcs, so an empty log cannot pass this.
+      expect(attestationRequests).toContain(`${LAUNCHER}@0.8.0-rc.1`);
+      expect(platforms.length).toBeGreaterThan(0);
+      const platformAtRc = attestationRequests.filter((spec) => !spec.startsWith(`${LAUNCHER}@`) && /-rc\./.test(spec));
+      expect(platformAtRc).toEqual([]);
+    });
+  });
+
+  test("the reviewer packument's exact request set: platforms once per release at X, launcher once per version", async () => {
+    await withPackument(REVIEWER_PACKUMENT, async () => {
+      const { out } = await runGate(["--pre"]);
+      const expected = [
+        ...["0.7.0", "0.7.1", "0.8.0"].flatMap((x) => platforms.map((p) => `${p}@${x}`)),
+        ...["0.7.0", "0.7.1", "0.8.0-rc.1", "0.8.0-rc.2", "0.8.0-rc.3"].map((v) => `${LAUNCHER}@${v}`),
+      ].sort();
+      expect([...attestationRequests].sort()).toEqual(expected);
+      // The launcher at 0.8.0 is not in the packument, so it is never asked for. The stub attests
+      // it with a destroyed commit, so asking for it would also show up as a dangling row.
+      expect(attestationRequests).not.toContain(`${LAUNCHER}@0.8.0`);
+      expect(outcomeOf(out, `${LAUNCHER}@0.8.0`)).toBeUndefined();
+    });
+  });
+
+  test("AC2: a release whose launcher has only rcs still has its platforms re-verified at X", async () => {
+    await withPackument([`${RC_ONLY_VERSION}-rc.1`], async () => {
+      const { code, out } = await runGate(["--pre"]);
+      for (const platform of platforms) expect(attestationRequests).toContain(`${platform}@${RC_ONLY_VERSION}`);
+      // The stub's platform at X pins a destroyed commit: re-verified, it is red.
+      expect(outcomeOf(out, `${PLATFORM}@${RC_ONLY_VERSION}`)).toBe("dangling");
+      expect(outcomeOf(out, `${LAUNCHER}@${RC_ONLY_VERSION}-rc.1`)).toBe("ok");
+      expect(attestationRequests).not.toContain(`${LAUNCHER}@${RC_ONLY_VERSION}`);
+      expect(code).toBe(1);
+    });
+  });
+
+  test("AC3: --limit counts releases, so three rcs of one release do not push 0.7.1 out of --limit 3", async () => {
+    await withPackument(REVIEWER_PACKUMENT, async () => {
+      const three = await runGate(["--pre", "--limit", "3"]);
+      expect(three.out).toContain("taking the most recent 3: 0.7.0, 0.7.1, 0.8.0");
+      // 0.7.1's launcher pins a destroyed commit in the stub, so reaching it is a red run.
+      expect(outcomeOf(three.out, `${LAUNCHER}@0.7.1`)).toBe("dangling");
+      expect(three.code).toBe(1);
+
+      // And the window is exactly releases: --limit 2 reaches 0.7.1 and stops before 0.7.0.
+      attestationRequests.length = 0;
+      const two = await runGate(["--pre", "--limit", "2"]);
+      expect(two.out).toContain("taking the most recent 2: 0.7.1, 0.8.0");
+      expect(attestationRequests).toContain(`${LAUNCHER}@0.7.1`);
+      expect(attestationRequests.some((spec) => spec.endsWith("@0.7.0"))).toBe(false);
+    });
+  });
+
+  test("within a release, rcs order by numeric N then X last, and each launcher version is checked once", async () => {
+    // Keys served out of order on purpose: the order must not come from the packument, and
+    // compareVersions calls X-rc.N and X equal, so it cannot supply one either.
+    await withPackument(["1.2.0", "1.2.0-rc.10", "1.1.0", "1.2.0-rc.2"], async () => {
+      const { code, out } = await runGate(["--pre", "--limit", "1"]);
+      expect(code).toBe(0);
+      const launcherSpecs = [`${LAUNCHER}@1.2.0-rc.2`, `${LAUNCHER}@1.2.0-rc.10`, `${LAUNCHER}@1.2.0`];
+      expect([...attestationRequests].sort()).toEqual([...launcherSpecs, ...platforms.map((p) => `${p}@1.2.0`)].sort());
+      const lines = out.split("\n");
+      const at = (spec: string) => lines.findIndex((line) => outcomeOf(`${line}\n`, spec) !== undefined);
+      const positions = launcherSpecs.map(at);
+      expect(positions.every((p) => p >= 0)).toBe(true);
+      expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+    });
+  });
+
+  test("a suffix other than -rc.N is named loudly and checked as a launcher version only", async () => {
+    await withPackument(["0.7.0", "0.7.0-beta.1"], async () => {
+      const { out } = await runGate(["--pre", "--package", LAUNCHER, "--package", PLATFORM]);
+      expect(out).toContain("suffix other than -rc.N: 0.7.0-beta.1");
+      expect(attestationRequests).toContain(`${LAUNCHER}@0.7.0-beta.1`);
+      expect(attestationRequests).not.toContain(`${PLATFORM}@0.7.0-beta.1`);
+      expect(attestationRequests.filter((spec) => spec === `${PLATFORM}@0.7.0`)).toHaveLength(1);
+    });
+  });
+
+  test("the rcs of a baseline release are baseline too, listed and never fetched", async () => {
+    await withPackument(["0.6.0-rc.1", "0.6.0", "0.6.1-rc.1"], async () => {
+      const { out } = await runGate(["--pre", "--package", LAUNCHER, "--package", PLATFORM]);
+      expect(out).toContain("baseline set");
+      expect(out).toContain("0.6.0-rc.1, 0.6.0");
+      expect(attestationRequests.some((spec) => spec.includes("@0.6.0"))).toBe(false);
+      // 0.6.1-rc.1 sits above the baseline under semver precedence, and so it is checked.
+      expect([...attestationRequests].sort()).toEqual([`${LAUNCHER}@0.6.1-rc.1`, `${PLATFORM}@0.6.1`].sort());
+    });
   });
 });
 
