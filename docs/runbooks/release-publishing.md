@@ -1090,7 +1090,12 @@ the promotion half, item 7. It is not part of staging.
       predates the amendment and refuses, as quest-cli's reader refuses it.
    4. **Staging.** `release-candidate` reads `X` on the six platforms and
       `X-rc.N` on the launcher. Every package's prior `latest`, the
-      launcher's included, goes into the record.
+      launcher's included, goes into the record. On a fresh run (no record
+      yet) it refuses if any package's current `latest` is newer than `X`,
+      compared numerically, or is not a plain `X.Y.Z`, naming the package
+      (LCLI-631). A backport is not a promote use case. A non-plain `X` never
+      gets this far, because item 2's equivalence check refuses it. A resumed
+      run does not re-read a current `latest` against `X` (LCLI-638).
    5. **The pair receipt.** It must pass every step of "What a reader must
       do":
       - `kind` is `opum.pair-qualification-receipt.v1`.

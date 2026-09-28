@@ -354,8 +354,11 @@ export async function planPromotion({
   // first write, on --dry-run and --promote alike; through main(), a non-plain version is already
   // refused one step earlier, by readArtifact's launcher-equivalence check, so this clause is the
   // second line there, and the only one for any other caller. The headlines below only explain the refusal;
-  // they never refuse on their own. A resumed run keeps the record the first run wrote, which
-  // main() has already validated with {version}; equal-to-latest is the lost-record refusal above.
+  // they never refuse on their own. A resumed run keeps the record the first run wrote, and
+  // main() validates only that record against {version}: nothing compares a package's CURRENT
+  // `latest` with --version on a resume, so a resume can still move `latest` backwards if the
+  // registry moved ahead between the runs (LCLI-638, paired with quest-cli). Equal-to-latest is
+  // the lost-record refusal above.
   //
   // DO NOT relax this to allow a backport or a prerelease. Neither is a promote use case: `latest`
   // only ever moves forward, onto a release. An older or prerelease version belongs on a

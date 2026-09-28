@@ -466,7 +466,9 @@ describe("LCLI-631: planPromotion's gate, directly", () => {
     });
   const all = (v: string) => Object.fromEntries(RELEASE_PACKAGES.map((n) => [n, v]));
 
-  test("the gate is fresh-only: resuming, an older version is left to main()'s validation of the reused record", async () => {
+  // Resuming, nothing compares a CURRENT latest with --version: main() validates only the reused
+  // record. That is the known gap LCLI-638 tracks, pinned here so closing it is a visible change.
+  test("the gate is fresh-only: resuming, an older version is accepted (the LCLI-638 gap)", async () => {
     const fresh = await planPromotion({
       version: "0.9.0",
       launcherVersion: rcOf("0.9.0"),
