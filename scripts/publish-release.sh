@@ -155,6 +155,10 @@
 #                  script, resolved ABSOLUTELY so the caller's cwd cannot change what it
 #                  means. Populated automatically when missing or short of eight.
 #      REPO_SLUG   owner/name, if the origin remote cannot be parsed.
+#      REGISTRY_WINDOW_SECONDS, PROPAGATION_CUSHION_SECONDS   the registry-visibility window
+#                  (default 1800) and the cushion after it (default 20). Whole seconds only,
+#                  0 to 999999999, no leading zero; anything else is refused before anything is
+#                  read. Unset or empty means the default.
 # USAGE-END
 
 set -uo pipefail
@@ -288,6 +292,54 @@ DONE
 hr()  { printf '%s\n' "────────────────────────────────────────────────────────────"; }
 
 [ "$PRINT_CHECKLIST" -eq 1 ] && { print_closing_checklist; exit 0; }
+
+# ── The registry window and the propagation cushion: whole seconds, checked FIRST (LCLI-629) ────
+# Both are read long after the irreversible step: the window in wait_for_all_visible's $(( )), the
+# cushion by `sleep`, and neither until all six platform packages are published. Unchecked, a
+# malformed value went wrong THERE, silently, and the script never refused. Measured on the real
+# script under macOS /bin/bash 3.2.57 (LCLI-629 AC1, recorded on the task):
+#   - window 30m or 08: "value too great for base" aborts the whole compound command holding the
+#     visibility gate AND the cushion, so the next thing run is the ROOT LAUNCHER's publish. It was
+#     published over a platform package that never became visible, exit 0 -- the LCLI-502
+#     install-without-binary window, reopened with a success status.
+#   - window abc: reaches $(( )) as a variable NAME, `set -u` trips inside it, and bash 3.2 EXITS 0
+#     after six platform publishes, with the launcher unpublished and no refusal printed.
+#   - cushion abc, or 5 plus a newline: `sleep` rejects it, execution goes on, the cushion is skipped.
+#   - cushion 30m: macOS `sleep` takes unit suffixes, so it is a real 30-minute wait, announced as
+#     "30ms".
+# So both are refused here, before the parity read, any download, any registry read or any publish.
+#
+# ONE GRAMMAR, the one scripts/readme-readback.sh refuses by the same `window_re` literal and
+# scripts/promote-latest.mjs exports as REGISTRY_WINDOW: 0 to 999999999, no leading zero (bash
+# reads 08 as bad octal), nothing but digits. test/publish-release-script.test.ts holds this literal
+# to REGISTRY_WINDOW.source. The cushion shares it on purpose, although only `sleep` reads it: it is
+# a duration in whole seconds in the same script, `sleep`'s own grammar is wider than seconds
+# (30m) and differs between platforms, and one grammar gives the operator one rule to learn. The
+# nine-digit cap is a sanity bound, not an overflow guard.
+#
+# The value is shown only through printf %q, so a newline or control character in it prints as an
+# escape on the one ERROR line and cannot print a line of its own. Exit 2, like every other refusal
+# of this script's inputs.
+#
+# WHICH MODES IT COVERS. --print-checklist exits above, before this, as it exits before parity: it
+# reads neither variable and must need nothing. --verify-only is EXEMPT too: it reads neither
+# variable, and it is the recovery command the propagation-timeout message sends an operator to
+# seconds after the irreversible step, so a stale value left in their shell must not block it.
+# --dry-run is NOT exempt: it prints the cushion it would wait, and a rehearsal that passes over a
+# value the real run refuses reads as a green light (promote-latest.mjs refuses its window in a dry
+# run too). Unset or empty keeps the default, as it did before.
+REGISTRY_WINDOW_SECONDS="${REGISTRY_WINDOW_SECONDS:-1800}"
+PROPAGATION_CUSHION_SECONDS="${PROPAGATION_CUSHION_SECONDS:-20}"
+window_re='^(0|[1-9][0-9]{0,8})$'
+refuse_unless_whole_seconds() {
+  [[ $2 =~ $window_re ]] && return 0
+  echo "ERROR: $1 must be a whole number of seconds (0 to 999999999, no leading zero); got $(printf '%q' "$2"). Nothing has been read, downloaded or published (LCLI-629)." >&2
+  exit 2
+}
+if [ "$VERIFY_ONLY" -eq 0 ]; then
+  refuse_unless_whole_seconds REGISTRY_WINDOW_SECONDS "$REGISTRY_WINDOW_SECONDS"
+  refuse_unless_whole_seconds PROPAGATION_CUSHION_SECONDS "$PROPAGATION_CUSHION_SECONDS"
+fi
 
 # ── Version parity with quest (constitution Article 3 clause 6, LCLI-613) ─────────────────
 # FIRST, before any artifact, digest, receipt, credential or registry step, and in a --dry-run
@@ -1004,7 +1056,8 @@ report_state() {
 # 5, 15, 35, 75, 135s ... : the first three bracket the 0.4.5 and 0.4.6 lags almost exactly,
 # then it settles into minute intervals for the long tail. Do not shorten it without new
 # evidence, and record what you saw if you change it.
-REGISTRY_WINDOW_SECONDS="${REGISTRY_WINDOW_SECONDS:-1800}"
+# REGISTRY_WINDOW_SECONDS is defaulted and validated near the top of this script, before anything is
+# read (LCLI-629), because a malformed value reaching the $(( )) below skipped this gate entirely.
 
 # CONSUMER-VISIBLE PROPAGATION LAGS "THE PUBLISHER'S OWN READ SAYS VISIBLE" BY 0-20 SECONDS
 # (LCLI-502), measured externally by opum-cli-e2e across five packages on 2026-09-15, from
@@ -1013,7 +1066,7 @@ REGISTRY_WINDOW_SECONDS="${REGISTRY_WINDOW_SECONDS:-1800}"
 # fixed cushion is added AFTER every platform package reads visible and BEFORE the root
 # launcher is published, closing the gap a poll alone cannot close. Overridable for tests;
 # do not shorten it in production without new evidence, same rule as REGISTRY_WINDOW_SECONDS.
-PROPAGATION_CUSHION_SECONDS="${PROPAGATION_CUSHION_SECONDS:-20}"
+# Defaulted (20) and validated near the top of this script with the window, one grammar (LCLI-629).
 
 # Space-separated string rather than an array on purpose: this script runs on macOS, whose
 # /bin/bash is 3.2, where "${arr[@]}" on an EMPTY array under `set -u` aborts the script.
