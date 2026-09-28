@@ -2681,7 +2681,10 @@ esac
       // The cushion is zeroed here so the run does not sleep its 20s default; the window stays unset.
       const r = runScript(ws, ws.root, ws.artifacts, { ...unset, PROPAGATION_CUSHION_SECONDS: "0" }, [], BASH);
       expect(r.code).toBe(0);
-      expect(r.out).toContain("waiting  1 package(s) not visible yet; 1800s of the shared window left");
+      // The script prints `deadline - now` after the first poll, so a whole-second boundary
+      // crossed during that poll prints 1799s (measured: 3 of 51 runs). Any value in
+      // 1701..1800 still proves the 1800 default rather than another window.
+      expect(r.out).toMatch(/waiting {2}1 package\(s\) not visible yet; (1800|17\d\d)s of the shared window left/);
       expect(npm.published()).toEqual([...PLATFORMS.map((p) => `opum-ai-lore-${p}-${VERSION}.tgz`), ws.rootTarball]);
     } finally {
       ws.cleanup();
