@@ -34,8 +34,16 @@ const RUN_ID = "4242424242";
 const ATTEMPT = "3";
 const COMMIT = "ea3813ae39fd9c9bba1e5e24e32a4c73e1611480";
 const PLATFORMS = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"];
+// The launcher STAGES as X-rc.N and the X launcher is carried beside it, never published
+// (constitution Article 3 clause 5 as amended by ODOC-302, LCLI-621).
+const LAUNCHER_RC = `${VERSION}-rc.1`;
 
 const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+// What `npm view` does for a name@version that is not on the registry: exit 1 with npm's E404 on
+// stderr. The script reads "absent" ONLY from that (LCLI-621 review); a silent failure is unreadable.
+const NPM_404 = `{ echo "npm error code E404" >&2; echo "npm error 404 No match found for version" >&2; exit 1; }`;
+// What npm serves as dist.integrity for a tarball: the SRI sha512 of its bytes.
+const integrity = (bytes: Buffer) => `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
 
 /**
  * Builds a workspace holding: a source of truth for the seven tarballs, per-platform
@@ -68,47 +76,55 @@ function makeWorkspace(
   // Its README is produced by the REAL generator (`--write`), never restated here: a fixture
   // carrying its own copy of the generated text passes happily while the two drift apart, which
   // is the same defect shape LCLI-510 itself is about.
-  const rootTarball = `opum-ai-lore-${VERSION}.tgz`;
-  const rootStage = resolve(root, "root-stage");
-  const rootPkg = resolve(rootStage, "package");
-  mkdirSync(rootPkg, { recursive: true });
-  // `staleRootReadme` reproduces LCLI-510 exactly: the README is generated against the PREVIOUS
-  // version and package.json is then bumped, which is what post-tag bookkeeping produces.
+  // BOTH LAUNCHERS (LCLI-621). The staged one is X-rc.N, pinning the platforms at exactly X, and
+  // `rootTarball` names it because it is the launcher this script publishes. The carried X one is
+  // packed from the same template, so the pair passes scripts/launcher-equivalence.mjs.
   const manifestFor = (version: string) =>
     JSON.stringify(
       {
         name: "@opum-ai/lore",
         version,
-        optionalDependencies: Object.fromEntries(PLATFORMS.map((name) => [`@opum-ai/lore-${name}`, version])),
+        optionalDependencies: Object.fromEntries(PLATFORMS.map((name) => [`@opum-ai/lore-${name}`, VERSION])),
       },
       null,
       2,
     );
-  writeFileSync(resolve(rootPkg, "package.json"), manifestFor(options.staleRootReadme ? "9.9.8" : VERSION));
-  writeFileSync(
-    resolve(rootPkg, "README.md"),
-    [
-      "# lore",
-      "",
-      // Markers sit AFTER text on their line, as the real README requires: a line whose content
-      // begins with `<!--` starts a CommonMark HTML block and renders the rest of the line raw.
-      "- Published on npm as<!--lore-version:published-bullet:begin--><!--lore-version:published-bullet:end-->",
-      "",
-      "> **Status:<!--lore-version:status:begin--><!--lore-version:status:end-->",
-      "",
-    ].join("\n"),
-  );
-  execFileSync("node", [
-    resolve(import.meta.dir, "..", "scripts", "shipped-readme-version.mjs"),
-    "--write",
-    "--dir",
-    rootPkg,
-  ]);
-  if (options.staleRootReadme) writeFileSync(resolve(rootPkg, "package.json"), manifestFor(VERSION));
-  // Bare filename + cwd, not an absolute path: GNU tar reads a Windows drive letter as a remote
-  // host spec. This suite is POSIX-only today, but the pattern should not be copied wrong.
-  execFileSync("tar", ["-czf", rootTarball, "package"], { cwd: rootStage });
-  writeFileSync(resolve(source, rootTarball), readFileSync(resolve(rootStage, rootTarball)));
+  const packLauncher = (version: string, file: string, stale: boolean) => {
+    const rootStage = resolve(root, `stage-${version}`);
+    const rootPkg = resolve(rootStage, "package");
+    mkdirSync(rootPkg, { recursive: true });
+    // `stale` reproduces LCLI-510 exactly: the README is generated against the PREVIOUS version
+    // and package.json is then bumped, which is what post-tag bookkeeping produces.
+    writeFileSync(resolve(rootPkg, "package.json"), manifestFor(stale ? version.replace(VERSION, "9.9.8") : version));
+    writeFileSync(
+      resolve(rootPkg, "README.md"),
+      [
+        "# lore",
+        "",
+        // Markers sit AFTER text on their line, as the real README requires: a line whose content
+        // begins with `<!--` starts a CommonMark HTML block and renders the rest of the line raw.
+        "- Published on npm as<!--lore-version:published-bullet:begin--><!--lore-version:published-bullet:end-->",
+        "",
+        "> **Status:<!--lore-version:status:begin--><!--lore-version:status:end-->",
+        "",
+      ].join("\n"),
+    );
+    execFileSync("node", [
+      resolve(import.meta.dir, "..", "scripts", "shipped-readme-version.mjs"),
+      "--write",
+      "--dir",
+      rootPkg,
+    ]);
+    if (stale) writeFileSync(resolve(rootPkg, "package.json"), manifestFor(version));
+    // Bare filename + cwd, not an absolute path: GNU tar reads a Windows drive letter as a remote
+    // host spec. This suite is POSIX-only today, but the pattern should not be copied wrong.
+    execFileSync("tar", ["-czf", file, "package"], { cwd: rootStage });
+    writeFileSync(resolve(source, file), readFileSync(resolve(rootStage, file)));
+  };
+  const rootTarball = `opum-ai-lore-${LAUNCHER_RC}.tgz`;
+  const finalTarball = `opum-ai-lore-${VERSION}.tgz`;
+  packLauncher(LAUNCHER_RC, rootTarball, options.staleRootReadme === true);
+  packLauncher(VERSION, finalTarball, false);
 
   // One artifact directory per platform, named exactly as release.yml uploads it. Since
   // LCLI-487 that is run id ONLY — the attempt suffix is gone, because a name carrying the
@@ -150,6 +166,15 @@ function makeWorkspace(
     releaseRunId: Number(RUN_ID),
     runAttempt: 1,
     tarballs: { ...tarballs },
+    // TASK-126 (opum-cli-e2e receipts/README.md at 4f078e6b), required from LCLI-621 on: the staged
+    // rc, and opum-cli-e2e's own substitution verdict naming the carried X launcher's bytes.
+    launcherVersion: LAUNCHER_RC,
+    launcherSubstitution: {
+      verdict: "MATCH",
+      finalTarball: { filename: finalTarball, sha256: sha256(readFileSync(resolve(source, finalTarball))) },
+      method: "entry by entry, X-rc.N -> X",
+      mismatches: [],
+    },
     verdict: "QUALIFIED",
     counts: { pass: 461, fail: 0, blocked: 2 },
     blocked: [],
@@ -277,7 +302,7 @@ exit 1
     `#!/usr/bin/env bash
 case "\${1:-}" in
   ping) exit 0 ;;
-  view) exit 1 ;;
+  view) ${NPM_404} ;;
   publish) echo "STUB PUBLISH $2"; exit 0 ;;
   *) exit 0 ;;
 esac
@@ -294,7 +319,9 @@ esac
     bin,
     artifacts: resolve(root, "artifacts"),
     digests,
+    source,
     rootTarball,
+    finalTarball,
     receiptFile,
     writeReceipt,
     questManifestFile,
@@ -335,7 +362,7 @@ describeOnPosix("scripts/publish-release.sh", () => {
     try {
       const r = runScript(ws, ws.root, ws.artifacts);
       expect(r.out).toContain("artifact directory is empty");
-      expect(r.out).toContain("downloaded 7 tarballs");
+      expect(r.out).toContain("downloaded 8 tarballs");
       // Nothing resolves a run attempt any more: release.yml names artifacts by run id alone
       // and sets overwrite:true, so one run is one consistent set (LCLI-487). Asserted on the
       // removed MECHANISM rather than on the word "attempt", which is ordinary English the
@@ -348,20 +375,20 @@ describeOnPosix("scripts/publish-release.sh", () => {
     }
   });
 
-  test("verifies six platform tarballs against the CI-recorded digest and seals the seventh locally", () => {
+  test("verifies six platform tarballs against the CI-recorded digest and seals both launchers locally", () => {
     const ws = makeWorkspace();
     try {
       const r = runScript(ws, ws.root, ws.artifacts);
       expect(r.out).toContain("6/6 platform tarballs match the digests CI recorded");
       expect(r.out).toContain(COMMIT);
-      // The claim must stay six-of-seven: the root launcher has no CI-recorded digest.
+      // The claim must stay six independently verified: neither launcher has a CI-recorded digest.
       expect(r.out).toContain("SELF-SEAL ONLY");
-      expect(r.out).toContain("6 independently verified, 1 locally sealed");
+      expect(r.out).toContain("6 independently verified, 2 launchers locally sealed (1 staged, 1 carried)");
       // Assert the shape of the claim, not the absence of one historical wording: the old
       // `not.toContain("all 7 artifacts verified")` passed for any other over-claim.
       expect(r.out).not.toMatch(/7 (independently )?verified/);
       expect(r.out).not.toMatch(/all seven .* verified/i);
-      expect(r.out).toMatch(/6 independently verified, 1 locally sealed/);
+      expect(r.out).toMatch(/6 independently verified, 2 launchers locally sealed/);
       expect(r.code).toBe(0);
     } finally {
       ws.cleanup();
@@ -387,7 +414,7 @@ describeOnPosix("scripts/publish-release.sh", () => {
       mkdirSync(ws.artifacts, { recursive: true });
       writeFileSync(resolve(ws.artifacts, `opum-ai-lore-linux-x64-${VERSION}.tgz`), "stale");
       const r = runScript(ws, ws.root, ws.artifacts);
-      expect(r.out).toContain("INCOMPLETE: 1 of 7");
+      expect(r.out).toContain("INCOMPLETE: 1 of 8");
       expect(r.out).toContain("6/6 platform tarballs match");
       expect(r.code).toBe(0);
     } finally {
@@ -409,7 +436,7 @@ describeOnPosix("scripts/publish-release.sh", () => {
 
       expect(fromRepo.code).toBe(0);
       expect(fromInside.code).toBe(0);
-      expect(fromInside.out).toContain("artifacts already present: 7 tarballs");
+      expect(fromInside.out).toContain("artifacts already present: 8 tarballs");
       expect(fromRepo.out).toBe(fromInside.out);
     } finally {
       ws.cleanup();
@@ -447,7 +474,14 @@ describeOnPosix("scripts/publish-release.sh", () => {
       // cwd-independence it is named for.
       // The version-parity checker (LCLI-613) is the same kind of sibling, and runs first: without
       // it the copy refuses at the gate, which proves the gate fails closed and nothing else.
-      for (const sibling of ["shipped-readme-version.mjs", "version-parity.mjs"])
+      // The launcher equivalence gate (LCLI-621) is a third such sibling, and the pass-1 receipt
+      // evaluator (pair-receipt.mjs, shared with promote-latest.mjs since LCLI-621) a fourth.
+      for (const sibling of [
+        "shipped-readme-version.mjs",
+        "version-parity.mjs",
+        "launcher-equivalence.mjs",
+        "pair-receipt.mjs",
+      ])
         writeFileSync(resolve(scriptDir, sibling), readFileSync(resolve(import.meta.dir, "..", "scripts", sibling)));
 
       const defaultArtifacts = resolve(scriptDir, `release-${VERSION}`);
@@ -463,13 +497,13 @@ describeOnPosix("scripts/publish-release.sh", () => {
       // First from outside, populating the default directory.
       const outside = run(ws.root, "scripts/publish-release.sh");
       const outsideOut = outside.stdout.toString() + outside.stderr.toString();
-      expect(outsideOut).toContain("downloaded 7 tarballs");
+      expect(outsideOut).toContain("downloaded 8 tarballs");
       expect(outside.exitCode).toBe(0);
 
       // Then from INSIDE it — the shape that broke.
       const inside = run(defaultArtifacts, "../publish-release.sh");
       const insideOut = inside.stdout.toString() + inside.stderr.toString();
-      expect(insideOut).toContain("artifacts already present: 7 tarballs");
+      expect(insideOut).toContain("artifacts already present: 8 tarballs");
       expect(insideOut).not.toContain("is empty");
       expect(insideOut).not.toContain("INCOMPLETE");
       expect(inside.exitCode).toBe(0);
@@ -481,7 +515,7 @@ describeOnPosix("scripts/publish-release.sh", () => {
         out
           .split("\n")
           .filter((line) =>
-            /verified @opum-ai|6\/6 platform tarballs|independently verified, 1 locally sealed|root launcher digest/.test(
+            /verified @opum-ai|6\/6 platform tarballs|independently verified, 2 launchers locally sealed|root launcher digest/.test(
               line,
             ),
           )
@@ -554,8 +588,8 @@ describeOnPosix("scripts/publish-release.sh", () => {
       expect(r.out).toContain("does not cover every tarball");
       expect(r.out).toContain("NO cross-run check");
       expect(r.code).toBe(0);
-      // And it really did reseal: the manifest covers all seven again.
-      expect(readFileSync(manifest, "utf8").trim().split("\n")).toHaveLength(7);
+      // And it really did reseal: the manifest covers all eight again.
+      expect(readFileSync(manifest, "utf8").trim().split("\n")).toHaveLength(8);
     } finally {
       ws.cleanup();
     }
@@ -712,7 +746,7 @@ describeOnPosix("scripts/publish-release.sh", () => {
       expect(runScript(ws, ws.root, ws.artifacts).code).toBe(0);
       writeFileSync(resolve(ws.artifacts, "opum-ai-lore-1.2.3.tgz"), "a tarball from another release");
       const r = runScript(ws, ws.root, ws.artifacts);
-      expect(r.out).toContain("MORE than the 7");
+      expect(r.out).toContain("MORE than the 8");
       expect(r.out).not.toContain("STUB PUBLISH");
       expect(r.code).not.toBe(0);
     } finally {
@@ -813,7 +847,7 @@ case "\${1:-}" in
     esac
     if [ ! -f "$STATE/published-$(safe "$name")" ]; then
       echo "VIEW-MISS $name (not yet published)" >> "$LOG"
-      exit 1
+      ${NPM_404}
     fi
     if [ "$name" = "$DELAYED" ]; then
       n=0
@@ -822,7 +856,7 @@ case "\${1:-}" in
       echo "$n" > "$STATE/delayed-count"
       if [ "$n" -le 1 ]; then
         echo "VIEW-MISS $name (staged-visibility-lag #$n)" >> "$LOG"
-        exit 1
+        ${NPM_404}
       fi
       echo "VIEW-HIT $name (#$n)" >> "$LOG"
       echo "$VERSION"
@@ -835,7 +869,7 @@ case "\${1:-}" in
   publish)
     tarball="$2"
     base="$(basename "$tarball")"
-    stripped="\${base%-$VERSION.tgz}"
+    stripped="\${base%-$VERSION.tgz}"; stripped="\${stripped%-$VERSION-rc.*}"
     name="@opum-ai/\${stripped#opum-ai-}"
     echo "PUBLISH $name" >> "$LOG"
     touch "$STATE/published-$(safe "$name")"
@@ -1022,13 +1056,80 @@ describeOnPosix("scripts/publish-release.sh qualification receipt (LCLI-578)", (
     }, `tarballs names "${extra}", which this release does not publish`);
   });
 
+  // ── TASK-126 fields, required at staging since LCLI-621 (the rule promotion applies too) ──────
+  test("a receipt with no launcherVersion (pre-TASK-126) refuses", () => {
+    refuses((r) => {
+      delete r.launcherVersion;
+    }, `launcherVersion is undefined, not ${VERSION}-rc.<N>`);
+  });
+
+  test("a malformed launcherVersion refuses", () => {
+    refuses((r) => {
+      r.launcherVersion = `${VERSION}-rc.01`;
+    }, `launcherVersion is "${VERSION}-rc.01", not ${VERSION}-rc.<N>`);
+  });
+
+  test("a launcherVersion that is not this run's rc refuses", () => {
+    refuses((r) => {
+      r.launcherVersion = `${VERSION}-rc.7`;
+    }, `launcherVersion is ${VERSION}-rc.7, but the artifact stages the launcher as ${LAUNCHER_RC}`);
+  });
+
+  test("a receipt with no launcherSubstitution refuses", () => {
+    refuses((r) => {
+      delete r.launcherSubstitution;
+    }, "receipt has no launcherSubstitution");
+  });
+
+  test("a launcherSubstitution that is not MATCH refuses, and so does a MATCH listing mismatches", () => {
+    refuses((r) => {
+      (r.launcherSubstitution as Record<string, unknown>).verdict = "MISMATCH";
+    }, 'launcherSubstitution.verdict is "MISMATCH", not "MATCH"');
+    refuses((r) => {
+      (r.launcherSubstitution as Record<string, unknown>).mismatches = ["package/README.md"];
+    }, 'launcherSubstitution.verdict is "MATCH" but lists 1 mismatch(es)');
+  });
+
+  test("a finalTarball that is not the carried launcher's basename refuses", () => {
+    refuses((r) => {
+      const sub = r.launcherSubstitution as { finalTarball: { filename: string } };
+      sub.finalTarball.filename = `final/${sub.finalTarball.filename}`;
+    }, `launcherSubstitution.finalTarball.filename is "final/opum-ai-lore-${VERSION}.tgz", not the basename`);
+  });
+
+  test("a finalTarball sha256 that is not the carried launcher's refuses", () => {
+    refuses(
+      (r) => {
+        (r.launcherSubstitution as { finalTarball: { sha256: string } }).finalTarball.sha256 = "9".repeat(64);
+      },
+      `launcherSubstitution.finalTarball.sha256 is "${"9".repeat(64)}", the artifact's opum-ai-lore-${VERSION}.tgz is`,
+    );
+  });
+
+  test("an override waives the verdict but never the launcher substitution", () => {
+    refuses((r) => {
+      r.verdict = "NOT QUALIFIED";
+      r.override = { by: "jdnewhouse", reason: "r", task: "LCLI-999", adr: "docs/adr/x.md@abc1234" };
+      (r.launcherSubstitution as Record<string, unknown>).verdict = "MISMATCH";
+    }, 'launcherSubstitution.verdict is "MISMATCH"');
+  });
+
+  test("the shell calls the shared pass-1 evaluator; it carries no receipt rule of its own", () => {
+    const script = readFileSync(SCRIPT, "utf8");
+    expect(script).toContain('node "$SCRIPT_DIR/pair-receipt.mjs" --check-release-receipt "$RECEIPT_FILE"');
+    expect(script).toContain('--launcher-version "$LAUNCHER_VERSION"');
+    // No inline checker survives: the kind string is the tell of one.
+    expect(script).not.toContain('"opum.qualification-receipt.v1"');
+    expect(script).not.toContain("receipt_check_js()");
+  });
+
   test("a partial override refuses: each of by, reason, task and adr is required", () => {
     for (const blank of ["by", "reason", "task", "adr"]) {
       refuses((r) => {
         r.verdict = "NOT QUALIFIED";
         r.override = { by: "jdnewhouse", reason: "scale row unbound", task: "LCLI-999", adr: "docs/adr/x.md@abc1234" };
         (r.override as Record<string, string>)[blank] = "";
-      }, "override is present but INCOMPLETE");
+      }, `missing or empty: ${blank}`);
     }
   });
 
@@ -1078,9 +1179,9 @@ describeOnPosix("scripts/publish-release.sh qualification receipt (LCLI-578)", (
     }
   });
 
-  // The checker is `node -e <heredoc>`. These two replace `node` on PATH with a shim that passes
-  // every call through to the real node EXCEPT the receipt check (recognised by the receipt kind
-  // in its script text), where it simulates a checker that exits 0 having said nothing -- what an
+  // The checker is `node scripts/pair-receipt.mjs --check-release-receipt` (LCLI-621; it was a
+  // `node -e <heredoc>`). These two replace `node` on PATH with a shim that passes every call
+  // through to the real node EXCEPT the receipt check (recognised by its flag), where it simulates a checker that exits 0 having said nothing -- what an
   // emptied heredoc produces -- or one that emits a warning on stderr before answering.
   function shimNode(ws: ReturnType<typeof makeWorkspace>) {
     const realNode = execFileSync("bash", ["-c", "command -v node"], { encoding: "utf8" }).trim();
@@ -1088,7 +1189,7 @@ describeOnPosix("scripts/publish-release.sh qualification receipt (LCLI-578)", (
       resolve(ws.bin, "node"),
       `#!/usr/bin/env bash
 case "$*" in
-  *opum.qualification-receipt.v1*)
+  *--check-release-receipt*)
     [ "\${NODE_SHIM:-}" = silent ] && exit 0
     [ "\${NODE_SHIM:-}" = warn ] && echo "(node:4242) ExperimentalWarning: a stray line on stderr" >&2 ;;
 esac
@@ -1184,8 +1285,11 @@ describeOnPosix("scripts/publish-release.sh re-hash before publish (LCLI-586)", 
     mkdirSync(state, { recursive: true });
     writeFileSync(replacement, swap.bytes);
     // `on` is "publish:<basename>" (swap while that tarball is being published) or
-    // "view-root-2" (swap on the second `npm view @opum-ai/lore@<v> version`: the first is
-    // report_state's, the second is publish_one's resumability check for the root).
+    // "view-root-3" (swap on the third `npm view @opum-ai/lore@<v> version`: the first is
+    // report_state's, the second the pre-flight's `published` probe (LCLI-621 review), the third
+    // publish_one's own `published` probe for the root, the last read before its re-hash). The count
+    // is kept, and the dry-run case asserts it ends at exactly 3, so a read added anywhere before the
+    // root's re-hash goes red rather than silently moving the swap earlier.
     writeFileSync(
       resolve(ws.bin, "npm"),
       `#!/usr/bin/env bash
@@ -1203,16 +1307,16 @@ case "\${1:-}" in
   view)
     spec="$2"; field="\${3:-}"
     case "$field" in dist-tags.*) name="$spec" ;; *) name="\${spec%@*}" ;; esac
-    if [ "$ON" = "view-root-2" ] && [ "$name" = "@opum-ai/lore" ] && [ "$field" = "version" ]; then
+    if [ "$ON" = "view-root-3" ] && [ "$name" = "@opum-ai/lore" ] && [ "$field" = "version" ]; then
       n=$(( $(cat "$STATE/root-views" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$STATE/root-views"
-      [ "$n" -eq 2 ] && do_swap
+      [ "$n" -eq 3 ] && do_swap
     fi
-    [ -f "$STATE/published-$(safe "$name")" ] || exit 1
+    [ -f "$STATE/published-$(safe "$name")" ] || ${NPM_404}
     echo "${VERSION}"; exit 0 ;;
   publish)
     tarball="$2"; base="$(basename "$tarball")"
     [ "$ON" = "publish:$base" ] && do_swap
-    stripped="\${base%-${VERSION}.tgz}"; name="@opum-ai/\${stripped#opum-ai-}"
+    stripped="\${base%-${VERSION}.tgz}"; stripped="\${stripped%-${VERSION}-rc.*}"; name="@opum-ai/\${stripped#opum-ai-}"
     echo "PUBLISH $base" >> "$LOG"
     touch "$STATE/published-$(safe "$name")"
     echo "STUB PUBLISH $tarball"; exit 0 ;;
@@ -1224,7 +1328,11 @@ esac
     // The real path ends with an npx install smoke; it must never reach the network.
     writeFileSync(resolve(ws.bin, "npx"), "#!/usr/bin/env bash\nexit 0\n");
     chmodSync(resolve(ws.bin, "npx"), 0o755);
-    return { published: () => readFileSync(log, "utf8").split("\n").filter(Boolean) };
+    const rootViews = resolve(state, "root-views");
+    return {
+      published: () => readFileSync(log, "utf8").split("\n").filter(Boolean),
+      rootViews: () => (existsSync(rootViews) ? Number(readFileSync(rootViews, "utf8").trim()) : 0),
+    };
   }
 
   // Different BYTES, same tar stream: re-gzip at another level. Still a valid tgz, so nothing
@@ -1322,11 +1430,13 @@ esac
     const ws = makeWorkspace();
     try {
       const { original, swapped } = regzippedRoot(ws);
-      const npm = swapStubNpm(ws, { target: ws.rootTarball, bytes: swapped, on: "view-root-2" });
+      const npm = swapStubNpm(ws, { target: ws.rootTarball, bytes: swapped, on: "view-root-3" });
       const r = runScript(ws, ws.root, ws.artifacts);
 
       expect(r.code).toBe(1);
       expect(npm.published()).toEqual([`SWAPPED ${ws.rootTarball}`]);
+      // Exactly three root reads, so the swap fired on publish_one's, the last before the re-hash.
+      expect(npm.rootViews()).toBe(3);
       // All six platform rehearsals re-hashed and passed; the root's did not.
       for (const p of PLATFORMS) {
         expect(r.out).toContain(`rehash   ${platformFile(p)} matches the receipt`);
@@ -1461,7 +1571,7 @@ exec "${realNode}" "$@"
   }
 
   for (const [mode, reason] of [
-    ["strip", `receipt tarballs has no entry for opum-ai-lore-${VERSION}.tgz`],
+    ["strip", `receipt tarballs has no entry for opum-ai-lore-${LAUNCHER_RC}.tgz`],
     ["silent", "The reader said:\n    (nothing)"],
   ] as const) {
     test(`a receipt value that cannot be read (${mode}) refuses before the root publish, and the kept receipt is removed on exit`, () => {
@@ -1739,6 +1849,12 @@ describeOnPosix("scripts/publish-release.sh stages under release-candidate only 
     for (const [name, rc] of Object.entries(preexisting)) {
       writeFileSync(resolve(state, `published-${safe(name)}`), "");
       if (rc !== null) writeFileSync(resolve(state, `tag-${safe(name)}-release-candidate`), rc);
+      // A resume: the registry holds exactly this run's bytes (LCLI-621 review), so the skip is one.
+      const file =
+        name === "@opum-ai/lore"
+          ? ws.rootTarball
+          : `opum-ai-lore-${name.slice("@opum-ai/lore-".length)}-${VERSION}.tgz`;
+      writeFileSync(resolve(state, `integrity-${safe(name)}`), integrity(readFileSync(resolve(ws.source, file))));
     }
     writeFileSync(
       resolve(ws.bin, "npm"),
@@ -1753,14 +1869,16 @@ case "\${1:-}" in
     spec="$2"; field="\${3:-}"
     case "$field" in
       dist-tags.*) f="$STATE/tag-$(safe "$spec")-\${field#dist-tags.}"; [ -f "$f" ] && cat "$f"; exit 0 ;;
-      *) [ -f "$STATE/published-$(safe "\${spec%@*}")" ] || exit 1; echo "${VERSION}"; exit 0 ;;
+      dist.integrity) cat "$STATE/integrity-$(safe "\${spec%@*}")" 2>/dev/null; exit 0 ;;
+      *) [ -f "$STATE/published-$(safe "\${spec%@*}")" ] || ${NPM_404}; echo "${VERSION}"; exit 0 ;;
     esac ;;
   publish)
     tarball="$2"; shift 2; tag="latest"
     while [ "$#" -gt 0 ]; do case "$1" in --tag) tag="$2"; shift 2 ;; *) shift ;; esac; done
-    base="$(basename "$tarball")"; stripped="\${base%-${VERSION}.tgz}"; name="@opum-ai/\${stripped#opum-ai-}"
+    base="$(basename "$tarball")"; stripped="\${base%-${VERSION}.tgz}"; stripped="\${stripped%-${VERSION}-rc.*}"; name="@opum-ai/\${stripped#opum-ai-}"
+    version="\${base#"$stripped"-}"; version="\${version%.tgz}"
     touch "$STATE/published-$(safe "$name")"
-    printf '%s' "${VERSION}" > "$STATE/tag-$(safe "$name")-$tag"
+    printf '%s' "$version" > "$STATE/tag-$(safe "$name")-$tag"
     echo "STUB PUBLISH $tarball"; exit 0 ;;
   dist-tag)
     [ "\${2:-}" = add ] || exit 1
@@ -1803,11 +1921,14 @@ esac
       ]);
       // No write of any kind names latest: not a publish, not a dist-tag.
       for (const w of writes(npm.argv())) expect(w.split(" ")).not.toContain("latest");
-      // And the registry agrees: release-candidate on all seven, latest on none.
+      // And the registry agrees: release-candidate on all seven (X-rc.N on the launcher, X on the
+      // platforms), latest on none.
       for (const name of ALL) {
-        expect(npm.tag(name, "release-candidate")).toBe(VERSION);
+        expect(npm.tag(name, "release-candidate")).toBe(name === "@opum-ai/lore" ? LAUNCHER_RC : VERSION);
         expect(npm.tag(name, "latest")).toBeNull();
       }
+      // The carried X launcher is never handed to npm at all.
+      expect(npm.argv().join("\n")).not.toContain(ws.finalTarball);
       expect(r.out).toContain("'latest' is NOT moved here");
       expect(r.out).not.toContain("moving 'latest'");
     } finally {
@@ -1831,7 +1952,8 @@ esac
         `dist-tag add @opum-ai/lore-darwin-arm64@${VERSION} release-candidate`,
       ]);
       for (const w of writes(npm.argv())) expect(w.split(" ")).not.toContain("latest");
-      for (const name of ALL) expect(npm.tag(name, "release-candidate")).toBe(VERSION);
+      for (const name of ALL)
+        expect(npm.tag(name, "release-candidate")).toBe(name === "@opum-ai/lore" ? LAUNCHER_RC : VERSION);
     } finally {
       ws.cleanup();
     }
@@ -1863,7 +1985,8 @@ esac
       const npm = recordingNpm(ws);
       const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
       expect(r.code).toBe(0);
-      expect(npm.npx().trim()).toBe(`--yes @opum-ai/lore@${VERSION} --version`);
+      // The staged launcher is X-rc.N (LCLI-621), so that is the exact version smoked.
+      expect(npm.npx().trim()).toBe(`--yes @opum-ai/lore@${LAUNCHER_RC} --version`);
     } finally {
       ws.cleanup();
     }
@@ -1872,6 +1995,435 @@ esac
   test("the closing checklist says staged is not released and names the latest move", () => {
     const out = execFileSync("bash", [SCRIPT, VERSION, RUN_ID, "--print-checklist"], { encoding: "utf8" });
     expect(out).toContain(`PUBLISHED ${VERSION} under the release-candidate dist-tag. latest has NOT moved.`);
-    expect(out).toContain(`node scripts/promote-latest.mjs --record <file> --version ${VERSION} --promote`);
+    expect(out).toContain(
+      `node scripts/promote-latest.mjs --record <file> --version ${VERSION} --release-run ${RUN_ID} --promote`,
+    );
+  });
+
+  // LCLI-621: a string match cannot tell whether the printed command still PARSES -- the pin above
+  // stayed green while the command it names exited 2 on a missing --release-run. So each printed
+  // promote command is run through the real promote-latest.mjs main() with a stubbed runner. A
+  // parser refusal throws; an accepted argv starts reading, and the stub proves the reads are for
+  // this version's tag and THIS run id before refusing the first one that matters.
+  test("each promote command the checklist prints is accepted by promote-latest.mjs's parser, for this run", async () => {
+    const { main } = await import("../scripts/promote-latest.mjs");
+    const out = execFileSync("bash", [SCRIPT, VERSION, RUN_ID, "--print-checklist"], { encoding: "utf8" });
+    const commands = out
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("node scripts/promote-latest.mjs "));
+    // Positive control: both the dry run and the real move are printed.
+    expect(commands.map((c) => c.split(" ").at(-1))).toEqual(["--dry-run", "--promote"]);
+    const dir = mkdtempSync(resolve(tmpdir(), "lore-checklist-argv-"));
+    try {
+      for (const command of commands) {
+        const argv = command
+          .split(/\s+/)
+          .slice(2)
+          .map((word) => (word === "<file>" ? resolve(dir, "record.json") : word));
+        const calls: string[] = [];
+        const err: string[] = [];
+        const code = await main(argv, {
+          run: async (cmd: string, args: string[]) => {
+            const line = [cmd, ...args].join(" ");
+            calls.push(line);
+            if (line.endsWith(`repos/opum-ai/lore-cli/git/ref/tags/v${VERSION}`))
+              return {
+                stdout: JSON.stringify({ ref: `refs/tags/v${VERSION}`, object: { type: "commit", sha: COMMIT } }),
+              };
+            throw Object.assign(new Error("stub: no further reads"), { stderr: "stub: no further reads" });
+          },
+          out: () => {},
+          err: (line: string) => err.push(line),
+          readPackageVersion: async () => "0.0.0-not-this",
+        });
+        expect({ command, code }).toEqual({ command, code: 1 });
+        expect(calls[1]).toBe(`gh api --hostname github.com repos/opum-ai/lore-cli/actions/runs/${RUN_ID}`);
+        expect(err.join("\n")).toContain(`Release run ${RUN_ID} could not be read`);
+        expect(existsSync(resolve(dir, "record.json"))).toBe(false);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ── Seven of eight: the X-rc.N launcher is staged, the X launcher carried (LCLI-621) ───────────
+// Constitution Article 3 clause 5 as amended by ODOC-302. Every refusal runs the REAL path and
+// asserts no publish happened, for the reason given above the LCLI-578 block.
+describeOnPosix("scripts/publish-release.sh stages the X-rc.N launcher and carries X (LCLI-621)", () => {
+  /**
+   * An npm whose registry holds `preexisting` (name@version -> dist.integrity) and logs publishes.
+   * `broken` answers `npm view <spec> version` for each listed spec with a NON-404 failure (or, for
+   * "empty", exit 0 with no output). `flaky` fails a spec's FIRST read after this stub published
+   * it with a non-404 error, as a registry blip during the visibility poll would.
+   */
+  function registryNpm(
+    ws: ReturnType<typeof makeWorkspace>,
+    preexisting: Record<string, string> = {},
+    options: { broken?: Record<string, "etimedout" | "empty">; flaky?: string } = {},
+  ) {
+    const log = resolve(ws.root, "npm-publish.log");
+    const flakyMarker = resolve(ws.root, "flaky-fired");
+    writeFileSync(log, "");
+    rmSync(flakyMarker, { force: true });
+    const broken = Object.entries(options.broken ?? {})
+      .map(([spec, how]) =>
+        how === "empty"
+          ? `    "${spec}") [ "$field" = version ] && exit 0 ;;`
+          : `    "${spec}") [ "$field" = version ] && { echo "npm error code ETIMEDOUT" >&2; echo "npm error network request to registry.npmjs.org timed out" >&2; exit 1; } ;;`,
+      )
+      .join("\n");
+    const cases = Object.entries(preexisting)
+      .map(
+        ([spec, sri]) =>
+          `    "${spec}") [ "$field" = dist.integrity ] && echo "${sri}" || echo "\${spec##*@}"; exit 0 ;;`,
+      )
+      .join("\n");
+    writeFileSync(
+      resolve(ws.bin, "npm"),
+      `#!/usr/bin/env bash
+case "\${1:-}" in
+  ping) exit 0 ;;
+  view)
+    spec="$2"; field="\${3:-}"
+    case "$spec" in
+${broken}
+    esac
+    case "$spec" in
+${cases}
+    esac
+    # Visible once THIS stub has published it: name@version maps back to its tarball's basename.
+    n="\${spec%@*}"; f="opum-ai-\${n#@opum-ai/}-\${spec##*@}.tgz"
+    while IFS= read -r line; do
+      [ "$(basename "$line")" = "$f" ] || continue
+      if [ "$spec" = "${options.flaky ?? ""}" ] && [ ! -f "${flakyMarker}" ]; then
+        touch "${flakyMarker}"; echo "npm error code ECONNRESET" >&2; exit 1
+      fi
+      echo "\${spec##*@}"; exit 0
+    done < "${log}"
+    ${NPM_404} ;;
+  publish) echo "$2" >> "${log}"; echo "STUB PUBLISH $2"; exit 0 ;;
+  *) exit 0 ;;
+esac
+`,
+    );
+    chmodSync(resolve(ws.bin, "npm"), 0o755);
+    writeFileSync(resolve(ws.bin, "npx"), "#!/usr/bin/env bash\nexit 0\n");
+    chmodSync(resolve(ws.bin, "npx"), 0o755);
+    return () => readFileSync(log, "utf8").split("\n").filter(Boolean);
+  }
+
+  test("positive control: stages the six platforms and the X-rc.N launcher, never the carried X one", () => {
+    const ws = makeWorkspace();
+    try {
+      const published = registryNpm(ws);
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(0);
+      expect(r.out).toContain(`launcher: staging @opum-ai/lore@${LAUNCHER_RC}; carrying @opum-ai/lore@${VERSION}`);
+      expect(r.out).toContain(`byte-identical once ${LAUNCHER_RC} -> ${VERSION}`);
+      expect(published()).toEqual([
+        ...PLATFORMS.map((p) => resolve(ws.artifacts, `opum-ai-lore-${p}-${VERSION}.tgz`)),
+        resolve(ws.artifacts, ws.rootTarball),
+      ]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("refuses a pair that differs beyond the version string, before any registry write", () => {
+    const ws = makeWorkspace();
+    try {
+      // Re-pack the carried X launcher with one extra entry: a valid tarball, a valid README, and
+      // not the launcher that was qualified as X-rc.N.
+      const stage = resolve(ws.root, "stage-extra");
+      mkdirSync(stage);
+      execFileSync("tar", ["-xzf", resolve(ws.source, ws.finalTarball)], { cwd: stage });
+      writeFileSync(resolve(stage, "package", "NOTICE"), "not in the rc\n");
+      execFileSync("tar", ["-czf", resolve(ws.source, ws.finalTarball), "package"], { cwd: stage });
+      // The receipt names the carried launcher's bytes (TASK-126), so it is re-issued for the new
+      // ones: this test is about the equivalence gate, which must be what refuses.
+      const newFinal = sha256(readFileSync(resolve(ws.source, ws.finalTarball)));
+      ws.writeReceipt((r) => {
+        (r.launcherSubstitution as { finalTarball: { sha256: string } }).finalTarball.sha256 = newFinal;
+      });
+      const published = registryNpm(ws);
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("package/NOTICE is in the final tarball and missing from the rc");
+      expect(r.out).toContain("the launcher equivalence gate refused (exit 1)");
+      expect(published()).toEqual([]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("refuses when the carried X launcher is absent, even with eight tarballs present", () => {
+    const ws = makeWorkspace();
+    try {
+      rmSync(resolve(ws.source, ws.finalTarball));
+      writeFileSync(resolve(ws.source, `opum-ai-lore-${VERSION}-extra.tgz`), "not a launcher");
+      const published = registryNpm(ws);
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain(`the carried launcher opum-ai-lore-${VERSION}.tgz is missing`);
+      expect(published()).toEqual([]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("refuses two X-rc.N launchers rather than guessing which to stage", () => {
+    const ws = makeWorkspace();
+    try {
+      rmSync(resolve(ws.source, ws.finalTarball));
+      writeFileSync(
+        resolve(ws.source, `opum-ai-lore-${VERSION}-rc.2.tgz`),
+        readFileSync(resolve(ws.source, ws.rootTarball)),
+      );
+      const published = registryNpm(ws);
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain(`expected exactly one launcher tarball opum-ai-lore-${VERSION}-rc.<N>.tgz`);
+      expect(r.out).toContain("found 2");
+      expect(published()).toEqual([]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  // opum-cli-e2e ruled at e0021c7 (receipts/README.md blob 76dad762, superseding 4f078e6b here):
+  // `tarballs` holds EXACTLY the seven staged packages, never eight. The carried X launcher is never
+  // a key there, even at its true digest; its identity lives only in launcherSubstitution.finalTarball.
+  test("an eight-entry receipt (the carried X launcher named in tarballs) refuses, whatever the digest", () => {
+    const ws = makeWorkspace();
+    try {
+      const finalSha = sha256(readFileSync(resolve(ws.source, ws.finalTarball)));
+      for (const digest of [finalSha, "0".repeat(64)]) {
+        ws.writeReceipt((r) => {
+          (r.tarballs as Record<string, string>)[ws.finalTarball] = digest;
+        });
+        const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+        expect(r.code).toBe(1);
+        expect(r.stderr).toContain(REFUSED);
+        expect(r.stderr).toContain(
+          `tarballs names "${ws.finalTarball}", the built ${VERSION} launcher; a pass-1 receipt's tarballs holds exactly the seven staged packages`,
+        );
+        expect(r.out).not.toContain("STUB PUBLISH");
+      }
+      // The seven-entry receipt, the clean case, still stages.
+      ws.writeReceipt();
+      expect(runScript(ws, ws.root, ws.artifacts).out).toContain("receipt: QUALIFIED (would proceed)");
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("an X-rc.N already on the registry with OTHER bytes refuses and names the next N; the same bytes resume", () => {
+    const ws = makeWorkspace();
+    try {
+      const spec = `@opum-ai/lore@${LAUNCHER_RC}`;
+      let published = registryNpm(ws, { [spec]: integrity(Buffer.from("an earlier run's launcher")) });
+      const taken = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(taken.code).toBe(1);
+      expect(taken.out).toContain(`${spec} is ALREADY on the registry with different bytes`);
+      expect(taken.out).toContain("launcher_rc set to the next N");
+      expect(taken.out).toContain("Do NOT run npm unpublish");
+      // A PRE-WRITE refusal (LCLI-621 review): the pre-flight fires before the platform loop and
+      // the registry-visibility wait, so not one package was published and nothing waited.
+      expect(published()).toEqual([]);
+      expect(taken.out).toContain("pre-flight: anything already on the registry must be this run's bytes");
+      expect(taken.out).not.toContain("publishing platform packages first");
+      expect(taken.out).not.toContain("gating the root launcher on registry visibility");
+
+      published = registryNpm(ws, { [spec]: integrity(readFileSync(resolve(ws.source, ws.rootTarball))) });
+      const resumed = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(resumed.code).toBe(0);
+      expect(resumed.out).toContain(`skip     ${spec} (already on the registry as this run's bytes)`);
+      expect(published()).not.toContain(resolve(ws.artifacts, ws.rootTarball));
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  // A re-stage as rc.N+1 comes from a NEW Release run, which rebuilds the platforms: its digests and
+  // receipt verify against ITS tarballs while the registry keeps an older run's X platform bytes.
+  // The skip must compare bytes for platforms exactly as for the launcher (LCLI-621 review).
+  test("an X platform package already on the registry with OTHER bytes refuses, and names why a new rc cannot fix it", () => {
+    const ws = makeWorkspace();
+    try {
+      const spec = `@opum-ai/lore-darwin-arm64@${VERSION}`;
+      const published = registryNpm(ws, { [spec]: integrity(Buffer.from("an earlier Release run's platform")) });
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain(`${spec} is ALREADY on the registry with different bytes`);
+      expect(r.out).toContain("A new launcher_rc\ndoes NOT fix this");
+      expect(r.out).toContain(`or by a different Release run than ${RUN_ID}`);
+      expect(r.out).toContain("Do NOT run npm unpublish");
+      expect(r.out).not.toContain("launcher_rc set to the next N");
+      expect(r.out).not.toContain(`skip     ${spec}`);
+      expect(published()).toEqual([]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("an X platform package already on the registry as THIS run's bytes is skipped, and the rest stage", () => {
+    const ws = makeWorkspace();
+    try {
+      const file = `opum-ai-lore-darwin-arm64-${VERSION}.tgz`;
+      const spec = `@opum-ai/lore-darwin-arm64@${VERSION}`;
+      const published = registryNpm(ws, { [spec]: integrity(readFileSync(resolve(ws.source, file))) });
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(0);
+      expect(r.out).toContain(`skip     ${spec} (already on the registry as this run's bytes)`);
+      expect(published()).toEqual([
+        ...PLATFORMS.filter((p) => p !== "darwin-arm64").map((p) =>
+          resolve(ws.artifacts, `opum-ai-lore-${p}-${VERSION}.tgz`),
+        ),
+        resolve(ws.artifacts, ws.rootTarball),
+      ]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("the pre-flight refuses a foreign LAST platform package before the first platform publishes", () => {
+    // win32-x64 is the last of the six in the loop, so a refusal reached only there would come
+    // after five publishes. The pre-flight must see it first.
+    const ws = makeWorkspace();
+    try {
+      const spec = `@opum-ai/lore-win32-x64@${VERSION}`;
+      const published = registryNpm(ws, { [spec]: integrity(Buffer.from("an earlier Release run's platform")) });
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain(`${spec} is ALREADY on the registry with different bytes`);
+      expect(published()).toEqual([]);
+      expect(r.out).not.toContain("publishing platform packages first");
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("the pre-flight reports a matching package as held, and the dry run makes the same check", () => {
+    const ws = makeWorkspace();
+    try {
+      const file = `opum-ai-lore-linux-x64-${VERSION}.tgz`;
+      const spec = `@opum-ai/lore-linux-x64@${VERSION}`;
+      registryNpm(ws, { [spec]: integrity(readFileSync(resolve(ws.source, file))) });
+      const held = runScript(ws, ws.root, ws.artifacts);
+      expect(held.code).toBe(0);
+      expect(held.out).toContain(`held     ${spec} (already on the registry as this run's bytes; will be skipped)`);
+      registryNpm(ws, { [spec]: integrity(Buffer.from("other")) });
+      const refused = runScript(ws, ws.root, ws.artifacts);
+      expect(refused.code).toBe(1);
+      expect(refused.out).toContain(`${spec} is ALREADY on the registry with different bytes`);
+      expect(refused.out).not.toContain("would    npm publish");
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("an already-published package whose integrity cannot be read refuses rather than skipping unverified", () => {
+    const ws = makeWorkspace();
+    try {
+      const spec = `@opum-ai/lore-darwin-arm64@${VERSION}`;
+      const published = registryNpm(ws, { [spec]: "" });
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("registry dist.integrity <unreadable>");
+      expect(published()).toEqual([]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  // "Is it already published?" reads absent ONLY from npm's own not-found (LCLI-621 review). A flaky
+  // or lagging read taken as absent would let the pre-flight pass a taken X-rc.N, publish all six
+  // platforms, wait out the visibility window, and only refuse at the launcher.
+  test("a NON-404 failure on the pre-flight's probe refuses with zero publishes, and the report says UNREADABLE", () => {
+    const ws = makeWorkspace();
+    try {
+      const spec = `@opum-ai/lore@${LAUNCHER_RC}`;
+      const published = registryNpm(ws, {}, { broken: { [spec]: "etimedout" } });
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(1);
+      expect(r.out).toMatch(new RegExp(`@opum-ai/lore +${LAUNCHER_RC.replaceAll(".", "\\.")} UNREADABLE`));
+      expect(r.out).toContain(`could not tell whether ${spec} is already on the registry`);
+      expect(r.out).toContain("npm error code ETIMEDOUT");
+      expect(r.out).not.toContain("publishing platform packages first");
+      expect(published()).toEqual([]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("an exit-0 probe that prints nothing is unreadable too, not present and not absent", () => {
+    const ws = makeWorkspace();
+    try {
+      const spec = `@opum-ai/lore-darwin-x64@${VERSION}`;
+      const published = registryNpm(ws, {}, { broken: { [spec]: "empty" } });
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain(`could not tell whether ${spec} is already on the registry`);
+      expect(published()).toEqual([]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("npm's own 404 still counts as unpublished: reported ABSENT, and all seven stage", () => {
+    const ws = makeWorkspace();
+    try {
+      const published = registryNpm(ws);
+      const r = runScript(ws, ws.root, ws.artifacts, REAL_RUN, []);
+      expect(r.code).toBe(0);
+      expect(r.out).toMatch(new RegExp(`@opum-ai/lore-darwin-arm64 +${VERSION.replaceAll(".", "\\.")} ABSENT`));
+      expect(r.out).not.toContain("could not tell whether");
+      expect(published()).toHaveLength(7);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("the visibility POLL still retries a non-404 failure rather than dying (its semantics are unchanged)", () => {
+    const ws = makeWorkspace();
+    try {
+      const spec = `@opum-ai/lore-linux-arm64@${VERSION}`;
+      const published = registryNpm(ws, {}, { flaky: spec });
+      // A real window, so the poll has room to retry once (one 5s backoff).
+      const r = runScript(ws, ws.root, ws.artifacts, { ...REAL_RUN, REGISTRY_WINDOW_SECONDS: "60" }, []);
+      expect(r.code).toBe(0);
+      expect(existsSync(resolve(ws.root, "flaky-fired"))).toBe(true);
+      expect(r.out).toContain("waiting  1 package(s) not visible yet");
+      expect(r.out).not.toContain("could not tell whether");
+      expect(published()).toHaveLength(7);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  test("--verify-only reports the launcher at the X-rc.N release-candidate names, with no artifacts", () => {
+    const ws = makeWorkspace();
+    try {
+      writeFileSync(
+        resolve(ws.bin, "npm"),
+        `#!/usr/bin/env bash
+[ "$1" = view ] || exit 0
+case "$2 \${3:-}" in
+  "@opum-ai/lore dist-tags.release-candidate") echo "${LAUNCHER_RC}" ;;
+  "@opum-ai/lore@${LAUNCHER_RC} version") echo "${LAUNCHER_RC}" ;;
+  *) ${NPM_404} ;;
+esac
+`,
+      );
+      chmodSync(resolve(ws.bin, "npm"), 0o755);
+      const r = runScript(ws, ws.root, resolve(ws.root, "absent"), { GH_FAIL_ALL: "1" }, ["--verify-only"]);
+      expect(r.code).toBe(0);
+      expect(r.out).toContain(`registry state for ${VERSION} (launcher ${LAUNCHER_RC})`);
+      expect(r.out).toMatch(new RegExp(`@opum-ai/lore +${LAUNCHER_RC.replaceAll(".", "\\.")} present`));
+    } finally {
+      ws.cleanup();
+    }
   });
 });

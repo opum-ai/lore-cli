@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The root launcher stages as `X-rc.N`; the platform packages still stage as `X`** (LCLI-621,
+  constitution Article 3 clause 5 as amended by ODOC-302). The Release run's `npm-packages`
+  artifact now carries eight tarballs: the six platform packages at `X`, the launcher at `X-rc.N`
+  and the launcher at `X`. Staging, from `release.yml`'s `publish` job or from
+  `scripts/publish-release.sh`, publishes seven of them under `release-candidate`: the platforms
+  at `X` and the launcher at `X-rc.N`, which pins the platforms at exactly `X`. The `X` launcher
+  is carried and never staged. `N` is the new `launcher_rc` dispatch input, which defaults to `1`.
+  A re-stage of the same `X` takes the next `N`, and works only if the new run's platform tarballs
+  are byte-identical to the ones already on the registry. That has been measured once: two Release
+  dispatches on the same commit, `20a1d24b` (0.6.1, runs 34783940117 and 34786808767), produced
+  seven byte-identical tarballs. From a different commit it is unmeasured. The final `X`
+  launcher reaches `latest` through `scripts/promote-latest.mjs`; see the next entry.
+- **`latest` gets the launcher by a fresh publish of the qualified `X`, last** (LCLI-621, Part B).
+  `scripts/promote-latest.mjs` now takes `--release-run <id>`. It downloads that run's
+  `npm-packages` artifact afresh and re-runs the equivalence gate on it. It then re-reads the
+  pass-1 receipt against the artifact. That receipt's `commit` must be what `v<version>` peels to,
+  its `launcherVersion` must be the artifact's `X-rc.N`, and its `launcherSubstitution` must be
+  `MATCH` naming the basename `opum-ai-lore-<X>.tgz` at the artifact `X` launcher's sha256. The
+  staging check reads `X-rc.N` on the launcher, and the pair receipt's `launcherVersion` is now
+  required and must equal the artifact's rc. A receipt without `launcherVersion` refuses, as
+  quest-cli's reader refuses it. Before anything moves, and again after the six platforms move by
+  dist-tag, `npm pack` of the registry's `X-rc.N` must be sha256-identical to the artifact's rc.
+  The `X` launcher must be equivalent to that served rc and still hash to the receipt's
+  `finalTarball.sha256`. Then it runs `npm publish <X> --tag latest`, last. That is the one publish
+  in the repository without `--tag release-candidate`, and a test holds it to that one site. If
+  `X` is already on npm as the artifact's bytes, it moves the tag instead. Other bytes refuse
+  before anything moves. Afterwards it verifies `latest` on all seven packages and npm's `X`
+  integrity. It then prints the byte count of the package-level `readme` (OPAG-474 AC3), with a
+  loud warning, not a failure, on `0`. A failed platform move or launcher publish restores every
+  `latest` that run moved, the launcher's included, by dist-tag. A failure in the step-7 checks
+  afterwards restores nothing by itself, by design, and names `--rollback <record>` as the remedy.
+  `--rollback` restores every recorded `latest`. Nothing is unpublished. Every npm call the promotion
+  and pair-receipt scripts make passes both `--registry=https://registry.npmjs.org/` and
+  `--@opum-ai:registry=https://registry.npmjs.org/`. That covers the dist-tag moves, the publish,
+  every `npm view`, and the `npm pack` of the served rc. `--registry` alone does not beat an
+  `@opum-ai:registry` set in a user, project or global npmrc, as measured on npm 12.1.0. Every
+  read also passes `--userconfig=/dev/null`, so no token is sent. The Release run must be a
+  `workflow_dispatch` run built from `opum-ai/lore-cli`. The spec is quest-cli's promote clause
+  (QCLI-399, `e3c59d7b`) and opum-cli-e2e's `receipts/README.md` steps 5 to 7 (`4f078e6b`).
+- **A resumed staging skips a package only if the registry holds this run's bytes** (LCLI-621).
+  Both `release.yml`'s `publish` job and `scripts/publish-release.sh` compare an already-published
+  package's `dist.integrity` with the run's tarball, platforms included, and refuse on a difference
+  or an unreadable value. The comparison runs for all seven in a pre-flight before the first write,
+  so a refusal leaves nothing published and never waits out the registry-visibility window. Before
+  this, a platform package already on the registry was skipped unchecked, so an `X-rc.N` staged
+  from a new Release run could install an older run's `X` platform bytes. Whether a package is
+  already published is read as absent only from npm's own not-found (E404); any other `npm view`
+  failure refuses, while the registry-visibility poll still retries it.
+
+- **Staging now requires the receipt fields promotion requires** (LCLI-621).
+  `scripts/publish-release.sh` gates staging on `scripts/pair-receipt.mjs --check-release-receipt`.
+  That is the same `evaluateReleaseReceipt` promotion runs, and it replaces a 60-line inline
+  `node -e` checker that had never learned opum-cli-e2e's TASK-126 fields. A receipt must now name
+  this run's `X-rc.N` as `launcherVersion`. It must also carry a `launcherSubstitution` of `MATCH`
+  whose `finalTarball` names the basename `opum-ai-lore-<X>.tgz` at the carried launcher's sha256.
+  Its `tarballs` must name exactly the seven staged packages. The carried `X` launcher is no longer
+  accepted there even at its true digest, per opum-cli-e2e's `receipts/README.md` at `e0021c7`.
+  Before this, staging accepted receipts that promotion then refused. The closing checklist's
+  promote commands now pass `--release-run <run-id>`, without which `promote-latest.mjs` exits 2.
+
+### Added
+
+- **Launcher equivalence gate** (LCLI-621). `scripts/launcher-equivalence.mjs` refuses an
+  `X-rc.N` launcher that differs from the `X` launcher by anything but the version string. It
+  compares entry by entry over the unpacked tarballs: the same set of paths, the same type and
+  mode per entry, and byte-identical content after every `X-rc.N` is replaced with `X`. It also
+  refuses an rc whose own `package.json` is not `X-rc.N`, and an rc pinning a platform at
+  anything but `X`. It reads each archive to its end and refuses non-zero data after a zero
+  block, because node-tar installs an entry placed after a lone zero block. It refuses any entry
+  that is not a regular file or a directory, since a link's target is never compared (npm pack
+  emits none). It runs in `release.yml`'s `package` job and in `scripts/publish-release.sh`, and
+  both launchers get the LCLI-510 shipped-README assertion and install-sanity.
+
 ## [0.11.0] - 2026-09-27
 
 ### Upgrade notice: schema drift on every repository that commits `.lore/schemas/`

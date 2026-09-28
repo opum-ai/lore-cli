@@ -25,8 +25,11 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import * as yaml from "js-yaml";
 
 const WORKFLOW_PATH = join(import.meta.dir, "..", ".github", "workflows", "release.yml");
@@ -58,6 +61,7 @@ interface WorkflowDoc {
       inputs?: {
         publish?: { default?: boolean };
         acknowledge_dangling_provenance?: { type?: string; default?: string };
+        launcher_rc?: { type?: string; default?: number };
       };
     };
   };
@@ -162,6 +166,18 @@ describe("release.yml publish job stays safely gated", () => {
     // Resumable: a run that fails partway through must be safe to re-dispatch without
     // 403ing (EPUBLISHCONFLICT) on packages already published.
     expect(script).toMatch(/npm view/);
+
+    // ...but only past THIS run's bytes (LCLI-621 review): the skip compares the registry's
+    // dist.integrity with the tarball's and fails before it can return. Pinned statically as well as
+    // executed below, because the executed cases are POSIX-only.
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal bash parameter expansion from release.yml's own script, not a JS template placeholder.
+    const integrityRead = script.indexOf('npm view "${name}@${version}" dist.integrity');
+    const refusal = script.indexOf("is already on the registry with different bytes", integrityRead);
+    const skip = script.indexOf("already published as this run's bytes", integrityRead);
+    expect(integrityRead).toBeGreaterThan(-1);
+    expect(refusal).toBeGreaterThan(integrityRead);
+    expect(skip).toBeGreaterThan(refusal);
+    expect(script.slice(refusal, skip)).toContain("exit 1");
   });
 
   test("the publish step refuses to publish the pre-release placeholder version 0.0.0, before publishing anything", () => {
@@ -225,7 +241,8 @@ describe("release.yml publish job stays safely gated", () => {
 
     // biome-ignore lint/suspicious/noTemplateCurlyInString: literal bash array expansion in release.yml.
     expect(script).toContain("expected_platform_count=${#platform_names[@]}");
-    expect(script).toContain("expected_total_count=$((expected_platform_count + 1))");
+    // Eight in the artifact since LCLI-621: the platforms, the X-rc.N launcher, the carried X one.
+    expect(script).toContain("expected_total_count=$((expected_platform_count + 2))");
     expect(script).not.toMatch(/platform_tgz\[@\].*-ne\s+[0-9]/);
   });
 
@@ -332,6 +349,151 @@ describe("release.yml keeps the provenance gate ENFORCING, not merely present (L
 // Clause 5: publication stages under `release-candidate` and never moves `latest`. Both are
 // asserted against the parsed workflow, so a reordering or a dropped flag fails here even though
 // actionlint and typecheck stay silent on it.
+// ── The publish-site scanner (LCLI-621 refinement iv; hardened after final review F4) ─────────────
+type ScannedFile = { path: string; text: string };
+type PublishSite = { path: string; text: string };
+
+/**
+ * Tracked paths NOT scanned, each for a stated reason. Everything else that git tracks and that is
+ * text is scanned, whatever its directory or extension.
+ */
+const PUBLISH_SCAN_EXCLUDED: RegExp[] = [
+  // prose: runbooks, CHANGELOG, CLAUDE.md and ADRs describe `npm publish` by the dozen. ONE region of
+  // one .md file is EXECUTED, and is scanned anyway: README.md's quickstart block, which ci.yml runs
+  // with bash through scripts/readme-quickstart.sh (see readmeQuickstartBlock).
+  /\.md$/,
+  /^\.quest\//, // tracker records: prose in JSON, never executed
+  /^docs\//, // the documentation bundle, prose (its .md is excluded above; this covers any data beside it)
+  /^archive\//, // retired material kept for history, never executed
+  /^research\//, // survey data about other tools, never executed
+  // Test sources and their fixtures: they spell publish argv on purpose, to drive stub `npm`s and to
+  // assert on what the scripts hand to npm. They never run in a release. Scanning them would turn
+  // this allowlist into a copy of every test's expectations.
+  /^test\//,
+];
+
+const SHELL_LIKE = /(\.(sh|bash|zsh|ya?ml|toml)|#quickstart)$/;
+
+/** The path the README quickstart block is scanned under: shell, per SHELL_LIKE. */
+const QUICKSTART_PATH = "README.md#quickstart";
+
+/**
+ * README.md's executed region, sliced exactly as scripts/readme-quickstart.sh slices it: the lines
+ * strictly between `<!-- quickstart:start -->` and `<!-- quickstart:end -->`, code-fence lines
+ * dropped (its `awk ... | sed -e '/^```/d'`). That script runs the result with bash in ci.yml.
+ */
+function readmeQuickstartBlock(readme: string): string {
+  const kept: string[] = [];
+  let on = false;
+  for (const line of readme.split("\n")) {
+    if (line.includes("<!-- quickstart:start -->")) {
+      on = true;
+      continue;
+    }
+    if (line.includes("<!-- quickstart:end -->")) on = false;
+    if (on && !line.startsWith("```")) kept.push(line);
+  }
+  return kept.join("\n");
+}
+const JS_LIKE = /\.(js|mjs|cjs|ts|mts|cts|tsx|jsx)$/;
+
+/**
+ * Every line that could be a publish. Rule A: a `publish` word on a line that also names npm, pnpm,
+ * bun or yarn ANYWHERE -- so `x && npm publish`, `npm --registry r publish`, `- run: npm publish`,
+ * `pnpm publish`, `bun publish` and a JS template all count. Rule B: a "publish" string literal in
+ * JS/TS source, which catches an argv array built apart from its `npm`. Rule C: a shell array whose
+ * first word is `publish` (`args=(publish ...)`, `args+=(publish ...)`), the bash form of the same
+ * thing -- publish-release.sh's own site is one, and names no package manager on its line, so rule
+ * A alone missed it (found by running this scanner on the real tree). Only FULL-LINE comments are
+ * skipped (`#` in shell-like files, `//`, `*`, `/*` in JS/TS); a trailing comment is still read.
+ * Known limit: a shell command split across lines with `\` (`npm \` then `publish`) is not seen.
+ */
+function publishSites(files: ScannedFile[]): PublishSite[] {
+  const sites: PublishSite[] = [];
+  for (const { path, text } of files) {
+    const shellLike = SHELL_LIKE.test(path);
+    const jsLike = JS_LIKE.test(path);
+    for (const raw of text.split("\n")) {
+      const line = raw.trim();
+      if (shellLike && line.startsWith("#")) continue;
+      if (jsLike && (line.startsWith("//") || line.startsWith("*") || line.startsWith("/*"))) continue;
+      const ruleA = /\bpublish\b/.test(line) && /\b(npm|pnpm|bun|yarn)\b/.test(line);
+      const ruleB = jsLike && /["'`]publish["'`]/.test(line);
+      const ruleC = shellLike && /\(\s*["']?publish\b/.test(line);
+      if (ruleA || ruleB || ruleC) sites.push({ path, text: line });
+    }
+  }
+  return sites;
+}
+
+/**
+ * EVERY line the scanner finds in the repository today, exact, in `git ls-files` order. Three run a
+ * publish (marked RUNS); the rest are messages, a job name and a Keychain service name that happen
+ * to name npm and publish together. Editing any of these lines means editing this list.
+ * readme-readback.sh's two lines belong to LCLI-616's file: an edit there lands here too.
+ */
+const PUBLISH_SITE_ALLOWLIST: PublishSite[] = [
+  { path: ".github/workflows/release.yml", text: "name: publish (npm, OIDC trusted publishing)" },
+  {
+    path: ".github/workflows/release.yml",
+    text: 'echo "::error::a registry auth token is configured for this job. npm still ATTEMPTS OIDC first, but this token becomes the silent fallback if the exchange fails -- publishing under the wrong identity without provenance, or returning an E404 that looks like a missing trust relationship. Remove the NPM_TOKEN secret / node-auth-token input from the publish job; trusted publishing needs no stored credential."',
+  },
+  {
+    path: ".github/workflows/release.yml",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: exact text of a tracked file the scanner reads, not a JS template.
+    text: "echo \"::error::${name}@${version} is already on the registry with different bytes (registry dist.integrity '${got}', this run's ${tgz} ${want}). It was published outside this run. npm versions are immutable: for the X-rc.N launcher, re-dispatch with launcher_rc set to the next N; for an X platform package a new rc cannot help (every rc pins X), so re-run the failed publish job of the Release run whose platform tarballs are the registry's ('Re-run failed jobs', NOT 'Re-run all jobs', which re-runs package and overwrites npm-packages; a re-dispatch rebuilds and may not match), or, if those platforms were staged by scripts/publish-release.sh from a publish: false run that has no failed publish job, run 'scripts/publish-release.sh ${version} <that run id>'; otherwise cut a new version. Do NOT run npm unpublish.\"",
+  },
+  { path: ".github/workflows/release.yml", text: 'echo "::group::npm publish $tgz ($name@$version)"' },
+  // RUNS: staging, under release-candidate.
+  { path: ".github/workflows/release.yml", text: 'npm publish "$tgz" --tag release-candidate' },
+  {
+    path: ".github/workflows/release.yml",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: exact text of a tracked file the scanner reads, not a JS template.
+    text: 'echo "::warning::still not visible on the registry read API after ${REGISTRY_WINDOW_SECONDS}s:${pending}. This is NOT proof the publish failed -- npm already confirmed it, and only the registry read API is behind (LCLI-460: 0.4.5 ~15s, 0.4.6 ~35s, 0.5.0 ~25min). Do NOT unpublish. Re-check before treating it as a failure."',
+  },
+  { path: "scripts/promote-latest.mjs", text: 'export const KEYCHAIN_SERVICE = "npm-opum-ai-publish";' },
+  // RUNS: the ONE publish without release-candidate -- the X launcher, --tag latest.
+  {
+    path: "scripts/promote-latest.mjs",
+    text: 'return ["publish", tarball, "--tag", PROMOTE_TAG, ...REGISTRY_PINS, ...(otp ? ["--otp", otp] : [])];',
+  },
+  {
+    path: "scripts/promote-latest.mjs",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: exact text of a tracked file the scanner reads, not a JS template.
+    text: "`Refusing to promote ${version}: ${reason(error)}. Whether ${version} is already on npm decides publish or tag-move. Nothing has moved.`,",
+  },
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: exact text of a tracked file the scanner reads, not a JS template.
+  { path: "scripts/publish-release.sh", text: 'KEYCHAIN_SERVICE="${KEYCHAIN_SERVICE:-npm-opum-ai-publish}"' },
+  {
+    path: "scripts/publish-release.sh",
+    text: "gate and before npm publish. Something outside this script wrote to $ARTIFACTS. Find out what",
+  },
+  {
+    path: "scripts/publish-release.sh",
+    text: 'say "  IT MAY ALSO NOT BE LAG AT ALL (LCLI-502). npm 12 can park a publish in a non-public"',
+  },
+  {
+    path: "scripts/publish-release.sh",
+    text: 'workflow with launcher_rc set to the next N, then publish that run. Do NOT run npm unpublish."',
+  },
+  // RUNS: staging -- STAGE_TAG is release-candidate, asserted below.
+  { path: "scripts/publish-release.sh", text: 'local npm_args=(publish "$tarball" --tag "$STAGE_TAG")' },
+  {
+    path: "scripts/publish-release.sh",
+    text: 'die "npm publish for $pkg@$ver printed text this script recognises as a 2FA challenge',
+  },
+  {
+    path: "scripts/readme-readback.sh",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: exact text of a tracked file the scanner reads, not a JS template.
+    text: "echo \"::warning::${name}: after ${REGISTRY_WINDOW_SECONDS}s the registry is still serving the README of the PREVIOUS release (${prev}), not ${version}'s. It satisfies ${prev}'s assertions exactly, which is what propagation lag looks like on an established package -- npm's readme field is package-level and updates when the publish finishes propagating (LCLI-460: 0.5.0 took ~25min). This is NOT a confirmed defect and NOT a reason to unpublish. Re-read 'npm view ${name} readme' later; if it still shows ${prev} once propagation is plainly done, THAT is the defect, and the fix is the next release.\"",
+  },
+  {
+    path: "scripts/readme-readback.sh",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: exact text of a tracked file the scanner reads, not a JS template.
+    text: "echo \"::error::A4 FAILED for package '${name}', release '${version}', read $(date -u +%FT%TZ) after ${attempt} attempt(s) over ${REGISTRY_WINDOW_SECONDS}s. The readme npm serves satisfies NEITHER ${version}'s assertions NOR ${prev:-the previous release}'s, so propagation lag has been ruled out -- this is not a replica catching up, it is a page that matches no release we published. The packed tarball passed the gate, so the divergence was introduced at or after publish. This page is IMMUTABLE: the fix is the next release, never an unpublish. Findings against ${version}:\"",
+  },
+];
+
 describe("release.yml enforces constitution Article 3 (LCLI-613)", () => {
   const publishSteps = () => loadWorkflow().jobs.publish?.steps ?? [];
   const parityIndex = (steps: WorkflowStep[]) =>
@@ -415,9 +577,386 @@ describe("release.yml enforces constitution Article 3 (LCLI-613)", () => {
           if (/^\s*npm (publish|dist-tag)\b/.test(line)) commands.push(line.trim());
     // Positive control: the loop below must have something to check, or it passes vacuously.
     expect(commands.filter((c) => c.startsWith("npm publish")).length).toBeGreaterThanOrEqual(1);
+    // NO EXCEPTION IN THIS FILE (LCLI-621). The paired design settled with quest-cli (QCLI-399,
+    // refinement iv) admits exactly one publish without --tag release-candidate anywhere: the X
+    // launcher's fresh publish with --tag latest, in the promote script only -- pinned repository-
+    // wide by the next test. release.yml stages; the X launcher it packs is carried and never
+    // published here, which the executed test of the publish step below pins.
     for (const command of commands) {
       if (command.startsWith("npm publish")) expect(command).toContain("--tag release-candidate");
       expect(command.split(/\s+/)).not.toContain("latest");
     }
   });
+
+  // LCLI-621, the paired design's refinement iv: EXACTLY ONE `npm publish` in this repository omits
+  // --tag release-candidate -- the X launcher's fresh publish with --tag latest -- and it is in
+  // scripts/promote-latest.mjs's launcherPublishArgs and nowhere else. The scanner (publishSites,
+  // below) reads EVERY git-tracked text file bar the prose/fixture classes in PUBLISH_SCAN_EXCLUDED
+  // and reports every line that could be a publish, and the set must equal PUBLISH_SITE_ALLOWLIST
+  // exactly. A new site anywhere, in any spelling the scanner sees, has to be admitted by editing
+  // that list, which is the point: the exception is a reviewed line, not a pattern. Hardened after
+  // the final review (F4) got eight spellings past a scanner that looked only at `npm publish` at
+  // the start of a line in scripts/ and .github/; each spelling is a case below.
+  test("exactly one npm publish site omits --tag release-candidate: promote-latest.mjs's X launcher, --tag latest", async () => {
+    const repo = join(import.meta.dir, "..");
+    const tracked = execFileSync("git", ["ls-files"], { cwd: repo, encoding: "utf8" }).split("\n").filter(Boolean);
+    const files: ScannedFile[] = [];
+    for (const path of tracked) {
+      if (PUBLISH_SCAN_EXCLUDED.some((rule) => rule.test(path))) continue;
+      let bytes: Buffer;
+      try {
+        bytes = readFileSync(join(repo, path));
+      } catch {
+        continue; // a tracked path deleted in the working tree is not a site
+      }
+      if (bytes.subarray(0, 8000).includes(0)) continue; // binary
+      files.push({ path, text: bytes.toString("utf8") });
+    }
+    // README.md is excluded as prose, but its quickstart block is executed, so it is scanned too.
+    const quickstart = readmeQuickstartBlock(readFileSync(join(repo, "README.md"), "utf8"));
+    expect(quickstart).toContain("quest init"); // positive control: the markers were found
+    files.push({ path: QUICKSTART_PATH, text: quickstart });
+    // Positive control: the scan read every tracked non-excluded text file, the known sites' among them.
+    expect(files.length).toBeGreaterThan(100);
+    for (const path of [
+      ".github/workflows/release.yml",
+      "scripts/publish-release.sh",
+      "scripts/promote-latest.mjs",
+      "package.json",
+    ])
+      expect(files.map((f) => f.path)).toContain(path);
+    expect(publishSites(files)).toEqual(PUBLISH_SITE_ALLOWLIST);
+
+    // Of the allowlisted sites, exactly three RUN a publish; two stage, one is the X launcher.
+    const script = readFileSync(join(repo, "scripts", "publish-release.sh"), "utf8");
+    expect(script.match(/^\s*STAGE_TAG=.*$/gm)).toEqual(['STAGE_TAG="release-candidate"']);
+    expect(script).toContain('local npm_args=(publish "$tarball" --tag "$STAGE_TAG")');
+    const promoteSource = readFileSync(join(repo, "scripts", "promote-latest.mjs"), "utf8").split("\n");
+    const site = PUBLISH_SITE_ALLOWLIST.find(
+      (s) => s.path === "scripts/promote-latest.mjs" && s.text.startsWith("return ["),
+    );
+    const index = promoteSource.findIndex((line) => line.trim() === site?.text);
+    const owner = promoteSource
+      .slice(0, index)
+      .reverse()
+      .find((line) => /^export function /.test(line));
+    expect(owner).toBe("export function launcherPublishArgs(tarball, { otp } = {}) {");
+    const promote = await import("../scripts/promote-latest.mjs");
+    expect(promote.PROMOTE_TAG).toBe("latest");
+    expect(promote.launcherPublishArgs("/artifact/opum-ai-lore-1.2.3.tgz")).toEqual([
+      "publish",
+      "/artifact/opum-ai-lore-1.2.3.tgz",
+      "--tag",
+      "latest",
+      "--registry=https://registry.npmjs.org/",
+      "--@opum-ai:registry=https://registry.npmjs.org/",
+    ]);
+  });
+
+  // The eight spellings the final review got past the previous scanner, plus a package.json script,
+  // each fed to the scanner as a file of its own: every one must surface as a site the allowlist
+  // does not admit.
+  const evasions: Array<[string, ScannedFile]> = [
+    ["a publish after &&", { path: "scripts/x.sh", text: "build && npm publish out.tgz\n" }],
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: exact text of a tracked file the scanner reads, not a JS template.
+    ["a JS template string", { path: "scripts/x.mjs", text: "await sh(`npm publish ${tarball}`);\n" }],
+    ["a JS argv built by concat", { path: "scripts/x.mjs", text: 'const argv = ["publish"].concat(args);\n' }],
+    ["a run: step in another workflow", { path: ".github/workflows/other.yml", text: "      - run: npm publish\n" }],
+    ["pnpm", { path: "scripts/x.sh", text: "pnpm publish --no-git-checks\n" }],
+    ["bun", { path: "scripts/x.sh", text: "bun publish\n" }],
+    ["a .bash file", { path: "scripts/release.bash", text: "npm publish dist/x.tgz\n" }],
+    [
+      "flags between npm and publish",
+      { path: "scripts/x.sh", text: "npm --registry https://r.example publish x.tgz\n" },
+    ],
+    ["a package.json script", { path: "package.json", text: '    "release": "npm publish --tag latest",\n' }],
+    ["yarn, outside scripts/", { path: "src/release.ts", text: 'execSync("yarn npm publish");\n' }],
+    ["a bash argv array built apart from its npm", { path: "scripts/x.sh", text: 'args+=(publish "$t")\n' }],
+  ];
+  for (const [label, file] of evasions)
+    test(`the scanner flags ${label} as an unadmitted publish site`, () => {
+      const sites = publishSites([file]);
+      expect(sites.length).toBe(1);
+      expect(PUBLISH_SITE_ALLOWLIST).not.toContainEqual(sites[0]);
+    });
+
+  test("a publish inside README.md's executed quickstart block is flagged; the same line as prose is not scanned", () => {
+    const readme = [
+      "# lore",
+      "Run `npm publish` yourself if you fork this.",
+      "<!-- quickstart:start -->",
+      "```sh",
+      "lore init",
+      "npm publish ./x.tgz",
+      "```",
+      "<!-- quickstart:end -->",
+      "",
+    ].join("\n");
+    const block = readmeQuickstartBlock(readme);
+    expect(block).toBe("lore init\nnpm publish ./x.tgz");
+    const sites = publishSites([{ path: QUICKSTART_PATH, text: block }]);
+    expect(sites).toEqual([{ path: QUICKSTART_PATH, text: "npm publish ./x.tgz" }]);
+    expect(PUBLISH_SITE_ALLOWLIST).not.toContainEqual(sites[0]);
+    // A shell comment inside the block is a comment to bash too.
+    expect(publishSites([{ path: QUICKSTART_PATH, text: "# npm publish x" }])).toEqual([]);
+  });
+
+  test("the scanner skips full-line comments, and only full-line comments", () => {
+    expect(publishSites([{ path: "scripts/x.sh", text: "# npm publish x.tgz\n" }])).toEqual([]);
+    expect(publishSites([{ path: "scripts/x.mjs", text: "// npm publish x.tgz\n * npm publish\n" }])).toEqual([]);
+    expect(publishSites([{ path: "scripts/x.sh", text: "true # npm publish x.tgz\n" }])).toHaveLength(1);
+    // JSON has no comments, so a `#` does not hide a line there.
+    expect(publishSites([{ path: "package.json", text: '"#": "npm publish"\n' }])).toHaveLength(1);
+  });
+});
+
+// ── The launcher stages as X-rc.N; the X launcher is carried and never staged (LCLI-621) ───────
+// Constitution Article 3 clause 5 as amended by ODOC-302. The package job must produce and gate
+// eight tarballs, and the publish job must stage exactly seven of them. The publish step's REAL
+// `run:` block is executed below against a stub npm, because a static read of a selection loop
+// cannot show which tarballs it actually hands to `npm publish`.
+const describeOnPosix = process.platform === "win32" ? describe.skip : describe;
+
+describe("release.yml packs and gates both launchers (LCLI-621)", () => {
+  const packageSteps = () => loadWorkflow().jobs.package?.steps ?? [];
+  const indexOf = (steps: WorkflowStep[], pattern: RegExp) => steps.findIndex((s) => pattern.test(s.run ?? ""));
+
+  test("the launcher_rc input is a number defaulting to 1, and both jobs that use it validate it", () => {
+    const doc = loadWorkflow();
+    expect(doc.on.workflow_dispatch?.inputs?.launcher_rc?.type).toBe("number");
+    expect(doc.on.workflow_dispatch?.inputs?.launcher_rc?.default).toBe(1);
+    const rcStep = packageSteps().find((s) => s.run?.includes("shipped-readme-version.mjs --write"));
+    const publishStep = doc.jobs.publish?.steps?.find((s) => s.run?.includes("npm publish"));
+    for (const step of [rcStep, publishStep]) {
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal GitHub Actions expression syntax from release.yml.
+      expect(step?.env?.LAUNCHER_RC).toBe("${{ inputs.launcher_rc }}");
+      expect(step?.run).toContain('""|0*|*[!0-9]*)');
+    }
+  });
+
+  test("the rc launcher is packed from the generator, restored, then README-gated, equivalence-gated and install-checked", () => {
+    const steps = packageSteps();
+    const packX = indexOf(steps, /npm pack --pack-destination/);
+    const packRc = indexOf(steps, /shipped-readme-version\.mjs --write/);
+    const readme = indexOf(steps, /--tarball "\$RC_TARBALL"/);
+    const equivalence = indexOf(steps, /launcher-equivalence\.mjs --rc "\$RC_TARBALL" --final "\$ROOT_TARBALL"/);
+    const sanity = indexOf(steps, /sanity "\$RC_TARBALL" "\$LAUNCHER_RC_VERSION"/);
+    const upload = steps.findIndex((s) => s.uses?.startsWith("actions/upload-artifact@"));
+    for (const i of [packX, packRc, readme, equivalence, sanity, upload]) expect(i).toBeGreaterThan(-1);
+    expect(packX).toBeLessThan(packRc);
+    expect(packRc).toBeLessThan(readme);
+    expect(readme).toBeLessThan(upload);
+    expect(equivalence).toBeLessThan(upload);
+    expect(sanity).toBeLessThan(upload);
+    const rcRun = steps[packRc]?.run ?? "";
+    expect(rcRun).toContain("git checkout -- package.json README.md");
+    expect(rcRun).toContain("git diff --exit-code -- package.json README.md");
+    // Both launchers get the LCLI-510 assertion, and both get install-sanity.
+    expect(steps[readme]?.run).toContain('--tarball "$ROOT_TARBALL"');
+    expect(steps[sanity]?.run).toContain('sanity "$ROOT_TARBALL" "$expected"');
+    for (const i of [packRc, readme, equivalence, sanity]) expect(steps[i]?.["continue-on-error"]).toBeUndefined();
+    expect(readFileSync(join(import.meta.dir, "..", "scripts", "launcher-equivalence.mjs"), "utf8")).toContain(
+      "export function compareLauncherTarballs",
+    );
+  });
+});
+
+describeOnPosix("release.yml's publish step stages seven of eight tarballs (LCLI-621)", () => {
+  const X = "7.8.9";
+  const PLATFORMS = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"];
+
+  function publishRun(): string {
+    const step = loadWorkflow().jobs.publish?.steps?.find((s) => s.run?.includes("npm publish"));
+    expect(step?.run).toBeDefined();
+    return step?.run ?? "";
+  }
+
+  /** A workspace the publish step's run block can execute in: dist-npm, parity/, a stub npm. */
+  function workspace(
+    options: {
+      rc?: number;
+      omit?: string;
+      extra?: string;
+      rcManifestVersion?: string;
+      /** Tarball file -> what the registry already holds for its name@version: its own bytes or others. */
+      preexisting?: Record<string, "same" | "other">;
+      /** Tarball file whose `npm view <name@version> version` fails with a NON-404 error. */
+      broken?: string;
+    } = {},
+  ) {
+    const root = mkdtempSync(join(tmpdir(), "release-publish-step-"));
+    const dist = join(root, "dist-npm");
+    const bin = join(root, "bin");
+    mkdirSync(dist, { recursive: true });
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(join(root, "parity"), { recursive: true });
+    writeFileSync(join(root, "parity", "package.json"), JSON.stringify({ name: "@opum-ai/lore", version: X }));
+    const rcVersion = `${X}-rc.${options.rc ?? 1}`;
+    const pack = (file: string, name: string, version: string) => {
+      const stage = mkdtempSync(join(root, "stage-"));
+      mkdirSync(join(stage, "package"));
+      writeFileSync(join(stage, "package", "package.json"), JSON.stringify({ name, version }));
+      execFileSync("tar", ["-czf", join(dist, file), "package"], { cwd: stage });
+    };
+    for (const p of PLATFORMS) pack(`opum-ai-lore-${p}-${X}.tgz`, `@opum-ai/lore-${p}`, X);
+    pack(`opum-ai-lore-${rcVersion}.tgz`, "@opum-ai/lore", options.rcManifestVersion ?? rcVersion);
+    pack(`opum-ai-lore-${X}.tgz`, "@opum-ai/lore", X);
+    if (options.extra) pack(options.extra, "@opum-ai/lore-extra", X);
+    if (options.omit) rmSync(join(dist, options.omit));
+    const log = join(root, "npm.log");
+    writeFileSync(log, "");
+    const sri = (bytes: Buffer) => `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
+    const specOf = (file: string) => {
+      const m = /^opum-ai-lore-(?:([a-z0-9]+-[a-z0-9]+)-)?(\d+\.\d+\.\d+(?:-rc\.\d+)?)\.tgz$/.exec(file);
+      if (!m) throw new Error(`unrecognised tarball name ${file}`);
+      return { spec: `@opum-ai/lore${m[1] ? `-${m[1]}` : ""}@${m[2]}`, version: m[2] as string };
+    };
+    const cases: string[] = [];
+    if (options.broken)
+      cases.push(`  "${specOf(options.broken).spec}") echo "npm error code ETIMEDOUT" >&2; exit 1 ;;`);
+    for (const [file, held] of Object.entries(options.preexisting ?? {})) {
+      const { spec, version } = specOf(file);
+      const value = held === "same" ? sri(readFileSync(join(dist, file))) : sri(Buffer.from("other bytes"));
+      cases.push(`  "${spec}") [ "\${3:-}" = dist.integrity ] && echo "${value}" || echo "${version}"; exit 0 ;;`);
+    }
+    // Anything else is not on the registry, answered as npm does: exit 1 with its E404.
+    writeFileSync(
+      join(bin, "npm"),
+      `#!/usr/bin/env bash\necho "$*" >> "${log}"\n[ "$1" = view ] || exit 0\ncase "$2" in\n${cases.join("\n")}\nesac\necho "npm error code E404" >&2\necho "npm error 404 No match found for version" >&2\nexit 1\n`,
+    );
+    chmodSync(join(bin, "npm"), 0o755);
+    const run = (launcherRc = String(options.rc ?? 1)) => {
+      const result = Bun.spawnSync({
+        cmd: ["bash", "-e", "-c", publishRun()],
+        cwd: root,
+        env: {
+          ...process.env,
+          PATH: `${bin}${delimiter}${process.env.PATH}`,
+          PLATFORM_NAMES_SPACE: PLATFORMS.join(" "),
+          LAUNCHER_RC: launcherRc,
+        },
+      });
+      const calls = readFileSync(log, "utf8").split("\n").filter(Boolean);
+      const staged = join(root, "staged-tarballs.txt");
+      return {
+        code: result.exitCode,
+        out: result.stdout.toString() + result.stderr.toString(),
+        publishes: calls.filter((c) => c.startsWith("publish ")),
+        staged: existsSync(staged) ? readFileSync(staged, "utf8").split("\n").filter(Boolean) : [],
+      };
+    };
+    return { run, rcVersion, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  }
+
+  test("positive control: six platforms at X, then the X-rc.N launcher last, all under release-candidate", () => {
+    const ws = workspace({ rc: 3 });
+    try {
+      const r = ws.run();
+      expect(r.code).toBe(0);
+      expect(r.publishes).toEqual([
+        ...PLATFORMS.map((p) => `publish ./dist-npm/opum-ai-lore-${p}-${X}.tgz --tag release-candidate`),
+        `publish ./dist-npm/opum-ai-lore-${X}-rc.3.tgz --tag release-candidate`,
+      ]);
+      // The carried X launcher is never handed to npm, and never recorded as staged.
+      expect(r.publishes.join("\n")).not.toContain(`opum-ai-lore-${X}.tgz`);
+      expect(r.staged).toHaveLength(7);
+      expect(r.staged).not.toContain(`./dist-npm/opum-ai-lore-${X}.tgz`);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  const refuses = (name: string, options: Parameters<typeof workspace>[0], message: string, launcherRc?: string) =>
+    test(name, () => {
+      const ws = workspace(options);
+      try {
+        const r = ws.run(launcherRc);
+        expect(r.code).not.toBe(0);
+        expect(r.out).toContain(message);
+        expect(r.publishes).toEqual([]);
+      } finally {
+        ws.cleanup();
+      }
+    });
+
+  // LCLI-621 review: a skip is a resume only when the registry holds THIS run's bytes, platforms included.
+  test("an already-published package holding this run's bytes is skipped, and the rest still stage", () => {
+    const ws = workspace({ preexisting: { [`opum-ai-lore-darwin-arm64-${X}.tgz`]: "same" } });
+    try {
+      const r = ws.run();
+      expect(r.code).toBe(0);
+      expect(r.out).toContain(`@opum-ai/lore-darwin-arm64@${X} already published as this run's bytes`);
+      expect(r.publishes).toEqual([
+        ...PLATFORMS.filter((p) => p !== "darwin-arm64").map(
+          (p) => `publish ./dist-npm/opum-ai-lore-${p}-${X}.tgz --tag release-candidate`,
+        ),
+        `publish ./dist-npm/opum-ai-lore-${X}-rc.1.tgz --tag release-candidate`,
+      ]);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  refuses(
+    "refuses an X platform package already on the registry with other bytes",
+    { preexisting: { [`opum-ai-lore-darwin-arm64-${X}.tgz`]: "other" } },
+    `::error::@opum-ai/lore-darwin-arm64@${X} is already on the registry with different bytes`,
+  );
+
+  // The pre-flight (LCLI-621 review): win32-x64 is the LAST platform in the loop and the rc launcher
+  // comes after all six, so without it each of these would refuse only after earlier publishes.
+  refuses(
+    "the pre-flight refuses the LAST platform package with other bytes before anything publishes",
+    { preexisting: { [`opum-ai-lore-win32-x64-${X}.tgz`]: "other" } },
+    `::error::@opum-ai/lore-win32-x64@${X} is already on the registry with different bytes`,
+  );
+  refuses(
+    "the pre-flight refuses an X-rc.N launcher already on the registry with other bytes before anything publishes",
+    { rc: 2, preexisting: { [`opum-ai-lore-${X}-rc.2.tgz`]: "other" } },
+    `::error::@opum-ai/lore@${X}-rc.2 is already on the registry with different bytes`,
+  );
+
+  // Only npm's own not-found (E404) is "absent" (LCLI-621 review); the positive control above is
+  // the 404 case, where every package still publishes.
+  refuses(
+    "a NON-404 failure on the pre-flight's probe of the X-rc.N launcher fails the step before anything publishes",
+    { broken: `opum-ai-lore-${X}-rc.1.tgz` },
+    `::error::could not tell whether @opum-ai/lore@${X}-rc.1 is already on the registry`,
+  );
+
+  test("the pre-flight runs the publish step's own comparison, in check mode, before the publish loop", () => {
+    const script = publishRun();
+    const preflight = script.search(
+      /for tgz in "\$\{platform_tgz\[@\]\}" "\$root"; do\s+publish_or_skip "\$tgz" check\n/,
+    );
+    const publishLoop = script.search(/for tgz in "\$\{platform_tgz\[@\]\}"; do\s+publish_or_skip "\$tgz"\n/);
+    expect(preflight).toBeGreaterThan(-1);
+    expect(publishLoop).toBeGreaterThan(preflight);
+    const ws = workspace({ preexisting: { [`opum-ai-lore-linux-x64-${X}.tgz`]: "same" } });
+    try {
+      const r = ws.run();
+      expect(r.code).toBe(0);
+      expect(r.out).toContain(
+        `pre-flight: @opum-ai/lore-linux-x64@${X} is already on the registry as this run's bytes`,
+      );
+      expect(r.publishes).toHaveLength(6);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  refuses("refuses when the carried X launcher is absent", { omit: `opum-ai-lore-${X}.tgz` }, "expected 8 tarballs");
+  refuses("refuses an unexpected ninth tarball", { extra: `opum-ai-lore-freebsd-x64-${X}.tgz` }, "expected 8 tarballs");
+  refuses("refuses a launcher_rc of 0", {}, "launcher_rc must be a positive integer", "0");
+  refuses(
+    "refuses when the input names an rc the artifact does not carry",
+    { rc: 1 },
+    "expected the launcher tarballs",
+    "2",
+  );
+  refuses(
+    "refuses an rc tarball whose own version is not X-rc.N",
+    { rcManifestVersion: X },
+    "names version '7.8.9', not '7.8.9-rc.1'",
+  );
 });

@@ -1,4 +1,4 @@
-// Types for scripts/promote-latest.mjs (LCLI-613), so test/ can import it under strict tsc.
+// Types for scripts/promote-latest.mjs (LCLI-613, LCLI-621), so test/ can import it under strict tsc.
 
 export type Run = (
   command: string,
@@ -15,9 +15,23 @@ export interface PromotionRecord {
   schemaVersion: 1;
   kind: string;
   version: string;
+  launcherVersion?: string;
+  releaseRunId?: string;
   recordedAt: string;
   packages: RecordEntry[];
 }
+
+export interface ArtifactFile {
+  filename: string;
+  path: string;
+  sha256: string;
+  integrity: string;
+}
+
+export type Probe = (
+  name: string,
+  version: string,
+) => Promise<{ state: "absent" } | { state: "present"; integrity: string | null }>;
 
 export type SetTag = (name: string, target: string, tag: string) => Promise<unknown>;
 
@@ -26,9 +40,67 @@ export declare const PROMOTE_TAG: string;
 export declare const RECORD_KIND: string;
 export declare const KEYCHAIN_SERVICE: string;
 export declare const QUEST_PACKAGE: string;
+export declare const RELEASE_WORKFLOW: string;
+export declare const ARTIFACT_NAME: string;
 export declare const SEMVER: RegExp;
 export declare const RELEASE_VERSION: RegExp;
 export declare function distTagReadArgs(name: string): string[];
+export declare function versionReadArgs(spec: string): string[];
+export declare function readmeReadArgs(name: string): string[];
+export declare function packArgs(spec: string, into: string): string[];
+export declare function releaseRunReadArgs(runId: string): string[];
+export declare function artifactDownloadArgs(runId: string, into: string): string[];
+export declare function launcherPublishArgs(tarball: string, options?: { otp?: string }): string[];
+export declare function sha256Hex(bytes: Uint8Array): string;
+export declare function integrityOf(bytes: Uint8Array): string;
+export declare function checkReleaseRun(run: unknown, expected: { runId: string; commit: string }): string[];
+export declare function readArtifact(
+  dir: string,
+  version: string,
+): Promise<{
+  ok: boolean;
+  problems: string[];
+  launcherVersion?: string | null;
+  staged?: Record<string, string>;
+  rc?: ArtifactFile;
+  final?: ArtifactFile;
+}>;
+export declare function downloadServedTarball(spec: string, into: string, options?: { run?: Run }): Promise<string>;
+export declare function checkServedLauncher(args: {
+  version: string;
+  launcherVersion: string;
+  rc: ArtifactFile;
+  final: ArtifactFile;
+  finalSha256: string;
+  download: (spec: string, into: string) => Promise<string>;
+}): Promise<{ ok: boolean; problems: string[] }>;
+export declare function probeVersion(
+  name: string,
+  version: string,
+  options?: { run?: Run },
+): Promise<{ state: "absent" } | { state: "present"; integrity: string | null }>;
+export declare function publishFinalLauncher(args: {
+  version: string;
+  final: ArtifactFile;
+  recheck: () => Promise<{ ok: boolean; problems: string[] }>;
+  publish: (tarball: string) => Promise<unknown>;
+  setTag: SetTag;
+  probe: Probe;
+}): Promise<string>;
+export declare function verifyFinalLauncher(args: {
+  version: string;
+  final: ArtifactFile;
+  probe: Probe;
+  attempts?: number;
+  delayMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}): Promise<{ ok: boolean; attempts: number; problems: string[] }>;
+export declare function readBackReadme(options?: {
+  run?: Run;
+  attempts?: number;
+  delayMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}): Promise<{ bytes: number | null; attempts: number; error?: string }>;
 export declare function checkRollbackState(args: {
   record: PromotionRecord;
   readTags: (name: string) => Promise<Record<string, string>>;
@@ -38,6 +110,8 @@ export declare function distTagAddArgs(name: string, target: string, tag: string
 export declare function readDistTags(name: string, options?: { run?: Run }): Promise<Record<string, string>>;
 export declare function planPromotion(args: {
   version: string;
+  launcherVersion?: string;
+  releaseRunId?: string;
   packages?: readonly string[];
   readTags?: (name: string) => Promise<Record<string, string>>;
   now?: () => Date;
@@ -50,6 +124,7 @@ export declare function validateRecord(
 export declare function promote(args: {
   record: PromotionRecord;
   setTag: SetTag;
+  publishLauncher?: () => Promise<string>;
   log?: (line: string) => void;
 }): Promise<
   | { ok: true; moved: string[] }

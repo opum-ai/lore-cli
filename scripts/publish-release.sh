@@ -50,6 +50,14 @@
 #     moves `latest` (Article 3 clause 5, LCLI-613). `latest` moves in a separate step,
 #     scripts/promote-latest.mjs, only once opum-cli-e2e's pair receipt for this version
 #     verifies -- quest first, then lore, on opum-agent's go.
+#   - SEVEN OF EIGHT (Article 3 clause 5 as amended by ODOC-302, LCLI-621). The Release run's
+#     artifact carries eight tarballs: the six platform packages at X, the root launcher at
+#     X-rc.N and the root launcher at X. This script stages the six platforms at X and the
+#     launcher at X-rc.N. The X launcher is CARRIED and never published here: it reaches
+#     `latest` later by a fresh publish, only after the pair receipt verifies. N is read from
+#     the artifact (exactly one X-rc.N launcher), never passed, because the run id already
+#     names the one dispatch that chose it. Before any registry write the pair must pass
+#     scripts/launcher-equivalence.mjs: the two launchers differ by the version string alone.
 #   - Verifies every tarball's sha256 BEFORE publishing anything, six of them against a
 #     digest CI recorded independently. Read "DIGEST PROVENANCE" below for what that does
 #     and does not prove -- the distinction is the whole point and it is easy to overstate.
@@ -124,8 +132,13 @@
 #   scripts/publish-release.sh <version> <run-id>             # stage under release-candidate
 #   scripts/publish-release.sh <version> <run-id> --verify-only   # registry state only
 #
+# Stages SEVEN of the run's eight tarballs: the six platform packages at <version> and the
+# launcher at <version>-rc.N. The <version> launcher is carried and never published here.
+#
 # Refuses to publish without receipts/lore/<version>.json on opum-ai/opum-cli-e2e main (read with
-# your gh login) matching this version, run id and all seven tarball sha256s, with verdict
+# your gh login) matching this version, run id and exactly the seven staged tarball sha256s, naming this
+# run's launcher rc as launcherVersion, and carrying a launcherSubstitution MATCH whose
+# finalTarball is the carried launcher, with verdict
 # QUALIFIED or a complete override {by, reason, task, adr} in that file. No flag or env var this
 # script reads bypasses it; the host is pinned to github.com even if GH_HOST is set. --dry-run
 # reports the receipt verdict, and stops non-zero if it would refuse.
@@ -138,9 +151,9 @@
 # npm. It is what the propagation-timeout message tells you to run, so it must stay reachable
 # when the artifacts are gone or expired.
 #
-# Env: ARTIFACTS   where the seven .tgz live. Defaults to release-<version>/ beside this
+# Env: ARTIFACTS   where the eight .tgz live. Defaults to release-<version>/ beside this
 #                  script, resolved ABSOLUTELY so the caller's cwd cannot change what it
-#                  means. Populated automatically when missing or short of seven.
+#                  means. Populated automatically when missing or short of eight.
 #      REPO_SLUG   owner/name, if the origin remote cannot be parsed.
 # USAGE-END
 
@@ -201,7 +214,13 @@ PLATFORM_PKGS=(
   "@opum-ai/lore-win32-arm64:opum-ai-lore-win32-arm64-${VERSION}.tgz"
   "@opum-ai/lore-win32-x64:opum-ai-lore-win32-x64-${VERSION}.tgz"
 )
-ROOT_PKG="@opum-ai/lore:opum-ai-lore-${VERSION}.tgz"
+# The launcher STAGED is the X-rc.N one, and its tarball name is only known once the artifact is
+# on disk: resolve_launcher_rc fills ROOT_PKG's filename and LAUNCHER_VERSION (LCLI-621). The X
+# launcher is carried alongside it and never published by this script.
+ROOT_NAME="@opum-ai/lore"
+ROOT_PKG="$ROOT_NAME:"
+LAUNCHER_VERSION=""
+FINAL_LAUNCHER_TARBALL="opum-ai-lore-${VERSION}.tgz"
 
 DRY_RUN=0
 VERIFY_ONLY=0
@@ -233,15 +252,19 @@ print_closing_checklist() {
   # no task ids, no session addresses, no version literals.
   cat <<DONE
   PUBLISHED $VERSION under the release-candidate dist-tag. latest has NOT moved.
+  The launcher ${ROOT_PKG%%:*} was staged as ${LAUNCHER_VERSION:-$VERSION-rc.N}; the $VERSION launcher is
+  carried in the Release run's artifact and was NOT published (Article 3 clause 5, LCLI-621).
   Remaining, in order (docs/runbooks/release-publishing.md section 3):
 
     0. STAGED IS NOT RELEASED. opum-cli-e2e qualifies the staged pair (lore $VERSION with
        quest $VERSION) from registry installs and lands receipts/pair/$VERSION.json on its
        main. Then, on opum-agent's go and AFTER quest's latest has moved:
-           node scripts/promote-latest.mjs --record <file> --version $VERSION --dry-run
-           node scripts/promote-latest.mjs --record <file> --version $VERSION --promote
-       It refuses without a verifying pair receipt, writes every prior latest to <file>
-       first, and --rollback <file> restores them. Steps 1 to 4 below follow the latest move.
+           node scripts/promote-latest.mjs --record <file> --version $VERSION --release-run $RUN_ID --dry-run
+           node scripts/promote-latest.mjs --record <file> --version $VERSION --release-run $RUN_ID --promote
+       It re-reads this run's artifact and both receipts, refuses unless they verify, writes
+       every prior latest to <file> first, moves the platforms by dist-tag and then publishes
+       the carried $VERSION launcher to latest, last. --rollback <file> restores every latest.
+       Steps 1 to 4 below follow the latest move.
 
     1. Update the release-truth doc so it states $VERSION is released. REPLACE the
        current-state claim, do not merely add alongside it:
@@ -344,14 +367,15 @@ fi
 # This whole section used to be four `die`s that printed the command the operator should run
 # next. Each one was deterministic and needed no decision, so each one is now performed.
 
-EXPECTED_TARBALLS=7
+# Eight: six platform tarballs, the X-rc.N launcher (staged) and the X launcher (carried).
+EXPECTED_TARBALLS=8
 
 tarball_count() { ls -1 "$ARTIFACTS"/*.tgz 2>/dev/null | wc -l | tr -d ' '; }
 list_tarballs() { ls -1 "$ARTIFACTS"/*.tgz 2>/dev/null | sed "s#^#    #"; }
 
 need_gh() {
   command -v gh >/dev/null 2>&1 || die "gh is required to fetch release artifacts and is not on PATH.
-Install it, or populate $ARTIFACTS by hand with the seven .tgz files from run $RUN_ID."
+Install it, or populate $ARTIFACTS by hand with the eight .tgz files from run $RUN_ID."
 }
 
 # NOTHING HERE RESOLVES A RUN ATTEMPT ANY MORE (LCLI-487). Artifact names used to embed
@@ -392,6 +416,30 @@ $ARTIFACTS holds $have tarball(s), not $EXPECTED_TARBALLS. Refusing to publish a
 What is actually there:
 $(list_tarballs)"
   say "downloaded $have tarballs into $ARTIFACTS"
+}
+
+# Which launcher is staged (LCLI-621). Exactly one opum-ai-lore-<version>-rc.<N>.tgz, N a positive
+# integer with no leading zero, and the carried <version> launcher beside it. Anything else is not
+# an artifact release.yml produces, and guessing which rc to stage would be choosing a version.
+resolve_launcher_rc() {
+  local matches count base n
+  matches="$(find "$ARTIFACTS" -maxdepth 1 -type f -name "opum-ai-lore-${VERSION}-rc.*.tgz" 2>/dev/null | sort)"
+  count="$(printf '%s' "$matches" | grep -c . || true)"
+  [ "$count" -eq 1 ] || die "expected exactly one launcher tarball opum-ai-lore-${VERSION}-rc.<N>.tgz in $ARTIFACTS, found $count:
+$(list_tarballs)
+release.yml packs one per dispatch (its launcher_rc input). Refusing to guess which to stage."
+  base="$(basename "$matches")"
+  n="${base#"opum-ai-lore-${VERSION}-rc."}"
+  n="${n%.tgz}"
+  case "$n" in
+    ""|0*|*[!0-9]*) die "$base does not name a launcher version ${VERSION}-rc.<N> with N a positive integer" ;;
+  esac
+  LAUNCHER_VERSION="${VERSION}-rc.${n}"
+  ROOT_PKG="$ROOT_NAME:$base"
+  [ -f "$ARTIFACTS/$FINAL_LAUNCHER_TARBALL" ] || die "the carried launcher $FINAL_LAUNCHER_TARBALL is missing from $ARTIFACTS.
+It is never published by this script, but the staged $LAUNCHER_VERSION launcher is only stageable
+if it is equivalent to it (Article 3 clause 5), so a run without it cannot be staged."
+  say "launcher: staging ${ROOT_NAME}@${LAUNCHER_VERSION}; carrying ${ROOT_NAME}@${VERSION} (not published here)"
 }
 
 # Six of seven, verified against a digest CI recorded independently of these bytes. See the
@@ -557,9 +605,10 @@ seal_locally() {
 The download changed after it was sealed. Discard $ARTIFACTS and re-run."
   manifest_covers_everything || die "SHA256SUMS.txt still does not cover every tarball after
 regenerating it -- refusing to report a seal that did not happen."
-  say "root launcher digest: $(shasum -a 256 "$ARTIFACTS/$root_tarball" | awk '{print $1}')"
-  say "  ^ SELF-SEAL ONLY. CI npm-pack's the launcher and records no digest for it, so this"
-  say "    one tarball is not independently verified."
+  say "root launcher digest: $(shasum -a 256 "$ARTIFACTS/$root_tarball" | awk '{print $1}')  ($root_tarball, staged)"
+  say "root launcher digest: $(shasum -a 256 "$ARTIFACTS/$FINAL_LAUNCHER_TARBALL" | awk '{print $1}')  ($FINAL_LAUNCHER_TARBALL, carried)"
+  say "  ^ SELF-SEAL ONLY. CI npm-pack's the launchers and records no digest for them, so"
+  say "    neither is independently verified."
 }
 
 # ── Qualification receipt (LCLI-578) ─────────────────────────────────────────
@@ -588,60 +637,21 @@ regenerating it -- refusing to report a seal that did not happen."
 RECEIPT_REPO="opum-ai/opum-cli-e2e"
 RECEIPT_PATH="receipts/lore/${VERSION}.json"
 
-receipt_check_js() {
-  cat <<'JS'
-const fs = require("fs"), path = require("path"), crypto = require("crypto");
-const [file, version, runId, artifacts, ...publishNames] = process.argv.slice(1);
-const show = (v) => JSON.stringify(v);
-const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
-const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
-let r;
-try { r = JSON.parse(fs.readFileSync(file, "utf8")); } catch (e) { console.error("  - receipt is not parseable JSON: " + e.message); process.exit(1); }
-if (!isObj(r)) { console.error("  - receipt is not a JSON object"); process.exit(1); }
-const p = [];
-if (r.kind !== "opum.qualification-receipt.v1") p.push(`kind is ${show(r.kind)}, not "opum.qualification-receipt.v1" (an unknown kind is refused, never guessed at)`);
-if (r.schemaVersion !== 1) p.push(`schemaVersion is ${show(r.schemaVersion)}, not 1`);
-if (r.product !== "lore") p.push(`product is ${show(r.product)}, not "lore"`);
-if (r.version !== version) p.push(`version is ${show(r.version)}, not "${version}"`);
-// Run ids compared as normalised DIGIT STRINGS: a number must be a safe integer (a larger one has
-// already lost precision in JSON.parse), a string must be all digits; leading zeros are dropped.
-const norm = (s) => s.replace(/^0+(?=\d)/, "");
-const rid = r.releaseRunId;
-const ridStr = typeof rid === "number" && Number.isSafeInteger(rid) && rid > 0 ? String(rid)
-  : typeof rid === "string" && /^[0-9]+$/.test(rid) ? norm(rid) : null;
-if (ridStr === null || ridStr !== norm(runId)) p.push(`releaseRunId is ${show(rid)}, not ${runId} (the run these tarballs were downloaded from)`);
-// Tarballs: own-property lookup AND set equality, so a receipt omitting a platform, or naming one
-// this release does not publish, refuses. Each digest is recomputed here from the exact file.
-const expected = [...publishNames].sort();
-const onDisk = fs.readdirSync(artifacts).filter((n) => n.endsWith(".tgz")).sort();
-if (show(onDisk) !== show(expected)) p.push(`${artifacts} holds ${show(onDisk)}, not exactly the tarballs this script publishes`);
-const t = r.tarballs;
-if (!isObj(t)) p.push(`tarballs is ${show(t)}, not an object of {filename: sha256}`);
-else {
-  for (const name of expected) {
-    if (!own(t, name)) { p.push(`tarballs has no entry for ${name}`); continue; }
-    const actual = crypto.createHash("sha256").update(fs.readFileSync(path.join(artifacts, name))).digest("hex");
-    if (typeof t[name] !== "string" || t[name].toLowerCase() !== actual) p.push(`sha256 MISMATCH for ${name}: receipt says ${show(t[name])}, the file to be published is ${actual}`);
-  }
-  for (const key of Object.keys(t)) if (!expected.includes(key)) p.push(`tarballs names ${show(key)}, which this release does not publish`);
-}
-// Override: waives nothing unless by, reason, task and adr are ALL non-empty strings. A partial
-// override is refused outright -- even beside a QUALIFIED verdict, because it is a malformed
-// record. `null` is treated as absent (it waives nothing either way).
-const F = ["by", "reason", "task", "adr"];
-let override = null;
-if (own(r, "override") && r.override !== null) {
-  const o = r.override;
-  if (isObj(o) && F.every((f) => own(o, f) && typeof o[f] === "string" && o[f].trim() !== "")) override = o;
-  else p.push(`override is present but INCOMPLETE: ${F.join(", ")} must all be non-empty strings, and a partial override waives nothing. Found: ${show(o)}`);
-}
-if (r.verdict !== "QUALIFIED" && override === null) p.push(`verdict is ${show(r.verdict)}, not "QUALIFIED", and the receipt carries no complete override`);
-if (p.length) { for (const m of p) console.error("  - " + m); process.exit(1); }
-if (r.verdict === "QUALIFIED") { console.log("QUALIFIED"); process.exit(0); }
-console.log("OVERRIDE " + show(r.verdict));
-console.log(JSON.stringify(override, null, 2));
-JS
-}
+# THE CHECK ITSELF IS scripts/pair-receipt.mjs --check-release-receipt (LCLI-621), the SAME
+# evaluateReleaseReceipt that scripts/promote-latest.mjs re-runs at promotion, so staging and
+# promotion cannot disagree about one receipt. It replaced a 60-line inline `node -e` heredoc here,
+# which never learned the TASK-126 fields and so staged receipts that promotion then refused. The
+# rules it keeps from that checker: kind, schemaVersion, product, version and releaseRunId (compared
+# as normalised digit strings); every staged tarball's sha256 by own-property lookup and set
+# equality; the artifact directory
+# holding exactly the staged tarballs plus the carried launcher; a partial override refuses and
+# `override: null` is absent. What it adds, from opum-cli-e2e receipts/README.md at 4f078e6b:
+# launcherVersion is required, ^<X>-rc\.[1-9][0-9]*$ and equal to this run's rc; launcherSubstitution
+# is required, verdict MATCH with no mismatches (no override waives it), and its finalTarball names
+# the BASENAME opum-ai-lore-<X>.tgz at the carried launcher's sha256; and `tarballs` holds EXACTLY
+# the seven staged packages -- the carried X launcher as an eighth key refuses (opum-cli-e2e
+# receipts/README.md at e0021c7, which superseded 4f078e6b on this point). The receipt's `commit` is NOT bound here,
+# as before: lore tags at publish, so there is no v<version> to peel yet. Promotion binds it.
 
 # THE RECEIPT THE GATE READ IS KEPT, not deleted after the check (LCLI-586), because
 # recheck_against_receipt below compares each tarball with it again immediately before that
@@ -690,7 +700,7 @@ install_cleanup_traps
 # path again, so a swap in the milliseconds between the two still goes unchecked. Closing it would
 # mean publishing from a private copy made at check time, which was deliberately not done here.
 receipt_digest_for() {
-  # Own-property lookup, as receipt_check_js does: an inherited key such as `constructor` must
+  # Own-property lookup, as the receipt gate does: an inherited key such as `constructor` must
   # not resolve to a value. Prints nothing and exits non-zero unless the entry is 64 hex digits.
   node -e '
 const fs = require("fs");
@@ -763,7 +773,9 @@ land an override in it by PR. No flag or environment variable this script reads 
   # STDOUT AND STDERR ARE KEPT APART. The verdict is read from stdout only; the reasons for a
   # refusal, and anything node itself prints (a deprecation warning, say), go to stderr and are
   # only ever quoted in a die message -- so a stray line can never be read as the verdict.
-  out="$(node -e "$(receipt_check_js)" "$RECEIPT_FILE" "$VERSION" "$RUN_ID" "$ARTIFACTS" "${names[@]}" 2>"$err")"
+  out="$(node "$SCRIPT_DIR/pair-receipt.mjs" --check-release-receipt "$RECEIPT_FILE" --version "$VERSION" \
+    --run-id "$RUN_ID" --artifacts "$ARTIFACTS" --carried "$FINAL_LAUNCHER_TARBALL" \
+    --launcher-version "$LAUNCHER_VERSION" -- "${names[@]}" 2>"$err")"
   rc=$?
   nerr="$(cat "$err")"
   # $RECEIPT_FILE is KEPT for recheck_against_receipt; cleanup_private_files removes it on exit.
@@ -815,9 +827,10 @@ else
   count="$(tarball_count)"
   [ "$count" -eq "$EXPECTED_TARBALLS" ] || die "expected $EXPECTED_TARBALLS tarballs in $ARTIFACTS, found $count:
 $(list_tarballs)"
+  resolve_launcher_rc
   verify_platform_digests
   seal_locally
-  say "all $count artifacts accounted for: 6 independently verified, 1 locally sealed"
+  say "all $count artifacts accounted for: 6 independently verified, 2 launchers locally sealed (1 staged, 1 carried)"
   # After the bytes are verified, BEFORE any credential handling or registry write.
   verify_qualification_receipt
 fi
@@ -954,20 +967,63 @@ say "registry reachable. Auth is NOT pre-checked: write permission is only obser
 say "A 404 on PUT below means the token lacks publish rights on that package -- not that it is missing."
 
 # ── Registry state ──────────────────────────────────────────────────────────
-published() { npm view "$1@$VERSION" version >/dev/null 2>&1; }
+# A spec is name@version. The platform packages are at $VERSION; the staged launcher is at
+# $LAUNCHER_VERSION (X-rc.N, LCLI-621), so every read names the version it means.
+#
+# TWO READS, ON PURPOSE (LCLI-621 review). spec_visible is the propagation POLL's read: any failure
+# there means "not visible yet" and is retried until the shared window runs out, so it stays
+# tolerant. published is the read a SKIP or a pre-flight PASS rests on, and there "unreadable" is
+# not "absent": a flaky or lagging `npm view` read as absent would let the pre-flight pass a taken
+# X-rc.N, publish all six platforms, wait out the visibility window, and only then refuse. So
+# registry_probe reports absent ONLY for npm's own not-found (E404, "No match found for version"),
+# and published dies on anything else.
+spec_visible() { npm view "$1" version >/dev/null 2>&1; }
+
+# Prints present, absent or unreadable. An unreadable probe's npm output goes to stderr.
+registry_probe() {
+  local out rc
+  out="$(npm view "$1" version 2>&1)"; rc=$?
+  if [ "$rc" -eq 0 ] && [ -n "${out//[[:space:]]/}" ]; then echo present; return 0; fi
+  if [ "$rc" -ne 0 ]; then
+    case "$out" in *E404*|*"No match found for version"*) echo absent; return 0 ;; esac
+  fi
+  printf '%s\n' "$out" >&2
+  echo unreadable
+}
+
+published() {
+  local spec="$1@${2:-$VERSION}" state
+  state="$(registry_probe "$spec")"
+  case "$state" in
+    present) return 0 ;;
+    absent) return 1 ;;
+  esac
+  die "could not tell whether $spec is already on the registry: \`npm view\` failed with something
+other than npm's not-found (E404); its output is above. Whether this package is skipped,
+and whether the pre-flight passes, rests on that answer, so an unreadable registry is not taken to
+mean \"not published\". Re-run once \`npm view $spec version\` answers; publishing is resumable."
+}
 
 report_state() {
-  local rc_tag
-  hr; say "registry state for $VERSION:"
+  local rc_tag ver
+  hr; say "registry state for $VERSION (launcher ${LAUNCHER_VERSION:-<no $VERSION-rc.N known>}):"
   for entry in "${PLATFORM_PKGS[@]}" "$ROOT_PKG"; do
     pkg="${entry%%:*}"
-    if published "$pkg"; then
-      rc_tag="$(npm view "$pkg" dist-tags.release-candidate 2>/dev/null)"
-      tag="$(npm view "$pkg" dist-tags.latest 2>/dev/null)"
-      printf '  %-34s present   release-candidate=%s latest=%s\n' "$pkg" "${rc_tag:-?}" "${tag:-?}"
-    else
-      printf '  %-34s ABSENT\n' "$pkg"
+    ver="$VERSION"
+    if [ "$pkg" = "$ROOT_NAME" ]; then
+      ver="$LAUNCHER_VERSION"
+      if [ -z "$ver" ]; then printf '  %-34s no %s-rc.N named by release-candidate\n' "$pkg" "$VERSION"; continue; fi
     fi
+    # A report, not a gate, and it also runs after the irreversible publish: an unreadable read is
+    # printed as such rather than dying, so it neither passes for ABSENT nor fails a good release.
+    case "$(registry_probe "$pkg@$ver")" in
+      present)
+        rc_tag="$(npm view "$pkg" dist-tags.release-candidate 2>/dev/null)"
+        tag="$(npm view "$pkg" dist-tags.latest 2>/dev/null)"
+        printf '  %-34s %s present   release-candidate=%s latest=%s\n' "$pkg" "$ver" "${rc_tag:-?}" "${tag:-?}" ;;
+      absent) printf '  %-34s %s ABSENT\n' "$pkg" "$ver" ;;
+      *) printf '  %-34s %s UNREADABLE (npm view failed other than not-found; its output is above)\n' "$pkg" "$ver" ;;
+    esac
   done
 }
 
@@ -1006,17 +1062,17 @@ PROPAGATION_CUSHION_SECONDS="${PROPAGATION_CUSHION_SECONDS:-20}"
 # /bin/bash is 3.2, where "${arr[@]}" on an EMPTY array under `set -u` aborts the script.
 # Package names contain no spaces, so word splitting is safe here.
 wait_for_all_visible() {
-  local pending="$1" deadline now delay=5 nap next pkg started missing
+  local pending="$1" deadline now delay=5 nap next spec started missing
   started="$(date +%s)"
   deadline=$(( started + REGISTRY_WINDOW_SECONDS ))
   while : ; do
     next=""
     missing=0
-    for pkg in $pending; do
-      if published "$pkg"; then
-        say "  visible  $pkg@$VERSION after $(( $(date +%s) - started ))s"
+    for spec in $pending; do
+      if spec_visible "$spec"; then
+        say "  visible  $spec after $(( $(date +%s) - started ))s"
       else
-        next="$next $pkg"
+        next="$next $spec"
         missing=$(( missing + 1 ))
       fi
     done
@@ -1041,7 +1097,7 @@ wait_for_all_visible() {
   # broken when it is in fact fine. Say plainly that npm already confirmed the publish.
   hr
   say "TIMEOUT: still not visible on the registry READ API after ${REGISTRY_WINDOW_SECONDS}s:"
-  for pkg in $pending; do say "    $pkg@$VERSION"; done
+  for spec in $pending; do say "    $spec"; done
   say ""
   say "  THIS IS NOT PROOF THE PUBLISH FAILED, AND YOU SHOULD NOT UNPUBLISH ANYTHING."
   say "  npm already confirmed these publishes. Only the registry's read API is behind --"
@@ -1067,7 +1123,16 @@ wait_for_all_visible() {
   return 1
 }
 
-if [ "$VERIFY_ONLY" -eq 1 ]; then report_state; exit 0; fi
+if [ "$VERIFY_ONLY" -eq 1 ]; then
+  # No artifacts to read N from, so the launcher is reported at whatever X-rc.N release-candidate
+  # names, and only if it names one for this $VERSION.
+  cur_rc="$(npm view "$ROOT_NAME" dist-tags.release-candidate 2>/dev/null | tr -d '[:space:]')"
+  case "${cur_rc#"$VERSION"-rc.}" in
+    "$cur_rc"|""|0*|*[!0-9]*) ;;
+    *) LAUNCHER_VERSION="$cur_rc" ;;
+  esac
+  report_state; exit 0
+fi
 report_state
 
 # ── Shipped-README version assertions (LCLI-510) ─────────────────────────────
@@ -1086,11 +1151,13 @@ report_state
 # is stale, and the packed one is what the registry serves (contract A1, opum-doc main@ba3055d).
 hr
 say "checking the packed README's version assertions before any registry write"
-readme_gate_tarball="$ARTIFACTS/${ROOT_PKG#*:}"
+# BOTH launchers (LCLI-621): the staged X-rc.N one renders its own version, and the carried X one
+# is what reaches latest later. Each is checked against its own packed package.json.
+for readme_gate_tarball in "$ARTIFACTS/${ROOT_PKG#*:}" "$ARTIFACTS/$FINAL_LAUNCHER_TARBALL"; do
 if [ ! -f "$readme_gate_tarball" ]; then
   die "the root launcher tarball is missing: $readme_gate_tarball"
 fi
-node "$(dirname "${BASH_SOURCE[0]}")/shipped-readme-version.mjs" --tarball "$readme_gate_tarball"
+node "$SCRIPT_DIR/shipped-readme-version.mjs" --tarball "$readme_gate_tarball"
 readme_gate_rc=$?
 if [ "$readme_gate_rc" -eq 2 ]; then
   # Exit 2 is "could not READ the input" -- a missing tar, an unparseable package.json -- and is a
@@ -1114,6 +1181,85 @@ Fix it at the source and re-cut the artifacts:
     # commit, re-tag, re-run the release workflow, re-download the artifacts
 Do NOT hand-edit the tarball."
 fi
+done
+
+# ── Launcher equivalence (Article 3 clause 5 as amended by ODOC-302, LCLI-621) ─────────────
+# The staged X-rc.N launcher must be the carried X launcher with the version string substituted,
+# entry by entry: same paths, same modes, byte-identical content. release.yml's package job ran
+# the same check on the bytes IT packed; this re-runs it on the bytes THIS script will publish,
+# for the same reason the README gate above is re-run. An rc staged without it could never be
+# promoted, and would burn its N.
+hr
+say "checking the $LAUNCHER_VERSION launcher is the $VERSION launcher with only the version changed"
+node "$SCRIPT_DIR/launcher-equivalence.mjs" --rc "$ARTIFACTS/${ROOT_PKG#*:}" \
+  --final "$ARTIFACTS/$FINAL_LAUNCHER_TARBALL" --version "$VERSION" --rc-version "$LAUNCHER_VERSION"
+equivalence_rc=$?
+[ "$equivalence_rc" -eq 0 ] || die "the launcher equivalence gate refused (exit $equivalence_rc) -- nothing has been published.
+Exit 1: the two launchers differ by more than the version string; the lines above name each
+difference. Exit 2: it could not read its input, so it verified NOTHING. Either way re-cut the
+artifacts from one Release run; do NOT hand-edit a tarball."
+
+# ── Already on the registry means: already on the registry AS THESE BYTES (LCLI-621 review) ──
+# A skip is only a resume when npm holds exactly the tarball this run would have published. Any
+# other bytes were published outside this gate -- an earlier Release run, a hand publish -- and a
+# skip would stage them under this run's qualification. It bites hardest on the platforms: a
+# re-stage as X-rc.N+1 comes from a NEW Release run, which rebuilds the platform tarballs (not
+# proven byte-reproducible), so this run's digests and receipt all verify against tarballs the
+# registry does not serve, and the rc.N+1 launcher then installs the OLD X platform bytes.
+#
+# dist.integrity (sha512, the SRI string npm itself verifies installs against), not dist.shasum
+# (sha1): same one read, a digest nobody can collide, and the field quest-cli's matching guard
+# compares (QCLI-366). Hashed with node, which this script already requires, because shasum has
+# no base64 output. An unreadable integrity refuses: a match that could not be observed is not one.
+# ONE helper for all seven, platforms and launcher alike; only the remedy it names differs. Called
+# by the pre-flight below, before any write, and again by publish_one's skip.
+tarball_integrity() {
+  node -e 'process.stdout.write("sha512-" + require("crypto").createHash("sha512").update(require("fs").readFileSync(process.argv[1])).digest("base64"))' "$1"
+}
+
+refuse_unless_registry_holds() {
+  local pkg="$1" ver="$2" tarball="$3" got want
+  want="$(tarball_integrity "$tarball")" || die "could not hash $tarball to compare it with $pkg@$ver on the registry"
+  got="$(npm view "$pkg@$ver" dist.integrity | tr -d '[:space:]')"
+  [ -n "$got" ] && [ "$got" = "$want" ] && return 0
+  if [ "$ver" != "$VERSION" ]; then
+    # The launcher at X-rc.N. N is chosen per dispatch, so a re-stage that forgot to bump it would
+    # otherwise "resume" past a launcher that is not this run's and leave the old one staged.
+    die "$pkg@$ver is ALREADY on the registry with different bytes
+(registry dist.integrity ${got:-<unreadable>},
+ this run's tarball        $want). npm versions are
+immutable, so this run's launcher cannot be staged under $ver. Re-stage by dispatching the Release
+workflow with launcher_rc set to the next N, then publish that run. Do NOT run npm unpublish."
+  fi
+  die "$pkg@$ver is ALREADY on the registry with different bytes
+(registry dist.integrity ${got:-<unreadable>},
+ this run's tarball        $want).
+It was published outside this gate, or by a different Release run than $RUN_ID. A new launcher_rc
+does NOT fix this: every $VERSION-rc.N launcher pins the platform packages at exactly $VERSION,
+and $VERSION platform packages are immutable, so any rc staged now would install the registry's
+bytes rather than the ones this run qualified. Either publish from the Release run whose platform
+tarballs ARE the registry's (re-run this script with that run id), or cut a new version.
+Do NOT run npm unpublish."
+}
+
+# ── Pre-flight: anything already on the registry is this run's bytes (LCLI-621 review) ───────
+# publish_one compares bytes when it reaches a package, but it reaches the launcher only after the
+# platform loop and the registry-visibility wait (up to REGISTRY_WINDOW_SECONDS), so a refusal
+# there came after six platform publishes and half an hour. This pass runs the SAME comparison
+# (refuse_unless_registry_holds) over all seven before the first write, so a taken X-rc.N or a
+# foreign X platform refuses with nothing written. Reads only, so the dry run makes it too.
+# publish_one still re-checks at skip time: a publish landing between here and there would
+# otherwise be skipped unverified.
+hr
+say "pre-flight: anything already on the registry must be this run's bytes, checked before any write"
+for entry in "${PLATFORM_PKGS[@]}" "$ROOT_PKG"; do
+  pkg="${entry%%:*}"
+  ver="$VERSION"
+  [ "$pkg" = "$ROOT_NAME" ] && ver="$LAUNCHER_VERSION"
+  published "$pkg" "$ver" || continue
+  refuse_unless_registry_holds "$pkg" "$ver" "$ARTIFACTS/${entry#*:}"
+  say "  held     $pkg@$ver (already on the registry as this run's bytes; will be skipped)"
+done
 
 # ── Publish ─────────────────────────────────────────────────────────────────
 hr
@@ -1180,13 +1326,17 @@ looks_like_2fa_or_staging() {
 # The dry run prints this same list, so a rehearsal shows the tag it would publish under.
 STAGED_SKIPPED=""
 publish_one() {
-  local pkg="$1" tarball="$ARTIFACTS/$2" out rc
+  local pkg="$1" tarball="$ARTIFACTS/$2" ver="${3:-$VERSION}" out rc
   local npm_args=(publish "$tarball" --tag "$STAGE_TAG")
-  if published "$pkg"; then
-    say "  skip     $pkg@$VERSION (already on the registry)"
+  if published "$pkg" "$ver"; then
+    [ -f "$tarball" ] || die "$tarball is missing, so $pkg@$ver on the registry cannot be compared with it"
+    # Dies on a mismatch; see refuse_unless_registry_holds. The pre-flight already checked, and this
+    # re-check covers a publish that landed in between.
+    refuse_unless_registry_holds "$pkg" "$ver" "$tarball"
+    say "  skip     $pkg@$ver (already on the registry as this run's bytes)"
     # Resumed, not published by this run: its dist-tags are whatever the earlier run left, so the
     # release-candidate check below re-reads it rather than assuming this run's --tag applied.
-    STAGED_SKIPPED="$STAGED_SKIPPED $pkg"
+    STAGED_SKIPPED="$STAGED_SKIPPED $pkg@$ver"
     return 0
   fi
   [ -f "$tarball" ] || { say "  MISSING  $tarball"; return 1; }
@@ -1198,11 +1348,11 @@ publish_one() {
     say "  would    npm ${npm_args[*]}"
     return 0
   fi
-  say "  publish  $pkg@$VERSION  (dist-tag $STAGE_TAG; latest is not moved)"
+  say "  publish  $pkg@$ver  (dist-tag $STAGE_TAG; latest is not moved)"
   out="$(npm "${npm_args[@]}" 2>&1)"; rc=$?
   [ -n "$out" ] && printf '%s\n' "$out"
   if looks_like_2fa_or_staging "$out"; then
-    die "npm publish for $pkg@$VERSION printed text this script recognises as a 2FA challenge
+    die "npm publish for $pkg@$ver printed text this script recognises as a 2FA challenge
 or a STAGED (non-public) outcome rather than an ordinary publish -- see the comment above
 looks_like_2fa_or_staging() for exactly what that recognition is and is not based on
 (LCLI-502). npm's own exit code was $rc. Resolve this as a human: check
@@ -1239,7 +1389,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
 else
   say "gating the root launcher on registry visibility of all six platform packages"
   platform_pkg_list=""
-  for entry in "${PLATFORM_PKGS[@]}"; do platform_pkg_list="$platform_pkg_list ${entry%%:*}"; done
+  for entry in "${PLATFORM_PKGS[@]}"; do platform_pkg_list="$platform_pkg_list ${entry%%:*}@$VERSION"; done
   if ! wait_for_all_visible "${platform_pkg_list# }"; then
     die "the root launcher was NOT published. One or more platform packages never became
 visible on the registry's read API within ${REGISTRY_WINDOW_SECONDS}s of being published (see
@@ -1253,7 +1403,7 @@ publishing is resumable and nothing further has been written."
   sleep "$PROPAGATION_CUSHION_SECONDS"
 fi
 
-publish_one "${ROOT_PKG%%:*}" "${ROOT_PKG#*:}" || die "root launcher failed to publish"
+publish_one "${ROOT_PKG%%:*}" "${ROOT_PKG#*:}" "$LAUNCHER_VERSION" || die "root launcher failed to publish"
 
 # ── dist-tags: release-candidate ONLY (constitution Article 3 clause 5, LCLI-613) ──────────
 # THIS SCRIPT NEVER MOVES `latest`. It used to, here, as the last step of every publish. Article 3
@@ -1270,14 +1420,17 @@ publish_one "${ROOT_PKG%%:*}" "${ROOT_PKG#*:}" || die "root launcher failed to p
 # $STAGED_SKIPPED is a space-separated string, split on purpose (bash 3.2; see
 # wait_for_all_visible): package names contain no spaces.
 hr
-say "dist-tags: '$STAGE_TAG' names $VERSION on every package; 'latest' is NOT moved here"
+say "dist-tags: '$STAGE_TAG' names $VERSION on every platform package and $LAUNCHER_VERSION on the"
+say "  launcher; 'latest' is NOT moved here"
 say "  (scripts/promote-latest.mjs moves latest once opum-cli-e2e's pair receipt for $VERSION verifies)"
-for pkg in $STAGED_SKIPPED; do
+# Each entry is name@version; the name is scoped (@opum-ai/...), so split on the LAST @.
+for spec in $STAGED_SKIPPED; do
+  pkg="${spec%@*}"; ver="${spec##*@}"
   cur="$(npm view "$pkg" "dist-tags.$STAGE_TAG" 2>/dev/null)"
-  if [ "$cur" = "$VERSION" ]; then say "  ok       $pkg $STAGE_TAG already $VERSION"; continue; fi
-  if [ "$DRY_RUN" -eq 1 ]; then say "  would    npm dist-tag add $pkg@$VERSION $STAGE_TAG  (currently ${cur:-none})"; continue; fi
-  say "  tag      $pkg  $STAGE_TAG ${cur:-none} -> $VERSION  (skipped above, so not tagged by a publish)"
-  npm dist-tag add "$pkg@$VERSION" "$STAGE_TAG" || die "could not point $STAGE_TAG at $VERSION for $pkg"
+  if [ "$cur" = "$ver" ]; then say "  ok       $pkg $STAGE_TAG already $ver"; continue; fi
+  if [ "$DRY_RUN" -eq 1 ]; then say "  would    npm dist-tag add $pkg@$ver $STAGE_TAG  (currently ${cur:-none})"; continue; fi
+  say "  tag      $pkg  $STAGE_TAG ${cur:-none} -> $ver  (skipped above, so not tagged by a publish)"
+  npm dist-tag add "$pkg@$ver" "$STAGE_TAG" || die "could not point $STAGE_TAG at $ver for $pkg"
 done
 
 # ── Verify ──────────────────────────────────────────────────────────────────
@@ -1291,28 +1444,30 @@ if [ "$DRY_RUN" -eq 1 ]; then say "DRY RUN complete — nothing was written."; e
 # failure below fired on a propagation lag and told the operator, seconds after the one
 # irreversible step, that the install path was broken. One shared window, not one per package.
 all_pkgs=""
-for entry in "${PLATFORM_PKGS[@]}" "$ROOT_PKG"; do all_pkgs="$all_pkgs ${entry%%:*}"; done
-say "confirming the registry read API serves $VERSION before smoking the install path"
+for entry in "${PLATFORM_PKGS[@]}"; do all_pkgs="$all_pkgs ${entry%%:*}@$VERSION"; done
+all_pkgs="$all_pkgs ${ROOT_PKG%%:*}@$LAUNCHER_VERSION"
+say "confirming the registry read API serves $VERSION and $LAUNCHER_VERSION before smoking the install path"
 if wait_for_all_visible "${all_pkgs# }"; then
   say "clean-registry install smoke (a fresh temp dir, nothing from this machine's caches)"
   # BY EXACT VERSION, and that is load-bearing since LCLI-613: the bare name resolves `latest`,
   # which this script no longer moves, so `npx @opum-ai/lore` would smoke the PREVIOUS release
-  # and pass. A test pins the spec.
+  # and pass. Since LCLI-621 the staged launcher is X-rc.N, so that is the version asked for; the
+  # binary it runs is the X platform package. A test pins the spec.
   SMOKE="$(mktemp -d)"
-  ( cd "$SMOKE" && npm init -y >/dev/null 2>&1 && npx --yes "@opum-ai/lore@$VERSION" --version )
+  ( cd "$SMOKE" && npm init -y >/dev/null 2>&1 && npx --yes "@opum-ai/lore@$LAUNCHER_VERSION" --version )
   rc=$?
   rm -rf "$SMOKE"
   # Reaching HERE means every package was visible, so a failure now is NOT propagation --
   # the registry is serving the version and the install path genuinely does not work.
   [ "$rc" -eq 0 ] || die "npx smoke failed AFTER every package was confirmed visible on the registry.
-This is not a propagation lag: the registry is serving $VERSION and the install path is broken.
+This is not a propagation lag: the registry is serving $LAUNCHER_VERSION and the install path is broken.
 Investigate before announcing. Do NOT unpublish -- that fixes nothing here and is destructive."
 else
   # Propagation, not breakage. wait_for_all_visible has already said so at length. Do not
   # die: dying here would attach a scary exit status to a release that is probably fine.
   say "SKIPPING the install smoke: the registry is not serving every package yet."
   say "Re-run with --verify-only once it settles, then smoke manually:"
-  say "    npx --yes @opum-ai/lore@$VERSION --version"
+  say "    npx --yes @opum-ai/lore@$LAUNCHER_VERSION --version"
 fi
 
 print_closing_checklist
