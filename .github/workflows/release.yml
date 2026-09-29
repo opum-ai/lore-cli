@@ -243,6 +243,18 @@ jobs:
         env:
           PLATFORM_NAMES_SPACE: ${{ needs.setup.outputs.namesSpace }}
         run: node scripts/check-package-artifacts.mjs --platforms "$PLATFORM_NAMES_SPACE"
+      - name: Assert bun.lock pins the platform packages at the versions package.json declares (LCLI-544)
+        # The version site the step below cannot see. That step compares declared versions
+        # across package.json, the six npm/<platform>/package.json manifests and plugin.json
+        # -- all FILES, internally consistent, all correct -- and can say nothing about
+        # bun.lock, whose agreement is otherwise decided by `bun install --frozen-lockfile`:
+        # a lockfile left behind by a bump passes that check while the new version is
+        # unpublished, then kills every job that runs a frozen install the moment publishing
+        # makes it resolvable.
+        # This is the release-time call site of scripts/check-lockfile-pins.mjs; ci.yml's
+        # package-set job runs the same script on every pull request, so a bump PR is refused
+        # before it lands rather than at dispatch.
+        run: node scripts/check-lockfile-pins.mjs
       - name: Assert version, license, author, repository, os/cpu, binary filename, and the optionalDependencies pin all match
         # bin/lore.cjs resolves a platform optionalDependency purely by name; npm silently
         # SKIPS it if the installed version doesn't satisfy root's pinned range — for an

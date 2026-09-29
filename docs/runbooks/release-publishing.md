@@ -553,6 +553,17 @@ the promotion half, item 7. It is not part of staging.
    for a new reason. Verify with `bun install --frozen-lockfile`, exit code
    taken without a pipe.
 
+   **A forgotten regeneration is caught on the bump's own pull request**
+   (`bun run check:lockfile-pins`, LCLI-544): ci.yml's package-set job compares
+   `bun.lock`'s platform pins against root `package.json`'s
+   `optionalDependencies` on every pull request, and `release.yml`'s
+   `verify-versions` runs the same script before any compile work. The check is
+   a pure file comparison for exactly the reason the trap above exists: the
+   assertion that would catch a stale lockfile by *resolving* it cannot run
+   before the publish that makes it resolvable, so `--frozen-lockfile` agrees
+   with a lockfile that is already wrong. The pins are the one version site
+   `verify-versions`' field comparison cannot see.
+
    **In that same commit, refresh the three version-bearing Ladybug digest
    baselines.** The bump alone turns the suite red, because the canonical
    export embeds `lore/<version>` as provenance, so the export digest moves on

@@ -75,6 +75,7 @@
     "lint": "biome check .",
     "lint:shell": "bash scripts/lint-shell.sh",
     "check:packages": "node scripts/check-package-artifacts.mjs",
+    "check:lockfile-pins": "node scripts/check-lockfile-pins.mjs",
     "check:breaking-bump": "node scripts/check-breaking-bump.mjs",
     "lint:fix": "biome check --write .",
     "test": "bun test",
