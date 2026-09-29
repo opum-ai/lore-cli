@@ -196,6 +196,5 @@ export declare function main(
     readPackageVersion?: () => Promise<string>;
     verifyOptions?: { attempts?: number; delayMs?: number; sleep?: (ms: number) => Promise<void> };
     readbackTempRoot?: string;
-    changelogPath?: string;
   },
 ): Promise<number>;

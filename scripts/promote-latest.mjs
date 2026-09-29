@@ -48,10 +48,12 @@
 //      still hashes to the receipt's finalTarball.sha256
 //   8. X is not on npm yet, or is on npm as exactly the artifact's bytes (a
 //      resume); any other bytes refuse here, before anything moves
-//   9. THE GITHUB RELEASE PREFLIGHT (LCLI-622): CHANGELOG.md has a non-empty
-//      `## [X]` section, and scripts/github-release.mjs, read-only, can cut v<X>
-//      from it later -- gh can read the repository, and any existing v<X> is
-//      published (not a draft or prerelease) and carries exactly those notes
+//   9. THE GITHUB RELEASE PREFLIGHT (LCLI-622, LCLI-639): CHANGELOG.md AT THE
+//      COMMIT v<X> PEELS TO (step 1's peeled.commit, never this checkout's copy)
+//      has a non-empty `## [X]` section, and scripts/github-release.mjs,
+//      read-only, can cut v<X> from those bytes later -- gh can read the
+//      repository, and any existing v<X> is published (not a draft or
+//      prerelease) and carries exactly those notes
 //   -- --dry-run stops here; --promote writes the record, then:
 //  10. the six platforms move `latest` by dist-tag
 //  11. STEP 6 again, then `npm publish <X> --tag latest`, LAST: the one publish
@@ -61,11 +63,13 @@
 //      moved instead of republishing.
 //  12. STEP 7: `latest` reads X on all seven, and npm's X dist.integrity is the
 //      artifact's.
-//  13. THE GITHUB RELEASE (LCLI-622, paired with quest-cli QCLI-398/QCLI-401):
-//      the private npmrc is removed first, then v<X> is created from the
-//      CHANGELOG section, non-draft, non-prerelease, marked latest -- or, when it
-//      already exists with those notes, only marked latest. A failure here exits
-//      3, not 1: see README_READBACK_EXIT.
+//  13. THE GITHUB RELEASE (LCLI-622, paired with quest-cli QCLI-398/QCLI-401;
+//      the tagged-commit source is LCLI-639): the private npmrc is removed
+//      first, then v<X> is created from the CHANGELOG section SEEN AT STEP 9,
+//      which is the section at the commit v<X> peels to -- non-draft,
+//      non-prerelease, marked latest -- or, when it already exists with those
+//      notes, only marked latest. A failure here exits 3, not 1: see
+//      README_READBACK_EXIT.
 //  14. THE README READ-BACK (A4 of LCLI-510; OPAG-474 AC3; LCLI-616):
 //      scripts/readme-readback.sh, run against the X tarball's own package.json
 //      and README.md, asserts npm's package-level readme is this release's and is
@@ -116,7 +120,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { ensureGitHubRelease, REPAIR_COMMAND, releaseNotesFor } from "./github-release.mjs";
+import { ensureGitHubRelease, REPAIR_COMMAND, readChangelogAtCommit, releaseNotesFor } from "./github-release.mjs";
 import { isMain } from "./is-main.mjs";
 import { compareLauncherTarballs, readTarEntries } from "./launcher-equivalence.mjs";
 import {
@@ -1179,7 +1183,7 @@ export function postLatestChecklist({
     `  1. README read-back: ${label ?? readback.state}. It ran automatically; its verdict:`,
     `         ${readback.verdict}`,
     "     Record that line in the release-truth record (item 5).",
-    `  2. GitHub Release for ${tag}: ${githubRelease.ok ? "DONE" : "NOT CUT (see above; do NOT roll back)"}. It ran automatically, from CHANGELOG.md's [${version}] section; its outcome:`,
+    `  2. GitHub Release for ${tag}: ${githubRelease.ok ? "DONE" : "NOT CUT (see above; do NOT roll back)"}. It ran automatically, from CHANGELOG.md's [${version}] section at the commit v${version} peels to; its outcome:`,
     `         ${githubRelease.detail}`,
     ...(githubRelease.ok
       ? []
@@ -1260,7 +1264,6 @@ export async function main(
     readPackageVersion = async () => JSON.parse(await readFile(join(root, "package.json"), "utf8")).version,
     verifyOptions = {},
     readbackTempRoot = undefined,
-    changelogPath = join(root, "CHANGELOG.md"),
   } = {},
 ) {
   const args = parseArgs(argv);
@@ -1529,18 +1532,22 @@ export async function main(
       // that is a draft, a prerelease, or carries other notes. Its honest limit: a read proves gh
       // can SEE the repository, not that its token may create a release; that is found at step 13
       // and reported there.
-      let releaseNotes;
-      try {
-        releaseNotes = await releaseNotesFor(version, { changelogPath });
-      } catch (error) {
+      //
+      // THE NOTES ARE THE TAGGED COMMIT'S BYTES (LCLI-639), read at the `peeled.commit` step 1
+      // resolved: never this checkout's CHANGELOG.md, so an uncommitted edit, or a section edited
+      // after the tag, cannot become the body of a new release. The commit is immutable, so the
+      // capture is sound for step 13 as well -- one read, one compare, one cut, all the same bytes.
+      const changelogRead = await readChangelogAtCommit(peeled.commit, { execFile });
+      if (!changelogRead.changelog) {
         err(
-          `Refusing to promote ${version}: ${changelogPath} could not be read (${reason(error)}), and the v${version} GitHub Release is cut from it. Nothing has moved.`,
+          `Refusing to promote ${version}: ${changelogRead.source} could not be read (${changelogRead.error}), and the v${version} GitHub Release is cut from those bytes. Nothing has moved.`,
         );
         return 1;
       }
+      const releaseNotes = releaseNotesFor(version, { changelog: changelogRead.changelog });
       if (!releaseNotes) {
         err(
-          `Refusing to promote ${version}: CHANGELOG.md has no non-empty "## [${version}]" section, and the v${version} GitHub Release is cut from it once latest moves (LCLI-622). Add the section, land it, and re-run from a checkout that has it. Nothing has moved.`,
+          `Refusing to promote ${version}: ${changelogRead.source} has no non-empty "## [${version}]" section, and the v${version} GitHub Release is cut from those bytes once latest moves (LCLI-622). The tag is immutable, so no edit to this checkout can add the section: re-tag v${version} at a commit whose CHANGELOG.md carries it, or cut that release by hand with notes you choose. Nothing has moved.`,
         );
         return 1;
       }

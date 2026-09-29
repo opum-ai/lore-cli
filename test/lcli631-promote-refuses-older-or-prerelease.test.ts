@@ -35,6 +35,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
+import { changelogAtRefArgs } from "../scripts/github-release.mjs";
 import {
   expectedTarballNames,
   PAIR_RECEIPT_KIND,
@@ -188,6 +189,10 @@ function world({ version: V, latest, latestFor = {} }: WorldOptions) {
       return { stdout: JSON.stringify({ ref: `refs/tags/v${V}`, object: { type: "tag", sha: TAG_OBJECT } }) };
     if (line === `gh api --hostname github.com repos/opum-ai/lore-cli/git/tags/${TAG_OBJECT}`)
       return { stdout: JSON.stringify({ sha: TAG_OBJECT, object: { type: "commit", sha: COMMIT } }) };
+    // LCLI-639: the release notes are CHANGELOG.md's bytes AT the commit v<V> peels to, never this
+    // checkout's. Only the cases that reach step 9 ask for it; every refusal here happens before.
+    if (line === `gh ${changelogAtRefArgs(COMMIT).join(" ")}`)
+      return { stdout: `# Changelog\n\n## [${V}] - 2026-09-28\n\n- Released.\n` };
     if (line === `gh ${releaseRunReadArgs(RUN).join(" ")}`)
       return {
         stdout: JSON.stringify({
@@ -269,9 +274,6 @@ type World = ReturnType<typeof world>;
 async function go(w: World, mode: "--dry-run" | "--promote", setup?: (recordPath: string) => void) {
   const dir = mkdtempSync(resolve(tmpdir(), "lore-lcli631-"));
   const record = join(dir, "promotion-record.json");
-  // LCLI-622: the GitHub Release is cut from CHANGELOG.md's ## [V] section, so the release has one.
-  const changelogPath = join(dir, "CHANGELOG.md");
-  writeFileSync(changelogPath, `# Changelog\n\n## [${w.V}] - 2026-09-28\n\n- Released.\n`);
   setup?.(record);
   const out: string[] = [];
   const err: string[] = [];
@@ -283,7 +285,6 @@ async function go(w: World, mode: "--dry-run" | "--promote", setup?: (recordPath
       err: (l) => err.push(l),
       readPackageVersion: async () => "0.0.0-not-read",
       verifyOptions: FAST,
-      changelogPath,
     });
     const recordText = existsSync(record) ? readFileSync(record, "utf8") : null;
     return { code, out, err, text: [...out, ...err].join("\n"), errText: err.join("\n"), recordText };

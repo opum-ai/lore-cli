@@ -9,7 +9,11 @@ export declare function changelogSection(changelog: string, version: string): { 
 
 export declare function releaseTitle(version: string, heading?: string): string;
 
-export type ExecFile = (file: string, args: readonly string[]) => Promise<{ stdout: string; stderr?: string }>;
+export type ExecFile = (
+  file: string,
+  args: readonly string[],
+  options?: { maxBuffer?: number },
+) => Promise<{ stdout: string; stderr?: string }>;
 
 export interface ReleaseOutcome {
   readonly ok: boolean;
@@ -26,16 +30,22 @@ export declare function ensureGitHubRelease(options: {
   execFile?: ExecFile;
 }): Promise<ReleaseOutcome>;
 
+export declare function changelogAtRefArgs(sha: string): string[];
+
+export declare function readChangelogAtCommit(
+  sha: string,
+  options?: { execFile?: ExecFile },
+): Promise<{ changelog: string | null; source: string; error?: string }>;
+
 export declare function releaseNotesFor(
   version: string,
-  options?: { changelogPath?: string },
-): Promise<{ notes: string; title: string } | null>;
+  options: { changelog: string },
+): { notes: string; title: string } | null;
 
 export declare function main(
   argv: string[],
   options?: {
     execFile?: ExecFile;
-    changelogPath?: string;
     out?: (line: string) => void;
     err?: (line: string) => void;
   },
