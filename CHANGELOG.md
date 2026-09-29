@@ -237,9 +237,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command resolves the tag first: a tag whose commit carries no such section refuses naming that
   commit, and its remedies are a re-tag or a hand-cut, not an edit to a checkout the tag does not
   name. Measured on this repository: `node scripts/github-release.mjs --version 0.9.0` now reports
-  "would mark it latest" where the working-tree read reported differing notes. A `## ` line inside
-  a fenced code block no longer ends the section, and an unclosed fence runs to the end of the
-  file, matching the extractor rule agreed with quest-cli.
+  "would mark it latest" where the working-tree read reported differing notes. The extractor's fence
+  handling is the rule agreed with quest-cli, refined after both reviews found the first version
+  wrong in three ways: the fence state is computed for the whole document first and remembers the
+  opener's character and run length (so a tilde line no longer closes a backtick fence, a
+  four-marker fence no longer swallows the next entry, and a line of fewer markers no longer closes
+  a longer one), a backtick fence's info string may not itself contain a backtick, and the section's
+  START is subject to that state too, so a fenced `## [X]` line can no longer hijack a section out
+  of the real heading below it. An unclosed fence still runs to the end of the file. It implements
+  the fence state and nothing else of CommonMark — no indented-code-block interaction, no lazy
+  continuation, no container or list scoping.
 - **`provenance-post` checks what a Release run published: the platforms at `X` and the launcher
   at `X-rc.N`** (LCLI-625). Since LCLI-621 a Release run stages the launcher as `X-rc.N`, but
   `scripts/release-provenance.mjs --post` still checked every package at `X`. On a

@@ -193,6 +193,85 @@ describe("changelogSection: Keep a Changelog headings (LCLI-622)", () => {
     expect(changelogSection(text.replace(/\n/g, "\r\n"), "1.0.0")).toEqual(changelogSection(text, "1.0.0"));
   });
 
+  // ── The refined fence rule, the three defects both reviews found (LCLI-639) ────────────────────
+  // The fence state of the WHOLE document is computed FIRST, remembering the opener's CHARACTER and
+  // RUN LENGTH: a closer must be the same character at least as many times, and a BACKTICK fence's
+  // info string may not itself contain a backtick ("```a`b" opens nothing, so the `## ` line under
+  // it really is a heading). The section's START is subject to that state too, so a fenced
+  // "## [X]" line cannot hijack a section out of the real heading below it, and END cannot be a
+  // fenced `## ` line. The three defects the previous predicate had, all measured on it: a tilde
+  // line closed a backtick fence (truncation), a four-marker fence swallowed the next entry (a
+  // regression the fence rule introduced), and a fenced "## [X]" hijacked the section (also a
+  // regression). Bodies below are quest-cli's, measured on its side of the same rule.
+  //
+  // MUTATION CONTROL. PREDICTION, written before measuring: against the PREVIOUS predicate -- a
+  // two-regex toggle that opens on any ```/~~~ line, closes on an EXACT three-marker line, tracks
+  // neither character nor run, and applies no fence state to the START scan -- the cases that go
+  // RED are exactly (a), (b), (c), (d), (e), (g) and (f-bracketed); the cases that stay GREEN are
+  // (f) itself, because an unbracketed `## 9.9.9` is not a lore version heading under either rule,
+  // and all five vectors above, because each of those is exactly three markers of one character,
+  // the only shape the old predicate gets right. A blanket red would not be localised; this is.
+  // MEASURED, and the prediction held exactly: the mutant was `c6c248b1`'s extractor read out of
+  // git (not hand-patched), and it was RED on those 7 -- (a) "```md\nalpha\n~~~", (b) the next
+  // entry swallowed, (c) the body running to EOF, (d) "````\nalpha\n```", (e) the next entry
+  // swallowed, (f-bracketed) a body out of the fenced heading, (g) "```a`b\n## not a heading\n```"
+  // -- and GREEN on (f) and on the four earlier fence vectors the harness carried -- the fifth, the
+  // fenced-CRLF pair, is the same code path and is green in this file -- with the refined extractor
+  // matching all 12. The fence-BLIND pre-change extractor (fee53bc6) was measured in the same
+  // harness: it truncates (a) exactly as the mutant does, matches (d) and (g) by the same blindness
+  // that produced the defect, and its bounded-but-wrong bodies on (b), (c), (e) and (f-bracketed)
+  // are what make those four regressions rather than defects the fence rule never reached.
+  const refined: Array<[string, string, string | null, string?]> = [
+    [
+      "(a) a tilde line inside a backtick fence is content, not a closer",
+      "## [9.9.9]\n\n```md\nalpha\n~~~\n## still inside the fence\nbeta\n```\n\n## [9.9.8]\n\nolder\n",
+      "```md\nalpha\n~~~\n## still inside the fence\nbeta\n```",
+    ],
+    [
+      "(b) a four-marker fence is closed by its own four, and the next ## ends the section",
+      "## [9.9.9]\n\n````\nalpha\n````\n\n## [9.9.8]\n\nolder\n",
+      "````\nalpha\n````",
+    ],
+    [
+      "(c) a fenced ## [X] does not hijack the section: START is the real heading",
+      "## Unreleased\n\n```\n## [9.9.9]\n```\n\n## [9.9.9]\n\nreal body\n\n## [9.9.8]\n\nolder\n",
+      "real body",
+      "## [9.9.9]",
+    ],
+    [
+      "(d) three markers inside a four-marker fence do NOT close it",
+      "## [9.9.9]\n\n````\nalpha\n```\n## still inside\n````\n\n## [9.9.8]\n\nolder\n",
+      "````\nalpha\n```\n## still inside\n````",
+    ],
+    [
+      "(e) five markers inside a three-marker fence DO close it (at least the opener's run)",
+      "## [9.9.9]\n\n```\nalpha\n`````\n\n## [9.9.8]\n\nolder\n",
+      "```\nalpha\n`````",
+    ],
+    [
+      "(f) a fenced `## 9.9.9` is no section at all: an unbracketed heading is never one",
+      "## Unreleased\n\n```\n## 9.9.9\n```\n\n## [9.9.8]\n\nolder\n",
+      null,
+    ],
+    [
+      "(f-bracketed) a fenced `## [9.9.9]` is no section at all: the only match is inside a fence",
+      "## Unreleased\n\n```\n## [9.9.9]\n```\n\n## [9.9.8]\n\nolder\n",
+      null,
+    ],
+    [
+      "(g) a backtick in a backtick fence's info string means no fence opened, so ## ends the section",
+      "## [9.9.9]\n\n```a`b\n## not a heading\n```\n\n## [9.9.8]\n\nolder\n",
+      "```a`b",
+    ],
+  ];
+
+  for (const [name, doc, body, heading] of refined)
+    test(`${name}`, () => {
+      const section = changelogSection(doc, "9.9.9");
+      expect(section?.body ?? null).toBe(body);
+      if (heading !== undefined) expect(section?.heading).toBe(heading);
+    });
+
   test("every ## [X] heading in the real CHANGELOG.md yields notes, and the oldest carries no link references", () => {
     const real = readFileSync(join(import.meta.dir, "..", "CHANGELOG.md"), "utf8");
     const versions = [...real.matchAll(/^## \[(\d+\.\d+\.\d+)\]/gm)].map((m) => m[1] as string);

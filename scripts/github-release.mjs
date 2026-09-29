@@ -69,19 +69,55 @@ const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const LINK_REFERENCE = /^\s{0,3}\[[^\]]+\]:\s*\S/;
 
 /**
- * A fenced-code-block opener: ``` or ~~~, indented at most three spaces (CommonMark). While the
- * section is CLOSED, a line matching this opens a fence -- a bare "```" opens rather than closing,
- * which is why the two predicates differ.
+ * A fenced-code-block opener: three or more backticks or tildes, indented at most three spaces,
+ * with the rest of the line as its info string.
  */
-const OPEN_FENCE = /^ {0,3}(```|~~~)/;
-/** A fenced-code-block closer: the same, with nothing after it but spaces or tabs. */
-const CLOSE_FENCE = /^ {0,3}(```|~~~)[ \t]*$/;
+const OPEN_FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+/** A fenced-code-block closer candidate: a run of ONE fence character, nothing after it. */
+const CLOSE_FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
 
 /** A commit SHA, the only ref the release notes are ever read at. */
 const COMMIT_SHA = /^[0-9a-f]{40}$/;
 
 /** @param {string} text */
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * The fence state of every line of a document: the opener's character and run length while a fence
+ * is open, and null outside one. The opener's own line and its closer's line carry the open state
+ * too, which is harmless: neither can be a `## ` heading, since a heading line starts with `##` and
+ * a fence line starts with its fence character.
+ * @param {string[]} lines
+ * @returns {(null | { char: string, length: number })[]}
+ */
+function fenceState(lines) {
+  /** @type {(null | { char: string, length: number })[]} */
+  const state = [];
+  /** @type {null | { char: string, length: number }} */
+  let open = null;
+  for (const line of lines) {
+    if (open) {
+      state.push(open);
+      const run = CLOSE_FENCE.exec(line)?.[1];
+      // Same character, at least the opener's run: a four-marker fence is closed by four or more
+      // of its own character and by nothing else, so a three-marker line inside it is content.
+      if (run?.startsWith(open.char) && run.length >= open.length) open = null;
+      continue;
+    }
+    const match = OPEN_FENCE.exec(line);
+    const run = match?.[1];
+    // CommonMark: a BACKTICK fence's info string may not contain a backtick, so "```a`b" opens
+    // nothing and the `## ` line under it really is a heading. A tilde fence takes any info
+    // string, which is why the restriction is tested against the fence's own character.
+    if (run !== undefined && !(run.startsWith("`") && (match?.[2] ?? "").includes("`"))) {
+      open = { char: run.startsWith("`") ? "`" : "~", length: run.length };
+      state.push(open);
+      continue;
+    }
+    state.push(null);
+  }
+  return state;
+}
 
 /**
  * The body of `## [<version>]` in CHANGELOG.md, trimmed, heading excluded. The heading may carry a
@@ -91,11 +127,18 @@ const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
  * no notes is refused, not cut.
  *
  * A fenced code block SUSPENDS the heading rule (LCLI-639, extractor parity with quest-cli
- * QCLI-407): a `## ` line inside a fence is the fence's content, not a heading. While closed, a
- * fence opener opens one; while open, only a closer closes it. An UNCLOSED fence runs the section
- * to the end of the file, as CommonMark reads it, and the trailing link-reference trim below still
- * applies there. CRLF is normalised before the split, so a CRLF file reads exactly as an LF one
- * (quest-cli's extractor carries the same split).
+ * QCLI-407), for the section's START as much as for its end: the fence state of the WHOLE document
+ * is computed first, and a `## ` line inside a fence is the fence's content, not a heading. So a
+ * fenced `## [<version>]` line cannot hijack a section out of the real one below it, and a fenced
+ * `## ` line cannot truncate one. An UNCLOSED fence runs the section to the end of the file, as
+ * CommonMark reads it, and the trailing link-reference trim below still applies there. CRLF is
+ * normalised before the split, so a CRLF file reads exactly as an LF one (quest-cli's extractor
+ * carries the same split).
+ *
+ * SCOPE, stated as a decision rather than as an omission: this implements the fence state, and
+ * nothing else of CommonMark -- no indented-code-block interaction, no lazy continuation, and no
+ * container or list scoping. A CHANGELOG section is prose plus fenced examples; the rest of
+ * CommonMark's block grammar would buy nothing here that its first misreading would not cost.
  * @param {string} changelog @param {string} version
  * @returns {{ heading: string, body: string } | null}
  */
@@ -103,22 +146,10 @@ export function changelogSection(changelog, version) {
   if (!VERSION.test(version)) return null;
   const heading = new RegExp(`^## \\[${escapeRegExp(version)}\\](?:\\s.*)?$`);
   const lines = changelog.replace(/\r\n/g, "\n").split("\n");
-  const start = lines.findIndex((line) => heading.test(line));
+  const fences = fenceState(lines);
+  const start = lines.findIndex((line, i) => !fences[i] && heading.test(line));
   if (start === -1) return null;
-  let end = -1;
-  let fenced = false;
-  for (let i = start + 1; i < lines.length; i++) {
-    const line = /** @type {string} */ (lines[i]);
-    if (fenced) {
-      if (CLOSE_FENCE.test(line)) fenced = false;
-      continue;
-    }
-    if (line.startsWith("## ")) {
-      end = i;
-      break;
-    }
-    if (OPEN_FENCE.test(line)) fenced = true;
-  }
+  let end = lines.findIndex((line, i) => i > start && !fences[i] && line.startsWith("## "));
   if (end === -1) {
     // The last section: Keep a Changelog's link references sit at the end of the file, below it.
     end = lines.length;
