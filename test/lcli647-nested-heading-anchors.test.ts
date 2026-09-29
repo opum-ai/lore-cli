@@ -38,8 +38,9 @@
  * 12, both [breadcrumb] cases; dropping scope-awareness (region bound and breadcrumb container pop)
  * reddens 3 of 12 — [scope]-container-bound and both [breadcrumb] cases; taking BOTH readers back to
  * top-level-only headings (the pre-fix enumeration) reddens 9 of 12 — every case except
- * [classifiable], the [breadcrumb]-enclosing case (which the flat enumeration satisfies by
- * accident), and the static vendored-source check. No figure is inferred from another.
+ * [classifiable], the [breadcrumb]-enclosing case (it anchors a TOP-level heading, so it is
+ * insensitive to nested support), and the static vendored-source check. No figure is inferred from
+ * another.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
