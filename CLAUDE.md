@@ -50,9 +50,16 @@ Two things that are not optional, both learned the hard way on 2026-09-13:
 - **Give each agent exclusive file scope, and check it against your own in-flight branches too,
   not just against the other agents.** Concurrent worktrees do not protect you from handing an
   agent a file that an open PR of yours is about to change underneath it.
-- **Read the agent's tool list before dispatching.** `documenter` ships with no Bash, so it cannot
-  run `lore`, `lore check`, or git — every documentation deliverable in this repo needs all three.
-  Route doc work to `implementer` until that is fixed upstream.
+- **Read the agent's tool list before dispatching.** That check is what caught this bullet's own
+  fact going stale. As written on 2026-09-13, `documenter` shipped with no Bash and so could not
+  run `lore`, `lore check`, or git — all three of which every documentation deliverable here needs
+  — and doc work was routed to `implementer` on that ground. The condition was met upstream the
+  same day: `opum-fleet` `f717ba8` (OFLE-44, `opum-ai/opum-fleet#83`) added `Bash` to its tool
+  list, `Read, Grep, Glob, Edit, Write, Bash, Skill`, and origin/dev still carries it. So
+  `documenter` can run the workflow now and documentation work may go to either agent. Verified by
+  ref at the fix commit and on origin/dev, not from an installed plugin copy — and kept as a
+  principle precisely because a list can change under a sentence that was true when it was
+  written.
 
 **A gate that is wrong fails only during a release**, so anything touching `release.yml` or
 `scripts/` gets a `reviewer` pass before it lands. Match ceremony to risk otherwise: a
