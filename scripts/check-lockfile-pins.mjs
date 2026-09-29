@@ -3,10 +3,13 @@
  * check-lockfile-pins.mjs — asserts that the platform-package pins recorded in `bun.lock` agree
  * with root `package.json`'s `optionalDependencies` (LCLI-544).
  *
- * THE DEFECT THIS EXISTS FOR, as the measurement rather than the lesson. During the 0.8.0 release
- * (2026-09-19) the bump moved root `package.json` and the six `npm/<platform>/package.json`
- * manifests to 0.8.0 and left `bun.lock` resolving the platform packages at 0.7.0. PR #180 (the
- * bump) and #181 (the promotion) were genuinely green. Publishing made 0.8.0 resolvable, and the
+ * THE DEFECT THIS EXISTS FOR, as the measurement rather than the lesson. (The 0.8.0 numbers are
+ * the LCLI-544 record's measurement, taken when the incident was fresh; what this change measured
+ * itself — the same shape reproduced deliberately, locally and in CI — is in the LCLI-544 record
+ * and PR #431.) During the 0.8.0 release (2026-09-19) the bump moved root `package.json` and the
+ * six `npm/<platform>/package.json` manifests to 0.8.0 and left `bun.lock` resolving the platform
+ * packages at 0.7.0. PR #180 (the bump) and #181 (the promotion) were genuinely green. Publishing
+ * made 0.8.0 resolvable, and the
  * SAME UNCHANGED LOCKFILE became stale the instant the registry could answer: every CI job then
  * failed in `setup-bun` with `error: lockfile had changes, but lockfile is frozen` — on `dev` and
  * on every open pull request at once, with no source change between the green run and the red, and
