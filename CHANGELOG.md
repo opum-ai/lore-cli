@@ -16,9 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   else moved `latest` ahead would move it backwards, the move the ADR refuses. `planPromotion` now
   makes the same numeric comparison on the resume path, before any write, naming the package and
   both versions; a package already at `--version` stays accepted, which is the partial state a
-  resume exists for. On a fresh run, a package whose current `latest` is not a plain `X.Y.Z` is now
-  explained in the registry's own terms rather than `validateRecord`'s "recorded prior latest ...",
-  which named a value nothing had recorded yet.
+  resume exists for. The comparison is by the release a live value leads with, so a registry
+  `latest` of `5.7.0-rc.1` counts as newer than `5.6.7` and refuses, while `5.6.7-rc.1` or
+  `5.6.7+build.7` is not newer than `5.6.7` and still resumes. On a fresh run, a package whose
+  current `latest` is not a plain `X.Y.Z` now gets a headline in the registry's own terms before
+  `validateRecord`'s "recorded prior latest ...", which named a value nothing had recorded yet.
 - **Every release script now runs its CLI when it is invoked through a symlinked path** (LCLI-637,
   twin of quest-cli QCLI-404). Six scripts guard `main()` — `launcher-equivalence`, `pair-receipt`,
   `promote-latest`, `version-parity`, `github-release` and `check-breaking-bump` — and all six
@@ -99,7 +101,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a plain release. Before this, such a run wrote a record that both resume and `--rollback` then
   refused, which stranded the promotion. A prerelease `--version` was already refused earlier, by
   the equivalence check, and a test now holds that end to end. Backports and prereleases are not
-  a promote use case. A resumed run is not re-checked against a current `latest` (LCLI-638).
+  a promote use case. A resumed run was not re-checked against a current `latest` until LCLI-638,
+  which closed that: see the bullet above.
 - **The root launcher stages as `X-rc.N`; the platform packages still stage as `X`** (LCLI-621,
   constitution Article 3 clause 5 as amended by ODOC-302). The Release run's `npm-packages`
   artifact now carries eight tarballs: the six platform packages at `X`, the launcher at `X-rc.N`

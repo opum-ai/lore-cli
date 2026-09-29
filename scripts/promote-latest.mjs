@@ -181,6 +181,23 @@ export function compareReleaseVersions(a, b) {
   return 0;
 }
 
+/** A semver-shaped value: the release it leads with, then `-prerelease` and/or `+build`. */
+const SEMVER_SHAPED = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?=$|[-+])/;
+
+/**
+ * The MAJOR.MINOR.PATCH a semver-shaped `latest` leads with, or null when the value is not one.
+ * LCLI-638 review F1: a registry `latest` may hold a prerelease or a build-metadata version, and
+ * semver precedence decides those by the release they lead with -- 5.7.0-rc.1 is NEWER than 5.6.7,
+ * while 5.6.7-rc.1 is older than 5.6.7 and 5.6.7+build.7 equals it. Comparing this key against a
+ * release therefore answers "is the live value strictly newer" exactly, without a precedence
+ * comparator; only a value that leads with no release at all returns null.
+ * @param {unknown} value
+ */
+export function leadingReleaseVersion(value) {
+  if (typeof value !== "string") return null;
+  return SEMVER_SHAPED.exec(value)?.[0] ?? null;
+}
+
 /** The one process runner. Tests replace it; nothing below spawns anything else. */
 export const defaultRun = (command, args, options = {}) =>
   execFileAsync(command, args, { maxBuffer: 64 * 1024 * 1024, ...options });
@@ -310,9 +327,11 @@ export const integrityOf = (bytes) => `sha512-${createHash("sha512").update(byte
  * rollback restores it by dist-tag. A fresh run (not `resuming`) also refuses a
  * record validateRecord would refuse: a version older than a current `latest`, or
  * not a plain X.Y.Z (LCLI-631). A RESUMED run refuses when any package's CURRENT
- * `latest` is strictly newer than `version` (LCLI-638, paired with quest-cli
- * QCLI-405): the reused record says what the prior values were, and a registry
- * that moved ahead since would make the resume move `latest` backwards.
+ * `latest` is strictly newer than `version`, measured by the release that value
+ * leads with so a prerelease counts as newer than an older release (LCLI-638,
+ * paired with quest-cli QCLI-405): the reused record says what the prior values
+ * were, and a registry that moved ahead since would make the resume move
+ * `latest` backwards.
  * @param {{ version: string, launcherVersion?: string, releaseRunId?: string, packages?: readonly string[],
  *   readTags?: (name: string) => Promise<Record<string, string>>, now?: () => Date, resuming?: boolean }} args
  */
@@ -342,6 +361,7 @@ export async function planPromotion({
         `${name}: ${STAGE_TAG} is ${JSON.stringify(tags[STAGE_TAG] ?? null)}, not ${staged ?? `${version}-rc.<N>`}; stage it with scripts/publish-release.sh first`,
       );
     const current = tags[PROMOTE_TAG];
+    const currentMain = leadingReleaseVersion(current);
     if (typeof current !== "string") problems.push(`${name}: has no ${PROMOTE_TAG} to record as the prior value`);
     else if (current === version && !resuming)
       // Only a lost record reaches here: a fresh record would name the new
@@ -357,18 +377,21 @@ export async function planPromotion({
     // refuses. Equal-to-`version` is the partial state a resume exists for and
     // stays accepted; only strictly newer refuses. `current` is the live value,
     // not the record's, so the record's `priorLatest` is deliberately not used
-    // here. Guarded on a plain X.Y.Z current: anything else cannot be ordered
-    // numerically, and a non-plain CURRENT `latest` is a separate question this
-    // change does not answer for the resume path.
+    // here. The comparison is against the release the live value LEADS WITH
+    // (leadingReleaseVersion) so that a prerelease is measured by semver
+    // precedence rather than skipped: 5.7.0-rc.1 is newer than 5.6.7 and
+    // refuses; 5.6.7-rc.1 and 5.6.7+build.7 are not newer than 5.6.7 and still
+    // resume. A live value that leads with no release at all (null) is left as
+    // it was before this change -- unorderable, and not this rule's question.
     else if (
       resuming &&
+      currentMain !== null &&
       typeof version === "string" &&
       RELEASE_VERSION.test(version) &&
-      RELEASE_VERSION.test(current) &&
-      compareReleaseVersions(current, version) > 0
+      compareReleaseVersions(currentMain, version) > 0
     )
       problems.push(
-        `${name}: ${version} is older than the current ${PROMOTE_TAG} ${current}, so resuming would move ${PROMOTE_TAG} backwards. ${PROMOTE_TAG} has moved on since the record was written: re-run against the newer release's checkout, or deliberately restore ${name}'s ${PROMOTE_TAG} first`,
+        `${name}: ${version} is older than the current ${PROMOTE_TAG} ${current}, so resuming would move ${PROMOTE_TAG} backwards. ${PROMOTE_TAG} has moved on since the record was written, so this record is stale: re-run against the newer release's checkout. Moving ${PROMOTE_TAG} back is a deliberate, manual decision -- --rollback refuses here, because ${current} is neither this record's release nor its recorded prior`,
       );
     entries.push({ name, priorLatest: current ?? null });
   }

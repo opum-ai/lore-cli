@@ -489,7 +489,7 @@ describe("LCLI-638 (paired with quest-cli QCLI-405): a RESUME refuses when a cur
     packages: RELEASE_PACKAGES.map((name) => ({ name, priorLatest: PRIOR })),
   });
   const resumeHeadline = (name: string, current: string) =>
-    `${name}: ${V} is older than the current latest ${current}, so resuming would move latest backwards. latest has moved on since the record was written: re-run against the newer release's checkout, or deliberately restore ${name}'s latest first`;
+    `${name}: ${V} is older than the current latest ${current}, so resuming would move latest backwards. latest has moved on since the record was written, so this record is stale: re-run against the newer release's checkout. Moving latest back is a deliberate, manual decision -- --rollback refuses here, because ${current} is neither this record's release nor its recorded prior`;
 
   for (const mode of MODES)
     test(`every package's latest has moved ahead (${V} over 5.7.0), ${mode}: exit 1, zero writes, record unchanged, both versions named`, async () => {
@@ -593,10 +593,71 @@ describe("LCLI-631: planPromotion's gate, directly", () => {
     expect((resumed as { problems: string[] }).problems).toEqual(
       RELEASE_PACKAGES.map(
         (name) =>
-          `${name}: 0.9.0 is older than the current latest 0.10.0, so resuming would move latest backwards. latest has moved on since the record was written: re-run against the newer release's checkout, or deliberately restore ${name}'s latest first`,
+          `${name}: 0.9.0 is older than the current latest 0.10.0, so resuming would move latest backwards. latest has moved on since the record was written, so this record is stale: re-run against the newer release's checkout. Moving latest back is a deliberate, manual decision -- --rollback refuses here, because 0.10.0 is neither this record's release nor its recorded prior`,
       ),
     );
   });
+
+  // LCLI-638 review F1: "strictly newer" is a SEMVER-PRECEDENCE question, and the live value is not
+  // always a plain X.Y.Z. A prerelease is decided by the release it leads with -- 5.7.0-rc.1 is
+  // newer than 5.6.7 and refuses -- while a prerelease or build-metadata value of the SAME release
+  // is not newer than it and still resumes. Pinned here at the precedence boundary.
+  const precedence: Array<[string, boolean]> = [
+    ["5.7.0-rc.1", false],
+    ["5.6.8-rc.1", false],
+    ["5.6.7+build.7", true],
+    ["5.6.7-rc.1", true],
+    ["5.6.6-rc.1", true],
+  ];
+  for (const [live, accepted] of precedence)
+    test(`resuming with a live latest of ${live} against ${"5.6.7"}: ${accepted ? "accepted" : "refused"}`, async () => {
+      const plan = await planPromotion({
+        version: "5.6.7",
+        launcherVersion: "5.6.7-rc.2",
+        resuming: true,
+        readTags: async (name) => ({
+          latest: name === RELEASE_PACKAGES[1] ? live : "5.6.6",
+          "release-candidate": name === LAUNCHER ? "5.6.7-rc.2" : "5.6.7",
+        }),
+      });
+      expect(plan.ok).toBe(accepted);
+      if (!accepted) {
+        const problems = (plan as { problems: string[] }).problems;
+        // Only the one package whose live value leads with a newer release is named.
+        expect(problems).toEqual([
+          `${RELEASE_PACKAGES[1]}: 5.6.7 is older than the current latest ${live}, so resuming would move latest backwards. latest has moved on since the record was written, so this record is stale: re-run against the newer release's checkout. Moving latest back is a deliberate, manual decision -- --rollback refuses here, because ${live} is neither this record's release nor its recorded prior`,
+        ]);
+      }
+    });
+
+  // The same boundary end to end: a live prerelease that is newer than --version refuses with zero
+  // writes. (The LCLI-638 describe block holds the plain-version e2e cases; this one belongs here
+  // because the precedence boundary is this describe's subject.)
+  const V1 = "5.6.7";
+  const PRIOR1 = "5.6.6";
+  for (const mode of MODES)
+    test(`a platform's live latest is a newer prerelease (5.7.0-rc.1), ${mode}: exit 1, zero writes`, async () => {
+      const odd = PLATFORM_PACKAGES[1] as string;
+      const w = world({ version: V1, latest: PRIOR1, latestFor: { [odd]: "5.7.0-rc.1" } });
+      const first = {
+        schemaVersion: 1,
+        kind: RECORD_KIND,
+        version: V1,
+        launcherVersion: rcOf(V1),
+        releaseRunId: RUN,
+        recordedAt: "2026-09-28T00:00:00.000Z",
+        packages: RELEASE_PACKAGES.map((name) => ({ name, priorLatest: PRIOR1 })),
+      };
+      const written = `${JSON.stringify(first, null, 2)}\n`;
+      const r = await go(w, mode, (path) => writeFileSync(path, written));
+      expect(r.code).toBe(1);
+      expect(w.writes).toEqual([]);
+      expect(r.recordText).toBe(written);
+      expect(r.errText).toContain(
+        `${odd}: ${V1} is older than the current latest 5.7.0-rc.1, so resuming would move latest backwards`,
+      );
+      expect(r.text).not.toContain("Pair receipt");
+    });
 
   // The case a resume exists for: the registry has NOT moved ahead, so the new resume refusal must
   // stay silent -- equal-to-latest and older-than-latest both resume.
