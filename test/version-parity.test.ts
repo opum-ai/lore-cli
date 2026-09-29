@@ -35,10 +35,15 @@ const QUEST_FIXTURE = join(import.meta.dir, "fixtures", "quest-cli", "version-pa
 // blob, so nothing here diverges from quest-cli — what has diverged is lore's own script: the
 // fixture's is-main guard (line 117) is the old `resolve(argv[1]) === fileURLToPath(import.meta.url)`,
 // which lore replaced with scripts/is-main.mjs on LCLI-637, and quest-cli has not fixed its twin
-// yet. Measured 2026-09-28 by ref: `gh api repos/opum-ai/quest-cli/git/trees/dev?recursive=1`
-// lists `.quest/tasks/QCLI-404.json`, so there is no upstream fix to re-vendor yet. It is
-// invisible to this file, which only IMPORTS the fixture and never runs it as a CLI. When
-// QCLI-404 lands, re-vendor the fixture from the fixing commit and update QUEST_BLOB with it.
+// yet. Measured 2026-09-28 by ref, three readings rather than one inference (LCLI-637 review F3 —
+// a task file sitting in tasks/ is consistent with a fix that landed without the record moving, so
+// the record is not the decisive read): the QCLI-404 record is `status: "To Do"` in
+// `.quest/tasks/`; `gh api repos/opum-ai/quest-cli/git/trees/dev?recursive=1 --jq .truncated`
+// answers `false`, so that listing really is complete; and quest-cli's own
+// `scripts/qualification/version-parity.mjs` has blob 249c28dc at BOTH dev and main, still
+// carrying the old guard. It is invisible to this file, which only IMPORTS the fixture and never
+// runs it as a CLI. When QCLI-404 lands, re-vendor the fixture from the fixing commit and update
+// QUEST_BLOB with it.
 const QUEST_BLOB = "249c28dc19525d17f799cfd0ec9d0481998d62a6";
 const SOURCE = "opum-ai/quest-cli@main:package.json";
 

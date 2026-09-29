@@ -18,8 +18,16 @@
  * script's own usage refusal, which reaches main() with no network, no registry and no fixture.
  *
  * BEFORE THE FIX, measured 2026-09-28 on macOS with node v24.20.0: every direct invocation below
- * exits 2 with 51-168 bytes of usage on stderr, and every symlinked invocation exits 0 with 0
- * bytes on both streams. After the fix the two agree byte for byte.
+ * exits 2 with usage on stderr (52-169 bytes as `wc -c` counts them, trailing newline included;
+ * this file's table quotes shell-stripped lengths, which are one shorter), and every symlinked
+ * invocation exits 0 with 0 bytes on both streams. After the fix the two agree byte for byte.
+ *
+ * WINDOWS: the six symlink cases are POSIX-only, following this repo's precedent for symlink tests
+ * (`test.skipIf(process.platform === "win32")` in a dozen files; creating one on a runner needs
+ * elevation), so the `windows-latest` leg runs the direct, import and tolerance controls and not
+ * these. Alias shapes Windows does have — junctions, 8.3 short names — are unverified here; the
+ * helper's realpath-both-sides comparison is the form that should handle them, but nothing in this
+ * suite demonstrates it (LCLI-637 review F4).
  *
  * THE PATHS HERE ARE REALPATH'D DELIBERATELY. The direct control resolves scripts/ with
  * realpathSync first, so it is a true non-symlinked invocation on any machine — including one
@@ -137,7 +145,8 @@ describe("release scripts invoked through a symlinked path (LCLI-637)", () => {
 
   // The helper's other documented tolerance, which the six scripts rely on: an entry path that
   // does not exist must answer false (realpathSync throws) rather than blowing up. argv[1] is the
-  // fake path because `node -e -- <arg>` makes the first argument the entry.
+  // fake path because `node -e <program> <arg>` sets argv to [node, <arg>]; the `--` separator some
+  // node versions tunnel through is irrelevant here (measured: both forms agree).
   test("isMain answers false, not an exception, for an entry path that does not exist", () => {
     const helper = pathToFileURL(join(SCRIPTS_DIR, "is-main.mjs")).href;
     const source = `const { isMain } = await import(${JSON.stringify(helper)}); console.log(isMain(${JSON.stringify(helper)}));`;

@@ -29,7 +29,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join, normalize } from "node:path";
 import * as yaml from "js-yaml";
 
 const WORKFLOW_PATH = join(import.meta.dir, "..", ".github", "workflows", "release.yml");
@@ -559,7 +559,10 @@ describe("release.yml enforces constitution Article 3 (LCLI-613)", () => {
       .map((line) => line.trim())
       .filter(Boolean);
     // Anchored: in non-cone mode an unanchored "package.json" matches at every depth.
-    expect(sparse.sort()).toEqual(["/package.json", "/scripts/version-parity.mjs"]);
+    // is-main.mjs is the sibling the checker imports (LCLI-637): without it node fails to LOAD the
+    // module (ERR_MODULE_NOT_FOUND, exit 1) and this gate never runs -- measured in a real
+    // --no-cone sparse clone, on every dispatch including publish:false rehearsals.
+    expect(sparse.sort()).toEqual(["/package.json", "/scripts/is-main.mjs", "/scripts/version-parity.mjs"]);
     expect(checkout?.with?.["sparse-checkout-cone-mode"]).toBe(false);
     // The file the gate runs exists at that path in this repository.
     expect(readFileSync(join(import.meta.dir, "..", "scripts", "version-parity.mjs"), "utf8")).toContain(
@@ -597,7 +600,7 @@ describe("release.yml enforces constitution Article 3 (LCLI-613)", () => {
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean);
-    expect(sparse.sort()).toEqual(["/package.json", "/scripts/version-parity.mjs"]);
+    expect(sparse.sort()).toEqual(["/package.json", "/scripts/is-main.mjs", "/scripts/version-parity.mjs"]);
     // A red parity job must block the real publish, not merely sit beside it.
     expect(doc.jobs.publish?.needs).toContain("version-parity");
   });
@@ -1007,6 +1010,15 @@ describeOnPosix("release.yml's publish step stages seven of eight tarballs (LCLI
 // it: a full checkout, or a sparse one that lists it. A job with no checkout at all brings nothing,
 // and neither does a checkout whose `repository:` names another repository.
 //
+// IT FOLLOWS RELATIVE IMPORTS (LCLI-637 review F1). A file being present is not the same as the
+// script being LOADABLE: `scripts/version-parity.mjs` imports `./is-main.mjs`, and a sparse tree
+// that lists only the entry point leaves node failing with ERR_MODULE_NOT_FOUND before the gate
+// runs at all -- red on every dispatch, including rehearsals. That happened: LCLI-637 added the
+// sibling and three sparse lists did not carry it, and this scan was green on the broken tree
+// because it asked about the path in the `run:` line and nothing the file imports. So each
+// invocation now requires its transitive relative imports too, which are checked exactly like the
+// entry point (same earlier-checkout requirement, same sparse-listing rule).
+//
 // WHAT IT DOES NOT SEE (LCLI-616 review F6), so a green here is not a proof about these:
 //   - a path held in a variable (`s=scripts/x.sh; bash "$s"`), or built from $GITHUB_WORKSPACE or
 //     ${{ github.workspace }};
@@ -1014,6 +1026,9 @@ describeOnPosix("release.yml's publish step stages seven of eight tarballs (LCLI
 //     a composite or JavaScript action runs on the step's behalf;
 //   - `working-directory:` or a `cd` before the invocation: a path is resolved against the
 //     workspace root, so a relative path that only works from a subdirectory is misjudged;
+//   - an import that is not a static top-of-file `import ... from "./x"` / `import "./x"`: a
+//     dynamic `await import(...)`, a re-export-only `export ... from "./x"`, or a specifier built
+//     from a variable all reach a file this scan will not name;
 //   - any workflow but release.yml.
 /** One `scripts/` file a step runs, as written (relative to the workspace), and where it runs. */
 interface ScriptInvocation {
@@ -1093,15 +1108,64 @@ function checkoutBrings(step: WorkflowStep, path: string): boolean {
   });
 }
 
+/**
+ * Every relative import specifier (`import ... from "./x.mjs"`, `import "./x.mjs"`) in one
+ * repository file. Top-of-file static imports only, which is the shape these scripts use; the
+ * comment above names the shapes this does not reach.
+ */
+function relativeImports(repoRoot: string, file: string): string[] {
+  const full = join(repoRoot, file);
+  if (!existsSync(full)) return [];
+  const specifiers: string[] = [];
+  for (const line of readFileSync(full, "utf8").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("import")) continue;
+    const match = /["'](\.{1,2}\/[^"']+)["']/.exec(trimmed);
+    if (match?.[1]) specifiers.push(match[1]);
+  }
+  return specifiers;
+}
+
+/**
+ * Every repository file a script needs in order to RUN: itself plus its transitive relative
+ * imports, as repository-relative paths (a specifier that resolves to nothing -- a builtin, a
+ * package, a file this repository does not carry -- is skipped, because a checkout cannot bring
+ * what does not exist).
+ */
+function loadSet(repoRoot: string, entry: string): string[] {
+  const seen = new Set<string>([entry]);
+  const queue = [entry];
+  while (queue.length > 0) {
+    const current = queue.pop() as string;
+    for (const specifier of relativeImports(repoRoot, current)) {
+      const resolved = normalize(join(dirname(current), specifier));
+      if (seen.has(resolved) || !existsSync(join(repoRoot, resolved))) continue;
+      seen.add(resolved);
+      queue.push(resolved);
+    }
+  }
+  return [...seen];
+}
+
 /** Every invocation no earlier checkout in its job brings, as a readable problem. */
 function uncheckedOutScripts(jobs: Record<string, WorkflowJob>): string[] {
+  const repoRoot = join(import.meta.dir, "..");
   const problems: string[] = [];
   for (const { job, step, path } of scriptInvocations(jobs)) {
     const earlier = (jobs[job]?.steps ?? []).slice(0, step).filter((s) => s.uses?.startsWith("actions/checkout@"));
-    if (!earlier.some((checkout) => checkoutBrings(checkout, path)))
+    // The checkout can be rooted somewhere other than the repository root (the parity jobs check
+    // out into parity/), so the load set is computed from the repository and then re-prefixed into
+    // the tree the job actually runs in.
+    const root = path.startsWith("parity/") ? "parity/" : "";
+    const entry = path.slice(root.length);
+    for (const needed of loadSet(repoRoot, entry)) {
+      const required = needed === entry ? path : `${root}${needed}`;
+      if (earlier.some((checkout) => checkoutBrings(checkout, required))) continue;
+      const missing = required === path ? "it" : `${required}, which it imports`;
       problems.push(
-        `${job} step ${step} runs ${path}, but ${earlier.length ? "no earlier checkout in the job brings it" : "the job has no checkout before it"}`,
+        `${job} step ${step} runs ${path}, but ${earlier.length ? `no earlier checkout in the job brings ${missing}` : "the job has no checkout before it"}`,
       );
+    }
   }
   return problems;
 }
@@ -1152,6 +1216,47 @@ describe("release.yml: every scripts/ file a job runs is in that job's checkout 
     expect(uncheckedOutScripts(repointed)).toEqual([
       `publish step ${publish.steps?.length} runs parity/scripts/readme-readback.sh, but no earlier checkout in the job brings it`,
     ]);
+  });
+
+  test("a sparse list missing a script's RELATIVE IMPORT is caught, in the tree the job runs it from (LCLI-637 review F1)", () => {
+    // The regression this pins: `scripts/version-parity.mjs` and `scripts/check-breaking-bump.mjs`
+    // import ./is-main.mjs. Dropping that entry leaves the sparse tree complete by the old scan's
+    // reading -- every path a `run:` names is present -- while node cannot load the module at all,
+    // so the gate is red on every dispatch. Measured on the broken tree: this file's LCLI-616 test
+    // was green while a real `git sparse-checkout --no-cone` clone exited 1 with
+    // ERR_MODULE_NOT_FOUND. Predicted subset: exactly the three sparse-listed jobs that run a
+    // script importing the sibling (version-parity, publish, breaking-bump) and nothing else.
+    const jobs = loadWorkflow().jobs;
+    const withoutSibling = Object.fromEntries(
+      Object.entries(jobs).map(([name, job]) => [
+        name,
+        {
+          ...job,
+          steps: (job.steps ?? []).map((step) =>
+            step.with?.["sparse-checkout"]
+              ? {
+                  ...step,
+                  with: {
+                    ...step.with,
+                    "sparse-checkout": String(step.with["sparse-checkout"]).replace(
+                      /^\s*\/scripts\/is-main\.mjs\s*$/m,
+                      "",
+                    ),
+                  },
+                }
+              : step,
+          ),
+        },
+      ]),
+    );
+    expect(uncheckedOutScripts(withoutSibling)).toEqual([
+      "version-parity step 2 runs parity/scripts/version-parity.mjs, but no earlier checkout in the job brings parity/scripts/is-main.mjs, which it imports",
+      "breaking-bump step 2 runs scripts/check-breaking-bump.mjs, but no earlier checkout in the job brings scripts/is-main.mjs, which it imports",
+      "publish step 3 runs parity/scripts/version-parity.mjs, but no earlier checkout in the job brings parity/scripts/is-main.mjs, which it imports",
+    ]);
+    // And with the sibling listed, the same scan is clean -- so the assertion above is about the
+    // entry, not about this file being unable to see imports at all.
+    expect(uncheckedOutScripts(jobs)).toEqual([]);
   });
 
   test("a job with NO checkout that runs a scripts/ file fails", () => {
