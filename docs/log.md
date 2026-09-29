@@ -271,6 +271,17 @@
 - 2026-09-22T21:43:51Z 87a970a2fcc27017b0f388a48dc8c4ded1420b15 feat(LCLI-565): committed-schema generator stamp and lore check exit 7 (indeterminate) (#224)
 - 2026-09-22T17:23:00-05:00 3df7997eab3d34511ded356c0f4e7b5e66555910 chore(LCLI-566): open the 0.9.0 release preparation
 - 2026-09-22T22:39:44Z fd712748176b59175eaf40ec10eceb5ba6ac3bdd chore(LCLI-566): bump to 0.9.0 with the LCLI-565 rollout note (#227)
+- 2026-09-22T23:26:57Z 6b92f0029ac2eed29cc598488cfd982344f1a05e docs(LCLI-567): 0.9.0 is released — release truth, sweep exemptions, bun.lock; close LCLI-565 (#229)
+- 2026-09-24T14:14:04Z ff95a1ba9c66b90a80bcfe0cda44f0fdf720759a feat(LCLI-575): always append bundle-wide query hits to lore agent context (#245)
+- 2026-09-25T06:31:03Z 3d4536258b57e6bba84e42450c00bf4c1b7e19bc docs(LCLI-574): teach query-then-read first and drop the retired preflight gate (#272)
+- 2026-09-25T08:44:31Z 3ef31253c7a735ab36bf38a5d686d73f2e7f0f1f docs(LCLI-589): retire Backlog-era live instructions from three docs (#284)
+- 2026-09-26T19:07:43Z 340020a69d1885d42e76bb7505530f6c69753dbf docs(LCLI-603): place the editor modeline inside the frontmatter fence in ADR-0006 and ADR-0011 (#295)
+- 2026-09-26T18:11:37-05:00 096466e385cb83c67aae2add1bdc8ee02d67e9e2 feat(LCLI-606): lore check enforces validate's required sections and fields for every type (R11) (#311)
+- 2026-09-26T18:31:42-05:00 90841da4897cbda0cf62c0f9aa07c87899bf977c feat(LCLI-609): lore agent context auto-pins the bundle's Constitution (OPAG-425 R8, Amendment 4) (#314)
+- 2026-09-27T22:13:16-05:00 79433eafb17079155b7428ff54dbcd10f77d5b6f fix(LCLI-616, LCLI-618): README read-back after the final latest publish; post-latest checklist from promotion (#342)
+- 2026-09-27T23:16:52-05:00 58dcb391af2198dd9afbecbc4f520be2dc8a222f fix(LCLI-626): readme-readback / promote-latest review nits (#347)
+- 2026-09-28T12:04:11-05:00 4c23a1d50761b462ea5dd9f1766d409808d324e6 feat(LCLI-612): lore check enforces validate's error-tier quote-safety findings (#368)
+- 2026-09-29T02:10:35-05:00 8ba60a02711772f5e78754b4f073a02be81b5011 feat(LCLI-642): lore check reports a profile whose declared set cannot fit its budget (#407)
 
 ## docs/adr
 
@@ -354,6 +365,18 @@
 - 2026-09-16T23:15:21-05:00 73780d3a491f31c9a4c85edbf6670a889e77c39e fix(LCLI-521): warn before a --preserve-source-ids retry leaves a family behind (#146)
 - 2026-09-18T08:51:52-05:00 32993cc8eb793aca10c2e347e01b84d99ed9d257 feat(LCLI-537): add lore types (type-vocabulary discovery) and name the valid set in the unknown-type warning (#155)
 - 2026-09-18T18:54:08-05:00 c6f03ac0c01c8fc01aaeb0b6d4f50e8c96e8b8c1 fix(LCLI-512): derive the advertised projection schema version (#177)
+- 2026-09-23T23:28:49-05:00 a17bf202aacae872baed66595610bd57f5297927 docs(LCLI-570): 0.9.1 is released -- release truth, close LCLI-570 and LCLI-569 (#236)
+- 2026-09-23T23:57:21-05:00 d24af8cfdf168d4cc5a82ee8622c248987809120 fix(LCLI-573): retrieval-first agent guidance; generate the plugin skill; drop the retired preflight (#237)
+- 2026-09-24T13:52:52Z 9c12c64fbd30050454b8ff7d514f54672def79ed docs(LCLI-577): 0.9.2 is released -- release truth; close LCLI-577 and LCLI-576 (#247)
+- 2026-09-26T19:06:36Z dc09ca982a8997d18a109f58e7052b59be48328b feat(LCLI-592): detect the opum-lore marketplace plugin in lore init and lore agents --check (#291)
+- 2026-09-26T19:51:01Z 46133fc0ea42925dcba9fa092b65ff411e020e44 feat(LCLI-593): lore agents --target claude|codex; --target --force updates that runtime's plugin (Amendment 5, ruling 27) (#297)
+- 2026-09-26T20:02:09Z a319981562a472de10fcf047c64e924b7dd296e9 feat(LCLI-595): built-in Constitution document type (OPAG-425 R1-R4, R9) (#296)
+- 2026-09-26T16:24:52-05:00 16e4533040ef23424752c4e99e628a6c3d4f4185 feat(LCLI-604): ruling 28 — managed decides over every scope and is never updated (#305)
+- 2026-09-26T16:37:09-05:00 e6d504f6a7ebe07f5aa28fec656e3b82c6627823 fix(LCLI-608): a managed disabled row gets the managed detail, never an instruction to enable it (#308)
+- 2026-09-26T16:38:23-05:00 3b26881350910e23f25526e88242297fd5699e9c feat(LCLI-596): built-in Constants document type (OPAG-425 R1, R2, R5-R7, R9) (#306)
+- 2026-09-26T17:45:04-05:00 e67b07af0069002de98c9d02bc0d38250b2ffca5 feat(LCLI-597): lore agents renders the Constitution core and a Constants pointer into the managed block (OPAG-425 R8) (#310)
+- 2026-09-27T00:15:51-05:00 3ba875cb3a2099acdacb6d0bffa44655bc5cb4fb docs(LCLI-611): release-truth record for lore 0.11.0; close LCLI-611 (#323)
+- 2026-09-28T13:05:54-05:00 a1cfcf685ef8526ac842dce96c9c6edd1838a7c5 feat(LCLI-615): lore read renders markdown in pretty mode; --plain, piped and --json stay verbatim (#371)
 
 ## docs/runbooks
 
@@ -384,6 +407,22 @@
 - 2026-09-13T21:11:36-05:00 d0829f66d147a743e85e52eba34dea9e31a9d8f3 docs(LCLI-481): document the dangling provenance, and that 0.6.1/0.6.2 ship unattested (#26)
 - 2026-09-14T02:03:23-05:00 51803177af3246ae2705adac5a56400113613d8f feat(LCLI-489): make publish-release.sh perform its own prerequisites
 - 2026-09-14T02:13:04-05:00 efd5482f53eb28030010b2a037b43b2e3bd920c0 fix(LCLI-489): close the reviewer's findings on the publish script
+- 2026-09-25T06:21:41Z 7e5ca28a66b07fa0371a1e07a60466b4f2aac8c7 feat(LCLI-578,LCLI-572): refuse to publish without a qualification receipt; surface gh's report-download error (#269)
+- 2026-09-25T07:22:55Z 4aa2d3e75ee984a946b6d0a85eb79f53deab6843 fix(LCLI-586): re-hash each tarball against the receipt immediately before npm publish (#275)
+- 2026-09-25T08:00:25Z 1d421972700e215b5d406cd7a2d7a100904d9e54 docs(LCLI-587): runbook no longer says publish-release.sh resolves the run attempt (#281)
+- 2026-09-26T22:26:59-05:00 bb225f1c43d39e896d2ec7094fdc7427072d2e4d feat(LCLI-613): publication gates for the paired release: version parity, release-candidate staging, pair-receipt-gated latest move (Article 3) (#319)
+- 2026-09-27T12:05:54Z 7028c26ba40282259ece1c9f279e053125f448dd fix(LCLI-620): evaluate lore/quest version parity on every release.yml dispatch (#329)
+- 2026-09-27T19:23:06-05:00 bb8b2662db25f211836efcf7142410516ec8dc5d feat(LCLI-621): stage the root launcher as X-rc.N, publish final X to latest (ODOC-302) (#337)
+- 2026-09-27T23:07:07-05:00 b119209c92de298bc6bb9bc9fb90fff9b2bf3c3d fix(LCLI-625): provenance-post checks the rc launcher a Release run published (#346)
+- 2026-09-28T00:14:28-05:00 c9f356ed2e343cf33961305eca4ea278df9ce369 fix(LCLI-627): provenance-pre checks releases, not launcher version strings (#349)
+- 2026-09-28T00:57:05-05:00 767af75b7912c2a405ef4115f03e39ace2544a19 fix(LCLI-629): publish-release.sh refuses a malformed registry window or cushion before any remote read (#350)
+- 2026-09-28T11:48:28-05:00 640195ecf84378638268c74dbe93a55c99f191e4 fix(LCLI-631): promote-latest refuses a --version older than latest or not plain X.Y.Z (#362)
+- 2026-09-28T12:34:17-05:00 1d1ebb899365f632ea24dbe78d740926c010944d feat(LCLI-622): promote-latest cuts lore's GitHub Release as an executed, refusing step (#370)
+- 2026-09-28T17:23:16-05:00 87795b7e721e14e2067830a3e2a0ec007fc45fb4 feat(LCLI-632): release-prep refuses a patch bump on a breaking changelog entry (paired with quest-cli QCLI-328) (#379)
+- 2026-09-28T17:57:23-05:00 c29e1866f8224c014eaccd0ffdca6502d6b047ef fix(LCLI-634): refuse a malformed window variable before the first publish, and in rehearsals (#383)
+- 2026-09-28T19:06:22-05:00 dadd8ed9da0a3fbf0dbad13906cfbe1eaca95f36 fix(LCLI-635): provenance-post leads its not-published warning with the cause the publish job allows (#387)
+- 2026-09-28T21:14:53-05:00 f3305628b2e21aed7e02236cee98dfd9a7f081c7 fix(LCLI-638): a RESUMED promote-latest refuses when any current latest is newer than --version (#392)
+- 2026-09-28T23:33:30-05:00 ffc3ab3b66a866d4b00729d19066186990f1e475 fix(LCLI-639): read the release notes at the tagged commit, not the working tree (paired with quest-cli QCLI-407) (#398)
 
 ## docs/specs
 
