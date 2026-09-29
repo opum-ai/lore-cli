@@ -9,17 +9,19 @@ on:
     # (dev is fast-forwarded onto main).
     #
     # THIS IS NOT A GAP TO FIX. dev's branch ruleset (require-ci-on-dev) requires
-    # 3 status checks -- docker e2e harness, lint/typecheck/test windows-latest,
-    # and Tracker integrity -- on every push, but a direct push to dev triggers no
+    # a set of status contexts on every push -- read the live set with
+    # `gh api repos/opum-ai/lore-cli/rulesets/22838594`; do not carry a count or a
+    # list forward from this comment (it said "3" read 2026-09-11, and the set has
+    # grown since) -- but a direct push to dev triggers no
     # workflow run at all -- so those checks can never be satisfied and GitHub
     # refuses the push outright (GH013, confirmed 2026-08-31 attempting exactly
     # this). Read live 2026-09-11; main has NO ruleset, so it is ungated rather
     # than gated-and-passing. An earlier revision of this comment named an
     # "operating block digest" check that no longer exists -- it went with the
     # fleet-operating content in #654, and Tracker integrity (LCLI-471/OPAG-79)
-    # took the third slot. Verify against `gh api repos/opum-ai/lore-cli/rules/
-    # branches/dev` before trusting this list; a context matches by RENDERED job
-    # name, and one of these contains U+00B7, not an ASCII period.
+    # took its place. Re-read the ruleset with `gh api repos/opum-ai/lore-cli/
+    # rules/branches/dev` before trusting any of this; a context matches by
+    # RENDERED job name, and some contain U+00B7, not an ASCII period.
     # That is not incidental: it is what makes landing on dev structurally
     # impossible except through a PR (whose `pull_request` trigger below does
     # run CI), in a fleet where PR-into-dev is otherwise only a convention.
