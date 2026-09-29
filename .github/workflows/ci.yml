@@ -435,6 +435,12 @@ jobs:
     # literal is handled (silently rounded then caught by lore's own check, vs. rejected by Bun's
     # parser itself before lore ever sees a value) — config.test.ts's assertions are written to
     # accept either observed shape, so a genuinely NEW divergence is what actually fails this job.
+    #
+    # LCLI-648: as of the 1.4.2 pin this job's DIFFERENTIAL IS EMPTY — the pinned floor and
+    # `latest` are the same release, so it currently compares 1.4.2 against itself and cannot
+    # fail. It is suspended, not broken, and heals on its own when the next Bun ships; the
+    # reviewer's finding on LCLI-648 is why this line exists rather than leaving a green job
+    # that measures nothing with nothing saying so.
     name: config test (newest Bun)
     if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
     runs-on: ubuntu-latest
