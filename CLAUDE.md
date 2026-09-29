@@ -212,13 +212,19 @@ makes the `cancelled` push runs above readable as green-but-for-one-cancelled-jo
 rather than as failures.
 
 **`dev` is gated; `main` is not.** Ruleset `require-ci-on-dev` (id `22838594`)
-requires five contexts as of 2026-09-15: `docker e2e harness (real lore + backlog
-binaries)`, `lint · typecheck · test (windows-latest)`, `lint · typecheck · test
-(ubuntu-latest)`, `Tracker integrity`, and `lore check (docs gate)` (LCLI-504).
-Two of those carry U+00B7, not an ASCII period — a required context is matched by
-RENDERED job name, and one that does not match is ABSENT rather than red, which
-blocks `dev` silently until an admin notices. Verify a new context by codepoint
-against a real run before writing it into the ruleset.
+requires a set of status contexts, and nothing in this repository compares prose
+to the ruleset — so **read the set live, and name no count carried forward**:
+`gh api repos/opum-ai/lore-cli/rulesets/22838594`. Read live 2026-09-29 it
+carried six: `docker e2e harness (real lore + backlog binaries)`,
+`lint · typecheck · test (windows-latest)`, `Tracker integrity`,
+`lint · typecheck · test (ubuntu-latest)`, `lore check (docs gate)` (LCLI-504)
+and `compile smoke (ubuntu)`. The paragraph here previously said "five as of
+2026-09-15" and the `ci.yml` header said "3" read 2026-09-11 — dated
+observations, not current ones, which is why the count is the part that does not
+survive. The list above is dated too, and the query is the source of truth. Two contexts carry U+00B7, not an ASCII period — a required
+context is matched by RENDERED job name, and one that does not match is ABSENT
+rather than red, which blocks `dev` silently until an admin notices. Verify a
+new context by codepoint against a real run before writing it into the ruleset.
 `gh api repos/opum-ai/lore-cli/rules/branches/main` returns `[]`, so the honest
 phrasing for a promotion is "no checks are configured on `main`; they ran and
 passed on `dev`" — never "checks passed".
