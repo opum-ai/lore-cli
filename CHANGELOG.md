@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The pinned Bun moved from `1.3.14` to `1.4.2`** (LCLI-648, pair with quest-cli QCLI-411).
+  `1.3.14` mis-parses a TS contextual keyword — `declare`, `type`, `abstract`, `namespace`,
+  `module`, `global`, `interface` — that starts a larger expression, desynchronising the parser's
+  scope tracking and panicking the runtime: `oven-sh/bun#31239`'s repro exits 133 with no output
+  on `1.3.14` and exits 0 on `1.4.2`, and `test/bun-declare-binding.test.ts` pins that on the
+  pinned runtime. `engines.bun` moves with the pin to `>=1.4.2`, so the older runtime is no
+  longer the supported floor. Two upstream behaviour changes ride along. `Bun.Glob` now descends
+  into dot-directories by default — `.github/workflows/*` returns 0 matches on `1.3.14` and 4 on
+  `1.4.2` (`dot: true` returned 4 on both) — which changes what a dotted `lore replace --in`
+  pattern matches, previously nothing. And `Bun.TOML.parse` rejects an imprecise bare integer
+  literal that `1.3.14` silently rounded; both runtimes still surface a stable `validation` error
+  naming the config file, and `test/config.test.ts` covers each shape.
 - **A RESUMED `promote-latest` run now refuses when any package's current `latest` is newer than
   `--version`** (LCLI-638, twin of quest-cli QCLI-405). The LCLI-631 gate validated the record a
   FRESH run was about to write, and a resume reuses the record the first run wrote instead — so

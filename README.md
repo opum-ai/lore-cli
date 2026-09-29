@@ -151,7 +151,7 @@ from the private source repository through the immutable composite action:
 - uses: opum-ai/lore-cli/.github/actions/strict-check@<full-commit-sha>
 ```
 
-The private composite action installs Bun 1.3.14 and this action revision's
+The private composite action installs Bun 1.4.2 and this action revision's
 frozen dependencies, installs the published JSON-capable `backlog.md` version
 pinned by the Docker E2E harness, then runs `lore validate --strict` and `lore
 check --strict` against the caller workspace. Consumer workflows must replace
