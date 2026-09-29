@@ -46,7 +46,7 @@ about the world, so it can be written at any moment.
 A fourth line, `` `0.6.2` was therefore published with
 `scripts/publish-release.sh` ``, carries the same string and is **not** a stale
 site: it narrates a past release and is still true at 0.7.0, exactly as
-`1.3.14` and `>=1.49.0` are. The distinction is not bookkeeping — a predicate
+`1.4.2` and `>=1.49.0` are. The distinction is not bookkeeping — a predicate
 built to the count rather than to the claim each line makes will either miss the
 `Status:` line or condemn the historical one.
 
@@ -164,7 +164,7 @@ Two alternatives were rejected, and the reasons are worth keeping:
 - **quest-cli's rule — no version token anywhere outside a region — is
   unusable here.** It is free for them because their file has zero tokens. This
   README carries nine legitimate non-package tokens (Backlog.md `>=1.49.0`, Bun
-  `1.3.14`, historical `0.2.0`/`0.6.x`). The same rule is a clean check there
+  `1.4.2`, historical `0.2.0`/`0.6.x`). The same rule is a clean check there
   and nine false positives here. Neither side is being lax; the rule's cost
   depends entirely on the file it runs against.
 - **A closed set of this package's own released values was withdrawn.** It reads

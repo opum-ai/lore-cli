@@ -1,14 +1,14 @@
 # Development
 
-## Runtime requirement: Bun 1.3.14 (pinned)
+## Runtime requirement: Bun 1.4.2 (pinned)
 
-lore pins **Bun `1.3.14`** as a single source of truth, declared on every surface
+lore pins **Bun `1.4.2`** as a single source of truth, declared on every surface
 that selects a toolchain:
 
 - [`.bun-version`](.bun-version) — read by `oven-sh/setup-bun` in CI and by `bun`
   itself.
-- [`package.json`](package.json) — `packageManager: "bun@1.3.14"` and
-  `engines.bun: ">=1.3.14"`.
+- [`package.json`](package.json) — `packageManager: "bun@1.4.2"` and
+  `engines.bun: ">=1.4.2"`.
 
 CI asserts this value before any build (see M0 / LCLI-8). The pin is enforced so
 lore behaves identically across every developer, CI runner, and shipped artifact —
@@ -16,14 +16,30 @@ an unpinned runtime is an undeclared dependency (see
 [ADR-0001](docs/adr/0001-runtime-build-distribution.md) and
 [tech-stack §1](docs/reference/tech-stack.md)).
 
-### Why `1.3.14` specifically
+### Why `1.4.2` specifically
 
-lore pins **`1.3.14`** because Windows ARM64 support requires both a native Bun
-runtime and the `bun-windows-arm64` compile target. Bun `1.2.23` published no
-Windows ARM64 runtime; the platform assets begin in the 1.3 line. `1.3.14` is
-the exact release used to cross-compile and qualify the new target. Lore does
-not use Backlog.md's browser/websocket path, so the older upstream pin made for
-that path does not constrain Lore's CLI runtime.
+lore pins **`1.4.2`** to stay on the same runtime as `quest-cli`, which moved
+for a parser correction (LCLI-648, 2026-09-29; OPAG-734, quest-cli QCLI-411).
+On `1.3.14` a TS contextual keyword — `declare`, `type`, `abstract`, `namespace`,
+`module`, `global`, `interface` — starting a larger expression desynchronises the
+parser's scope tracking and can **panic the runtime** (oven-sh/bun#31239, fixed
+in the 1.4 line):
+
+```sh
+# 1.3.14: exits 133 with a panic; 1.4.2: exits 0
+bun -e 'new Bun.Transpiler({ loader: "ts" })
+  .transformSync("declare = (...t) => R;e((a) => {(u=> uge);\r\n})")'
+```
+
+`test/bun-declare-binding.test.ts` pins that on the pinned runtime, so the floor
+carries its own reason. Lore has no such binding in its source — this is runtime
+alignment and currency, not a repaired defect here.
+
+The previous pin, `1.3.14`, was chosen for Windows ARM64: that target needs both
+a native Bun runtime and the `bun-windows-arm64` compile target, Bun `1.2.23`
+published no Windows ARM64 runtime, and the platform assets begin in the 1.3
+line. That requirement is unchanged by this bump, and `1.3.14` remains the
+release the first Windows ARM64 cross-compile was qualified on.
 
 ### Bumping the pin
 

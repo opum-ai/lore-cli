@@ -163,7 +163,7 @@ function benchmarkReport(platform: NodeJS.Platform, arch: string): LadybugBenchm
     mode: "qualification",
     toolchain: {
       loreVersion: "0.0.0",
-      bunVersion: "1.3.14",
+      bunVersion: "1.4.2",
       nodeVersion: "22.0.0",
       ladybugPackageVersion: "0.19.0",
       ladybugRuntimeVersion: "0.19.0",
@@ -303,7 +303,7 @@ function packageReport(platform: (typeof LADYBUG_QUALIFICATION_PLATFORMS)[number
       distribution: platform.distribution,
       os: platform.os,
       cpu: platform.cpu,
-      bun: "1.3.14",
+      bun: "1.4.2",
       node: "v22.0.0",
     },
     repository: { commit: COMMIT },
@@ -361,7 +361,7 @@ function concurrencyReport() {
     ),
   ];
   const report = createLadybugConcurrencyEvidenceReport(records, { commit: COMMIT, dirty: false });
-  return { ...report, toolchain: { ...report.toolchain, bun: "1.3.14" } };
+  return { ...report, toolchain: { ...report.toolchain, bun: "1.4.2" } };
 }
 
 function record(

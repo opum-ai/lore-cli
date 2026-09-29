@@ -203,8 +203,11 @@ jobs:
             # weakening the ordinary matrix's per-test timeout.
             bun test --isolate --timeout=40000
           elif [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
-            # Bun 1.3.14 can race Linux epoll registration when isolated files
-            # concurrently construct streams over the process stdio fds. Keep
+            # Bun can race Linux epoll registration when isolated files
+            # concurrently construct streams over the process stdio fds. Both
+            # observations behind this guard were taken on the 1.3.14 floor;
+            # LCLI-648 moved the pin to 1.4.2 without re-measuring the race, so
+            # the retry stays until someone does. Keep
             # file isolation and serialization, and retry once only when the
             # first bounded run proves that exact runtime failure. Product-test
             # failures remain fatal without a retry.
@@ -232,7 +235,7 @@ jobs:
               exit 0
             fi
             if grep -Fq "error: EEXIST: file already exists, epoll_ctl" "${lore_bun_log}" || [[ "${lore_bun_status}" -eq 124 ]]; then
-              echo "::warning::Retrying once after the known Bun 1.3.14 Linux epoll runtime race (exit ${lore_bun_status})"
+              echo "::warning::Retrying once after the known Linux epoll runtime race, observed on Bun 1.3.14 (exit ${lore_bun_status})"
               timeout --kill-after=10s 6m bun test --isolate --max-concurrency=1 --timeout=10000
             else
               exit "${lore_bun_status}"
@@ -432,6 +435,12 @@ jobs:
     # literal is handled (silently rounded then caught by lore's own check, vs. rejected by Bun's
     # parser itself before lore ever sees a value) — config.test.ts's assertions are written to
     # accept either observed shape, so a genuinely NEW divergence is what actually fails this job.
+    #
+    # LCLI-648: as of the 1.4.2 pin this job's DIFFERENTIAL IS EMPTY — the pinned floor and
+    # `latest` are the same release, so it currently compares 1.4.2 against itself and cannot
+    # fail. It is suspended, not broken, and heals on its own when the next Bun ships; the
+    # reviewer's finding on LCLI-648 is why this line exists rather than leaving a green job
+    # that measures nothing with nothing saying so.
     name: config test (newest Bun)
     if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
     runs-on: ubuntu-latest

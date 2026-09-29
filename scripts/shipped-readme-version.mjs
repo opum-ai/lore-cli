@@ -60,7 +60,7 @@
  *
  *   NOT quest-cli's rule ("no version token anywhere outside a region"). It is free for them —
  *   their file has zero tokens — and unusable here: this README carries nine legitimate
- *   non-package version tokens (Backlog.md `>=1.49.0`, Bun `1.3.14`, historical `0.2.0`/`0.6.x`).
+ *   non-package version tokens (Backlog.md `>=1.49.0`, Bun `1.4.2`, historical `0.2.0`/`0.6.x`).
  *   The same rule is a clean check there and nine false positives here.
  *
  *   NOT a closed set of this package's own released values. That reads tighter and is wrong: it
