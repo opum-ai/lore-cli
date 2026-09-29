@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A RESUMED `promote-latest` run now refuses when any package's current `latest` is newer than
+  `--version`** (LCLI-638, twin of quest-cli QCLI-405). The LCLI-631 gate validated the record a
+  FRESH run was about to write, and a resume reuses the record the first run wrote instead — so
+  nothing compared the registry as it reads NOW with `--version`, and a run resumed after something
+  else moved `latest` ahead would move it backwards, the move the ADR refuses. `planPromotion` now
+  makes the same numeric comparison on the resume path, before any write, naming the package and
+  both versions; a package already at `--version` stays accepted, which is the partial state a
+  resume exists for. On a fresh run, a package whose current `latest` is not a plain `X.Y.Z` is now
+  explained in the registry's own terms rather than `validateRecord`'s "recorded prior latest ...",
+  which named a value nothing had recorded yet.
 - **Every release script now runs its CLI when it is invoked through a symlinked path** (LCLI-637,
   twin of quest-cli QCLI-404). Six scripts guard `main()` — `launcher-equivalence`, `pair-receipt`,
   `promote-latest`, `version-parity`, `github-release` and `check-breaking-bump` — and all six
