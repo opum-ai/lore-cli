@@ -29,7 +29,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join, normalize } from "node:path";
+import { delimiter, join, posix } from "node:path";
 import * as yaml from "js-yaml";
 
 const WORKFLOW_PATH = join(import.meta.dir, "..", ".github", "workflows", "release.yml");
@@ -1138,7 +1138,12 @@ function loadSet(repoRoot: string, entry: string): string[] {
   while (queue.length > 0) {
     const current = queue.pop() as string;
     for (const specifier of relativeImports(repoRoot, current)) {
-      const resolved = normalize(join(dirname(current), specifier));
+      // POSIX arithmetic on purpose, NOT node:path's default: these paths are compared against
+      // workflow text, which always uses "/". Node's `join`/`normalize` emit "\" on Windows, so the
+      // resolved import never matched the sparse listing there and this gate reported a sibling
+      // that really was listed -- three tests red on windows-latest and green everywhere else
+      // (measured on opum-ai/lore-cli#389's run 36505443110).
+      const resolved = posix.normalize(posix.join(posix.dirname(current), specifier));
       if (seen.has(resolved) || !existsSync(join(repoRoot, resolved))) continue;
       seen.add(resolved);
       queue.push(resolved);
@@ -1254,6 +1259,11 @@ describe("release.yml: every scripts/ file a job runs is in that job's checkout 
       "breaking-bump step 2 runs scripts/check-breaking-bump.mjs, but no earlier checkout in the job brings scripts/is-main.mjs, which it imports",
       "publish step 3 runs parity/scripts/version-parity.mjs, but no earlier checkout in the job brings parity/scripts/is-main.mjs, which it imports",
     ]);
+    // The paths travelling through this gate are workflow text, so they always use "/": a resolved
+    // import carrying "\" can never match a sparse listing, whatever the host separator is. That is
+    // what reddened three tests on windows-latest only (run 36505443110), so the convention is
+    // pinned here rather than left to whichever node:path flavour the runner uses.
+    expect(uncheckedOutScripts(withoutSibling).join(" ")).not.toContain("\\");
     // And with the sibling listed, the same scan is clean -- so the assertion above is about the
     // entry, not about this file being unable to see imports at all.
     expect(uncheckedOutScripts(jobs)).toEqual([]);
