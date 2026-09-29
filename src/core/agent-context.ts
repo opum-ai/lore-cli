@@ -1,7 +1,6 @@
 /** Deterministic, bounded evidence compilation for `lore agent context`. */
 
 import { createHash } from "node:crypto";
-import GithubSlugger from "github-slugger";
 import type { Heading, RootContent } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { LoreError } from "../errors";
@@ -10,6 +9,7 @@ import {
   type AgentProfile,
   type AgentProfileReference,
   type AgentProfileSnapshot,
+  anchoredHeadings,
   DEFAULT_AGENT_MAX_TOKENS,
   findAgentProfile,
   validateAgentProfileReferences,
@@ -509,13 +509,13 @@ const CAPACITY_MEASUREMENT_SCORE = 1;
  * - A declared reference that does not resolve in this bundle: a qualified `member::id` reference
  *   that is meaningful only under `--workspace`, which {@link validateAgentProfileReferences}
  *   deliberately skips too.
- * - A reference whose ANCHOR the renderer cannot resolve, even though the validator accepted it.
- *   `regionForReference` sees top-level headings only, while the validator's mdast walk sees every
- *   node, so a heading nested in a blockquote or list item — or a mistyped anchor on a qualified
- *   reference, which the validator skips entirely — resolves for the validator and throws for the
- *   renderer. Declining keeps `lore check` from converting that pre-existing disagreement into an
- *   uncaught exit `1` with no report at all (LCLI-642 review F1: `lore agent context` on such a
- *   profile is the defect that crash belongs to; it is filed separately).
+ * - A reference whose ANCHOR the renderer cannot resolve. Since LCLI-647 the renderer resolves every
+ *   heading the validator does — nested headings included — so this is the anchor the validator
+ *   never saw: a mistyped anchor on a qualified reference, which {@link
+ *   validateAgentProfileReferences} skips entirely, and `regionForReference` now rejects with a
+ *   classifiable `validation` error. Declining keeps `lore check` from turning that into a finding
+ *   about a profile it cannot read in this bundle at all: history and the reasoning are in LCLI-642
+ *   review F1 and LCLI-647.
  */
 export function measureAgentProfileCapacity(
   profile: AgentProfile,
@@ -1006,29 +1006,56 @@ interface MarkdownRegion {
   readonly breadcrumb?: string;
 }
 
+/**
+ * The region an anchor names: from the heading carrying that slug to the next heading that closes
+ * it (LCLI-647, DEC-22 A). Nested headings are resolved, and a nested section is scoped to its
+ * container: the region never runs past the container the heading sits in, and a heading inside a
+ * nested container does not close a section that opened outside it.
+ *
+ * The heading enumeration and the slug sequence are {@link anchoredHeadings}' — the validator's own
+ * — so an anchor `headingSlugs` admits always resolves here. Before that, this function read only
+ * top-level headings and threw a PLAIN `Error` when the search missed, which the CLI reported as an
+ * uncaught exit 1 with zero bytes of stdout for a profile the validator had accepted (LCLI-642
+ * review F1).
+ */
 function regionForReference(body: string, anchor?: string): MarkdownRegion {
   if (anchor === undefined) return { body };
-  const tree = fromMarkdown(body);
-  const slugger = new GithubSlugger();
-  const headings = tree.children.filter((child): child is Heading => child.type === "heading");
-  for (const heading of headings) {
-    if (slugger.slug(nodeText(heading)) !== anchor) continue;
-    const start = offsetStart(heading);
-    let end = body.length;
-    for (const later of headings) {
-      if (offsetStart(later) > start && later.depth <= heading.depth) {
-        end = offsetStart(later);
-        break;
-      }
-    }
-    return { body: body.slice(start, end), breadcrumb: breadcrumbAt(tree.children, heading) };
+  const headings = anchoredHeadings(body);
+  const match = headings.find((entry) => entry.slug === anchor);
+  if (match === undefined)
+    throw new LoreError(
+      "validation",
+      `the profile reference anchor #${anchor} matches no heading in the referenced document`,
+      "correct the anchor, or drop the #anchor to include the whole document",
+      { anchor },
+    );
+  const start = offsetStart(match.heading);
+  const limit = match.scopeEnd ?? body.length;
+  let end = limit;
+  for (const later of headings) {
+    const laterStart = offsetStart(later.heading);
+    if (laterStart <= start || laterStart >= limit) continue;
+    if (later.heading.depth > match.heading.depth) continue;
+    // Only a heading in the SAME scope closes the section: one nested deeper inside this
+    // container's content is part of it, and one outside the container is past the limit already.
+    if (later.scopeEnd !== match.scopeEnd) continue;
+    end = laterStart;
+    break;
   }
-  throw new Error(`validated heading disappeared: ${anchor}`);
+  return { body: body.slice(start, end), breadcrumb: breadcrumbAt(headings, match.heading) };
 }
 
 function partitionMarkdown(body: string, parentBreadcrumb?: string): MarkdownRegion[] {
   const tree = fromMarkdown(body);
   if (tree.children.length === 0) return [];
+  // Partitioning stays at TOP-LEVEL heading boundaries (LCLI-647): a partition must slice complete
+  // blocks, and a version of this that split at nested headings too would cut a blockquote or list
+  // item mid-syntax and change the bytes every existing top-level partition yields. Nested headings
+  // are handled where they are addressed — `regionForReference` resolves them as anchors — and here
+  // they remain part of the partition that encloses them, which is what keeps their content in it.
+  const topLevelHeadings: TrailHeading[] = tree.children
+    .filter((child): child is Heading => child.type === "heading")
+    .map((heading) => ({ heading }));
   const regions: MarkdownRegion[] = [];
   let startIndex = 0;
   let breadcrumb = parentBreadcrumb;
@@ -1038,7 +1065,7 @@ function partitionMarkdown(body: string, parentBreadcrumb?: string): MarkdownReg
     if (index > startIndex) {
       regions.push(sliceChildren(body, tree.children.slice(startIndex, index), breadcrumb));
     }
-    breadcrumb = breadcrumbAt(tree.children, child, parentBreadcrumb);
+    breadcrumb = breadcrumbAt(topLevelHeadings, child, parentBreadcrumb);
     startIndex = index;
   }
   if (startIndex < tree.children.length) {
@@ -1053,15 +1080,41 @@ function sliceChildren(body: string, children: readonly RootContent[], breadcrum
   return { body: body.slice(offsetStart(first), offsetEnd(last)), ...(breadcrumb === undefined ? {} : { breadcrumb }) };
 }
 
-function breadcrumbAt(children: readonly RootContent[], target: Heading, prefix?: string): string {
-  const stack: Heading[] = [];
-  for (const child of children) {
-    if (child.type !== "heading") continue;
-    while ((stack.at(-1)?.depth ?? 0) >= child.depth) stack.pop();
-    stack.push(child);
-    if (child === target) break;
+/**
+ * What {@link breadcrumbAt} needs of a heading: the node, and its container's end when it is
+ * nested. {@link AnchoredHeading} satisfies it structurally, and `partitionMarkdown` builds bare
+ * entries for the top-level headings of the region it is splitting.
+ */
+interface TrailHeading {
+  readonly heading: Heading;
+  readonly scopeEnd?: number;
+}
+
+/**
+ * The heading trail to `target`, from the ordered `headings` list.
+ *
+ * Since LCLI-647 `regionForReference` passes EVERY heading (nested included), so a nested target's
+ * breadcrumb names its ancestors inside the blockquote or list item; `partitionMarkdown` passes the
+ * top-level headings of the region it is splitting, which is its own scope and unchanged.
+ *
+ * Two pops, and the second is what scope-awareness means here: a heading trail is a depth stack
+ * (deeper-or-equal tops pop), AND an entry whose container has already ended stops parenting — a
+ * heading nested in a blockquote does not become the ancestor of a top-level heading that merely
+ * follows the blockquote.
+ */
+function breadcrumbAt(headings: readonly TrailHeading[], target: Heading, prefix?: string): string {
+  const stack: TrailHeading[] = [];
+  for (const entry of headings) {
+    while (stack.length > 0) {
+      const top = stack[stack.length - 1] as TrailHeading;
+      const containerEnded = top.scopeEnd !== undefined && top.scopeEnd <= offsetStart(entry.heading);
+      if (top.heading.depth < entry.heading.depth && !containerEnded) break;
+      stack.pop();
+    }
+    stack.push(entry);
+    if (entry.heading === target) break;
   }
-  const own = stack.map((heading) => oneLine(nodeText(heading))).join(" > ");
+  const own = stack.map((entry) => oneLine(nodeText(entry.heading))).join(" > ");
   return [prefix, own].filter((part): part is string => part !== undefined && part !== "").join(" > ");
 }
 

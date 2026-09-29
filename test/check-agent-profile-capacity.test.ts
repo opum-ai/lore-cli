@@ -15,17 +15,24 @@
  *                   (it comes from the same comparison); the printed-line case on a fitting
  *                   fixture -> stays GREEN.
  *   [silent]        1 case: a profile that fits -> stays GREEN.
- *   [unmeasurable]  2 cases: a profile this bundle cannot measure (a qualified reference that does
- *                   not resolve, and an anchor the renderer cannot resolve) -> stay GREEN.
+ *   [measurable]    1 case: an anchor nested in a blockquote is measured like any other, because
+ *                   renderer and validator share one heading enumeration (LCLI-647, DEC-22 A;
+ *                   before the fix this profile was declined) -> RED if the renderer regresses to
+ *                   top-level-only headings and the profile declines again.
+ *   [unmeasurable]  3 cases: a profile this bundle cannot measure (a qualified reference that does
+ *                   not resolve, and a qualified reference whose anchor cannot resolve) -> stay
+ *                   GREEN.
  *   [severity]      2 cases: the DEC-11 severity plumbing. The builder-level case is hand-built and
  *                   stays GREEN; the command-level case also asserts a finding exists, so it goes
  *                   RED with the comparison.
  *   [pack-size]     1 case: the measurement counts what a real pack pays -> RED if the score
  *                   annotation is dropped from it.
  *
- * Measured against that map, forcing the comparison false reddens 4 of 9 (both [capacity], the
+ * Measured against that map (re-measured 2026-09-29 over the 11 cases here, after LCLI-647 replaced
+ * the old decline case): forcing the comparison false reddens 4 of 11 (both [capacity], the
  * over-capacity [count], the command-level [severity]); forcing the annotation off reddens only
- * [pack-size]. The map is written out because predicting the subset from the file is the point.
+ * [pack-size], 1 of 11. The map is written out because predicting the subset from the file is the
+ * point.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -182,16 +189,30 @@ describe("lore check gates agent profile capacity (LCLI-642, DEC-11)", () => {
     expect(stdout.text()).toContain("Agent profiles: 1 read, 0 over capacity");
   });
 
-  test("[unmeasurable] an anchor only the validator can see is declined, not thrown on (review F1)", () => {
-    // A heading nested in a blockquote is visible to `validateAgentProfileReferences` (it walks every
-    // mdast node) and invisible to the renderer (it reads top-level headings only), so the reference
-    // validates and then throws — an uncaught exit 1 with no report, which `lore check` must never
-    // turn into. The profile is counted unmeasurable instead.
+  test("[measurable] an anchor nested in a blockquote is measured, not declined (review F1, LCLI-647)", () => {
+    // This case used to assert the opposite. A heading nested in a blockquote WAS visible only to
+    // `validateAgentProfileReferences` (it walked every mdast node) while the renderer read
+    // top-level headings only, so the reference validated and then threw — an uncaught exit 1 with
+    // no report — and `lore check` could only decline to measure it. Since LCLI-647 (DEC-22 A) both
+    // readers share one heading enumeration, the profile is measured like any other.
     writeDoc(
       "reference/nested.md",
       "---\ntype: Reference\ntitle: Nested\n---\n\n# Nested\n\n> ## Quoted heading\n>\n> Body.\n",
     );
     writeProfile("nested", 4000, ["reference/nested#quoted-heading"]);
+    const { code, report } = check();
+    expect(report.agentProfileCounts).toEqual({ read: 1, overCapacity: 0, unmeasurable: 0 });
+    expect(report.findings).toEqual([]);
+    expect(code).toBe(EXIT_OK);
+  });
+
+  test("[unmeasurable] a qualified reference whose anchor cannot resolve is declined, not thrown on", () => {
+    // The remaining anchor-shape decline after LCLI-647: the validator deliberately skips qualified
+    // `member::id` references, so a typo'd anchor on one reaches the renderer, which refuses with a
+    // classifiable `validation` error. `lore check` counts the profile unmeasurable rather than
+    // turning that into a finding about a declaration it cannot read in this bundle.
+    writeDoc("reference/big.md", referenceDoc("Big", 200));
+    writeProfile("typo", 4000, ["other-member::reference/big#no-such-heading"]);
     const { code, report } = check();
     expect(report.agentProfileCounts).toEqual({ read: 0, overCapacity: 0, unmeasurable: 1 });
     expect(report.findings).toEqual([]);

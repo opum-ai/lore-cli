@@ -7,10 +7,11 @@
 import { type Dirent, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join, posix } from "node:path";
 import GithubSlugger from "github-slugger";
+import type { Heading, Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { z } from "zod";
 import { errnoCode, LoreError } from "../errors";
-import { type BundleGraph, nodeText, walkMdast } from "./bundle";
+import { type BundleGraph, nodeText } from "./bundle";
 import { idFromPath } from "./concept";
 import { compareCodeUnits } from "./order";
 
@@ -439,14 +440,72 @@ function validateDelegateGraph(profiles: ReadonlyMap<string, AgentProfile>): voi
   for (const name of profiles.keys()) visit(name);
 }
 
+/**
+ * One heading in a concept body, in document order, with the GitHub-compatible slug the slugger
+ * assigns it. Nested headings — inside a blockquote, a list item or a footnote — are included:
+ * DEC-22 (accepted 2026-09-29, option A) rules that a nested heading IS a valid anchor target, so
+ * the enumeration is every heading the walk sees, not only the top-level ones.
+ */
+export interface AnchoredHeading {
+  readonly heading: Heading;
+  readonly slug: string;
+  /**
+   * End offset of the nearest non-heading container (a blockquote, list item, footnote, …) the
+   * heading sits inside, or `undefined` when the heading is top-level. A nested heading's section
+   * cannot outlive its container (LCLI-647): its region stops there, and it stops parenting headings
+   * that begin after the container ends.
+   */
+  readonly scopeEnd?: number;
+}
+
+/**
+ * Every heading in a concept body, in document order, with its slug — the ONE slug sequence
+ * {@link headingSlugs} (the validator) and `regionForReference` in `agent-context.ts` (the
+ * renderer) both read.
+ *
+ * Sharing the enumeration is the repair, not a tidiness: they used to walk differently — the
+ * validator every mdast node, the renderer top-level children only — so a heading nested in a
+ * blockquote or list item validated and then threw `validated heading disappeared` out of
+ * `lore agent context` as an uncaught exit 1 with empty stdout (LCLI-642 review F1, LCLI-647).
+ * One walk and one slugger means a slug cannot exist for one reader and not the other.
+ *
+ * Iterative rather than recursive for the same reason `walkMdast` is: document depth is input, and
+ * a recursive walk would turn a pathological document into a stack overflow.
+ */
+export function anchoredHeadings(body: string): readonly AnchoredHeading[] {
+  const slugger = new GithubSlugger();
+  const headings: AnchoredHeading[] = [];
+  const stack: Array<{ node: Nodes; scopeEnd: number | undefined }> = [
+    { node: fromMarkdown(body), scopeEnd: undefined },
+  ];
+  while (stack.length > 0) {
+    const { node, scopeEnd } = stack.pop() as { node: Nodes; scopeEnd: number | undefined };
+    if (node.type === "heading") {
+      headings.push({
+        heading: node,
+        slug: slugger.slug(nodeText(node)),
+        ...(scopeEnd === undefined ? {} : { scopeEnd }),
+      });
+    }
+    if ("children" in node) {
+      const childScope = node.type === "root" || node.type === "heading" ? scopeEnd : nodeEndOffset(node);
+      for (let index = node.children.length - 1; index >= 0; index--) {
+        const child = node.children[index];
+        if (child !== undefined) stack.push({ node: child, scopeEnd: childScope });
+      }
+    }
+  }
+  return headings;
+}
+
+/** The end offset of a node's source range, or `undefined` when the parser recorded no position. */
+function nodeEndOffset(node: Nodes): number | undefined {
+  return node.position?.end.offset;
+}
+
 /** Every GitHub-compatible heading slug in a concept body; shared by workspace reference expansion. */
 export function headingSlugs(body: string): ReadonlySet<string> {
-  const slugger = new GithubSlugger();
-  const slugs = new Set<string>();
-  walkMdast(fromMarkdown(body), (node) => {
-    if (node.type === "heading") slugs.add(slugger.slug(nodeText(node)));
-  });
-  return slugs;
+  return new Set(anchoredHeadings(body).map((entry) => entry.slug));
 }
 
 function reason(cause: unknown): string {
