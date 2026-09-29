@@ -35,9 +35,11 @@
  *
  * The bulk snapshot is not always a complete existence oracle, though (LCLI-375): a tracker can
  * silently drop a live, terminal-status task from its bulk listing while still resolving it
- * correctly per-task (confirmed against Quest 0.2.7-0.3.0, QCLI-165, fixed in 0.3.1 — but lore-cli's
- * own `MIN_QUEST_VERSION` floor sits below that fix, so this stays a real gap independent of any one
- * installed Quest). `runOrphans` therefore confirms every CANDIDATE `danglingLink` against a live
+ * correctly per-task (confirmed against Quest 0.2.7-0.3.0, QCLI-165, fixed in 0.3.1 — and no
+ * installable pair can exhibit it any more: the pair lock (LCLI-650) accepts exactly lore's own
+ * version, every one of which is past that fix; the confirmation stays as the contract-level
+ * safeguard rather than a workaround for an old binary). `runOrphans` therefore confirms every
+ * CANDIDATE `danglingLink` against a live
  * per-task view before trusting it — bounded to the *distinct suspect ids* a candidate actually
  * names, never every task in the repo, and skipped entirely when `danglingLinks` isn't even
  * requested (`--tasks-only`) or there are no candidates to confirm (see {@link confirmDanglingLinks}).
@@ -293,8 +295,9 @@ function classify(concepts: Iterable<Concept>, snapshot: readonly BacklogTask[])
  * LCLI-375: confirm each CANDIDATE dangling link against a live per-task view before trusting it, since
  * a tracker's bulk listing is not always a complete existence oracle — Quest 0.2.7-0.3.0's bare
  * `task list` silently drops every terminal-status task, while `task view`/`search` still resolve them
- * correctly (fixed upstream in Quest 0.3.1, QCLI-165; lore-cli's own floor, `MIN_QUEST_VERSION`, is
- * below that fix, so this stays a real gap regardless of what any one installed Quest does).
+ * correctly (fixed upstream in Quest 0.3.1, QCLI-165; since the pair lock (LCLI-650) a runnable
+ * quest is exactly lore's own version, all of which are past that fix — the confirmation stays as
+ * the contract-level safeguard regardless).
  *
  * Resolves only the DISTINCT ids `candidates` actually names (never every task in the repo), reusing
  * {@link resolveTaskDetails}'s existing bounded-concurrency, identity-verified `viewTask` machinery —

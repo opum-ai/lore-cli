@@ -52,9 +52,10 @@ import type { TrackerAdapter } from "./tracker";
 export const MIN_BACKLOG_VERSION = "1.49.0";
 
 /**
- * The stable discriminator on a below-the-floor rejection (LCLI-370), mirroring
- * `QUEST_VERSION_FLOOR_CODE` in `./quest` exactly: a caller acts on THIS failure specifically
- * without matching message text. Before this code existed, a below-the-floor Backlog.md and a
+ * The stable discriminator on a below-the-floor rejection (LCLI-370), the same shape quest's
+ * pair-mismatch rejection uses (`QUEST_VERSION_PAIR_MISMATCH_CODE` in `./quest`): a caller acts on
+ * THIS failure specifically without matching message text. Backlog's floor stays a floor -- only
+ * lore and quest share a version and are locked to it (LCLI-650). Before this code existed, a below-the-floor Backlog.md and a
  * merely-uninitialized one (`noBacklogProject`) both surfaced as the same undiscriminated
  * `validation` LoreError, so `verifyBackendReadiness` could treat a below-floor Quest as fatal
  * before persisting the selection but never a below-floor Backlog.md -- an explicit

@@ -4,60 +4,84 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { QUEST_STATUS_FLOW_HINTS } from "../core/reconcile";
 import { type ErrorType, errnoCode, LoreError } from "../errors";
+import { VERSION } from "../meta";
 import type { BacklogComment, BacklogCriterion, BacklogTask, BacklogTaskDetail, ListTasksOptions } from "./backlog";
-import { atLeast } from "./semver";
+import { compareSemver, parseSemver } from "./semver";
 import type { TrackerAdapter, TrackerCapability } from "./tracker";
 
 export const QUEST_SCHEMA_VERSION = 1;
 export const QUEST_TIMEOUT_ENV_VAR = "LORE_QUEST_TIMEOUT_MS";
 export const DEFAULT_QUEST_TIMEOUT_MS = 30_000;
-/**
- * The oldest Quest whose JSON contract this adapter is qualified against. A **minimum floor**, not a
- * bounded set (LCLI-356).
- *
- * LCLI-353 deliberately froze an exact-match allowlist (`["0.2.7", "0.2.8"]`) and its tests asserted
- * rejection of anything else. That design has a cost it was chosen without: Lore and Quest release
- * independently, so the set went stale the moment Quest shipped 0.2.9 — the two current published
- * packages could not be used together at all, and every later Quest patch would need a fresh Lore
- * release before the pair worked again. Reversed by product-owner decision on 2026-08-28.
- *
- * A floor is safe here because the version is NOT what actually enforces compatibility. Every single
- * Quest call already validates the envelope structurally — `schemaVersion === {@link
- * QUEST_SCHEMA_VERSION}`, the exact `kind`, the presence of `data`, and {@link REQUIRED_COMMANDS}
- * through the manifest — so a Quest that broke the contract would be rejected by those checks with a
- * `drift` diagnostic naming what changed, whether or not its version number happened to sit inside
- * some allowlist. The floor's job is only to give a clearly-too-old Quest a better message than a
- * mid-call structural failure would.
- */
-export const MIN_QUEST_VERSION = "0.2.7";
 
 /**
- * The stable discriminator on a below-the-floor rejection, so a caller can act on THAT failure
- * specifically without matching message text (LCLI-356).
+ * The stable discriminator on a pair-version rejection, so a caller can act on THAT failure
+ * specifically without matching message text.
  *
- * The distinction it enables is load-bearing: an installed Quest below the floor is a pairing that
- * cannot work at all, and no action inside the repository fixes it — the operator must install a
- * different Quest. Every other probe failure ("workspace is not initialized", "not on PATH") is one
- * setup step away in the same directory, which is exactly why LORE-319 made the capability check
- * advisory rather than fatal. `lore init` withholds a tracker selection for the first and kept
- * reporting the second as a warning — until LCLI-376: an uninitialized workspace produced a
- * SILENT broken state (`backend = "quest"` persisted, `lore check` staying green) rather than the
- * loud, later failure "one setup step away" implied, so the user reversed that half of LORE-319's
- * call. "Not on PATH" (the package genuinely missing) is unchanged and stays advisory here.
+ * The rule (LCLI-650; DEC-31 adopting opum-doc ADR ODOC-328,
+ * `lock-lore-and-quest-to-their-exact-pair-version-at-runtime`): **lore X runs only against quest X**,
+ * compared on the full version. Article 3 clause 1 of the constitution keeps both numbers identical
+ * in every release, patches included, so a correct install never trips this. A mismatch FAILS rather
+ * than warns — the message names both installed versions and the side to upgrade.
+ *
+ * It is fatal for `lore init`'s tracker selection for the same reason the old below-the-floor failure
+ * was (LCLI-356): a mismatched pair is a pairing that cannot work at all, and no action inside the
+ * repository fixes it — the operator must install the other side. The superseded floor
+ * (`MIN_QUEST_VERSION`, `quest.version-below-floor`) was a superset of this rule's *acceptance*: a
+ * floor let every newer Quest through, which is precisely the mixed-pair running the ADR retires.
  */
-export const QUEST_VERSION_FLOOR_CODE = "quest.version-below-floor";
+export const QUEST_VERSION_PAIR_MISMATCH_CODE = "quest.version-pair-mismatch";
 
-/** Whether `error` is the below-the-floor rejection {@link QUEST_VERSION_FLOOR_CODE} marks. */
-export function isQuestVersionFloorFailure(error: unknown): boolean {
+/** Whether `error` is the pair-version rejection {@link QUEST_VERSION_PAIR_MISMATCH_CODE} marks. */
+export function isQuestVersionPairMismatch(error: unknown): boolean {
   return (
     error instanceof LoreError &&
     typeof error.input === "object" &&
     error.input !== null &&
-    (error.input as { code?: unknown }).code === QUEST_VERSION_FLOOR_CODE
+    (error.input as { code?: unknown }).code === QUEST_VERSION_PAIR_MISMATCH_CODE
   );
 }
 
-/** The stable discriminator on an uninitialized-workspace rejection (LCLI-376), mirroring {@link QUEST_VERSION_FLOOR_CODE}. */
+/**
+ * The refusal for a Quest that is not lore's exact pair version, or `undefined` when the two match.
+ *
+ * Full-version equality on the raw `quest --version` string (trimmed), so an rc pair matches only
+ * its own rc — the staged release (`X-rc.N`) qualifies against its own stage. When the raw strings
+ * differ, the "which side is behind" clause orders the semver triples; where only a pre-release
+ * suffix differs (`0.11.0` vs `0.11.0-rc.1`) it does not guess and names the exact pair to install.
+ * A version that is not a semver at all never guesses either.
+ */
+function pairVersionMismatch(reported: string): LoreError | undefined {
+  if (reported === VERSION) return undefined;
+  const message = `the lore ${VERSION} / quest ${reported} pair version requirement is not met: lore ${VERSION} requires quest ${VERSION}`;
+  const input = { code: QUEST_VERSION_PAIR_MISMATCH_CODE, lore: VERSION, quest: reported };
+  const lore = parseSemver(VERSION);
+  const quest = parseSemver(reported);
+  if (lore !== null && quest !== null) {
+    const order = compareSemver(quest, lore);
+    if (order < 0)
+      return new LoreError(
+        "validation",
+        message,
+        `upgrade quest to ${VERSION}: npm install -g @opum-ai/quest@${VERSION}`,
+        input,
+      );
+    if (order > 0)
+      return new LoreError(
+        "validation",
+        message,
+        `upgrade lore to ${reported}: npm install -g @opum-ai/lore@${reported}`,
+        input,
+      );
+  }
+  return new LoreError(
+    "validation",
+    message,
+    `install the exact pair: npm install -g @opum-ai/quest@${VERSION} and @opum-ai/lore@${VERSION}`,
+    input,
+  );
+}
+
+/** The stable discriminator on an uninitialized-workspace rejection (LCLI-376), mirroring {@link QUEST_VERSION_PAIR_MISMATCH_CODE}. */
 export const QUEST_WORKSPACE_NOT_INITIALIZED_CODE = "quest.workspace-not-initialized";
 
 /** Whether `error` is the uninitialized-workspace rejection {@link QUEST_WORKSPACE_NOT_INITIALIZED_CODE} marks. */
@@ -69,8 +93,8 @@ export function isQuestWorkspaceNotInitializedFailure(error: unknown): boolean {
     (error.input as { code?: unknown }).code === QUEST_WORKSPACE_NOT_INITIALIZED_CODE
   );
 }
-const QUEST_VERSION_SET_HINT = `Quest ${MIN_QUEST_VERSION} or newer is required`;
-const QUEST_VERSION_GATE_MESSAGE = "`quest --version` did not report a supported Quest version";
+const QUEST_VERSION_SET_HINT = `Quest ${VERSION} is required`;
+const QUEST_VERSION_GATE_MESSAGE = "`quest --version` did not report a quest version";
 /**
  * Env vars an operator or a delegated agent session sets to declare who a Quest write is on
  * behalf of (LCLI-434). Read only at the point of an actual write — `probe`/`statusFlow`/`listTasks`
@@ -103,7 +127,7 @@ export function isQuestActorContextFailure(error: unknown): boolean {
   );
 }
 const ACTOR_CONTEXT_HINT = `set ${QUEST_ACTOR_ENV_VAR} and ${QUEST_ACTOR_KIND_ENV_VAR} before this command, e.g. ${QUEST_ACTOR_ENV_VAR}=jdoe ${QUEST_ACTOR_KIND_ENV_VAR}=human (add ${QUEST_ACCOUNTABLE_HUMAN_ENV_VAR}=<their id> for kind=delegated-agent), or pass an explicit actor to the Quest adapter's own API`;
-const INSTALL_HINT = `install @opum-ai/quest@>=${MIN_QUEST_VERSION} and ensure the \`quest\` binary is on PATH`;
+const INSTALL_HINT = `install @opum-ai/quest@${VERSION} and ensure the \`quest\` binary is on PATH`;
 const REQUIRED_COMMANDS = [
   ["manifest", "manifest.registry", false],
   ["version", null, false],
@@ -381,19 +405,9 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
     const reported = versionResult.stdout.trim();
     if (versionResult.exitCode !== 0 || !reported)
       throw new LoreError("validation", QUEST_VERSION_GATE_MESSAGE, QUEST_VERSION_SET_HINT);
-    const comparison = atLeast(reported, MIN_QUEST_VERSION);
-    if (comparison === null)
-      throw new LoreError("validation", "`quest --version` did not print a bare semver", QUEST_VERSION_SET_HINT, {
-        reported,
-      });
-    if (!comparison.ok)
-      throw new LoreError(
-        "validation",
-        `Quest ${comparison.version.raw} is below the ${MIN_QUEST_VERSION} floor this adapter is qualified against`,
-        INSTALL_HINT,
-        { code: QUEST_VERSION_FLOOR_CODE, version: comparison.version.raw, floor: MIN_QUEST_VERSION },
-      );
-    const version = comparison.version.raw;
+    const mismatch = pairVersionMismatch(reported);
+    if (mismatch !== undefined) throw mismatch;
+    const version = reported;
     const manifest = await run(["manifest", "--json"], "manifest --json");
     if (manifest.kind !== "manifest.registry")
       throw drift("manifest --json", `returned kind ${JSON.stringify(manifest.kind)}, expected "manifest.registry"`);
@@ -775,10 +789,10 @@ function pausedStatusField(value: unknown): string | undefined {
  * `>=` test would both miss a Quest that has it and claim it on one that does not. The manifest is
  * the tracker's own statement of what it accepts, which is the thing actually being asked about.
  *
- * Getting this wrong in the other direction would be worse than the bug it fixes: passing an
- * unknown flag unconditionally would raise lore's effective Quest floor from MIN_QUEST_VERSION to
- * whichever release added it, breaking every Quest in between. That is an external compatibility
- * change, and it is not one a bug fix gets to make silently.
+ * The pair lock (LCLI-650) narrows the stakes -- lore X now runs only against quest X -- but does
+ * not change the rule: the manifest is the tracker's own statement of what IT accepts, and a version
+ * string has repeatedly named two byte-sets in this fleet. Passing an unknown flag unconditionally
+ * would still be an external compatibility change, and not one a bug fix gets to make silently.
  */
 function supportsIfRevision(manifestData: unknown): boolean {
   if (!record(manifestData) || !Array.isArray(manifestData.commands)) return false;

@@ -94,7 +94,7 @@ import {
 import { type JiraOnboarding, realJiraOnboarding } from "../adapters/jira-onboarding";
 import {
   createQuestBacklogMigration,
-  isQuestVersionFloorFailure,
+  isQuestVersionPairMismatch,
   isQuestWorkspaceNotInitializedFailure,
   type QuestBacklogMigrationOptions,
   type QuestMigrationPreview,
@@ -687,7 +687,7 @@ async function verifyBackendReadiness(
     return { checked: true, backend, capable: true, version: capability.version };
   } catch (err) {
     if (
-      isQuestVersionFloorFailure(err) ||
+      isQuestVersionPairMismatch(err) ||
       isQuestWorkspaceNotInitializedFailure(err) ||
       isBacklogVersionFloorFailure(err)
     ) {

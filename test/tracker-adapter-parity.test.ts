@@ -135,7 +135,7 @@ function equivalentQuestTask(): Record<string, unknown> {
 function scriptedQuest(script: (argv: string[]) => QuestSpawnResult | Error): QuestSpawn {
   return async (readonlyArgs) => {
     const argv = [...readonlyArgs];
-    if (argv[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+    if (argv[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
     if (argv.join(" ") === "manifest --json") return okQuest("manifest.registry", questManifest());
     if (argv.join(" ") === "task status-flow --json") return okQuest("task.status-flow", QUEST_FLOW);
     const outcome = script(argv);
@@ -343,6 +343,7 @@ import { runLink } from "../src/commands/link";
 import { computeOrphans } from "../src/commands/orphans";
 import { gatherReconciliation, resolveTaskDetails } from "../src/commands/reconcile-shared";
 import { parseConcept } from "../src/core/concept";
+import { VERSION } from "../src/meta";
 import { persistTrackerWrites, sweepTrackerStorage, type TrackerWriteRef } from "../src/tracker-persistence";
 
 const JSON_CTX_L1 = { mode: "json", color: false } as const;

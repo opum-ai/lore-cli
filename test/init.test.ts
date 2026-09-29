@@ -15,11 +15,7 @@ import { PassThrough } from "node:stream";
 import { BACKLOG_VERSION_FLOOR_CODE, type BacklogAdapter } from "../src/adapters/backlog";
 import { bunGitPreflightSpawn, type GitPreflight, realGitPreflight } from "../src/adapters/git-preflight";
 import type { JiraOnboarding, JiraProfile, JiraProjectSummary } from "../src/adapters/jira-onboarding";
-import {
-  MIN_QUEST_VERSION,
-  QUEST_VERSION_FLOOR_CODE,
-  QUEST_WORKSPACE_NOT_INITIALIZED_CODE,
-} from "../src/adapters/quest";
+import { QUEST_VERSION_PAIR_MISMATCH_CODE, QUEST_WORKSPACE_NOT_INITIALIZED_CODE } from "../src/adapters/quest";
 import { atLeast } from "../src/adapters/semver";
 import { createTrackerAdapter } from "../src/adapters/tracker";
 import {
@@ -42,6 +38,7 @@ import { parseConcept } from "../src/core/concept";
 import { buildHermesContextDoc, HERMES_CONTEXT_REL_PATH } from "../src/core/hermes-bridge";
 import { findInstructionTopic } from "../src/core/instructions";
 import { EXIT_CODES, exitCodeFor, LoreError, reportError, WarningCollector } from "../src/errors";
+import { VERSION } from "../src/meta";
 import type { OutputContext } from "../src/output";
 import type { TrackerMigrationResult } from "../src/tracker-migration";
 import { capture, expectError, fakeAdapter, gitRun } from "./helpers";
@@ -2663,19 +2660,20 @@ describe("lore init — the capability probe follows the selected tracker (LCLI-
   });
 });
 
-describe("lore init — an unsupported tracker version is rejected at selection time (LCLI-356)", () => {
-  /** A tracker adapter whose probe fails exactly the way an under-the-floor Quest does. */
-  function belowFloorAdapter(): BacklogAdapter {
+describe("lore init — an unsupported tracker version is rejected at selection time (LCLI-356, pair lock since LCLI-650)", () => {
+  /** A tracker adapter whose probe fails exactly the way a mismatched Quest pair does (LCLI-650). */
+  function mismatchedPairAdapter(): BacklogAdapter {
     return fakeAdapter([], {
-      probe: new LoreError("validation", "Quest 0.2.6 is below the 0.2.7 floor", "install a newer Quest", {
-        code: QUEST_VERSION_FLOOR_CODE,
-        version: "0.2.6",
-        floor: "0.2.7",
-      }),
+      probe: new LoreError(
+        "validation",
+        `the lore ${VERSION} / quest 0.2.6 pair version requirement is not met: lore ${VERSION} requires quest ${VERSION}`,
+        `upgrade quest to ${VERSION}: npm install -g @opum-ai/quest@${VERSION}`,
+        { code: QUEST_VERSION_PAIR_MISMATCH_CODE, lore: VERSION, quest: "0.2.6" },
+      ),
     });
   }
 
-  test("--tracker quest against an under-the-floor Quest fails and does NOT persist the backend", async () => {
+  test("--tracker quest against a mismatched Quest pair fails and does NOT persist the backend", async () => {
     // The reported defect: init exited 0, wrote backend = "quest", and every later tracker command
     // then exited 6 — the user committed to a backend nothing would accept.
     const err = await Promise.resolve(
@@ -2686,7 +2684,7 @@ describe("lore init — an unsupported tracker version is rejected at selection 
         stdout: capture(),
         clock: FIXED_CLOCK,
         args: ["--tracker", "quest"],
-        adapter: belowFloorAdapter(),
+        adapter: mismatchedPairAdapter(),
       }),
     ).then(
       () => undefined,
@@ -2694,7 +2692,7 @@ describe("lore init — an unsupported tracker version is rejected at selection 
     );
     expect(err).toBeInstanceOf(LoreError);
     expect(err?.type).toBe("validation");
-    expect(err?.message).toContain("below the 0.2.7 floor");
+    expect(err?.message).toContain("pair version requirement is not met");
     // The scaffold is idempotent and harmless; the SELECTION is the commitment that is withheld.
     expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).not.toContain('backend = "quest"');
   });
@@ -2788,7 +2786,7 @@ describe("lore init — an unsupported tracker version is rejected at selection 
   test("--no-tracker opts out of the gate for a repository configured before its tooling", async () => {
     const { code } = await init({
       args: ["--tracker", "quest", "--no-tracker"],
-      adapter: belowFloorAdapter(),
+      adapter: mismatchedPairAdapter(),
     });
     expect(code).toBe(0);
     expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).toContain('backend = "quest"');
@@ -2800,26 +2798,27 @@ describe("lore init — an unsupported tracker version is rejected at selection 
       ...fakeAdapter([], { probe: "ok" }),
       probe: async () => {
         probes += 1;
-        return { version: "0.2.9", schemaVersion: 1 };
+        return { version: VERSION, schemaVersion: 1 };
       },
     };
     const { result } = await init({ args: ["--tracker", "quest", "--check-tracker"], adapter });
-    expect(result.trackerCheck).toEqual({ checked: true, backend: "quest", capable: true, version: "0.2.9" });
+    expect(result.trackerCheck).toEqual({ checked: true, backend: "quest", capable: true, version: VERSION });
     expect(probes).toBe(1);
   });
 });
 
-describe("quest version floor (LCLI-356)", () => {
-  test("the shipped 0.2.9 and later releases are accepted; below the floor is not", () => {
-    // Reversing LCLI-353's frozen ["0.2.7","0.2.8"] set: the two currently published packages could
-    // not be used together at all, and every Quest patch would have needed a new Lore release.
-    for (const version of ["0.2.7", "0.2.9", "0.3.0", "1.4.2"]) {
-      expect(atLeast(version, MIN_QUEST_VERSION)?.ok).toBe(true);
+describe("the version-floor primitive (LCLI-356; Quest's floor superseded by the pair lock, LCLI-650)", () => {
+  test("a floor accepts at-or-above and rejects below, and a non-version is not a verdict", () => {
+    // `atLeast` is now used by Backlog's floor alone: Quest's own floor was superseded by the
+    // exact-pair lock (LCLI-650), which accepts one version and refuses every other by equality
+    // rather than by ordering. The H4c primitive is unchanged and still needs its own coverage.
+    for (const version of ["1.49.0", "1.49.1", "1.50.0", "2.0.0"]) {
+      expect(atLeast(version, "1.49.0")?.ok).toBe(true);
     }
-    for (const version of ["0.1.0", "0.2.6"]) {
-      expect(atLeast(version, MIN_QUEST_VERSION)?.ok).toBe(false);
+    for (const version of ["1.48.9", "0.9.9"]) {
+      expect(atLeast(version, "1.49.0")?.ok).toBe(false);
     }
-    expect(atLeast("not a version", MIN_QUEST_VERSION)).toBeNull();
+    expect(atLeast("not a version", "1.49.0")).toBeNull();
   });
 
   test("an invalid floor is a programming error, not a silent accept-everything", () => {
