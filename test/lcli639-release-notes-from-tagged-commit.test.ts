@@ -202,7 +202,12 @@ type Run = (
  * registry, and a v<V> release that does not exist yet. `notesSeen` is every notes file
  * `gh release create` was handed, read while it ran.
  */
-function world({ changelogAtCommit = COMMITTED_CHANGELOG }: { changelogAtCommit?: string } = {}) {
+function world({
+  changelogAtCommit = COMMITTED_CHANGELOG,
+}: {
+  /** The bytes the raw-contents read answers, or "fail" for a gh that cannot read them at all. */
+  changelogAtCommit?: string | "fail";
+} = {}) {
   const tags: Record<string, Record<string, string>> = {};
   for (const name of RELEASE_PACKAGES) tags[name] = { latest: PRIOR, "release-candidate": name === LAUNCHER ? RC : V };
   const calls: string[][] = [];
@@ -221,7 +226,11 @@ function world({ changelogAtCommit = COMMITTED_CHANGELOG }: { changelogAtCommit?
         return { stdout: JSON.stringify({ ref: `refs/tags/v${V}`, object: { type: "tag", sha: TAG_OBJECT } }) };
       if (path === `repos/opum-ai/lore-cli/git/tags/${TAG_OBJECT}`)
         return { stdout: JSON.stringify({ sha: TAG_OBJECT, object: { type: "commit", sha: COMMIT } }) };
-      if (line === `gh ${changelogAtRefArgs(COMMIT).join(" ")}`) return { stdout: changelogAtCommit };
+      if (line === `gh ${changelogAtRefArgs(COMMIT).join(" ")}`) {
+        if (changelogAtCommit === "fail")
+          throw Object.assign(new Error("Command failed: gh api"), { stderr: "HTTP 502: Bad gateway\n" });
+        return { stdout: changelogAtCommit };
+      }
       // The two receipts, read by ref from opum-cli-e2e (`?ref=main` on the contents path).
       if (path.includes("/opum-cli-e2e/contents/receipts/pair/")) return { stdout: JSON.stringify(pairReceipt()) };
       if (path.includes("/opum-cli-e2e/contents/receipts/lore/")) return { stdout: JSON.stringify(pass1Receipt()) };
@@ -397,6 +406,24 @@ async function repair(
 const contentsReads = (w: World) =>
   w.calls.filter((c) => c[0] === "gh" && c[1] === "api" && String(c.at(-1)).includes("/contents/CHANGELOG.md"));
 
+/**
+ * THE ARGV THE NOTES MUST BE READ WITH, WRITTEN OUT (review F1). It is deliberately NOT derived
+ * from `changelogAtRefArgs`: the world's stub matches that builder, so an assertion built from it
+ * too would move with the builder and stay green -- a builder pointed at `?ref=main` would pass
+ * every test in this file while the notes came from a movable ref. Measured: with the builder
+ * pointed at `main`, this literal reddens the assertion below and the builder-derived form it
+ * replaced did not.
+ */
+const CONTENTS_ARGV = [
+  "gh",
+  "api",
+  "--hostname",
+  "github.com",
+  "-H",
+  "Accept: application/vnd.github.raw",
+  `repos/opum-ai/lore-cli/contents/CHANGELOG.md?ref=${COMMIT}`,
+];
+
 describe("LCLI-639: the promote path reads the notes at the tagged commit, never the working tree", () => {
   const record = (dir: string) => join(dir, "promotion-record.json");
 
@@ -412,7 +439,7 @@ describe("LCLI-639: the promote path reads the notes at the tagged commit, never
         `would create release v${V} "Lore CLI ${V}" (${Buffer.byteLength(committedNotes())} bytes of notes), marked latest`,
       );
       expect(r.text).not.toContain(workingTreeNotes());
-      expect(contentsReads(w)).toEqual([["gh", ...changelogAtRefArgs(COMMIT)]]);
+      expect(contentsReads(w)).toEqual([CONTENTS_ARGV]);
       // The run the world served is the one the module asked for (its reader matches the exact
       // path), so a run id this test had merely chosen would have thrown instead of passing here.
       expect(w.calls.some((c) => c.at(-1) === `repos/opum-ai/lore-cli/actions/runs/${RUN}`)).toBe(true);
@@ -434,6 +461,57 @@ describe("LCLI-639: the promote path reads the notes at the tagged commit, never
       // The working-tree file was there, and divergent -- the positive control for the two above.
       expect(readFileSync(join(c.dir, "CHANGELOG.md"), "utf8")).toContain(WORKING_TREE_MARKER);
       expect(w.writes.filter((line) => line === "publish")).toHaveLength(1);
+      // EXACTLY ONE contents read per --promote run (review F3): step 13 reuses step 9's capture,
+      // and a second read would be invisible to a deterministic stub that serves the same sha.
+      expect(contentsReads(w)).toEqual([CONTENTS_ARGV]);
+    } finally {
+      c.cleanup();
+    }
+  });
+
+  // REVIEW F2: the state that was missing. Every other test in this file hands the module a
+  // SUCCESSFUL contents read, so a regression that fell back to `join(root, "CHANGELOG.md")` when
+  // the read FAILED -- gh 502 plus an uncommitted section, which is precisely the defect LCLI-639
+  // is about -- would cut a release from the working tree and keep all of them green.
+  test("a FAILED contents read refuses, and never falls back to this checkout's CHANGELOG.md", async () => {
+    const c = checkout();
+    const w = world({ changelogAtCommit: "fail" });
+    try {
+      // The fallback's bait: a real, non-empty section sits in the checkout the module runs in.
+      expect(readFileSync(join(c.dir, "CHANGELOG.md"), "utf8")).toContain(WORKING_TREE_NOTE);
+      for (const mode of ["--dry-run", "--promote"] as const) {
+        const r = await promote(c.dir, [mode], w, { recordPath: record(c.dir) });
+        expect({ mode, code: r.code }).toEqual({ mode, code: 1 });
+        expect(r.text).toContain(
+          `Refusing to promote ${V}: opum-ai/lore-cli@${COMMIT}:CHANGELOG.md could not be read (HTTP 502: Bad gateway)`,
+        );
+        expect(r.text).toContain("Nothing has moved.");
+      }
+      // No release was cut (the fallback would have cut one), nothing moved, and no notes file was
+      // ever written.
+      expect(w.notesSeen).toEqual([]);
+      expect(w.calls.filter((a) => a[0] === "gh" && a[1] === "release")).toEqual([]);
+      expect(w.writes).toEqual([]);
+    } finally {
+      c.cleanup();
+    }
+  });
+
+  test("and with the local CHANGELOG.md unreadable, the refusal still names the remote source", async () => {
+    const c = checkout();
+    const w = world({ changelogAtCommit: "fail" });
+    try {
+      // A DIRECTORY where the file was: any read of `join(root, "CHANGELOG.md")` now fails with
+      // EISDIR (on every platform), so an implementation that touched it -- fallback, probe, or
+      // anything else -- could not produce this refusal's words.
+      rmSync(join(c.dir, "CHANGELOG.md"));
+      mkdirSync(join(c.dir, "CHANGELOG.md"));
+      const r = await promote(c.dir, ["--promote"], w, { recordPath: record(c.dir) });
+      expect(r.code).toBe(1);
+      expect(r.text).toContain(`opum-ai/lore-cli@${COMMIT}:CHANGELOG.md could not be read (HTTP 502: Bad gateway)`);
+      expect(r.text).not.toContain("EISDIR");
+      expect(r.text).not.toContain(c.dir);
+      expect(w.notesSeen).toEqual([]);
     } finally {
       c.cleanup();
     }
@@ -474,7 +552,7 @@ describe("LCLI-639: the repair tool reads the notes at the tagged commit too", (
       expect(w.calls.slice(0, 3)).toEqual([
         ["gh", "api", "--hostname", "github.com", `repos/opum-ai/lore-cli/git/ref/tags/v${V}`],
         ["gh", "api", "--hostname", "github.com", `repos/opum-ai/lore-cli/git/tags/${TAG_OBJECT}`],
-        ["gh", ...changelogAtRefArgs(COMMIT)],
+        CONTENTS_ARGV,
       ]);
       expect(w.calls.filter((a) => a[0] === "gh" && a[1] === "release").map((a) => a[2])).toEqual(["view", "create"]);
     } finally {
@@ -516,6 +594,30 @@ describe("LCLI-639: the repair tool reads the notes at the tagged commit too", (
     } finally {
       c.cleanup();
     }
+  });
+});
+
+// REVIEW F5. The runbook now names the command, so the command has to be pinned from both ends:
+// the DOC against a literal written here, and the MODULE against that same literal. Neither half
+// borrows from the other, which is what keeps a doc drift and a builder drift separately visible --
+// and the builder half is why this is not the F1 weakness again (the doc literal below is
+// hand-written, and every word of the argv, header included, is compared).
+describe("LCLI-639: the runbook's command is the argv the module sends", () => {
+  /** A sample peeled sha, only ever substituted into the two literals below. */
+  const SAMPLE = "1f2e3d4c5b6a79887766554433221100ffeeddcc";
+  /** The runbook's own words, as an operator would type them into a shell. */
+  const RUNBOOK_COMMAND =
+    'gh api --hostname github.com -H "Accept: application/vnd.github.raw" repos/opum-ai/lore-cli/contents/CHANGELOG.md?ref=<that commit>';
+
+  test("the runbook carries the command, and changelogAtRefArgs produces the same one", () => {
+    const runbook = readFileSync(join(import.meta.dir, "..", "docs", "runbooks", "release-publishing.md"), "utf8");
+    // (a) doc drift reddens here. The runbook writes the header shell-quoted; that quoting is the
+    // ONLY difference the argv comparison below tolerates, and the test is what removes it.
+    expect(runbook).toContain(RUNBOOK_COMMAND);
+    // (b) builder drift reddens here: `?ref=main` (or any other spelling) cannot equal this literal.
+    expect(["gh", ...changelogAtRefArgs(SAMPLE)].join(" ")).toBe(
+      RUNBOOK_COMMAND.replaceAll('"', "").replace("<that commit>", SAMPLE),
+    );
   });
 });
 

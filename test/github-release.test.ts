@@ -204,23 +204,26 @@ describe("changelogSection: Keep a Changelog headings (LCLI-622)", () => {
   // regression the fence rule introduced), and a fenced "## [X]" hijacked the section (also a
   // regression). Bodies below are quest-cli's, measured on its side of the same rule.
   //
-  // MUTATION CONTROL. PREDICTION, written before measuring: against the PREVIOUS predicate -- a
-  // two-regex toggle that opens on any ```/~~~ line, closes on an EXACT three-marker line, tracks
-  // neither character nor run, and applies no fence state to the START scan -- the cases that go
-  // RED are exactly (a), (b), (c), (d), (e), (g) and (f-bracketed); the cases that stay GREEN are
-  // (f) itself, because an unbracketed `## 9.9.9` is not a lore version heading under either rule,
-  // and all five vectors above, because each of those is exactly three markers of one character,
-  // the only shape the old predicate gets right. A blanket red would not be localised; this is.
+  // MUTATION CONTROL. PREDICTION, written before measuring: of the THIRTEEN fence tests in this
+  // file -- the eight vectors below and the five above it -- the SEVEN that go red against the
+  // PREVIOUS predicate are exactly (a), (b), (c), (d), (e), (g) and (f-bracketed), and the SIX
+  // that stay green are (f) itself, because an unbracketed `## 9.9.9` is not a lore version heading
+  // under either rule, plus the five vectors above, because each of those is exactly three markers
+  // of one character -- the only shape the old predicate gets right. That predicate is a two-regex
+  // toggle: it opens on any ```/~~~ line, closes on an EXACT three-marker line, tracks neither
+  // character nor run, and applies no fence state to the START scan. A blanket red would not be
+  // localised; a 7-of-13 red set is.
   // MEASURED, and the prediction held exactly: the mutant was `c6c248b1`'s extractor read out of
   // git (not hand-patched), and it was RED on those 7 -- (a) "```md\nalpha\n~~~", (b) the next
   // entry swallowed, (c) the body running to EOF, (d) "````\nalpha\n```", (e) the next entry
   // swallowed, (f-bracketed) a body out of the fenced heading, (g) "```a`b\n## not a heading\n```"
-  // -- and GREEN on (f) and on the four earlier fence vectors the harness carried -- the fifth, the
-  // fenced-CRLF pair, is the same code path and is green in this file -- with the refined extractor
-  // matching all 12. The fence-BLIND pre-change extractor (fee53bc6) was measured in the same
-  // harness: it truncates (a) exactly as the mutant does, matches (d) and (g) by the same blindness
-  // that produced the defect, and its bounded-but-wrong bodies on (b), (c), (e) and (f-bracketed)
-  // are what make those four regressions rather than defects the fence rule never reached.
+  // -- and GREEN on the other 6. The harness carried twelve of the thirteen cases and measured 7
+  // red / 5 green; the thirteenth, the fenced-CRLF pair above, differs only in line endings and is
+  // green in this file, and the refined extractor matched all twelve it carried. The fence-BLIND
+  // pre-change extractor (fee53bc6) was measured in the same harness: it truncates (a) exactly as
+  // the mutant does, matches (d) and (g) by the same blindness that produced the defect, and its
+  // bounded-but-wrong bodies on (b), (c), (e) and (f-bracketed) are what make those four
+  // regressions rather than defects the fence rule never reached.
   const refined: Array<[string, string, string | null, string?]> = [
     [
       "(a) a tilde line inside a backtick fence is content, not a closer",
