@@ -38,9 +38,12 @@ import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, posix, relative, sep } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { gitTrackedState, resolveHeadCommitDate } from "../adapters/git";
-import { loadAgentProfiles, validateAgentProfileReferences } from "../core/agent-profile";
+import { measureAgentProfileCapacity } from "../core/agent-context";
+import { type AgentProfile, loadAgentProfiles, validateAgentProfileReferences } from "../core/agent-profile";
 import { effectiveProfileFor, loadBundle, loadBundleState, walkFiles } from "../core/bundle";
 import {
+  type AgentProfileCounts,
+  agentProfileCapacityFindings,
   bodyText,
   type CheckFinding,
   type CheckInputFile,
@@ -62,6 +65,7 @@ import {
 import { type Concept, hasStrayFrontmatterFence, parseConcept, tryReadFrontmatter } from "../core/concept";
 import { generateIndexes } from "../core/indexes";
 import { type BundleState, type BundleVersionIssue, resolveBundleState, taskRollupFieldFor } from "../core/okf-version";
+import { compareCodeUnits } from "../core/order";
 import { loadProfile, type Profile, profileForBundle, profileTypeDeclaresField } from "../core/profile";
 import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
 import { canonicalType, emitSchemaFiles, profileDigest, SCHEMAS_DIR, unknownTypeHint } from "../core/schema";
@@ -88,6 +92,7 @@ import {
 } from "../errors";
 import { VERSION } from "../meta";
 import { emit, type OutputContext, type Renderable } from "../output";
+import { constitutionPathFor } from "./agent-governance";
 import { parseCommandArgs, singleOptionValue } from "./args";
 import { canonicalIdentity, gitIgnoredEntries, readIndexBytes, readSource, toRepoRelative } from "./discover";
 import { dedupeTaskIds, defaultAdapter } from "./link";
@@ -242,9 +247,39 @@ function checkAfterSchemaPass(
   profile: Profile,
   schemaFindings: readonly CheckFinding[],
 ): number | Promise<number> {
+  // The profile pass (LCLI-642, DEC-11): reference validation first, then the capacity measurement
+  // of every profile it validated. Both need the same loaded bundle, so it is built once. The
+  // measurement is pure and reads no task: "a declared source does not fit" is a property of the
+  // declaration, while which sources a REAL task's pack drops is task-ranked retention and is not
+  // this check's subject (LCLI-642's first note measures that false positive on this bundle).
   const agentProfiles = loadAgentProfiles(options.root);
+  const agentProfileFindings: CheckFinding[] = [];
+  let agentProfileCounts: AgentProfileCounts | undefined;
   if (agentProfiles.profiles.size > 0) {
-    validateAgentProfileReferences(agentProfiles, loadBundle(join(options.root, DOCS_DIR), { profile }));
+    const graph = loadBundle(join(options.root, DOCS_DIR), { profile });
+    validateAgentProfileReferences(agentProfiles, graph);
+    const constitutionPath = constitutionPathFor(options.root);
+    const capacities = [];
+    let unmeasurable = 0;
+    for (const name of [...agentProfiles.profiles.keys()].sort(compareCodeUnits)) {
+      const capacity = measureAgentProfileCapacity(
+        agentProfiles.profiles.get(name) as AgentProfile,
+        graph,
+        agentProfiles,
+        constitutionPath,
+      );
+      if (capacity === undefined) {
+        unmeasurable += 1;
+      } else {
+        capacities.push(capacity);
+      }
+    }
+    agentProfileFindings.push(...agentProfileCapacityFindings(capacities));
+    agentProfileCounts = {
+      read: capacities.length,
+      overCapacity: capacities.filter((capacity) => capacity.overCapacity).length,
+      unmeasurable,
+    };
   }
   const advisories = new WarningCollector();
   let bundles: Bundle[];
@@ -305,12 +340,17 @@ function checkAfterSchemaPass(
     ...typeBundle.findings.map(({ finding, label }) => prefixFinding(finding, label, multi)),
     ...bundles.flatMap((bundle) => tryIndexDriftForBundle(options.root, bundle, profile, multi)),
     // Repo-scoped, so it is computed once (first, in `runCheck`) rather than per bundle — see
-    // `schemaDriftForRoot`.
+    // `schemaDriftForRoot`. The agent-profile findings are repo-scoped for the same reason: the
+    // profiles live at the repository root, not in any one bundle root (LCLI-642).
     ...schemaFindings,
+    ...agentProfileFindings,
   ];
   const merged = mergeFindings(linkReport, scanFindings);
-  const baseReport: CheckReport =
-    Object.keys(typeBundle.readCounts).length > 0 ? { ...merged, readCounts: typeBundle.readCounts } : merged;
+  const baseReport: CheckReport = {
+    ...merged,
+    ...(Object.keys(typeBundle.readCounts).length > 0 ? { readCounts: typeBundle.readCounts } : {}),
+    ...(agentProfileCounts === undefined ? {} : { agentProfileCounts }),
+  };
   const needsReconciliation = conceptBundleResults.some(
     (result) => result.error !== null || taskBlockConcepts(result.concepts).length > 0,
   );
@@ -1563,6 +1603,9 @@ function renderReport(data: CheckReport, color: boolean): string {
   for (const [type, counts] of Object.entries(data.readCounts ?? {})) {
     lines.push(readCountsLine(type, counts));
   }
+  if (data.agentProfileCounts !== undefined) {
+    lines.push(agentProfileCountsLine(data.agentProfileCounts));
+  }
   lines.push(summaryLine(data, color));
   return lines.join("\n");
 }
@@ -1577,6 +1620,20 @@ function readCountsLine(type: string, counts: Readonly<Record<string, number>>):
     ([key, count]) => `${key.replace(/([A-Z])/g, " $1").toLowerCase()} ${count}`,
   );
   return `${type} read: ${parts.join(", ")}`;
+}
+
+/**
+ * What the agent-profile pass read (LCLI-642), e.g. `Agent profiles read: 4, 0 over capacity`. Printed
+ * beside the findings so a clean capacity result is never mistaken for a pass that measured nothing —
+ * and `unmeasurable` appears only when some profile could not be measured here at all, which is the
+ * one state in which `read` alone would overstate the coverage.
+ */
+function agentProfileCountsLine(counts: AgentProfileCounts): string {
+  const parts = [`${counts.read} read`, `${counts.overCapacity} over capacity`];
+  if (counts.unmeasurable > 0) {
+    parts.push(`${counts.unmeasurable} not measurable in this bundle`);
+  }
+  return `Agent profiles: ${parts.join(", ")}`;
 }
 
 /**

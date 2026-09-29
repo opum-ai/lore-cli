@@ -2,7 +2,10 @@ schema_version = 1
 name = "verification"
 description = "Retrieves the acceptance, conformance and release evidence needed to verify a lore-cli change — what OKF conformance actually requires, what the end-to-end environment covers, and which release facts are authoritative rather than assumed."
 kind = "specialist"
-max_tokens = 16000
+# Holds this profile's COMPLETE declared set (LCLI-642, DEC-11). Measured at ~87664 tokens with
+# every declared candidate rendered; 93000 leaves ~5300 headroom for growth and for a real task's
+# bundle-wide query section, which is not part of that measurement.
+max_tokens = 93000
 pinned = ["reference/okf-conformance"]
 sources = [
   "reference/consumer-compatibility",

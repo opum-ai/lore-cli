@@ -56,6 +56,7 @@ import * as ipaddr from "ipaddr.js";
 import * as yaml from "js-yaml";
 import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
+import type { AgentProfileCapacity } from "./agent-context";
 import { extractLinkTargets, nodeText, resolveRef, walkMdast } from "./bundle";
 import { hasStrayFrontmatterFence, idFromPath, normalizeInput, tryReadFrontmatter } from "./concept";
 import type { Finding, Severity } from "./finding";
@@ -106,6 +107,12 @@ export type CheckSeverity = Severity;
  * an entry whose JSON/TOML/YAML `source_of_truth` disagrees with its `value` or cannot be read
  * (error), a Constants document from which no entry was read -- the positive control (error), and a
  * link citing a deprecated or retired entry (warning, on the citing file; the message says which).
+ *
+ * `agent-profile-capacity` (LCLI-642, DEC-11) is the one rule whose severity is not fixed at its
+ * call site but named by {@link AGENT_PROFILE_CAPACITY_SEVERITY}: a `.lore/agents/*.toml` profile
+ * whose declared sources cannot fit its `max_tokens` budget. It ships as a **warning for one
+ * release**, so external users are not turned red without notice, and DEC-11 then makes it an
+ * error -- the flip is that one constant's value (LCLI-646 holds the schedule).
  */
 export type CheckRule =
   | "type-shape"
@@ -134,7 +141,8 @@ export type CheckRule =
   | "double-frontmatter"
   | "broken-relation"
   | "unknown-relation-kind"
-  | "relation-version-drift";
+  | "relation-version-drift"
+  | "agent-profile-capacity";
 
 /**
  * One problem found in the bundle, attributed to the file that carries it: the shared
@@ -241,6 +249,16 @@ export interface CheckReport {
    */
   readonly complete: boolean;
   /**
+   * What the `lore check` run's agent-profile pass READ (LCLI-642, the LCLI-596 precedent applied to
+   * a second pass): present exactly when the repository declares at least one profile, so a clean
+   * capacity answer can be told apart from a pass that measured nothing. `read` counts the profiles
+   * the capacity measurement could resolve and compare; `unmeasurable` counts the ones it could not,
+   * which is a declared reference that does not resolve in this bundle (a `member::id` reference
+   * meaningful only under `--workspace`) — counted rather than silently treated as fitting.
+   * Informational: it never affects the exit code, because its failures ARE findings.
+   */
+  readonly agentProfileCounts?: AgentProfileCounts;
+  /**
    * Opt-in external-URL **liveness** results (`--external`), each an `external-link` warning. These
    * are **non-deterministic** (they depend on the network), so they are kept out of the gate
    * entirely: never folded into {@link errorCount}/{@link warningCount}, never affecting the exit
@@ -248,6 +266,16 @@ export interface CheckReport {
    * leaves this empty; the command layer fills it (the probing is network IO, ADR-0014).
    */
   readonly externalFindings?: readonly CheckFinding[];
+}
+
+/** How many `.lore/agents/*.toml` profiles the capacity pass measured, and how many it could not (see {@link CheckReport.agentProfileCounts}). */
+export interface AgentProfileCounts {
+  /** Profiles whose declared set was measured against their budget. */
+  readonly read: number;
+  /** Of those, how many are over capacity — the profiles a finding was emitted for. */
+  readonly overCapacity: number;
+  /** Profiles a declared reference did not resolve for, so nothing was measured: not evidence of fitting. */
+  readonly unmeasurable: number;
 }
 
 /** One external URL discovered in the bundle, attributed to its file — the `--external` probe's worklist item. */
@@ -970,6 +998,61 @@ function unattributableMessage(stamp: string | null, loreVersion: string): strin
     "which cannot tell a removed type from a lore older than this tree — do NOT prune it: read " +
     "`git log` on this file and on the profile (`.lore/profile.toml`, or the lore release supplying the built-in profile) and delete it by hand only if the type was removed"
   );
+}
+
+// ── Agent profile capacity (DEC-11) ──────────────────────────────────────────────
+
+/**
+ * The severity `agent-profile-capacity` findings are reported at — **the single line DEC-11's flip
+ * changes** (LCLI-642, LCLI-646).
+ *
+ * DEC-11 (opum-agent `.quest/planning.json`, accepted) ruled that a profile whose declared sources
+ * cannot fit its `max_tokens` budget becomes a `lore check` error, "shipped first as a warning for
+ * one release, then as the error", so external users are not turned red without notice. This
+ * release is the warning's: changing `"warning"` to `"error"` here is the whole flip, and it is
+ * deliberately this small so the change that turns every over-capacity profile in every repository
+ * from advisory to failing is one reviewable line rather than a diff to re-derive.
+ *
+ * Not exported to the command layer as a second copy: the value flows through the findings this
+ * module builds, and {@link tallySeverity} then decides the exit code, so `--strict` escalates the
+ * warning exactly as it escalates every other warning (and, once flipped, neither needs `--strict`).
+ */
+export const AGENT_PROFILE_CAPACITY_SEVERITY: CheckSeverity = "warning";
+
+/** How many unable-to-fit sources a capacity finding names before it says `+N more`. */
+const AGENT_PROFILE_CAPACITY_NAMED_SOURCES = 5;
+
+/**
+ * One finding per over-capacity profile (LCLI-642, DEC-11). The comparison itself is
+ * {@link AgentProfileCapacity.overCapacity}, computed beside the measurement from the declaration
+ * alone — this function only renders it, so there is no second place the capacity test could drift.
+ *
+ * Every finding it returns is reported at `severity`, which defaults to
+ * {@link AGENT_PROFILE_CAPACITY_SEVERITY}; passing one explicitly is how the tests exercise both
+ * sides of DEC-11's flip without editing the constant.
+ */
+export function agentProfileCapacityFindings(
+  capacities: readonly AgentProfileCapacity[],
+  severity: CheckSeverity = AGENT_PROFILE_CAPACITY_SEVERITY,
+): CheckFinding[] {
+  return capacities
+    .filter((capacity) => capacity.overCapacity)
+    .map((capacity) => {
+      const unfitting = capacity.sources.filter((source) => !source.fits);
+      const named = unfitting.slice(0, AGENT_PROFILE_CAPACITY_NAMED_SOURCES).map((source) => source.reference);
+      const more = unfitting.length - named.length;
+      return {
+        severity,
+        rule: "agent-profile-capacity" as const,
+        file: capacity.path,
+        message:
+          `agent profile "${capacity.name}" declares ~${capacity.declaredTokens} tokens of evidence against a ` +
+          `${capacity.maxTokens}-token budget, so it cannot fit its declared sources: ${unfitting.length} of ` +
+          `${capacity.sources.length} sources drop (wholly or partly) when the budget is filled in declaration order ` +
+          `— ${named.join(", ")}${more > 0 ? `, +${more} more` : ""}. Raise max_tokens to ~${capacity.declaredTokens} ` +
+          `(or narrow the declared sources to what ${capacity.maxTokens} holds)`,
+      };
+    });
 }
 
 // ── Link / anchor resolution (the gate) ──────────────────────────────────────────

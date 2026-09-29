@@ -2,7 +2,11 @@ schema_version = 1
 name = "implementation"
 description = "Grounds lore-cli feature work in the CLI contract that binds every command's flags, output envelope and exit codes, the OKF substrate underneath it, and the architectural constraints a change is not allowed to relax."
 kind = "specialist"
-max_tokens = 20000
+# Holds this profile's COMPLETE declared set (LCLI-642, DEC-11: a profile whose declared sources
+# cannot fit its budget is a `lore check` finding). Measured at ~101259 tokens with every declared
+# candidate rendered; 106000 leaves ~4700 headroom for the declared set to grow and for a real
+# task's bundle-wide query section, which is not part of that measurement.
+max_tokens = 106000
 pinned = ["reference/cli-contract"]
 sources = [
   "specs/lore-design",

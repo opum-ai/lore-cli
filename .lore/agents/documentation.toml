@@ -2,7 +2,10 @@ schema_version = 1
 name = "documentation"
 description = "Grounds documentation authoring in this bundle's entry point, the records that say who owns which documentation and how a campaign runs here, and the portability and coherence rules that keep a docs/ bundle rendering the same on GitHub, Obsidian, MkDocs and Docusaurus."
 kind = "specialist"
-max_tokens = 20000
+# Holds this profile's COMPLETE declared set (LCLI-642, DEC-11). Measured at ~56526 tokens with
+# every declared candidate rendered; 62000 leaves ~5500 headroom for growth and for a real task's
+# bundle-wide query section, which is not part of that measurement.
+max_tokens = 62000
 pinned = ["index"]
 sources = [
   "reference/lore-cli-documentation-ownership",

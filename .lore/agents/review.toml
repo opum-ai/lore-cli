@@ -2,7 +2,10 @@ schema_version = 1
 name = "review"
 description = "Reviews a lore-cli change against the accepted architecture decisions that constrain it — determinism with no LLM dependency, retrieval without vectors, frontmatter serialization stability, and the git-ownership boundary with the tracker — and against the contracts downstream consumers depend on."
 kind = "specialist"
-max_tokens = 18000
+# Holds this profile's COMPLETE declared set (LCLI-642, DEC-11). Measured at ~56765 tokens with
+# every declared candidate rendered; 62000 leaves ~5200 headroom for growth and for a real task's
+# bundle-wide query section, which is not part of that measurement.
+max_tokens = 62000
 pinned = ["reference/cli-contract"]
 sources = [
   "adr/0003-okf-substrate",

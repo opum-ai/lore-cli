@@ -433,6 +433,136 @@ function compilePack(
 }
 
 /**
+ * The task a capacity measurement renders with (LCLI-642). A fixed, non-task string, deliberately:
+ * the measurement is defined to be independent of any task — that is the whole difference between a
+ * capacity check and the task-ranked omission it must not be confused with (a per-task omission is
+ * normal, budget-driven retention and is NOT evidence of over capacity). `assemble` prints whatever
+ * task it is given into the pack header, so this constant is part of the fixed overhead both the
+ * measurement and every real pack carry.
+ */
+const CAPACITY_MEASUREMENT_TASK = "(capacity measurement)";
+
+/**
+ * One declared source's share of a profile's complete declared set, and whether the profile's own
+ * `max_tokens` budget holds all of it (LCLI-642, DEC-11).
+ */
+export interface AgentProfileSourceCapacity {
+  /** The source reference as the profile normalized it (`reference/normalized-anchor`). */
+  readonly reference: string;
+  /** The rendered estimate of every candidate this source produced — the whole source. */
+  readonly declaredTokens: number;
+  /** How many of this source's candidates the declared budget holds, filled in declaration order. */
+  readonly includedCount: number;
+  readonly candidateCount: number;
+  /** Whether the budget holds EVERY candidate of this source. */
+  readonly fits: boolean;
+}
+
+/**
+ * How a profile's declaration and its budget compare (LCLI-642, DEC-11): the size of its COMPLETE
+ * declared set beside the budget, with the per-source attribution a reader needs to act.
+ *
+ * `declaredTokens` is measured by the compiler itself — the same pins, the same candidate
+ * partition, the same canonical Markdown rendering as {@link compilePack} — with every candidate
+ * selected, so it is the size of the pack that would carry the profile's whole declared set. It is
+ * task-independent by construction: no query section is rendered (that section exists only for a
+ * task) and a fixed measurement task stands in the header.
+ *
+ * `sources` attributes the shortfall in DECLARATION order, which is the compiler's own order when a
+ * task matches no candidate (spec step 7's fallback). Which sources drop for a REAL task is
+ * task-driven; that is exactly why the finding built from this says "declared sources cannot fit"
+ * and never claims a per-task omission set.
+ */
+export interface AgentProfileCapacity {
+  readonly name: string;
+  /** The `.lore/agents/<name>.toml` profile path, as {@link AgentProfile.path} carries it. */
+  readonly path: string;
+  readonly maxTokens: number;
+  /** The rendered estimate of the complete declared set: pins plus every declared candidate. */
+  readonly declaredTokens: number;
+  /** `declaredTokens > maxTokens`, computed HERE so a caller never re-derives the comparison. */
+  readonly overCapacity: boolean;
+  readonly sources: readonly AgentProfileSourceCapacity[];
+}
+
+/**
+ * Measure one profile's declared set against its own budget (LCLI-642, DEC-11).
+ *
+ * Returns `undefined` when a declared reference does not resolve in this bundle — a qualified
+ * `member::id` reference that is meaningful only under `--workspace`, which
+ * {@link validateAgentProfileReferences} deliberately skips too. The caller COUNTS such a profile
+ * rather than treating it as fitting, because "not measurable here" and "fits" are different facts
+ * and only one of them is a clean answer.
+ */
+export function measureAgentProfileCapacity(
+  profile: AgentProfile,
+  graph: BundleGraph,
+  snapshot: AgentProfileSnapshot,
+  constitutionPath?: string,
+): AgentProfileCapacity | undefined {
+  const references = [...profile.pinned, ...profile.sources];
+  if (references.some((reference) => findConcept(graph, reference) === undefined)) return undefined;
+
+  const autoPin = constitutionAutoPin(profile, graph, constitutionPath);
+  const pinned = [
+    ...(autoPin === undefined ? [] : [itemForReference(autoPin, graph, undefined, undefined)]),
+    ...profile.pinned.map((reference) => itemForReference(reference, graph, undefined, undefined)),
+  ];
+  const sources = profile.sources.map((reference, sourceIndex) =>
+    buildSourceCandidates(reference, graph, sourceIndex, profile.maxTokens, undefined),
+  );
+  const delegates = delegateSummaries(profile, snapshot);
+  const candidates = sources.flatMap((source) => source.items);
+  const render = (selected: readonly RankedCandidate[]) =>
+    assemble(
+      profile,
+      CAPACITY_MEASUREMENT_TASK,
+      profile.maxTokens,
+      autoPin,
+      pinned,
+      selected,
+      sources,
+      candidates.length,
+      delegates,
+      undefined,
+      [],
+      0,
+      false,
+      false,
+    );
+
+  const declaredTokens = render(candidates).tokenEstimate;
+  // The fill is the compiler's own first-fit, on the compiler's own deck order, but in DECLARATION
+  // order and with no query section: which sources survive is the attribution AC1 asks for.
+  const selected: RankedCandidate[] = [];
+  const chosen = new Set<string>();
+  for (const candidate of candidates) {
+    if (render([...selected, candidate]).tokenEstimate <= profile.maxTokens) {
+      selected.push(candidate);
+      chosen.add(candidate.key);
+    }
+  }
+
+  return {
+    name: profile.name,
+    path: profile.path,
+    maxTokens: profile.maxTokens,
+    declaredTokens,
+    overCapacity: declaredTokens > profile.maxTokens,
+    sources: sources.map((source) => {
+      const includedCount = source.items.filter((item) => chosen.has(item.key)).length;
+      return {
+        reference: source.reference.normalized,
+        declaredTokens: source.items.reduce((sum, item) => sum + item.tokenEstimate, 0),
+        includedCount,
+        candidateCount: source.items.length,
+        fits: includedCount === source.items.length,
+      };
+    }),
+  };
+}
+
+/**
  * Every bundle-wide BM25 hit for `task`, best first, using the exact `lore query` ranking. Empty
  * when the task yields no searchable term: `query` then degrades to an unranked filters-only
  * listing, and three arbitrary concepts in id order are not "hits".

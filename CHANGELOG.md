@@ -213,6 +213,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`lore check` reports an agent profile whose declared sources cannot fit its `max_tokens`
+  budget** (LCLI-642, DEC-11). The new `agent-profile-capacity` finding is computed from the profile
+  declaration alone — every candidate of every `pinned`/`sources` reference plus the auto-pinned
+  Constitution, rendered by the same code the pack compiler uses — so it is the same on every task,
+  needs no task string and compiles no pack. That distinction is the whole point of the check: a real
+  pack omits declared sources on most tasks while being entirely within capacity, so a check built on
+  a compiled pack would false-positive (measured on this repository's own `documentation` profile
+  before the check was written). The finding names the profile, its budget, the declared set's size,
+  and the sources that cannot fit, in declaration order. DEC-11 rules that it ships as a **warning
+  for one release and then as an error**; this release is the warning's, and the flip is one line —
+  `AGENT_PROFILE_CAPACITY_SEVERITY` in `src/core/check.ts` — held by LCLI-646 and listed in the
+  release runbook's "Held release steps" so the ordering is not left to memory. The `check.report`
+  also carries `agentProfileCounts` (`read`, `overCapacity`, `unmeasurable`) and the printed report
+  names it, so a clean capacity answer can never be a zero-input artifact. This repository's four
+  profiles were re-budgeted to hold their complete declared sets — 106000 / 62000 / 93000 / 62000 —
+  rather than narrowed, so no declared coverage was dropped.
+
 - **Launcher equivalence gate** (LCLI-621). `scripts/launcher-equivalence.mjs` refuses an
   `X-rc.N` launcher that differs from the `X` launcher by anything but the version string. It
   compares entry by entry over the unpacked tarballs: the same set of paths, the same type and
