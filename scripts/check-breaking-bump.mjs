@@ -32,16 +32,24 @@
 //      ANY bump level, with a message naming the canonical spelling
 //      (orchestrator ruling, 2026-09-28, recorded on LCLI-632). quest-cli's
 //      file knows only the canonical "### ... (breaking)" heading; without
-//      this, lore's existing style would read as "no breaking change" and the
-//      gate would certify what it exists to catch.
+//      this, a legacy bullet would read as "no breaking change" and the gate
+//      would certify what it exists to catch. The last occurrence in lore's own
+//      history was converted to the canonical heading by LCLI-649; the refusal
+//      stays as the guard against reintroducing the marker, not as a rule with
+//      live violations.
 //   4. Stale-tree window: with no --next, a package.json that still names a
-//      released version checks that released section (rule 2) — so on lore's
-//      real bytes, where the released 0.11.0 section carries the legacy
-//      marker, a no-flag run in the window right after a release cut exits 1
-//      naming the canonical spelling. That is the documented consequence of
-//      the legacy-marker ruling applied to the checked section. It is NOT
-//      reachable at a CI dispatch (package.json names the bumped version by
-//      then), and release prep runs --next before the bump.
+//      released version checks that released section (rule 2) — a no-flag run
+//      just after a release cut therefore judges a section that is already
+//      history. The legacy-marker refusal (rule 3) reds there with a remedy
+//      nobody can take without rewriting a shipped section: lore's own bytes
+//      carried exactly that red from the ruling until LCLI-649 converted that
+//      section's marker to the canonical heading. That window is NOT reachable
+//      at a release dispatch for the NEXT version (package.json names the
+//      bumped version by then, and release prep runs --next before the bump) —
+//      but it IS reachable at any dispatch whose ref's package.json still names
+//      an already-released version: a `publish: false` rehearsal at main, or a
+//      re-run on an old tag. Release.yml's breaking-bump job carries no if:
+//      guard, so rehearsals run it too (measured 2026-09-29, reviewer F1).
 //
 //   node scripts/check-breaking-bump.mjs                         # the package.json version
 //   node scripts/check-breaking-bump.mjs --next 0.12.0           # release prep, before the bump
