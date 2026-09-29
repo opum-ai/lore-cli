@@ -376,6 +376,13 @@ jobs:
     # not exist. This job is the same assertion release.yml's verify-versions job now invokes
     # -- ONE script, two call sites -- run where it can refuse a pull request.
     #
+    # LCLI-544 added the second, sibling assertion to this job: bun.lock's platform pins must
+    # agree with those same optionalDependencies. A lockfile left behind by a bump is invisible
+    # until the new version publishes -- `--frozen-lockfile` passes while the pins are
+    # unresolvable -- and then fails EVERY job in this workflow in setup-bun at once. That
+    # version site is checked nowhere else; the job name carries both so it does not read as a
+    # gate narrower than what runs.
+    #
     # NOT a required context, deliberately: the dev ruleset is edited by an admin, by hand,
     # against a real run's rendered job name, and this change does not touch it. Plain ASCII
     # name so that, if it is ever promoted, it can be typed into the ruleset without a
@@ -383,7 +390,7 @@ jobs:
     #
     # No `needs:` -- an upstream job that fails or skips would turn this context absent
     # rather than red, and absent is not a verdict.
-    name: platform package set (npm/ vs optionalDependencies)
+    name: platform package set and lockfile pins (npm/ and bun.lock vs optionalDependencies)
     if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -398,6 +405,11 @@ jobs:
           echo "node $(node --version)"
       - name: Assert npm/ holds exactly the platform packages root package.json declares
         run: bun run check:packages
+      # LCLI-544. Pure file comparison, which is the point: the check that would catch a stale
+      # lockfile by RESOLVING it cannot run before the publish that makes it stale, so this one
+      # reads the two files instead and fires on the bump PR.
+      - name: Assert bun.lock pins the platform packages at the versions package.json declares
+        run: bun run check:lockfile-pins
 
   promotion-is-manual:
     # Fails on purpose on any PR targeting main, so the merge button shows an

@@ -282,6 +282,8 @@
 - 2026-09-27T23:16:52-05:00 58dcb391af2198dd9afbecbc4f520be2dc8a222f fix(LCLI-626): readme-readback / promote-latest review nits (#347)
 - 2026-09-28T12:04:11-05:00 4c23a1d50761b462ea5dd9f1766d409808d324e6 feat(LCLI-612): lore check enforces validate's error-tier quote-safety findings (#368)
 - 2026-09-29T02:10:35-05:00 8ba60a02711772f5e78754b4f073a02be81b5011 feat(LCLI-642): lore check reports a profile whose declared set cannot fit its budget (#407)
+- 2026-09-29T03:11:47-05:00 ceef2b1f625d6c7b6a18e10c4f110f8c7b26f4cc docs(LCLI-644): the runbook now says how to choose a profile's max_tokens (#410)
+- 2026-09-29T06:16:39-05:00 5af3fe561f6caa7f51bc34809f9b5a3860c92b9c feat(LCLI-650): lock lore to its exact quest pair version at runtime (DEC-31 / ODOC-328) (#421)
 
 ## docs/adr
 
@@ -377,6 +379,8 @@
 - 2026-09-26T17:45:04-05:00 e67b07af0069002de98c9d02bc0d38250b2ffca5 feat(LCLI-597): lore agents renders the Constitution core and a Constants pointer into the managed block (OPAG-425 R8) (#310)
 - 2026-09-27T00:15:51-05:00 3ba875cb3a2099acdacb6d0bffa44655bc5cb4fb docs(LCLI-611): release-truth record for lore 0.11.0; close LCLI-611 (#323)
 - 2026-09-28T13:05:54-05:00 a1cfcf685ef8526ac842dce96c9c6edd1838a7c5 feat(LCLI-615): lore read renders markdown in pretty mode; --plain, piped and --json stay verbatim (#371)
+- 2026-09-29T04:14:34-05:00 32944509c545ffb8932af655c2f16092c035d7df chore(LCLI-648): pin Bun 1.4.2, keeping lore on the same runtime as quest-cli (#414)
+- 2026-09-29T10:51:37-05:00 50a02c5b50cb20bc6a326feba1b26a52e483e806 feat(LCLI-652): read the bundle across refs with `lore query --across-refs` (#429)
 
 ## docs/runbooks
 
