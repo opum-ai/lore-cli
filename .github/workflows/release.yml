@@ -102,9 +102,15 @@ jobs:
           persist-credentials: false
           sparse-checkout-cone-mode: false
           # Anchored: in non-cone mode a bare "package.json" matches at ANY depth (LCLI-613 N1).
+          #
+          # THE CHECKER'S OWN RELATIVE IMPORT IS PART OF WHAT IT READS (LCLI-637 review F1): the
+          # script imports ./is-main.mjs, and a sparse tree without it makes node fail to LOAD the
+          # module (ERR_MODULE_NOT_FOUND, exit 1) before the gate runs at all — on every dispatch,
+          # rehearsals included. measured in a real --no-cone sparse clone.
           sparse-checkout: |
             /package.json
             /scripts/version-parity.mjs
+            /scripts/is-main.mjs
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
@@ -177,8 +183,11 @@ jobs:
   # above reads (the checker's CLI default is dev; release prep passes --next before the bump).
   # Same shape as version-parity: no `if:`, no `needs:`, `publish` lists it, any read failure
   # refuses (an unreadable quest changelog is not a clean one), and the sparse checkout carries
-  # exactly the files the checker reads, at the workspace root so test/release-workflow.test.ts's
-  # LCLI-616 scan (which strips only a parity/ prefix) sees them where the job runs them.
+  # exactly the files the checker reads — INCLUDING THE SIBLING IT IMPORTS, scripts/is-main.mjs
+  # (LCLI-637): without it the module does not load (ERR_MODULE_NOT_FOUND) and the gate never
+  # runs, on every dispatch. The list is at the workspace root so test/release-workflow.test.ts's
+  # LCLI-616 scan (which strips only a parity/ prefix) sees them where the job runs them; that
+  # scan now follows relative imports, which is why this entry is required rather than optional.
   breaking-bump:
     name: breaking CHANGELOG entry vs the bump (lore and quest, QCLI-328)
     runs-on: ubuntu-latest
@@ -190,10 +199,15 @@ jobs:
           persist-credentials: false
           sparse-checkout-cone-mode: false
           # Anchored (LCLI-613 N1): in non-cone mode a bare "package.json" matches at ANY depth.
+          #
+          # /scripts/is-main.mjs is the sibling the checker imports (LCLI-637): without it node
+          # cannot load the module and this gate never runs, on every dispatch including
+          # rehearsals. measured in a real --no-cone sparse clone.
           sparse-checkout: |
             /package.json
             /CHANGELOG.md
             /scripts/check-breaking-bump.mjs
+            /scripts/is-main.mjs
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
@@ -1036,9 +1050,14 @@ jobs:
           sparse-checkout-cone-mode: false
           # Anchored with a leading "/": in non-cone mode a bare "package.json" matches at ANY
           # depth (7 tracked here, measured with git ls-files --ignored), not just the root (LCLI-613 N1).
+          #
+          # /scripts/is-main.mjs is what the checker imports (LCLI-637): this job holds
+          # id-token: write, and without the sibling node fails to load the module, so the gate
+          # that guards the first publish never runs. measured in a real --no-cone sparse clone.
           sparse-checkout: |
             /package.json
             /scripts/version-parity.mjs
+            /scripts/is-main.mjs
       # Refuse unless quest-cli's package.json on its main names this same version. The rule is
       # quest-cli's scripts/qualification/version-parity.mjs (QCLI-386), mirrored in
       # scripts/version-parity.mjs; quest-cli's release.yml runs the mirror against lore-cli.

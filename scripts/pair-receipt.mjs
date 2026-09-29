@@ -69,9 +69,10 @@ import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { devNull } from "node:os";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { promisify } from "node:util";
+
+import { isMain } from "./is-main.mjs";
 
 const execFile = promisify(execFileCallback);
 
@@ -708,7 +709,7 @@ export function parseCheckArgs(argv) {
   };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMain(import.meta.url)) {
   const args = parseCheckArgs(process.argv.slice(2));
   if (!args) {
     console.error(CHECK_USAGE);

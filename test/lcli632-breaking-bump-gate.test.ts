@@ -463,11 +463,13 @@ describePosix("the command, with a stubbed gh (no network)", () => {
 
   async function run(dir: string, args: string[], env: Record<string, string | undefined> = {}) {
     const copy = join(dir, "check.mjs");
-    // The script reads the checkout it lives in; copy it next to the files.
+    // The script reads the checkout it lives in; copy it next to the files, and the shared
+    // is-main helper it imports (LCLI-637) beside it, or the copy cannot load at all.
     writeFileSync(
       copy,
       readFileSync(SCRIPT, "utf8").replace('new URL("..", import.meta.url)', 'new URL(".", import.meta.url)'),
     );
+    writeFileSync(join(dir, "is-main.mjs"), readFileSync(join(import.meta.dir, "..", "scripts", "is-main.mjs")));
     const child = Bun.spawnSync(["node", copy, ...args], {
       stdout: "pipe",
       stderr: "pipe",
