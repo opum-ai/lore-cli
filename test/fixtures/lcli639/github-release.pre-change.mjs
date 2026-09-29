@@ -1,6 +1,21 @@
+// VENDORED, DO NOT EDIT: scripts/github-release.mjs as it stood BEFORE LCLI-639.
+//
+// Provenance: `git show fee53bc6:scripts/github-release.mjs` (dev's tip when LCLI-639 branched --
+// the same tree as `0305ca90^:scripts/github-release.mjs`). Everything below this header is those
+// bytes, verbatim. It is pinned INTO the tree rather than re-resolved from git at test time on
+// purpose: actions/checkout clones at depth 1 in this repository's CI, so a control that ran
+// `git show <old sha>:<path>` would fail there, and a control that silently skipped would prove
+// nothing.
+//
+// Why it exists: test/lcli639-release-notes-from-tagged-commit.test.ts runs its end-to-end fixture
+// against this module to prove the fixture really does let a working-tree CHANGELOG.md edit become
+// the release body -- the defect LCLI-639 fixed. A control that cannot reproduce the defect cannot
+// vouch for the test that catches it. The test asserts this file is not the current module -- it
+// reads a path (`changelogPath`) where the current one reads the tagged commit's bytes -- so a copy
+// that has drifted is caught rather than trusted.
+
 // Cuts lore's GitHub Release for a version tag, its body taken from that version's CHANGELOG.md
-// section AT THE COMMIT v<version> PEELS TO (LCLI-622, opum-agent OPAG-646, paired with quest-cli
-// QCLI-398 and QCLI-401; the tagged-commit source is LCLI-639, paired with quest-cli QCLI-407).
+// section (LCLI-622, opum-agent OPAG-646, paired with quest-cli QCLI-398 and QCLI-401).
 //
 // The release used to be a printed line in the post-latest checklist, carried out by hand. Lore's
 // releases stayed current only because someone remembered; quest's lagged to v0.6.0 unnoticed the
@@ -28,29 +43,19 @@
 // release counts as done only when it is published (not a draft, not a prerelease) and carries
 // these notes; anything else is refused and left for a person, because publishing a draft or
 // rewriting a published body is a decision, not a release step.
-//
-// THE NOTES COME FROM THE TAGGED COMMIT, NEVER FROM THIS CHECKOUT (LCLI-639). The bytes are read
-// with one pinned `gh api` raw-contents call addressed by the peeled SHA -- the same rule and the
-// same call shape as scripts/check-breaking-bump.mjs's quest-side read (LCLI-632), exported here
-// as changelogAtRefArgs so a test can pin the argv. Two reasons it is the network read and not
-// `git show`: this file and promote-latest.mjs contain no local-git invocation at all today, and
-// the tag is created REMOTELY by release.yml, so the commit it names is not guaranteed to exist as
-// a local object in the checkout that runs the promotion. The SHA (not the tag ref) is the
-// address, because a tag ref can be re-pointed and a commit cannot.
-//
-// That makes scripts/check-breaking-bump.mjs's working-tree read deliberate rather than an
-// inconsistency: it gates the version bump BEFORE any tag exists, so there is no commit to read.
 
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { isMain } from "./is-main.mjs";
-import { OWN_REPOSITORY, RECEIPT_HOST, resolveTagCommit } from "./pair-receipt.mjs";
+import { OWN_REPOSITORY, RECEIPT_HOST } from "./pair-receipt.mjs";
 
 const execFileAsync = promisify(execFileCallback);
+const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
 /** Host and repository, pinned the way every other gh call in lore's release tooling pins them. */
 export const RELEASE_REPOSITORY = `${RECEIPT_HOST}/${OWN_REPOSITORY}`;
@@ -68,18 +73,6 @@ const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 /** A Markdown link-reference definition: `[label]: url`, the block Keep a Changelog ends with. */
 const LINK_REFERENCE = /^\s{0,3}\[[^\]]+\]:\s*\S/;
 
-/**
- * A fenced-code-block opener: ``` or ~~~, indented at most three spaces (CommonMark). While the
- * section is CLOSED, a line matching this opens a fence -- a bare "```" opens rather than closing,
- * which is why the two predicates differ.
- */
-const OPEN_FENCE = /^ {0,3}(```|~~~)/;
-/** A fenced-code-block closer: the same, with nothing after it but spaces or tabs. */
-const CLOSE_FENCE = /^ {0,3}(```|~~~)[ \t]*$/;
-
-/** A commit SHA, the only ref the release notes are ever read at. */
-const COMMIT_SHA = /^[0-9a-f]{40}$/;
-
 /** @param {string} text */
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -89,13 +82,6 @@ const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
  * are required. The body ends at the next `## ` heading or, for the last section, at the trailing
  * link-reference block. Returns null when there is no such section or it is empty: a release with
  * no notes is refused, not cut.
- *
- * A fenced code block SUSPENDS the heading rule (LCLI-639, extractor parity with quest-cli
- * QCLI-407): a `## ` line inside a fence is the fence's content, not a heading. While closed, a
- * fence opener opens one; while open, only a closer closes it. An UNCLOSED fence runs the section
- * to the end of the file, as CommonMark reads it, and the trailing link-reference trim below still
- * applies there. CRLF is normalised before the split, so a CRLF file reads exactly as an LF one
- * (quest-cli's extractor carries the same split).
  * @param {string} changelog @param {string} version
  * @returns {{ heading: string, body: string } | null}
  */
@@ -105,20 +91,7 @@ export function changelogSection(changelog, version) {
   const lines = changelog.replace(/\r\n/g, "\n").split("\n");
   const start = lines.findIndex((line) => heading.test(line));
   if (start === -1) return null;
-  let end = -1;
-  let fenced = false;
-  for (let i = start + 1; i < lines.length; i++) {
-    const line = /** @type {string} */ (lines[i]);
-    if (fenced) {
-      if (CLOSE_FENCE.test(line)) fenced = false;
-      continue;
-    }
-    if (line.startsWith("## ")) {
-      end = i;
-      break;
-    }
-    if (OPEN_FENCE.test(line)) fenced = true;
-  }
+  let end = lines.findIndex((line, i) => i > start && line.startsWith("## "));
   if (end === -1) {
     // The last section: Keep a Changelog's link references sit at the end of the file, below it.
     end = lines.length;
@@ -153,11 +126,11 @@ const firstLine = (error) =>
     .trim()
     .split("\n")[0];
 
-/** @typedef {(file: string, args: readonly string[], options?: { maxBuffer?: number }) => Promise<{ stdout: string, stderr?: string }>} ExecFile */
+/** @typedef {(file: string, args: readonly string[]) => Promise<{ stdout: string, stderr?: string }>} ExecFile */
 /** @typedef {{ ok: boolean, action: "created" | "exists" | "marked-latest" | "would-create" | "would-mark-latest" | "none", detail: string }} ReleaseOutcome */
 
 /** @type {ExecFile} */
-const defaultExecFile = (file, args, options = {}) => execFileAsync(file, [...args], options);
+const defaultExecFile = (file, args) => execFileAsync(file, [...args]);
 
 /**
  * Creates the release for v<version>, or confirms one exists. Never edits an existing release's
@@ -278,59 +251,14 @@ export async function ensureGitHubRelease({
   }
 }
 
-/** The one argv a commit's CHANGELOG.md is read with. Exported so a test can pin it (LCLI-639). */
-export function changelogAtRefArgs(sha) {
-  return [
-    "api",
-    "--hostname",
-    RECEIPT_HOST,
-    "-H",
-    "Accept: application/vnd.github.raw",
-    `repos/${OWN_REPOSITORY}/contents/CHANGELOG.md?ref=${sha}`,
-  ];
-}
-
 /**
- * lore-cli's CHANGELOG.md AT `sha`, through the pinned raw-contents call. Every failure comes back
- * as `changelog: null` with the reason, never thrown and never defaulted -- notes that could not be
- * read are not notes. `sha` must be a commit sha: a branch or tag ref is refused here rather than
- * sent, so the read can only ever answer with the bytes of a commit (LCLI-639).
- * @param {string} sha @param {{ execFile?: ExecFile }} [options]
- * @returns {Promise<{ changelog: string | null, source: string, error?: string }>}
+ * The notes and title for a version, read from this checkout's CHANGELOG.md. Null when there is no
+ * non-empty `## [<version>]` section. Throws only when the file cannot be read.
+ * @param {string} version @param {{ changelogPath?: string }} [options]
+ * @returns {Promise<{ notes: string, title: string } | null>}
  */
-export async function readChangelogAtCommit(sha, { execFile: execFileFn = defaultExecFile } = {}) {
-  const source = `${OWN_REPOSITORY}@${sha}:CHANGELOG.md`;
-  if (typeof sha !== "string" || !COMMIT_SHA.test(sha))
-    return {
-      changelog: null,
-      source,
-      error: `${JSON.stringify(sha)} is not a commit sha, and the release notes are read at a commit, never at a ref that can move`,
-    };
-  try {
-    const { stdout } = await execFileFn("gh", changelogAtRefArgs(sha), { maxBuffer: 8 * 1024 * 1024 });
-    if (typeof stdout !== "string" || !stdout.trim())
-      return { changelog: null, source, error: "gh answered with no changelog text" };
-    return { changelog: stdout, source };
-  } catch (caught) {
-    // The cast types the catch binding for checkJs; the expression is check-breaking-bump.mjs's.
-    const error = /** @type {{ stderr?: string, message?: string }} */ (caught);
-    const detail = String(error?.stderr || error?.message || error)
-      .trim()
-      .split("\n")[0];
-    return { changelog: null, source, error: detail };
-  }
-}
-
-/**
- * The notes and title for a version, FROM THE TEXT IT IS GIVEN. Null when there is no non-empty
- * `## [<version>]` section. Pure, and deliberately so (LCLI-639): it holds no path and reads
- * nothing, so the caller decides WHICH bytes -- promote-latest.mjs and main() below both pass the
- * bytes of the tagged commit, never this checkout's.
- * @param {string} version @param {{ changelog: string }} options
- * @returns {{ notes: string, title: string } | null}
- */
-export function releaseNotesFor(version, { changelog }) {
-  const section = changelogSection(changelog, version);
+export async function releaseNotesFor(version, { changelogPath = join(root, "CHANGELOG.md") } = {}) {
+  const section = changelogSection(await readFile(changelogPath, "utf8"), version);
   if (!section) return null;
   return { notes: section.body, title: releaseTitle(version, section.heading) };
 }
@@ -338,17 +266,20 @@ export function releaseNotesFor(version, { changelog }) {
 const USAGE = "usage: node scripts/github-release.mjs --version <x.y.z> [--create] [--not-latest]";
 
 /**
- * The repair and backfill command. The tag is resolved FIRST and the notes are read at the commit
- * it peels to (LCLI-639), so this tool cuts exactly the bytes the preflight compares -- and so a
- * tag that does not resolve refuses before any gh call that writes. Returns an exit code: 0 done
- * (or, without --create, nothing to refuse), 1 refused or failed, 2 bad arguments.
+ * The repair and backfill command. Returns an exit code: 0 done (or, without --create, nothing to
+ * refuse), 1 refused or failed, 2 bad arguments.
  * @param {string[]} argv
- * @param {{ execFile?: ExecFile, out?: (line: string) => void, err?: (line: string) => void }} [options]
+ * @param {{ execFile?: ExecFile, changelogPath?: string, out?: (line: string) => void, err?: (line: string) => void }} [options]
  * @returns {Promise<number>}
  */
 export async function main(
   argv,
-  { execFile = defaultExecFile, out = (line) => console.log(line), err = (line) => console.error(line) } = {},
+  {
+    execFile = defaultExecFile,
+    changelogPath = join(root, "CHANGELOG.md"),
+    out = (line) => console.log(line),
+    err = (line) => console.error(line),
+  } = {},
 ) {
   const known = new Set(["--version", "--create", "--not-latest"]);
   for (let i = 0; i < argv.length; i++) {
@@ -364,26 +295,15 @@ export async function main(
     err(`--version needs a version like 0.11.0 (no "v" prefix)\n${USAGE}`);
     return 2;
   }
-  // The tag first, then the bytes it names (LCLI-639). resolveTagCommit fails closed: no such tag,
-  // a ref that is not exactly refs/tags/v<version>, a peel ending on anything but a commit, and a
-  // chain too deep all come back as commit: null, with no fallback to a branch head.
-  const peeled = await resolveTagCommit(version, { execFile });
-  if (!peeled.commit) {
-    err(`refusing to cut a release for ${version}: ${peeled.error}. It never creates a tag.`);
+  let release;
+  try {
+    release = await releaseNotesFor(version, { changelogPath });
+  } catch (error) {
+    err(`${changelogPath} could not be read: ${firstLine(error)}`);
     return 1;
   }
-  const read = await readChangelogAtCommit(peeled.commit, { execFile });
-  if (!read.changelog) {
-    err(
-      `CHANGELOG.md could not be read at v${version}'s commit ${peeled.commit} (${read.error}); the notes are those bytes, not this checkout's.`,
-    );
-    return 1;
-  }
-  const release = releaseNotesFor(version, { changelog: read.changelog });
   if (!release) {
-    err(
-      `CHANGELOG.md at v${version}'s commit ${peeled.commit} has no non-empty "## [${version}]" section; refusing to cut a release without notes. The tag exists and is immutable, so no edit to this checkout can add the section: re-tag v${version} at a commit whose CHANGELOG.md carries it, or cut that release by hand with notes you choose.`,
-    );
+    err(`CHANGELOG.md has no non-empty "## [${version}]" section; refusing to cut a release without notes.`);
     return 1;
   }
   const outcome = await ensureGitHubRelease({

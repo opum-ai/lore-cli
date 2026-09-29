@@ -1161,9 +1161,19 @@ the promotion half, item 7. It is not part of staging.
       bytes refuse: npm versions are immutable, so that needs a new version.
       A registry read that fails with anything but npm's not-found also
       refuses.
-   9. **The GitHub Release can be cut (LCLI-622).** `CHANGELOG.md` in this
-      checkout must have a non-empty `## [<version>]` section: the release's
-      notes are that section, trimmed, heading excluded. Then
+   9. **The GitHub Release can be cut (LCLI-622, LCLI-639).** `CHANGELOG.md`
+      **at the commit `v<version>` peels to** -- step 1 already resolved that
+      commit -- must have a non-empty `## [<version>]` section: the release's
+      notes are that section, trimmed, heading excluded, and they are read
+      from that commit, never from this checkout, with
+      `gh api --hostname github.com -H "Accept: application/vnd.github.raw" repos/opum-ai/lore-cli/contents/CHANGELOG.md?ref=<that commit>`.
+      So an uncommitted edit, or a section edited after the tag, cannot become
+      the body of a new release, and the read is addressed by the commit
+      rather than by the tag ref, because a tag ref can be re-pointed. A
+      commit whose `CHANGELOG.md` cannot be read, or carries no such section,
+      refuses: the tag is immutable, so neither is fixable in this checkout --
+      re-point `v<version>` at a commit whose `CHANGELOG.md` carries the
+      section, or cut that release by hand with notes you choose. Then
       `scripts/github-release.mjs` reads `v<version>` with
       `gh release view v<version> -R github.com/opum-ai/lore-cli --json tagName,body,isDraft,isPrerelease`,
       writing nothing. It refuses when gh cannot read the repository (not
@@ -1208,8 +1218,12 @@ the promotion half, item 7. It is not part of staging.
    node scripts/github-release.mjs --version <version> --create   # cut it, marked latest
    ```
 
-   That command exits `0` when done, `1` when it refuses or fails, and `2` on
-   bad arguments. `--not-latest` cuts a backfill without marking it latest.
+   That command resolves the tag first and reads the same bytes the preflight
+   did -- `CHANGELOG.md` at the commit `v<version>` peels to -- so a promotion
+   that refused at step 9 for want of that section refuses here too, and with
+   the same reason. It exits `0` when done, `1` when it refuses or fails, and
+   `2` on bad arguments. `--not-latest` cuts a backfill without marking it
+   latest.
 
    **Then it reads the README back, and asserts it (OPAG-474 AC3, LCLI-616).**
    It runs `scripts/readme-readback.sh` with its working directory set to a
@@ -1297,12 +1311,18 @@ the promotion half, item 7. It is not part of staging.
       `A4 VERDICT:` line. Record that line in the release-truth record. If it
       is not PASSED, re-read it by hand, and do not roll back.
    2. **GitHub Release.** It has already run (item 7, LCLI-622): promote cut
-      `v<version>` from `CHANGELOG.md`'s `[<version>]` section, or marked an
-      existing identical one latest. The checklist says DONE or NOT CUT and
-      repeats the outcome. Nothing is asked of you when it is DONE. If it is
-      NOT CUT, do not roll back. Fix the cause, then cut it by hand with
+      `v<version>` from `CHANGELOG.md`'s `[<version>]` section at the commit
+      `v<version>` peels to, or marked an existing identical one latest. The
+      checklist says DONE or NOT CUT and repeats the outcome. Nothing is asked
+      of you when it is DONE. If it is NOT CUT, do not roll back. Fix the
+      cause, then cut it by hand with
       `node scripts/github-release.mjs --version <version> --create`, and
-      record in the release-truth record that you did.
+      record in the release-truth record that you did. If the cause is the
+      tagged commit's own `CHANGELOG.md` -- a missing or empty section there --
+      that command refuses too, and rightly: both read the same bytes. Re-point
+      `v<version>` at a commit whose `CHANGELOG.md` carries the section, or cut
+      the release by hand with `gh release create` and notes you choose;
+      neither is something this tooling does for you.
    3. **Tell quest-cli that lore is live on `latest`.** Tell opum-cli-e2e the
       same, for information, and opum-agent, whose go it was. Resolve each
       session with `ListAgents` and match on repository.

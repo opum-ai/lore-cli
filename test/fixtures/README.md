@@ -59,3 +59,21 @@ the blob id in the test in the same commit:
 gh api 'repos/opum-ai/quest-cli/contents/scripts/qualification/version-parity.mjs?ref=main' \
   -H 'Accept: application/vnd.github.raw' > test/fixtures/quest-cli/version-parity.mjs
 ```
+
+## `lcli639/` — the pre-LCLI-639 `github-release.mjs`, verbatim
+
+`github-release.pre-change.mjs` is `scripts/github-release.mjs` as it stood before LCLI-639 —
+`git show fee53bc6:scripts/github-release.mjs`, git blob `6dde69ea5a2ea92ce42c91f4981d00dccab8eeb2`
+(dev's tip when the change branched; the same tree as `0305ca90^`). A provenance header sits above
+the original first line, and `test/lcli639-release-notes-from-tagged-commit.test.ts` re-derives that
+blob id from the bytes below the header, so an edit here fails the suite instead of quietly changing
+the oracle.
+
+That module reads the release notes from the checkout it runs in (`changelogPath`), which is the
+defect LCLI-639 fixed: the control runs the same end-to-end fixture against it and asserts the
+working-tree `CHANGELOG.md` edit DOES become the release body. A control that cannot reproduce the
+defect cannot vouch for the test that catches it.
+
+It is vendored rather than re-resolved from git at test time on purpose: this repository's CI
+checks out at depth 1, so `git show <old sha>:<path>` fails there, and a control that skipped would
+prove nothing.

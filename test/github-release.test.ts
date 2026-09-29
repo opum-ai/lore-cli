@@ -8,25 +8,45 @@
  * Measured, not tested (no network in a test): on 2026-09-28 the hand-cut v0.11.0 release body,
  * trimmed, was byte-equal to changelogSection(CHANGELOG.md, "0.11.0").body. So the automated cut
  * reproduces the practice it replaces, and an existing v0.11.0 would read as an exact match.
+ *
+ * SINCE LCLI-639 the notes come from CHANGELOG.md AT the commit v<version> peels to, read with one
+ * pinned gh api raw-contents call, and never from this checkout: releaseNotesFor takes the TEXT,
+ * and the repair command resolves the tag first. So every stub below answers the tag reads and the
+ * contents read as well as the release ones. The end-to-end proof that a divergent working-tree
+ * CHANGELOG.md does not reach the release body (and the pre-change control for it) is
+ * test/lcli639-release-notes-from-tagged-commit.test.ts; the fenced-code-block vectors just below
+ * are here, beside the extractor's other unit tests.
  */
 
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import {
+  changelogAtRefArgs,
   changelogSection,
   type ExecFile,
   ensureGitHubRelease,
   main,
   RELEASE_REPOSITORY,
   REPAIR_COMMAND,
+  readChangelogAtCommit,
   releaseNotesFor,
   releaseTitle,
 } from "../scripts/github-release.mjs";
 
 const REPO = "github.com/opum-ai/lore-cli";
+/** The annotated tag the stub resolves: refs/tags/v<version> -> tag object -> this commit. */
+const TAG_OBJECT = "9".repeat(40);
+const COMMIT = "a".repeat(40);
+/** The two tag reads, in the order resolveTagCommit makes them. The third is the contents read. */
+const tagRefArgs = (version: string) => [
+  "api",
+  "--hostname",
+  "github.com",
+  `repos/opum-ai/lore-cli/git/ref/tags/v${version}`,
+];
+const tagObjectArgs = ["api", "--hostname", "github.com", `repos/opum-ai/lore-cli/git/tags/${TAG_OBJECT}`];
 
 const CHANGELOG = [
   "# Changelog",
@@ -100,6 +120,79 @@ describe("changelogSection: Keep a Changelog headings (LCLI-622)", () => {
     expect(changelogSection(CHANGELOG.replace(/\n/g, "\r\n"), "0.10.0")?.body).toBe("Ten.");
   });
 
+  // ── Fenced code blocks (LCLI-639, extractor parity with quest-cli QCLI-407) ───────────────────
+  // A `## ` line inside a fence is the fence's content, not a heading: without this, a section
+  // holding an example CHANGELOG heading is silently truncated at it. The predicate is CommonMark's
+  // at its edges: an opener is ``` or ~~~ indented at most three spaces, a closer is the same with
+  // nothing after it, and while CLOSED a bare "```" OPENS rather than closing on itself.
+  const fenced = (open: string, close: string) =>
+    [
+      "# Changelog",
+      "",
+      "## [1.0.0] - 2026-09-28",
+      "",
+      "Before.",
+      "",
+      open,
+      "## [0.9.0] - a heading inside the fence",
+      close,
+      "",
+      "After.",
+      "",
+      "## [0.5.0] - 2026-09-01",
+      "",
+      "Older.",
+    ].join("\n");
+  test("(i) a ## line inside an unindented fence does not end the section", () => {
+    expect(changelogSection(fenced("```js", "```"), "1.0.0")).toEqual({
+      heading: "## [1.0.0] - 2026-09-28",
+      body: ["Before.", "", "```js", "## [0.9.0] - a heading inside the fence", "```", "", "After."].join("\n"),
+    });
+  });
+
+  test("(ii) a ## line inside a 2-space-indented fence does not end the section", () => {
+    expect(changelogSection(fenced("  ```", "  ```"), "1.0.0")).toEqual({
+      heading: "## [1.0.0] - 2026-09-28",
+      body: ["Before.", "", "  ```", "## [0.9.0] - a heading inside the fence", "  ```", "", "After."].join("\n"),
+    });
+  });
+
+  test("(iii) a ## line after a CLOSED fence still ends the section", () => {
+    const text = fenced("~~~", "~~~");
+    expect(changelogSection(text, "1.0.0")?.body).not.toContain("Older.");
+    // Positive control: the section below it is a real section, found as its own.
+    expect(changelogSection(text, "0.5.0")?.body).toBe("Older.");
+  });
+
+  test("(iv) an UNCLOSED fence runs the section to EOF, carrying the ## lines that follow", () => {
+    const unclosed = [
+      "# Changelog",
+      "",
+      "## [1.0.0] - 2026-09-28",
+      "",
+      "```",
+      "## [0.9.0] - also inside the unclosed fence",
+      "",
+      "## [0.5.0] - 2026-09-01",
+      "",
+      "Older.",
+      "",
+      "[0.5.0]: https://github.com/opum-ai/lore-cli/releases/tag/v0.5.0",
+      "",
+    ].join("\n");
+    const body = changelogSection(unclosed, "1.0.0")?.body ?? "";
+    expect(body).toContain("## [0.9.0] - also inside the unclosed fence");
+    expect(body).toContain("## [0.5.0] - 2026-09-01");
+    expect(body).toContain("Older.");
+    // The trailing link-reference trim still applies on the EOF branch an unclosed fence reaches.
+    expect(body).not.toContain("[0.5.0]: https://");
+  });
+
+  test("a fenced body reads the same with CRLF line ends as with LF", () => {
+    const text = fenced("```js", "```");
+    expect(changelogSection(text.replace(/\n/g, "\r\n"), "1.0.0")).toEqual(changelogSection(text, "1.0.0"));
+  });
+
   test("every ## [X] heading in the real CHANGELOG.md yields notes, and the oldest carries no link references", () => {
     const real = readFileSync(join(import.meta.dir, "..", "CHANGELOG.md"), "utf8");
     const versions = [...real.matchAll(/^## \[(\d+\.\d+\.\d+)\]/gm)].map((m) => m[1] as string);
@@ -119,31 +212,114 @@ test("title: 'Lore CLI X', and a never-published heading says so (quest's rule, 
   );
 });
 
-test("releaseNotesFor reads the file it is given, and returns null for no section", async () => {
-  const dir = mkdtempSync(resolve(tmpdir(), "lore-ghrel-"));
-  try {
-    const changelogPath = join(dir, "CHANGELOG.md");
-    writeFileSync(changelogPath, CHANGELOG);
-    expect(await releaseNotesFor("0.0.9", { changelogPath })).toEqual({
-      notes: "Never shipped.",
-      title: "Lore CLI 0.0.9 (tagged, never published)",
+test("releaseNotesFor is a pure function of the TEXT it is given, and null for no section", () => {
+  expect(releaseNotesFor("0.0.9", { changelog: CHANGELOG })).toEqual({
+    notes: "Never shipped.",
+    title: "Lore CLI 0.0.9 (tagged, never published)",
+  });
+  expect(releaseNotesFor("9.9.9", { changelog: CHANGELOG })).toBeNull();
+});
+
+// ── The tagged commit's CHANGELOG.md, read at the peeled SHA (LCLI-639) ─────────────────────────
+
+describe("the notes' source is a commit, never a ref that can move (LCLI-639)", () => {
+  test("changelogAtRefArgs pins the host, the raw accept header, and the read AT a sha", () => {
+    expect(changelogAtRefArgs(COMMIT)).toEqual([
+      "api",
+      "--hostname",
+      "github.com",
+      "-H",
+      "Accept: application/vnd.github.raw",
+      `repos/opum-ai/lore-cli/contents/CHANGELOG.md?ref=${COMMIT}`,
+    ]);
+  });
+
+  test("readChangelogAtCommit answers gh's bytes with the source it asked for, at the ONE argv", async () => {
+    const seen: string[][] = [];
+    const read = await readChangelogAtCommit(COMMIT, {
+      execFile: async (_file, args, options) => {
+        seen.push([...args]);
+        // The 8 MiB buffer is check-breaking-bump.mjs's precedent: a raw contents answer is the
+        // whole file, and the default 1 MiB would truncate it into a different failure.
+        expect(options).toEqual({ maxBuffer: 8 * 1024 * 1024 });
+        return { stdout: CHANGELOG };
+      },
     });
-    expect(await releaseNotesFor("9.9.9", { changelogPath })).toBeNull();
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+    expect(read).toEqual({ changelog: CHANGELOG, source: `opum-ai/lore-cli@${COMMIT}:CHANGELOG.md` });
+    expect(seen).toEqual([changelogAtRefArgs(COMMIT)]);
+  });
+
+  test("every failure comes back as {changelog: null, error}, never thrown", async () => {
+    const failed = await readChangelogAtCommit(COMMIT, {
+      execFile: async () => {
+        throw Object.assign(new Error("exit 1"), { stderr: "HTTP 502: Bad gateway\nmore" });
+      },
+    });
+    expect(failed.changelog).toBeNull();
+    expect(failed.error).toBe("HTTP 502: Bad gateway");
+    expect(failed.source).toBe(`opum-ai/lore-cli@${COMMIT}:CHANGELOG.md`);
+    const empty = await readChangelogAtCommit(COMMIT, { execFile: async () => ({ stdout: "  \n" }) });
+    expect({ changelog: empty.changelog, error: empty.error }).toEqual({
+      changelog: null,
+      error: "gh answered with no changelog text",
+    });
+  });
+
+  test("a ref that is not a commit sha is refused without a gh call", async () => {
+    for (const ref of ["main", "refs/tags/v0.11.0", "deadbeef", "", undefined]) {
+      const calls: string[][] = [];
+      const read = await readChangelogAtCommit(ref as unknown as string, {
+        execFile: async (_file, args) => {
+          calls.push([...args]);
+          return { stdout: CHANGELOG };
+        },
+      });
+      expect({ ref, changelog: read.changelog, calls: calls.length }).toEqual({ ref, changelog: null, calls: 0 });
+      expect(read.error).toContain("is not a commit sha");
+    }
+  });
 });
 
 // ── ensureGitHubRelease, with a stubbed gh ──────────────────────────────────────────────────────
 
 type Answer = { stdout: string } | { throw: { message: string; stderr?: string } };
 
-/** A stub gh: `view` answers as given; create/edit succeed unless `writeFails`. Records every call. */
-function gh(view: Answer, { writeFails }: { writeFails?: string } = {}) {
+/**
+ * A stub gh. `view` answers as given; create/edit succeed unless `writeFails`. The LCLI-639 reads
+ * answer a fixed annotated tag (refs/tags/v<anything> -> TAG_OBJECT -> COMMIT) and the contents of
+ * CHANGELOG.md at that commit, unless `tagFails`/`contentsFails` say otherwise. Records every call:
+ * `api()` is the three tag/contents reads, `verbs()` every gh verb with each api read as "api".
+ */
+function gh(
+  view: Answer,
+  {
+    writeFails,
+    changelog = CHANGELOG,
+    tagFails,
+    contentsFails,
+  }: { writeFails?: string; changelog?: string; tagFails?: string; contentsFails?: string } = {},
+) {
   const calls: string[][] = [];
   const notesSeen: string[] = [];
   const execFile: ExecFile = async (_file, args) => {
     calls.push([...args]);
+    if (args[0] === "api") {
+      const path = args[args.length - 1] as string;
+      const tagged = /\/git\/ref\/tags\/(v.+)$/.exec(path);
+      if (tagged) {
+        if (tagFails) throw Object.assign(new Error("exit 1"), { stderr: `${tagFails}\n` });
+        return {
+          stdout: JSON.stringify({ ref: `refs/tags/${tagged[1]}`, object: { type: "tag", sha: TAG_OBJECT } }),
+        };
+      }
+      if (path.includes("/git/tags/"))
+        return { stdout: JSON.stringify({ sha: TAG_OBJECT, object: { type: "commit", sha: COMMIT } }) };
+      if (path.includes("/contents/CHANGELOG.md")) {
+        if (contentsFails) throw Object.assign(new Error("exit 1"), { stderr: `${contentsFails}\n` });
+        return { stdout: changelog };
+      }
+      throw new Error(`unexpected gh api path in test: ${path}`);
+    }
     const answer: Answer =
       args[1] === "view"
         ? view
@@ -154,7 +330,13 @@ function gh(view: Answer, { writeFails }: { writeFails?: string } = {}) {
     if ("throw" in answer) throw Object.assign(new Error(answer.throw.message), { stderr: answer.throw.stderr });
     return answer;
   };
-  return { calls, notesSeen, execFile, verbs: () => calls.map((a) => a[1]) };
+  return {
+    calls,
+    notesSeen,
+    execFile,
+    api: () => calls.filter((a) => a[0] === "api"),
+    verbs: () => calls.map((a) => (a[0] === "api" ? "api" : a[1])),
+  };
 }
 
 const absent: Answer = { throw: { message: "exit 1", stderr: "release not found\n" } };
@@ -423,66 +605,80 @@ describe("ensureGitHubRelease: the calls it makes", () => {
 });
 
 describe("scripts/github-release.mjs as the repair command", () => {
-  const withChangelog = async (fn: (changelogPath: string) => Promise<void>) => {
-    const dir = mkdtempSync(resolve(tmpdir(), "lore-ghrel-cli-"));
-    try {
-      const changelogPath = join(dir, "CHANGELOG.md");
-      writeFileSync(changelogPath, CHANGELOG);
-      await fn(changelogPath);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  };
-
   test("without --create it only reads; with it, it cuts; each returns its exit code", async () => {
-    await withChangelog(async (changelogPath) => {
-      const out: string[] = [];
-      const dry = gh(absent);
-      expect(
-        await main(["--version", "0.10.0"], { execFile: dry.execFile, changelogPath, out: (l) => out.push(l) }),
-      ).toBe(0);
-      expect(dry.verbs()).toEqual(["view"]);
-      expect(out).toEqual(['would create release v0.10.0 "Lore CLI 0.10.0" (4 bytes of notes), marked latest']);
-      const real = gh(absent);
-      expect(
-        await main(["--version", "0.10.0", "--create"], { execFile: real.execFile, changelogPath, out: () => {} }),
-      ).toBe(0);
-      expect(real.verbs()).toEqual(["view", "create"]);
-      const backfill = gh(absent);
-      expect(
-        await main(["--version", "0.10.0", "--create", "--not-latest"], {
-          execFile: backfill.execFile,
-          changelogPath,
-          out: () => {},
-        }),
-      ).toBe(0);
-      expect(backfill.calls.find((a) => a[1] === "create")).toContain("--latest=false");
-    });
+    const out: string[] = [];
+    const dry = gh(absent);
+    expect(await main(["--version", "0.10.0"], { execFile: dry.execFile, out: (l) => out.push(l) })).toBe(0);
+    expect(dry.verbs()).toEqual(["api", "api", "api", "view"]);
+    expect(out).toEqual(['would create release v0.10.0 "Lore CLI 0.10.0" (4 bytes of notes), marked latest']);
+    const real = gh(absent);
+    expect(await main(["--version", "0.10.0", "--create"], { execFile: real.execFile, out: () => {} })).toBe(0);
+    expect(real.verbs()).toEqual(["api", "api", "api", "view", "create"]);
+    const backfill = gh(absent);
+    expect(
+      await main(["--version", "0.10.0", "--create", "--not-latest"], { execFile: backfill.execFile, out: () => {} }),
+    ).toBe(0);
+    expect(backfill.calls.find((a) => a[1] === "create")).toContain("--latest=false");
   });
 
-  test("no section, a refused state, or a failed cut exits 1; bad arguments exit 2", async () => {
-    await withChangelog(async (changelogPath) => {
-      const err: string[] = [];
-      const quiet = { changelogPath, out: () => {}, err: (l: string) => err.push(l) };
-      const none = gh(absent);
-      expect(await main(["--version", "9.9.9", "--create"], { ...quiet, execFile: none.execFile })).toBe(1);
-      expect(none.calls).toEqual([]);
-      expect(err.at(-1)).toContain('no non-empty "## [9.9.9]" section');
-      expect(
-        await main(["--version", "0.10.0"], { ...quiet, execFile: gh(published({ isDraft: true })).execFile }),
-      ).toBe(1);
-      expect(
-        await main(["--version", "0.10.0", "--create"], {
-          ...quiet,
-          execFile: gh(absent, { writeFails: "HTTP 403" }).execFile,
-        }),
-      ).toBe(1);
-      for (const argv of [[], ["--version"], ["--version", "v0.10.0"], ["--version", "0.10.0", "--force"]])
-        expect({ argv, code: await main(argv, { ...quiet, execFile: gh(absent).execFile }) }).toEqual({
-          argv,
-          code: 2,
-        });
-    });
+  test("the tag is resolved FIRST, and the notes are read AT the commit it peels to (LCLI-639)", async () => {
+    const stub = gh(absent);
+    expect(await main(["--version", "0.10.0", "--create"], { execFile: stub.execFile, out: () => {} })).toBe(0);
+    expect(stub.api()).toEqual([tagRefArgs("0.10.0"), tagObjectArgs, changelogAtRefArgs(COMMIT)]);
+    expect(stub.api()[2]?.at(-1)).toContain(COMMIT);
+  });
+
+  test("a tag that does not resolve refuses before the contents read, and never writes", async () => {
+    const err: string[] = [];
+    const stub = gh(absent, { tagFails: "gh: Not Found (HTTP 404)" });
+    expect(await main(["--version", "0.10.0", "--create"], { execFile: stub.execFile, err: (l) => err.push(l) })).toBe(
+      1,
+    );
+    expect(stub.api()).toEqual([tagRefArgs("0.10.0")]);
+    expect(stub.calls.filter((a) => a[0] === "release")).toEqual([]);
+    expect(err.at(-1)).toContain("refusing to cut a release for 0.10.0");
+    expect(err.at(-1)).toContain("refs/tags/v0.10.0 could not be read");
+    expect(err.at(-1)).toContain("It never creates a tag");
+  });
+
+  test("no section at the tagged commit, a refused state, or a failed cut exits 1; bad arguments exit 2", async () => {
+    const err: string[] = [];
+    const quiet = { out: () => {}, err: (l: string) => err.push(l) };
+    const none = gh(absent);
+    expect(await main(["--version", "9.9.9", "--create"], { ...quiet, execFile: none.execFile })).toBe(1);
+    // The bytes were READ, at the tagged commit, and the refusal names them: the section is absent
+    // there, and no edit to this checkout could add it (the tag is immutable).
+    expect(none.api()).toEqual([tagRefArgs("9.9.9"), tagObjectArgs, changelogAtRefArgs(COMMIT)]);
+    expect(none.calls.filter((a) => a[0] === "release")).toEqual([]);
+    expect(err.at(-1)).toContain(`CHANGELOG.md at v9.9.9's commit ${COMMIT} has no non-empty "## [9.9.9]" section`);
+    expect(err.at(-1)).toContain("no edit to this checkout can add the section");
+    expect(err.at(-1)).toContain("re-tag v9.9.9 at a commit whose CHANGELOG.md carries it");
+    // A contents read that failed refuses too, naming the commit it could not read.
+    const unreadable = gh(absent, { contentsFails: "HTTP 502: Bad gateway" });
+    expect(await main(["--version", "0.10.0", "--create"], { ...quiet, execFile: unreadable.execFile })).toBe(1);
+    expect(err.at(-1)).toContain(
+      `CHANGELOG.md could not be read at v0.10.0's commit ${COMMIT} (HTTP 502: Bad gateway)`,
+    );
+    expect(await main(["--version", "0.10.0"], { ...quiet, execFile: gh(published({ isDraft: true })).execFile })).toBe(
+      1,
+    );
+    expect(
+      await main(["--version", "0.10.0", "--create"], {
+        ...quiet,
+        execFile: gh(absent, { writeFails: "HTTP 403" }).execFile,
+      }),
+    ).toBe(1);
+    for (const argv of [[], ["--version"], ["--version", "v0.10.0"], ["--version", "0.10.0", "--force"]])
+      expect({ argv, code: await main(argv, { ...quiet, execFile: gh(absent).execFile }) }).toEqual({
+        argv,
+        code: 2,
+      });
+  });
+
+  test("bad arguments refuse before the tag is read: no gh call at all", async () => {
+    const stub = gh(absent);
+    expect(await main(["--version", "v0.10.0"], { execFile: stub.execFile, out: () => {}, err: () => {} })).toBe(2);
+    expect(stub.calls).toEqual([]);
   });
 
   test("the repair command promote-latest prints is this file's --create", () => {

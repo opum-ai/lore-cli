@@ -226,6 +226,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The GitHub Release's notes come from `CHANGELOG.md` at the commit `v<version>` peels to, not
+  from the operator's working tree** (LCLI-639, twin of quest-cli QCLI-407). `releaseNotesFor` read
+  `<checkout>/CHANGELOG.md` out of the tree `scripts/promote-latest.mjs` ran in, so an uncommitted
+  edit — or a section edited after the tag — became the body of a NEW release. An existing release
+  was never at risk: differing notes are refused, and never edited. The bytes are now read with one
+  pinned `gh api` raw-contents call at the peeled sha, for the pre-move refusal, the cut and the
+  repair tool alike, addressed by the commit rather than the tag ref (a ref can be re-pointed, a
+  commit cannot). `releaseNotesFor` is a pure function of the text it is given, and the repair
+  command resolves the tag first: a tag whose commit carries no such section refuses naming that
+  commit, and its remedies are a re-tag or a hand-cut, not an edit to a checkout the tag does not
+  name. Measured on this repository: `node scripts/github-release.mjs --version 0.9.0` now reports
+  "would mark it latest" where the working-tree read reported differing notes. A `## ` line inside
+  a fenced code block no longer ends the section, and an unclosed fence runs to the end of the
+  file, matching the extractor rule agreed with quest-cli.
 - **`provenance-post` checks what a Release run published: the platforms at `X` and the launcher
   at `X-rc.N`** (LCLI-625). Since LCLI-621 a Release run stages the launcher as `X-rc.N`, but
   `scripts/release-provenance.mjs --post` still checked every package at `X`. On a

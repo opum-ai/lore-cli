@@ -27,6 +27,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { devNull, tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
+import { changelogAtRefArgs } from "../scripts/github-release.mjs";
 import {
   expectedTarballNames,
   PAIR_RECEIPT_KIND,
@@ -314,6 +315,12 @@ type WorldOptions = {
   release?: string | { tagName?: string; body?: unknown; isDraft?: unknown; isPrerelease?: unknown };
   /** `gh release create` / `gh release edit` fail with this stderr. */
   failReleaseWrite?: string;
+  /**
+   * LCLI-639: what the raw-contents read of CHANGELOG.md AT the peeled commit answers. Default
+   * CHANGELOG_FIXTURE; "fail" throws, as a gh that cannot read it does. The promotion has no other
+   * source for its notes, so changing this is the only way to change them.
+   */
+  changelog?: string | "fail";
 };
 
 type World = ReturnType<typeof world>;
@@ -397,6 +404,14 @@ function world(options: WorldOptions = {}) {
       }
       if (command === "gh" && line === `gh api --hostname github.com repos/opum-ai/lore-cli/${GIT}/tags/${TAG_OBJECT}`)
         return { stdout: JSON.stringify({ sha: TAG_OBJECT, object: { type: "commit", sha: commit } }) };
+      // LCLI-639: the release notes are CHANGELOG.md's bytes AT the commit v<V> peels to, read with
+      // this one call. The argv comes from the module's own exported builder, so a test cannot pin
+      // a shape the script does not send -- and a read at any OTHER ref matches nothing and throws.
+      if (command === "gh" && line === `gh ${changelogAtRefArgs(commit ?? COMMIT).join(" ")}`) {
+        if (options.changelog === "fail")
+          throw Object.assign(new Error("Command failed: gh api"), { stderr: "HTTP 502: Bad gateway\n" });
+        return { stdout: options.changelog ?? CHANGELOG_FIXTURE };
+      }
       if (command === "gh" && line === `gh ${releaseRunReadArgs(RUN).join(" ")}`)
         return {
           stdout: JSON.stringify({
@@ -555,7 +570,11 @@ function world(options: WorldOptions = {}) {
   return self;
 }
 
-/** The CHANGELOG.md section the v<V> GitHub Release is cut from (LCLI-622), as the harness writes it. */
+/**
+ * The CHANGELOG.md section the v<V> GitHub Release is cut from (LCLI-622). SINCE LCLI-639 these
+ * bytes are served as CHANGELOG.md AT the commit v<V> peels to, through the world's fake gh -- the
+ * promotion reads no file of its own, so a working-tree copy cannot reach the notes.
+ */
 const V_NOTES = `### Added\n\n- **Something** (LCLI-0): shipped in ${V}.`;
 const CHANGELOG_FIXTURE = [
   "# Changelog",
@@ -579,8 +598,6 @@ const CHANGELOG_FIXTURE = [
 function harness() {
   const dir = mkdtempSync(resolve(tmpdir(), "lore-promote-"));
   const record = join(dir, "promotion-record.json");
-  const changelog = join(dir, "CHANGELOG.md");
-  writeFileSync(changelog, CHANGELOG_FIXTURE);
   const out: string[] = [];
   const err: string[] = [];
   const go = (
@@ -596,13 +613,11 @@ function harness() {
       err: (l) => err.push(l),
       readPackageVersion: async () => V,
       verifyOptions: FAST,
-      changelogPath: changelog,
       ...extra,
     });
   return {
     dir,
     record,
-    changelog,
     out,
     err,
     go,
@@ -686,7 +701,7 @@ describe("scripts/promote-latest.mjs: the clean case (LCLI-621)", () => {
       // LCLI-622 AC4: the GitHub Release is executed, not printed as an instruction.
       expect(checklist.join("\n")).not.toContain("gh release create v");
       expect(checklist).toContain(
-        `  2. GitHub Release for v${V}: DONE. It ran automatically, from CHANGELOG.md's [${V}] section; its outcome:`,
+        `  2. GitHub Release for v${V}: DONE. It ran automatically, from CHANGELOG.md's [${V}] section at the commit v${V} peels to; its outcome:`,
       );
       expect(checklist).toContain(`         created release v${V} "Lore CLI ${V}", marked latest`);
       // LCLI-616 review F4: the four handshake values, RESOLVED, the skills/ tree through gh api.
@@ -1639,7 +1654,7 @@ describe("scripts/promote-latest.mjs: the post-latest checklist (LCLI-618)", () 
       "  1. README read-back: PASSED. It ran automatically; its verdict:",
       `         ${PASSED_VERDICT}`,
       "     Record that line in the release-truth record (item 5).",
-      "  2. GitHub Release for v1.2.3: DONE. It ran automatically, from CHANGELOG.md's [1.2.3] section; its outcome:",
+      "  2. GitHub Release for v1.2.3: DONE. It ran automatically, from CHANGELOG.md's [1.2.3] section at the commit v1.2.3 peels to; its outcome:",
       '         created release v1.2.3 "Lore CLI 1.2.3", marked latest',
       "  3. Tell quest-cli that lore 1.2.3 is live on latest; tell opum-cli-e2e the same, for information; and",
       "     opum-agent, whose go this was. Resolve each session with ListAgents and match on repository;",
@@ -1674,7 +1689,7 @@ describe("scripts/promote-latest.mjs: the post-latest checklist (LCLI-618)", () 
   test("LCLI-622: item 2 reports a release that was NOT cut, with the repair command, and never gh release create", () => {
     const lines = postLatestChecklist({ ...args, githubRelease: notCut });
     const at = lines.indexOf(
-      "  2. GitHub Release for v1.2.3: NOT CUT (see above; do NOT roll back). It ran automatically, from CHANGELOG.md's [1.2.3] section; its outcome:",
+      "  2. GitHub Release for v1.2.3: NOT CUT (see above; do NOT roll back). It ran automatically, from CHANGELOG.md's [1.2.3] section at the commit v1.2.3 peels to; its outcome:",
     );
     expect(at).toBeGreaterThan(-1);
     expect(lines.slice(at + 1, at + 4)).toEqual([
@@ -2514,14 +2529,14 @@ describe("scripts/promote-latest.mjs: the GitHub Release (LCLI-622)", () => {
     ["an unbracketed ## X heading", CHANGELOG_FIXTURE.replace(`## [${V}]`, `## ${V}`)],
   ] as const)
     for (const mode of MODES)
-      test(`CHANGELOG.md with ${label} (${mode}): exit 1 before any write, no record, no gh release call (AC2)`, async () => {
+      test(`CHANGELOG.md with ${label} AT THE TAGGED COMMIT (${mode}): exit 1 before any write, no record, no gh release call (AC2)`, async () => {
         const h = harness();
-        const w = world();
+        const w = world({ changelog });
         try {
-          writeFileSync(h.changelog, changelog);
           expect(await h.go(["--record", h.record, mode], w)).toBe(1);
+          // The refusal names the source it read: the tagged commit, not this checkout (LCLI-639).
           expect(h.err.join("\n")).toContain(
-            `Refusing to promote ${V}: CHANGELOG.md has no non-empty "## [${V}]" section, and the v${V} GitHub Release is cut from it`,
+            `Refusing to promote ${V}: opum-ai/lore-cli@${COMMIT}:CHANGELOG.md has no non-empty "## [${V}]" section, and the v${V} GitHub Release is cut from those bytes`,
           );
           expect(h.err.join("\n")).toContain("Nothing has moved.");
           expectRefusedBeforeAnyWrite(h, w);
@@ -2534,13 +2549,14 @@ describe("scripts/promote-latest.mjs: the GitHub Release (LCLI-622)", () => {
       });
 
   for (const mode of MODES)
-    test(`an unreadable CHANGELOG.md (${mode}): exit 1 before any write`, async () => {
+    test(`an unreadable CHANGELOG.md at the tagged commit (${mode}): exit 1 before any write`, async () => {
       const h = harness();
-      const w = world();
+      const w = world({ changelog: "fail" });
       try {
-        rmSync(h.changelog);
         expect(await h.go(["--record", h.record, mode], w)).toBe(1);
-        expect(h.err.join("\n")).toContain(`${h.changelog} could not be read`);
+        expect(h.err.join("\n")).toContain(
+          `Refusing to promote ${V}: opum-ai/lore-cli@${COMMIT}:CHANGELOG.md could not be read (HTTP 502: Bad gateway)`,
+        );
         expectRefusedBeforeAnyWrite(h, w);
       } finally {
         h.cleanup();
@@ -2697,7 +2713,7 @@ describe("scripts/promote-latest.mjs: the GitHub Release (LCLI-622)", () => {
       // The read-back passed, and the checklist says so beside the release's NOT CUT.
       expect(h.out).toContain("  1. README read-back: PASSED. It ran automatically; its verdict:");
       expect(h.out).toContain(
-        `  2. GitHub Release for v${V}: NOT CUT (see above; do NOT roll back). It ran automatically, from CHANGELOG.md's [${V}] section; its outcome:`,
+        `  2. GitHub Release for v${V}: NOT CUT (see above; do NOT roll back). It ran automatically, from CHANGELOG.md's [${V}] section at the commit v${V} peels to; its outcome:`,
       );
       expect(h.out).toContain(`         node scripts/github-release.mjs --version ${V} --create`);
     } finally {
@@ -2729,9 +2745,11 @@ describe("scripts/promote-latest.mjs: the GitHub Release (LCLI-622)", () => {
       const w = world({
         receipt: undefined,
         pass1: undefined,
+        // LCLI-639: "--rollback makes no gh release call" is a stronger claim now that the notes
+        // read is a gh call too -- a rollback that read the CHANGELOG would answer no such call.
+        changelog: "fail",
         tags: Object.fromEntries(RELEASE_PACKAGES.map((n) => [n, { latest: V }])),
       });
-      rmSync(h.changelog);
       expect(await h.go(["--rollback", h.record], w)).toBe(0);
       expect(releaseCalls(w)).toEqual([]);
     } finally {
