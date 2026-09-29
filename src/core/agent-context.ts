@@ -1,7 +1,7 @@
 /** Deterministic, bounded evidence compilation for `lore agent context`. */
 
 import { createHash } from "node:crypto";
-import type { Heading, RootContent } from "mdast";
+import type { Heading, Nodes, RootContent } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { LoreError } from "../errors";
 import {
@@ -1088,12 +1088,13 @@ function sliceChildren(body: string, children: readonly RootContent[], breadcrum
 }
 
 /**
- * What {@link breadcrumbAt} needs of a heading: the node, and its container's end when it is
- * nested. {@link AnchoredHeading} satisfies it structurally, and `partitionMarkdown` builds bare
- * entries for the top-level headings of the region it is splitting.
+ * What {@link breadcrumbAt} needs of a heading: the node, its container when it is nested, and that
+ * container's end offset. {@link AnchoredHeading} satisfies it structurally, and `partitionMarkdown`
+ * builds bare entries for the top-level headings of the region it is splitting.
  */
 interface TrailHeading {
   readonly heading: Heading;
+  readonly container?: Nodes;
   readonly scopeEnd?: number;
 }
 
@@ -1108,14 +1109,22 @@ interface TrailHeading {
  * (deeper-or-equal tops pop), AND an entry whose container has already ended stops parenting — a
  * heading nested in a blockquote does not become the ancestor of a top-level heading that merely
  * follows the blockquote.
+ *
+ * The first pop is QUALIFIED for a nested entry: it may evict only entries that began inside its own
+ * container. `# Doc` then `> # Nested` then `## Target` is the case that forced this — the quoted
+ * H1 is not deeper than `Doc`, so an unqualified depth pop evicted `Doc` on push and the later
+ * container pop of `Nested` left `Target` orphaned at `"Target"` where the true trail is
+ * `"Doc > Target"` (LCLI-647 fix-verification pass).
  */
 function breadcrumbAt(headings: readonly TrailHeading[], target: Heading, prefix?: string): string {
   const stack: TrailHeading[] = [];
   for (const entry of headings) {
+    const entryScopeStart = entry.container?.position?.start.offset ?? -1;
     while (stack.length > 0) {
       const top = stack[stack.length - 1] as TrailHeading;
       const containerEnded = top.scopeEnd !== undefined && top.scopeEnd <= offsetStart(entry.heading);
-      if (top.heading.depth < entry.heading.depth && !containerEnded) break;
+      const evictable = entry.container === undefined || offsetStart(top.heading) >= entryScopeStart;
+      if (!containerEnded && (top.heading.depth < entry.heading.depth || !evictable)) break;
       stack.pop();
     }
     stack.push(entry);
@@ -1133,10 +1142,17 @@ function offsetStart(node: RootContent): number {
  * The offset where the line containing `offset` begins. Used to end a NESTED region before its
  * terminator heading's own container marker (`> ## B`), so the slice cannot end with a dangling
  * `"> "` fragment (LCLI-647 review F2).
+ *
+ * Both line terminators count: a lone CR body has no `\n` at all, and returning `0` for it made the
+ * region end BEFORE its own start (an empty region). CRLF is unaffected — the `\r` sits before the
+ * `\n`, so `\n` wins. With neither terminator before `offset`, the offset itself is the safe answer:
+ * there is no partial line prefix to trim.
  */
 function lineStart(body: string, offset: number): number {
-  const newline = body.lastIndexOf("\n", offset - 1);
-  return newline === -1 ? 0 : newline + 1;
+  const lf = body.lastIndexOf("\n", offset - 1);
+  const cr = body.lastIndexOf("\r", offset - 1);
+  const boundary = lf > cr ? lf : cr;
+  return boundary === -1 ? offset : boundary + 1;
 }
 
 function offsetEnd(node: RootContent): number {

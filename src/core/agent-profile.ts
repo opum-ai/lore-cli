@@ -450,8 +450,9 @@ export interface AnchoredHeading {
   readonly heading: Heading;
   readonly slug: string;
   /**
-   * The nearest non-heading container (a blockquote, list item, footnote, …) the heading sits
-   * inside, or `undefined` when the heading is top-level. Compared by IDENTITY, never by offsets:
+   * The nearest non-heading container (a blockquote or list item — what plain `fromMarkdown`,
+   * with no micromark extensions, puts a heading inside) the heading sits in, or `undefined` when
+   * the heading is top-level. Compared by IDENTITY, never by offsets:
    * when a container is the last child of another (a blockquote ending a list item), their end
    * offsets coincide, so an offset comparison called a heading in the inner container a sibling of
    * one in the outer and silently truncated the outer heading's region (LCLI-647 review F1).

@@ -20,8 +20,10 @@
  *                   container END OFFSET, which collides whenever a container ends its parent;
  *                   (c) a nested region never ends with a dangling container marker (review F2)
  *                   -> RED if the line-start trim is dropped.
- *   [breadcrumb]    1 case: the scope-aware trail -> RED if a nested heading parents the following
- *                   top-level one again (`Overview > Overview`).
+ *   [breadcrumb]    2 cases: the scope-aware trail -> RED (both) if the pop becomes unqualified
+ *                   again (a nested H1 evicts its enclosing section, `"Overview"` where
+ *                   `"Dup > Overview"` is true), and RED if a nested entry keeps parenting the
+ *                   following top-level one (`Overview > Overview`).
  *   [classifiable]  1 case: an anchor the renderer cannot resolve -> RED if the refusal goes back to
  *                   a plain Error (uncaught/1, empty stdout) instead of LoreError(validation/6).
  *   [control]       2 cases: the vendored pre-fix resolver, run in the same invocation -> RED if the
@@ -29,13 +31,15 @@
  *   [agreement]     1 case: every slug `headingSlugs` reports for the shift fixture resolves through
  *                   the CLI -> RED if the two enumerations diverge again.
  *
- * Measured against that map, over the 11 cases here (re-measured 2026-09-29 after the review-F1/F2
- * fixes): F1's defect restored (scope compared by container end offset) reddens exactly 1 of 11,
- * its own case; dropping the line-start trim (F2's defect) reddens exactly 1 of 11, its own case;
- * dropping scope-awareness (region bound and breadcrumb container pop) reddens 2 of 11 —
- * [scope]-container-bound and [breadcrumb]; taking BOTH readers back to top-level-only headings
- * (the pre-fix enumeration) reddens 9 of 11 — every case except [classifiable] and the static
- * vendored-source check. No figure is inferred from another.
+ * Measured against that map, over the 12 cases here (re-measured 2026-09-29 after the review-F1/F2
+ * fixes and the fix-verification pass): F1's defect restored (scope compared by container end
+ * offset) reddens exactly 1 of 12, its own case; dropping the line-start trim (F2's defect) reddens
+ * exactly 1 of 12, its own case; making the breadcrumb pop unqualified again reddens exactly 2 of
+ * 12, both [breadcrumb] cases; dropping scope-awareness (region bound and breadcrumb container pop)
+ * reddens 3 of 12 — [scope]-container-bound and both [breadcrumb] cases; taking BOTH readers back to
+ * top-level-only headings (the pre-fix enumeration) reddens 9 of 12 — every case except
+ * [classifiable], the [breadcrumb]-enclosing case (which the flat enumeration satisfies by
+ * accident), and the static vendored-source check. No figure is inferred from another.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -191,7 +195,7 @@ describe("LCLI-647: nested headings are valid anchor targets (DEC-22 A)", () => 
     const { code, section } = await contextSection("alpha");
     expect(code).toBe(0);
     // trimEnd() because this case's subject is NOT where the region ends (the container's end vs
-    // EOF is the [scope] case below): under a region that runs to EOF the same content carries one
+    // EOF is the first [scope] case above): under a region that runs to EOF the same content carries one
     // trailing newline, and pinning that here would red this case for a reason it does not test.
     expect(section.body.trimEnd()).toBe("## Alpha\n\n  Alpha body.\n\n  > ## Legacy note\n  >\n  > Legacy body.");
   });
@@ -224,11 +228,39 @@ describe("LCLI-647: nested headings are valid anchor targets (DEC-22 A)", () => 
     expect(section.body.endsWith("> ")).toBe(false);
   });
 
-  test("[breadcrumb] a quoted heading does not parent the top-level heading that follows it", async () => {
+  test("[breadcrumb] a quoted heading neither parents the top-level heading nor evicts its ancestor", async () => {
+    // `## Overview` is a subsection of `# Dup`; the quoted `# Overview` is scoped to its blockquote.
+    // An unqualified depth pop let that nested H1 evict `Dup` on push, and the later container pop
+    // left the trail as bare "Overview" (fix-verification finding 1); the true trail keeps Dup.
     writeProfile("shift", ["reference/dup#overview-1"]);
     const { section } = await contextSection("shift");
-    expect(section.breadcrumb).toBe("Overview");
-    expect(section.breadcrumb).not.toContain(" > ");
+    expect(section.breadcrumb).toBe("Dup > Overview");
+  });
+
+  test("[breadcrumb] a nested heading one level down keeps its enclosing section on the trail", async () => {
+    // The shape that forced the qualified pop, with no duplicate slug involved: `# Doc`, a quoted
+    // `# Nested`, then the real `## Target`, whose trail must keep `Doc`.
+    writeFileSync(
+      join(root, "docs/reference/enclosing.md"),
+      [
+        "---",
+        "type: Reference",
+        "title: Enclosing",
+        "---",
+        "",
+        "# Doc",
+        "",
+        "> # Nested",
+        "",
+        "## Target",
+        "",
+        "text",
+        "",
+      ].join("\n"),
+    );
+    writeProfile("enclosing", ["reference/enclosing#target"]);
+    const { section } = await contextSection("enclosing");
+    expect(section.breadcrumb).toBe("Doc > Target");
   });
 
   test("[classifiable] an unresolvable anchor is a LoreError refusal, not an uncaught crash", async () => {

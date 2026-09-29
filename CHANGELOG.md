@@ -33,8 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stops at its container and its breadcrumb names its nested ancestors; an anchor that matches no
   heading is a `validation` refusal (exit `6`) with a remedy, never an uncaught crash. Where a
   duplicate heading takes a slug (a quoted `# Overview` beside a top-level `## Overview`), an anchor
-  on the shifted slug resolves to the heading the slugger assigns it — the meaning the validator and
-  GitHub's own anchors already used.
+  on that slug now resolves to the heading the slugger assigns it — the meaning the validator and
+  GitHub's own anchors already used. That re-points one case a profile could have relied on: an
+  anchor of `#overview` where a quoted `# Overview` took the slug resolves to the QUOTED heading,
+  not the top-level one the pre-fix renderer picked; anchor `#overview-1` for the top-level heading.
+  Classified `### Changed` rather than breaking: the pack item's target changes, but nothing is
+  refused that worked before, and the pre-fix target was the violation of this repository's own
+  retrieval spec.
 - **A RESUMED `promote-latest` run now refuses when any package's current `latest` is newer than
   `--version`** (LCLI-638, twin of quest-cli QCLI-405). The LCLI-631 gate validated the record a
   FRESH run was about to write, and a resume reuses the record the first run wrote instead — so
