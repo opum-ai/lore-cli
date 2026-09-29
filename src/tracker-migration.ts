@@ -2,13 +2,13 @@
 
 import { readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import {
-  MIN_QUEST_VERSION,
-  type QuestBacklogMigration,
-  type QuestBacklogMigrationOptions,
-  type QuestMigrationPreview,
-  type QuestMigrationReceipt,
+import type {
+  QuestBacklogMigration,
+  QuestBacklogMigrationOptions,
+  QuestMigrationPreview,
+  QuestMigrationReceipt,
 } from "./adapters/quest";
+import { VERSION } from "./meta";
 import { assertNoSymlinkInPath, ensureDir, writeFileAtomic } from "./commands/fswrite";
 import { LoreError } from "./errors";
 
@@ -173,7 +173,7 @@ function assertPreview(preview: QuestMigrationPreview): void {
     throw new LoreError(
       "drift",
       "Quest returned an invalid Backlog migration preview",
-      `Quest ${MIN_QUEST_VERSION} or newer is required`,
+      `Quest ${VERSION} is required`,
     );
 }
 

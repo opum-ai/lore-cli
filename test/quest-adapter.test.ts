@@ -4,14 +4,18 @@ import {
   bunQuestSpawn,
   createQuestAdapter,
   createQuestBacklogMigration,
+  isQuestVersionPairMismatch,
   QUEST_ACCOUNTABLE_HUMAN_ENV_VAR,
   QUEST_ACTOR_ENV_VAR,
   QUEST_ACTOR_KIND_ENV_VAR,
   QUEST_TIMEOUT_ENV_VAR,
+  QUEST_VERSION_PAIR_MISMATCH_CODE,
   type QuestSpawn,
   type QuestSpawnResult,
 } from "../src/adapters/quest";
-import { LoreError } from "../src/errors";
+import { EXIT_CODES, LoreError, reportError } from "../src/errors";
+import { VERSION } from "../src/meta";
+import { capture } from "./helpers";
 
 function ok(kind: string, data: unknown): QuestSpawnResult {
   return { exitCode: 0, stdout: JSON.stringify({ schemaVersion: 1, kind, data }), stderr: "" };
@@ -106,7 +110,7 @@ describe("Quest 0.2 tracker adapter", () => {
     const spawn: QuestSpawn = async (readonlyArgs) => {
       const args = [...readonlyArgs];
       calls.push(args);
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
       if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
       if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
       if (args.slice(0, 3).join(" ") === "migration backlog preview") return ok("migration.backlog-preview", preview);
@@ -146,7 +150,7 @@ describe("Quest 0.2 tracker adapter", () => {
   test("maps migration transport rejections to typed Lore errors after a successful probe", async () => {
     function failingMigrationSpawn(cause: Error): QuestSpawn {
       return async (args) => {
-        if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+        if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
         if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
         if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
         throw cause;
@@ -197,7 +201,7 @@ describe("Quest 0.2 tracker adapter", () => {
     const spawn: QuestSpawn = async (readonlyArgs) => {
       const args = [...readonlyArgs];
       calls.push(args);
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
       if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
       if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
       if (args.join(" ") === "task list --json") return ok("task.list", [task()]);
@@ -269,7 +273,7 @@ describe("Quest 0.2 tracker adapter", () => {
   test("pausedStatus reads Quest 0.4.0's optional field, drift-checking it independently of statusFlow (LCLI-455)", async () => {
     const spawnWith = (flowData: Record<string, unknown>): QuestSpawn => {
       return async (args) => {
-        if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+        if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
         if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
         if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flowData);
         throw new Error(`unexpected quest call: ${args.join(" ")}`);
@@ -292,7 +296,7 @@ describe("Quest 0.2 tracker adapter", () => {
       return async (readonlyArgs) => {
         const args = [...readonlyArgs];
         calls.push(args);
-        if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+        if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
         if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
         if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
         if (args[0] === "task" && args[1] === "edit") return ok("task.updated", { id: "QUEST-2" });
@@ -330,7 +334,7 @@ describe("Quest 0.2 tracker adapter", () => {
         spawn: async (readonlyArgs) => {
           const args = [...readonlyArgs];
           calls.push(args);
-          if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+          if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
           if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
           if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
           if (args.slice(0, 3).join(" ") === "migration backlog apply")
@@ -386,7 +390,7 @@ describe("Quest 0.2 tracker adapter", () => {
         spawn: async (readonlyArgs) => {
           const args = [...readonlyArgs];
           calls.push(args);
-          if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+          if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
           if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
           if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
           if (args.slice(0, 3).join(" ") === "migration backlog preview")
@@ -438,7 +442,7 @@ describe("Quest 0.2 tracker adapter", () => {
       const migration = createQuestBacklogMigration("/repo", {
         spawn: async (readonlyArgs) => {
           const args = [...readonlyArgs];
-          if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+          if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
           if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
           if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
           if (args.slice(0, 3).join(" ") === "migration backlog preview")
@@ -465,7 +469,7 @@ describe("Quest 0.2 tracker adapter", () => {
       const migration = createQuestBacklogMigration("/repo", {
         spawn: async (readonlyArgs) => {
           const args = [...readonlyArgs];
-          if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+          if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
           if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
           if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
           if (args.slice(0, 3).join(" ") === "migration backlog preview")
@@ -490,7 +494,7 @@ describe("Quest 0.2 tracker adapter", () => {
       const migration = createQuestBacklogMigration("/repo", {
         spawn: async (readonlyArgs) => {
           const args = [...readonlyArgs];
-          if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+          if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
           if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
           if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
           if (args.slice(0, 3).join(" ") === "migration backlog preview")
@@ -515,7 +519,7 @@ describe("Quest 0.2 tracker adapter", () => {
         spawn: async (readonlyArgs) => {
           const args = [...readonlyArgs];
           calls.push(args);
-          if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+          if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
           if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
           if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
           if (args.slice(0, 3).join(" ") === "migration backlog preview")
@@ -537,7 +541,7 @@ describe("Quest 0.2 tracker adapter", () => {
         spawn: async (readonlyArgs) => {
           const args = [...readonlyArgs];
           calls.push(args);
-          if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+          if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
           if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
           if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
           throw new Error(`unexpected quest call: ${args.join(" ")}`);
@@ -669,7 +673,7 @@ describe("Quest 0.2 tracker adapter", () => {
 
   test("maps Quest JSON diagnostics exactly and treats a missing task as null", async () => {
     const spawn: QuestSpawn = async (args) => {
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
       if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
       if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
       return {
@@ -686,7 +690,7 @@ describe("Quest 0.2 tracker adapter", () => {
     expect(await adapter(spawn).viewTask("QUEST-9")).toBeNull();
     const bad: QuestSpawn = async (args) =>
       args[0] === "--version"
-        ? { exitCode: 0, stdout: "0.2.7\n", stderr: "" }
+        ? { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" }
         : {
             exitCode: 1,
             stdout: "",
@@ -755,18 +759,18 @@ describe("Quest 0.2 tracker adapter", () => {
     await expect(adapter(async () => Promise.reject(missing)).probe()).rejects.toMatchObject({ type: "not_found" });
     const incompatible: QuestSpawn = async (args) =>
       args[0] === "--version"
-        ? { exitCode: 0, stdout: "0.2.7\n", stderr: "" }
+        ? { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" }
         : { exitCode: 0, stdout: JSON.stringify({ schemaVersion: 2, kind: "help.manifest", data: {} }), stderr: "" };
     await expect(adapter(incompatible).probe()).rejects.toMatchObject({ type: "drift" });
     const wrongKind: QuestSpawn = async (args) => {
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
       if (args[0] === "manifest") return ok("manifest.registry", manifest());
       if (args[1] === "status-flow") return ok("task.status-flow", flow());
       return ok("task.view", []);
     };
     await expect(adapter(wrongKind).listTasks()).rejects.toMatchObject({ type: "drift" });
     const malformed: QuestSpawn = async (args) => {
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
       if (args[0] === "manifest") return ok("manifest.registry", manifest());
       return ok("task.status-flow", { statuses: [] });
     };
@@ -776,11 +780,11 @@ describe("Quest 0.2 tracker adapter", () => {
   test("rejects a manifest with a missing descriptor and malformed live status-flow shape", async () => {
     const incomplete: QuestSpawn = async (args) =>
       args[0] === "--version"
-        ? { exitCode: 0, stdout: "0.2.7\n", stderr: "" }
+        ? { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" }
         : ok("manifest.registry", { commands: [] });
     await expect(adapter(incomplete).probe()).rejects.toMatchObject({ type: "drift" });
     const badFlow: QuestSpawn = async (args) => {
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
       if (args[0] === "manifest") return ok("manifest.registry", manifest());
       return ok("task.status-flow", { statuses: ["To Do"], terminalStatuses: ["Done"] });
     };
@@ -791,7 +795,7 @@ describe("Quest 0.2 tracker adapter", () => {
 describe("quest adapter structured criteria", () => {
   test("maps Quest 0.2.7 structured acceptanceCriteria and definitionOfDone losslessly (checked=true survives, index dropped)", async () => {
     const spawn: QuestSpawn = async (args) => {
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
       if (args[0] === "manifest") return ok("manifest.registry", manifest());
       if (args[0] === "task" && args[1] === "status-flow") return ok("task.status-flow", flow());
       if (args[0] === "task" && args[1] === "view")
@@ -827,7 +831,7 @@ describe("quest adapter structured criteria", () => {
     const spawnFor =
       (payload: unknown): QuestSpawn =>
       async (args) => {
-        if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+        if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
         if (args[0] === "manifest") return ok("manifest.registry", manifest());
         if (args[0] === "task" && args[1] === "status-flow") return ok("task.status-flow", flow());
         if (args[0] === "task" && args[1] === "view")
@@ -851,12 +855,12 @@ describe("quest adapter structured criteria", () => {
       await expect(adapter(spawnFor(payload)).viewTask("QUEST-2")).rejects.toMatchObject({
         type: "drift",
         message: "Quest returned invalid acceptanceCriteria",
-        hint: "Quest 0.2.7 or newer is required",
+        hint: `Quest ${VERSION} is required`,
       });
     }
   });
 
-  test("accepts the versions this adapter was originally qualified against", async () => {
+  test("accepts exactly its own pair version", async () => {
     const spawnFor =
       (version: string): QuestSpawn =>
       async (args) => {
@@ -874,8 +878,7 @@ describe("quest adapter structured criteria", () => {
           }),
         };
       };
-    await expect(adapter(spawnFor("0.2.7")).probe()).resolves.toBeTruthy();
-    await expect(adapter(spawnFor("0.2.8")).probe()).resolves.toBeTruthy();
+    await expect(adapter(spawnFor(VERSION)).probe()).resolves.toMatchObject({ version: VERSION });
   });
 
   /** A Quest that reports `version` and otherwise answers every probe call successfully. */
@@ -896,34 +899,87 @@ describe("quest adapter structured criteria", () => {
       };
     };
 
-  test("accepts every Quest at or above the floor, including the ones shipped after this adapter", async () => {
-    // LCLI-356 reverses LCLI-353's frozen allowlist, whose assertions required exactly 0.2.7/0.2.8
-    // and so rejected the shipped 0.2.9 — leaving the two current published packages unusable
-    // together. 0.2.9 and 0.3.0 are the cases that used to fail.
-    for (const version of ["0.2.7", "0.2.8", "0.2.9", "0.3.0", "1.0.0"]) {
-      await expect(adapter(spawnVersion(version)).probe()).resolves.toMatchObject({ version });
-    }
+  test("refuses a mismatched pair in BOTH directions, naming the side to upgrade", async () => {
+    // The lock (LCLI-650; DEC-31 adopting ODOC-328): lore X runs only against quest X, compared on
+    // the full version. A newer counterpart is a mismatch too, and the fix is to upgrade whichever
+    // side is older.
+    const behind = await adapter(spawnVersion("0.0.1"))
+      .probe()
+      .then(
+        () => undefined,
+        (caught: unknown) => caught as LoreError,
+      );
+    expect(behind).toBeInstanceOf(LoreError);
+    expect(behind?.type).toBe("validation");
+    expect(behind?.message).toBe(
+      `the lore ${VERSION} / quest 0.0.1 pair version requirement is not met: lore ${VERSION} requires quest ${VERSION}`,
+    );
+    expect(behind?.hint).toBe(`upgrade quest to ${VERSION}: npm install -g @opum-ai/quest@${VERSION}`);
+    expect(isQuestVersionPairMismatch(behind)).toBe(true);
+
+    const ahead = await adapter(spawnVersion("99.0.0"))
+      .probe()
+      .then(
+        () => undefined,
+        (caught: unknown) => caught as LoreError,
+      );
+    expect(ahead?.message).toContain(`the lore ${VERSION} / quest 99.0.0 pair version requirement is not met`);
+    expect(ahead?.hint).toBe("upgrade lore to 99.0.0: npm install -g @opum-ai/lore@99.0.0");
+    expect(isQuestVersionPairMismatch(ahead)).toBe(true);
+
+    // A pre-release suffix is NOT the pair version: full-string equality, and since the triples are
+    // equal the refusal names no side as behind.
+    const suffixed = await adapter(spawnVersion(`${VERSION}-rc.1`))
+      .probe()
+      .then(
+        () => undefined,
+        (caught: unknown) => caught as LoreError,
+      );
+    expect(suffixed?.hint).toBe(
+      `install the exact pair: npm install -g @opum-ai/quest@${VERSION} and @opum-ai/lore@${VERSION}`,
+    );
+    expect(suffixed?.input).toMatchObject({ code: QUEST_VERSION_PAIR_MISMATCH_CODE });
   });
 
-  test("fails loud below the floor, naming the minimum rather than a frozen set", async () => {
-    for (const version of ["0.1.0", "0.2.6"]) {
-      await expect(adapter(spawnVersion(version)).probe()).rejects.toMatchObject({
-        type: "validation",
-        message: `Quest ${version} is below the 0.2.7 floor this adapter is qualified against`,
-        input: { version, floor: "0.2.7" },
-      });
-    }
+  test("the refusal is classifiable: exit 6 with the discriminator, never an uncaught crash", () => {
+    // The CLI contract advertises 0, 2, 3, 4, 5, 6 for tracker-backed commands; a pair mismatch is
+    // `validation` -> 6, and the envelope carries the stable discriminator so a caller (or
+    // opum-cli-e2e's mismatch probe) can branch without matching prose.
+    const mismatch = new LoreError(
+      "validation",
+      `the lore ${VERSION} / quest 0.0.1 pair version requirement is not met: lore ${VERSION} requires quest ${VERSION}`,
+      "upgrade quest",
+      { code: QUEST_VERSION_PAIR_MISMATCH_CODE, lore: VERSION, quest: "0.0.1" },
+    );
+    const stderr = capture();
+    expect(reportError(mismatch, { json: true, stderr })).toBe(EXIT_CODES.validation);
+    expect(JSON.parse(stderr.text())).toMatchObject({
+      error_type: "validation",
+      input: { code: QUEST_VERSION_PAIR_MISMATCH_CODE, lore: VERSION, quest: "0.0.1" },
+    });
   });
 
-  test("output that is not a version at all stays a distinct failure from being too old", async () => {
+  test("output that is not a version at all is refused as a pair mismatch, never matched by accident", async () => {
     await expect(adapter(spawnVersion("")).probe()).rejects.toMatchObject({
       type: "validation",
-      message: "`quest --version` did not report a supported Quest version",
+      message: "`quest --version` did not report a quest version",
     });
-    await expect(adapter(spawnVersion("quest version alpha")).probe()).rejects.toMatchObject({
-      type: "validation",
-      message: "`quest --version` did not print a bare semver",
-    });
+    // Garbage is not equal to lore's version, so it takes the same refusal a wrong version does —
+    // and the hint cannot name a side as behind, because there is no version to order.
+    const garbage = await adapter(spawnVersion("quest version alpha"))
+      .probe()
+      .then(
+        () => undefined,
+        (caught: unknown) => caught as LoreError,
+      );
+    expect(garbage?.type).toBe("validation");
+    expect(garbage?.message).toBe(
+      `the lore ${VERSION} / quest quest version alpha pair version requirement is not met: lore ${VERSION} requires quest ${VERSION}`,
+    );
+    expect(garbage?.hint).toBe(
+      `install the exact pair: npm install -g @opum-ai/quest@${VERSION} and @opum-ai/lore@${VERSION}`,
+    );
+    expect(isQuestVersionPairMismatch(garbage)).toBe(true);
   });
 });
 
@@ -934,7 +990,7 @@ describe("Quest adapter — optimistic concurrency on read-modify-write (LCLI-52
     const spawn: QuestSpawn = async (readonlyArgs) => {
       const args = [...readonlyArgs];
       calls.push(args);
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.7.1\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
       if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifestData);
       if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
       if (args.slice(0, 2).join(" ") === "task edit") return ok("task.updated", task());
@@ -955,11 +1011,10 @@ describe("Quest adapter — optimistic concurrency on read-modify-write (LCLI-52
   });
 
   test("OMITS --if-revision when the manifest does not advertise it", async () => {
-    // The compatibility half, and the more important of the two: passing an unknown flag would
-    // raise lore's effective Quest floor above MIN_QUEST_VERSION and break every Quest between it
-    // and the release that added the flag. Detected by PRESENCE, never by a version comparison --
-    // note this stub reports 0.7.1, the very version that does support it, so a version-based
-    // implementation would pass this flag here and fail this test.
+    // The compatibility half, and the more important of the two: passing an unknown flag
+    // unconditionally would be an external compatibility change the moment the pair version lacks
+    // it. Detected by PRESENCE, never by a version comparison -- the stub reports the pair version
+    // itself, so a version-based implementation would pass this flag here and fail this test.
     const args = await editArgs(manifest(), { removeLabels: ["docs"], ifRevision: "sha256:abc" });
     expect(args).not.toContain("--if-revision");
   });
@@ -972,7 +1027,7 @@ describe("Quest adapter — optimistic concurrency on read-modify-write (LCLI-52
   test("viewTask surfaces the record revision so a caller can feed it back", async () => {
     const spawn: QuestSpawn = async (readonlyArgs) => {
       const args = [...readonlyArgs];
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.7.1\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
       if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifestWithIfRevision());
       if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
       if (args.slice(0, 2).join(" ") === "task view") return ok("task.view", task({ revision: "sha256:live" }));
@@ -987,7 +1042,7 @@ describe("Quest adapter — optimistic concurrency on read-modify-write (LCLI-52
     // would silently drop it. Reporting it would let a caller believe its edit was guarded.
     const spawn: QuestSpawn = async (readonlyArgs) => {
       const args = [...readonlyArgs];
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.7.1\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
       if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
       if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
       if (args.slice(0, 2).join(" ") === "task view") return ok("task.view", task({ revision: "sha256:live" }));
@@ -1002,7 +1057,7 @@ describe("Quest adapter — optimistic concurrency on read-modify-write (LCLI-52
   test("a Quest that emits no revision yields undefined rather than failing the read", async () => {
     const spawn: QuestSpawn = async (readonlyArgs) => {
       const args = [...readonlyArgs];
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.7.1\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
       if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
       if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
       if (args.slice(0, 2).join(" ") === "task view") return ok("task.view", task());
@@ -1016,7 +1071,7 @@ describe("Quest adapter — optimistic concurrency on read-modify-write (LCLI-52
   test("an exit-5 conflict surfaces as a `conflict` LoreError the caller can retry on", async () => {
     const spawn: QuestSpawn = async (readonlyArgs) => {
       const args = [...readonlyArgs];
-      if (args[0] === "--version") return { exitCode: 0, stdout: "0.7.1\n", stderr: "" };
+      if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
       if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifestWithIfRevision());
       if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flow());
       if (args.slice(0, 2).join(" ") === "task edit")

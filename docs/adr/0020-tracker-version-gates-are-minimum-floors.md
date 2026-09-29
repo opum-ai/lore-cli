@@ -19,6 +19,17 @@ timestamp: 2026-08-28T23:09:28.183Z
 Accepted — 2026-08-28. Reverses the bounded-set choice made in LCLI-353 and
 merged in PR #430.
 
+Amended — 2026-09-29 (LCLI-650): **Quest's gate is no longer a floor.** The
+operator retired mixed-pair running — lore X runs only against quest X, compared
+on the full version, and a mismatch fails with a message naming both installed
+versions and the side to upgrade (opum-doc ADR
+`lock-lore-and-quest-to-their-exact-pair-version-at-runtime`, ODOC-328; decided as
+DEC-31). The release-coupling cost this ADR was written against does not apply to
+the pair: Article 3 clause 1 of the project constitution keeps lore's and
+quest's numbers identical in every release, patches included, so a correct
+install never trips an exact check. Backlog's `MIN_BACKLOG_VERSION` floor is
+unchanged — only lore and quest share a version and are locked to it.
+
 ## Context
 
 Lore consumes each tracker backend through a pinned CLI contract, and each
@@ -52,6 +63,10 @@ qualified against, with no upper bound. `MIN_QUEST_VERSION` joins the
 long-standing `MIN_BACKLOG_VERSION`, and both use one shared
 `adapters/semver.ts` rather than a parser per adapter.
 
+**Superseded for Quest (2026-09-29, LCLI-650):** the quest adapter's gate is an
+exact pair lock now — see the Status amendment. The floor rule below survives for
+Backlog alone, and `MIN_QUEST_VERSION` was retired with the floor.
+
 **The version is not what enforces compatibility, and never was.** Every Quest
 call already validates the response structurally — the envelope's
 `schemaVersion`, its exact `kind`, the presence of `data`, and the required
@@ -63,9 +78,11 @@ structural failure would produce. Read that way, the bounded set was buying
 protection the structural checks already provide, at the price of the release
 coupling above.
 
-**A below-the-floor rejection is fatal at tracker-selection time.** `lore init
+**A version rejection is fatal at tracker-selection time.** `lore init
 --tracker quest` verifies before it writes `[tracker].backend`, so a user is
-never committed to a backend that will refuse every later command. This is
+never committed to a backend that will refuse every later command. (For Quest
+that rejection is the exact-pair refusal since the 2026-09-29 amendment; the
+reasoning below is unchanged.) This is
 narrow on purpose: an installed backend below the floor is a pairing that cannot
 work at all, and nothing the operator does inside the repository fixes it — they
 must install a different backend. Every other probe failure ("workspace is not

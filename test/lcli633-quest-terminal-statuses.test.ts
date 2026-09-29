@@ -28,6 +28,7 @@ import { type ManagedTaskRow, regenerateTaskBlock } from "../src/core/managed-bl
 import { QUEST_STATUS_FLOW_HINTS, reconcileStatus } from "../src/core/reconcile";
 import { EXIT_CODES, EXIT_OK, type LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
+import { VERSION } from "../src/meta";
 import { capture, concept, fakeAdapter, makeTask, storyDoc } from "./helpers";
 
 // ── Quest adapter: closedStatus tolerance ─────────────────────────────────────
@@ -58,7 +59,7 @@ function manifest(): Record<string, unknown> {
 function adapterFor(flowData: Record<string, unknown>): ReturnType<typeof createQuestAdapter> {
   const spawn: QuestSpawn = async (readonlyArgs) => {
     const args = [...readonlyArgs];
-    if (args[0] === "--version") return { exitCode: 0, stdout: "0.2.7\n", stderr: "" };
+    if (args[0] === "--version") return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
     if (args.join(" ") === "manifest --json") return ok("manifest.registry", manifest());
     if (args.join(" ") === "task status-flow --json") return ok("task.status-flow", flowData);
     throw new Error(`unexpected Quest call: ${args.join(" ")}`);
@@ -82,7 +83,7 @@ describe("quest adapter: second terminal status (LCLI-633)", () => {
       terminalStatuses: ["Done"],
       closedStatus: "Closed",
     });
-    await expect(adapter.probe()).resolves.toMatchObject({ version: "0.2.7" });
+    await expect(adapter.probe()).resolves.toMatchObject({ version: VERSION });
     // statusFlow keeps returning the ladder; the terminal set rides its own adapter method.
     expect(await adapter.statusFlow()).toEqual(["To Do", "In Progress", "Done"]);
     expect(await adapter.terminalStatuses?.()).toEqual(["Done", "Closed"]);
@@ -97,7 +98,7 @@ describe("quest adapter: second terminal status (LCLI-633)", () => {
       terminalStatuses: ["Done", "Closed"],
       closedStatus: "Closed",
     });
-    await expect(adapter.probe()).resolves.toMatchObject({ version: "0.2.7" });
+    await expect(adapter.probe()).resolves.toMatchObject({ version: VERSION });
     expect(await adapter.terminalStatuses?.()).toEqual(["Done", "Closed"]);
   });
 
@@ -106,7 +107,7 @@ describe("quest adapter: second terminal status (LCLI-633)", () => {
       statuses: ["To Do", "In Progress", "Done", "Closed"],
       terminalStatuses: ["Done", "Closed"],
     });
-    await expect(adapter.probe()).resolves.toMatchObject({ version: "0.2.7" });
+    await expect(adapter.probe()).resolves.toMatchObject({ version: VERSION });
     expect(await adapter.terminalStatuses?.()).toEqual(["Done", "Closed"]);
   });
 
@@ -116,7 +117,7 @@ describe("quest adapter: second terminal status (LCLI-633)", () => {
       terminalStatuses: ["Done", "Closed"],
       closedStatus: "Closed",
     });
-    await expect(adapter.probe()).resolves.toMatchObject({ version: "0.2.7" });
+    await expect(adapter.probe()).resolves.toMatchObject({ version: VERSION });
     expect(await adapter.terminalStatuses?.()).toEqual(["Done", "Closed"]);
   });
 
