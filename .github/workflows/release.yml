@@ -249,7 +249,8 @@ jobs:
         # -- all FILES, internally consistent, all correct -- and can say nothing about
         # bun.lock, whose agreement is otherwise decided by `bun install --frozen-lockfile`:
         # a lockfile left behind by a bump passes that check while the new version is
-        # unpublished, then fails every CI job the moment publishing makes it resolvable.
+        # unpublished, then kills every job that runs a frozen install the moment publishing
+        # makes it resolvable.
         # This is the release-time call site of scripts/check-lockfile-pins.mjs; ci.yml's
         # package-set job runs the same script on every pull request, so a bump PR is refused
         # before it lands rather than at dispatch.

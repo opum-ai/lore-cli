@@ -284,6 +284,7 @@
 - 2026-09-29T02:10:35-05:00 8ba60a02711772f5e78754b4f073a02be81b5011 feat(LCLI-642): lore check reports a profile whose declared set cannot fit its budget (#407)
 - 2026-09-29T03:11:47-05:00 ceef2b1f625d6c7b6a18e10c4f110f8c7b26f4cc docs(LCLI-644): the runbook now says how to choose a profile's max_tokens (#410)
 - 2026-09-29T06:16:39-05:00 5af3fe561f6caa7f51bc34809f9b5a3860c92b9c feat(LCLI-650): lock lore to its exact quest pair version at runtime (DEC-31 / ODOC-328) (#421)
+- 2026-09-29T11:21:29-05:00 b3d7649b4a4fc2cecfc7dc58930adc7b25db78dc fix(LCLI-544): assert bun.lock's platform pins against package.json
 
 ## docs/adr
 

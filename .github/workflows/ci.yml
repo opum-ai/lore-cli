@@ -379,9 +379,10 @@ jobs:
     # LCLI-544 added the second, sibling assertion to this job: bun.lock's platform pins must
     # agree with those same optionalDependencies. A lockfile left behind by a bump is invisible
     # until the new version publishes -- `--frozen-lockfile` passes while the pins are
-    # unresolvable -- and then fails EVERY job in this workflow in setup-bun at once. That
-    # version site is checked nowhere else; the job name carries both so it does not read as a
-    # gate narrower than what runs.
+    # unresolvable -- and then kills every job that runs a frozen install, in setup-bun, at once:
+    # read 2026-09-29 that is nine of this file's twelve jobs, four of them the jobs `dev`
+    # requires. That version site is checked nowhere else; the job name carries both so it does
+    # not read as a gate narrower than what runs.
     #
     # NOT a required context, deliberately: the dev ruleset is edited by an admin, by hand,
     # against a real run's rendered job name, and this change does not touch it. Plain ASCII

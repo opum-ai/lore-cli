@@ -139,6 +139,19 @@ describe("check-lockfile-pins.mjs accepts", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  test("a lockfile with no packages map at all — the success line says so rather than counting zero", () => {
+    // "none found" and "nothing was read" are different facts; the success line must not print the
+    // first for the second.
+    const pins = PLATFORMS.map((p) => `        "@opum-ai/lore-${p}": "${MANIFEST_VERSION}",`).join("\n");
+    const root = fixture({
+      lockText: `{\n  "lockfileVersion": 1,\n  "workspaces": {\n    "": {\n      "optionalDependencies": {\n${pins}\n      },\n    },\n  },\n}\n`,
+    });
+    const result = run(root);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("no packages map recorded, so no resolved entry was read");
+    rmSync(root, { recursive: true, force: true });
+  });
+
   test("the real repository tree, naming what it compared rather than passing vacuously", () => {
     const manifest = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")) as {
       version: string;
@@ -189,11 +202,40 @@ describe("check-lockfile-pins.mjs rejects, each for its own reason", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  test("a workspace block whose pin set is empty — nothing was compared", () => {
+  test("a workspace block whose pin set is empty — every declared platform is reported missing", () => {
     const root = fixture({ lockedPlatforms: [] });
     const result = run(root);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("records no optionalDependencies pin for @opum-ai/lore-darwin-arm64");
+    // All six, not just the first: an empty block is six findings, and a script that printed one
+    // would still exit 1 while hiding five.
+    expect(result.stderr).toContain(`${PLATFORMS.length} lockfile pin problem(s)`);
+  });
+
+  test("a lockfile parsing to null — a shape the sentinel would swallow", () => {
+    // Found in review (2026-09-29): `let lock = null` doubled as "missing or unparseable" and as
+    // the parsed JSON literal, so this file fell through every read and exited 0 while the success
+    // line claimed six pins compared.
+    const root = fixture({ lockText: "null" });
+    const result = run(root);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("parses to null, not an object");
+    expect(result.stderr).toContain("not a lockfile it cleared");
+    expect(result.stdout).not.toContain("agrees with package.json");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("a lockfile whose packages map is not a map — and whose pins are otherwise perfect", () => {
+    // The pins are all correct here, so the malformed map is the ONLY finding: a test that also
+    // tripped the pin comparison would not show which branch refused it.
+    const pins = PLATFORMS.map((p) => `        "@opum-ai/lore-${p}": "${MANIFEST_VERSION}",`).join("\n");
+    const root = fixture({
+      lockText: `{\n  "lockfileVersion": 1,\n  "workspaces": {\n    "": {\n      "optionalDependencies": {\n${pins}\n      },\n    },\n  },\n  "packages": "nope",\n}\n`,
+    });
+    const result = run(root);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('"packages" is "nope", which this check cannot read as a map');
+    expect(result.stderr).toContain("1 lockfile pin problem(s)");
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -293,6 +335,7 @@ interface WorkflowStep {
   run?: string;
   env?: Record<string, string>;
   uses?: string;
+  if?: unknown;
 }
 interface WorkflowJob {
   needs?: unknown;
@@ -330,6 +373,10 @@ describe("the lockfile assertion is ONE script invoked from two call sites", () 
     expect(job?.["continue-on-error"]).toBeUndefined();
     const step = job?.steps?.find((s) => s.run?.includes("check:lockfile-pins"));
     expect(step?.run?.trim()).toBe("bun run check:lockfile-pins");
+    // A step-level `if:` disarms the gate with the whole suite still green (found in review,
+    // 2026-09-29: `if: false` on this exact step left 21 tests passing). Reading `run` alone does
+    // not prove the step is ungated.
+    expect(step?.if).toBeUndefined();
     for (const pattern of NEUTERING_RUN_PATTERNS) expect(step?.run ?? "").not.toMatch(pattern);
   });
 
@@ -337,6 +384,7 @@ describe("the lockfile assertion is ONE script invoked from two call sites", () 
     const job = loadWorkflow(RELEASE_WORKFLOW).jobs["verify-versions"];
     const step = job?.steps?.find((s) => s.run?.includes("scripts/check-lockfile-pins.mjs"));
     expect(step?.run?.trim()).toBe("node scripts/check-lockfile-pins.mjs");
+    expect(step?.if).toBeUndefined();
     expect(job?.["continue-on-error"]).toBeUndefined();
     for (const pattern of NEUTERING_RUN_PATTERNS) expect(step?.run ?? "").not.toMatch(pattern);
   });

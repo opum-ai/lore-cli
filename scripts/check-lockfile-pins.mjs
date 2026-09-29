@@ -8,12 +8,16 @@
  * itself — the same shape reproduced deliberately, locally and in CI — is in the LCLI-544 record
  * and PR #431.) During the 0.8.0 release (2026-09-19) the bump moved root `package.json` and the
  * six `npm/<platform>/package.json` manifests to 0.8.0 and left `bun.lock` resolving the platform
- * packages at 0.7.0. PR #180 (the bump) and #181 (the promotion) were genuinely green. Publishing
- * made 0.8.0 resolvable, and the
- * SAME UNCHANGED LOCKFILE became stale the instant the registry could answer: every CI job then
- * failed in `setup-bun` with `error: lockfile had changes, but lockfile is frozen` — on `dev` and
- * on every open pull request at once, with no source change between the green run and the red, and
- * no test output to read. `lore-cli` had shipped the same shape once before, at 0.3.5 (LCLI-369).
+ * packages at 0.7.0. PR #180 (the bump) was green, and so was #181's promotion push run — #181's PR
+ * rollup also carries the deliberate `promotion is manual` failure this repository puts on every PR
+ * into `main`, which is not a red anyone acted on (see CLAUDE.md's repo profile on the two runs a
+ * landing SHA carries). Publishing made 0.8.0 resolvable, and the SAME UNCHANGED LOCKFILE became
+ * stale the instant the registry could answer: every job that runs a frozen install then failed in
+ * `setup-bun` with `error: lockfile had changes, but lockfile is frozen` — read 2026-09-29, that is
+ * nine of ci.yml's twelve jobs, four of them jobs the `dev` ruleset requires (`lint · typecheck ·
+ * test` on both OSes, `lore check (docs gate)`, `compile smoke (ubuntu)`) — on `dev` and on every
+ * open pull request at once, with no source change between the green run and the red, and no test
+ * output to read. `lore-cli` had shipped the same shape once before, at 0.3.5 (LCLI-369).
  *
  * WHY NO EXISTING GATE CATCHES IT, which is the half that decides where this file lives.
  * `release.yml`'s `verify-versions` job compares the declared version across `package.json`, the
@@ -35,9 +39,11 @@
  *      manifest does not declare;
  *   3. every pin's VALUE equals the manifest's pin for the same package;
  *   4. any `@opum-ai/lore-*` entry under the lockfile's `packages` map carries the same version.
- *      Absent on today's tree — bun records no resolved entry for an optional dependency it did not
- *      install — so this clause is "if present, it must agree", and the success line reports how
- *      many it read rather than letting zero reads pass for a clean comparison.
+ *      No such entry exists on today's tree — bun records no resolved entry for an optional
+ *      dependency it did not install — so this clause is "if present, it must agree", and the
+ *      success line reports how many entries it read. A `packages` key that is present but not a map
+ *      is a finding, and an absent one is named in the success line rather than counted as zero:
+ *      "none found" and "nothing was read" are different facts and must not share a sentence.
  *
  * WHAT IS DELIBERATELY NOT ASSERTED. The manifest's own pins against the manifest's own `version`
  * field. That assertion belongs to `release.yml`'s `verify-versions` job ("Assert version, license,
@@ -51,7 +57,10 @@
  * handled here is exactly that — a comma whose next non-whitespace character is `}` or `]`, outside
  * a string — because that is the only one bun writes. Comments are NOT handled, so a lockfile that
  * still fails to parse after the strip is reported as a FINDING (exit 1) rather than a pass: a file
- * this check could not read is a file it did not clear.
+ * this check could not read is a file it did not clear. The SHAPE is checked too, not only the
+ * parse — a `bun.lock` parsing to `null` (or to any other non-object) is a finding, because a
+ * sentinel that doubles as a parsed value lets such a file fall through every read below and exit 0
+ * with a success line claiming the pins were compared (found in review, 2026-09-29).
  *
  * EXIT CODES
  *   0  every assertion held
@@ -176,16 +185,32 @@ function checkLockfilePins(root) {
       `${lockPath} does not exist, so nothing about its platform pins was compared. Regenerate it with the pinned Bun and commit it with the same change that moved package.json.`,
     );
   } else {
+    let parsed;
+    let parsedOk = false;
     try {
-      lock = JSON.parse(stripTrailingCommas(readFileSync(lockPath, "utf8")));
+      parsed = JSON.parse(stripTrailingCommas(readFileSync(lockPath, "utf8")));
+      parsedOk = true;
     } catch (error) {
       problems.push(
         `${lockPath} does not parse as JSON after trailing-comma stripping: ${messageOf(error)}. Nothing about its pins was compared, and a lockfile this check cannot read is not a lockfile it cleared.`,
       );
     }
+    // The SHAPE is checked as well as the parse: a lockfile parsing to `null` (or any other
+    // non-object) would otherwise fall through every read below and exit 0 while the success line
+    // claimed six pins compared. A sentinel that doubles as a parsed value is how that happens.
+    if (parsedOk) {
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        problems.push(
+          `${lockPath} parses to ${JSON.stringify(parsed)}, not an object, so nothing about its pins was compared — a lockfile this check could not read is not a lockfile it cleared`,
+        );
+      } else {
+        lock = parsed;
+      }
+    }
   }
 
   let resolvedCount = 0;
+  let packagesMapRead = false;
   if (lock !== null) {
     const locked = lock.workspaces?.[""]?.optionalDependencies;
     if (locked === null || typeof locked !== "object" || Array.isArray(locked)) {
@@ -214,8 +239,18 @@ function checkLockfilePins(root) {
       }
     }
 
+    // Clause 4 reads only when there IS a readable map. Both other shapes are said out loud rather
+    // than skipped: a malformed map is a finding, and an absent one is named in the success line, so
+    // "no resolved entry" can never be printed for a map that was never read.
     const packages = lock.packages;
-    if (packages !== null && typeof packages === "object" && !Array.isArray(packages)) {
+    if (packages === undefined) {
+      packagesMapRead = false;
+    } else if (packages === null || typeof packages !== "object" || Array.isArray(packages)) {
+      problems.push(
+        `${lockPath}: "packages" is ${JSON.stringify(packages)}, which this check cannot read as a map, so no resolved entry was compared`,
+      );
+    } else {
+      packagesMapRead = true;
       for (const [name, entry] of Object.entries(packages)) {
         if (!name.startsWith(PIN_PREFIX)) continue;
         resolvedCount++;
@@ -238,6 +273,7 @@ function checkLockfilePins(root) {
     comparedPins: Object.keys(manifestPins).length,
     comparedVersion: pinVersions.length === 1 ? pinVersions[0] : pinVersions.join(", "),
     resolvedCount,
+    packagesMapRead,
   };
 }
 
@@ -286,7 +322,11 @@ function main() {
   }
 
   console.log(
-    `bun.lock agrees with package.json under ${options.root}: ${result.comparedPins} platform pin(s) compared, all at ${result.comparedVersion}; ${result.resolvedCount} resolved ${PIN_PREFIX}* entr(ies) under packages`,
+    `bun.lock agrees with package.json under ${options.root}: ${result.comparedPins} platform pin(s) compared, all at ${result.comparedVersion}; ${
+      result.packagesMapRead
+        ? `${result.resolvedCount} resolved ${PIN_PREFIX}* entr(ies) under packages`
+        : "no packages map recorded, so no resolved entry was read"
+    }`,
   );
   return 0;
 }
