@@ -59,13 +59,15 @@ runs:
         QUEST_SOURCE_REF: ${{ inputs.source-ref }}
       run: |
         set -euo pipefail
-        # The shim this writes is a bash script with no extension, which is
-        # resolvable on Linux and NOT on Windows (a bare-name lookup there walks
-        # PATHEXT and CreateProcess will not run a script without a shell). Every
-        # caller today is ubuntu; a future Windows caller would otherwise get a
-        # silent no-op instead of a quest, so refuse loudly rather than half-work.
-        if [ "$RUNNER_OS" != "Linux" ]; then
-          echo "::error::setup-quest's source fallback supports Linux runners only (this runner is $RUNNER_OS). A Windows caller needs a different mechanism — see ADR-0023 and DEC-55."
+        # The shim this writes is a bash script with no extension, which bash and a
+        # shebang-resolving lookup can run on Linux and macOS, and which a Windows
+        # bare-name lookup cannot resolve at all (PATHEXT walk, and CreateProcess
+        # will not run a script without a shell). Every caller today is ubuntu; a
+        # future Windows caller would otherwise get a silent no-op instead of a
+        # quest, so refuse THERE — and only there, since a wider guard would refuse
+        # a runner this actually works on.
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          echo "::error::setup-quest's source fallback does not support Windows runners (this runner is $RUNNER_OS): its shim is an extensionless bash script, which a bare-name lookup cannot resolve there. A Windows caller needs a different mechanism — see ADR-0023 and DEC-55."
           exit 1
         fi
         dest="$RUNNER_TEMP/quest-cli"
@@ -105,8 +107,14 @@ runs:
       run: |
         set -euo pipefail
         reported="$(quest --version)"
+        # Which `quest` answered, printed rather than assumed: the success line
+        # below is a provenance claim, and "built from source at the pinned ref"
+        # would be a claim this step never checked if the lookup had resolved
+        # something else. Nothing can do that today (the npm install failed, and
+        # GITHUB_PATH prepends), so this is a belt on the braces, not a fix.
+        resolved="$(command -v quest)"
         if [ "$reported" != "$DECLARED" ]; then
           echo "::error::the quest built from the pinned ref reports '$reported' but CLAUDE.md declares '$DECLARED'. The source-ref input names the commit carrying the declared version; a mismatch means the ref and the declaration have drifted apart, and no gate should run against the wrong peer. Failure is named HERE, as a ref problem, rather than later as a pair-lock refusal that reads like a lore defect."
           exit 1
         fi
-        echo "quest --version => $reported (built from source at the pinned ref)"
+        echo "quest --version => $reported (resolved at $resolved, built from source at the pinned ref)"
