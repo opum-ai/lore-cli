@@ -252,9 +252,10 @@ export interface CheckReport {
    * What the `lore check` run's agent-profile pass READ (LCLI-642, the LCLI-596 precedent applied to
    * a second pass): present exactly when the repository declares at least one profile, so a clean
    * capacity answer can be told apart from a pass that measured nothing. `read` counts the profiles
-   * the capacity measurement could resolve and compare; `unmeasurable` counts the ones it could not,
-   * which is a declared reference that does not resolve in this bundle (a `member::id` reference
-   * meaningful only under `--workspace`) — counted rather than silently treated as fitting.
+   * the capacity measurement could resolve and compare; `unmeasurable` counts the ones it could not:
+   * a declared reference that does not resolve in this bundle (a `member::id` reference meaningful
+   * only under `--workspace`), or an anchor the pack renderer cannot resolve although the validator
+   * accepted it (LCLI-642 review F1). Counted rather than silently treated as fitting.
    * Informational: it never affects the exit code, because its failures ARE findings.
    */
   readonly agentProfileCounts?: AgentProfileCounts;

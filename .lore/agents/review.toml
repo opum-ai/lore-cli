@@ -2,10 +2,13 @@ schema_version = 1
 name = "review"
 description = "Reviews a lore-cli change against the accepted architecture decisions that constrain it — determinism with no LLM dependency, retrieval without vectors, frontmatter serialization stability, and the git-ownership boundary with the tracker — and against the contracts downstream consumers depend on."
 kind = "specialist"
-# Holds this profile's COMPLETE declared set (LCLI-642, DEC-11). Measured at ~56765 tokens with
-# every declared candidate rendered; 62000 leaves ~5200 headroom for growth and for a real task's
-# bundle-wide query section, which is not part of that measurement.
-max_tokens = 62000
+# Holds this profile's COMPLETE declared set, as a real pack renders it (LCLI-642, DEC-11: a profile
+# whose declared sources cannot fit its budget is the `lore check` finding `agent-profile-capacity`).
+# The headroom above that measurement covers document growth plus the two things the measurement
+# deliberately does NOT count -- the task line and the bundle-wide query section. No number is
+# written here on purpose: it moves with every edit to a declared source, and `lore check` prints
+# the current requirement when it is exceeded.
+max_tokens = 63000
 pinned = ["reference/cli-contract"]
 sources = [
   "adr/0003-okf-substrate",

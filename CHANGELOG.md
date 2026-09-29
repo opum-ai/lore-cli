@@ -216,8 +216,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`lore check` reports an agent profile whose declared sources cannot fit its `max_tokens`
   budget** (LCLI-642, DEC-11). The new `agent-profile-capacity` finding is computed from the profile
   declaration alone — every candidate of every `pinned`/`sources` reference plus the auto-pinned
-  Constitution, rendered by the same code the pack compiler uses — so it is the same on every task,
-  needs no task string and compiles no pack. That distinction is the whole point of the check: a real
+  Constitution, rendered by the same code the pack compiler uses, score annotations included — so it
+  is the same on every task, needs no task string and compiles no pack. That distinction is the whole point of the check: a real
   pack omits declared sources on most tasks while being entirely within capacity, so a check built on
   a compiled pack would false-positive (measured on this repository's own `documentation` profile
   before the check was written). The finding names the profile, its budget, the declared set's size,
@@ -227,8 +227,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release runbook's "Held release steps" so the ordering is not left to memory. The `check.report`
   also carries `agentProfileCounts` (`read`, `overCapacity`, `unmeasurable`) and the printed report
   names it, so a clean capacity answer can never be a zero-input artifact. This repository's four
-  profiles were re-budgeted to hold their complete declared sets — 106000 / 62000 / 93000 / 62000 —
-  rather than narrowed, so no declared coverage was dropped.
+  profiles were re-budgeted to hold their complete declared sets — 108000 / 63000 / 94000 / 63000 —
+  rather than narrowed, so no declared coverage was dropped; the budgets carry headroom for the task
+  line and the query section, which the measurement itself does not count.
 
 - **Launcher equivalence gate** (LCLI-621). `scripts/launcher-equivalence.mjs` refuses an
   `X-rc.N` launcher that differs from the `X` launcher by anything but the version string. It

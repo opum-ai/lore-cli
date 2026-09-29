@@ -9,20 +9,34 @@
  * The cases are tagged so a mutation of the capacity comparison can be PREDICTED from this file
  * alone, per the fleet's mutate-the-check rule:
  *
- *   [capacity]      asserts the comparison's outcome on an over-declared fixture -> RED when the
+ *   [capacity]      2 cases: the comparison's outcome on an over-declared fixture -> RED when the
  *                   comparison is removed.
- *   [count]         asserts what the report says it read, over the same fixture -> RED too (the
- *                   over-capacity count comes from the same comparison).
- *   [silent]        a profile that fits, and an over-budget-only-in-a-task sense -> stays GREEN.
- *   [unmeasurable]  a profile this bundle cannot measure -> stays GREEN.
- *   [severity]      the DEC-11 severity plumbing, on a hand-built measurement -> stays GREEN.
+ *   [count]         2 cases: what the report says it read. The over-capacity count case -> RED too
+ *                   (it comes from the same comparison); the printed-line case on a fitting
+ *                   fixture -> stays GREEN.
+ *   [silent]        1 case: a profile that fits -> stays GREEN.
+ *   [unmeasurable]  2 cases: a profile this bundle cannot measure (a qualified reference that does
+ *                   not resolve, and an anchor the renderer cannot resolve) -> stay GREEN.
+ *   [severity]      2 cases: the DEC-11 severity plumbing. The builder-level case is hand-built and
+ *                   stays GREEN; the command-level case also asserts a finding exists, so it goes
+ *                   RED with the comparison.
+ *   [pack-size]     1 case: the measurement counts what a real pack pays -> RED if the score
+ *                   annotation is dropped from it.
+ *
+ * Measured against that map, forcing the comparison false reddens 4 of 9 (both [capacity], the
+ * over-capacity [count], the command-level [severity]); forcing the annotation off reddens only
+ * [pack-size]. The map is written out because predicting the subset from the file is the point.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCheck } from "../src/commands/check";
-import { type AgentProfileCapacity, measureAgentProfileCapacity } from "../src/core/agent-context";
+import {
+  type AgentProfileCapacity,
+  compileAgentContextWithoutQueryHits,
+  measureAgentProfileCapacity,
+} from "../src/core/agent-context";
 import { loadAgentProfiles } from "../src/core/agent-profile";
 import { loadBundle } from "../src/core/bundle";
 import { AGENT_PROFILE_CAPACITY_SEVERITY, agentProfileCapacityFindings, tallySeverity } from "../src/core/check";
@@ -166,6 +180,53 @@ describe("lore check gates agent profile capacity (LCLI-642, DEC-11)", () => {
     const code = runCheck({ root, output: PLAIN_CTX, args: [], stdout, stderr: capture() });
     expect(code).toBe(EXIT_OK);
     expect(stdout.text()).toContain("Agent profiles: 1 read, 0 over capacity");
+  });
+
+  test("[unmeasurable] an anchor only the validator can see is declined, not thrown on (review F1)", () => {
+    // A heading nested in a blockquote is visible to `validateAgentProfileReferences` (it walks every
+    // mdast node) and invisible to the renderer (it reads top-level headings only), so the reference
+    // validates and then throws — an uncaught exit 1 with no report, which `lore check` must never
+    // turn into. The profile is counted unmeasurable instead.
+    writeDoc(
+      "reference/nested.md",
+      "---\ntype: Reference\ntitle: Nested\n---\n\n# Nested\n\n> ## Quoted heading\n>\n> Body.\n",
+    );
+    writeProfile("nested", 4000, ["reference/nested#quoted-heading"]);
+    const { code, report } = check();
+    expect(report.agentProfileCounts).toEqual({ read: 0, overCapacity: 0, unmeasurable: 1 });
+    expect(report.findings).toEqual([]);
+    expect(code).toBe(EXIT_OK);
+  });
+
+  test("[pack-size] the measurement counts what a real pack pays, so the gate cannot fire late (review F2)", () => {
+    // The measurement must stand for the pack a REAL task would compile, not only for one that
+    // matched nothing: `compilePack` scores every candidate and the renderer spends bytes on that
+    // annotation, per item and per catalog line. With the annotation counted, a budget at the
+    // measured size (plus a little for the task line the measurement deliberately excludes) holds
+    // the whole declared set, and just below it the pack truncates. The fixture is MANY small
+    // candidates on purpose: the annotation is a per-item cost, so a big-token fixture would bury it
+    // under the margin and the case would pass with the annotation missing — which is precisely the
+    // mutation it exists to catch.
+    const sections = ["---\ntype: Reference\ntitle: Many\n---\n\n# Many\n"];
+    for (let index = 0; index < 40; index++) sections.push(`\n## Section ${index}\n\n${"y".repeat(400)}\n`);
+    writeDoc("reference/many.md", sections.join(""));
+    writeProfile("many", 200000, ["reference/many"]);
+
+    const snapshot = loadAgentProfiles(root);
+    const graph = loadBundle(join(root, "docs"), { profile: loadProfile({ root }) });
+    const capacity = measureAgentProfileCapacity(
+      snapshot.profiles.get("many") as NonNullable<ReturnType<typeof snapshot.profiles.get>>,
+      graph,
+      snapshot,
+    ) as AgentProfileCapacity;
+    // Positive control on the fixture: it really did partition into many candidates, so the
+    // per-item annotation it is testing is a large share of the margin below.
+    expect(capacity.sources[0]?.candidateCount).toBeGreaterThan(20);
+
+    const compile = (maxTokens: number) =>
+      compileAgentContextWithoutQueryHits(snapshot, graph, "many", "capacity probe", maxTokens);
+    expect(compile(capacity.declaredTokens + 50).truncated).toBe(false);
+    expect(compile(capacity.declaredTokens - 50).truncated).toBe(true);
   });
 
   test("[unmeasurable] a profile this bundle cannot resolve is counted, never silently treated as fitting", () => {

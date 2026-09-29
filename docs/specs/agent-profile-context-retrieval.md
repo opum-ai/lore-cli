@@ -95,7 +95,10 @@ Contract:
   `sources` reference, plus the auto-pinned Constitution — must fit inside it.
   A profile whose declared set cannot fit is reported by `lore check`
   as `agent-profile-capacity`, naming the profile, its budget, and the sources
-  that cannot fit (LCLI-642). DEC-11 rules that this ships as a **warning for one
+  that cannot fit (LCLI-642). That measurement is the size of the set **as a real
+  pack renders it** — the per-item and catalog score annotations included — so a
+  budget that satisfies it cannot start dropping declared evidence on a task, and
+  a budget that only appears to satisfy it cannot hide behind that appearance. DEC-11 rules that this ships as a **warning for one
   release and then as an error**; the flip is held by LCLI-646. The finding is
   computed from the declaration alone, so it is the same on every task and never
   depends on what a particular pack happens to retain — task-ranked omission is
