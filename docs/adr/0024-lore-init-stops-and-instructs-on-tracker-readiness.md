@@ -11,20 +11,26 @@ tags:
   - windows-ci
 summary: "lore init detects tracker readiness, offers to stop with exact install/init/migrate instructions, and never installs, initializes, or migrates anything itself."
 timestamp: 2026-09-29T20:06:16.586Z
-status: draft
+status: stable
 ---
 
 # ADR-0024: Tracker readiness is the operator's step: `lore init` detects, offers, and instructs — it never installs, initializes, or migrates a tracker for you (DEC-57)
 
 ## Status
 
-**Draft — proposed 2026-09-29, revised the same day to add the operator's offers (see "The
-operator's refinement" below), and awaiting the operator's review and approval. No part of this
-workflow is implemented.** Nothing under `src/` or `test/` changes until the operator approves the
-written workflow, which is the form DEC-57 itself requires (Article 5). This record is the artifact
-for that approval; the implementation is a separate task, created only after approval.
+**Accepted — 2026-09-29 (DEC-62).** The operator decided it first-party in `opum-doc`; the answer is
+relayed as opum-doc outbound seq 53, `ODOC-OP-2026-09-29-31` (2026-09-29T23:44:27Z), and it was read
+here in that workspace's own records rather than taken from the relay: the operator-workspace relay
+ledger records "decision: DEC-62 A" against that seq, id and time, and opum-doc's own session
+record carries "lore-cli ADR 0024 approved (DEC-62); #436 lands, then the implementation". The chosen
+option, verbatim: **"Approve, Jira offer later (Recommended)"** — which is option (A) of the JIRA
+section: the three working offers ship, and the JIRA→Quest offer is added once quest has a runnable
+Jira migration command, and not in 0.12.0. It approves this ADR as written at #436 head `56607ac5`,
+every point in "Points recorded for the operator's approval or correction" included. The workflow was
+approved before implementation, which is the form DEC-57 itself requires (Article 5); implementation
+is a separate task, opened under this ADR.
 
-When accepted, this ADR **amends ADR-0017** (interactive `lore init` wizard, TTY-gated) by removing
+This ADR **amends ADR-0017** (interactive `lore init` wizard, TTY-gated) by removing
 its tracker install offer and replacing its in-wizard Backlog migration with a stop-and-instruct
 offer, and **narrows LCLI-358.3** (tracker-environment detection and its install offer) to detection
 plus instruction. It introduces no new exit codes: every stop below reuses a class that already
@@ -379,6 +385,9 @@ the operator, since this is theirs to decide:
 - **(C)** Build and expose the migration first (quest-cli), then ship the offer in the same release
   window.
 
+**Chosen: (A)** — DEC-62, 2026-09-29 ("Approve, Jira offer later"): the offer is added once quest has
+a runnable Jira migration command, and not in 0.12.0.
+
 If the operator chooses (B) or (C), the firing condition proposed here is **on a jira selection**
 (O9's row) — the moment lore knows JIRA is in play. "JIRA is installed" is read as the detected
 `jira` binary being on `PATH` plus the user having selected jira; a machine-wide binary alone is not
@@ -523,7 +532,9 @@ refusals); ADR-0017 gets its amendment pointer at acceptance time.
 
 ### Points recorded for the operator's approval or correction
 
-Each has a recommendation above, and any of them can be struck without touching the rest:
+Approved as written with DEC-62 (the option label in Status); recorded here as exactly what the
+approval covers. Each had a recommendation above, and any of them can be struck without touching the
+rest:
 
 1. **Offers fire on selection**, in the wizard, after the tracker question — not as an up-front
    interrogation. (Alternative: fire before the question; see "The flow, in order".)
