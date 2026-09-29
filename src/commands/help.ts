@@ -167,7 +167,14 @@ function globalFlagLabel(flag: ManifestFlag): string {
   return flag.alias !== undefined ? `-${flag.alias}, --${flag.name}` : `--${flag.name}`;
 }
 
-/** `--type <value>` for a value-taking flag, else `--strict`. */
+/**
+ * `--type <value>` for a value-taking flag, `--across-refs [value]` when the value is OPTIONAL
+ * (LCLI-652), else `--strict`.
+ *
+ * The optional form matters to an agent reading `--help` as its contract: rendered `<value>`, a
+ * bare `--across-refs` looks invalid and the open-pull-request population is never used.
+ */
 function commandFlagLabel(flag: ManifestFlag): string {
-  return flag.takesValue ? `--${flag.name} <value>` : `--${flag.name}`;
+  if (!flag.takesValue) return `--${flag.name}`;
+  return flag.optionalValue === true ? `--${flag.name} [value]` : `--${flag.name} <value>`;
 }

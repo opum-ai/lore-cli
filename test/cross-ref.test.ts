@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { type ForgeAdapter, type ForgeDiscovery, realForgeAdapter } from "../src/adapters/forge";
 import { run } from "../src/cli";
 import { runQuery } from "../src/commands/query";
-import type { CrossRefCoverage, RefProvenance } from "../src/core/cross-ref";
+import type { CrossRefCoverage, CrossRefGit, RefProvenance } from "../src/core/cross-ref";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
 
@@ -72,9 +72,14 @@ function commit(message: string): string {
  * remote-changing command shape, refused first-party even for a fixture (ODOC-OP-2026-09-29-11).
  */
 function setOrigin(url: string): void {
+  // QUOTED, with backslashes normalized to forward slashes: a Windows path in an unquoted value
+  // is parsed for backslash escapes, and every git call then dies with "fatal: bad config line N"
+  // — measured on the Windows CI runner (a D:\a\… fixture path) and reproduced locally with a
+  // backslash-bearing path before the quotes went in.
+  const portable = url.replaceAll("\\", "/");
   appendFileSync(
     join(root, ".git", "config"),
-    `[remote "origin"]\n\turl = ${url}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n`,
+    `[remote "origin"]\n\turl = "${portable}"\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n`,
   );
 }
 
@@ -83,8 +88,8 @@ function setOrigin(url: string): void {
  * checkout that has fetched would have it. `git fetch origin dev` writes FETCH_HEAD only, so the
  * fixture materializes the ref directly, exactly as `test/assert-main-fast-forward.test.ts` does.
  */
-function anchorOriginDev(): void {
-  git(root, ["update-ref", "refs/remotes/origin/dev", git(root, ["rev-parse", "dev"])]);
+function anchorOriginDev(sha?: string): void {
+  git(root, ["update-ref", "refs/remotes/origin/dev", sha ?? git(root, ["rev-parse", "dev"])]);
 }
 
 /** A bare repository standing in for a real remote, with `dev` pushed into it. */
@@ -117,7 +122,10 @@ function forgeWithPullRequests(
 }
 
 /** Run `query` in-process with the given args and seams; returns the exit code and both streams. */
-async function queryAt(args: readonly string[], seams: { forge?: ForgeAdapter } = {}) {
+async function queryAt(
+  args: readonly string[],
+  seams: { forge?: ForgeAdapter; now?: () => Date; git?: CrossRefGit } = {},
+) {
   const stdout = capture();
   const stderr = capture();
   const code = await Promise.resolve(
@@ -215,6 +223,71 @@ describe("cross-ref — explicit refs", () => {
     expect(sharedRows.map((row) => row.refProvenance?.ref)).toEqual(["dev"]);
   });
 
+  test("the anchor need not be named first, and a ref-order that puts it last still collapses", async () => {
+    writeBundle();
+    commit("base");
+    git(root, ["checkout", "-qb", "feature"]);
+    write(
+      "docs/adr-shared.md",
+      "---\ntype: ADR\ntitle: Shared\nsummary: Same on both refs.\n---\nIdentical on both refs.\n",
+    );
+    commit("feature adds a doc dev also has");
+    git(root, ["checkout", "-q", "dev"]);
+    write(
+      "docs/adr-shared.md",
+      "---\ntype: ADR\ntitle: Shared\nsummary: Same on both refs.\n---\nIdentical on both refs.\n",
+    );
+    commit("dev adds the same doc");
+
+    // The anchor is named LAST here: the collapse needs dev's digests before another ref's rows
+    // are considered, so the reader must reorder rather than trust the caller's order.
+    const { stdout } = await queryAt(["identical", "--across-refs=feature", "--across-refs=dev"]);
+    const { data, coverage } = parseEnvelope(stdout);
+    expect(data.hits.map((hit) => hit.refProvenance?.ref)).toEqual(["dev"]);
+    expect(coverage.refsRead.map((entry) => entry.ref)).toEqual(["dev", "feature"]);
+  });
+
+  test("an id absent from dev is shown once per ref carrying it, and coverage key order is fixed", async () => {
+    writeBundle();
+    commit("base");
+    git(root, ["checkout", "-qb", "alpha"]);
+    write("docs/adr-shared.md", "---\ntype: ADR\ntitle: Shared\nsummary: Only on branches.\n---\nOnly on branches.\n");
+    commit("alpha adds it");
+    git(root, ["checkout", "-qb", "beta", "dev"]);
+    write("docs/adr-shared.md", "---\ntype: ADR\ntitle: Shared\nsummary: Only on branches.\n---\nOnly on branches.\n");
+    commit("beta adds it too");
+
+    const discovered = new Date("2026-09-29T00:00:00.000Z");
+    const { stdout } = await queryAt(["branches", "--across-refs=alpha", "--across-refs=beta"], {
+      now: () => discovered,
+    });
+    const { data, coverage } = parseEnvelope(stdout);
+    // No dev among the named refs, so there is nothing to collapse against: one row per ref.
+    expect(data.hits.map((hit) => hit.refProvenance?.ref)).toEqual(["alpha", "beta"]);
+    // The coverage object's own key order is part of the cross-CLI agreement, so it is asserted
+    // rather than left to `toMatchObject` (which cannot see order).
+    expect(Object.keys(coverage)).toEqual(["complete", "population", "discoveredAt", "refsRead", "refsUnreadable"]);
+    expect(coverage.discoveredAt).toBe("2026-09-29T00:00:00.000Z");
+  });
+
+  test("a ref with more matches than the default cap is not truncated per ref", async () => {
+    writeBundle();
+    for (let index = 0; index < 25; index += 1) {
+      write(
+        `docs/adr-${index}.md`,
+        `---\ntype: ADR\ntitle: A${index}\nsummary: retention ${index}\n---\nretention ${index}.\n`,
+      );
+    }
+    commit("many matches");
+
+    const { stdout } = await queryAt(["retention", "--across-refs=dev"]);
+    const { data } = parseEnvelope(stdout);
+    // A per-ref default cap of 20 would report total 20 and truncated false: a silent cut.
+    expect(data.total).toBeGreaterThan(20);
+    expect(data.shown).toBe(20);
+    expect(data.truncated).toBe(true);
+  });
+
   test("a ref with no bundle at all was still read — it documents nothing, and coverage stays complete", async () => {
     writeBundle();
     commit("base");
@@ -243,13 +316,17 @@ describe("cross-ref — explicit refs", () => {
     ]);
     expect(code).toBe(6);
     expect(stdout).toBe("");
-    const envelope = JSON.parse(stderr) as { error_type: string; message: string; input: CrossRefCoverage };
+    const envelope = JSON.parse(stderr) as {
+      error_type: string;
+      message: string;
+      input: { coverage: CrossRefCoverage };
+    };
     expect(envelope.error_type).toBe("drift");
     expect(envelope.message).toContain("nope");
-    expect(envelope.input).toMatchObject({ complete: false, population: "explicit" });
-    expect(envelope.input.refsUnreadable).toHaveLength(1);
-    expect(envelope.input.refsUnreadable[0]).toMatchObject({ ref: "nope", pullRequest: null });
-    expect(envelope.input.refsRead.map((entry) => entry.ref)).toEqual(["dev"]);
+    expect(envelope.input.coverage).toMatchObject({ complete: false, population: "explicit" });
+    expect(envelope.input.coverage.refsUnreadable).toHaveLength(1);
+    expect(envelope.input.coverage.refsUnreadable[0]).toMatchObject({ ref: "nope", pullRequest: null });
+    expect(envelope.input.coverage.refsRead.map((entry) => entry.ref)).toEqual(["dev"]);
   });
 
   test("--allow-partial answers the same run with complete:false instead of refusing", async () => {
@@ -383,6 +460,83 @@ describe("cross-ref — open pull requests", () => {
     // both platforms, which reported as `git for-each-ref exited null` — a slow runner, not a hang.
   }, 30_000);
 
+  test("reading origin/dev fetches objects WITHOUT moving refs/remotes/origin/dev", async () => {
+    writeBundle();
+    commit("base");
+    const bare = bareRemoteWithDev();
+    try {
+      // The remote moves ahead of this checkout's remote-tracking ref — the ordinary case, and the
+      // one where a fetch that updates refs is observable.
+      write("docs/adr-later.md", "---\ntype: ADR\ntitle: Later\nsummary: retention later.\n---\nretention, later.\n");
+      const ahead = commit("dev moves ahead");
+      git(root, ["push", "-q", bare, "dev:refs/heads/dev"]);
+      setOrigin(bare);
+      const anchor = git(root, ["rev-parse", "HEAD~1"]);
+      anchorOriginDev(anchor);
+
+      const { code, stdout } = await queryAt(["retention", "--across-refs"], {
+        forge: forgeWithPullRequests("opum-ai/fixture", []),
+      });
+      expect(code).toBe(0);
+      // The commit READ is the remote's tip...
+      expect(parseEnvelope(stdout).coverage.refsRead[0]?.sha).toBe(ahead);
+      // ...and the remote-tracking ref has not moved: the fetch is `--refmap=` (FETCH_HEAD only),
+      // which is what "the view never writes" rests on. Without the flag git applies the configured
+      // heads refspec and this assertion fails — measured both ways on git 2.55.0.
+      expect(git(root, ["rev-parse", "refs/remotes/origin/dev"])).toBe(anchor);
+    } finally {
+      rmSync(bare, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("every discovered pull request is read, in ascending number order", async () => {
+    writeBundle();
+    commit("base");
+    const bare = bareRemoteWithDev();
+    try {
+      git(root, ["checkout", "-qb", "feature"]);
+      write("docs/adr-one.md", "---\ntype: ADR\ntitle: One\nsummary: discovery one.\n---\ndiscovery one.\n");
+      const first = commit("first pull request");
+      write("docs/adr-two.md", "---\ntype: ADR\ntitle: Two\nsummary: discovery two.\n---\ndiscovery two.\n");
+      const second = commit("second pull request");
+      setOrigin(bare);
+      anchorOriginDev();
+
+      // Discovered out of order on purpose: the listing is ordered by number, not by discovery.
+      const { code, stdout } = await queryAt(["discovery", "--across-refs"], {
+        forge: forgeWithPullRequests("opum-ai/fixture", [
+          { number: 9, headRefOid: second },
+          { number: 3, headRefOid: first },
+        ]),
+      });
+      expect(code).toBe(0);
+      const { coverage } = parseEnvelope(stdout);
+      expect(coverage.refsRead.map((entry) => entry.pullRequest)).toEqual([
+        null,
+        "opum-ai/fixture#3",
+        "opum-ai/fixture#9",
+      ]);
+    } finally {
+      rmSync(bare, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("a failure reason carries no absolute path", async () => {
+    writeBundle();
+    commit("base");
+    // A remote that EXISTS as a name but cannot be reached: the fetch fails with git's own stderr,
+    // which names the path — and a reason travels into the drift error's `input` and into CI logs.
+    setOrigin("/nonexistent/lore-cross-ref-remote.git");
+    anchorOriginDev();
+
+    const { code, stderr } = await queryViaCli(["retention", "--across-refs", "--json"]);
+    expect(code).toBe(6);
+    const envelope = JSON.parse(stderr) as { input: { coverage: CrossRefCoverage } };
+    const reasons = envelope.input.coverage.refsUnreadable.map((entry) => entry.reason);
+    expect(reasons.join(" | ")).toContain("<path>");
+    expect(reasons.join(" | ")).not.toContain("/nonexistent");
+  }, 30_000);
+
   test("discovery that cannot run is incomplete coverage: exit 6, drift, coverage in input, stdout empty", async () => {
     writeBundle();
     commit("base");
@@ -397,13 +551,13 @@ describe("cross-ref — open pull requests", () => {
       const { code, stdout, stderr } = await queryViaCli(["retention", "--across-refs", "--json"]);
       expect(code).toBe(6);
       expect(stdout).toBe("");
-      const envelope = JSON.parse(stderr) as { error_type: string; input: CrossRefCoverage };
+      const envelope = JSON.parse(stderr) as { error_type: string; input: { coverage: CrossRefCoverage } };
       expect(envelope.error_type).toBe("drift");
       // Population degrades to dev-only, and the discovery failure is the single unreadable entry.
-      expect(envelope.input).toMatchObject({ complete: false, population: "dev-only" });
-      expect(envelope.input.refsUnreadable).toHaveLength(1);
-      expect(envelope.input.refsUnreadable[0]).toMatchObject({ ref: null, pullRequest: null });
-      expect(envelope.input.refsUnreadable[0]?.reason).toContain("not a GitHub remote");
+      expect(envelope.input.coverage).toMatchObject({ complete: false, population: "dev-only" });
+      expect(envelope.input.coverage.refsUnreadable).toHaveLength(1);
+      expect(envelope.input.coverage.refsUnreadable[0]).toMatchObject({ ref: null, pullRequest: null });
+      expect(envelope.input.coverage.refsUnreadable[0]?.reason).toContain("not a GitHub remote");
     } finally {
       rmSync(bare, { recursive: true, force: true });
     }

@@ -45,7 +45,7 @@ import { type ForgeAdapter, realForgeAdapter } from "../adapters/forge";
 import { LoreError, singleLine, stripAnsiAndControls, type WarningCollector } from "../errors";
 import { parseStoreZip } from "../zip-store";
 import { type BundleGraph, loadBundle } from "./bundle";
-import { loadProfile } from "./profile";
+import { loadProfile, type Profile } from "./profile";
 import { DEFAULT_QUERY_LIMIT, type QueryHit, type QueryOptions, type QueryResult, query } from "./query";
 import { DOCS_DIR } from "./scaffold";
 
@@ -130,6 +130,10 @@ export interface LoadCrossRefOptions {
   readonly root: string;
   readonly selection: CrossRefSelection;
   /** The query to run per ref — filters and text exactly as the caller passed them. */
+  /**
+   * The query every ref is read with. `limit` and `profile` are deliberately NOT part of it: the
+   * cap belongs to the merged listing (see the return below) and the profile is each ref's own.
+   */
   readonly query: Omit<QueryOptions, "limit" | "profile">;
   /** The merged listing cap (the CLI's `--limit`, or the query default). */
   readonly limit?: number;
@@ -298,10 +302,19 @@ export async function loadCrossRef(options: LoadCrossRefOptions): Promise<CrossR
       "drift",
       `cross-ref coverage is incomplete: ${named}`,
       "re-run with --allow-partial to report what could be read, or fix the refs named above",
-      coverage,
+      // NESTED under `coverage`, not spread: quest-cli emits `input: { coverage: … }` and pins that
+      // spelling in its own tests, so `input.refsUnreadable` on one side and `input.coverage.
+      // refsUnreadable` on the other would leave a shared reader counting zero unreadable refs —
+      // the silent false-green this whole coverage object exists to prevent.
+      { coverage },
     );
   }
 
+  // The caller's cap applies to the MERGED listing, and each ref is read UNCAPPED for exactly that
+  // reason: a per-ref default cap (20) would silently drop a ref's matches before the merge, so
+  // `--limit 100` could not reach them and `total` would under-report what matched — a silent
+  // truncation, which cli-contract §3 forbids and this command's own coverage rule exists to
+  // prevent. The cost is bounded by the refs in the population, measured at qualification.
   const limit = options.limit ?? DEFAULT_QUERY_LIMIT;
   const shown = Math.min(rows.length, limit);
   return {
@@ -356,30 +369,45 @@ function readOneRef(
 
   // The ref's OWN profile is used, not the working tree's: a branch can add a type, and reading it
   // through a stale vocabulary would misreport exactly the documents this view exists to show.
-  const profileArchive = git.archive(options.root, sha.value, ".lore/profile.toml");
+  // BOTH profile forms are archived — `profile.json` is the lower-precedence sibling
+  // (`loadProfile`'s PROFILE_REL_PATH pair), and a repository that only ships the JSON form would
+  // otherwise be read with the built-in default profile on every ref, dev included.
+  const profileArchives = [".lore/profile.toml", ".lore/profile.json"].map((path) =>
+    git.archive(options.root, sha.value, path),
+  );
 
-  const tempRoot = mkdtempSync(join(tmpdir(), "lore-cross-ref-"));
+  let tempRoot: string;
+  try {
+    tempRoot = mkdtempSync(join(tmpdir(), "lore-cross-ref-"));
+  } catch (cause) {
+    return unreadable(cause instanceof Error ? cause.message : String(cause));
+  }
   try {
     // Both archives are written at the temporary ROOT, not into a `docs/` subdirectory: the
     // entries already carry their repository-relative paths (`docs/stories/x.md`,
     // `.lore/profile.toml`), and re-nesting them would make `loadBundle` see ids prefixed with the
     // bundle directory and never match a digest.
-    const profileSafe = materialize(archive.value, tempRoot);
-    if (!profileSafe.ok) return unreadable(profileSafe.reason);
-    if (profileArchive.ok && profileArchive.value.size > 0) {
-      const profileSafeWrite = materialize(profileArchive.value, tempRoot);
-      if (!profileSafeWrite.ok) return unreadable(profileSafeWrite.reason);
+    const bundleSafe = materialize(archive.value, tempRoot);
+    if (!bundleSafe.ok) return unreadable(bundleSafe.reason);
+    for (const profileArchive of profileArchives) {
+      if (!profileArchive.ok || profileArchive.value.size === 0) continue;
+      const written = materialize(profileArchive.value, tempRoot);
+      if (!written.ok) return unreadable(written.reason);
     }
 
     let graph: BundleGraph;
+    let profile: Profile;
     try {
-      const profile = loadProfile({ root: tempRoot });
+      profile = loadProfile({ root: tempRoot });
       graph = loadBundle(join(tempRoot, DOCS_DIR), { warnings, profile });
     } catch (cause) {
       return unreadable(cause instanceof Error ? cause.message : String(cause));
     }
 
-    const result = query(graph, options.query);
+    // The profile reaches the QUERY too, not only the loader: `--type` is resolved through the
+    // profile's deprecated aliases (`canonicalType`), so a ref that declares `Decision` with alias
+    // `ADR` would otherwise be selected by `--type Decision` locally and dropped here.
+    const result = query(graph, { ...options.query, profile, limit: Number.MAX_SAFE_INTEGER });
     const digests = new Map<string, string>();
     for (const hit of result.hits) {
       const concept = graph.concepts.get(hit.id);
@@ -443,9 +471,24 @@ function materialize(
   return { ok: true };
 }
 
-/** Collapse a reason to the shared guarantee: one line, no ANSI or control bytes. */
+/**
+ * Collapse a reason to the shared guarantee settled with quest-cli: one line, no ANSI or control
+ * bytes, and **no absolute paths**. The path scrub is not cosmetic — git's own stderr names the
+ * remote path or the temporary directory it failed on, and these reasons are emitted in the drift
+ * error's `input` and in `--allow-partial` warnings, both of which land in CI logs.
+ */
 function cleanReason(reason: string): string {
-  return stripAnsiAndControls(singleLine(reason)).slice(0, 512);
+  return scrubPaths(stripAnsiAndControls(singleLine(reason))).slice(0, 512);
+}
+
+/** Decode a spawned stream. `Uint8Array.toString` takes no encoding, unlike Buffer's. */
+function decode(bytes: Uint8Array): string {
+  return new TextDecoder().decode(bytes);
+}
+
+/** Replace an absolute POSIX or Windows path — and everything up to whitespace after it — with `<path>`. */
+function scrubPaths(text: string): string {
+  return text.replace(/(?:[A-Za-z]:\\|\/)[^\s'"`,;)\]]*/gu, "<path>");
 }
 
 /** Build the real {@link CrossRefGit}, shelling `git` in `cwd`. Never throws. */
@@ -463,22 +506,36 @@ export function realCrossRefGit(): CrossRefGit {
       return run(cwd, ["cat-file", "-e", `${sha}^{commit}`]).ok;
     },
     fetch(cwd, refspec) {
-      // A destination-less refspec stores the fetched commit in FETCH_HEAD and nowhere else: no
-      // branch ref, no remote-tracking ref, no tag moves — the ADR's "the view never writes".
-      const fetched = run(cwd, ["fetch", "--no-tags", "--quiet", "origin", refspec], { keepStderr: true });
+      // `--refmap=` (an EMPTY refmap) is what makes this read-only, and it is not decoration: with
+      // a destination-less refspec and no override, git applies the remote's CONFIGURED fetch
+      // spec to decide which remote-tracking branch to update, so `git fetch origin dev` moves
+      // `refs/remotes/origin/dev` while `refs/pull/<N>/head` (matching no configured spec) writes
+      // FETCH_HEAD only. Measured both ways on git 2.55.0, 2026-09-29: plain `fetch origin dev`
+      // moved origin/dev from ff1d4fae to fe3f584e; with `--refmap=` it did not move and
+      // FETCH_HEAD still held the remote tip. Without this flag the view would silently fetch on a
+      // user's behalf — the ADR's "the view never writes" would be false in the one place a
+      // reviewer would not look.
+      const fetched = run(cwd, ["fetch", "--no-tags", "--quiet", "--refmap=", "origin", refspec], {
+        keepStderr: true,
+      });
       if (!fetched.ok) return { ok: false, reason: fetched.reason };
       const head = run(cwd, ["rev-parse", "FETCH_HEAD"]);
       if (!head.ok) return { ok: false, reason: "`git fetch` did not leave a readable FETCH_HEAD" };
       return head;
     },
     archive(cwd, sha, path) {
-      const proc = Bun.spawnSync(["git", "archive", "--format=zip", "-0", sha, path], {
-        cwd,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+      let proc: { exitCode: number; stdout: Uint8Array; stderr: Uint8Array };
+      try {
+        proc = Bun.spawnSync(["git", "archive", "--format=zip", "-0", sha, path], {
+          cwd,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+      } catch {
+        return { ok: false, reason: "the `git` CLI is not installed or not on PATH" };
+      }
       if (proc.exitCode !== 0) {
-        const stderr = proc.stderr.toString("utf8");
+        const stderr = decode(proc.stderr);
         // A path that simply does not exist at that ref is not a failure of the read: callers
         // treat an empty map as "absent at this ref" (`docs/` is checked, `.lore/profile.toml` is
         // optional).
@@ -500,13 +557,21 @@ function run(
   args: readonly string[],
   options: { readonly keepStderr?: boolean } = {},
 ): { readonly ok: true; readonly value: string } | { readonly ok: false; readonly reason: string } {
-  const proc = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  let proc: { exitCode: number; stdout: Uint8Array; stderr: Uint8Array };
+  try {
+    proc = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  } catch {
+    // Bun THROWS when the executable cannot be started at all — measured on 1.3.14 for a missing
+    // binary. Unguarded, a PATH without git would escape this module's classified-failure contract
+    // as an uncaught exit 1, which is exactly what the operator's condition forbids.
+    return { ok: false, reason: "the `git` CLI is not installed or not on PATH" };
+  }
   if (proc.exitCode !== 0) {
-    const detail = options.keepStderr === true ? singleLine(proc.stderr.toString("utf8")).trim() : "";
+    const detail = options.keepStderr === true ? singleLine(decode(proc.stderr)).trim() : "";
     return {
       ok: false,
       reason: `\`git ${args[0] ?? ""}\` exited ${proc.exitCode}${detail === "" ? "" : ` (${detail.slice(0, 160)})`}`,
     };
   }
-  return { ok: true, value: proc.stdout.toString("utf8").trim() };
+  return { ok: true, value: decode(proc.stdout).trim() };
 }
