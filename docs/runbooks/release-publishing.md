@@ -1641,6 +1641,22 @@ default inputs) to re-verify before a real release; the version will no
 longer read `0.0.0` once the [First-release checklist](#first-release-checklist)'s
 version-bump item has happened.
 
+## Held release steps
+
+A contract change that lands in two releases — advisory first, enforced after
+every consumer has had one release of notice — is held by a **record**, not by
+intent: a Quest task whose schedule names the release it waits for, plus the one
+line of production code the flip changes. Read this list when cutting a release;
+each item says which release it belongs to.
+
+- **`agent-profile-capacity` flips from warning to error** (LCLI-642, DEC-11).
+  The **warning ships in the release that carries LCLI-642** and the error ships
+  in the release **after** it — not the same one, which would leave external
+  repositories no notice at all. The flip is **one line**:
+  `AGENT_PROFILE_CAPACITY_SEVERITY` in `src/core/check.ts`, from `"warning"` to
+  `"error"`. LCLI-646 holds it and its criteria require the ordering to be read
+  off what was actually published rather than assumed.
+
 ## Rollback
 
 - **Before publish**: nothing external happened — delete the tag, fix the

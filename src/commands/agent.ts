@@ -34,12 +34,11 @@ import {
   compileWorkspaceAgentContext,
 } from "../core/agent-workspace-context";
 import { compareCodeUnits } from "../core/order";
-import { CONSTITUTION_TYPE } from "../core/profile";
 import { loadReferenceRetrievalGraph, type RetrievalGraphLoader } from "../core/retrieval";
 import type { WorkspaceRetrievalSelection } from "../core/workspace-retrieval";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
-import { discoverAgentGovernanceDocs } from "./agent-governance";
+import { constitutionPathFor } from "./agent-governance";
 import { assertFlagAtMostOnce, parseCommandArgs, singleOptionValue, usage, workspaceSelection } from "./args";
 import { readSource } from "./discover";
 import { assertNoSymlinkInPath, classifyExistingFile, ensureDir, writeFileAtomic } from "./fswrite";
@@ -383,15 +382,6 @@ async function runAgentProject(action: Extract<AgentAction, { kind: "project" }>
   } finally {
     await retrieval.dispose?.();
   }
-}
-
-/**
- * The repo-relative path of the bundle's built-in Constitution, or `undefined` when it has none —
- * from `lore agents`' own discovery, so the two commands can never disagree about which document it
- * is (LCLI-609).
- */
-function constitutionPathFor(root: string): string | undefined {
-  return discoverAgentGovernanceDocs(root).get(CONSTITUTION_TYPE)?.path;
 }
 
 function parseAgentArgs(args: readonly string[]): AgentAction {

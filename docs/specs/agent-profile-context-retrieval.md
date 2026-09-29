@@ -89,7 +89,20 @@ Contract:
 - `description` is required, single-line routing metadata of at most 300
   characters. It is not injected behavioral guidance.
 - `kind` is required and is `specialist` or `orchestrator`.
-- `max_tokens` is an optional positive safe integer and defaults to `8000`.
+- `max_tokens` is an optional positive safe integer and defaults to `8000`. It is
+  a ceiling on the pack, and it is also a promise about the declaration: the
+  profile's **complete declared set** — every candidate of every `pinned` and
+  `sources` reference, plus the auto-pinned Constitution — must fit inside it.
+  A profile whose declared set cannot fit is reported by `lore check`
+  as `agent-profile-capacity`, naming the profile, its budget, and the sources
+  that cannot fit (LCLI-642). That measurement is the size of the set **as a real
+  pack renders it** — the per-item and catalog score annotations included — so a
+  budget that satisfies it cannot start dropping declared evidence on a task, and
+  a budget that only appears to satisfy it cannot hide behind that appearance. DEC-11 rules that this ships as a **warning for one
+  release and then as an error**; the flip is held by LCLI-646. The finding is
+  computed from the declaration alone, so it is the same on every task and never
+  depends on what a particular pack happens to retain — task-ranked omission is
+  normal retention and is not this finding.
 - `pinned` and `sources` are optional ordered arrays defaulting to empty. Each
   item is a canonical bundle-relative concept id with an optional
   GitHub-compatible `#heading-anchor`.

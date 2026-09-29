@@ -38,7 +38,7 @@ import { effectiveProfileFor } from "../core/bundle";
 import { bodyText } from "../core/check";
 import { tryReadFrontmatter } from "../core/concept";
 import { type BundleState, resolveBundleState } from "../core/okf-version";
-import { loadProfile, profileForBundle } from "../core/profile";
+import { CONSTITUTION_TYPE, loadProfile, profileForBundle } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { canonicalType } from "../core/schema";
 import { type AgentBlockDoc, agentBlockLines, typeRuleFor } from "../core/type-rules";
@@ -58,6 +58,18 @@ const BUNDLE_ROOT_INDEX_DISPLAY = posix.join(DOCS_DIR, BUNDLE_ROOT_INDEX);
  */
 export function readAgentGovernance(root: string): string[] {
   return agentBlockLines(discoverAgentGovernanceDocs(root));
+}
+
+/**
+ * The repo-relative path of the bundle's built-in Constitution, or `undefined` when it has none.
+ * One definition over {@link discoverAgentGovernanceDocs}, so the three callers that need "the
+ * bundle's Constitution" — `lore agent context`'s auto-pin (LCLI-609), `lore check`'s capacity
+ * measurement of a profile that auto-pin counts toward (LCLI-642), and `lore agents`' own block —
+ * can never disagree about which document it is (or about a profile-declared `Constitution` type
+ * being none, R12).
+ */
+export function constitutionPathFor(root: string): string | undefined {
+  return discoverAgentGovernanceDocs(root).get(CONSTITUTION_TYPE)?.path;
 }
 
 /**

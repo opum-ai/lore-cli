@@ -2,7 +2,13 @@ schema_version = 1
 name = "verification"
 description = "Retrieves the acceptance, conformance and release evidence needed to verify a lore-cli change — what OKF conformance actually requires, what the end-to-end environment covers, and which release facts are authoritative rather than assumed."
 kind = "specialist"
-max_tokens = 16000
+# Holds this profile's COMPLETE declared set, as a real pack renders it (LCLI-642, DEC-11: a profile
+# whose declared sources cannot fit its budget is the `lore check` finding `agent-profile-capacity`).
+# The headroom above that measurement covers document growth plus the two things the measurement
+# deliberately does NOT count -- the task line and the bundle-wide query section. No number is
+# written here on purpose: it moves with every edit to a declared source, and `lore check` prints
+# the current requirement when it is exceeded.
+max_tokens = 94000
 pinned = ["reference/okf-conformance"]
 sources = [
   "reference/consumer-compatibility",
