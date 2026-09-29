@@ -31,10 +31,11 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { isMain } from "./is-main.mjs";
 import { OWN_REPOSITORY, RECEIPT_HOST } from "./pair-receipt.mjs";
 
 const execFileAsync = promisify(execFileCallback);
@@ -300,7 +301,7 @@ export async function main(
   return outcome.ok ? 0 : 1;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMain(import.meta.url)) {
   try {
     process.exitCode = await main(process.argv.slice(2));
   } catch (error) {

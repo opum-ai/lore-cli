@@ -50,9 +50,11 @@
 
 import { execFile as execFileCallback } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+
+import { isMain } from "./is-main.mjs";
 
 const execFile = promisify(execFileCallback);
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -268,7 +270,7 @@ export async function checkBreakingBump({
   };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMain(import.meta.url)) {
   const argv = process.argv.slice(2);
   const atNext = argv.indexOf("--next");
   const next = atNext === -1 ? undefined : argv[atNext + 1];

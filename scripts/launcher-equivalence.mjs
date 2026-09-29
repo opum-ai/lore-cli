@@ -43,9 +43,9 @@
 //   2  usage error, a malformed version pair, or a tarball that could not be read
 
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
+
+import { isMain } from "./is-main.mjs";
 
 /** A final release version: plain MAJOR.MINOR.PATCH, never itself a prerelease. */
 const FINAL_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
@@ -319,6 +319,6 @@ export function main(argv, { out = console.log, err = console.error } = {}) {
   return 0;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMain(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

@@ -112,11 +112,12 @@ import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { devNull, tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { ensureGitHubRelease, REPAIR_COMMAND, releaseNotesFor } from "./github-release.mjs";
+import { isMain } from "./is-main.mjs";
 import { compareLauncherTarballs, readTarEntries } from "./launcher-equivalence.mjs";
 import {
   describeOverride,
@@ -1716,7 +1717,7 @@ function pairIo(run) {
   };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMain(import.meta.url)) {
   try {
     process.exitCode = await main(process.argv.slice(2));
   } catch (error) {

@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Every release script now runs its CLI when it is invoked through a symlinked path** (LCLI-637,
+  twin of quest-cli QCLI-404). Six scripts guard `main()` — `launcher-equivalence`, `pair-receipt`,
+  `promote-latest`, `version-parity`, `github-release` and `check-breaking-bump` — and all six
+  compared `resolve(process.argv[1])` with `fileURLToPath(import.meta.url)`. That is false through
+  any symlinked path, because `resolve()` never follows a link while Node resolves `import.meta.url`
+  to the module's real one; the macOS tmpdir (`/var` -> `/private/var`) trips it with no symlink of
+  anyone's own. The failure was silent in the worst way: the process exited 0 having done nothing,
+  so a release gate reported success for work it never did. All six now call one shared
+  realpath-based `isMain()` in `scripts/is-main.mjs`, and `test/lcli637-is-main-symlink.test.ts`
+  invokes each of them through a real symlink and fails against the old guard. Measured before:
+  `node scripts/version-parity.mjs --help` exits 2 with 52 bytes of usage, the same file through a
+  symlinked directory exits 0 with 0 bytes. After: both exit 2 with byte-identical output.
+  `check-breaking-bump.mjs` is in the list because re-measuring the inventory repo-wide found it,
+  not the four sites the record named.
 - **A malformed window variable now fails the release BEFORE the first publish, and fails a
   `publish:false` rehearsal too** (LCLI-634, extending LCLI-630). `vars.REGISTRY_WINDOW_SECONDS` and
   `vars.PROVENANCE_WAIT_SECONDS` are refused unless they are a whole number of seconds (0 to

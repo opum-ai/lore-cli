@@ -480,12 +480,14 @@ describeOnPosix("scripts/publish-release.sh", () => {
       // The version-parity checker (LCLI-613) is the same kind of sibling, and runs first: without
       // it the copy refuses at the gate, which proves the gate fails closed and nothing else.
       // The launcher equivalence gate (LCLI-621) is a third such sibling, and the pass-1 receipt
-      // evaluator (pair-receipt.mjs, shared with promote-latest.mjs since LCLI-621) a fourth.
+      // evaluator (pair-receipt.mjs, shared with promote-latest.mjs since LCLI-621) a fourth. The
+      // shared is-main helper (LCLI-637) is imported by three of the copies, so it is a fifth.
       for (const sibling of [
         "shipped-readme-version.mjs",
         "version-parity.mjs",
         "launcher-equivalence.mjs",
         "pair-receipt.mjs",
+        "is-main.mjs",
       ])
         writeFileSync(resolve(scriptDir, sibling), readFileSync(resolve(import.meta.dir, "..", "scripts", sibling)));
 

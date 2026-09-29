@@ -41,9 +41,11 @@
 
 import { execFile as execFileCallback } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+
+import { isMain } from "./is-main.mjs";
 
 const execFile = promisify(execFileCallback);
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -160,7 +162,7 @@ async function main(argv) {
   console.log(verdict.message);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMain(import.meta.url)) {
   try {
     await main(process.argv.slice(2));
   } catch (error) {
