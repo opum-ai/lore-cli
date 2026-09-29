@@ -181,7 +181,7 @@ describe("Ladybug benchmark report contract", () => {
       "fixtures",
       "gates",
     ]);
-    expect(benchmarkDigest(json)).toBe("sha256:d192a3421c69e08d297f76173baf04de013709e73a6bef07a4d91182e3bf2d8f");
+    expect(benchmarkDigest(json)).toBe("sha256:22f3c3636c2899a79910475823834ae83ce4f7f662324d9f462c2731b0987f4f");
     expect(() => parseLadybugBenchmarkReport({ ...report, unexpected: true })).toThrow();
 
     const noisySmoke = {

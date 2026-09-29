@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-29
+
 ### Added
 
 - **`lore query --across-refs` — read the bundle across refs, read-only** (LCLI-652; ODOC-330 /
