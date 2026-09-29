@@ -178,14 +178,14 @@ describe("cross-ref — explicit refs", () => {
     expect(coverage).toMatchObject({ complete: true, population: "explicit" });
     expect(coverage.refsRead.map((entry) => entry.ref)).toEqual(["dev", "feature"]);
     for (const entry of coverage.refsRead) expect(entry.sha).toMatch(/^[0-9a-f]{40}$/u);
-  });
+  }, 30_000);
 
   test("coverage sits after data and before principal — the position agreed with quest-cli", async () => {
     writeBundle();
     commit("base");
     const { stdout } = await queryAt(["retention", "--across-refs=dev"]);
     expect(parseEnvelope(stdout).keys).toEqual(["schemaVersion", "kind", "data", "coverage", "principal"]);
-  });
+  }, 30_000);
 
   test("a differing copy on another ref is shown beside dev's, and an identical one is not duplicated", async () => {
     writeBundle("Soft delete retention.\n");
@@ -221,7 +221,7 @@ describe("cross-ref — explicit refs", () => {
     const shared = await queryAt(["identical", "--across-refs=dev", "--across-refs=feature"]);
     const sharedRows = parseEnvelope(shared.stdout).data.hits;
     expect(sharedRows.map((row) => row.refProvenance?.ref)).toEqual(["dev"]);
-  });
+  }, 30_000);
 
   test("the anchor need not be named first, and a ref-order that puts it last still collapses", async () => {
     writeBundle();
@@ -245,7 +245,7 @@ describe("cross-ref — explicit refs", () => {
     const { data, coverage } = parseEnvelope(stdout);
     expect(data.hits.map((hit) => hit.refProvenance?.ref)).toEqual(["dev"]);
     expect(coverage.refsRead.map((entry) => entry.ref)).toEqual(["dev", "feature"]);
-  });
+  }, 30_000);
 
   test("an id absent from dev is shown once per ref carrying it, and coverage key order is fixed", async () => {
     writeBundle();
@@ -268,7 +268,7 @@ describe("cross-ref — explicit refs", () => {
     // rather than left to `toMatchObject` (which cannot see order).
     expect(Object.keys(coverage)).toEqual(["complete", "population", "discoveredAt", "refsRead", "refsUnreadable"]);
     expect(coverage.discoveredAt).toBe("2026-09-29T00:00:00.000Z");
-  });
+  }, 30_000);
 
   test("a ref with more matches than the default cap is not truncated per ref", async () => {
     writeBundle();
@@ -286,7 +286,7 @@ describe("cross-ref — explicit refs", () => {
     expect(data.total).toBeGreaterThan(20);
     expect(data.shown).toBe(20);
     expect(data.truncated).toBe(true);
-  });
+  }, 30_000);
 
   test("a ref with no bundle at all was still read — it documents nothing, and coverage stays complete", async () => {
     writeBundle();
@@ -303,7 +303,7 @@ describe("cross-ref — explicit refs", () => {
     expect(coverage.refsRead.map((entry) => entry.ref)).toEqual(["dev", "no-docs"]);
     expect(coverage.refsUnreadable).toEqual([]);
     expect(data.hits.map((hit) => hit.refProvenance?.ref)).toEqual(["dev"]);
-  });
+  }, 30_000);
 
   test("an unreadable ref refuses with exit 6, a drift envelope carrying coverage in input, and nothing on stdout", async () => {
     writeBundle();
@@ -327,7 +327,7 @@ describe("cross-ref — explicit refs", () => {
     expect(envelope.input.coverage.refsUnreadable).toHaveLength(1);
     expect(envelope.input.coverage.refsUnreadable[0]).toMatchObject({ ref: "nope", pullRequest: null });
     expect(envelope.input.coverage.refsRead.map((entry) => entry.ref)).toEqual(["dev"]);
-  });
+  }, 30_000);
 
   test("--allow-partial answers the same run with complete:false instead of refusing", async () => {
     writeBundle();
@@ -346,7 +346,7 @@ describe("cross-ref — explicit refs", () => {
     expect(coverage.refsUnreadable.map((entry) => entry.ref)).toEqual(["nope"]);
     // The human half of coverage: a reason reaches stderr even though the run succeeded.
     expect(stderr).toContain("could not read nope");
-  });
+  }, 30_000);
 
   test("--limit caps the merged listing and says so", async () => {
     writeBundle();
@@ -365,7 +365,7 @@ describe("cross-ref — explicit refs", () => {
     expect(unlimited.data.total).toBeGreaterThan(2);
     expect(capped.data).toMatchObject({ shown: 2, truncated: true });
     expect(capped.data.total).toBe(unlimited.data.total);
-  });
+  }, 30_000);
 });
 
 // ── the open-PR population ────────────────────────────────────────────────────
@@ -454,10 +454,11 @@ describe("cross-ref — open pull requests", () => {
       rmSync(author, { recursive: true, force: true });
       rmSync(bare, { recursive: true, force: true });
     }
-    // 30s, matching this repo's other subprocess-heavy suites (agent-plugins, release-provenance):
-    // these five tests build a bare remote, and this one clones, commits, pushes and fetches across
-    // two repositories. The default 10s budget killed the spawn mid-call on a loaded CI runner, on
-    // both platforms, which reported as `git for-each-ref exited null` — a slow runner, not a hang.
+    // 30s, matching this repo's other subprocess-heavy suites (agent-plugins, release-provenance).
+    // EVERY test in this file that drives the view spawns git — a fetch or an archive per ref, plus
+    // a bundle load — and CI (both platforms, measured twice on 2026-09-29) killed a spawn mid-call
+    // at the default 10s budget, once reporting `git for-each-ref exited null` and once as a plain
+    // timeout. The budget is a ceiling, not a wait: a genuine hang still fails, at 30s.
   }, 30_000);
 
   test("reading origin/dev fetches objects WITHOUT moving refs/remotes/origin/dev", async () => {
@@ -635,7 +636,7 @@ describe("cross-ref — open pull requests", () => {
     const { code, stderr } = await queryViaCli(["retention", "--across-refs", "--json"]);
     expect(code).toBe(3);
     expect((JSON.parse(stderr) as { message: string }).message).toContain("origin/dev");
-  });
+  }, 30_000);
 });
 
 // ── the view is read-only ─────────────────────────────────────────────────────
@@ -706,7 +707,7 @@ describe("cross-ref — flag shape", () => {
     const lone = await queryViaCli(["retention", "--allow-partial", "--json"]);
     expect(lone.code).toBe(2);
     expect((JSON.parse(lone.stderr) as { message: string }).message).toContain("requires --across-refs");
-  });
+  }, 30_000);
 
   test("a search text that followed the flag is refused as a ref name, not read as one", async () => {
     writeBundle();
@@ -720,7 +721,7 @@ describe("cross-ref — flag shape", () => {
     expect(envelope.error_type).toBe("usage");
     expect(envelope.message).toContain("soft delete");
     expect(envelope.hint).toContain("cannot contain spaces");
-  });
+  }, 30_000);
 
   test("--across-refs and --workspace are one explicit scope, not two", async () => {
     writeBundle();
@@ -728,7 +729,7 @@ describe("cross-ref — flag shape", () => {
     const { code, stderr } = await queryViaCli(["retention", "--across-refs=dev", "--workspace", "w.json", "--json"]);
     expect(code).toBe(2);
     expect((JSON.parse(stderr) as { message: string }).message).toContain("cannot be combined");
-  });
+  }, 30_000);
 });
 
 // ── rendering ─────────────────────────────────────────────────────────────────
