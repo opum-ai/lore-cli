@@ -35,13 +35,14 @@
 //      this, lore's existing style would read as "no breaking change" and the
 //      gate would certify what it exists to catch.
 //   4. Stale-tree window: with no --next, a package.json that still names a
-//      released version checks that released section (rule 2) — so on lore's
-//      real bytes, where the released 0.11.0 section carries the legacy
-//      marker, a no-flag run in the window right after a release cut exits 1
-//      naming the canonical spelling. That is the documented consequence of
-//      the legacy-marker ruling applied to the checked section. It is NOT
-//      reachable at a CI dispatch (package.json names the bumped version by
-//      then), and release prep runs --next before the bump.
+//      released version checks that released section (rule 2) — a no-flag run
+//      just after a release cut therefore judges a section that is already
+//      history. The legacy-marker refusal (rule 3) reds there with a remedy
+//      nobody can take without rewriting a shipped section: lore's own bytes
+//      carried exactly that red from 0.11.0 until LCLI-649 converted that
+//      section's marker to the canonical heading. NOT reachable at a CI
+//      dispatch (package.json names the bumped version by then), and release
+//      prep runs --next before the bump.
 //
 //   node scripts/check-breaking-bump.mjs                         # the package.json version
 //   node scripts/check-breaking-bump.mjs --next 0.12.0           # release prep, before the bump

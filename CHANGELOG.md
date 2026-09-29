@@ -417,10 +417,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Additive contract effects:** a new catalog `reason` value, and `packDigest`/`contextDigest`
     change for any bundle that has a Constitution.
 
-### Changed
+### Changed (breaking)
 
-- **BEHAVIOUR CHANGE: `lore check` now fails on the error-tier `frontmatter` and `required-section`
-  findings `lore validate` reports, for every type** (LCLI-606). Ships in a lore minor release.
+- `lore check` now fails on the error-tier `frontmatter` and `required-section`
+  findings `lore validate` reports, for every type (LCLI-606). Ships in a lore minor release.
   Until now `lore check` could exit `0` over a document that `lore validate` failed. It now exits
   `6` on every such finding: a missing required section (an ADR without `## Consequences`, a Story
   without `## Acceptance criteria`), a missing `type`, a missing or mistyped field (including one
@@ -440,6 +440,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   existing `rule` field. LCLI-598 measured the ten fleet repositories on 2026-09-26 and found 1 of
   384 documents that would newly fail, since fixed. A re-measurement before merge, counting every
   error-tier finding, found 0 of 385.
+
+### Changed
+
 - **Declaring the built-in `Constants` type adds `owner` and `last_reviewed` to the profile-wide
   frontmatter key order** (LCLI-596). A document of any type that already carries `owner:` has it
   reordered on its next lore rewrite. Measured 2026-09-26: 0 fleet documents affected.

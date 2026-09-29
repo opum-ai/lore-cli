@@ -15,7 +15,9 @@
  * patch bump and accepted at a minor/major bump. The orchestrator's AC2
  * rulings are proven too: quest's `### ... (breaking)` heading is canonical
  * (byte-for-byte the same regex), lore's legacy bold `**BEHAVIOUR CHANGE:**`
- * marker fails at ANY bump level naming the canonical spelling, and the notes
+ * marker fails at ANY bump level naming the canonical spelling (the one real
+ * occurrence — in the released 0.11.0 section — was converted to the canonical
+ * heading by LCLI-649, because a shipped section is not re-authorable), and the notes
  * section is chosen by quest's own rule, verbatim: the version's own
  * "## [X]" section when it exists (checked against the section below it),
  * otherwise the Unreleased section (checked against the first versioned
@@ -390,7 +392,7 @@ describe("the quest-side read (AC3, enforced)", () => {
   });
 });
 
-test("the real CHANGELOG: --next checks [Unreleased] against the current version; a no-flag run checks the released section (stale-tree window)", () => {
+test("the real CHANGELOG: --next checks [Unreleased] against the current version; a no-flag run checks the released section (canonical since LCLI-649)", () => {
   const real = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
   const version = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
   // Pre-bump: --next names a version with no section of its own, so
@@ -402,23 +404,23 @@ test("the real CHANGELOG: --next checks [Unreleased] against the current version
   const next = breakingBumpProblems(real, "0.12.0");
   expect(next).toMatchObject({ previous: version, level: "minor", breaking: true });
   expect(next.problems).toEqual([]);
-  // Stale-tree window: with no --next, package.json still names the released
-  // 0.11.0, so its own section is the checked one — and that released section
-  // carries the legacy marker, so the run reds naming the canonical spelling.
-  // Documented in the script header (item 4); release prep runs --next and a
-  // CI dispatch has the bump in by then.
-  const stale = breakingBumpProblems(real, "0.11.0");
-  expect(stale.sectionsRead).toBeGreaterThan(10);
-  expect(stale).toMatchObject({
+  // No-flag run: package.json still names the released 0.11.0, so its own
+  // section is the checked one. LCLI-649 converted that section's legacy
+  // `**BEHAVIOUR CHANGE:**` marker to the canonical `### Changed (breaking)`
+  // heading, so the released section still READS as breaking — the assertion
+  // below pins that, not merely the absence of the refusal — and its minor
+  // bump satisfies it. Before the conversion this invocation exited 1 on a
+  // clean tree, with a remedy that would have rewritten a shipped section.
+  const released = breakingBumpProblems(real, "0.11.0");
+  expect(released.sectionsRead).toBeGreaterThan(10);
+  expect(released).toMatchObject({
     source: "## [0.11.0] - 2026-09-27",
     previous: "0.9.3",
     level: "minor",
-    breaking: false,
-    legacyMarker: true,
+    breaking: true,
+    legacyMarker: false,
   });
-  expect(stale.problems).toHaveLength(1);
-  expect(stale.problems[0]).toContain("**BEHAVIOUR CHANGE:**");
-  expect(stale.problems[0]).toContain("### Changed (breaking)");
+  expect(released.problems).toEqual([]);
 });
 
 // A PATH stub named `gh` cannot shadow the runner's real gh.exe on Windows:
