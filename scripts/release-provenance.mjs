@@ -158,6 +158,20 @@
  *           it (see checkPublishedOne). --pre does not take this read: every version it checks
  *           comes from the packument it already read.
  *
+ *           WHICH CAUSE THE NOT-PUBLISHED WARNING LEADS WITH IS AN INPUT, NOT A GUESS (LCLI-635).
+ *           A `not-published` result has two explanations, and which of them is possible is decided
+ *           by an event this script cannot observe: whether the publish job succeeded. It succeeded
+ *           -> every package is on the registry, so the read API is lagging (LCLI-460) and there is
+ *           nothing to resume. It did not -> a publish that stopped partway is the likely cause and
+ *           "Re-run failed jobs" is the sanctioned move, but the result does NOT settle it: a job
+ *           can go red after its last package went out, which is why the failure wording sends the
+ *           reader to the publish job's log rather than asserting the cause. The warning used to lead with the partial
+ *           publish in BOTH cases because it could not tell them apart, so on the run where lag was
+ *           the only possibility it named a cause that was not true and prescribed a resume that
+ *           could not help (LCLI-628's reviewer, F4). release.yml now passes needs.publish.result as
+ *           --publish-result, and it is REQUIRED in this mode for the same reason --launcher-rc is:
+ *           a default would print a lead cause -- and a remedy -- this check never established.
+ *
  * THE BASELINE, AND WHY --pre WOULD OTHERWISE BE USELESS
  *
  * Every attested version at or below KNOWN_DANGLING_THROUGH already dangles, permanently. A
@@ -252,6 +266,19 @@ const REQUEST_TIMEOUT_MS = Number.parseInt(process.env.LORE_PROVENANCE_TIMEOUT_M
  * the test, the same arrangement publish-release.sh already uses.
  */
 const WAIT_SECONDS_GRAMMAR = /^(0|[1-9][0-9]{0,8})$/;
+
+/**
+ * The complete set of values GitHub sets `needs.<job>.result` to (LCLI-635), passed through
+ * verbatim as --publish-result. `success` is the one value that decides anything here: it is the
+ * only one under which a `not-published` result cannot be a publish that stopped partway. The
+ * other three are accepted rather than refused because they are what the expression really
+ * produces, and a refusal would make the script invent a rule about a workflow it does not own.
+ *
+ * A value outside this set is REFUSED (exit 2), not defaulted. Unknown here means release.yml and
+ * this script disagree about the vocabulary, and guessing between "the publish succeeded" and "it
+ * did not" is exactly the guess this flag exists to remove.
+ */
+const PUBLISH_RESULTS = new Set(["success", "failure", "cancelled", "skipped"]);
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_JSON = join(SCRIPT_DIR, "..", "package.json");
@@ -1003,6 +1030,11 @@ async function runPost(options, manifest) {
   console.log(
     `--post checking the provenance this release just produced: ${specs.length} package(s): ${specs.map((s) => `${s.name}@${s.version}`).join(", ")}`,
   );
+  // Printed on every run, so an operator reading a not-published warning can see the input that
+  // chose its lead cause without going back to the workflow run (LCLI-635).
+  console.log(
+    `       needs.publish.result was '${options.publishResult}', which decides the lead cause of the not-published warning below, if any (LCLI-635)`,
+  );
   // Said on every run, in the log and the job summary, so the absence of a launcher@X row is
   // never read as that launcher having been checked and found clean (OPAG-127 wording).
   const notes = [
@@ -1068,7 +1100,7 @@ async function runPost(options, manifest) {
 /**
  * @param {{results: any[], scannedVersions: number, notes: string[]}} checked
  * @param {string} mode
- * @param {{acknowledge: string}} options
+ * @param {{acknowledge: string, publishResult: string}} options
  */
 function report(checked, mode, options) {
   const { results, scannedVersions } = checked;
@@ -1121,8 +1153,18 @@ function report(checked, mode, options) {
   if (notPublished.length > 0) {
     // Deliberately NOT the LCLI-482 text above: that explains a published version with no
     // attestation, and these versions are not published at all (LCLI-628).
+    //
+    // WHICH CAUSE LEADS IS DECIDED BY THE PUBLISH JOB'S OWN RESULT (LCLI-635), passed in by
+    // release.yml. Leading with a partial publish on a run whose publish job SUCCEEDED names a
+    // cause that cannot be true and prescribes a resume that cannot help: the packages are on the
+    // registry, and what has not caught up is the read API (LCLI-460).
+    const specs = notPublished.map((r) => r.spec).join(", ");
+    const publishSucceeded = options.publishResult === "success";
+    const cause = publishSucceeded
+      ? `The cause is the registry read API lagging a publish that did succeed (LCLI-460). needs.publish.result: success is what settles that: the publish job finished green, so every one of these versions is on the registry — published by this run, or found there with matching bytes by its own skip check — and no PARTIAL PUBLISH can leave a version a green publish job put there. The publish job's read-back step reports the same lag when a package is not yet visible inside its window, and re-reading the registry later is what clears this: re-running the publish job cannot, because its skip check either finds each package and does nothing, or hits the same lag and fails on the publish conflict.`
+      : `The likely cause is a PARTIAL PUBLISH — the publish job did not succeed (needs.publish.result: ${options.publishResult}), and a publish that stops partway leaves exactly this. release.yml publishes the platform packages first and the launcher X-rc.N last, so a job that dies partway leaves the launcher unpublished. The one other explanation is the registry read API lagging a publish that did succeed (LCLI-460): a job can still go red after its last package went out, because the read-back step reports a lagging package and exits 0 but a content mismatch there fails it, so the publish job's log is where the two are told apart. The sanctioned resume is "Re-run failed jobs" on the same run.`;
     console.log(
-      `::warning::${notPublished.length} package version(s) this ${mode} check expected are NOT ON THE REGISTRY: ${notPublished.map((r) => r.spec).join(", ")}. This is not a missing attestation, and LCLI-482 does not explain it: each package's packument answered and does not list that version. The likely cause is a PARTIAL PUBLISH — the publish job stopped before these went out. release.yml publishes the platform packages first and the launcher X-rc.N last, so a publish that died partway leaves the launcher unpublished. The one other explanation is the registry read API lagging a publish that did succeed (LCLI-460); the publish job's own read-back step is where that shows. No propagation window was spent waiting on these: there is no attestation to wait for on a version nobody published. The sanctioned resume is "Re-run failed jobs" on the same run. This check does not fail the run.`,
+      `::warning::${notPublished.length} package version(s) this ${mode} check expected are NOT ON THE REGISTRY: ${specs}. This is not a missing attestation, and LCLI-482 does not explain it: each package's packument answered and does not list that version. ${cause} No propagation window was spent waiting on these: there is no attestation to wait for on a version the registry does not list. This check does not fail the run.`,
     );
   }
   for (const r of inconclusive) {
@@ -1138,6 +1180,9 @@ function report(checked, mode, options) {
     notPublished,
     verifiedNothing,
     acknowledge: options.acknowledge,
+    // The same discriminator the warning above leads with, so the summary cannot contradict the
+    // log line an operator read first (LCLI-635).
+    publishResult: options.publishResult,
     notes: checked.notes,
   });
 
@@ -1153,7 +1198,11 @@ function writeStepSummary(mode, rows, state) {
       : state.waived.length > 0
         ? `**WAIVED for this dispatch** against "${state.acknowledge}" — ${state.waived.length} dangling finding(s) are still dangling.`
         : state.notPublished.length > 0
-          ? `Passed, but ${state.notPublished.length} package version(s) this release should have published are **NOT ON THE REGISTRY** — a partial publish, or read-API lag (LCLI-460); see the job log. That is not a missing attestation${state.absent.length > 0 ? `; separately, ${state.absent.length} published package(s) ship no provenance at all (LCLI-482, open)` : ""}.`
+          ? `Passed, but ${state.notPublished.length} package version(s) this release should have published are **NOT ON THE REGISTRY** — ${
+              state.publishResult === "success"
+                ? "the publish job succeeded, so this is the registry read API lagging (LCLI-460)"
+                : `the publish job did not succeed (needs.publish.result: ${state.publishResult}), so this is most likely a partial publish`
+            }; see the job log. That is not a missing attestation${state.absent.length > 0 ? `; separately, ${state.absent.length} published package(s) ship no provenance at all (LCLI-482, open)` : ""}.`
           : state.absent.length > 0
             ? `Passed, with ${state.absent.length} package(s) shipping no provenance at all (LCLI-482, open).`
             : "Passed.";
@@ -1180,13 +1229,14 @@ function writeStepSummary(mode, rows, state) {
 // ---------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  /** @type {{ mode: string, limit: number, waitSeconds: number, version: string, launcherRc: string, acknowledge: string, expectedRepo: string, packages: string[] }} */
+  /** @type {{ mode: string, limit: number, waitSeconds: number, version: string, launcherRc: string, publishResult: string, acknowledge: string, expectedRepo: string, packages: string[] }} */
   const options = {
     mode: "",
     limit: 10,
     waitSeconds: 0,
     version: "",
     launcherRc: "",
+    publishResult: "",
     acknowledge: "",
     expectedRepo: "",
     packages: [],
@@ -1223,6 +1273,17 @@ function parseArgs(argv) {
         throw new Error(`--launcher-rc must be a positive integer with no leading zero (X-rc.N, N >= 1); got '${rc}'`);
       }
       options.launcherRc = rc;
+    } else if (arg === "--publish-result") {
+      // needs.publish.result, passed through verbatim (LCLI-635). Ends are trimmed so a shell's
+      // trailing newline is accepted -- the same tolerance --acknowledge has -- but the value
+      // itself must then be exactly one of the four, so nothing else can reach the wording.
+      const raw = (argv[++i] ?? "").trim();
+      if (!PUBLISH_RESULTS.has(raw)) {
+        throw new Error(
+          `--publish-result must be one of ${[...PUBLISH_RESULTS].join(", ")} (release.yml passes needs.publish.result); got ${renderRefusedValue(raw)}`,
+        );
+      }
+      options.publishResult = raw;
     } else if (arg === "--package") {
       const name = argv[++i] ?? "";
       if (!name) throw new Error("--package needs a value");
@@ -1261,6 +1322,19 @@ function parseArgs(argv) {
   if (options.mode === "pre" && options.launcherRc) {
     throw new Error("--launcher-rc applies only to --post");
   }
+  // Required, not defaulted, for --post (LCLI-635), and for the same reason --launcher-rc is: a
+  // default here would pick the lead cause of the not-published warning for the caller, and the
+  // two candidates prescribe opposite actions (re-read the registry / re-run the publish job).
+  // Guessing wrong names a cause that is not true and sends the operator to a resume that cannot
+  // help. --pre has no not-published branch at all, so passing it there is a mistake worth naming.
+  if (options.mode === "post" && !options.publishResult) {
+    throw new Error(
+      "--post needs --publish-result success|failure|cancelled|skipped: needs.publish.result decides which cause the not-published warning leads with",
+    );
+  }
+  if (options.mode === "pre" && options.publishResult) {
+    throw new Error("--publish-result applies only to --post");
+  }
   return options;
 }
 
@@ -1273,7 +1347,7 @@ async function main() {
     // argument is caller-controlled text (LCLI-636).
     console.error(`::error::${workflowCommandData(describeError(error))}`);
     console.error(
-      "usage: node scripts/release-provenance.mjs (--pre [--limit N] | --post --launcher-rc N [--wait-seconds N] [--version V]) [--package NAME]... [--acknowledge REF]",
+      "usage: node scripts/release-provenance.mjs (--pre [--limit N] | --post --launcher-rc N --publish-result R [--wait-seconds N] [--version V]) [--package NAME]... [--acknowledge REF]",
     );
     process.exit(2);
   }

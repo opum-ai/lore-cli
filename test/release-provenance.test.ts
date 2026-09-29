@@ -342,7 +342,17 @@ function outcomeOf(out: string, spec: string): string | undefined {
 
 describe("release-provenance gate outcomes", () => {
   test("attestation ABSENT passes, loudly, naming the manual-publish cause (LCLI-482)", async () => {
-    const { code, out } = await runGate(["--post", "--launcher-rc", "1", "--version", "0.6.1", "--package", LAUNCHER]);
+    const { code, out } = await runGate([
+      "--post",
+      "--publish-result",
+      "success",
+      "--launcher-rc",
+      "1",
+      "--version",
+      "0.6.1",
+      "--package",
+      LAUNCHER,
+    ]);
     expect(code).toBe(0);
     expect(outcomeOf(out, `${LAUNCHER}@0.6.1-rc.1`)).toBe("absent");
     // Loud, not silent: the gap has to be a recorded fact on the run, every run.
@@ -352,7 +362,17 @@ describe("release-provenance gate outcomes", () => {
   });
 
   test("attestation PRESENT pinning a resolvable commit passes with no annotation", async () => {
-    const { code, out } = await runGate(["--post", "--launcher-rc", "1", "--version", "0.7.0", "--package", LAUNCHER]);
+    const { code, out } = await runGate([
+      "--post",
+      "--publish-result",
+      "success",
+      "--launcher-rc",
+      "1",
+      "--version",
+      "0.7.0",
+      "--package",
+      LAUNCHER,
+    ]);
     expect(code).toBe(0);
     expect(outcomeOf(out, `${LAUNCHER}@0.7.0-rc.1`)).toBe("ok");
     expect(out).not.toContain("::error::");
@@ -360,7 +380,17 @@ describe("release-provenance gate outcomes", () => {
   });
 
   test("attestation PRESENT pinning a commit the API cannot resolve FAILS (the LCLI-481 defect)", async () => {
-    const { code, out } = await runGate(["--post", "--launcher-rc", "1", "--version", "0.7.1", "--package", LAUNCHER]);
+    const { code, out } = await runGate([
+      "--post",
+      "--publish-result",
+      "success",
+      "--launcher-rc",
+      "1",
+      "--version",
+      "0.7.1",
+      "--package",
+      LAUNCHER,
+    ]);
     expect(code).toBe(1);
     expect(outcomeOf(out, `${LAUNCHER}@0.7.1-rc.1`)).toBe("dangling");
     expect(out).toContain("::error::");
@@ -371,7 +401,17 @@ describe("release-provenance gate outcomes", () => {
     // A gate whose only reachable remedy is deletion gets deleted. `--pre` re-checks published
     // history, so this finding never clears on its own and `publish` stays unreachable until
     // someone acts; the error text is where an operator finds out what the legitimate action is.
-    const { out } = await runGate(["--post", "--launcher-rc", "1", "--version", "0.7.1", "--package", LAUNCHER]);
+    const { out } = await runGate([
+      "--post",
+      "--publish-result",
+      "success",
+      "--launcher-rc",
+      "1",
+      "--version",
+      "0.7.1",
+      "--package",
+      LAUNCHER,
+    ]);
     expect(out).toContain("acknowledge_dangling_provenance");
     expect(out).toContain("KNOWN_DANGLING_THROUGH");
     expect(out).toContain("WILL NOT CLEAR ON ITS OWN");
@@ -382,7 +422,17 @@ describe("release-provenance gate outcomes", () => {
     // substring match were the deciding branch, this would pass silently and the gate would be
     // dead the day GitHub reworded its error. The verdict comes from 422 + the repository
     // itself resolving, so it still fails; the wording only labels the log line.
-    const { code, out } = await runGate(["--post", "--launcher-rc", "1", "--version", "0.7.5", "--package", LAUNCHER]);
+    const { code, out } = await runGate([
+      "--post",
+      "--publish-result",
+      "success",
+      "--launcher-rc",
+      "1",
+      "--version",
+      "0.7.5",
+      "--package",
+      LAUNCHER,
+    ]);
     expect(code).toBe(1);
     expect(outcomeOf(out, `${LAUNCHER}@0.7.5-rc.1`)).toBe("dangling");
     expect(out).toContain("UNRECOGNISED wording");
@@ -391,14 +441,34 @@ describe("release-provenance gate outcomes", () => {
   test("a 422 whose repository is ALSO unreadable is inconclusive, not dangling", async () => {
     // Without being able to read the repo, a 422 corroborates nothing: it could be a token or
     // visibility problem rather than a destroyed commit.
-    const { code, out } = await runGate(["--post", "--launcher-rc", "1", "--version", "0.7.6", "--package", LAUNCHER]);
+    const { code, out } = await runGate([
+      "--post",
+      "--publish-result",
+      "success",
+      "--launcher-rc",
+      "1",
+      "--version",
+      "0.7.6",
+      "--package",
+      LAUNCHER,
+    ]);
     expect(code).toBe(0);
     expect(outcomeOf(out, `${LAUNCHER}@0.7.6-rc.1`)).toBe("inconclusive");
     expect(out).toContain("is not readable");
   });
 
   test("a rate limit is inconclusive, never dangling, and never red", async () => {
-    const { code, out } = await runGate(["--post", "--launcher-rc", "1", "--version", "0.7.2", "--package", LAUNCHER]);
+    const { code, out } = await runGate([
+      "--post",
+      "--publish-result",
+      "success",
+      "--launcher-rc",
+      "1",
+      "--version",
+      "0.7.2",
+      "--package",
+      LAUNCHER,
+    ]);
     expect(code).toBe(0);
     expect(outcomeOf(out, `${LAUNCHER}@0.7.2-rc.1`)).toBe("inconclusive");
     expect(out).toContain("rate limit");
@@ -406,14 +476,34 @@ describe("release-provenance gate outcomes", () => {
   });
 
   test("a 404 on the repository is inconclusive, not a missing commit", async () => {
-    const { code, out } = await runGate(["--post", "--launcher-rc", "1", "--version", "0.7.3", "--package", LAUNCHER]);
+    const { code, out } = await runGate([
+      "--post",
+      "--publish-result",
+      "success",
+      "--launcher-rc",
+      "1",
+      "--version",
+      "0.7.3",
+      "--package",
+      LAUNCHER,
+    ]);
     expect(code).toBe(0);
     expect(outcomeOf(out, `${LAUNCHER}@0.7.3-rc.1`)).toBe("inconclusive");
     expect(out).toContain("NOT evidence about the commit");
   });
 
   test("a version at or below the baseline reports its pinned commit and does not fail", async () => {
-    const { code, out } = await runGate(["--post", "--launcher-rc", "1", "--version", "0.6.0", "--package", LAUNCHER]);
+    const { code, out } = await runGate([
+      "--post",
+      "--publish-result",
+      "success",
+      "--launcher-rc",
+      "1",
+      "--version",
+      "0.6.0",
+      "--package",
+      LAUNCHER,
+    ]);
     expect(code).toBe(0);
     expect(outcomeOf(out, `${LAUNCHER}@0.6.0-rc.1`)).toBe("baseline");
     expect(out).toContain(GONE_SHA);
@@ -425,6 +515,8 @@ describe("release-provenance acknowledgement (the escape hatch)", () => {
   test("a waiver turns a dangling finding into a loud pass, naming the reference", async () => {
     const { code, out } = await runGate([
       "--post",
+      "--publish-result",
+      "success",
       "--launcher-rc",
       "1",
       "--version",
@@ -444,13 +536,30 @@ describe("release-provenance acknowledgement (the escape hatch)", () => {
   });
 
   test("a waiver must name a reference — it is not a bare yes", async () => {
-    const { code, out } = await runGate(["--post", "--version", "0.7.1", "--acknowledge"]);
+    const { code, out } = await runGate([
+      "--post",
+      "--publish-result",
+      "success",
+      "--version",
+      "0.7.1",
+      "--acknowledge",
+    ]);
     expect(code).toBe(2);
     expect(out).toContain("--acknowledge needs a reference");
   });
 
   test("without a waiver the same finding is still red", async () => {
-    const { code } = await runGate(["--post", "--launcher-rc", "1", "--version", "0.7.1", "--package", LAUNCHER]);
+    const { code } = await runGate([
+      "--post",
+      "--publish-result",
+      "success",
+      "--launcher-rc",
+      "1",
+      "--version",
+      "0.7.1",
+      "--package",
+      LAUNCHER,
+    ]);
     expect(code).toBe(1);
   });
 });
@@ -469,6 +578,8 @@ describe("release-provenance acknowledgement (the escape hatch)", () => {
 describe("release-provenance refuses an --acknowledge value that could forge a workflow command (LCLI-636)", () => {
   const waiverArgs = (reference: string) => [
     "--post",
+    "--publish-result",
+    "success",
     "--launcher-rc",
     "1",
     "--version",
@@ -568,7 +679,13 @@ describe("release-provenance refuses an --acknowledge value that could forge a w
   test("any usage error that quotes an argument back is escaped, not only --acknowledge's", async () => {
     // --launcher-rc echoes its rejected value inside the ::error:: line. The escaping at that
     // print site is what keeps an interior LF there from forging a command.
-    const { code, out } = await runGate(["--post", "--launcher-rc", "1\n::error::forged"]);
+    const { code, out } = await runGate([
+      "--post",
+      "--publish-result",
+      "success",
+      "--launcher-rc",
+      "1\n::error::forged",
+    ]);
     expect(code).toBe(2);
     expect(logLines(out).some((line) => line.startsWith("::error::forged"))).toBe(false);
     const commands = commandLines(out);
@@ -860,6 +977,8 @@ describe("release-provenance propagation window", () => {
     const started = Date.now();
     const { code, out } = await runGate([
       "--post",
+      "--publish-result",
+      "success",
       "--launcher-rc",
       "1",
       "--version",
@@ -884,6 +1003,8 @@ describe("release-provenance propagation window", () => {
     attestationRequests.length = 0;
     const { out } = await runGate([
       "--post",
+      "--publish-result",
+      "success",
       "--launcher-rc",
       "1",
       "--version",
@@ -909,6 +1030,8 @@ describe("release-provenance propagation window", () => {
     attestationRequests.length = 0;
     const { out } = await runGate([
       "--post",
+      "--publish-result",
+      "success",
       "--launcher-rc",
       "1",
       "--version",
@@ -953,7 +1076,15 @@ describe("release-provenance --post checks what a Release run published (LCLI-62
     const expected = [...platforms.map((p) => `${p}@${SET_VERSION}`), `${LAUNCHER}@${SET_VERSION}-rc.${SET_RC}`].sort();
 
     attestationRequests.length = 0;
-    const { code, out } = await runGate(["--post", "--version", SET_VERSION, "--launcher-rc", SET_RC]);
+    const { code, out } = await runGate([
+      "--post",
+      "--publish-result",
+      "success",
+      "--version",
+      SET_VERSION,
+      "--launcher-rc",
+      SET_RC,
+    ]);
 
     expect([...new Set(attestationRequests)].sort()).toEqual(expected);
     expect(attestationRequests).toHaveLength(expected.length);
@@ -973,9 +1104,12 @@ describe("release-provenance --post checks what a Release run published (LCLI-62
     const summaryPath = join(dir, "summary.md");
     writeFileSync(summaryPath, "");
     try {
-      const { out } = await runGate(["--post", "--version", SET_VERSION, "--launcher-rc", SET_RC], {
-        GITHUB_STEP_SUMMARY: summaryPath,
-      });
+      const { out } = await runGate(
+        ["--post", "--publish-result", "success", "--version", SET_VERSION, "--launcher-rc", SET_RC],
+        {
+          GITHUB_STEP_SUMMARY: summaryPath,
+        },
+      );
       const summary = readFileSync(summaryPath, "utf8");
       for (const text of [out, summary]) {
         expect(text).toContain(`${LAUNCHER}@${SET_VERSION} is NOT checked here`);
@@ -995,6 +1129,8 @@ describe("release-provenance --post checks what a Release run published (LCLI-62
     attestationRequests.length = 0;
     const { code } = await runGate([
       "--post",
+      "--publish-result",
+      "success",
       "--version",
       SET_VERSION,
       "--launcher-rc",
@@ -1008,7 +1144,7 @@ describe("release-provenance --post checks what a Release run published (LCLI-62
 
   test("--post without --launcher-rc fails closed rather than guessing N", async () => {
     attestationRequests.length = 0;
-    const { code, out } = await runGate(["--post", "--version", SET_VERSION]);
+    const { code, out } = await runGate(["--post", "--publish-result", "success", "--version", SET_VERSION]);
     expect(code).toBe(2);
     expect(out).toContain("--post needs --launcher-rc N");
     expect(attestationRequests).toHaveLength(0);
@@ -1017,7 +1153,15 @@ describe("release-provenance --post checks what a Release run published (LCLI-62
   for (const bad of ["0", "01", "-1", "1.5", "abc", "1 ", "rc.1", ""]) {
     test(`a malformed --launcher-rc ${JSON.stringify(bad)} fails closed`, async () => {
       attestationRequests.length = 0;
-      const { code, out } = await runGate(["--post", "--version", SET_VERSION, "--launcher-rc", bad]);
+      const { code, out } = await runGate([
+        "--post",
+        "--publish-result",
+        "success",
+        "--version",
+        SET_VERSION,
+        "--launcher-rc",
+        bad,
+      ]);
       expect(code).toBe(2);
       expect(out).toContain("--launcher-rc must be a positive integer with no leading zero");
       expect(attestationRequests).toHaveLength(0);
@@ -1029,6 +1173,40 @@ describe("release-provenance --post checks what a Release run published (LCLI-62
     expect(code).toBe(2);
     expect(out).toContain("--launcher-rc applies only to --post");
   });
+
+  test("--post without --publish-result fails closed rather than choosing a lead cause", async () => {
+    // LCLI-635. The two candidate causes of a not-published finding prescribe opposite actions
+    // (re-read the registry / re-run the publish job), so a default here would pick one for a
+    // caller that never observed which is possible -- the same reason --launcher-rc is required.
+    attestationRequests.length = 0;
+    const { code, out } = await runGate(["--post", "--launcher-rc", "1", "--version", SET_VERSION]);
+    expect(code).toBe(2);
+    expect(out).toContain("--post needs --publish-result success|failure|cancelled|skipped");
+    expect(attestationRequests).toHaveLength(0);
+  });
+
+  for (const bad of ["", "Success", "ok", "true", "succeeded", "x\n::error::forged"]) {
+    test(`--publish-result ${JSON.stringify(bad)} is refused, shown escaped`, async () => {
+      // An unknown value means release.yml and this script disagree about the vocabulary, which
+      // is precisely the question the flag exists to answer, so it is refused rather than read
+      // as "not success". These run offline: the refusal precedes every request.
+      attestationRequests.length = 0;
+      const { code, out } = await runGate(["--post", "--launcher-rc", "1", "--publish-result", bad]);
+      expect(code).toBe(2);
+      expect(out).toContain("--publish-result must be one of success, failure, cancelled, skipped");
+      expect(out).toContain(JSON.stringify(bad));
+      // The forged text stays INSIDE the refusal line, JSON-escaped, so no line the runner reads
+      // begins as the workflow command the value tried to become (LCLI-636's rule, same shape).
+      expect(out.split(/\r\n|\r|\n/).some((line) => line.startsWith("::error::forged"))).toBe(false);
+      expect(attestationRequests).toHaveLength(0);
+    });
+  }
+
+  test("--publish-result is refused on --pre, which has no not-published branch", async () => {
+    const { code, out } = await runGate(["--pre", "--publish-result", "success", "--package", LAUNCHER]);
+    expect(code).toBe(2);
+    expect(out).toContain("--publish-result applies only to --post");
+  });
 });
 
 describe("release-provenance --post tells a version that was never published from one with no attestation (LCLI-628)", () => {
@@ -1039,6 +1217,15 @@ describe("release-provenance --post tells a version that was never published fro
    * attestation is read first and the existence read runs only when it 404s.
    */
   const lineWith = (out: string, needle: string) => out.split("\n").find((line) => line.includes(needle)) ?? "";
+
+  /**
+   * Where one of the two CAUSES first appears in a warning, by concept rather than by one spelling
+   * (LCLI-635). Case-insensitive on purpose: the uppercase marker is a style, and a wording that
+   * opened with "a partial publish is one way to reach this" would otherwise read as leading with
+   * the lag. -1 when the cause is not named at all, which the callers assert against.
+   */
+  const causeIndex = (warning: string, cause: "lag" | "partial") =>
+    warning.search(cause === "lag" ? /read api lagging/i : /partial publish/i);
 
   function reset() {
     attestationRequests.length = 0;
@@ -1052,7 +1239,21 @@ describe("release-provenance --post tells a version that was never published fro
     writeFileSync(summaryPath, "");
     try {
       const { code, out } = await runGate(
-        ["--post", "--launcher-rc", "1", "--version", PARTIAL_VERSION, "--package", LAUNCHER, "--package", PLATFORM],
+        [
+          "--post",
+          // needs.publish.result here is the FAILED publish, which is the case a partial
+          // publish explains (LCLI-635). The succeeded case is its own test below.
+          "--publish-result",
+          "failure",
+          "--launcher-rc",
+          "1",
+          "--version",
+          PARTIAL_VERSION,
+          "--package",
+          LAUNCHER,
+          "--package",
+          PLATFORM,
+        ],
         { GITHUB_STEP_SUMMARY: summaryPath },
       );
       expect(code).toBe(0);
@@ -1090,6 +1291,128 @@ describe("release-provenance --post tells a version that was never published fro
     }
   });
 
+  /**
+   * LCLI-635 (LCLI-628's reviewer, F4). A not-published result has two explanations — a publish
+   * that stopped partway, and the registry read API lagging a publish that DID succeed (LCLI-460)
+   * — and which of them is even possible is decided by an event this script cannot observe:
+   * whether the publish job succeeded. The warning led with the partial publish in both cases, so
+   * on a green publish it named a cause that could not be true and prescribed "Re-run failed
+   * jobs" for bytes that were already on the registry. release.yml now passes needs.publish.result
+   * as --publish-result; these two tests pin the resulting order in BOTH wordings.
+   *
+   * Both assert the INDEX of one cause against the other, not merely presence: a warning naming
+   * both causes in the wrong order is exactly the defect. The causes are matched CASE-INSENSITIVELY
+   * on their concepts (`/read api lagging/i`, `/partial publish/i`), because a wording that opened
+   * with a partial-publish narrative in lowercase would satisfy an uppercase-literal comparison
+   * while leading with exactly the wrong cause (LCLI-635's reviewer, F2's mutant).
+   *
+   * The two runs are NOT otherwise identical: the succeeded one sets GITHUB_STEP_SUMMARY and the
+   * not-succeeded ones are looped over three results, because an earlier version exercised only
+   * `success` and `failure` and a classifier written as `!== "failure"` — which prints the success
+   * wording for `cancelled` and `skipped` — passed the entire suite (F1). Only `success` may take
+   * the lag branch, so all three other values are run.
+   *
+   * Mutant: restoring the old single wording puts the partial publish first in both runs,
+   * reddening the succeeded one and leaving the others green.
+   */
+  test("a not-published finding leads with read-API lag when the publish job SUCCEEDED", async () => {
+    reset();
+    const dir = mkdtempSync(join(tmpdir(), "lore-provenance-lag-lead-"));
+    const summaryPath = join(dir, "summary.md");
+    writeFileSync(summaryPath, "");
+    try {
+      const { code, out } = await runGate(
+        [
+          "--post",
+          "--publish-result",
+          "success",
+          "--launcher-rc",
+          "1",
+          "--version",
+          PARTIAL_VERSION,
+          "--package",
+          LAUNCHER,
+        ],
+        { GITHUB_STEP_SUMMARY: summaryPath },
+      );
+      expect(code).toBe(0);
+      expect(outcomeOf(out, `${LAUNCHER}@${PARTIAL_VERSION}-rc.1`)).toBe("not-published");
+
+      const warning = lineWith(out, "NOT ON THE REGISTRY");
+      expect(warning).toStartWith("::warning::");
+      const lag = causeIndex(warning, "lag");
+      const partial = causeIndex(warning, "partial");
+      expect(lag).toBeGreaterThan(-1);
+      expect(partial).toBeGreaterThan(-1);
+      expect(lag).toBeLessThan(partial);
+      // The value the wording was chosen from is named, so a reader can check the choice rather
+      // than trust it, and the remedy that cannot help here is not prescribed.
+      expect(warning).toContain("needs.publish.result: success");
+      expect(warning).not.toContain("Re-run failed jobs");
+      expect(out).toContain("needs.publish.result was 'success'");
+
+      // The job summary carries the same discriminator; a summary contradicting the log line an
+      // operator read first is its own defect.
+      const summary = readFileSync(summaryPath, "utf8");
+      expect(summary).toContain("**NOT ON THE REGISTRY**");
+      expect(summary).toContain("the publish job succeeded, so this is the registry read API lagging (LCLI-460)");
+      expect(summary).not.toContain("most likely a partial publish");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Every value that is NOT `success`. All three, not just `failure`: the discriminator is
+  // "succeeded", and a classifier written as `!= "failure"` would print the success wording --
+  // including the sentence naming `success` -- into a run whose own log line one line above says
+  // the result was `cancelled` (LCLI-635's reviewer, F1).
+  for (const result of ["failure", "cancelled", "skipped"]) {
+    test(`a not-published finding leads with the PARTIAL PUBLISH when the publish job reports ${result}`, async () => {
+      reset();
+      const dir = mkdtempSync(join(tmpdir(), "lore-provenance-partial-lead-"));
+      const summaryPath = join(dir, "summary.md");
+      writeFileSync(summaryPath, "");
+      try {
+        const { code, out } = await runGate(
+          [
+            "--post",
+            "--publish-result",
+            result,
+            "--launcher-rc",
+            "1",
+            "--version",
+            PARTIAL_VERSION,
+            "--package",
+            LAUNCHER,
+          ],
+          { GITHUB_STEP_SUMMARY: summaryPath },
+        );
+        expect(code).toBe(0);
+        expect(outcomeOf(out, `${LAUNCHER}@${PARTIAL_VERSION}-rc.1`)).toBe("not-published");
+
+        const warning = lineWith(out, "NOT ON THE REGISTRY");
+        const lag = causeIndex(warning, "lag");
+        const partial = causeIndex(warning, "partial");
+        expect(lag).toBeGreaterThan(-1);
+        expect(partial).toBeGreaterThan(-1);
+        expect(partial).toBeLessThan(lag);
+        // The result is named, so a reader can tell a failed publish from a cancelled one — and
+        // never reads `success` in a run that reported otherwise — and the sanctioned resume is
+        // prescribed, because on this branch it is the move that can help.
+        expect(warning).toContain(`needs.publish.result: ${result}`);
+        expect(warning).not.toContain("needs.publish.result: success");
+        expect(warning).toContain("Re-run failed jobs");
+        expect(out).toContain(`needs.publish.result was '${result}'`);
+
+        const summary = readFileSync(summaryPath, "utf8");
+        expect(summary).toContain(`the publish job did not succeed (needs.publish.result: ${result})`);
+        expect(summary).not.toContain("the publish job succeeded");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }
+
   test("AC2: an unpublished launcher gets NO propagation wait although a platform is attested (bounded time)", async () => {
     // A 30s window: a regression to waiting on the launcher costs 30s, so a 3s bound cannot be
     // met by accident. Mutant: red on the elapsed bound, which is asserted FIRST and under an
@@ -1099,6 +1422,8 @@ describe("release-provenance --post tells a version that was never published fro
     const started = Date.now();
     const { code, out } = await runGate([
       "--post",
+      "--publish-result",
+      "success",
       "--launcher-rc",
       "1",
       "--version",
@@ -1129,6 +1454,8 @@ describe("release-provenance --post tells a version that was never published fro
     const started = Date.now();
     const { out } = await runGate([
       "--post",
+      "--publish-result",
+      "success",
       "--launcher-rc",
       "1",
       "--version",
@@ -1164,6 +1491,8 @@ describe("release-provenance --post tells a version that was never published fro
     try {
       const { code, out } = await runGate([
         "--post",
+        "--publish-result",
+        "success",
         "--launcher-rc",
         "1",
         "--version",
@@ -1188,6 +1517,8 @@ describe("release-provenance --post tells a version that was never published fro
     const spec = `${PLATFORM}@${DOC_LAG_VERSION}`;
     const { code, out } = await runGate([
       "--post",
+      "--publish-result",
+      "success",
       "--launcher-rc",
       "1",
       "--version",
@@ -1212,6 +1543,8 @@ describe("release-provenance --post tells a version that was never published fro
     try {
       const { code, out } = await runGate([
         "--post",
+        "--publish-result",
+        "success",
         "--launcher-rc",
         "1",
         "--version",
@@ -1238,6 +1571,8 @@ describe("release-provenance --post tells a version that was never published fro
     try {
       const { code, out } = await runGate([
         "--post",
+        "--publish-result",
+        "success",
         "--launcher-rc",
         "1",
         "--version",
@@ -1261,6 +1596,8 @@ describe("release-provenance --post tells a version that was never published fro
     try {
       const { out } = await runGate([
         "--post",
+        "--publish-result",
+        "success",
         "--launcher-rc",
         "1",
         "--version",
@@ -1285,6 +1622,8 @@ describe("release-provenance --post tells a version that was never published fro
     try {
       const { code, out } = await runGate([
         "--post",
+        "--publish-result",
+        "success",
         "--launcher-rc",
         "1",
         "--version",
@@ -1308,7 +1647,7 @@ describe("release-provenance argument handling", () => {
   });
 
   test("an unknown argument is a usage error, not a silent pass", async () => {
-    const { code, out } = await runGate(["--post", "--nope"]);
+    const { code, out } = await runGate(["--post", "--publish-result", "success", "--nope"]);
     expect(code).toBe(2);
     expect(out).toContain("unknown argument: --nope");
   });

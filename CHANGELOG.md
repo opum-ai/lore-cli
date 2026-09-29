@@ -23,6 +23,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   symlinked directory exits 0 with 0 bytes. After: both exit 2 with byte-identical output.
   `check-breaking-bump.mjs` is in the list because re-measuring the inventory repo-wide found it,
   not the four sites the record named.
+- **`provenance-post`'s not-published warning now leads with the cause that run's publish job
+  allows** (LCLI-635, LCLI-628's reviewer finding F4). A package this release should have published
+  but the registry does not list has two explanations — a publish that stopped partway, or the
+  registry read API lagging a publish that succeeded (LCLI-460). The warning led with the partial
+  publish either way, so on a run whose publish job was green it named a cause that could not be
+  true and prescribed "Re-run failed jobs" for bytes that were already on the registry. `release.yml`
+  now passes `needs.publish.result` to `scripts/release-provenance.mjs --post` as the new
+  `--publish-result` flag, which is required there: `success` means every package is on the registry,
+  so the warning leads with the read-API lag and does not prescribe a resume, while any other value
+  makes a partial publish the likely cause and sends the reader to the publish job's log, the one
+  thing that tells the two apart. The same choice orders the job summary's verdict. A value outside
+  GitHub's result vocabulary is refused (exit 2) rather than read as "not success", and
+  `--publish-result` is refused on `--pre`, which has no not-published branch.
 - **A malformed window variable now fails the release BEFORE the first publish, and fails a
   `publish:false` rehearsal too** (LCLI-634, extending LCLI-630). `vars.REGISTRY_WINDOW_SECONDS` and
   `vars.PROVENANCE_WAIT_SECONDS` are refused unless they are a whole number of seconds (0 to
