@@ -1,0 +1,18 @@
+schema_version = 1
+name = "documentation"
+description = "Grounds documentation authoring in this bundle's entry point, the records that say who owns which documentation and how a campaign runs here, and the portability and coherence rules that keep a docs/ bundle rendering the same on GitHub, Obsidian, MkDocs and Docusaurus."
+kind = "specialist"
+max_tokens = 20000
+pinned = ["index"]
+sources = [
+  "reference/lore-cli-documentation-ownership",
+  "reference/operate-autonomous-lore-cli-documentation-campaigns",
+  "stories/maintain-lore-cli-documentation-authority",
+  "reference/portable-markdown",
+  "adr/0010-multi-consumer-docs-layer",
+  "adr/0007-validation-and-coherence",
+  "reference/lore-cli-repository-notes",
+  "reference/consumer-compatibility",
+  "runbooks/agent-profile-operation",
+  "runbooks/release-publishing",
+]
