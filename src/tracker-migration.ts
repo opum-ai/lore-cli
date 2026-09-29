@@ -8,9 +8,9 @@ import type {
   QuestMigrationPreview,
   QuestMigrationReceipt,
 } from "./adapters/quest";
-import { VERSION } from "./meta";
 import { assertNoSymlinkInPath, ensureDir, writeFileAtomic } from "./commands/fswrite";
 import { LoreError } from "./errors";
+import { VERSION } from "./meta";
 
 const PENDING_MIGRATION_REL_PATH = ".lore/quest-backlog-migration.pending.json";
 
@@ -170,11 +170,7 @@ function pendingPreview(value: unknown): QuestMigrationPreview {
 
 function assertPreview(preview: QuestMigrationPreview): void {
   if (!preview.requiresApproval || !preview.digest || !preview.sourceFingerprint || !validMappings(preview.mappings))
-    throw new LoreError(
-      "drift",
-      "Quest returned an invalid Backlog migration preview",
-      `Quest ${VERSION} is required`,
-    );
+    throw new LoreError("drift", "Quest returned an invalid Backlog migration preview", `Quest ${VERSION} is required`);
 }
 
 function validMappings(value: unknown): value is readonly QuestMigrationMapping[] {

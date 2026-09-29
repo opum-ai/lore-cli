@@ -410,11 +410,16 @@ The contract also preserves four hardening obligations across implementations:
 The Quest backend consumes the public `@opum-ai/quest` npm package through
 argv-only subprocess calls. Lore requires `.quest/workspace.toml` and tells
 the operator to run `quest init` when it is absent; it never invokes Quest
-initialization itself. Its version check is a **minimum floor**
-(`MIN_QUEST_VERSION` in `src/adapters/quest.ts`), not a bounded allowlist — any
-installed Quest at or above the floor is accepted, so Lore and the
-independently-released Quest CLI never require a synchronized third release to
-stay pairable (ADR-0020). The cached probe reads the schema-1
+initialization itself. Its version check is the **runtime pair lock**
+(LCLI-650; DEC-31 adopting opum-doc ADR
+`lock-lore-and-quest-to-their-exact-pair-version-at-runtime`): the installed
+Quest must report exactly the version of the Lore driving it, compared on the
+full version string, and a mismatch fails with a `validation` error (exit `6`)
+naming both versions and the side to upgrade. The project constitution's
+Article 3 keeps the two numbers identical in every release, so a correct
+install never trips it; ADR-0020's minimum floor is superseded for Quest (its
+amendment carries the reasoning), and Backlog's floor is unchanged. The cached
+probe reads the schema-1
 `manifest.registry` command descriptors, including the package's nullable
 `version` kind, mutating `workspace.initialized` `init` descriptor, all four
 Backlog-migration descriptors, and the live `task.status-flow` payload. Reads

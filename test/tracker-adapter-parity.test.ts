@@ -343,8 +343,8 @@ import { runLink } from "../src/commands/link";
 import { computeOrphans } from "../src/commands/orphans";
 import { gatherReconciliation, resolveTaskDetails } from "../src/commands/reconcile-shared";
 import { parseConcept } from "../src/core/concept";
-import { persistTrackerWrites, sweepTrackerStorage, type TrackerWriteRef } from "../src/tracker-persistence";
 import { VERSION } from "../src/meta";
+import { persistTrackerWrites, sweepTrackerStorage, type TrackerWriteRef } from "../src/tracker-persistence";
 
 const JSON_CTX_L1 = { mode: "json", color: false } as const;
 

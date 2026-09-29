@@ -598,6 +598,17 @@ the promotion half, item 7. It is not part of staging.
    dispatch, reading quest-cli `main`; the `publish` job needs it, like the
    version-parity job.
 
+   **The bump to X also needs quest X published and declared, or CI cannot run
+   lore at all (LCLI-650, the runtime pair lock).** `lore check` drives the
+   installed `quest`, and the lock refuses any quest that is not exactly lore's
+   own `package.json` version; the docs gate installs the version CLAUDE.md's
+   managed block declares. So the commit that bumps `package.json` must move
+   the declared Quest version in CLAUDE.md to X in the same change, and quest X
+   must already be on npm by the time that PR's checks run — under Article 3's
+   staged pair release the quest side publishes first. A lore bumped ahead of
+   its quest cannot go green anywhere, and that is the lock working, not a
+   flake to retry.
+
 3. Regenerate the README's version-bearing lines **in the same commit as the
    version bump, before the tag**:
 

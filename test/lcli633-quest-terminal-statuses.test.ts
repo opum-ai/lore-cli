@@ -27,8 +27,8 @@ import { gatherReconciliation, readReconcileConfig } from "../src/commands/recon
 import { type ManagedTaskRow, regenerateTaskBlock } from "../src/core/managed-block";
 import { QUEST_STATUS_FLOW_HINTS, reconcileStatus } from "../src/core/reconcile";
 import { EXIT_CODES, EXIT_OK, type LoreError } from "../src/errors";
-import type { OutputContext } from "../src/output";
 import { VERSION } from "../src/meta";
+import type { OutputContext } from "../src/output";
 import { capture, concept, fakeAdapter, makeTask, storyDoc } from "./helpers";
 
 // ── Quest adapter: closedStatus tolerance ─────────────────────────────────────

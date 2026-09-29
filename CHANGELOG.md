@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   literal that `1.3.14` silently rounded; both runtimes still surface a stable `validation` error
   naming the config file, and `test/config.test.ts` covers each shape.
 
+- **`lore` now refuses to drive a `quest` that is not its exact pair version** (LCLI-650; DEC-31
+  adopting the opum-doc ADR `lock-lore-and-quest-to-their-exact-pair-version-at-runtime`). The two
+  CLIs carry one version number in every release (constitution Article 3 clause 1), so a correct
+  install never notices: the check compares the full version string once, at the capability gate
+  every quest-backed command passes before its first quest spawn. A mismatch fails — exit `6`,
+  `validation`, with a message naming both installed versions and the side to upgrade — rather than
+  warning. Marked breaking because a mixed pair that used to work (lore X against quest Y) now
+  refuses until the older side is upgraded; that is the intended cost, and the message names it.
+
 ### Changed
 
 - **A RESUMED `promote-latest` run now refuses when any package's current `latest` is newer than

@@ -17,7 +17,6 @@ import { bunGitPreflightSpawn, type GitPreflight, realGitPreflight } from "../sr
 import type { JiraOnboarding, JiraProfile, JiraProjectSummary } from "../src/adapters/jira-onboarding";
 import { QUEST_VERSION_PAIR_MISMATCH_CODE, QUEST_WORKSPACE_NOT_INITIALIZED_CODE } from "../src/adapters/quest";
 import { atLeast } from "../src/adapters/semver";
-import { VERSION } from "../src/meta";
 import { createTrackerAdapter } from "../src/adapters/tracker";
 import {
   detectTrackerEnvironment,
@@ -39,6 +38,7 @@ import { parseConcept } from "../src/core/concept";
 import { buildHermesContextDoc, HERMES_CONTEXT_REL_PATH } from "../src/core/hermes-bridge";
 import { findInstructionTopic } from "../src/core/instructions";
 import { EXIT_CODES, exitCodeFor, LoreError, reportError, WarningCollector } from "../src/errors";
+import { VERSION } from "../src/meta";
 import type { OutputContext } from "../src/output";
 import type { TrackerMigrationResult } from "../src/tracker-migration";
 import { capture, expectError, fakeAdapter, gitRun } from "./helpers";
