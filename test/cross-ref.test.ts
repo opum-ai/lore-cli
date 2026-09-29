@@ -326,7 +326,7 @@ describe("cross-ref — open pull requests", () => {
     } finally {
       rmSync(bare, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   test("a discovered PR head that is not local is fetched by refspec, and no ref is created", async () => {
     writeBundle();
@@ -339,17 +339,23 @@ describe("cross-ref — open pull requests", () => {
       // Cloned at `dev` so the PR commit is a CHILD of it: a real pull request's tree carries the
       // base's bundle, and a commit built on an empty tree would prove nothing about this path.
       git(root, ["clone", "-q", "-b", "dev", bare, author]);
-      git(author, ["config", "user.email", "pr@example.invalid"]);
-      git(author, ["config", "user.name", "pr"]);
       git(author, ["checkout", "-qb", "pr-branch"]);
-      const abs = join(author, "docs", "adr-from-pr.md");
-      mkdirSync(join(author, "docs"), { recursive: true });
       writeFileSync(
-        abs,
+        join(author, "docs", "adr-from-pr.md"),
         "---\ntype: ADR\ntitle: From the PR\nsummary: Discovery reads.\n---\nDiscovery reads pull requests.\n",
       );
-      git(author, ["add", "-A"]);
-      git(author, ["commit", "-qm", "the pull request's commit"]);
+      // Identity inline rather than two extra `git config` calls: this test is subprocess-heavy
+      // enough that its budget is asserted (below), so it does not spend spawns on ceremony.
+      git(author, ["-c", "user.email=pr@example.invalid", "-c", "user.name=pr", "add", "-A"]);
+      git(author, [
+        "-c",
+        "user.email=pr@example.invalid",
+        "-c",
+        "user.name=pr",
+        "commit",
+        "-qm",
+        "the pull request's commit",
+      ]);
       const prSha = git(author, ["rev-parse", "HEAD"]);
       git(author, ["push", "-q", "origin", "HEAD:refs/pull/7/head"]);
 
@@ -371,7 +377,11 @@ describe("cross-ref — open pull requests", () => {
       rmSync(author, { recursive: true, force: true });
       rmSync(bare, { recursive: true, force: true });
     }
-  });
+    // 30s, matching this repo's other subprocess-heavy suites (agent-plugins, release-provenance):
+    // these five tests build a bare remote, and this one clones, commits, pushes and fetches across
+    // two repositories. The default 10s budget killed the spawn mid-call on a loaded CI runner, on
+    // both platforms, which reported as `git for-each-ref exited null` — a slow runner, not a hang.
+  }, 30_000);
 
   test("discovery that cannot run is incomplete coverage: exit 6, drift, coverage in input, stdout empty", async () => {
     writeBundle();
@@ -397,7 +407,7 @@ describe("cross-ref — open pull requests", () => {
     } finally {
       rmSync(bare, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   test("--allow-partial degrades a failed discovery to a dev-only answer, never to complete:true", async () => {
     writeBundle();
@@ -416,7 +426,7 @@ describe("cross-ref — open pull requests", () => {
     } finally {
       rmSync(bare, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   test("a repository with no origin at all is a not_found (exit 3) — the agreed anchor check, before discovery", async () => {
     writeBundle();
@@ -474,7 +484,7 @@ describe("cross-ref — the view never writes", () => {
     } finally {
       rmSync(bare, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   test("a mutating command refuses the flag as an unknown option", async () => {
     writeBundle();
