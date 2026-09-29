@@ -182,8 +182,17 @@ async function spawnGh(
  * user-facing leaves this seam carrying them.
  */
 function originUrl(cwd: string): string | null {
-  const proc = Bun.spawnSync(["git", "remote", "get-url", "origin"], { cwd, stdout: "pipe", stderr: "pipe" });
+  let proc: { exitCode: number; stdout: Uint8Array };
+  try {
+    proc = Bun.spawnSync(["git", "remote", "get-url", "origin"], { cwd, stdout: "pipe", stderr: "pipe" });
+  } catch {
+    // Bun throws when `git` itself cannot be started. Every caller here treats `null` as "no
+    // readable origin URL", which is the same incomplete-coverage outcome this seam promises; the
+    // case is normally intercepted earlier by the guarded `hasRemote`, so this is belt and braces
+    // rather than a path a run reaches first.
+    return null;
+  }
   if (proc.exitCode !== 0) return null;
-  const url = singleLine(proc.stdout.toString("utf8").trim());
+  const url = singleLine(new TextDecoder().decode(proc.stdout).trim());
   return url === "" ? null : url;
 }

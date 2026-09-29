@@ -224,7 +224,10 @@ export async function loadCrossRef(options: LoadCrossRefOptions): Promise<CrossR
       // in the reported coverage either way — nothing else was readable — and only --allow-partial
       // turns that into an answer rather than a refusal.
       population = "dev-only";
-      refsUnreadable.push({ ref: null, pullRequest: null, reason: discovery.reason });
+      // Through `cleanReason` like every other reason, even though today's forge reasons are
+      // constants: the guarantee is a property of the SHAPE, and a constant is only constant until
+      // someone adds a reason that quotes the thing it failed on.
+      refsUnreadable.push({ ref: null, pullRequest: null, reason: cleanReason(discovery.reason) });
       plan = [{ kind: "dev", ref: "origin/dev", pullRequest: null, anchor: true }];
     } else {
       const pullRequests = [...discovery.pullRequests].sort((left, right) => left.number - right.number);
@@ -430,7 +433,14 @@ function readOneRef(
       },
     };
   } finally {
-    rmSync(tempRoot, { recursive: true, force: true });
+    // Best-effort cleanup: a failure to remove the temporary directory must not replace the read's
+    // own outcome with an uncaught error, which is what an unguarded `rmSync` would do (EACCES,
+    // EBUSY). The directory is outside the repository either way.
+    try {
+      rmSync(tempRoot, { recursive: true, force: true });
+    } catch {
+      // ignored deliberately
+    }
   }
 }
 
@@ -465,8 +475,14 @@ function materialize(
       return { ok: false, reason: "the archive at this ref contains an unsafe path" };
     }
     const absolute = join(targetDir, ...segments);
-    mkdirSync(dirname(absolute), { recursive: true });
-    writeFileSync(absolute, bytes);
+    try {
+      mkdirSync(dirname(absolute), { recursive: true });
+      writeFileSync(absolute, bytes);
+    } catch (cause) {
+      // A full or read-only temporary filesystem (ENOSPC, EACCES) is a coverage failure like any
+      // other, not a crash: an unguarded write here would escape as the CLI's uncaught exit 1.
+      return { ok: false, reason: cause instanceof Error ? cause.message : String(cause) };
+    }
   }
   return { ok: true };
 }
@@ -481,6 +497,28 @@ function cleanReason(reason: string): string {
   return scrubPaths(stripAnsiAndControls(singleLine(reason))).slice(0, 512);
 }
 
+/**
+ * Turn git's stderr into a short classification, for the reasons that must never carry a path or
+ * a URL back to the caller. Deliberately a closed vocabulary rather than a scrub of the raw text:
+ * a scrubber is a filter that can be defeated (a backslash UNC path survived one), while a
+ * classification cannot carry what it never copies.
+ */
+function classifyFetchFailure(stderr: string): string {
+  if (/not a git repository|does not appear to be a git repository/i.test(stderr)) {
+    return "the remote is not a readable git repository";
+  }
+  if (/could not read from remote|could not resolve host|connection timed out|network is unreachable/i.test(stderr)) {
+    return "the remote could not be reached";
+  }
+  if (/authentication failed|permission denied|could not read username|terminal prompts disabled/i.test(stderr)) {
+    return "the remote refused authentication";
+  }
+  if (/couldn't find remote ref|remote ref.*not found/i.test(stderr)) {
+    return "the remote has no such ref";
+  }
+  return "git could not complete the fetch";
+}
+
 /** Decode a spawned stream. `Uint8Array.toString` takes no encoding, unlike Buffer's. */
 function decode(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes);
@@ -488,7 +526,17 @@ function decode(bytes: Uint8Array): string {
 
 /** Replace an absolute POSIX or Windows path — and everything up to whitespace after it — with `<path>`. */
 function scrubPaths(text: string): string {
-  return text.replace(/(?:[A-Za-z]:\\|\/)[^\s'"`,;)\]]*/gu, "<path>");
+  // The backslash alternatives are not decoration: a review pass measured a backslash-only UNC
+  // path (`\\\\server\\share\\file`) surviving an earlier POSIX-only pattern byte-identical, and a
+  // Windows path in a CONFIGURED REMOTE URL is echoed back by git on any platform — so this is a
+  // reachable input, not a Windows-only one. `\\\\?\\C:\\…` (the extended-length form) is covered
+  // by the same alternative because the run after the leading separators is consumed whole.
+  //
+  // Known residue, stated rather than implied: a path segment containing SPACES is only scrubbed
+  // up to the first space (`C:\\Program Files\\…` -> `<path> Files\\…`). The absolute prefix is
+  // gone, which is what the guarantee covers; the tail is not. Classified reasons (see
+  // `classifyFetchFailure`) are what keep raw stderr out of these strings in the first place.
+  return text.replace(/(?:[A-Za-z]:)?[\\/]{1,2}[^\s'"`,;)\]]*/gu, "<path>");
 }
 
 /** Build the real {@link CrossRefGit}, shelling `git` in `cwd`. Never throws. */
@@ -567,10 +615,13 @@ function run(
     return { ok: false, reason: "the `git` CLI is not installed or not on PATH" };
   }
   if (proc.exitCode !== 0) {
-    const detail = options.keepStderr === true ? singleLine(decode(proc.stderr)).trim() : "";
+    // CLASSIFIED, never quoted (see `classifyFetchFailure`): git's stderr echoes the remote URL or
+    // the path it failed on, and these reasons reach CI logs through the drift error's
+    // `input.coverage` and the `--allow-partial` warnings.
+    const stderr = options.keepStderr === true ? decode(proc.stderr) : "";
     return {
       ok: false,
-      reason: `\`git ${args[0] ?? ""}\` exited ${proc.exitCode}${detail === "" ? "" : ` (${detail.slice(0, 160)})`}`,
+      reason: `\`git ${args[0] ?? ""}\` exited ${proc.exitCode}${stderr === "" ? "" : ` (${classifyFetchFailure(stderr)})`}`,
     };
   }
   return { ok: true, value: decode(proc.stdout).trim() };

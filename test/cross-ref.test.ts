@@ -521,20 +521,33 @@ describe("cross-ref — open pull requests", () => {
     }
   }, 30_000);
 
-  test("a failure reason carries no absolute path", async () => {
+  test("a failure reason carries no absolute path and no remote URL", async () => {
     writeBundle();
     commit("base");
-    // A remote that EXISTS as a name but cannot be reached: the fetch fails with git's own stderr,
-    // which names the path — and a reason travels into the drift error's `input` and into CI logs.
+    // A remote that exists as a NAME but cannot be reached. The POSIX form is the common one; the
+    // backslash UNC form is here because a review pass measured an earlier POSIX-only scrubber
+    // letting it through byte-identical, and because git echoes the CONFIGURED URL on any platform.
     setOrigin("/nonexistent/lore-cross-ref-remote.git");
     anchorOriginDev();
 
     const { code, stderr } = await queryViaCli(["retention", "--across-refs", "--json"]);
     expect(code).toBe(6);
     const envelope = JSON.parse(stderr) as { input: { coverage: CrossRefCoverage } };
-    const reasons = envelope.input.coverage.refsUnreadable.map((entry) => entry.reason);
-    expect(reasons.join(" | ")).toContain("<path>");
-    expect(reasons.join(" | ")).not.toContain("/nonexistent");
+    const reasons = envelope.input.coverage.refsUnreadable.map((entry) => entry.reason).join(" | ");
+    expect(reasons).not.toContain("/nonexistent");
+    expect(reasons).not.toContain("does not appear to be a git repository");
+
+    // The same, for a UNC-shaped remote: nothing that looks like a path or a URL may survive.
+    git(root, ["config", "remote.origin.url", String.raw`\\server\share\secret\repo.git`]);
+    const unc = await queryViaCli(["retention", "--across-refs", "--json"]);
+    expect(unc.code).toBe(6);
+    const uncReasons = (
+      JSON.parse(unc.stderr) as { input: { coverage: CrossRefCoverage } }
+    ).input.coverage.refsUnreadable
+      .map((entry) => entry.reason)
+      .join(" | ");
+    expect(uncReasons).not.toContain("server");
+    expect(uncReasons).not.toContain("<path>");
   }, 30_000);
 
   test("discovery that cannot run is incomplete coverage: exit 6, drift, coverage in input, stdout empty", async () => {

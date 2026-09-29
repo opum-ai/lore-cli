@@ -793,6 +793,12 @@ the pull request as `owner/repo#N` (null for a ref that is not a PR head), and t
 commit actually read. It is a **separate key from `provenance`**, which in `--workspace` mode holds
 a locator-free workspace identity — two unrelated shapes never share a key.
 
+**Each ref is read with its own vocabulary.** A ref's `.lore/profile.toml` (or `profile.json`) is
+read from that ref, not from the working tree, and it governs both the loader and the query — so a
+branch that declares a type or an alias resolves it there. `--type` is therefore ref-local for the
+same reason `score` is: the same value can select different documents on two refs, and the view
+reports both rather than deciding which vocabulary is right.
+
 **Conflicts are shown, never merged.** An id on `origin/dev` always emits dev's row; another ref's
 copy of that id emits a row only when its file bytes differ from dev's; an id absent from dev emits
 one row per ref carrying it. A document edited on two branches therefore appears as several rows

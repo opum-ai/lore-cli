@@ -444,6 +444,17 @@ describe("runHelp — text rendering", () => {
     expect(text).toContain("Exit codes:");
   });
 
+  test("an OPTIONAL-value flag renders as [value], not as a required one (LCLI-652)", () => {
+    // An agent reads `--help` as the contract: rendered `<value>`, a bare `--across-refs` looks
+    // invalid and the open-pull-request population is never used. Both halves are asserted, so a
+    // regression to the required form — or to no value at all — fails here.
+    const stdout = capture();
+    runHelp({ output: PLAIN_CTX, args: ["query"], stdout });
+    const text = stdout.text();
+    expect(text).toContain("--across-refs [value]");
+    expect(text).not.toContain("--across-refs <value>");
+  });
+
   test("renderTopLevelHelp defaults to the built manifest and names the command surface", () => {
     const text = renderTopLevelHelp();
     expect(text).toContain("Usage:");

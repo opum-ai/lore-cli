@@ -461,9 +461,10 @@ can tell "my frontmatter is malformed" from "my managed block is stale".
 An error envelope may carry the data it is about in `input`, so a caller never
 has to parse the message to recover the structure. `lore query --across-refs`
 uses that: an incomplete read is `drift` at exit `6` with the coverage object at
-`input.coverage` — the same nesting `quest` emits, so one reader serves both —
-and the unreadable refs named in `message`, and **nothing on stdout**: the
-partial answer is not emitted beside the failure (LCLI-652).
+`input.coverage` — the nesting agreed with `quest` in the same cross-CLI pair
+(QCLI-417), so one reader serves both — and the unreadable refs named in
+`message`, and **nothing on stdout**: the partial answer is not emitted beside
+the failure (LCLI-652).
 
 ### 5.4 Non-`--json` failures
 
