@@ -59,6 +59,15 @@ runs:
         QUEST_SOURCE_REF: ${{ inputs.source-ref }}
       run: |
         set -euo pipefail
+        # The shim this writes is a bash script with no extension, which is
+        # resolvable on Linux and NOT on Windows (a bare-name lookup there walks
+        # PATHEXT and CreateProcess will not run a script without a shell). Every
+        # caller today is ubuntu; a future Windows caller would otherwise get a
+        # silent no-op instead of a quest, so refuse loudly rather than half-work.
+        if [ "$RUNNER_OS" != "Linux" ]; then
+          echo "::error::setup-quest's source fallback supports Linux runners only (this runner is $RUNNER_OS). A Windows caller needs a different mechanism — see ADR-0023 and DEC-55."
+          exit 1
+        fi
         dest="$RUNNER_TEMP/quest-cli"
         # A blob-filtered clone of a public repository: no token, no credentials,
         # and no access to anything this workflow's GITHUB_TOKEN could reach.
