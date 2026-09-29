@@ -329,8 +329,13 @@ function createProgram(onInvocation: (parsed: ParsedArgs) => void): Command {
       .arguments(positionalSyntax);
     for (const flag of definition.flags) {
       command.addOption(commanderOption(flag));
-      command.on(`option:${flag.name}`, (value?: string) => {
-        occurrences.push(value === undefined ? { name: flag.name } : { name: flag.name, value });
+      command.on(`option:${flag.name}`, (value?: unknown) => {
+        // Only a STRING is a value (LCLI-652). Commander passes `undefined` for a boolean switch
+        // and `null` for an optional-value flag given bare — and `null` here used to be
+        // re-serialized by normalizeCommandArgs as the literal `--across-refs=null`, turning a
+        // bare `--across-refs` into an explicit ref named "null". A truthiness or `!== undefined`
+        // test cannot tell those apart; the type can.
+        occurrences.push(typeof value === "string" ? { name: flag.name, value } : { name: flag.name });
       });
     }
     command.action(function () {

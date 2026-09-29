@@ -763,9 +763,59 @@ lore query "archive" --type Story --tag orders --status in-progress
 | | |
 |---|---|
 | **Args** | `"<text>"` (optional; filters alone are valid) |
-| **Key flags** | `--type <T>` · `--tag <t>` (repeatable) · `--status <S>` · `--limit <n>` (default bounded) · `--field k=v` (arbitrary frontmatter filter) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) |
+| **Key flags** | `--type <T>` · `--tag <t>` (repeatable) · `--status <S>` · `--limit <n>` (default bounded) · `--field k=v` (arbitrary frontmatter filter) · `--workspace <manifest>` · `--repository <member-id>` (repeatable) · `--across-refs [<ref>]` (repeatable) · `--allow-partial` |
 | **Output** | `kind: query.results` — ranked `[{ id, type, title, snippet, score }]` with `total`/`shown`/`truncated` and `backend`; workspace JSON adds scope and per-hit provenance |
-| **Exit** | `0` ok (zero hits is still `0`) · `2` bad filter syntax |
+| **Exit** | `0` ok (zero hits is still `0`) · `2` bad filter syntax · `3` `--across-refs` with no `origin`/`origin/dev` · `6` incomplete `--across-refs` coverage (or a bad ref name) |
+
+### Reading across refs: `lore query --across-refs`
+
+A bundle a checkout can see is the bundle that checkout has, so a document added on an open pull
+request is invisible until it merges. `--across-refs` answers for the **repository** instead:
+
+```
+lore query "retention" --across-refs                      # origin/dev + every open PR into dev
+lore query --type ADR --across-refs=origin/dev --across-refs=refs/pull/42/head
+```
+
+Bare, the population is `origin/dev` plus every open pull request into `dev`, discovered through
+the `gh` CLI. With one or more ref names it is exactly those refs, resolved **locally** — no forge,
+no fetch, which is the offline/git-only path. `--across-refs` cannot be combined with `--workspace`.
+
+**Nothing is written.** Other refs are read through a destination-less `git fetch` (objects only —
+no branch, remote-tracking or tag ref moves) and `git archive`, materialized into a temporary
+directory and loaded with the same loader every other read uses. The working tree and the index are
+never touched, and `lore sync` — which regenerates a branch's managed blocks from that branch's own
+records — refuses the flag.
+
+**Every row carries its provenance.** Each hit gains `refProvenance`
+`{ref, pullRequest, sha}`: the ref read (`origin/dev`, `refs/pull/<N>/head`, or the name given),
+the pull request as `owner/repo#N` (null for a ref that is not a PR head), and the full 40-hex
+commit actually read. It is a **separate key from `provenance`**, which in `--workspace` mode holds
+a locator-free workspace identity — two unrelated shapes never share a key.
+
+**Each ref is read with its own vocabulary.** A ref's `.lore/profile.toml` (or `profile.json`) is
+read from that ref, not from the working tree, and it governs both the loader and the query — so a
+branch that declares a type or an alias resolves it there. `--type` is therefore ref-local for the
+same reason `score` is: the same value can select different documents on two refs, and the view
+reports both rather than deciding which vocabulary is right.
+
+**Conflicts are shown, never merged.** An id on `origin/dev` always emits dev's row; another ref's
+copy of that id emits a row only when its file bytes differ from dev's; an id absent from dev emits
+one row per ref carrying it. A document edited on two branches therefore appears as several rows
+with the same id, and nothing picks a winner. Rows are ordered dev first, then pull requests by
+ascending number, and `score` is the engine's **ref-local** BM25 score — not comparable across
+refs, which is why ordering never interleaves by score.
+
+**`coverage` is always reported**, as an envelope key after `data` (§2 of the
+[CLI contract](cli-contract.md)): `{complete, population, discoveredAt, refsRead[], refsUnreadable[]}`.
+An empty listing therefore never claims "nothing documented" when a ref could not be read. Without
+`--allow-partial` an incomplete read is a `drift` error at exit `6`, naming the unreadable refs and
+carrying the coverage object in the error's `input`, with **nothing on stdout**; `--allow-partial`
+answers the same run at exit `0` with `complete: false` — **except when nothing was read at all**,
+which exits `6` whatever the flag says, because an empty listing with an empty `refsRead` cannot be
+told apart from "nothing is documented". With no `gh` on PATH, or an `origin` that
+is not a GitHub remote, the run degrades to `population: "dev-only"` the same way — incomplete
+coverage, never an uncaught failure.
 
 ### `context`
 

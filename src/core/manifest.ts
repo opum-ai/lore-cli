@@ -57,6 +57,16 @@ export interface ManifestFlag {
   readonly alias?: string;
   /** Whether the flag consumes a following value (`--type <T>`) vs. a boolean switch (`--strict`). */
   readonly takesValue: boolean;
+  /**
+   * `true` when the flag's value is OPTIONAL — `--across-refs` alone selects the open-pull-request
+   * population, `--across-refs <ref>` names one ref (LCLI-652). Only meaningful with
+   * {@link ManifestFlag.takesValue}: renders as `[value]`, and an agent reading the manifest can
+   * tell a flag that MAY be given a value from one that must or cannot.
+   *
+   * Absent on every other flag, which keeps the field additive in the same way `required?` and
+   * `kind?` are: a consumer that does not know it reads exactly what it read before.
+   */
+  readonly optionalValue?: boolean;
   /** Whether the flag may be repeated to accumulate values (`--tag a --tag b`). */
   readonly repeatable?: boolean;
   /**
@@ -830,11 +840,31 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
       { name: "field", takesValue: true, repeatable: true, summary: "Arbitrary frontmatter filter (k=v)" },
       { name: "workspace", takesValue: true, summary: "Select an explicit workspace manifest" },
       { name: "repository", takesValue: true, repeatable: true, summary: "Select a workspace member" },
+      {
+        name: "across-refs",
+        takesValue: true,
+        optionalValue: true,
+        repeatable: true,
+        summary: "Read origin/dev plus every open pull request into dev (bare), or the named refs",
+      },
+      {
+        name: "allow-partial",
+        takesValue: false,
+        summary: "Report incomplete cross-ref coverage instead of refusing with exit 6",
+      },
     ],
     json: true,
     kind: "query.results",
-    exitCodes: exitCodesFor(["bundle"]),
-    examples: ['lore query "soft delete retention"', "lore query --type Story --tag orders --status in-progress"],
+    // `git` is new with --across-refs (LCLI-652): the view fetches and archives other refs, so it
+    // inherits the git seam's drift/6. The forge is deliberately NOT a seam here — a forge that
+    // cannot answer is incomplete coverage at 6, never an error of its own.
+    exitCodes: exitCodesFor(["bundle", "git"]),
+    examples: [
+      'lore query "soft delete retention"',
+      "lore query --type Story --tag orders --status in-progress",
+      'lore query "retention" --across-refs',
+      "lore query --type ADR --across-refs=origin/dev --across-refs=refs/pull/426/head",
+    ],
   },
   {
     name: "context",

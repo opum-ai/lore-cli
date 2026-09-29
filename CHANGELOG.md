@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`lore query --across-refs` — read the bundle across refs, read-only** (LCLI-652; ODOC-330 /
+  DEC-40, paired with quest-cli QCLI-417). A document added on an open pull request is invisible
+  until it merges, because a checkout sees only its own bundle; this answers for the repository.
+  Bare, the population is `origin/dev` plus every open pull request into `dev`, discovered
+  through `gh`; given one or more ref names, it is exactly those refs, resolved locally with no
+  forge and no fetch. Every hit gains `refProvenance` `{ref, pullRequest, sha}` — a separate key
+  from `--workspace`'s `provenance`, which carries an unrelated workspace identity — and every
+  answer reports `coverage` `{complete, population, discoveredAt, refsRead[], refsUnreadable[]}`
+  as an envelope key between `data` and `principal`, in the shape agreed byte-for-byte with
+  quest-cli. Conflicting copies of one id are shown side by side, never merged: an id on
+  `origin/dev` always emits dev's row, another ref's copy emits a row only when its bytes differ,
+  and an id absent from dev emits one row per ref carrying it. Nothing is written — other refs
+  are read with a destination-less `git fetch` (objects only) and `git archive` into a temporary
+  directory, and `lore sync` refuses the flag, since a branch's managed blocks regenerate only
+  from that branch's own records. An incomplete read is a `drift` error at exit `6` naming the
+  unreadable refs and carrying the coverage object in the error's `input`, with nothing on
+  stdout; `--allow-partial` answers at exit `0` with `complete: false` instead. With no `gh` on
+  PATH, or an `origin` that is not GitHub, the run degrades to `population: "dev-only"` the same
+  way — incomplete coverage, never an uncaught failure.
+
 ### Changed (breaking)
 
 - **The pinned Bun moved from `1.3.14` to `1.4.2`** (LCLI-648, pair with quest-cli QCLI-411).

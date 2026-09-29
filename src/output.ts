@@ -292,12 +292,42 @@ export interface SuccessEnvelope<T> {
 }
 
 /**
+ * The keys the envelope itself owns. An {@link EnvelopeExtensions} object may not name one of
+ * these: a silent overwrite would either drop a caller's payload or move a reserved slot, and
+ * both are the kind of defect that only shows up in someone else's parser.
+ */
+const RESERVED_ENVELOPE_KEYS: ReadonlySet<string> = Object.freeze(
+  new Set(["schemaVersion", "kind", "data", "principal"]),
+);
+
+/**
+ * Optional additive keys a result places in the success envelope BETWEEN `data` and `principal`
+ * (cli-contract §7 — additive, tolerated by consumers, no `schemaVersion` bump).
+ *
+ * Today exactly one result uses this: `query --across-refs` emits `coverage` there (LCLI-652),
+ * at the position agreed byte-for-byte with quest-cli so a consumer of both tools reads one
+ * convention rather than two. It is an ENVELOPE key rather than a `data` field because coverage
+ * describes the READ — which refs were read, which could not be — rather than the records the
+ * read produced; a caller comparing two answers must see it even when both are empty.
+ */
+export type EnvelopeExtensions = Readonly<Record<string, unknown>>;
+
+/**
  * Wrap a command's typed result in the {@link SuccessEnvelope} at the kind's
  * current version ({@link schemaVersionFor}). The single constructor for the
  * envelope, so the version and field order are fixed in one place.
  */
-export function successEnvelope<T>(kind: string, data: T): SuccessEnvelope<T> {
-  return { schemaVersion: schemaVersionFor(kind), kind, data, principal: null };
+export function successEnvelope<T>(kind: string, data: T, extensions?: EnvelopeExtensions): SuccessEnvelope<T> {
+  for (const key of Object.keys(extensions ?? {})) {
+    if (RESERVED_ENVELOPE_KEYS.has(key)) {
+      throw new TypeError(
+        `successEnvelope: "${key}" is a reserved envelope key and cannot be placed by a result (cli-contract §2)`,
+      );
+    }
+  }
+  // Field ORDER is contract: the reserved `principal` slot stays last, and every extension sits
+  // after `data` and before it (LCLI-652's coverage placement is part of the cross-CLI agreement).
+  return { schemaVersion: schemaVersionFor(kind), kind, data, ...extensions, principal: null };
 }
 
 /**
@@ -388,6 +418,12 @@ export function renderTruncationLine(t: Truncation): string {
 export interface Renderable<T> {
   kind: string;
   data: T;
+  /**
+   * Optional additive envelope keys (see {@link EnvelopeExtensions}) — placed after `data` and
+   * before `principal` in `--json`. Absent on every result that adds none, which is what keeps the
+   * base envelope byte-identical to what it was.
+   */
+  readonly envelopeExtensions?: EnvelopeExtensions;
   /** Human view; emit ANSI only when `opts.color` is true. */
   pretty(data: T, opts: { color: boolean }): string;
   /** ANSI-free, diff-stable view for pipes and snapshot tests. */
@@ -425,7 +461,7 @@ export function emit<T>(renderable: Renderable<T>, ctx: OutputContext, out: Writ
       // Serialize ONCE, then validate the exact bytes (not the live object): this
       // closes a TOCTOU where a non-idempotent toJSON could ship a value different
       // from the one checked. The write happens only after both succeed.
-      const text = JSON.stringify(successEnvelope(renderable.kind, renderable.data));
+      const text = JSON.stringify(successEnvelope(renderable.kind, renderable.data, renderable.envelopeExtensions));
       assertSerializedEnvelope(text);
       out.write(`${text}\n`);
       return;
