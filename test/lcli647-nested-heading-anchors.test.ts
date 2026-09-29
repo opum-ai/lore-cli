@@ -14,8 +14,12 @@
  *   [shift]         1 case: the slug-shift shape — a blockquoted duplicate takes `overview`, the
  *                   real top-level heading becomes `overview-1` -> RED if the renderer's slug
  *                   sequence stops matching the validator's.
- *   [scope]         1 case: a nested heading's region stops at its container -> RED if the region
- *                   runs past the blockquote again.
+ *   [scope]         3 cases: (a) a nested heading's region stops at its container -> RED if the
+ *                   region runs past the blockquote again; (b) a heading nested deeper inside the
+ *                   region does not cut it short (review F1) -> RED if scope is compared by
+ *                   container END OFFSET, which collides whenever a container ends its parent;
+ *                   (c) a nested region never ends with a dangling container marker (review F2)
+ *                   -> RED if the line-start trim is dropped.
  *   [breadcrumb]    1 case: the scope-aware trail -> RED if a nested heading parents the following
  *                   top-level one again (`Overview > Overview`).
  *   [classifiable]  1 case: an anchor the renderer cannot resolve -> RED if the refusal goes back to
@@ -25,11 +29,13 @@
  *   [agreement]     1 case: every slug `headingSlugs` reports for the shift fixture resolves through
  *                   the CLI -> RED if the two enumerations diverge again.
  *
- * Measured against that map. Dropping scope-awareness (region bound and breadcrumb container pop)
- * reddens exactly 2 of 9 — [scope] and [breadcrumb] — with the rest correctly green, because the
- * nested anchors still resolve and every other assertion is untouched by that clause. Taking BOTH
- * sides back to top-level-only headings (the pre-fix enumeration) reddens 7 of 9: every case except
- * [classifiable] and the vendored-file check. Neither figure is inferred from the other.
+ * Measured against that map, over the 11 cases here (re-measured 2026-09-29 after the review-F1/F2
+ * fixes): F1's defect restored (scope compared by container end offset) reddens exactly 1 of 11,
+ * its own case; dropping the line-start trim (F2's defect) reddens exactly 1 of 11, its own case;
+ * dropping scope-awareness (region bound and breadcrumb container pop) reddens 2 of 11 —
+ * [scope]-container-bound and [breadcrumb]; taking BOTH readers back to top-level-only headings
+ * (the pre-fix enumeration) reddens 9 of 11 — every case except [classifiable] and the static
+ * vendored-source check. No figure is inferred from another.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -156,6 +162,68 @@ describe("LCLI-647: nested headings are valid anchor targets (DEC-22 A)", () => 
     expect(section.body).not.toContain("After the quote.");
   });
 
+  test("[scope] a heading nested deeper inside the region does not cut it short (review F1)", async () => {
+    // The collision: a blockquote that ENDS a list item shares that item's end offset, and comparing
+    // container end OFFSETS treated the quote's heading as a sibling of the item's, truncating the
+    // region at the quote's first line and silently dropping the whole quoted section. Scope is
+    // compared by container IDENTITY now, so the item's region runs to the item's end.
+    writeFileSync(
+      join(root, "docs/reference/collide.md"),
+      [
+        "---",
+        "type: Reference",
+        "title: Collide",
+        "---",
+        "",
+        "# Registry",
+        "",
+        "- ## Alpha",
+        "",
+        "  Alpha body.",
+        "",
+        "  > ## Legacy note",
+        "  >",
+        "  > Legacy body.",
+        "",
+      ].join("\n"),
+    );
+    writeProfile("alpha", ["reference/collide#alpha"]);
+    const { code, section } = await contextSection("alpha");
+    expect(code).toBe(0);
+    // trimEnd() because this case's subject is NOT where the region ends (the container's end vs
+    // EOF is the [scope] case below): under a region that runs to EOF the same content carries one
+    // trailing newline, and pinning that here would red this case for a reason it does not test.
+    expect(section.body.trimEnd()).toBe("## Alpha\n\n  Alpha body.\n\n  > ## Legacy note\n  >\n  > Legacy body.");
+  });
+
+  test("[scope] a nested region does not end with a dangling container marker (review F2)", async () => {
+    // `> # A ... > # B`: the terminator's own line begins with its container marker, so a slice
+    // ending at the heading's offset left a dangling `"> "` tail. The region ends at the START of
+    // that line; the tail below is a complete quoted line, not a marker fragment.
+    writeFileSync(
+      join(root, "docs/reference/siblings.md"),
+      [
+        "---",
+        "type: Reference",
+        "title: Siblings",
+        "---",
+        "",
+        "> # A",
+        ">",
+        "> body A",
+        ">",
+        "> # B",
+        ">",
+        "> body B",
+        "",
+      ].join("\n"),
+    );
+    writeProfile("siblings", ["reference/siblings#a"]);
+    const { section } = await contextSection("siblings");
+    expect(section.body).toBe("# A\n>\n> body A\n>\n");
+    expect(section.body.endsWith("> ")).toBe(false);
+  });
+
   test("[breadcrumb] a quoted heading does not parent the top-level heading that follows it", async () => {
     writeProfile("shift", ["reference/dup#overview-1"]);
     const { section } = await contextSection("shift");
@@ -233,10 +301,11 @@ describe("LCLI-647: nested headings are valid anchor targets (DEC-22 A)", () => 
   });
 });
 
-// The vendored control is not the current implementation, checked by distinctive bytes rather than
-// trusted: the pre-fix resolver's top-level filter and plain throw, and the current source's
-// absence of them, so a copy that drifted toward the current code is caught.
-test("[control] the vendored file is the pre-fix resolver, not a copy of the current one", () => {
+// What THIS case alone proves is that the vendored file carries the pre-fix resolver's source, by
+// distinctive bytes; a file that merely mentioned those strings in a comment would satisfy it. The
+// BEHAVIOUR that makes it a control is enforced by the dynamic case above, which drives the module
+// and requires its throw and the current build's success on identical bytes (review F4).
+test("[control] the vendored file carries the pre-fix resolver source (behaviour is enforced by the dynamic case)", () => {
   const vendored = readFileSync(PRE_CHANGE, "utf8");
   expect(vendored).toContain("throw new Error(");
   expect(vendored).toContain("validated heading disappeared:");

@@ -1036,10 +1036,17 @@ function regionForReference(body: string, anchor?: string): MarkdownRegion {
     const laterStart = offsetStart(later.heading);
     if (laterStart <= start || laterStart >= limit) continue;
     if (later.heading.depth > match.heading.depth) continue;
-    // Only a heading in the SAME scope closes the section: one nested deeper inside this
+    // Only a heading in the SAME container closes the section: one nested deeper inside this
     // container's content is part of it, and one outside the container is past the limit already.
-    if (later.scopeEnd !== match.scopeEnd) continue;
-    end = laterStart;
+    // Compared by container IDENTITY, not by container end offsets -- two nested containers can
+    // share an end offset (a blockquote ending a list item), and comparing those treated an inner
+    // heading as a sibling and cut the outer region through its content (review F1).
+    if (later.container !== match.container) continue;
+    // A nested heading carries its line's container marker before its own offset (`> ## B`), and a
+    // slice ending at the marker would leave a dangling `"> "` tail; end at the START of the
+    // terminator's line instead. Top-level terminators begin their line already, so their regions
+    // keep the exact bytes they have always had.
+    end = match.container === undefined ? laterStart : lineStart(body, laterStart);
     break;
   }
   return { body: body.slice(start, end), breadcrumb: breadcrumbAt(headings, match.heading) };
@@ -1120,6 +1127,16 @@ function breadcrumbAt(headings: readonly TrailHeading[], target: Heading, prefix
 
 function offsetStart(node: RootContent): number {
   return node.position?.start.offset ?? 0;
+}
+
+/**
+ * The offset where the line containing `offset` begins. Used to end a NESTED region before its
+ * terminator heading's own container marker (`> ## B`), so the slice cannot end with a dangling
+ * `"> "` fragment (LCLI-647 review F2).
+ */
+function lineStart(body: string, offset: number): number {
+  const newline = body.lastIndexOf("\n", offset - 1);
+  return newline === -1 ? 0 : newline + 1;
 }
 
 function offsetEnd(node: RootContent): number {

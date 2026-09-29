@@ -450,10 +450,17 @@ export interface AnchoredHeading {
   readonly heading: Heading;
   readonly slug: string;
   /**
-   * End offset of the nearest non-heading container (a blockquote, list item, footnote, …) the
-   * heading sits inside, or `undefined` when the heading is top-level. A nested heading's section
-   * cannot outlive its container (LCLI-647): its region stops there, and it stops parenting headings
-   * that begin after the container ends.
+   * The nearest non-heading container (a blockquote, list item, footnote, …) the heading sits
+   * inside, or `undefined` when the heading is top-level. Compared by IDENTITY, never by offsets:
+   * when a container is the last child of another (a blockquote ending a list item), their end
+   * offsets coincide, so an offset comparison called a heading in the inner container a sibling of
+   * one in the outer and silently truncated the outer heading's region (LCLI-647 review F1).
+   */
+  readonly container?: Nodes;
+  /**
+   * End offset of {@link container}, when it carries positions. A nested heading's section cannot
+   * outlive its container (LCLI-647): its region stops there, and it stops parenting headings that
+   * begin after the container ends.
    */
   readonly scopeEnd?: number;
 }
@@ -475,23 +482,25 @@ export interface AnchoredHeading {
 export function anchoredHeadings(body: string): readonly AnchoredHeading[] {
   const slugger = new GithubSlugger();
   const headings: AnchoredHeading[] = [];
-  const stack: Array<{ node: Nodes; scopeEnd: number | undefined }> = [
-    { node: fromMarkdown(body), scopeEnd: undefined },
+  const stack: Array<{ node: Nodes; container: Nodes | undefined }> = [
+    { node: fromMarkdown(body), container: undefined },
   ];
   while (stack.length > 0) {
-    const { node, scopeEnd } = stack.pop() as { node: Nodes; scopeEnd: number | undefined };
+    const { node, container } = stack.pop() as { node: Nodes; container: Nodes | undefined };
     if (node.type === "heading") {
+      const scopeEnd = container === undefined ? undefined : nodeEndOffset(container);
       headings.push({
         heading: node,
         slug: slugger.slug(nodeText(node)),
+        ...(container === undefined ? {} : { container }),
         ...(scopeEnd === undefined ? {} : { scopeEnd }),
       });
     }
     if ("children" in node) {
-      const childScope = node.type === "root" || node.type === "heading" ? scopeEnd : nodeEndOffset(node);
+      const childContainer = node.type === "root" || node.type === "heading" ? container : node;
       for (let index = node.children.length - 1; index >= 0; index--) {
         const child = node.children[index];
-        if (child !== undefined) stack.push({ node: child, scopeEnd: childScope });
+        if (child !== undefined) stack.push({ node: child, container: childContainer });
       }
     }
   }
