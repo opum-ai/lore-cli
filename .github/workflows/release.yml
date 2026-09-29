@@ -1609,9 +1609,19 @@ jobs:
         # launcher at X reaches npm later, through scripts/promote-latest.mjs, and carries no
         # provenance ("provenance-missing, byte-bound to the qualified rc"; opum-agent's
         # OPAG-127 owns restoring it); the script prints that on every run.
+        #
+        # WHICH CAUSE A NOT-PUBLISHED FINDING LEADS WITH IS THIS JOB'S OWN RESULT (LCLI-635).
+        # A version this release expected and the registry does not list has two explanations --
+        # a publish that stopped partway, or the read API lagging a publish that DID succeed
+        # (LCLI-460) -- and this job's result tells them apart: if `publish` succeeded, every
+        # package went out and only lag remains, so the warning must not lead with a partial
+        # publish and must not prescribe "Re-run failed jobs". Passed as the expression, never a
+        # literal: a literal would describe some other run's publish. The script validates it and
+        # refuses --post without it, the same way it treats --launcher-rc.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LAUNCHER_RC: ${{ inputs.launcher_rc }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
           # Attestations propagate on the registry's own schedule — the same read-API lag
           # LCLI-460 documents for tarballs (0.5.0 took ~25 minutes to become visible). Without
           # a bounded wait, a genuinely attested release would be reported as unattested purely
@@ -1621,4 +1631,4 @@ jobs:
           # the structural case, and spending 180s per package to re-learn it would make every
           # release slower for nothing.
           PROVENANCE_WAIT_SECONDS: ${{ vars.PROVENANCE_WAIT_SECONDS || 180 }}
-        run: node scripts/release-provenance.mjs --post --launcher-rc "$LAUNCHER_RC" --wait-seconds "$PROVENANCE_WAIT_SECONDS"
+        run: node scripts/release-provenance.mjs --post --launcher-rc "$LAUNCHER_RC" --publish-result "$PUBLISH_RESULT" --wait-seconds "$PROVENANCE_WAIT_SECONDS"

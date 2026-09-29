@@ -336,6 +336,24 @@ describe("release.yml keeps the provenance gate ENFORCING, not merely present (L
     expect(provenanceStep(doc.jobs["provenance-pre"])?.run ?? "").not.toContain("--launcher-rc");
   });
 
+  test("the post-publish check is told whether THIS run's publish job succeeded (LCLI-635)", () => {
+    // A not-published finding has two explanations -- a partial publish, or the registry read API
+    // lagging a publish that succeeded (LCLI-460) -- and only this job's own result distinguishes
+    // them: if publish succeeded, only lag remains, and the warning must not lead with a partial
+    // publish or prescribe "Re-run failed jobs". The expression is asserted, never a literal: a
+    // literal would describe some other run's publish, and the context is `needs.publish.result`,
+    // not a string that could drift from the job it is about.
+    const doc = loadWorkflow();
+    const step = provenanceStep(doc.jobs["provenance-post"]);
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal GitHub Actions expression syntax from release.yml, not a JS template placeholder.
+    expect(step?.env?.PUBLISH_RESULT).toBe("${{ needs.publish.result }}");
+    const run = step?.run ?? "";
+    expect(run).toContain('--publish-result "$PUBLISH_RESULT"');
+    expect(run.replace('--publish-result "$PUBLISH_RESULT"', "")).not.toContain("--publish-result");
+    // --pre has no not-published branch for it to change, and the script refuses it there.
+    expect(provenanceStep(doc.jobs["provenance-pre"])?.run ?? "").not.toContain("--publish-result");
+  });
+
   test("both provenance jobs are time-bounded", () => {
     const doc = loadWorkflow();
     // provenance-pre gates publish, so a hung connection would otherwise hold a runner for the
