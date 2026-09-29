@@ -181,6 +181,23 @@ export function compareReleaseVersions(a, b) {
   return 0;
 }
 
+/** A semver-shaped value: the release it leads with, then `-prerelease` and/or `+build`. */
+const SEMVER_SHAPED = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?=$|[-+])/;
+
+/**
+ * The MAJOR.MINOR.PATCH a semver-shaped `latest` leads with, or null when the value is not one.
+ * LCLI-638 review F1: a registry `latest` may hold a prerelease or a build-metadata version, and
+ * semver precedence decides those by the release they lead with -- 5.7.0-rc.1 is NEWER than 5.6.7,
+ * while 5.6.7-rc.1 is older than 5.6.7 and 5.6.7+build.7 equals it. Comparing this key against a
+ * release therefore answers "is the live value strictly newer" exactly, without a precedence
+ * comparator; only a value that leads with no release at all returns null.
+ * @param {unknown} value
+ */
+export function leadingReleaseVersion(value) {
+  if (typeof value !== "string") return null;
+  return SEMVER_SHAPED.exec(value)?.[0] ?? null;
+}
+
 /** The one process runner. Tests replace it; nothing below spawns anything else. */
 export const defaultRun = (command, args, options = {}) =>
   execFileAsync(command, args, { maxBuffer: 64 * 1024 * 1024, ...options });
@@ -309,7 +326,12 @@ export const integrityOf = (bytes) => `sha512-${createHash("sha512").update(byte
  * The launcher's own prior `latest` is recorded like every other package's, so a
  * rollback restores it by dist-tag. A fresh run (not `resuming`) also refuses a
  * record validateRecord would refuse: a version older than a current `latest`, or
- * not a plain X.Y.Z (LCLI-631).
+ * not a plain X.Y.Z (LCLI-631). A RESUMED run refuses when any package's CURRENT
+ * `latest` is strictly newer than `version`, measured by the release that value
+ * leads with so a prerelease counts as newer than an older release (LCLI-638,
+ * paired with quest-cli QCLI-405): the reused record says what the prior values
+ * were, and a registry that moved ahead since would make the resume move
+ * `latest` backwards.
  * @param {{ version: string, launcherVersion?: string, releaseRunId?: string, packages?: readonly string[],
  *   readTags?: (name: string) => Promise<Record<string, string>>, now?: () => Date, resuming?: boolean }} args
  */
@@ -338,15 +360,40 @@ export async function planPromotion({
       problems.push(
         `${name}: ${STAGE_TAG} is ${JSON.stringify(tags[STAGE_TAG] ?? null)}, not ${staged ?? `${version}-rc.<N>`}; stage it with scripts/publish-release.sh first`,
       );
-    if (typeof tags[PROMOTE_TAG] !== "string")
-      problems.push(`${name}: has no ${PROMOTE_TAG} to record as the prior value`);
-    else if (tags[PROMOTE_TAG] === version && !resuming)
+    const current = tags[PROMOTE_TAG];
+    const currentMain = leadingReleaseVersion(current);
+    if (typeof current !== "string") problems.push(`${name}: has no ${PROMOTE_TAG} to record as the prior value`);
+    else if (current === version && !resuming)
       // Only a lost record reaches here: a fresh record would name the new
       // version as the prior one, and a rollback from it would restore nothing.
       problems.push(
         `${name}: ${PROMOTE_TAG} already reads ${version}; a new record would store that as the prior value -- pass the record written by the first run`,
       );
-    entries.push({ name, priorLatest: tags[PROMOTE_TAG] ?? null });
+    // LCLI-638 (paired with quest-cli QCLI-405): the LCLI-631 gate above is
+    // fresh-only, because a fresh record is what it validates. A RESUME keeps
+    // the record the first run wrote, so nothing there compares the registry
+    // NOW with `version` -- and on a registry that moved ahead between the two
+    // runs, the resume would move `latest` BACKWARDS, exactly the move the ADR
+    // refuses. Equal-to-`version` is the partial state a resume exists for and
+    // stays accepted; only strictly newer refuses. `current` is the live value,
+    // not the record's, so the record's `priorLatest` is deliberately not used
+    // here. The comparison is against the release the live value LEADS WITH
+    // (leadingReleaseVersion) so that a prerelease is measured by semver
+    // precedence rather than skipped: 5.7.0-rc.1 is newer than 5.6.7 and
+    // refuses; 5.6.7-rc.1 and 5.6.7+build.7 are not newer than 5.6.7 and still
+    // resume. A live value that leads with no release at all (null) is left as
+    // it was before this change -- unorderable, and not this rule's question.
+    else if (
+      resuming &&
+      currentMain !== null &&
+      typeof version === "string" &&
+      RELEASE_VERSION.test(version) &&
+      compareReleaseVersions(currentMain, version) > 0
+    )
+      problems.push(
+        `${name}: ${version} is older than the current ${PROMOTE_TAG} ${current}, so resuming would move ${PROMOTE_TAG} backwards. ${PROMOTE_TAG} has moved on since the record was written, so this record is stale: re-run against the newer release's checkout. Moving ${PROMOTE_TAG} back is a deliberate, manual decision -- --rollback refuses here, because ${current} is neither this record's release nor its recorded prior`,
+      );
+    entries.push({ name, priorLatest: current ?? null });
   }
   if (problems.length) return /** @type {{ ok: false, problems: string[] }} */ ({ ok: false, problems });
   /** @type {PromotionRecord} */
@@ -368,11 +415,11 @@ export async function planPromotion({
   // first write, on --dry-run and --promote alike; through main(), a non-plain version is already
   // refused one step earlier, by readArtifact's launcher-equivalence check, so this clause is the
   // second line there, and the only one for any other caller. The headlines below only explain the refusal;
-  // they never refuse on their own. A resumed run keeps the record the first run wrote, and
-  // main() validates only that record against {version}: nothing compares a package's CURRENT
-  // `latest` with --version on a resume, so a resume can still move `latest` backwards if the
-  // registry moved ahead between the runs (LCLI-638, paired with quest-cli). Equal-to-latest is
-  // the lost-record refusal above.
+  // they never refuse on their own. A RESUMED run keeps the record the first run wrote, so this
+  // block never runs: the resume refusal inside the loop above closes that hole (LCLI-638, paired
+  // with quest-cli QCLI-405) by comparing every package's CURRENT `latest` with --version, and
+  // refusing a strictly newer one. Equal-to-latest stays accepted there -- the partial state a
+  // resume exists for -- and on a FRESH run it is the lost-record refusal in the loop above.
   //
   // DO NOT relax this to allow a backport or a prerelease. Neither is a promote use case: `latest`
   // only ever moves forward, onto a release. An older or prerelease version belongs on a
@@ -383,17 +430,30 @@ export async function planPromotion({
     if (!valid.ok) {
       const plain = typeof version === "string" && RELEASE_VERSION.test(version);
       const headlines = plain
-        ? entries
-            .filter(
-              (entry) =>
-                typeof entry.priorLatest === "string" &&
-                RELEASE_VERSION.test(entry.priorLatest) &&
-                compareReleaseVersions(entry.priorLatest, version) > 0,
-            )
-            .map(
-              (entry) =>
-                `${entry.name}: ${version} is older than the current ${PROMOTE_TAG} ${entry.priorLatest}, so promoting it would move ${PROMOTE_TAG} backwards. Backports are not a promote use case: an older version belongs on a non-${PROMOTE_TAG} dist-tag through a separate path that is not built`,
-            )
+        ? [
+            ...entries
+              .filter(
+                (entry) =>
+                  typeof entry.priorLatest === "string" &&
+                  RELEASE_VERSION.test(entry.priorLatest) &&
+                  compareReleaseVersions(entry.priorLatest, version) > 0,
+              )
+              .map(
+                (entry) =>
+                  `${entry.name}: ${version} is older than the current ${PROMOTE_TAG} ${entry.priorLatest}, so promoting it would move ${PROMOTE_TAG} backwards. Backports are not a promote use case: an older version belongs on a non-${PROMOTE_TAG} dist-tag through a separate path that is not built`,
+              ),
+            // From the same LCLI-631 review that found the resume gap (LCLI-638): on a fresh run
+            // nothing has been RECORDED yet, so validateRecord's own "recorded prior latest ..."
+            // wording names an artifact that does not exist and carries no remedy. The refusal is
+            // right -- a record's prior is what --rollback restores from, so it must be a release
+            // -- so explain it in the registry's own terms instead.
+            ...entries
+              .filter((entry) => typeof entry.priorLatest === "string" && !RELEASE_VERSION.test(entry.priorLatest))
+              .map(
+                (entry) =>
+                  `${entry.name}: its current ${PROMOTE_TAG} is ${JSON.stringify(entry.priorLatest)}, not a plain X.Y.Z release. A promotion records the current ${PROMOTE_TAG} as the value --rollback would restore, so ${PROMOTE_TAG} must read a release: move ${entry.name}'s ${PROMOTE_TAG} onto the release it should return to, then re-run`,
+              ),
+          ]
         : [
             `${version} is not a plain X.Y.Z release, and ${PROMOTE_TAG} only ever takes a release. A prerelease, like a backport, is not a promote use case: it belongs on a non-${PROMOTE_TAG} dist-tag through a separate path that is not built`,
           ];

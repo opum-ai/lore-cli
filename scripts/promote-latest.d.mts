@@ -45,6 +45,8 @@ export declare const ARTIFACT_NAME: string;
 export declare const SEMVER: RegExp;
 export declare const RELEASE_VERSION: RegExp;
 export declare function compareReleaseVersions(a: string, b: string): number;
+/** LCLI-638: the release a semver-shaped `latest` leads with, so a prerelease or build-metadata value can be ordered against a release. */
+export declare function leadingReleaseVersion(value: unknown): string | null;
 export declare function distTagReadArgs(name: string): string[];
 export declare function versionReadArgs(spec: string): string[];
 export declare function packArgs(spec: string, into: string): string[];

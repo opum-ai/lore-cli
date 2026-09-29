@@ -1131,7 +1131,14 @@ the promotion half, item 7. It is not part of staging.
       compared numerically, or is not a plain `X.Y.Z`, naming the package
       (LCLI-631). A backport is not a promote use case. A non-plain `X` never
       gets this far, because item 2's equivalence check refuses it. A resumed
-      run does not re-read a current `latest` against `X` (LCLI-638).
+      run compares each package's current `latest` with `X` too, and refuses
+      when one is strictly newer, naming the package and both versions
+      (LCLI-638): the record carries the FIRST run's prior values, so a
+      registry that moved ahead in between would otherwise make the resume
+      move `latest` backwards. The comparison is by the release a live value
+      leads with, so `5.7.0-rc.1` is newer than `5.6.7` and refuses, while
+      `5.6.7-rc.1` or `5.6.7+build.7` is not newer than `5.6.7` and still
+      resumes. A package already at `X`, or below it, still resumes.
    5. **The pair receipt.** It must pass every step of "What a reader must
       do":
       - `kind` is `opum.pair-qualification-receipt.v1`.

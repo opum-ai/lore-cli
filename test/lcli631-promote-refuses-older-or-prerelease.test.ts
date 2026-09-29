@@ -12,6 +12,15 @@
  * Equal-to-latest keeps its existing behaviour: a fresh run refuses it as a lost record, and a
  * resume accepts it.
  *
+ * LCLI-638 (paired with quest-cli QCLI-405) closes the other half: the gate above is fresh-only,
+ * because a fresh record is what it validates, and a resume keeps the record the FIRST run wrote.
+ * So a resume now compares every package's CURRENT `latest` with --version too, and refuses a
+ * strictly newer one before any write; equal-to-version stays accepted (that partial state is what
+ * a resume is for). Its cases are the last describe block, and they reuse this file's runner. A
+ * fresh run's non-plain-current-latest refusal was re-worded in the same change: nothing has been
+ * recorded yet, so validateRecord's "recorded prior latest ..." was naming an artifact that did
+ * not exist.
+ *
  * Every case drives main() end to end through its one injectable runner, against an in-memory
  * GitHub and registry keyed by the version under test. (test/promote-latest.test.ts has the full
  * world, pinned to one version; this is the same shape, parameterised, and only as much as the
@@ -465,6 +474,95 @@ describe("LCLI-631: equal-to-latest keeps its existing behaviour", () => {
   });
 });
 
+describe("LCLI-638 (paired with quest-cli QCLI-405): a RESUME refuses when a current latest is newer", () => {
+  // The first run's record, verbatim: what a resume reuses. Written to disk by `setup`, and what
+  // the refusal must leave byte-identical.
+  const V = "5.6.7";
+  const PRIOR = "5.6.6";
+  const recordFor = () => ({
+    schemaVersion: 1,
+    kind: RECORD_KIND,
+    version: V,
+    launcherVersion: rcOf(V),
+    releaseRunId: RUN,
+    recordedAt: "2026-09-28T00:00:00.000Z",
+    packages: RELEASE_PACKAGES.map((name) => ({ name, priorLatest: PRIOR })),
+  });
+  const resumeHeadline = (name: string, current: string) =>
+    `${name}: ${V} is older than the current latest ${current}, so resuming would move latest backwards. latest has moved on since the record was written, so this record is stale: re-run against the newer release's checkout. Moving latest back is a deliberate, manual decision -- --rollback refuses here, because ${current} is neither this record's release nor its recorded prior`;
+
+  for (const mode of MODES)
+    test(`every package's latest has moved ahead (${V} over 5.7.0), ${mode}: exit 1, zero writes, record unchanged, both versions named`, async () => {
+      const w = world({ version: V, latest: "5.7.0" });
+      const written = `${JSON.stringify(recordFor(), null, 2)}\n`;
+      const r = await go(w, mode, (path) => writeFileSync(path, written));
+      expect(r.code).toBe(1);
+      expect(w.writes).toEqual([]);
+      expect(w.calls.some(([c, a]) => c === "npm" && (a === "publish" || a === "dist-tag"))).toBe(false);
+      expect(r.recordText).toBe(written);
+      expect(r.errText).toContain(`Refusing to promote ${V}:`);
+      for (const name of RELEASE_PACKAGES) expect(r.errText).toContain(resumeHeadline(name, "5.7.0"));
+      // The refusal is the resume gate: the reused record is validated and reported, and then the
+      // plan refuses -- the pair receipt that follows the plan is never reached.
+      expect(r.text).not.toContain("Pair receipt");
+    });
+
+  for (const mode of MODES)
+    test(`one platform's latest has moved ahead, ${mode}: only that package is named, zero writes`, async () => {
+      const moved = PLATFORM_PACKAGES[3] as string;
+      const w = world({ version: V, latest: PRIOR, latestFor: { [moved]: "6.0.0" } });
+      const written = `${JSON.stringify(recordFor(), null, 2)}\n`;
+      const r = await go(w, mode, (path) => writeFileSync(path, written));
+      expect(r.code).toBe(1);
+      expect(w.writes).toEqual([]);
+      expect(r.recordText).toBe(written);
+      expect(r.errText).toContain(resumeHeadline(moved, "6.0.0"));
+      for (const name of RELEASE_PACKAGES.filter((n) => n !== moved))
+        expect(r.errText).not.toContain(`${name}: ${V} is older than the current latest`);
+    });
+
+  for (const mode of MODES)
+    test(`only the LAUNCHER's latest has moved ahead, ${mode}: refused, zero writes`, async () => {
+      const w = world({ version: V, latest: PRIOR, latestFor: { [LAUNCHER]: "6.0.0" } });
+      const written = `${JSON.stringify(recordFor(), null, 2)}\n`;
+      const r = await go(w, mode, (path) => writeFileSync(path, written));
+      expect(r.code).toBe(1);
+      expect(w.writes).toEqual([]);
+      expect(r.recordText).toBe(written);
+      expect(r.errText).toContain(resumeHeadline(LAUNCHER, "6.0.0"));
+    });
+
+  // The state a resume exists for, and the boundary the rule must not cross: a package already at
+  // --version (the first run moved it and stopped) and the rest still at the prior value.
+  test("resume with a partial move (two platforms already at --version) still proceeds, exit 0", async () => {
+    const moved = PLATFORM_PACKAGES.slice(0, 2);
+    const w = world({
+      version: V,
+      latest: PRIOR,
+      latestFor: Object.fromEntries(moved.map((n) => [n, V])),
+    });
+    const written = `${JSON.stringify(recordFor(), null, 2)}\n`;
+    const r = await go(w, "--promote", (path) => writeFileSync(path, written));
+    expect(r.errText).toBe("");
+    expect(r.code).toBe(0);
+    expect(r.recordText).toBe(written);
+    expect(w.writes).toEqual([
+      ...PLATFORM_PACKAGES.map((name) => `dist-tag add ${name}@${V} latest`),
+      `publish ${join(w.state.downloadDir as string, w.X_FILE)} --tag latest`,
+    ]);
+  });
+
+  test("resume with every latest one patch below --version still proceeds, exit 0", async () => {
+    const w = world({ version: V, latest: "5.6.6" });
+    const written = `${JSON.stringify(recordFor(), null, 2)}\n`;
+    const r = await go(w, "--dry-run", (path) => writeFileSync(path, written));
+    expect(r.errText).toBe("");
+    expect(r.code).toBe(0);
+    expect(w.writes).toEqual([]);
+    expect(r.recordText).toBe(written);
+  });
+});
+
 describe("LCLI-631: planPromotion's gate, directly", () => {
   const tagsFor =
     (latest: Record<string, string>, version: string) =>
@@ -474,9 +572,10 @@ describe("LCLI-631: planPromotion's gate, directly", () => {
     });
   const all = (v: string) => Object.fromEntries(RELEASE_PACKAGES.map((n) => [n, v]));
 
-  // Resuming, nothing compares a CURRENT latest with --version: main() validates only the reused
-  // record. That is the known gap LCLI-638 tracks, pinned here so closing it is a visible change.
-  test("the gate is fresh-only: resuming, an older version is accepted (the LCLI-638 gap)", async () => {
+  // LCLI-638 inverted this test. It used to pin the gap -- resuming, an older version was accepted
+  // because main() validates only the reused record. Since LCLI-638 the resume path refuses too,
+  // naming the package and both versions, so the same inputs now refuse on both paths.
+  test("the gate covers resume too: resuming an older version is refused, naming both versions", async () => {
     const fresh = await planPromotion({
       version: "0.9.0",
       launcherVersion: rcOf("0.9.0"),
@@ -489,10 +588,97 @@ describe("LCLI-631: planPromotion's gate, directly", () => {
       readTags: tagsFor(all("0.10.0"), "0.9.0"),
       resuming: true,
     });
-    expect(resumed.ok).toBe(true);
+    expect(resumed.ok).toBe(false);
+    // Every package's CURRENT latest is 0.10.0, so every one of them is named, both versions in each.
+    expect((resumed as { problems: string[] }).problems).toEqual(
+      RELEASE_PACKAGES.map(
+        (name) =>
+          `${name}: 0.9.0 is older than the current latest 0.10.0, so resuming would move latest backwards. latest has moved on since the record was written, so this record is stale: re-run against the newer release's checkout. Moving latest back is a deliberate, manual decision -- --rollback refuses here, because 0.10.0 is neither this record's release nor its recorded prior`,
+      ),
+    );
   });
 
-  test("a current latest that is not a plain X.Y.Z is refused too, by validateRecord's own reason (no headline)", async () => {
+  // LCLI-638 review F1: "strictly newer" is a SEMVER-PRECEDENCE question, and the live value is not
+  // always a plain X.Y.Z. A prerelease is decided by the release it leads with -- 5.7.0-rc.1 is
+  // newer than 5.6.7 and refuses -- while a prerelease or build-metadata value of the SAME release
+  // is not newer than it and still resumes. Pinned here at the precedence boundary.
+  const precedence: Array<[string, boolean]> = [
+    ["5.7.0-rc.1", false],
+    ["5.6.8-rc.1", false],
+    ["5.6.7+build.7", true],
+    ["5.6.7-rc.1", true],
+    ["5.6.6-rc.1", true],
+  ];
+  for (const [live, accepted] of precedence)
+    test(`resuming with a live latest of ${live} against ${"5.6.7"}: ${accepted ? "accepted" : "refused"}`, async () => {
+      const plan = await planPromotion({
+        version: "5.6.7",
+        launcherVersion: "5.6.7-rc.2",
+        resuming: true,
+        readTags: async (name) => ({
+          latest: name === RELEASE_PACKAGES[1] ? live : "5.6.6",
+          "release-candidate": name === LAUNCHER ? "5.6.7-rc.2" : "5.6.7",
+        }),
+      });
+      expect(plan.ok).toBe(accepted);
+      if (!accepted) {
+        const problems = (plan as { problems: string[] }).problems;
+        // Only the one package whose live value leads with a newer release is named.
+        expect(problems).toEqual([
+          `${RELEASE_PACKAGES[1]}: 5.6.7 is older than the current latest ${live}, so resuming would move latest backwards. latest has moved on since the record was written, so this record is stale: re-run against the newer release's checkout. Moving latest back is a deliberate, manual decision -- --rollback refuses here, because ${live} is neither this record's release nor its recorded prior`,
+        ]);
+      }
+    });
+
+  // The same boundary end to end: a live prerelease that is newer than --version refuses with zero
+  // writes. (The LCLI-638 describe block holds the plain-version e2e cases; this one belongs here
+  // because the precedence boundary is this describe's subject.)
+  const V1 = "5.6.7";
+  const PRIOR1 = "5.6.6";
+  for (const mode of MODES)
+    test(`a platform's live latest is a newer prerelease (5.7.0-rc.1), ${mode}: exit 1, zero writes`, async () => {
+      const odd = PLATFORM_PACKAGES[1] as string;
+      const w = world({ version: V1, latest: PRIOR1, latestFor: { [odd]: "5.7.0-rc.1" } });
+      const first = {
+        schemaVersion: 1,
+        kind: RECORD_KIND,
+        version: V1,
+        launcherVersion: rcOf(V1),
+        releaseRunId: RUN,
+        recordedAt: "2026-09-28T00:00:00.000Z",
+        packages: RELEASE_PACKAGES.map((name) => ({ name, priorLatest: PRIOR1 })),
+      };
+      const written = `${JSON.stringify(first, null, 2)}\n`;
+      const r = await go(w, mode, (path) => writeFileSync(path, written));
+      expect(r.code).toBe(1);
+      expect(w.writes).toEqual([]);
+      expect(r.recordText).toBe(written);
+      expect(r.errText).toContain(
+        `${odd}: ${V1} is older than the current latest 5.7.0-rc.1, so resuming would move latest backwards`,
+      );
+      expect(r.text).not.toContain("Pair receipt");
+    });
+
+  // The case a resume exists for: the registry has NOT moved ahead, so the new resume refusal must
+  // stay silent -- equal-to-latest and older-than-latest both resume.
+  test("resuming is still accepted when every current latest is older than, or equal to, --version", async () => {
+    const older = await planPromotion({
+      version: "0.10.0",
+      launcherVersion: rcOf("0.10.0"),
+      readTags: tagsFor(all("0.9.0"), "0.10.0"),
+      resuming: true,
+    });
+    expect(older.ok).toBe(true);
+    const equal = await planPromotion({
+      version: "0.10.0",
+      launcherVersion: rcOf("0.10.0"),
+      readTags: tagsFor({ ...all("0.9.0"), [PLATFORM_PACKAGES[0] as string]: "0.10.0" }, "0.10.0"),
+      resuming: true,
+    });
+    expect(equal.ok).toBe(true);
+  });
+
+  test("a current latest that is not a plain X.Y.Z is refused, now explained in the registry's own terms", async () => {
     const odd = { ...all("0.9.0"), [LAUNCHER]: "0.9.0-rc.1" };
     const plan = await planPromotion({
       version: "0.10.0",
@@ -501,6 +687,9 @@ describe("LCLI-631: planPromotion's gate, directly", () => {
     });
     expect(plan.ok).toBe(false);
     const problems = (plan as { problems: string[] }).problems;
-    expect(problems).toEqual([`${LAUNCHER}: recorded prior latest "0.9.0-rc.1" is not a plain X.Y.Z release version`]);
+    expect(problems).toEqual([
+      `${LAUNCHER}: its current latest is "0.9.0-rc.1", not a plain X.Y.Z release. A promotion records the current latest as the value --rollback would restore, so latest must read a release: move ${LAUNCHER}'s latest onto the release it should return to, then re-run`,
+      `${LAUNCHER}: recorded prior latest "0.9.0-rc.1" is not a plain X.Y.Z release version`,
+    ]);
   });
 });
