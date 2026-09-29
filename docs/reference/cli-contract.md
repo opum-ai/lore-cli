@@ -197,6 +197,19 @@ The envelope is emitted on **stdout**, alone, with no leading or trailing prose,
 no progress lines, and a single trailing newline. Pretty-printing (indentation)
 is permitted; whitespace inside the JSON is not part of the contract.
 
+**Envelope extension keys.** A result may add one or more keys to the envelope
+**between `data` and the reserved `principal` slot** — never inside `data`,
+never after `principal`, and never one of the four keys above (a result that
+tries is refused). An extension describes the **read** rather than the payload,
+which is why it is not a `data` field: a caller comparing two answers must still
+see it when both payloads are empty. Exactly one result uses this today —
+`lore query --across-refs` emits `coverage`
+`{complete, population, discoveredAt, refsRead[], refsUnreadable[]}` there
+(LCLI-652), at the position agreed byte-for-byte with quest-cli so a consumer of
+both CLIs reads one convention. Additive under §7.1; the example above is a
+result that adds none, and one that adds none is byte-identical to the pre-§2
+envelope.
+
 ### 2.1 The `kind` registry
 
 `kind` is a stable, enumerated string. Each command that supports `--json`
@@ -444,6 +457,14 @@ cannot-judge failure outside a gate (LCLI-548) uses the same spelling.
 `validation` and `drift` both map to exit `6` but are distinguished in
 `error_type` (and in the `check.report`/`validate.report` `data`) so an agent
 can tell "my frontmatter is malformed" from "my managed block is stale".
+
+An error envelope may carry the data it is about in `input`, so a caller never
+has to parse the message to recover the structure. `lore query --across-refs`
+uses that: an incomplete read is `drift` at exit `6` with the whole `coverage`
+object in `input` and the unreadable refs named in `message`, and **nothing on
+stdout** — the partial answer is not emitted beside the failure (LCLI-652). The
+same shape is emitted by `quest`; the two CLIs agree on `error_type`, exit code
+and `input` so one consumer reads both.
 
 ### 5.4 Non-`--json` failures
 

@@ -27,9 +27,17 @@
 
 import { join } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
+import type { ForgeAdapter } from "../adapters/forge";
 import { loadBundle } from "../core/bundle";
+import {
+  type CrossRefCoverage,
+  type CrossRefGit,
+  type CrossRefResult,
+  type CrossRefSelection,
+  loadCrossRef,
+} from "../core/cross-ref";
 import { loadProfile, type Profile } from "../core/profile";
-import { type FieldFilter, type QueryResult, query } from "../core/query";
+import { type FieldFilter, type QueryHit, type QueryResult, query } from "../core/query";
 import {
   loadRetrievalGraph,
   type RetrievalBackend,
@@ -40,7 +48,7 @@ import { DOCS_DIR } from "../core/scaffold";
 import type { WorkspaceRetrievalContext, WorkspaceRetrievalSelection } from "../core/workspace-retrieval";
 import { EXIT_OK, LoreError, singleLine, stripAnsiAndControls, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable, renderTruncationLine, truncation } from "../output";
-import { optionValues, parseCommandArgs, singleOptionValue, workspaceSelection } from "./args";
+import { acrossRefsSelection, optionValues, parseCommandArgs, singleOptionValue, workspaceSelection } from "./args";
 
 /** Options for {@link runQuery}; `root` and the streams are injectable for tests. */
 export interface QueryCommandOptions {
@@ -58,6 +66,15 @@ export interface QueryCommandOptions {
   adapter?: BacklogAdapter;
   /** Indexed/reference selector injected by the Commander handler or conformance tests. */
   retrieval?: RetrievalGraphLoader;
+  /**
+   * The cross-ref view's seams, injectable for tests (`forge`/`git`/clock). Production passes none
+   * and the real `gh` adapter and real git are used (LCLI-652).
+   */
+  crossRef?: {
+    readonly forge?: ForgeAdapter;
+    readonly git?: CrossRefGit;
+    readonly now?: () => Date;
+  };
 }
 
 /** The parsed form of `lore query`'s arguments. */
@@ -75,6 +92,10 @@ interface QueryArgs {
   /** `--field key=value` filters, in order (repeatable). */
   fields: FieldFilter[];
   readonly workspace?: WorkspaceRetrievalSelection;
+  /** The `--across-refs` selection, when the flag was given. */
+  readonly acrossRefs?: CrossRefSelection;
+  /** `--allow-partial`: answer an incomplete view instead of refusing it with exit 6. */
+  readonly allowPartial: boolean;
 }
 
 /** The narrow-it hint on the §3 truncation line (AC#2) — the actionable ways to bound a broad result. */
@@ -88,6 +109,30 @@ const NARROW_HINT = "narrow with --type/--tag/--status/--field, or raise --limit
 export function runQuery(options: QueryCommandOptions): number | Promise<number> {
   const parsed = parseQueryArgs(options.args);
   const advisories = new WarningCollector();
+  if (parsed.acrossRefs !== undefined) {
+    // The cross-ref view is its own read path (LCLI-652): it loads every ref's bundle through the
+    // reference loader and never touches the working tree's bundle or profile, so it returns
+    // before either is loaded here.
+    return loadCrossRef({
+      root: options.root,
+      selection: parsed.acrossRefs,
+      query: {
+        text: parsed.text,
+        type: parsed.type,
+        tags: parsed.tags,
+        status: parsed.status,
+        fields: parsed.fields,
+      },
+      ...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
+      ...(parsed.allowPartial ? { allowPartial: true } : {}),
+      warnings: advisories,
+      ...(options.crossRef !== undefined ? options.crossRef : {}),
+    }).then((result) => {
+      advisories.flush({ color: options.output.color, stderr: options.stderr });
+      emit(crossRefRenderable(result), options.output, options.stdout);
+      return EXIT_OK;
+    });
+  }
   // Loaded before the retrieval branch, not after it: BOTH backends resolve `--type` through
   // this profile's deprecated aliases (LCLI-554), and the indexed path returns before the
   // in-memory path's own load was ever reached.
@@ -203,7 +248,15 @@ function parseQueryArgs(args: readonly string[]): QueryArgs {
       'pass one quoted search string, e.g. `lore query "soft delete retention"`',
     );
   }
-  return { text: positionals[0], type, status, limit, tags, fields, workspace };
+  const acrossRefs = acrossRefsSelection(parsed);
+  if (acrossRefs !== undefined && workspace !== undefined) {
+    throw usage(
+      "--across-refs cannot be combined with --workspace",
+      "one explicit scope per invocation — drop one of the two",
+    );
+  }
+  const allowPartial = (parsed.counts.get("allow-partial") ?? 0) > 0;
+  return { text: positionals[0], type, status, limit, tags, fields, workspace, acrossRefs, allowPartial };
 }
 
 /**
@@ -267,6 +320,98 @@ function parseCount(flag: string, value: string): number {
  */
 function queryRenderable(data: QueryResult): Renderable<QueryResult> {
   return { kind: "query.results", data, pretty: renderText, plain: renderText };
+}
+
+/**
+ * The `--json` payload of a cross-ref `query.results`: the same fields as an ordinary query, with
+ * one row per (id, ref) observation. `coverage` is NOT a field of this object — it is an envelope
+ * key placed after `data` and before `principal`, the position agreed byte-for-byte with
+ * quest-cli, so a consumer of both tools reads one convention.
+ */
+export interface CrossRefQueryExport {
+  readonly query?: string;
+  readonly hits: readonly QueryHit[];
+  readonly total: number;
+  readonly shown: number;
+  readonly truncated: boolean;
+}
+
+/**
+ * Wrap a cross-ref result for output. Both renderers close over `coverage`, which is exactly why
+ * this is a separate builder rather than a flag on {@link queryRenderable}: the payload keeps the
+ * ordinary shape, and the text modes still print what the read covered — ADR decision 7, where an
+ * empty listing must be distinguishable from one that read nothing.
+ */
+function crossRefRenderable(result: CrossRefResult): Renderable<CrossRefQueryExport> {
+  const data: CrossRefQueryExport = {
+    ...(result.query !== undefined ? { query: result.query } : {}),
+    hits: result.hits,
+    total: result.total,
+    shown: result.shown,
+    truncated: result.truncated,
+  };
+  const render = (payload: CrossRefQueryExport): string => renderCrossRefText(payload, result.coverage);
+  return {
+    kind: "query.results",
+    data,
+    envelopeExtensions: { coverage: result.coverage },
+    pretty: render,
+    plain: render,
+  };
+}
+
+/**
+ * The cross-ref listing: the ordinary ranked shape with each row's ref shown, plus a coverage line
+ * that is always printed — "nothing matched" and "nothing was read" must never render the same.
+ * Every field is sanitized exactly as {@link renderText} sanitizes its own (a ref name or a
+ * snippet can carry attacker-influenced bytes).
+ */
+function renderCrossRefText(data: CrossRefQueryExport, coverage: CrossRefCoverage): string {
+  const queryText = data.query !== undefined ? sanitizeField(data.query) : undefined;
+  const head = queryText !== undefined ? `query "${queryText}"` : "query (filters)";
+  const refs = coverage.refsRead.length;
+  const lines = [
+    `${head} — ${data.total} ${data.total === 1 ? "row" : "rows"} across ${refs} ${
+      refs === 1 ? "ref" : "refs"
+    } (${describePopulation(coverage.population)})`,
+  ];
+  for (const hit of data.hits) {
+    const score = queryText !== undefined ? `  (${formatScore(hit.score)})` : "";
+    const ref = hit.refProvenance !== undefined ? `  @${sanitizeField(refLabel(hit))}` : "";
+    const snippet = hit.snippet !== undefined ? `  — ${sanitizeField(hit.snippet)}` : "";
+    lines.push(`  ${sanitizeField(hit.id)}  [${sanitizeField(hit.type)}]${score}${ref}${snippet}`);
+  }
+  const footer = renderTruncationLine(truncation(data.total, data.shown, NARROW_HINT));
+  if (footer !== "") {
+    lines.push(footer);
+  }
+  lines.push(coverageLine(coverage));
+  return lines.join("\n");
+}
+
+/** The ref a row reads from, named by its pull request when it has one. */
+function refLabel(hit: QueryHit): string {
+  const provenance = hit.refProvenance;
+  if (provenance === undefined) return "";
+  return provenance.pullRequest ?? provenance.ref;
+}
+
+/** The one-line coverage footer: how much was read, and what was not. */
+function coverageLine(coverage: CrossRefCoverage): string {
+  const read = coverage.refsRead.length;
+  const plural = read === 1 ? "ref" : "refs";
+  if (coverage.complete) {
+    return `coverage: complete — ${read} ${plural} read`;
+  }
+  const names = coverage.refsUnreadable.map((entry) => entry.ref ?? "the open-pull-request list").join(", ");
+  return `coverage: INCOMPLETE — ${read} ${plural} read; unreadable: ${names}`;
+}
+
+/** How the population reads in the text listing. */
+function describePopulation(population: CrossRefCoverage["population"]): string {
+  if (population === "open-prs") return "origin/dev + open pull requests";
+  if (population === "explicit") return "named refs";
+  return "origin/dev only — discovery was unavailable";
 }
 
 /**

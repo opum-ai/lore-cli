@@ -24,6 +24,9 @@
 import { singleLine } from "../errors";
 import { type BundleGraph, conceptNotInBundle, type Edge, frontmatterScalar } from "./bundle";
 import type { Concept } from "./concept";
+// Type-only, so the runtime dependency stays one-directional: cross-ref.ts imports this module's
+// engine, and this module never imports its loader.
+import type { RefProvenance } from "./cross-ref";
 import { compareCodeUnits } from "./order";
 import { defaultProfile, type Profile } from "./profile";
 import { canonicalType } from "./schema";
@@ -181,6 +184,17 @@ export interface QueryHit {
   readonly score: number;
   /** Complete locator-free provenance in explicit workspace mode. */
   readonly provenance?: WorkspaceRecordProvenance;
+  /**
+   * The ref this hit was read from, in `--across-refs` mode (LCLI-652): `{ref, pullRequest, sha}`,
+   * the inner object agreed byte-for-byte with quest-cli.
+   *
+   * A SEPARATE key from {@link QueryHit.provenance} on purpose. Workspace mode's `provenance` is a
+   * locator-free identity (member/repository/bundle/export keys) and has nothing in common with a
+   * ref and a commit; hanging both shapes on one key would make `hit.provenance.memberId` and
+   * `hit.provenance.ref` each silently `undefined` in the other mode, which is the one failure mode
+   * a consumer cannot detect.
+   */
+  readonly refProvenance?: RefProvenance;
 }
 
 /** The `query.results` payload: the ranked hits (already capped) plus the bounded-output accounting. */

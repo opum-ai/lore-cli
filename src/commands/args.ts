@@ -8,6 +8,7 @@
 
 import { posix } from "node:path";
 import { Command, CommanderError, Option } from "commander";
+import type { CrossRefSelection } from "../core/cross-ref";
 import { findManifestCommand, type ManifestFlag } from "../core/manifest";
 import { RESERVED_STEMS } from "../core/scaffold";
 import type { WorkspaceRetrievalSelection } from "../core/workspace-retrieval";
@@ -53,10 +54,14 @@ export function parseCommandArgs(args: readonly string[], command: string): Pars
     .action(() => {});
   for (const flag of definition.flags) {
     parser.addOption(commanderOption(flag));
-    parser.on(`option:${flag.name}`, (value?: string) => {
+    parser.on(`option:${flag.name}`, (value?: unknown) => {
       flags.add(flag.name);
       counts.set(flag.name, (counts.get(flag.name) ?? 0) + 1);
-      if (value !== undefined) {
+      // Measured against Commander 15 (LCLI-652): a boolean switch emits `undefined`, a
+      // value-taking flag emits its `string`, and an OPTIONAL-value flag emits `null` when it was
+      // given bare. Only a string is a value; a truthiness test would push `null` into the
+      // string-valued map and make `--across-refs` (bare) indistinguishable from a valued one.
+      if (typeof value === "string") {
         const collected = values.get(flag.name) ?? [];
         collected.push(value);
         values.set(flag.name, collected);
@@ -73,7 +78,8 @@ export function parseCommandArgs(args: readonly string[], command: string): Pars
 
 /** Commander flag declaration sourced from one manifest flag. */
 export function optionSyntax(flag: ManifestFlag): string {
-  const long = `--${flag.name}${flag.takesValue ? " <value>" : ""}`;
+  const value = flag.takesValue ? (flag.optionalValue === true ? " [value]" : " <value>") : "";
+  const long = `--${flag.name}${value}`;
   return flag.alias === undefined ? long : `-${flag.alias}, ${long}`;
 }
 
@@ -201,6 +207,57 @@ export function assertFlagAtMostOnce(parsed: ParsedArgs, name: string): void {
   if ((parsed.counts.get(name) ?? 0) > 1) {
     throw usage(`--${name} given more than once`, `pass --${name} at most once`);
   }
+}
+
+/**
+ * Parse `query`'s cross-ref selection (LCLI-652): `--across-refs` bare selects the open-pull-request
+ * population; `--across-refs <ref>` (repeatable) selects exactly those refs, read locally.
+ *
+ * **A whitespace value is refused here rather than left to resolution**, and that is ergonomic
+ * rather than pedantic: `--across-refs` takes an optional value, so `lore query --across-refs
+ * "soft delete"` hands the search text to the FLAG (measured against Commander 15). Git ref names
+ * cannot contain spaces, so the value can never have been meant as one — the caller gets a usage
+ * error naming what happened instead of an unreadable ref named `soft delete` and an exit 6 whose
+ * reason reads like a repository problem.
+ *
+ * The `--allow-partial` pairing is checked here too: a downgrade flag with nothing to downgrade is
+ * a usage error, not a silently ignored option.
+ */
+export function acrossRefsSelection(parsed: ParsedArgs): CrossRefSelection | undefined {
+  const occurrences = parsed.counts.get("across-refs") ?? 0;
+  const allowPartial = (parsed.counts.get("allow-partial") ?? 0) > 0;
+  if (occurrences === 0) {
+    if (allowPartial) {
+      throw usage("--allow-partial requires --across-refs", "pass --across-refs to select the view it applies to");
+    }
+    return undefined;
+  }
+  const values = optionValues(parsed, "across-refs").map((value) => value.trim());
+  const bare = occurrences - values.length;
+  if (bare > 0 && values.length > 0) {
+    throw usage(
+      "--across-refs cannot be bare and valued in one run",
+      "pass it bare for every open pull request, or once per named ref",
+    );
+  }
+  if (bare > 1) {
+    throw usage("--across-refs given more than once", "pass it at most once when it names no ref");
+  }
+  if (values.some((value) => value === "")) {
+    throw usage("--across-refs needs a ref name", "pass a ref, e.g. `--across-refs=origin/dev`");
+  }
+  for (const value of values) {
+    if (/\s/u.test(value)) {
+      throw usage(
+        `invalid --across-refs value "${value}"`,
+        "a ref name cannot contain spaces — put the search text before the flag, or name a ref",
+      );
+    }
+  }
+  if (new Set(values).size !== values.length) {
+    throw usage("--across-refs values must be unique", "pass each ref at most once");
+  }
+  return values.length > 0 ? { mode: "explicit", refs: values } : { mode: "open-prs", refs: [] };
 }
 
 /** Parse the shared explicit workspace/repository selection flags. */
