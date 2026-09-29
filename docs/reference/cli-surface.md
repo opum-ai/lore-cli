@@ -811,7 +811,9 @@ refs, which is why ordering never interleaves by score.
 An empty listing therefore never claims "nothing documented" when a ref could not be read. Without
 `--allow-partial` an incomplete read is a `drift` error at exit `6`, naming the unreadable refs and
 carrying the coverage object in the error's `input`, with **nothing on stdout**; `--allow-partial`
-answers the same run at exit `0` with `complete: false`. With no `gh` on PATH, or an `origin` that
+answers the same run at exit `0` with `complete: false` — **except when nothing was read at all**,
+which exits `6` whatever the flag says, because an empty listing with an empty `refsRead` cannot be
+told apart from "nothing is documented". With no `gh` on PATH, or an `origin` that
 is not a GitHub remote, the run degrades to `population: "dev-only"` the same way — incomplete
 coverage, never an uncaught failure.
 

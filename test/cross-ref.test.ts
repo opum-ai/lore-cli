@@ -521,6 +521,30 @@ describe("cross-ref — open pull requests", () => {
     }
   }, 30_000);
 
+  test("a read of ZERO refs is refused even with --allow-partial", async () => {
+    writeBundle();
+    commit("base");
+    // `{complete: false, refsRead: [], hits: []}` cannot be told apart from "nothing is
+    // documented", so partiality cannot answer it — the boundary quest-cli's landed half
+    // (QCLI-417) names, and ADR decision 7's rule read to its end.
+    const { code, stdout, stderr } = await queryViaCli([
+      "retention",
+      "--across-refs=does-not-exist",
+      "--allow-partial",
+      "--json",
+    ]);
+    expect(code).toBe(6);
+    expect(stdout).toBe("");
+    const envelope = JSON.parse(stderr) as {
+      error_type: string;
+      message: string;
+      input: { coverage: CrossRefCoverage };
+    };
+    expect(envelope.error_type).toBe("drift");
+    expect(envelope.message).toContain("read no refs at all");
+    expect(envelope.input.coverage).toMatchObject({ complete: false, refsRead: [] });
+  });
+
   test("a failure reason carries no absolute path and no remote URL", async () => {
     writeBundle();
     commit("base");

@@ -299,12 +299,20 @@ export async function loadCrossRef(options: LoadCrossRefOptions): Promise<CrossR
     refsUnreadable,
   };
 
-  if (!coverage.complete && options.allowPartial !== true) {
+  // ZERO refs read is the one incomplete outcome `--allow-partial` cannot answer (LCLI-652,
+  // boundary agreed with quest-cli's landed half, QCLI-417): `{complete: false, refsRead: [],
+  // hits: []}` is indistinguishable from "nothing is documented", which is precisely the false
+  // green ADR decision 7 exists to prevent. Partiality answers a PARTIAL read; it cannot answer a
+  // missing one.
+  const readNothing = refsRead.length === 0;
+  if (!coverage.complete && (options.allowPartial !== true || readNothing)) {
     const named = refsUnreadable.map((entry) => entry.ref ?? `the open-pull-request list (${entry.reason})`).join(", ");
     throw new LoreError(
       "drift",
-      `cross-ref coverage is incomplete: ${named}`,
-      "re-run with --allow-partial to report what could be read, or fix the refs named above",
+      readNothing ? `cross-ref read no refs at all: ${named}` : `cross-ref coverage is incomplete: ${named}`,
+      readNothing
+        ? "no answer is possible with nothing read; fix the refs named above"
+        : "re-run with --allow-partial to report what could be read, or fix the refs named above",
       // NESTED under `coverage`, not spread: quest-cli emits `input: { coverage: … }` and pins that
       // spelling in its own tests, so `input.refsUnreadable` on one side and `input.coverage.
       // refsUnreadable` on the other would leave a shared reader counting zero unreadable refs —
