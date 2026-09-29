@@ -343,15 +343,18 @@ describe("the lockfile assertion is ONE script invoked from two call sites", () 
 
   test("neither workflow carries an inline copy of the lockfile comparison", () => {
     // The lockfile is read in exactly one file. A second, inline comparison in a workflow is the
-    // shape that drifts: the two agree until one of them is edited.
+    // shape that drifts: the two agree until one of them is edited. Collected rather than asserted
+    // one by one, so the failure names the step instead of quoting its whole `run` block.
+    const inline: string[] = [];
     for (const path of [CI_WORKFLOW, RELEASE_WORKFLOW]) {
-      const doc = loadWorkflow(path);
-      for (const job of Object.values(doc.jobs)) {
+      const file = path.split("/").pop() ?? path;
+      for (const [id, job] of Object.entries(loadWorkflow(path).jobs)) {
         for (const step of job.steps ?? []) {
           if (step.run?.includes("check-lockfile-pins") === true) continue;
-          expect(step.run ?? "").not.toContain("bun.lock");
+          if (step.run?.includes("bun.lock") === true) inline.push(`${file}: ${id}: ${step.name ?? step.run}`);
         }
       }
     }
+    expect(inline).toEqual([]);
   });
 });
