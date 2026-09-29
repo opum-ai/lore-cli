@@ -72,7 +72,7 @@ runs:
         # blobs the source run needs (2.7 MB, measured).
         git clone --quiet --filter=blob:none --no-checkout https://github.com/opum-ai/quest-cli.git "$dest"
         git -C "$dest" cat-file -e "$QUEST_SOURCE_REF^{commit}" 2>/dev/null || {
-          echo "::error::the pinned quest-cli ref $QUEST_SOURCE_REF is not a commit in the cloned repository. A squash-merged pull request leaves its head SHA unreachable, so a ref recorded from one must be replaced by the commit that landed; check the ref before assuming the clone is broken."
+          echo "::error::the pinned quest-cli ref $QUEST_SOURCE_REF is not a commit in the cloned repository. Verify the ref against the remote rather than assuming the clone is broken: a 40-character value that resolves nowhere is usually a composed or mistyped id, and a string that denotes no object answers identically from every query (measured — the ref this workflow first carried had its first eight characters right and the rest invented)."
           exit 1
         }
         git -C "$dest" sparse-checkout set src package.json bun.lock tsconfig.json

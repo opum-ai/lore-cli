@@ -49,4 +49,5 @@ the same convention rather than a bare `slug.md`.
 - [Tracker version gates are minimum floors, not bounded allowlists](0020-tracker-version-gates-are-minimum-floors.md)
 - [Typed authored relationships and claim state](0021-typed-authored-relationships-and-claim-state.md)
 - [Tracker status flow is backend-polymorphic, not Backlog config](0022-tracker-status-flow-is-backend-polymorphic-not-backlog-config.md)
+- [Resolve the Quest CLI in CI from a pinned source build when its version is not on npm](0023-resolve-the-quest-cli-in-ci-from-a-pinned-source-build-when-its-version-is-not-on-npm.md)
 <!-- lore:index:end -->

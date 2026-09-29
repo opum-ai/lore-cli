@@ -256,9 +256,7 @@ describe("ci.yml docs gate (LCLI-504)", () => {
       expect(jobs[jobId]?.steps?.some((step) => step.uses === "./.github/actions/setup-quest")).toBe(true);
     }
     const inline = Object.entries(jobs).flatMap(([id, job]) =>
-      (job.steps ?? [])
-        .filter((step) => (step.run ?? "").includes('npm install -g "@opum-ai/quest@'))
-        .map(() => id),
+      (job.steps ?? []).filter((step) => (step.run ?? "").includes('npm install -g "@opum-ai/quest@')).map(() => id),
     );
     expect(inline).toEqual([]);
   });

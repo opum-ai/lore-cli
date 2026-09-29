@@ -117,11 +117,15 @@ env:
   # uses it, so a ref that has drifted from the declaration fails loudly as a
   # ref problem rather than quietly testing the wrong peer.
   #
-  # The ref is a commit, and a REACHABLE one: b6e1da51… — offered as "the 0.12.0
-  # bump commit" — does not exist on the remote at all (gh api 422, and
-  # `git fetch <sha>` refused), which is what a squash-merged pull request head
-  # looks like afterwards. ec79b543 is quest-cli's dev tip, which carries
-  # 0.12.0 in package.json, src/application/version.ts and
+  # The ref is a commit, and a VERIFIED one — verify any replacement the same
+  # way, because a 40-character value that resolves nowhere answers identically
+  # from every query. Measured here: the ref this line first carried
+  # (b6e1da5168a3d9b1d57eb0d3d0e6f7f6c0afebf2) had its first eight characters
+  # right and the remaining thirty-two invented — it was a composed id, not a
+  # squash-merge artifact as an earlier revision of this comment claimed;
+  # GitHub retains a pull request's head ref, so even a deleted head branch's
+  # tip still resolves (both checked). ec79b543 is quest-cli's dev tip, which
+  # carries 0.12.0 in package.json, src/application/version.ts and
   # src/contract/tracker/index.ts.
   QUEST_SOURCE_REF: ec79b543f4575374e4ece5f73e123fbacdab6f64
 

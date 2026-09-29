@@ -286,6 +286,7 @@
 - 2026-09-29T06:16:39-05:00 5af3fe561f6caa7f51bc34809f9b5a3860c92b9c feat(LCLI-650): lock lore to its exact quest pair version at runtime (DEC-31 / ODOC-328) (#421)
 - 2026-09-29T11:21:29-05:00 b3d7649b4a4fc2cecfc7dc58930adc7b25db78dc fix(LCLI-544): assert bun.lock's platform pins against package.json
 - 2026-09-29T12:02:42-05:00 10274f641a9e5e6408772eeede1780a8a9bef9a2 fix(LCLI-544): assert bun.lock's platform pins against package.json (#431)
+- 2026-09-29T12:14:30-05:00 788229458f0587cace85af956f22c286abbeac28 chore(LCLI-621): RECYCLE HANDOFF 17, written after the recycle request (#432)
 
 ## docs/adr
 
