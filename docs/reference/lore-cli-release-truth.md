@@ -21,7 +21,84 @@ availability claim.
 
 ### Current state
 
-`0.11.0` is **RELEASED**. It is a minor release, paired with `quest` `0.11.0` under
+`0.12.0` is **RELEASED**. It is a minor release, paired with `quest` `0.12.0` under the Opum
+project constitution's Article 3 (one version number across lore and quest, and every release a
+pair). It carries `lore query --across-refs` (LCLI-652, a read-only read across refs with a
+coverage envelope agreed byte-for-byte with quest-cli); three changes marked breaking — the
+pinned Bun moving to `1.4.2` with `engines.bun` narrowing to `>=1.4.2` (LCLI-648), `lore`
+refusing to drive a `quest` that is not its exact pair version (LCLI-650), and `lore init`
+detecting a tracker, offering, and instructing rather than installing (LCLI-656, ADR-0024); the
+launcher staging as `X-rc.N` and reaching `latest` by a fresh publish of the qualified `X`, last
+(LCLI-621, Article 3 clause 5 as amended by ODOC-302); and the win32-x64 acceptance amendment
+below. The full entry list is `CHANGELOG.md`'s `[0.12.0]` section, which the GitHub Release is
+cut from.
+
+It was cut from tag `v0.12.0` (annotated tag object
+`070085b0e448340cb6f5a2156bc0a3a39399001d`, peeling to
+`739f2b48e7f6d52a27c3d1a298ea4545ef2e7bf9`, which `origin/main` named when read on
+2026-09-30T15:38Z, and which `git merge-base --is-ancestor` confirms is a fast-forward of
+`0.11.0`'s landing commit `57879cc8`). **The tag was re-cut once.** It first named
+`2e726167f7ea278312426b78944268db41c84315` peeling to `57879cc8`; it was re-cut onto the
+promoted commit so the release would ship the fix below rather than the commit whose
+qualification failed, through an authorization dialog in this repository's own session.
+
+**The win32-x64 acceptance was amended for this release (DEC-80, operator choice A).** Under the
+pinned Bun `1.4.2` the Ladybug native add-on cannot load on win32-x64 — `LoadLibrary failed: A
+dynamic link library (DLL) initialization routine failed` — identically through the
+interpreter's `require` and through a direct `process.dlopen`, while byte-identical add-on bytes
+on the same runner image load cleanly under `1.3.14` at `0.11.0`. Windows is
+`reference-fallback-only` by construction (`package-qualification.ts:392`/`:397`, the validator's
+equality at `:262`, published in `architecture.md:386` and `tech-stack.md:361`), so the failing
+probe characterised a capability the product does not use there. The acceptance now takes exactly
+one added shape: a win32-x64 verdict of `unavailable` whose stderr carries the documented
+message as the child's own **first line**, recorded verbatim in the report as
+`native.addonLoadFailureMessage`, with every other shape — a different message, a different
+platform, a different marker set, a message beside a non-`unavailable` verdict — still refused.
+The refusal also gained diagnostics in the same release (LCLI-657): it names the three import
+markers and carries a bounded excerpt of the child's stderr, which is what made this failure
+diagnosable at all.
+
+**Staged, then promoted.**
+- **Staged.** `scripts/publish-release.sh 0.12.0 36739887507` ran on the operator's own
+  first-party authorisation, given in this repository's session as a question naming the npm
+  destination — not on a relayed approval, which the harness refused. Its gates, in order:
+  version parity (lore `0.12.0` equals quest `0.12.0` on quest-cli `main`); all six platform
+  tarballs matching their CI-recorded digests; and opum-cli-e2e's `receipts/lore/0.12.0.json` on
+  `main` QUALIFIED, binding that run at `739f2b4` with `launcherSubstitution MATCH`. Every
+  package was published under `--tag release-candidate` only. The launcher was published last,
+  after the script waited for the six platforms to become registry-visible (142s–446s, measured
+  this run) plus a 20s propagation cushion measured externally on 2026-09-15. Auth:
+  `keychain:npm-opum-ai-publish`.
+- **Pair-qualified.** opum-cli-e2e's `receipts/pair/0.12.0.json` (main `852a392`) is QUALIFIED,
+  **487 pass / 0 fail / 2 blocked**, both blocked rows being registry-dependent by construction.
+- **Promoted.** quest moved first (Article 3 clause 5): `@opum-ai/quest`'s `latest` read
+  `0.12.0` before lore's moved. Then `scripts/promote-latest.mjs --record
+  scripts/release-0.12.0/latest-rollback.json --version 0.12.0 --release-run 36739887507
+  --promote` exited `0` on opum-agent's go. It re-verified its gates — the tag, the artifact's
+  eight tarballs, both receipts, and that npm already served 0.12.0 on all seven packages — then
+  **wrote every prior `latest` (`0.11.0` on all seven) to the rollback record BEFORE moving
+  anything**, then moved `latest`: the six platforms by dist-tag, then `@opum-ai/lore@0.12.0`
+  published onto `latest` from the carried `opum-ai-lore-0.12.0.tgz`, last.
+
+Read with `npm view` immediately afterwards, all seven packages report `latest` = `0.12.0` (the
+wrapper's `release-candidate` remains `0.12.0-rc.1`; the platforms' remains `0.12.0`). A clean
+`npm install @opum-ai/lore` resolves to `0.12.0`. The GitHub Release `v0.12.0` ("Lore CLI
+0.12.0", 37,328 bytes of notes from the changelog) was cut automatically by the same script and
+marked latest at 2026-09-30T18:11:17Z.
+
+**README read-back: PASSED (OPAG-474 AC3).** `promote-latest.mjs` ran `readme-readback.sh`
+automatically after the move: the readme npm serves for `@opum-ai/lore` is byte-equal to
+`0.12.0`'s packed `README.md`, read 2026-09-30T18:11:18Z. Its subject is recorded honestly as
+the package-level `readme` field, which is not per-version.
+
+**`0.12.0` carries NO provenance attestation (LCLI-482, open).** It was staged by
+`scripts/publish-release.sh` as a tarball-file publish, which carries none — so a reader must not
+infer one from the trusted-publishing machinery in `release.yml`, which this path does not use.
+`0.11.0` was the same, for the same reason.
+
+### Previous state
+
+`0.11.0` was **RELEASED**. It is a minor release, paired with `quest` `0.11.0` under
 the Opum project constitution's Article 3 (opum-ai/opum-agent#988): one version number
 across lore and quest, and every release a pair. It carries the built-in Constitution and
 Constants document types (LCLI-595/596), the managed-block render and Constitution auto-pin
@@ -95,8 +172,6 @@ peeled commit and tree.
 **Record gap.** `0.9.3` (released 2026-09-25) was never written into this record, and it is
 not reconstructed here from memory. The previous state below is `0.9.2`, the last release
 this record actually captured.
-
-### Previous state
 
 `0.9.2` was **RELEASED**. It is a patch whose only shipped change is LCLI-573
 (opum-ai/lore-cli#237): agent guidance starts with retrieval (`lore query` then
