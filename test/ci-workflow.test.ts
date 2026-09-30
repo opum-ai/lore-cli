@@ -128,7 +128,12 @@ describe("ci.yml exact-host LadybugDB qualification", () => {
     expect(testScript).toContain('== "ubuntu-latest"');
     expect(testScript).toContain('== "ubuntu-24.04-arm"');
     expect(testScript).toContain("bun test --isolate --max-concurrency=1 --timeout=10000");
-    expect(testScript).toContain("timeout --kill-after=10s 6m bun test --isolate --max-concurrency=1 --timeout=10000");
+    // The ubuntu leg's budget is a single value used by the run AND by the LCLI-659 classifier,
+    // so the two cannot drift apart; the wrapper and the bound are both still asserted.
+    expect(testScript).toContain("lore_per_test_ms=10000");
+    expect(testScript).toContain(
+      'timeout --kill-after=10s 6m bun test --isolate --max-concurrency=1 --timeout="$' + '{lore_per_test_ms}"',
+    );
     expect(testScript).toContain("error: EEXIST: file already exists, epoll_ctl");
     expect(testScript).toContain("lore_bun_status=$" + "{PIPESTATUS[0]}");
     expect(testScript).toContain('exit "$' + '{lore_bun_status}"');
