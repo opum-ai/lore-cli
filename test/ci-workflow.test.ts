@@ -220,9 +220,14 @@ describe("ci.yml docs gate (LCLI-504)", () => {
     // The fleet rule is "`lore check` exiting 0 is the definition of done for a docs
     // change". Before LCLI-504 no job in this workflow ran it at all, so the rule gated
     // nothing and `lore check` had been exiting 6 on dev unnoticed. This asserts the job
-    // cannot be silently gutted back to that state.
+    // cannot be silently gutted back to that state. LCLI-661 routed the invocation through
+    // scripts/ci-quiet-gate.sh (findings quote document text, and the runner parses a
+    // step's output as workflow commands); the assertion still pins that the gate really
+    // runs `bun run lore check` from source, now behind the guard.
     const job = loadWorkflow().jobs["docs-gate"];
-    expect(job?.steps?.find((step) => step.name === "lore check")?.run).toBe("bun run lore check");
+    expect(job?.steps?.find((step) => step.name === "lore check")?.run).toBe(
+      "scripts/ci-quiet-gate.sh bun run lore check",
+    );
   });
 
   test("the docs gate installs the Quest CLI, which `lore check` cannot run without", () => {
@@ -384,6 +389,115 @@ describe("ci.yml docs gate (LCLI-504)", () => {
     // context is absent rather than green — which blocks dev until an admin notices.
     // Same trap as an `if:` that evaluates false, reached through a dependency instead.
     expect(loadWorkflow().jobs["docs-gate"]?.needs).toBeUndefined();
+  });
+});
+
+describe("tracker and docs reads stay out of the workflow-command parser (LCLI-661)", () => {
+  // The defect, measured 2026-09-30 on this repository: the tracker job ran
+  // `quest task list --json` bare, the runner parses a step's stdout as workflow commands,
+  // and a record quoting a CI log line — "##[error]Process completed with exit code 1."
+  // lives in .quest/completed/LCLI-507.json — forged a real failure annotation on the job
+  // while it was green (check-run 110060733763). The read is now redirected and counted,
+  // and the sibling quest/lore steps in these two jobs run through
+  // scripts/ci-quiet-gate.sh, which replays captured output inside ::stop-commands:: markers.
+
+  function stepRun(jobId: string, stepName: string): string {
+    return loadWorkflow().jobs[jobId]?.steps?.find((step) => step.name === stepName)?.run ?? "";
+  }
+
+  test("the tracker read is redirected to a file, not streamed", () => {
+    const run = stepRun("tracker", "Tracker reads cleanly");
+    expect(run).toContain('quest task list --json >"${out}"');
+    // The old shape — the command standing alone as the whole step — is the defect itself.
+    expect(run).not.toMatch(/^\s*quest task list --json\s*$/m);
+  });
+
+  test("the tracker read reports how much it read and fails on zero", () => {
+    const run = stepRun("tracker", "Tracker reads cleanly");
+    expect(run).toContain("jq -er");
+    expect(run).toContain('"${count}" -eq 0');
+    expect(run).toContain("read ${count} task record(s)");
+  });
+
+  test("a failed tracker read replays the tracker's own error text inside stop-commands", () => {
+    const run = stepRun("tracker", "Tracker reads cleanly");
+    expect(run).toContain("::stop-commands::");
+    expect(run).toContain('exit "${status}"');
+  });
+
+  test("every quest/lore step in the tracker and docs-gate jobs is guarded or explicitly redirected", () => {
+    const jobs = loadWorkflow().jobs;
+    const offenders: string[] = [];
+    for (const jobId of ["tracker", "docs-gate"]) {
+      for (const step of jobs[jobId]?.steps ?? []) {
+        const unguarded = (step.run ?? "")
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => /^(quest|lore|bun run lore)\b/.test(line))
+          // The tracker read is the one deliberate exception: its own redirect names it.
+          .filter((line) => !line.includes("quest task list --json >"));
+        if (unguarded.length > 0) {
+          offenders.push(`${jobId}/${step.name}: ${unguarded.join("; ")}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test("the sibling steps run through scripts/ci-quiet-gate.sh", () => {
+    expect(stepRun("tracker", "Managed instructions are current")).toBe(
+      "scripts/ci-quiet-gate.sh quest agents --check --require-installed --target claude",
+    );
+    expect(stepRun("docs-gate", "lore agents --check (bridge currency)")).toBe(
+      "scripts/ci-quiet-gate.sh bun run lore agents --check",
+    );
+  });
+});
+
+describe("scripts/ci-quiet-gate.sh (LCLI-661)", () => {
+  const SCRIPT = join(import.meta.dir, "..", "scripts", "ci-quiet-gate.sh");
+
+  test("replays forged workflow commands between stop markers, and keeps the child's exit status", () => {
+    const result = spawnSync(
+      "bash",
+      [
+        SCRIPT,
+        "bash",
+        "-c",
+        'echo "##[error]forged annotation"; echo "::warning::forged too"; echo to-stderr >&2; exit 3',
+      ],
+      { encoding: "utf8" },
+    );
+    expect(result.status).toBe(3);
+    const token = result.stdout.match(/::stop-commands::([0-9a-f]{32})/)?.[1];
+    expect(token).toBeDefined();
+    const open = result.stdout.indexOf(`::stop-commands::${token}`);
+    const close = result.stdout.indexOf(`::${token}::`);
+    expect(close).toBeGreaterThan(open);
+    for (const forged of ["##[error]forged annotation", "::warning::forged too", "to-stderr"]) {
+      const at = result.stdout.indexOf(forged);
+      expect(at).toBeGreaterThan(open);
+      expect(at).toBeLessThan(close);
+    }
+    // The guard's own failure line is outside the block and is its own text, not the child's.
+    expect(result.stdout).toContain("::error::bash exited 3");
+  });
+
+  test("a clean run keeps status 0 and still keeps the output inside the markers", () => {
+    const result = spawnSync("bash", [SCRIPT, "bash", "-c", "echo all-clear"], { encoding: "utf8" });
+    expect(result.status).toBe(0);
+    const token = result.stdout.match(/::stop-commands::([0-9a-f]{32})/)?.[1];
+    expect(token).toBeDefined();
+    const open = result.stdout.indexOf(`::stop-commands::${token}`);
+    const close = result.stdout.indexOf(`::${token}::`);
+    const at = result.stdout.indexOf("all-clear");
+    expect(at).toBeGreaterThan(open);
+    expect(at).toBeLessThan(close);
+  });
+
+  test("is a usage error when handed no command", () => {
+    const result = spawnSync("bash", [SCRIPT], { encoding: "utf8" });
+    expect(result.status).toBe(2);
   });
 });
 
