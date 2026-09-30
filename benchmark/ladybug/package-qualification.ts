@@ -727,7 +727,16 @@ async function runNativeProbe(input: PackageQualificationInput, scratch: string)
     }
     if (!isProvenAbruptWindowsImportCrash({ exitCode, signal, importStarted, importCompleted, importFailed })) {
       throw new Error(
-        `Windows native probe failed without a proven abrupt native stop (exit=${exitCode}, signal=${signal ?? "none"}, markers={started:${importStarted}, completed:${importCompleted}, failed:${importFailed}}, stdout=${stdoutSha256}, stderr=${stderrSha256}, stderrExcerpt=${JSON.stringify(boundedNativeProbeOutput(stderr))})`,
+        windowsNativeProbeRefusalMessage({
+          exitCode,
+          signal,
+          importStarted,
+          importCompleted,
+          importFailed,
+          stdoutSha256,
+          stderrSha256,
+          stderr,
+        }),
       );
     }
     return {
@@ -825,17 +834,55 @@ export const NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT = 4_000;
  * A bounded excerpt of a probe child's captured stream, for a failure MESSAGE rather than a
  * report field.
  *
- * Head AND tail are kept, deliberately: a JavaScript rejection leads with its message and
- * ends with its deepest frame, so a one-ended excerpt can drop whichever of the two says
- * what went wrong. Before LCLI-657 these messages carried only digests, so a deterministic
- * win32-x64 failure could not be diagnosed from the log, the jobs API, or the artifact --
- * the JSON report is written after the throw -- and a green re-run would have hidden it.
- * The digest stays the identity of the bytes; the excerpt is what makes them readable.
+ * BOTH ends are kept, deliberately -- but not for the reason an earlier revision of this
+ * comment gave. A caught JavaScript rejection is written message-first and then its stack
+ * deepest-frame-first, so the HEAD carries the error itself and the TAIL carries the outermost
+ * callers; the captured win32-x64 stack runs `at dlopen` first and the entry module last. An
+ * excerpt of one end alone can therefore drop whichever of the two answers the question.
+ * Before LCLI-657 these messages carried only digests, so a deterministic failure could not be
+ * diagnosed from the log, the jobs API or the artifact -- the JSON report is written after the
+ * throw -- and a green re-run would have hidden it. The digest stays the identity of the
+ * bytes; the excerpt is what makes them readable.
+ *
+ * Counts are UTF-16 code units (`String.prototype.length`), not bytes, and a cut may land
+ * between a surrogate pair; `JSON.stringify` at the call site escapes a lone half rather than
+ * emitting something that breaks the log line. Limits below 2 keep a head-only slice instead
+ * of degenerating: `slice(-0)` is `slice(0)`, which would return the WHOLE string while the
+ * message claimed to have elided.
  */
 export function boundedNativeProbeOutput(value: string, limit = NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT): string {
   if (value.length <= limit) return value;
   const half = Math.floor(limit / 2);
-  return `${value.slice(0, half)}...[${value.length - limit} bytes elided]...${value.slice(-half)}`;
+  if (half < 1) {
+    const kept = Math.max(0, limit);
+    return `${value.slice(0, kept)}...[${value.length - kept} UTF-16 code units elided]`;
+  }
+  const kept = half * 2;
+  return `${value.slice(0, half)}...[${value.length - kept} UTF-16 code units elided]...${value.slice(-half)}`;
+}
+
+/**
+ * The refusal text for a Windows probe outcome that is neither a clean import nor a proven
+ * abrupt native stop (LCLI-657).
+ *
+ * Extracted as a VALUE rather than left inline so its content is testable without spawning a
+ * child, which is what the first revision of this change got wrong: it asserted this text in
+ * the source file, and that stayed green while the refusal lost the very property it was
+ * meant to pin (a peer review reproduced that with two mutants -- the fragment parked in the
+ * sibling refusal, and the excerpt parked in a comment).
+ */
+export function windowsNativeProbeRefusalMessage(evidence: {
+  readonly exitCode: number;
+  readonly signal: NodeJS.Signals | null;
+  readonly importStarted: boolean;
+  readonly importCompleted: boolean;
+  readonly importFailed: boolean;
+  readonly stdoutSha256: string;
+  readonly stderrSha256: string;
+  readonly stderr: string;
+}): string {
+  const markers = `markers={started:${evidence.importStarted}, completed:${evidence.importCompleted}, failed:${evidence.importFailed}}`;
+  return `Windows native probe failed without a proven abrupt native stop (exit=${evidence.exitCode}, signal=${evidence.signal ?? "none"}, ${markers}, stdout=${evidence.stdoutSha256}, stderr=${evidence.stderrSha256}, stderrExcerpt=${JSON.stringify(boundedNativeProbeOutput(evidence.stderr))})`;
 }
 
 async function smoke(

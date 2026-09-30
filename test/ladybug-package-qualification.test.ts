@@ -15,6 +15,7 @@ import {
   parsePackageQualificationArgs,
   removeQualificationScratch,
   resolveInstalledOptionalPackageJson,
+  windowsNativeProbeRefusalMessage,
 } from "../benchmark/ladybug/package-qualification";
 
 const RELEASE_PATH = join(import.meta.dir, "..", ".github", "workflows", "release.yml");
@@ -648,31 +649,67 @@ describe("matching-host Ladybug package qualification", () => {
     ).toBe(true);
   });
 
-  test("a refusal carries the marker booleans and a bounded excerpt of the child's own output (LCLI-657)", () => {
-    const runner = readFileSync(PACKAGE_RUNNER_PATH, "utf8");
-    // A refusal is only diagnosable if it says WHICH marker state it refused and repeats some
-    // of what the child said. Before LCLI-657 both messages carried digests alone, so the
-    // deterministic win32-x64 driver-load rejection could not be read from the log, the jobs
-    // API, or the artifact -- and a green re-run would have hidden the gap. The digest stays;
-    // the excerpt is added beside it, on BOTH refusal branches.
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: asserting the exact refusal text the runner emits, placeholders and all.
-    const markers = "markers={started:${importStarted}, completed:${importCompleted}, failed:${importFailed}}";
-    expect(runner).toContain(markers);
-    expect(runner.match(/stderrExcerpt=\$\{JSON\.stringify\(boundedNativeProbeOutput\(stderr\)\)\}/g)?.length).toBe(2);
+  test("a refusal names the marker state and repeats what the child said (LCLI-657)", () => {
+    // This drives a DELIBERATE rejection -- the shape the win32-x64 probe actually produced --
+    // through the message the refusal is built from. It replaces a first revision that asserted
+    // these fragments in the runner's SOURCE, which a peer review showed stayed green while the
+    // refusal lost the property: the marker fragment parked in the sibling non-Windows refusal
+    // (whose three locals are also in scope), or the excerpt parked in a comment. Both mutants
+    // are why this asserts a value instead of file bytes.
+    const message = windowsNativeProbeRefusalMessage({
+      exitCode: 1,
+      signal: null,
+      importStarted: true,
+      importCompleted: false,
+      importFailed: true,
+      stdoutSha256: `sha256:${"e3b0".repeat(16)}`,
+      stderrSha256: `sha256:${"da81".repeat(16)}`,
+      stderr:
+        "Error: LoadLibrary failed: A dynamic link library (DLL) initialization routine failed.\n    at dlopen (unknown)\n    at lbug_native.js:12:8",
+    });
+    expect(message).toContain("exit=1, signal=none");
+    expect(message).toContain("markers={started:true, completed:false, failed:true}");
+    expect(message).toContain(`stdout=sha256:${"e3b0".repeat(16)}`);
+    expect(message).toContain(`stderr=sha256:${"da81".repeat(16)}`);
+    expect(message).toContain("LoadLibrary failed");
+    expect(message).toContain("at lbug_native.js:12:8");
 
-    // Past the limit the excerpt keeps the head AND the tail, because a JavaScript rejection
-    // leads with its message and ends with its deepest frame -- either end alone can drop the
-    // half that answers the question.
+    // The same evidence must be one the policy REFUSES: if this predicate ever accepted it, the
+    // message above would never be reached and the assertions would be pinning dead text.
+    expect(
+      isProvenAbruptWindowsImportCrash({
+        exitCode: 1,
+        signal: null,
+        importStarted: true,
+        importCompleted: false,
+        importFailed: true,
+      }),
+    ).toBe(false);
+
+    // One narrow structural assertion survives, and only for WIRING: the Windows refusal must be
+    // built by that function rather than a drifted copy of its text.
+    const runner = readFileSync(PACKAGE_RUNNER_PATH, "utf8");
+    expect(runner).toMatch(/throw new Error\(\s*windowsNativeProbeRefusalMessage\(/);
+  });
+
+  test("the bounded excerpt keeps both ends and claims only the elision it did (LCLI-657)", () => {
     const long = `${"H".repeat(2_500)}${"T".repeat(2_500)}`;
     const excerpt = boundedNativeProbeOutput(long);
     expect(excerpt.startsWith("H".repeat(NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT / 2))).toBe(true);
     expect(excerpt.endsWith("T".repeat(NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT / 2))).toBe(true);
-    expect(excerpt).toContain("[1000 bytes elided]");
+    expect(excerpt).toContain("[1000 UTF-16 code units elided]");
 
-    // Under the limit nothing is dropped and nothing is marked.
+    // Under the limit nothing is dropped and nothing is claimed.
     expect(boundedNativeProbeOutput("short")).toBe("short");
     expect(boundedNativeProbeOutput("x".repeat(NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT))).toBe(
       "x".repeat(NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT),
     );
+
+    // An ODD limit must not understate what was dropped, and a limit below 2 must not return the
+    // whole string while claiming to have elided (`slice(-0)` is `slice(0)`) -- both measured
+    // defects in the first revision, and both reachable because the parameter is exported.
+    expect(boundedNativeProbeOutput("abcdefghij", 5)).toBe("ab...[6 UTF-16 code units elided]...ij");
+    expect(boundedNativeProbeOutput("abcdefghij", 1)).toBe("a...[9 UTF-16 code units elided]");
+    expect(boundedNativeProbeOutput("abcdefghij", 0)).toBe("...[10 UTF-16 code units elided]");
   });
 });
