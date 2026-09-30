@@ -1606,6 +1606,46 @@ describe("lore init — legacy zero-config tracker boundary", () => {
     expect(treeDigest(root)).toEqual(before);
   });
 
+  test("no wizard question is asked after the first byte is written (LCLI-358.1; LCLI-519)", async () => {
+    // The check LCLI-519 asked for, in place of the comment that used to carry the rule. LCLI-466
+    // had added one prompt AFTER the base scaffold — the migration collision retry — and ADR-0024
+    // removed that arm with the wizard's migration, so the invariant is a universal again; nothing
+    // said so mechanically until this test. It asserts at every prompt BOUNDARY rather than only
+    // at the end: a prompt moved after the first write finds a non-empty directory here and fails,
+    // which an assertion taken only after the run (or only after a stop) cannot see.
+    const base = scriptedPrompter({ agents: false, codex: false, site: "none", obsidian: false, tracker: "none" });
+    const treesAtPrompts: string[][] = [];
+    const record = (): void => {
+      treesAtPrompts.push(readdirSync(root).sort());
+    };
+    const prompter: InitPrompter = {
+      ...base,
+      confirm: async (question, defaultValue) => {
+        record();
+        return base.confirm(question, defaultValue);
+      },
+      choose: async (question, choices, defaultValue) => {
+        record();
+        return base.choose(question, choices, defaultValue);
+      },
+      ask: async (question, defaultValue) => {
+        record();
+        return base.ask(question, defaultValue);
+      },
+      multiselect: async (question, options, defaultSelected) => {
+        record();
+        return base.multiselect(question, options, defaultSelected);
+      },
+    };
+    const { result } = await init({ stdinIsTTY: true, stderrIsTTY: true, prompter, adapter: fakeAdapter([], { probe: "ok" }) });
+
+    // Positive control, in the same invocation: the run DID write, and DID ask. Without both, the
+    // emptiness assertion below would pass because nothing happened, not because the order held.
+    expect(result.created.length).toBeGreaterThan(0);
+    expect(treesAtPrompts.length).toBeGreaterThan(0);
+    expect(treesAtPrompts.filter((tree) => tree.length > 0)).toEqual([]);
+  });
+
   test("with a Backlog project AND a usable quest, N3 still refuses at exit 6 — unchanged (D2)", () => {
     // The other half of the precedence: the ready case must reach exactly today's message, not the
     // readiness stop. Both halves are asserted because a gate that swallows N3 entirely would pass
