@@ -17,6 +17,9 @@ interface WorkflowJob {
   steps?: Array<{
     name?: string;
     run?: string;
+    /** A step that calls a composite action, e.g. `./.github/actions/setup-quest` (DEC-55). */
+    uses?: string;
+    with?: Record<string, unknown>;
   }>;
   strategy?: {
     matrix?: {
@@ -42,8 +45,13 @@ interface WorkflowDoc {
       };
     };
   };
+  /** Workflow-level env, where DEC-55's pinned quest-cli ref lives. */
+  env?: Record<string, string>;
   jobs: Record<string, WorkflowJob>;
 }
+
+/** The composite action DEC-55 put the Quest CLI resolution into. */
+const SETUP_QUEST_PATH = join(import.meta.dir, "..", ".github", "actions", "setup-quest", "action.yml");
 
 function loadWorkflow(path: string = WORKFLOW_PATH): WorkflowDoc {
   return yaml.load(readFileSync(path, "utf8"), { schema: yaml.JSON_SCHEMA }) as WorkflowDoc;
@@ -216,9 +224,16 @@ describe("ci.yml docs gate (LCLI-504)", () => {
     // Not a convenience: this repository's tracker backend is quest, so reconciliation
     // shells out to the quest binary. With it off PATH, `lore check` exits 3. A job that
     // dropped this step would fail for a reason that has nothing to do with the docs.
+    //
+    // DEC-55 moved the resolution into .github/actions/setup-quest, so this asserts the
+    // CALL (with the derived version and the pinned source ref) and the action file
+    // itself carries the npm-then-source behaviour, asserted below.
     const job = loadWorkflow().jobs["docs-gate"];
     const steps = job?.steps ?? [];
-    expect(steps.some((step) => (step.run ?? "").includes('npm install -g "@opum-ai/quest@'))).toBe(true);
+    const setup = steps.find((step) => step.uses === "./.github/actions/setup-quest");
+    expect(setup).toBeDefined();
+    expect(setup?.with?.version).toBe("${{ steps.quest.outputs.version }}");
+    expect(setup?.with?.["source-ref"]).toBe("${{ env.QUEST_SOURCE_REF }}");
     // Derived from CLAUDE.md's managed block rather than pinned a second time here —
     // the same rule the tracker job states, and the reason the two must stay in step.
     expect(steps.some((step) => (step.run ?? "").includes("Quest CLI \\([0-9][0-9.]*\\)"))).toBe(true);
@@ -229,7 +244,134 @@ describe("ci.yml docs gate (LCLI-504)", () => {
     // releases because nothing ran it. The script needs the quest binary, so assert both.
     const steps = loadWorkflow().jobs["build"]?.steps ?? [];
     expect(steps.some((step) => step.run === "scripts/readme-quickstart.sh dist/lore")).toBe(true);
-    expect(steps.some((step) => (step.run ?? "").includes('npm install -g "@opum-ai/quest@'))).toBe(true);
+    expect(steps.some((step) => step.uses === "./.github/actions/setup-quest")).toBe(true);
+  });
+
+  test("every quest-consuming required job resolves quest the same way (DEC-55)", () => {
+    // Tracker integrity, the docs gate and compile smoke all drive the quest binary.
+    // The resolution lives in one action so the three cannot drift; a fourth job that
+    // installs quest inline would bypass the source fallback and red the window again.
+    const jobs = loadWorkflow().jobs;
+    for (const jobId of ["tracker", "docs-gate", "build"]) {
+      expect(jobs[jobId]?.steps?.some((step) => step.uses === "./.github/actions/setup-quest")).toBe(true);
+    }
+    const inline = Object.entries(jobs).flatMap(([id, job]) =>
+      (job.steps ?? []).filter((step) => (step.run ?? "").includes('npm install -g "@opum-ai/quest@')).map(() => id),
+    );
+    expect(inline).toEqual([]);
+  });
+
+  /**
+   * The action's OWN structure, parsed rather than grepped.
+   *
+   * An earlier revision of these tests did `readFileSync(action).toContain(...)` on
+   * five substrings, and an adversarial review measured ELEVEN of fourteen mutations
+   * surviving it — including the fallback disarmed outright (the npm step's failing
+   * branch replaced by `exit 1`), both `if:` lines deleted, the mismatch guard's
+   * `exit 1` dropped, and the shim written into a directory that is never appended to
+   * `GITHUB_PATH`. The window this action covers is the one nobody watches, which is
+   * exactly why the wiring, not the vocabulary, is what has to be pinned here.
+   */
+  const SETUP_QUEST_FALLBACK_IF = "steps.npm.outputs.method == 'source'";
+
+  interface ActionStep {
+    id?: string;
+    if?: string;
+    run?: string;
+    uses?: string;
+    "continue-on-error"?: boolean;
+  }
+
+  function loadSetupQuest(): {
+    inputs: Record<string, { required?: boolean } | undefined>;
+    runs: { steps: ActionStep[] };
+  } {
+    return yaml.load(readFileSync(SETUP_QUEST_PATH, "utf8"), { schema: yaml.JSON_SCHEMA }) as {
+      inputs: Record<string, { required?: boolean } | undefined>;
+      runs: { steps: ActionStep[] };
+    };
+  }
+
+  test("setup-quest takes both inputs as required, and reaches the build only from the failed install", () => {
+    const action = loadSetupQuest();
+    expect(Object.keys(action.inputs).sort()).toEqual(["source-ref", "version"]);
+    expect(action.inputs.version?.required).toBe(true);
+    expect(action.inputs["source-ref"]?.required).toBe(true);
+
+    const steps = action.runs.steps;
+    expect(steps).toHaveLength(4);
+    const npm = steps[0];
+    expect(npm?.id).toBe("npm");
+    // Today's exact install, unchanged.
+    expect(npm?.run).toContain('npm install -g "@opum-ai/quest@${{ inputs.version }}"');
+    // The fallback is entered by the FAILED INSTALL, not by aborting the job, and a
+    // plain `toContain` cannot tell those two apart: it passes for a branch that is
+    // present but unreachable (measured — an `else` turned into `elif true` left the
+    // line in place and every assertion green). So this pins the SHAPE: one
+    // if/then/else/fi whose failing branch is the one that records `method=source`.
+    expect(npm?.run).toMatch(
+      /if npm install -g "@opum-ai\/quest@\$\{\{ inputs\.version \}\}"; then[\s\S]*?method=npm[\s\S]*?else[\s\S]*?method=source[\s\S]*?fi/,
+    );
+    expect(npm?.run).not.toContain("exit 1");
+  });
+
+  test("exactly the three build-and-assert steps are gated on the fallback, and none can be neutralised", () => {
+    const steps = loadSetupQuest().runs.steps;
+    const gated = steps.slice(1);
+    expect(gated.map((step) => step.if)).toEqual([
+      SETUP_QUEST_FALLBACK_IF,
+      SETUP_QUEST_FALLBACK_IF,
+      SETUP_QUEST_FALLBACK_IF,
+    ]);
+    // ...and in that order: the toolchain, the clone-and-build, the assertion.
+    expect(gated[0]?.uses).toBe("oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6");
+    expect(gated[1]?.uses).toBeUndefined();
+    expect(gated[2]?.uses).toBeUndefined();
+    // A `continue-on-error` anywhere in this action would let a broken fallback pass
+    // while the gates ran against no quest at all.
+    expect(steps.every((step) => step["continue-on-error"] === undefined)).toBe(true);
+  });
+
+  test("the build step puts the shim it writes onto PATH, and installs frozen", () => {
+    const run = loadSetupQuest().runs.steps[2]?.run ?? "";
+    expect(run).toContain(
+      'git clone --quiet --filter=blob:none --no-checkout https://github.com/opum-ai/quest-cli.git "$dest"',
+    );
+    expect(run).toContain('cat-file -e "$QUEST_SOURCE_REF^{commit}"');
+    expect(run).toContain("sparse-checkout set src package.json bun.lock tsconfig.json");
+    expect(run).toContain('checkout --quiet "$QUEST_SOURCE_REF"');
+    // The `.bun-version` pin matters: quest-cli's lockfile was written by that runtime.
+    expect(run).toContain("bun install --frozen-lockfile");
+    // ONE directory, captured once and used for both the write and the PATH entry.
+    // A shim written to a directory that is not the one appended to `GITHUB_PATH`
+    // leaves every gate running without a quest, and reads as a lore defect.
+    expect(run).toContain('bin="$RUNNER_TEMP/quest-bin"');
+    expect(run).toContain('> "$bin/quest"');
+    expect(run).toContain('chmod +x "$bin/quest"');
+    expect(run).toContain('echo "$bin" >> "$GITHUB_PATH"');
+    // The one runner whose lookup cannot resolve that shim must be refused there,
+    // and only there — a wider guard would refuse a runner the shim works on.
+    expect(run).toContain('if [ "$RUNNER_OS" = "Windows" ]');
+  });
+
+  test("the assertion step refuses a build that does not report the declared version, and can fail the job", () => {
+    const run = loadSetupQuest().runs.steps[3]?.run ?? "";
+    expect(run).toContain('reported="$(quest --version)"');
+    // Shape again, not vocabulary: the exit must live INSIDE the mismatch branch.
+    // Without it the guard prints its refusal and passes, and three required contexts
+    // run against the wrong peer while every log line looks right — and a bare
+    // `toContain("exit 1")` would pass for an exit anywhere else in the step.
+    expect(run).toMatch(/if \[ "\$reported" != "\$DECLARED" \]; then[\s\S]*?exit 1[\s\S]*?fi/);
+    // The success line claims provenance, so the step has to have resolved it.
+    expect(run).toContain("command -v quest");
+  });
+
+  test("DEC-55's pinned quest-cli ref is a full commit SHA, not a branch", () => {
+    // A branch here would make the build move under the workflow — the peer would be
+    // whatever that branch happened to hold on the day, which is exactly the float the
+    // action's assertion exists to catch.
+    const ref = loadWorkflow().env?.QUEST_SOURCE_REF;
+    expect(ref).toMatch(/^[0-9a-f]{40}$/);
   });
 
   test("the docs gate never depends on another job, so a required context cannot go absent", () => {

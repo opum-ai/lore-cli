@@ -1,0 +1,120 @@
+name: Set up the Quest CLI
+description: >
+  Puts a `quest` on PATH for the jobs whose gates drive it. Exactly what those
+  jobs did before when the declared version is on npm — an exact
+  `npm install -g "@opum-ai/quest@<version>"` — and, when it is not, a build of
+  opum-ai/quest-cli at a pinned ref instead.
+inputs:
+  version:
+    description: The Quest version CLAUDE.md's managed block declares.
+    required: true
+  source-ref:
+    description: >
+      The opum-ai/quest-cli ref to build when `version` is not on npm. Pin it to
+      the commit that carries that version; the assertion step fails loudly if
+      the ref and the declared version disagree.
+    required: true
+runs:
+  using: composite
+  steps:
+    # DEC-55 (operator ruling, 2026-09-29; relayed by opum-agent, opum-doc relay
+    # ODOC-OP-2026-09-29-21). Label, verbatim: "Build quest from source
+    # (Recommended)"; option text the operator saw, verbatim: "When the declared
+    # quest version isn't on npm yet, lore's docs gate and compile smoke build
+    # quest from quest-cli's matching ref. Both version locks stay strict and
+    # Article 3 is untouched." The ADR in this repository's docs bundle carries
+    # the ruling; this file is its implementation.
+    #
+    # WHY A FALLBACK AND NOT A FLOAT. lore refuses to drive any quest that is not
+    # exactly its own version (LCLI-650), so between lore's bump landing and
+    # quest's publish there is a window in which `npm install -g
+    # "@opum-ai/quest@X"` cannot resolve, and the docs gate and compile smoke
+    # cannot run at all. Building the peer at the version it will publish keeps
+    # both locks strict: nothing is floated, nothing is bypassed, and the built
+    # CLI is asserted to report the declared version before any gate uses it.
+    - id: npm
+      shell: bash
+      run: |
+        set -euo pipefail
+        if npm install -g "@opum-ai/quest@${{ inputs.version }}"; then
+          echo "method=npm" >> "$GITHUB_OUTPUT"
+          echo "::notice::quest ${{ inputs.version }} installed from npm, exactly as before DEC-55"
+        else
+          # Any npm failure takes this path, not only "no matching version":
+          # an unreachable registry is indistinguishable from an absent version
+          # at the exit code, and the fallback is safe for both because the
+          # assertion below refuses a build that does not carry the right
+          # version. A genuine absence and a network blip then differ only in
+          # whether the clone that follows also fails.
+          echo "method=source" >> "$GITHUB_OUTPUT"
+          echo "::notice::quest ${{ inputs.version }} did not install from npm; building opum-ai/quest-cli at ${{ inputs.source-ref }}"
+        fi
+    - if: steps.npm.outputs.method == 'source'
+      uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      with:
+        bun-version-file: .bun-version
+    - if: steps.npm.outputs.method == 'source'
+      shell: bash
+      env:
+        QUEST_SOURCE_REF: ${{ inputs.source-ref }}
+      run: |
+        set -euo pipefail
+        # The shim this writes is a bash script with no extension, which bash and a
+        # shebang-resolving lookup can run on Linux and macOS, and which a Windows
+        # bare-name lookup cannot resolve at all (PATHEXT walk, and CreateProcess
+        # will not run a script without a shell). Every caller today is ubuntu; a
+        # future Windows caller would otherwise get a silent no-op instead of a
+        # quest, so refuse THERE — and only there, since a wider guard would refuse
+        # a runner this actually works on.
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          echo "::error::setup-quest's source fallback does not support Windows runners (this runner is $RUNNER_OS): its shim is an extensionless bash script, which a bare-name lookup cannot resolve there. A Windows caller needs a different mechanism — see ADR-0023 and DEC-55."
+          exit 1
+        fi
+        dest="$RUNNER_TEMP/quest-cli"
+        # A blob-filtered clone of a public repository: no token, no credentials,
+        # and no access to anything this workflow's GITHUB_TOKEN could reach.
+        #
+        # NOT `git fetch origin <sha>`, and NOT the codeload tarball. Both were
+        # measured: `git fetch --depth 1 origin <sha>` is refused by this remote
+        # ("upload-pack: not our ref"), and the tarball for the same commit is
+        # 207 MB. A blob-filtered, no-checkout clone brings every commit and tree
+        # but no file contents — 916 KB and about a second — after which the
+        # pinned commit is already present and a sparse checkout fetches only the
+        # blobs the source run needs (2.7 MB, measured).
+        git clone --quiet --filter=blob:none --no-checkout https://github.com/opum-ai/quest-cli.git "$dest"
+        git -C "$dest" cat-file -e "$QUEST_SOURCE_REF^{commit}" 2>/dev/null || {
+          echo "::error::the pinned quest-cli ref $QUEST_SOURCE_REF is not a commit in the cloned repository. Verify the ref against the remote rather than assuming the clone is broken: a 40-character value that resolves nowhere is usually a composed or mistyped id, and a string that denotes no object answers identically from every query (measured — the ref this workflow first carried had its first eight characters right and the rest invented)."
+          exit 1
+        }
+        git -C "$dest" sparse-checkout set src package.json bun.lock tsconfig.json
+        git -C "$dest" checkout --quiet "$QUEST_SOURCE_REF"
+        # Frozen, with the bun .bun-version pins: quest-cli's lockfile was written
+        # by that same runtime, so a different bun compares against another
+        # runtime's lock and fails for a reason that has nothing to do with the
+        # version under test.
+        (cd "$dest" && bun install --frozen-lockfile)
+        bin="$RUNNER_TEMP/quest-bin"
+        mkdir -p "$bin"
+        printf '#!/usr/bin/env bash\nexec bun run "%s/src/cli/main.ts" "$@"\n' "$dest" > "$bin/quest"
+        chmod +x "$bin/quest"
+        # GITHUB_PATH applies to SUBSEQUENT steps, which is why the assertion is
+        # its own step below rather than part of this one.
+        echo "$bin" >> "$GITHUB_PATH"
+    - if: steps.npm.outputs.method == 'source'
+      shell: bash
+      env:
+        DECLARED: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        reported="$(quest --version)"
+        # Which `quest` answered, printed rather than assumed: the success line
+        # below is a provenance claim, and "built from source at the pinned ref"
+        # would be a claim this step never checked if the lookup had resolved
+        # something else. Nothing can do that today (the npm install failed, and
+        # GITHUB_PATH prepends), so this is a belt on the braces, not a fix.
+        resolved="$(command -v quest)"
+        if [ "$reported" != "$DECLARED" ]; then
+          echo "::error::the quest built from the pinned ref reports '$reported' but CLAUDE.md declares '$DECLARED'. The source-ref input names the commit carrying the declared version; a mismatch means the ref and the declaration have drifted apart, and no gate should run against the wrong peer. Failure is named HERE, as a ref problem, rather than later as a pair-lock refusal that reads like a lore defect."
+          exit 1
+        fi
+        echo "quest --version => $reported (resolved at $resolved, built from source at the pinned ref)"

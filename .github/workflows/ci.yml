@@ -104,6 +104,31 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # DEC-55 (operator ruling, 2026-09-29): the opum-ai/quest-cli commit that
+  # carries the Quest version CLAUDE.md's managed block declares. Read by
+  # .github/actions/setup-quest ONLY when that version does not install from
+  # npm — the window between lore's bump landing and quest's publish, in which
+  # lore's pair lock (LCLI-650) otherwise leaves the docs gate and compile smoke
+  # unable to run at all.
+  #
+  # Move this ref with the declaration in CLAUDE.md, never independently. The
+  # action asserts the built quest reports the declared version before any gate
+  # uses it, so a ref that has drifted from the declaration fails loudly as a
+  # ref problem rather than quietly testing the wrong peer.
+  #
+  # The ref is a commit, and a VERIFIED one — verify any replacement the same
+  # way, because a 40-character value that resolves nowhere answers identically
+  # from every query. Measured here: the ref this line first carried
+  # (b6e1da5168a3d9b1d57eb0d3d0e6f7f6c0afebf2) had its first eight characters
+  # right and the remaining thirty-two invented — it was a composed id, not a
+  # squash-merge artifact as an earlier revision of this comment claimed;
+  # GitHub retains a pull request's head ref, so even a deleted head branch's
+  # tip still resolves (both checked). ec79b543 is quest-cli's dev tip, which
+  # carries 0.12.0 in package.json, src/application/version.ts and
+  # src/contract/tracker/index.ts.
+  QUEST_SOURCE_REF: ec79b543f4575374e4ece5f73e123fbacdab6f64
+
 jobs:
   check:
     # OS list is computed inline by event: pull requests verify on ubuntu + windows
@@ -284,7 +309,10 @@ jobs:
           fi
           echo "Declared Quest version: $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - run: npm install -g "@opum-ai/quest@${{ steps.quest.outputs.version }}"
+      - uses: ./.github/actions/setup-quest
+        with:
+          version: ${{ steps.quest.outputs.version }}
+          source-ref: ${{ env.QUEST_SOURCE_REF }}
 
       # Catches a duplicated task identity — the same id present in both
       # .quest/tasks/ and .quest/completed/ — which exits conflict/5 and makes
@@ -348,7 +376,10 @@ jobs:
           fi
           echo "Declared Quest version: $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - run: npm install -g "@opum-ai/quest@${{ steps.quest.outputs.version }}"
+      - uses: ./.github/actions/setup-quest
+        with:
+          version: ${{ steps.quest.outputs.version }}
+          source-ref: ${{ env.QUEST_SOURCE_REF }}
 
       # Runs lore FROM SOURCE, not the published package. In this repository that is the
       # stronger assertion of the two: a PR that breaks `lore check` fails on its own
@@ -564,7 +595,10 @@ jobs:
           fi
           echo "Declared Quest version: $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - run: npm install -g "@opum-ai/quest@${{ steps.quest.outputs.version }}"
+      - uses: ./.github/actions/setup-quest
+        with:
+          version: ${{ steps.quest.outputs.version }}
+          source-ref: ${{ env.QUEST_SOURCE_REF }}
       - name: README quickstart runs verbatim and its examples match real output
         run: scripts/readme-quickstart.sh dist/lore
 
