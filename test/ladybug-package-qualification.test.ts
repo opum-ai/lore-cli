@@ -6,9 +6,11 @@ import * as yaml from "js-yaml";
 import { packageBuildConfig, windowsReferenceOnlyLadybugPlugin } from "../benchmark/ladybug/package-build";
 import {
   assertPackageQualificationReport,
+  boundedNativeProbeOutput,
   isKnownNativeCrash,
   isProvenAbruptWindowsImportCrash,
   LADYBUG_PACKAGE_QUALIFICATION_SCHEMA,
+  NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT,
   packageCompileCommand,
   parsePackageQualificationArgs,
   removeQualificationScratch,
@@ -644,5 +646,33 @@ describe("matching-host Ladybug package qualification", () => {
         importFailed: false,
       }),
     ).toBe(true);
+  });
+
+  test("a refusal carries the marker booleans and a bounded excerpt of the child's own output (LCLI-657)", () => {
+    const runner = readFileSync(PACKAGE_RUNNER_PATH, "utf8");
+    // A refusal is only diagnosable if it says WHICH marker state it refused and repeats some
+    // of what the child said. Before LCLI-657 both messages carried digests alone, so the
+    // deterministic win32-x64 driver-load rejection could not be read from the log, the jobs
+    // API, or the artifact -- and a green re-run would have hidden the gap. The digest stays;
+    // the excerpt is added beside it, on BOTH refusal branches.
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: asserting the exact refusal text the runner emits, placeholders and all.
+    const markers = "markers={started:${importStarted}, completed:${importCompleted}, failed:${importFailed}}";
+    expect(runner).toContain(markers);
+    expect(runner.match(/stderrExcerpt=\$\{JSON\.stringify\(boundedNativeProbeOutput\(stderr\)\)\}/g)?.length).toBe(2);
+
+    // Past the limit the excerpt keeps the head AND the tail, because a JavaScript rejection
+    // leads with its message and ends with its deepest frame -- either end alone can drop the
+    // half that answers the question.
+    const long = `${"H".repeat(2_500)}${"T".repeat(2_500)}`;
+    const excerpt = boundedNativeProbeOutput(long);
+    expect(excerpt.startsWith("H".repeat(NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT / 2))).toBe(true);
+    expect(excerpt.endsWith("T".repeat(NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT / 2))).toBe(true);
+    expect(excerpt).toContain("[1000 bytes elided]");
+
+    // Under the limit nothing is dropped and nothing is marked.
+    expect(boundedNativeProbeOutput("short")).toBe("short");
+    expect(boundedNativeProbeOutput("x".repeat(NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT))).toBe(
+      "x".repeat(NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT),
+    );
   });
 });

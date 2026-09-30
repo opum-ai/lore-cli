@@ -727,7 +727,7 @@ async function runNativeProbe(input: PackageQualificationInput, scratch: string)
     }
     if (!isProvenAbruptWindowsImportCrash({ exitCode, signal, importStarted, importCompleted, importFailed })) {
       throw new Error(
-        `Windows native probe failed without a proven abrupt native stop (exit=${exitCode}, signal=${signal ?? "none"}, stdout=${stdoutSha256}, stderr=${stderrSha256})`,
+        `Windows native probe failed without a proven abrupt native stop (exit=${exitCode}, signal=${signal ?? "none"}, markers={started:${importStarted}, completed:${importCompleted}, failed:${importFailed}}, stdout=${stdoutSha256}, stderr=${stderrSha256}, stderrExcerpt=${JSON.stringify(boundedNativeProbeOutput(stderr))})`,
       );
     }
     return {
@@ -745,7 +745,7 @@ async function runNativeProbe(input: PackageQualificationInput, scratch: string)
 
   if (exitCode !== 0 || signal !== null) {
     throw new Error(
-      `native indexing probe failed (exit=${exitCode}, signal=${signal ?? "none"}, stdout=${stdoutSha256}, stderr=${stderrSha256})`,
+      `native indexing probe failed (exit=${exitCode}, signal=${signal ?? "none"}, stdout=${stdoutSha256}, stderr=${stderrSha256}, stderrExcerpt=${JSON.stringify(boundedNativeProbeOutput(stderr))})`,
     );
   }
   const report = parseNativeProbeReport(stdout);
@@ -816,6 +816,26 @@ export function isProvenAbruptWindowsImportCrash(evidence: {
     !evidence.importCompleted &&
     !evidence.importFailed
   );
+}
+
+/** How much of a probe child's captured stream a failure message carries (LCLI-657). */
+export const NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT = 4_000;
+
+/**
+ * A bounded excerpt of a probe child's captured stream, for a failure MESSAGE rather than a
+ * report field.
+ *
+ * Head AND tail are kept, deliberately: a JavaScript rejection leads with its message and
+ * ends with its deepest frame, so a one-ended excerpt can drop whichever of the two says
+ * what went wrong. Before LCLI-657 these messages carried only digests, so a deterministic
+ * win32-x64 failure could not be diagnosed from the log, the jobs API, or the artifact --
+ * the JSON report is written after the throw -- and a green re-run would have hidden it.
+ * The digest stays the identity of the bytes; the excerpt is what makes them readable.
+ */
+export function boundedNativeProbeOutput(value: string, limit = NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT): string {
+  if (value.length <= limit) return value;
+  const half = Math.floor(limit / 2);
+  return `${value.slice(0, half)}...[${value.length - limit} bytes elided]...${value.slice(-half)}`;
 }
 
 async function smoke(
