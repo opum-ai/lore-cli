@@ -502,6 +502,22 @@ export function runInit(options: InitOptions): number | Promise<number> {
   let cachedSelection: TrackerSelection | undefined;
   const priorSelection = (): TrackerSelection => (cachedSelection ??= resolveTrackerSelection(options.root));
   assertFlagCombinations(parsed, options.root);
+  // N9 (ADR-0024): `--install-tracker` and `--no-install-tracker` stay accepted for one release and
+  // install nothing on any path. The note is written once, here — stderr only, never stdout, so a
+  // `--json` run's envelope stays the envelope — and it therefore reaches the operator whether the
+  // run then succeeds, stops at a readiness gate, or fails for an unrelated reason. It has to come
+  // BEFORE the readiness gate for exactly that last case: a not-ready run with the flag on is the
+  // run whose caller most needs to be told the flag no longer does anything. The two together are
+  // still a usage error, raised in `parseInitArgs` before this point is reachable at all.
+  if (parsed.installTracker || parsed.noInstallTracker) {
+    (options.stderr ?? process.stderr).write(installTrackerDeprecation());
+  }
+  // ADR-0024's precedence, in this order and no other: the flag GRAMMAR guards above (exit `2`),
+  // then the selected backend's readiness (N1/N2/N5/N6 — the commands those stops hand over run),
+  // and only then N3's question about the Backlog tasks. The not-ready case therefore never learns
+  // about a migration it cannot run.
+  assertSelectedBackendReady(parsed, options);
+  assertBacklogProjectChoice(parsed, options.root);
 
   const git = options.git ?? realGitPreflight(options.root);
 
@@ -516,15 +532,6 @@ export function runInit(options: InitOptions): number | Promise<number> {
   // already has one, opted out with `--allow-no-git`, or fails before writing a single byte.
   if (!parsed.allowNoGit && !git.isRepository()) {
     throw missingGitRepository();
-  }
-  // N9 (ADR-0024): `--install-tracker` and `--no-install-tracker` stay accepted for one release and
-  // install nothing on any path. The note is written once, here, before any branch can return or
-  // throw — stderr only, never stdout, so a `--json` run's envelope stays the envelope — and it
-  // therefore reaches the operator whether the run then succeeds, stops at a readiness gate, or
-  // fails for an unrelated reason. The two together are still a usage error, raised in
-  // `parseInitArgs` before this point is reachable at all.
-  if (parsed.installTracker || parsed.noInstallTracker) {
-    (options.stderr ?? process.stderr).write(installTrackerDeprecation());
   }
   const base = applyBaseScaffold(options, plan);
   const created = base.created;
@@ -599,6 +606,45 @@ export function runInit(options: InitOptions): number | Promise<number> {
   return finishNonInteractive(options, parsed, base, clock, priorSelection);
 }
 
+/** The backend an explicit selection's readiness gate applies to, or `undefined` when none does. */
+function gatedBackend(parsed: InitArgs): TrackerBackend | undefined {
+  const backend = parsed.tracker;
+  // `none` has no CLI to be ready, and jira is verified by {@link configureJira} instead, which
+  // resolves a real credential profile and a real project key against the live CLI before either is
+  // written (LCLI-358.4) — including its own `not_found` when the `jira` binary is absent (O7/N7,
+  // unchanged). Probing it again here would spawn jira-cli a second time to re-learn what that step
+  // just proved.
+  if (backend === undefined || backend === "none" || backend === "jira") return undefined;
+  // N10: `--no-tracker` is the documented opt-out, for pinning a backend before installing its
+  // tooling. N4: `--migrate-backlog` is the operator's own explicit invocation, and the migration
+  // proves quest usable by actually using it.
+  if (parsed.noTracker || parsed.migrateBacklog) return undefined;
+  return backend;
+}
+
+/**
+ * The readiness half of ADR-0024's gate for an explicit `--tracker` selection (N1/N2/N5/N6): the
+ * backend's CLI is not on PATH (`not_found`, exit `3`), or it is on PATH but this repository
+ * carries none of its marker (`validation`, exit `6`). This is the tightening the ADR exists for —
+ * before it, a `--tracker quest` with no quest installed wrote `backend = "quest"` and exited `0`,
+ * and every later command failed for a reason the run could have named.
+ *
+ * **Synchronous, and called BEFORE {@link assertBacklogProjectChoice},** which is the point of
+ * splitting it out of {@link verifySelectedBackend}: N3's remedy is the `--migrate-backlog`
+ * command, and a repository with no usable quest cannot run it. The environment gate cannot replace
+ * the probe below, and the probe cannot replace the gate — a marker file says nothing about the
+ * pair lock, and a missing binary is a `not_found` the probe reports only as one advisory failure
+ * among many.
+ */
+function assertSelectedBackendReady(parsed: InitArgs, options: InitOptions): void {
+  const backend = gatedBackend(parsed);
+  if (backend === undefined) return;
+  const entry = trackerEntry(trackerEnvironmentFor(options), backend);
+  if (entry !== undefined && !trackerReady(entry)) {
+    throw trackerNotReady(entry);
+  }
+}
+
 /**
  * Verify an explicitly selected backend BEFORE the selection is persisted (LCLI-356 AC#2), letting
  * the adapter's own classified {@link LoreError} propagate: an unusable backend must fail the run
@@ -607,40 +653,19 @@ export function runInit(options: InitOptions): number | Promise<number> {
  * Returns the resulting {@link InitTrackerCheck} so the advisory step downstream reuses this
  * probe's answer instead of spawning the tracker a second time.
  *
- * **Two gates, in this order, and both are the ADR-0024 stop rather than a warning.**
- *
- * 1. {@link trackerNotReady} against the detected environment (N1/N2/N5/N6): the backend's CLI is
- *    not on PATH (`not_found`, exit `3`), or it is on PATH but this repository carries none of its
- *    marker (`validation`, exit `6`). This is the tightening the ADR exists for — before it, a
- *    `--tracker quest` with no quest installed wrote `backend = "quest"` and exited `0`, and every
- *    later command failed for a reason the run could have named.
- * 2. The adapter's own `probe()`, through {@link verifyBackendReadiness}: the exact-pair lock and
- *    Backlog's version floor, which no repository-local fact can answer.
- *
- * The environment gate cannot replace the probe, and the probe cannot replace the gate: a marker
- * file says nothing about the pair lock, and a missing binary is a `not_found` the probe reports
- * only as one advisory failure among many. `none`, `jira`, and `--no-tracker` are skipped entirely.
- * `none` has nothing to verify; `--no-tracker` is the documented opt-out (N10) for pinning a
- * backend before installing its tooling; and jira is verified by {@link configureJira} instead,
- * which resolves a real credential profile and a real project key against the live CLI before
- * either is written (LCLI-358.4) — including its own `not_found` when the `jira` binary is absent
- * (O7/N7, unchanged). Probing it again here would spawn jira-cli a second time to re-learn what
- * that step just proved.
+ * **The second of ADR-0024's two gates.** The first — {@link assertSelectedBackendReady}'s
+ * environment verdict — has already run, before the flag guards' N3 question and before the
+ * scaffold. What is left for this one is what no repository-local fact can answer: the adapter's
+ * own `probe()`, through {@link verifyBackendReadiness}, which carries the exact-pair lock and
+ * Backlog's version floor. It is asynchronous because it spawns the backend.
  *
  * The interactive wizard deliberately does not call this. It runs the same readiness gate inside
  * {@link chooseTracker}, where a quest selection gets the offer-and-continue arm (O1/O2) instead of
  * a bare stop.
  */
 async function verifySelectedBackend(options: InitOptions, parsed: InitArgs): Promise<InitTrackerCheck | undefined> {
-  const backend = parsed.tracker;
-  if (backend === undefined || backend === "none" || backend === "jira" || parsed.noTracker) {
-    return undefined;
-  }
-  const entry = trackerEntry(trackerEnvironmentFor(options), backend);
-  if (entry !== undefined && !trackerReady(entry)) {
-    throw trackerNotReady(entry);
-  }
-  return verifyBackendReadiness(options, backend);
+  const backend = gatedBackend(parsed);
+  return backend === undefined ? undefined : verifyBackendReadiness(options, backend);
 }
 
 /** {@link InitOptions.trackerEnvironment}, defaulting to the real PATH-and-marker probe. */
@@ -836,18 +861,6 @@ function assertFlagCombinations(parsed: InitArgs, root: string): void {
       { marker: BACKLOG_PROJECT_MARKER },
     );
   }
-  // A scripted Quest selection over real Backlog tasks must state what happens to them (AC#3).
-  // Whether the bundle reached Backlog through an explicit `backend = "backlog"` or through the
-  // zero-config legacy default is irrelevant: the tasks are equally real either way, and the old
-  // `source === "legacy-backlog"` gate let the explicit case succeed in silence.
-  if (parsed.tracker === "quest" && !parsed.migrateBacklog && !parsed.keepBacklogTasks && hasBacklogProject(root)) {
-    throw new LoreError(
-      "validation",
-      `selecting Quest here would leave the Backlog.md project at ${LEGACY_BACKLOG_DIR}/ behind, and that must be a deliberate choice`,
-      BACKLOG_MIGRATION_COMMANDS_HINT,
-      { marker: BACKLOG_PROJECT_MARKER },
-    );
-  }
   if (parsed.keepBacklogTasks && parsed.tracker !== "quest") {
     throw usage(
       "--keep-backlog-tasks only means something with --tracker quest",
@@ -865,6 +878,32 @@ function assertFlagCombinations(parsed: InitArgs, root: string): void {
     throw usage(
       "--adopt-manifest requires --approval-digest: pass the exact digest of the reviewed adoption preview",
       "run `lore backlog adopt preview --manifest <path>` first and pass its approval.digest",
+    );
+  }
+}
+
+/**
+ * N3: a scripted Quest selection over real Backlog tasks must state what happens to them (AC#3).
+ *
+ * Whether the bundle reached Backlog through an explicit `backend = "backlog"` or through the
+ * zero-config legacy default is irrelevant: the tasks are equally real either way, and the old
+ * `source === "legacy-backlog"` gate let the explicit case succeed in silence.
+ *
+ * **Split out of {@link assertFlagCombinations} so {@link assertSelectedBackendReady} can run
+ * first** (ADR-0024's precedence; LCLI-656 review D2). N3's row in the ADR is conditioned on the
+ * detected state "ready, `backlog/config.yml` present" — and the remedy it hands over is the
+ * `--migrate-backlog` command, which is useless in a repository with no usable quest. Evaluating
+ * the readiness gate first means the not-ready case gets N1/N2/N5/N6 (whose commands DO work), and
+ * the ready case still gets exactly this message at exit `6`. Like every other guard here it runs
+ * BEFORE the scaffold (LCLI-358.1), so a refusal still writes nothing.
+ */
+function assertBacklogProjectChoice(parsed: InitArgs, root: string): void {
+  if (parsed.tracker === "quest" && !parsed.migrateBacklog && !parsed.keepBacklogTasks && hasBacklogProject(root)) {
+    throw new LoreError(
+      "validation",
+      `selecting Quest here would leave the Backlog.md project at ${LEGACY_BACKLOG_DIR}/ behind, and that must be a deliberate choice`,
+      BACKLOG_MIGRATION_COMMANDS_HINT,
+      { marker: BACKLOG_PROJECT_MARKER },
     );
   }
 }

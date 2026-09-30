@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -114,6 +115,34 @@ function detectedEnvironment(
     },
   ] as const;
   return base.map((entry) => ({ ...entry, ...(overrides[entry.backend] ?? {}) })) as TrackerEnvironment;
+}
+
+/**
+ * Sorted `relative/path <sha256 of its bytes>` lines for everything under `dir` — a recursive,
+ * content-level snapshot, for the assertions that claim a refused run wrote NOTHING.
+ *
+ * A bare `readdirSync(root)` cannot carry that claim: it sees one level, so a regression that wrote
+ * `.lore/profile.toml` or a schema before an offer would still pass, and in a `legacyBundle()` root
+ * (where `.lore/` and `backlog/` already exist) an empty first level was never assertable at all
+ * (LCLI-656 review D6). Non-regular entries are recorded by kind rather than read.
+ */
+function treeDigest(dir: string, prefix = ""): string[] {
+  const lines: string[] = [];
+  for (const entry of readdirSync(join(dir, prefix), { withFileTypes: true })) {
+    const rel = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+    if (entry.isDirectory()) {
+      lines.push(...treeDigest(dir, rel));
+    } else if (entry.isFile()) {
+      lines.push(
+        `${rel} ${createHash("sha256")
+          .update(readFileSync(join(dir, rel)))
+          .digest("hex")}`,
+      );
+    } else {
+      lines.push(`${rel} <${entry.isSymbolicLink() ? "symlink" : "non-regular"}>`);
+    }
+  }
+  return lines.sort();
 }
 
 /**
@@ -1305,7 +1334,16 @@ describe("lore init — legacy zero-config tracker boundary", () => {
     expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
 
     const silent = expectError("validation", () =>
-      runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), args: ["--tracker", "quest"] }),
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        args: ["--tracker", "quest"],
+        // A READY quest: this test is about the Backlog-project guard (N3), which the ADR conditions
+        // on exactly that state. With quest unusable the readiness stop fires first (D2, below).
+        trackerEnvironment: () => detectedEnvironment(),
+      }),
     );
     expect(silent.message).toContain("must be a deliberate choice");
     expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
@@ -1412,7 +1450,7 @@ describe("lore init — legacy zero-config tracker boundary", () => {
 
   test("accepting the O3 offer stops with the migration commands and writes nothing (ADR-0024 AC#6)", async () => {
     legacyBundle();
-    const before = readdirSync(root).sort();
+    const before = treeDigest(root);
     const base = scriptedPrompter({ tracker: "quest", agents: false, site: "none", obsidian: false });
     const defaults: boolean[] = [];
     const prompter: InitPrompter = {
@@ -1451,8 +1489,8 @@ describe("lore init — legacy zero-config tracker boundary", () => {
     expect(err?.hint).toContain("lore init --tracker quest --migrate-backlog");
     expect(err?.hint).toContain("--keep-backlog-tasks");
     expect(err?.hint).toContain("lore init --tracker backlog");
-    // Nothing is written, and lore runs no migration on the operator's behalf (DEC-57).
-    expect(readdirSync(root).sort()).toEqual(before);
+    // Nothing is written — at any depth — and lore runs no migration on the operator's behalf.
+    expect(treeDigest(root)).toEqual(before);
   });
 
   test("a deliberate Backlog choice is never interrupted: the O6 offer defaults to NO and proceeds (ADR-0024 AC#6)", async () => {
@@ -1486,7 +1524,7 @@ describe("lore init — legacy zero-config tracker boundary", () => {
 
   test("accepting the O6 offer stops with the same commands as O3 and writes nothing (ADR-0024 AC#6)", async () => {
     legacyBundle();
-    const before = readdirSync(root).sort();
+    const before = treeDigest(root);
     const base = scriptedPrompter({ tracker: "backlog", agents: false, site: "none", obsidian: false });
     const prompter: InitPrompter = {
       ...base,
@@ -1516,13 +1554,20 @@ describe("lore init — legacy zero-config tracker boundary", () => {
     );
     expect(err?.type).toBe("validation");
     expect(err?.hint).toContain("lore init --tracker quest --migrate-backlog");
-    expect(readdirSync(root).sort()).toEqual(before);
+    expect(treeDigest(root)).toEqual(before);
   });
 
   test("the N3 refusal names the actor context the handed-over command needs (ADR-0024 AC#9)", () => {
     legacyBundle();
     const error = expectError("validation", () =>
-      runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), args: ["--tracker", "quest"] }),
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        args: ["--tracker", "quest"],
+        trackerEnvironment: () => detectedEnvironment(),
+      }),
     );
     expect(error.message).toContain("must be a deliberate choice");
     expect(error.hint).toContain("LORE_QUEST_ACTOR=<you>");
@@ -1532,6 +1577,54 @@ describe("lore init — legacy zero-config tracker boundary", () => {
     expect(error.hint).toContain("--keep-backlog-tasks");
     expect(error.hint).toContain("lore init --tracker backlog");
     expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
+  });
+
+  test("with a Backlog project AND no usable quest, the readiness stop wins over N3 — install remedy, exit 3 (D2)", () => {
+    // The combined case the ADR's tables do not spell out. N3's row is conditioned on the detected
+    // state "ready, backlog/config.yml present"; here that state does NOT hold and N1's does. The
+    // ordering matters because N3 hands over the `--migrate-backlog` command, which cannot run in a
+    // repository with no quest — ADR-0024's own principle is that a "yes" hands over commands that
+    // work. So the readiness gate is evaluated BEFORE the Backlog-project guard.
+    legacyBundle();
+    const before = treeDigest(root); // `.lore/` and `backlog/` are already there — the point
+    const err = expectError("not_found", () =>
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        args: ["--tracker", "quest"],
+        trackerEnvironment: () => detectedEnvironment({ quest: { installed: false, initialized: false } }),
+      }),
+    );
+    expect(exitCodeFor(err)).toBe(EXIT_CODES.not_found); // exit 3, N1's class
+    expect(err.hint).toContain(`npm install -g @opum-ai/quest@${VERSION}`);
+    expect(err.hint).toContain("run `quest init`");
+    expect(err.message).not.toContain("must be a deliberate choice");
+    // No scaffold either: the gate runs before the first write, so the legacy bundle is untouched.
+    expect(treeDigest(root)).toEqual(before);
+  });
+
+  test("with a Backlog project AND a usable quest, N3 still refuses at exit 6 — unchanged (D2)", () => {
+    // The other half of the precedence: the ready case must reach exactly today's message, not the
+    // readiness stop. Both halves are asserted because a gate that swallows N3 entirely would pass
+    // the test above.
+    legacyBundle();
+    const err = expectError("validation", () =>
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        args: ["--tracker", "quest"],
+        trackerEnvironment: () => detectedEnvironment(),
+      }),
+    );
+    expect(exitCodeFor(err)).toBe(EXIT_CODES.validation); // exit 6, N3's class
+    expect(err.message).toContain("must be a deliberate choice");
+    expect(err.hint).toContain("lore init --tracker quest --migrate-backlog");
   });
 
   test("jira and none stay reachable in a repository that has Backlog tasks (AC#1)", async () => {
@@ -2673,7 +2766,9 @@ describe("lore init — the tracker environment is detected before the choice (L
     // O1. The offer is a STOP, not an install: nothing is executed, and the directory the run
     // started with is the directory it leaves behind — the wizard's every-prompt-precedes-the-first
     // -write invariant, which is what makes "nothing written" checkable rather than aspirational.
-    const before = readdirSync(root).sort();
+    // Snapshot at content level: a `.lore/` written before the offer would be invisible to a
+    // top-level listing (D6).
+    const before = treeDigest(root);
     const asked: string[] = [];
     const base = scriptedPrompter({ tracker: "quest", site: "none", obsidian: false });
     const prompter: InitPrompter = {
@@ -2705,7 +2800,7 @@ describe("lore init — the tracker environment is detected before the choice (L
     expect(err?.hint).toContain(`npm install -g @opum-ai/quest@${VERSION}`);
     expect(err?.hint).toContain("run `quest init`");
     expect(err?.hint).toContain("rerun `lore init`");
-    expect(readdirSync(root).sort()).toEqual(before); // byte-identical: nothing was written
+    expect(treeDigest(root)).toEqual(before); // byte-identical, at every depth: nothing was written
   });
 
   test("O1 drops the `quest init` step when the workspace marker is already there (ADR-0024 AC#1)", async () => {
@@ -2757,7 +2852,7 @@ describe("lore init — the tracker environment is detected before the choice (L
   });
 
   test("selecting quest installed but uninitialized offers O2; yes stops with `quest init`, exit 6, nothing written (ADR-0024 AC#2)", async () => {
-    const before = readdirSync(root).sort();
+    const before = treeDigest(root);
     const err = await Promise.resolve(
       runInit({
         root,
@@ -2778,7 +2873,7 @@ describe("lore init — the tracker environment is detected before the choice (L
     expect(err?.type).toBe("validation"); // exit 6: the state, not the answer
     expect(err?.message).toContain(".quest/workspace.toml");
     expect(err?.hint).toContain("run `quest init` here, then rerun `lore init`");
-    expect(readdirSync(root).sort()).toEqual(before);
+    expect(treeDigest(root)).toEqual(before);
   });
 
   test("declining O2 returns to the tracker question (O2b, ADR-0024 AC#2)", async () => {
@@ -2902,10 +2997,13 @@ describe("lore init — the tracker environment is detected before the choice (L
     expect(err?.hint).toContain("run `backlog init` here, then rerun `lore init`");
   });
 
-  test("--tracker quest with quest not on PATH stops with the O1 remedy at exit 3 (N1, ADR-0024 AC#4)", async () => {
+  test("--tracker quest with quest not on PATH stops with the O1 remedy at exit 3 (N1, ADR-0024 AC#4)", () => {
     // Today (before this change) the same invocation was advisory and exited 0 having written
     // `backend = "quest"` into a repository with no quest — the LCLI-356 defect.
-    const err = await Promise.resolve(
+    // Thrown SYNCHRONOUSLY: the readiness gate runs ahead of every async step in `runInit`, which
+    // is what lets it precede the Backlog-project guard (D2) and what leaves the directory
+    // completely untouched — no scaffold either.
+    const err = expectError("not_found", () =>
       runInit({
         root,
         git: gitStub(),
@@ -2916,18 +3014,14 @@ describe("lore init — the tracker environment is detected before the choice (L
         args: ["--tracker", "quest"],
         trackerEnvironment: () => detectedEnvironment({ quest: { installed: false, initialized: false } }),
       }),
-    ).then(
-      () => undefined,
-      (caught: unknown) => caught as LoreError,
     );
-    expect(err?.type).toBe("not_found"); // exit 3
-    expect(err?.hint).toContain(`npm install -g @opum-ai/quest@${VERSION}`);
-    expect(err?.hint).toContain("run `quest init`");
-    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).not.toContain('backend = "quest"');
+    expect(err.hint).toContain(`npm install -g @opum-ai/quest@${VERSION}`);
+    expect(err.hint).toContain("run `quest init`");
+    expect(readdirSync(root)).toEqual([]);
   });
 
-  test("--tracker quest with no workspace stops at exit 6 (N2, ADR-0024 AC#4)", async () => {
-    const err = await Promise.resolve(
+  test("--tracker quest with no workspace stops at exit 6 (N2, ADR-0024 AC#4)", () => {
+    const err = expectError("validation", () =>
       runInit({
         root,
         git: gitStub(),
@@ -2938,17 +3032,13 @@ describe("lore init — the tracker environment is detected before the choice (L
         args: ["--tracker", "quest"],
         trackerEnvironment: () => detectedEnvironment({ quest: { installed: true, initialized: false } }),
       }),
-    ).then(
-      () => undefined,
-      (caught: unknown) => caught as LoreError,
     );
-    expect(err?.type).toBe("validation"); // exit 6
-    expect(err?.hint).toContain("run `quest init` here, then rerun `lore init`");
-    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).not.toContain('backend = "quest"');
+    expect(err.hint).toContain("run `quest init` here, then rerun `lore init`");
+    expect(readdirSync(root)).toEqual([]);
   });
 
-  test("--tracker backlog stops at exit 3 when missing (N5) and exit 6 when uninitialized (N6)", async () => {
-    const missing = await Promise.resolve(
+  test("--tracker backlog stops at exit 3 when missing (N5) and exit 6 when uninitialized (N6)", () => {
+    const missing = expectError("not_found", () =>
       runInit({
         root,
         git: gitStub(),
@@ -2959,15 +3049,11 @@ describe("lore init — the tracker environment is detected before the choice (L
         args: ["--tracker", "backlog"],
         trackerEnvironment: () => detectedEnvironment({ backlog: { installed: false } }),
       }),
-    ).then(
-      () => undefined,
-      (caught: unknown) => caught as LoreError,
     );
-    expect(missing?.type).toBe("not_found"); // exit 3
-    expect(missing?.hint).toContain("npm install -g backlog.md");
-    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).not.toContain('backend = "backlog"');
+    expect(missing.hint).toContain("npm install -g backlog.md");
+    expect(readdirSync(root)).toEqual([]);
 
-    const uninitialized = await Promise.resolve(
+    const uninitialized = expectError("validation", () =>
       runInit({
         root,
         git: gitStub(),
@@ -2978,13 +3064,9 @@ describe("lore init — the tracker environment is detected before the choice (L
         args: ["--tracker", "backlog"],
         trackerEnvironment: () => detectedEnvironment({ backlog: { installed: true, initialized: false } }),
       }),
-    ).then(
-      () => undefined,
-      (caught: unknown) => caught as LoreError,
     );
-    expect(uninitialized?.type).toBe("validation"); // exit 6, today advisory — a deliberate tightening
-    expect(uninitialized?.hint).toContain("run `backlog init` here, then rerun `lore init`");
-    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).not.toContain('backend = "backlog"');
+    expect(uninitialized.hint).toContain("run `backlog init` here, then rerun `lore init`");
+    expect(readdirSync(root)).toEqual([]);
   });
 
   test("a bare non-TTY `lore init` with no --tracker is unchanged: it pins the default and probes nothing (N8, ADR-0024 AC#4)", async () => {
@@ -3023,9 +3105,9 @@ describe("lore init — the tracker environment is detected before the choice (L
     expect(stderr).toContain("deprecation: lore no longer installs tracker CLIs on your behalf");
   });
 
-  test("a not-ready selection stops as N1/N2/N5/N6 with the deprecation note printed (N9)", async () => {
+  test("a not-ready selection stops as N1/N2/N5/N6 with the deprecation note printed (N9)", () => {
     const stderr = capture();
-    const err = await Promise.resolve(
+    const err = expectError("not_found", () =>
       runInit({
         root,
         git: gitStub(),
@@ -3036,13 +3118,9 @@ describe("lore init — the tracker environment is detected before the choice (L
         args: ["--tracker", "quest", "--install-tracker"],
         trackerEnvironment: () => detectedEnvironment({ quest: { installed: false, initialized: false } }),
       }),
-    ).then(
-      () => undefined,
-      (caught: unknown) => caught as LoreError,
     );
-    expect(err?.type).toBe("not_found");
-    expect(err?.hint).toContain(`npm install -g @opum-ai/quest@${VERSION}`);
-    // The note is written before the branch that stops, so a caller that passes the deprecated flag
+    expect(err.hint).toContain(`npm install -g @opum-ai/quest@${VERSION}`);
+    // The note is written before the gate that stops, so a caller that passes the deprecated flag
     // learns it no longer means anything on the very run it stopped on.
     expect(stderr.text()).toContain("deprecation: lore no longer installs tracker CLIs on your behalf");
   });
