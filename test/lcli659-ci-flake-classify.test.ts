@@ -85,6 +85,23 @@ describe("LCLI-659 CI flake classifier", () => {
     expect(result.stdout).toBe("");
   });
 
+  test("a duration-LESS failing line stays fatal even when its name carries a bracket", () => {
+    // The residual the review measured on the looser anchor: with only the name's bracket present
+    // (a truncated or abnormal line), the end-anchor still parsed it as a duration and scored a
+    // hang. Anchoring to the bracket plus trailing whitespace only makes that line unparseable,
+    // and an unparseable failure is fatal rather than retryable.
+    const result = classify("(fail) reads the [10000ms] budget marker\n");
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+  });
+
+  test("trailing whitespace after the duration does not change the verdict", () => {
+    // The stricter anchor must not turn an ordinary trailing space or tab into a parse failure:
+    // that would flip a real hang from retryable to fatal, the other direction.
+    expect(classify(hang("space after", 10_000.17).replace("\n", " \n")).status).toBe(0);
+    expect(classify(hang("tab after", 10_000.17).replace("\n", "\t\n")).status).toBe(0);
+  });
+
   test("a CRLF log takes the same path, so a carriage return is not a missed retry", () => {
     // Review F2: the tolerance was correct but unpinned, and an end-anchored mutant that ignores
     // the trailing CR flips this from retryable to fatal with every other case still green.

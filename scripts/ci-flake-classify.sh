@@ -47,14 +47,22 @@ fi
 # THE LAST BRACKET, not the first, and that is a correctness requirement rather than a style
 # choice: a test's NAME may itself contain a duration-looking bracket, and reading the first one
 # would score a genuine assertion failure as a hang -- the wrong direction, since it is exactly
-# the failure the rule exists to keep fatal. Anchoring the match to the end of the line is what
-# selects the recorded duration, which bun always appends last. The anchor also tolerates a
-# trailing CR, so a CRLF log is classified by the same path.
+# the failure the rule exists to keep fatal. Anchoring to the end of the line, allowing only
+# trailing whitespace after the bracket, is what selects the recorded duration bun appends last;
+# it also covers a trailing CR, so a CRLF log takes the same path, and it keeps a duration-LESS
+# line fatal even when the name carries a bracket (a review measured the looser `[^[]*$` anchor
+# parsing that name bracket as a hang).
 awk -v budget="$budget" '
   /^\(fail\) / {
     failures++
-    if (match($0, /\[[0-9]+(\.[0-9]+)?ms\][^[]*$/)) {
-      duration = substr($0, RSTART + 1, RLENGTH - 4) + 0
+    if (match($0, /\[[0-9]+(\.[0-9]+)?ms\][ \t\r]*$/)) {
+      # Strip the ms] suffix explicitly rather than leaning on awk numeric-prefix conversion:
+      # RLENGTH includes the trailing run, so a subtraction would have to know its length, and a
+      # silent parse failure here would score a hang. No apostrophes in these comments -- this
+      # program is inside a single-quoted shell string, where one would end it.
+      token = substr($0, RSTART + 1, RLENGTH)
+      sub(/ms\].*$/, "", token)
+      duration = token + 0
       if (duration >= budget) {
         hung++
         # Bun prints a failure twice -- inline and again in its summary -- so the names are
