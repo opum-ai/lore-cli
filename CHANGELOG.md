@@ -65,8 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the wizard, and no TTY means the same stop rather than an assumed "no". Marked breaking
   because three previously-advisory cases are now stops: `--tracker quest` or `--tracker backlog`
   with the CLI missing or the project uninitialized used to warn and persist a selection (exit `0`)
-  and now stop with the instructions (exit `3`/`6`) without persisting it — the *selection* is what
-  stops; the bundle scaffold on that path still lands, as it did. `--install-tracker` and `--no-install-tracker` are accepted for one release as no-ops that
+  and now stop with the instructions (exit `3`/`6`), writing nothing at all — the stop precedes the
+  scaffold, so neither the selection nor the bundle lands until the backend can serve it. `--install-tracker` and `--no-install-tracker` are accepted for one release as no-ops that
   print a deprecation note — they install nothing, on any path, and together remain a usage error.
   The wizard's post-migration `backlog/` removal offer is gone with the wizard's migration arm
   (the flag path's `--remove-backlog`/`--no-remove-backlog` is unchanged), `--no-tracker` remains the
