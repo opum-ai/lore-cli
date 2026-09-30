@@ -736,12 +736,18 @@ describe("matching-host Ladybug package qualification", () => {
       signal: null,
       stdoutSha256: `sha256:${"11".repeat(32)}`,
       stderrSha256: `sha256:${"22".repeat(32)}`,
-      stderr: "native probe could not open its fixture",
+      // The sample carries a NEWLINE on purpose: an excerpt rendered without JSON.stringify is
+      // still "found" by a substring assertion, so a single-line sample cannot tell the escaping
+      // from its absence -- a peer review measured exactly that hole on this branch.
+      stderr: "native probe could not open its fixture\n    at runNativeProbe (native-probe.ts:88)",
     });
     expect(message).toContain("exit=3, signal=none");
     expect(message).toContain(`stdout=sha256:${"11".repeat(32)}`);
     expect(message).toContain(`stderr=sha256:${"22".repeat(32)}`);
     expect(message).toContain("native probe could not open its fixture");
+    expect(message).toContain("at runNativeProbe (native-probe.ts:88)");
+    expect(message).toContain('stderrExcerpt="');
+    expect(message).not.toContain("\n");
   });
 
   test("the bounded excerpt keeps both ends and claims only the elision it did (LCLI-657)", () => {
