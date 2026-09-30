@@ -329,6 +329,9 @@ function packageReport(platform: (typeof LADYBUG_QUALIFICATION_PLATFORMS)[number
       supportClaim: platform.supportClaim,
       probeMode: platform.nativeAddonAvailable ? (windows ? "import" : "indexed") : "unavailable",
       probeOutcome: platform.nativeAddonAvailable ? (windows ? "crash" : "pass") : "unavailable",
+      // Never non-null here: this fixture builds the classic verdicts, and the win32-x64
+      // add-on load failure is the one shape that carries a message (LCLI-657 / DEC-80).
+      addonLoadFailureMessage: null,
       exitCode: platform.nativeAddonAvailable ? (windows ? 139 : 0) : null,
       signal: null,
       stdoutSha256: SHA,
