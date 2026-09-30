@@ -243,11 +243,6 @@ export function assertPackageQualificationReport(value: unknown): asserts value 
     // with nothing to refuse it -- while the predicate itself returns false for those platforms.
     // The doc claimed both directions and the call site delivered one; a peer review measured
     // the gap. A missing platform fails closed here too: "" is never "win32".
-    // LCLI-657 / DEC-80, and it is consulted for EVERY platform rather than inside the win32
-    // arm. Inside that arm alone, a linux or darwin report could carry the recorded load failure
-    // with nothing to refuse it -- while the predicate itself returns false for those platforms.
-    // The doc claimed both directions and the call site delivered one; a peer review measured
-    // the gap. A missing platform fails closed here too: "" is never "win32".
     !windowsAddonLoadFailurePolicyHolds({
       os: report.platform?.os ?? "",
       cpu: report.platform?.cpu ?? "",
