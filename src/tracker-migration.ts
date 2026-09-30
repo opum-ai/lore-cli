@@ -224,13 +224,21 @@ function sameMappings(left: readonly QuestMigrationMapping[], right: readonly Qu
 /**
  * Whether a Lore-owned crash-recovery record already names an approved digest for `root`.
  *
- * The wizard's collision retry (LCLI-466) asks this before offering to re-run with different
+ * The wizard's collision retry (LCLI-466) asked this before offering to re-run with different
  * migration options: once a preview has been approved and recorded, {@link
  * migrateBacklogTasksToQuest} resumes by re-applying THAT digest, and Quest re-derives its plan from
  * whatever options it is handed — so a retry that changes the options against an already-recorded
  * digest could only be refused a second time, for a different and more confusing reason. The retry
- * is therefore offered only when nothing has been approved yet, which is every refusal raised by the
- * preview itself.
+ * was therefore offered only when nothing had been approved yet, which is every refusal raised by
+ * the preview itself.
+ *
+ * **DORMANT since ADR-0024 (LCLI-656), retained deliberately rather than dead by oversight.** That
+ * retry was this function's only production caller, and the wizard no longer runs a migration at
+ * all — it stops with the migration commands instead — so nothing in `src/` calls this today. It is
+ * kept because the Jira-to-Quest offer DEC-62 option A defers would plausibly reuse the same
+ * question ("is something already approved here?"), and because `test/tracker-migration.test.ts`
+ * still covers it as a unit. If that offer is never built, this is a deletion candidate; nothing
+ * else depends on it.
  */
 export function hasPendingQuestMigration(
   root: string,
@@ -277,7 +285,17 @@ export type MigrationCollision =
   | { readonly kind: "alias-collision"; readonly message: string; readonly sourceFamilyHint?: string }
   | { readonly kind: "preservation-refused"; readonly message: string; readonly input?: unknown };
 
-/** Classify a failed migration; `undefined` for anything that is not one of Quest's id-collision refusals. */
+/**
+ * Classify a failed migration; `undefined` for anything that is not one of Quest's id-collision
+ * refusals.
+ *
+ * **DORMANT since ADR-0024 (LCLI-656), retained deliberately rather than dead by oversight.** Its
+ * only production caller was the wizard's collision retry (LCLI-466), removed with the wizard's
+ * migration arm — the wizard now stops with the commands instead of migrating, so `src/` has no
+ * caller left. The classification survives because the Jira-to-Quest offer DEC-62 option A defers
+ * would need exactly this discrimination (and the QCLI-322 note above outlives the caller), and
+ * because `test/tracker-migration.test.ts` still covers it as a unit.
+ */
 export function classifyMigrationCollision(cause: unknown): MigrationCollision | undefined {
   if (!(cause instanceof LoreError) || cause.type !== "conflict") return undefined;
   if (/id preservation refused/i.test(cause.message) || hasCollisionReport(cause.input))

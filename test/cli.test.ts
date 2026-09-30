@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { TrackerEnvironment } from "../src/adapters/tracker-environment";
 import { coerceRealTTY, type RunContext, run } from "../src/cli";
 import type { InitPrompter } from "../src/commands/init";
 import { buildManifest } from "../src/core/manifest";
@@ -13,6 +14,41 @@ import { capture, fakeAdapter, gitRun } from "./helpers";
 function argv(...args: string[]): string[] {
   return ["bun", "lore", ...args];
 }
+
+/**
+ * A detected tracker environment with every backend usable.
+ *
+ * Router tests hand this to `lore init` so the ROUTER is what is under test. Detection reads this
+ * machine's PATH, so without it the LORE-260 wizard test below would be decided by whichever
+ * tracker CLIs happen to be installed wherever it runs — and, since ADR-0024, a missing one turns
+ * that test's "yes" answers into a readiness stop, a red that says nothing about `cli.ts`.
+ */
+const DETECTED_ENVIRONMENT: TrackerEnvironment = [
+  {
+    backend: "quest",
+    binary: "quest",
+    package: "@opum-ai/quest",
+    installed: true,
+    initialized: true,
+    marker: ".quest/workspace.toml",
+  },
+  {
+    backend: "backlog",
+    binary: "backlog",
+    package: "backlog.md",
+    installed: true,
+    initialized: true,
+    marker: "backlog/config.yml",
+  },
+  {
+    backend: "jira",
+    binary: "jira",
+    package: "@salient-ai/jira-cli",
+    installed: true,
+    initialized: undefined,
+    marker: undefined,
+  },
+];
 
 /** A {@link RunContext} wired to capturing streams, non-TTY, empty env. */
 function ctx(over: Partial<RunContext> = {}): RunContext & {
@@ -182,6 +218,9 @@ describe("cli — init dispatch", () => {
       prompter,
       adapter: fakeAdapter([], { probe: "ok" }),
       agentAvailability: () => ({ claude: true, codex: false }),
+      // ADR-0024: the wizard consults this before it accepts a backend, so the router test pins it
+      // instead of inheriting the host's — no test reads the machine.
+      trackerEnvironment: () => DETECTED_ENVIRONMENT,
     });
     const result = run(argv("init"), c);
     expect(result).toBeInstanceOf(Promise); // only the wizard (or an implied backlog check) returns a Promise

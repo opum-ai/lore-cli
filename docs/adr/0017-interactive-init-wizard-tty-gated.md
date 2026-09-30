@@ -235,6 +235,36 @@ exit depends only on the operator eventually answering differently is a loop an
 automated or confused caller never escapes, so the bound is a property of the
 code rather than of the answers.
 
+### Amendment (2026-09-29, LCLI-656): the tracker step stops and instructs — it no longer installs
+
+[ADR-0024](0024-lore-init-stops-and-instructs-on-tracker-readiness.md) amends
+this ADR's tracker step, and the amendment REPLACES the LCLI-358.3 paragraph
+above rather than extending it. `lore init` no longer installs the selected
+backend's package, runs its init, or migrates its tasks: it detects, offers, and
+instructs, and a "yes" prints the exact commands and exits without writing
+anything (ADR-0024's O1/O2 for quest, O4/O5 as bare stops for backlog, and the
+O3/O6 Backlog-migration offer; DEC-57 is the ruling). The retired install offer
+was the one wizard question that changed the machine rather than the repository,
+and its absence tightens rather than loosens this ADR's contract: every
+remaining wizard question writes at most inside the repository, and every prompt
+still precedes the first write.
+
+Two consequences for the shape described above. The install offer's companion
+question — "choose a different tracker instead of X?" — is gone with it; a
+declined readiness offer now returns straight to the tracker question, and a
+second selection of the same unready backend stops with the same instructions
+instead of asking again, inside the *unchanged* two-pass bound. And the Backlog
+step keeps its position but not its behavior: where it asked migrate/keep/backlog
+and could run the migration itself, it now offers to stop with the commands, so
+the wizard never migrates.
+
+`--install-tracker` and `--no-install-tracker` stay accepted for one release as
+no-ops carrying a deprecation note, so the flag-per-question mapping this ADR
+rests on is unchanged for every script already written against it; they are
+removed in the next release. The readiness stops are wizard-only to SHOW, but not
+to reach — `--tracker quest`/`--tracker backlog` produce the identical stop
+non-interactively (ADR-0024's N1/N2/N5/N6).
+
 ## Consequences
 
 ### Positive
