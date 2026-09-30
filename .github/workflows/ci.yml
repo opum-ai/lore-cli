@@ -253,19 +253,41 @@ jobs:
             # instead — a longer wait models the wrong theory of the failure
             # (see the diff-reachability note on the step above for why this
             # was judged a flake and not a regression).
+            lore_per_test_ms=10000
             lore_bun_log="${RUNNER_TEMP}/lore-bun-test.log"
+            lore_hung_log="${RUNNER_TEMP}/lore-bun-hung.log"
+            : > "${lore_hung_log}"
             set +e
-            timeout --kill-after=10s 6m bun test --isolate --max-concurrency=1 --timeout=10000 2>&1 | tee "${lore_bun_log}"
+            timeout --kill-after=10s 6m bun test --isolate --max-concurrency=1 --timeout="${lore_per_test_ms}" 2>&1 | tee "${lore_bun_log}"
             lore_bun_status=${PIPESTATUS[0]}
             set -e
             if [[ "${lore_bun_status}" -eq 0 ]]; then
               exit 0
             fi
+            # LCLI-659: the race's THIRD presentation. It hangs a few tests, each dies at its own
+            # per-test budget, and the suite COMPLETES with those as failures -- so the status is
+            # neither 124 nor accompanied by the EEXIST line, and the two older signals below are
+            # both silent. Classified over the WHOLE run on purpose: retryable only when EVERY
+            # failing test hung at the budget. One sub-budget failure is a product signal, and the
+            # script exits non-zero for it, so an assertion failure never reaches the retry.
+            lore_race_retry=false
             if grep -Fq "error: EEXIST: file already exists, epoll_ctl" "${lore_bun_log}" || [[ "${lore_bun_status}" -eq 124 ]]; then
-              echo "::warning::Retrying once after the known Linux epoll runtime race, observed on Bun 1.3.14 (exit ${lore_bun_status})"
-              timeout --kill-after=10s 6m bun test --isolate --max-concurrency=1 --timeout=10000
+              lore_race_retry=true
+              echo "::warning::The known Linux epoll runtime race fired on attempt 1 (exit ${lore_bun_status}); attempt 2 follows. No per-test durations are listed because this presentation kills the run rather than individual tests."
+            elif bash scripts/ci-flake-classify.sh "${lore_bun_log}" "${lore_per_test_ms}" > "${lore_hung_log}"; then
+              lore_race_retry=true
+              echo "::warning::The known Linux epoll runtime race hung every failing test on attempt 1; attempt 2 follows."
+              echo "::notice::attempt 1's failures were ALL hangs at the ${lore_per_test_ms}ms per-test budget (${lore_bun_status}):"
+              sed 's/^/    /' "${lore_hung_log}"
             else
               exit "${lore_bun_status}"
+            fi
+            if [[ "${lore_race_retry}" == "true" ]]; then
+              if ! timeout --kill-after=10s 6m bun test --isolate --max-concurrency=1 --timeout="${lore_per_test_ms}"; then
+                echo "::error::attempt 2 ALSO failed after the race retry. The retry count stays at one by design -- a test that hangs every time must still fail this job -- so this run is red and belongs to whoever can measure the race."
+                exit 1
+              fi
+              echo "::warning::attempt 2 PASSED. This job's green is a RETRY-GREEN, not a clean run: attempt 1's failures were the Linux epoll runtime race, and if they were per-test hangs they are listed above."
             fi
           elif [[ "${{ matrix.os }}" == "ubuntu-24.04-arm" ]]; then
             bun test --isolate --max-concurrency=1 --timeout=10000
