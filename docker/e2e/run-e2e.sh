@@ -171,21 +171,46 @@ step_json "LCLI-358.1: --allow-no-git scaffolds a docs-only bundle outside a wor
 rm -rf /tmp/no-git-probe
 
 # LCLI-358.2: the capability probe must follow the SELECTED tracker. Selecting quest previously
-# still probed the `backlog` binary and reported Backlog.md as uninitialized. Asserted on the
-# envelope rather than on stderr, so this holds whether or not quest is installed in the image:
-# `trackerCheck` names quest, and the deprecated Backlog-only field stays absent.
+# still probed the `backlog` binary and reported Backlog.md as uninitialized.
 #
-# LCLI-376 made an uninitialized Quest workspace a FATAL probe failure (not just advisory), and
-# that check (assertWorkspace) is a pure `.quest/workspace.toml` existence test that runs before
-# quest's own binary is ever probed -- so it fires regardless of whether quest is installed in
-# this image. The marker file's content is never read here (only its presence), so a placeholder
-# is enough to clear the gate and let the rest of probe() proceed exactly as before LCLI-376.
+# REWRITTEN (LCLI-656, ADR-0024). The old case asserted the ENVELOPE -- `.kind == "init.result"`
+# with `trackerCheck.backend == "quest"` -- deliberately, so that it held whether or not quest was
+# installed in the image. ADR-0024 removed exactly that: a `quest` selection whose CLI is not on
+# PATH is now a STOP (the ADR's N1 row), taken before the scaffold and before any probe, so no
+# `init.result` envelope exists at all. This image ships lore and backlog only, so a quest selection
+# here IS that stop; keeping the old assertion would assert the advisory behavior the ADR deleted.
+#
+# WHAT THIS BLOCK DOES AND DOES NOT COVER -- stated because an earlier revision of this comment
+# claimed coverage that could not fail, which is the defect LCLI-360 corrected once already here:
+#   - `trackerCheck.backend` is the SELECTION echoed back (src/commands/init.ts:710, :1797), not a
+#     report of which adapter was probed. So the LCLI-356 case below (a backlog selection answering
+#     "backlog") cannot fail for an always-probe-backlog regression, and neither can the unit test
+#     "selecting quest probes quest and says nothing at all about backlog" (test/init.test.ts:2425):
+#     it injects one fake adapter, used for whichever backend is probed, and asserts only the echoed
+#     field plus a stderr that is quiet under both behaviors.
+#   - The case in this file that CAN fail for that regression is the `--tracker none` one below:
+#     `trackerCheck == null` even with `--check-tracker` goes false the moment a probe fires
+#     regardless of the selection.
+#   - This rewritten case cannot: it stops before any probe runs, which is the point of it. A
+#     quest-arm equivalent of the `none` assertion is not expressible through the current seam --
+#     observing which adapter was constructed needs a hook lore does not offer, the same gap
+#     LCLI-360 names for a binary-override seam.
+#
+# The `.quest/workspace.toml` placeholder is kept from the pre-rewrite case: it makes the detected
+# state unambiguously N1 (binary absent) rather than N2 (binary present, workspace missing), and
+# ADR-0024 makes that difference observable -- with the marker present the remedy drops its
+# `quest init` step, which the filter below asserts negatively. `--check-tracker` is deliberately
+# NOT passed: the readiness stop precedes any probe, so the flag cannot change this outcome, and
+# passing it would suggest this case exercises a probe.
 mkdir -p /tmp/tracker-probe && (cd /tmp/tracker-probe && git init -q && mkdir -p .quest && : > .quest/workspace.toml)
-step_json "LCLI-358.2: --tracker quest probes quest, and reports nothing about backlog" \
-  '.kind == "init.result"
-   and .data.trackerCheck.backend == "quest"
-   and (.data.backlog == null)' \
-  -- bash -c 'cd /tmp/tracker-probe && lore init --tracker quest --check-tracker --json'
+step_fail "LCLI-358.2 (ADR-0024): --tracker quest with no quest on PATH stops with the pinned install remedy (not_found, exit 3)" 3 \
+  '.error_type == "not_found"
+   and (.message | test("not on PATH"))
+   and (.hint | test("@opum-ai/quest@[0-9]"))
+   and (.hint | test("quest init") | not)' \
+  -- bash -c 'cd /tmp/tracker-probe && lore init --tracker quest --json'
+check "LCLI-358.2 (ADR-0024): the stopped run wrote nothing at all" \
+  '[ "$(ls -A /tmp/tracker-probe | sort | tr "\n" " ")" = ".git .quest " ]'
 step_json "LCLI-358.2: --tracker none runs no tracker probe at all" \
   '.kind == "init.result" and (.data.trackerCheck == null) and (.data.backlog == null)' \
   -- bash -c 'cd /tmp/tracker-probe && lore init --tracker none --check-tracker --json'
@@ -214,10 +239,20 @@ check "LCLI-356: the verified selection is the one written to config" \
   'grep -q '"'"'backend = "backlog"'"'"' /tmp/floor-probe/.lore/config.toml'
 rm -rf /tmp/floor-probe
 
-# LCLI-358.3: the environment detection must be in the --json result, and nothing may be installed
-# without an explicit flag. The image has backlog installed and quest/jira absent or present
-# depending on the build, so the assertion is on the SHAPE (one entry per backend, each with the
-# detection fields) plus the invariant that a bare selection installs nothing.
+# LCLI-358.3: the environment detection must be in the --json result. The assertion is on the SHAPE
+# (one entry per backend, each with the detection fields) rather than on any backend being present:
+# this image installs lore and backlog and nothing else (docker/e2e/Dockerfile -- `backlog.md` from
+# npm, lore compiled from source, no quest and no jira), and the pre-rewrite comment's "quest/jira
+# absent or present depending on the build" was the wrong reason for the right assertion.
+#
+# The second check was REWRITTEN (LCLI-656, ADR-0024). It used to read
+#   ! lore init --tracker none --json | jq -e ".data.installed"
+# asserting "a run with no install flag installed nothing". ADR-0024 removed the install arm
+# entirely, so `installed` can no longer be populated by ANY run: the check had no input under which
+# it could fail. Worse, it failed OPEN -- piping into jq means a `lore init` that itself errored
+# became empty input, `jq -e` exited non-zero, and the `!` turned that into a PASS. What replaces it
+# is the behavior that does still exist, the ADR's N9 row: the deprecated flag is accepted, installs
+# nothing, and says so on stderr.
 mkdir -p /tmp/env-probe && (cd /tmp/env-probe && git init -q)
 step_json "LCLI-358.3: init reports one detection entry per backend" \
   '.kind == "init.result"
@@ -225,9 +260,12 @@ step_json "LCLI-358.3: init reports one detection entry per backend" \
    and ([.data.trackerEnvironment[].backend] | sort) == ["backlog", "jira", "quest"]
    and (.data.trackerEnvironment | all(has("installed") and has("package")))' \
   -- bash -c 'cd /tmp/env-probe && lore init --tracker none --json'
-check "LCLI-358.3: a run with no install flag installed nothing" \
-  '! lore init --tracker none --json 2>/dev/null | jq -e ".data.installed" >/dev/null'
-rm -rf /tmp/env-probe
+check "LCLI-358.3 (ADR-0024): --install-tracker is accepted, installs nothing, and prints the deprecation note" \
+  'out="$(lore init --tracker none --install-tracker --json 2>/tmp/env-probe-install.err)"; rc=$?;
+   [ "$rc" = 0 ] && [ -n "$out" ] &&
+   ! printf %s "$out" | jq -e ".data.installed" >/dev/null &&
+   grep -q "no longer installs tracker CLIs" /tmp/env-probe-install.err'
+rm -rf /tmp/env-probe /tmp/env-probe-install.err
 
 # ── Phase 1: bootstrap (critical — nothing downstream works without this) ───
 critical "git init" 0 -- git init -q
