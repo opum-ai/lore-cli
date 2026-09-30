@@ -92,7 +92,9 @@ backend choice (`quest`, `backlog`, or `jira`), independently detected Claude
 Code and Codex agent bridges, a downstream doc-site scaffold (mkdocs/docusaurus), an
 Obsidian vault config, and a backlog `--json`-capability check — instead of
 the older `init` → `agents` → external `lore-setup.sh` → manual-Obsidian
-sequence ([ADR-0017](../adr/0017-interactive-init-wizard-tty-gated.md)).
+sequence ([ADR-0017](../adr/0017-interactive-init-wizard-tty-gated.md); its
+tracker step is [ADR-0024](../adr/0024-lore-init-stops-and-instructs-on-tracker-readiness.md)'s
+detect-offer-instruct flow).
 
 The wizard is **strictly TTY-gated**: it runs only when **both stdin and
 stderr** are interactive terminals (every wizard question is written to
@@ -105,7 +107,10 @@ non-interactively with defaults and no prompt can ever block it — the
 npm-init pattern. `--allow-no-git` is the single exception: it waives the git
 preflight rather than answering a wizard question, so it suppresses only its
 own prompt and leaves the wizard reachable. Every wizard question has a 1:1 flag equivalent, so a
-script can reach every option the wizard offers with zero prompts — but
+script can reach every option the wizard offers with zero prompts — the readiness stops are the
+one apparent exception and are not one: they are offered only in the wizard, but a script reaches
+the identical stop by naming the backend (`--tracker quest`/`--tracker backlog`, ADR-0024's
+N1/N2/N5/N6). But
 `--yes`/`--non-interactive` is npm's `-y` ("skip the wizard, run the bare
 default"), **not** "answer every question with its own default"; the two
 diverge on the agent-bridge question in particular (its wizard default is
@@ -136,65 +141,79 @@ An explicit wizard or `--tracker` choice also writes `backend` under
 question, `init` reports one line per backend on stderr: whether `quest`,
 `backlog`, and `jira` are on PATH, and whether this repository is already
 initialized for each (`.quest/workspace.toml`, `backlog/config.yml`; jira's
-readiness is credential-based and is checked only when selected). Choosing a
-backend whose binary is missing offers to run its `npm install -g` command;
-declining offers one switch to a different backend, and declining that too exits
-with the exact install command. The return to the tracker question is bounded at
-two passes, so no answer can make it loop. `--install-tracker` and
-`--no-install-tracker` are the prompt-free equivalents; nothing is ever installed
-without one of them or an explicit confirmation.
+readiness is credential-based and is checked only when selected). The summary's
+"not installed" line names the install command, **pinned to lore's own exact
+version for quest** (`npm install -g @opum-ai/quest@<lore's version>`): the pair
+lock accepts that version and refuses every other, so a bare `latest` can
+install a quest the next command will reject.
 
-**The tracker question is always asked, and migration follows it.** A Backlog
-project in the repository never removes a choice: `quest`, `backlog`, `jira`,
-and `none` are all offered regardless. Only once the answer settles on `quest`,
-and only when a real Backlog project exists, does `init` ask what should happen
-to the existing tasks — migrate them, keep them where they are, or use Backlog
-as the tracker after all. `--migrate-backlog` and `--keep-backlog-tasks` are
-the prompt-free equivalents, and a scripted `--tracker quest` over a real
-Backlog project fails without one of them rather than orphaning the tasks in
-silence. That gate reads the project, not the configuration: a bundle with
-`backend = "backlog"` already written reaches Quest through exactly the same
-two flags as a zero-config one.
+**`lore init` detects, offers, and instructs. It never installs a tracker CLI,
+never runs another tool's init, and never migrates tracker data on the
+operator's behalf** (ADR-0024, DEC-57). Selecting a backend that is not ready
+offers to stop there: for a `quest` selection, when the CLI is missing or when
+the repository has no Quest workspace. Answering yes prints the exact commands —
+install `@opum-ai/quest@<lore's version>`, run `quest init` (dropped when
+`.quest/workspace.toml` already exists), then rerun `lore init` — and exits
+without writing anything: exit `3` for a missing CLI, `6` for a missing
+workspace. Answering no returns to the tracker question and detection continues.
+Selecting `backlog` when its CLI is missing stops immediately at exit `3`, and
+at exit `6` when the CLI is present but the repository has no project — no
+install is offered for Backlog. A second selection of the same unready backend
+in one run stops with those same instructions rather than asking again, and the
+return to the tracker question is bounded at two passes, so no answer can make
+it loop. Nothing the stop prints is ever executed by lore.
 
-**An id collision offers a way out inside the same run.** Quest refuses a
-migration whose ids clash, with one `conflict` (exit `5`) message that names two
-possible causes — positional renumbering (a dotted subtask flattening and
-shifting a later allocation, which `--preserve-source-ids --source-family
-<PREFIX>` avoids) and an id already claimed by an unrelated record in the
-destination workspace (which no flag resolves). The message does not say which
-one occurred, so the wizard does not guess: it prints Quest's refusal, offers to
-retry keeping each record's own Backlog id, and asks which id family to import,
-pre-filled from the id Quest quoted. The retry is decided by Quest's own
-preservation-mode preview, which writes nothing — it either produces a plan and
-the migration completes in the same run, or it refuses again, and `init` reports
-that the collision needs manual resolution (rename or remove the conflicting
-record) instead of offering a second retry that cannot work. Declining the offer
-re-raises Quest's own refusal unchanged. Both outcomes leave `[tracker]`
-unwritten unless a migration actually applied. The prompt-free equivalents are
-`--preserve-source-ids` and `--source-family <PREFIX>`, which must be passed
-together and only with `--migrate-backlog`.
+**The tracker question is always asked, and a Backlog project raises one offer
+after it.** A Backlog project in the repository never removes a choice: `quest`,
+`backlog`, `jira`, and `none` are all offered regardless. Once the answer
+settles on `quest` or `backlog`, and only when a real Backlog project exists,
+`init` offers to stop and run the migration first: yes prints the exact commands
+below and writes nothing (exit `6`), no proceeds with the backend just chosen and
+leaves `backlog/` where it is. A deliberate `none` or `jira` selection is never
+interrupted by it, and the offer's default is yes for a Quest selection and no
+for Backlog. The commands it hands over carry the actor context Quest requires —
+`LORE_QUEST_ACTOR=<you> LORE_QUEST_ACTOR_KIND=human` (a `delegated-agent` actor
+also sets `LORE_QUEST_ACCOUNTABLE_HUMAN`; see `lore instructions linking`) —
+because a Quest write without one is refused.
 
-**A completed migration then asks what happens to `backlog/`, and says plainly
-that removal deletes it.** Once the tasks are in Quest the old directory is
-still on disk, so the wizard offers to remove it — in those words. Accepting
-writes a verified ZIP of every file to `.lore/archive/` and then **deletes**
-`backlog/` from the working tree. That archive is repository-local and
-gitignored (the directory carries its own `.gitignore`), never committed and
-never published, so it is a convenience copy rather than the safety net: **git
-is**, and until the deletion is committed `git checkout -- backlog/` restores
-every file. For that reason the question is only asked when git can prove the
-recovery — `backlog/` must be tracked and clean. An untracked or modified
-`backlog/`, or a directory git cannot answer about at all, is reported and left
-alone rather than offered.
+`--migrate-backlog` and `--keep-backlog-tasks` are the prompt-free equivalents,
+and a scripted `--tracker quest` over a real Backlog project fails without one of
+them rather than orphaning the tasks in silence. That gate reads the project, not
+the configuration: a bundle with `backend = "backlog"` already written reaches
+Quest through exactly the same two flags as a zero-config one.
 
-The prompt-free equivalents are `--remove-backlog` and `--no-remove-backlog`,
-both valid only with `--migrate-backlog` and never with `--adopt-manifest`
-(whose coordinated cutover already archives and deletes `backlog/` as a verified
-phase of its own). A scripted run that passes neither keeps `backlog/` — the
-unchanged default — and says so on stderr naming both flags, so the outcome is
-never silent. `--remove-backlog` over a `backlog/` git cannot prove recoverable
-is refused with `denied` (exit `4`); the migration itself still stands, because
-the refusal is of the deletion, not of the selection.
+**The migration itself is a flag path.** `--migrate-backlog` runs Quest's own
+preview and apply; its id-collision refusal is Quest's, carried through verbatim
+(exit `5`), and the message names both possible causes — positional renumbering
+(which `--preserve-source-ids --source-family <PREFIX>` avoids) and an id already
+claimed by an unrelated record in the destination workspace (which no flag
+resolves). Those two flags must be passed together and only with
+`--migrate-backlog`. A preserved-ids run that would leave another id family
+behind warns on stderr and proceeds — prompting is impossible on this path — and
+`migration.excluded` reports exactly which records were left for a later run.
+**The wizard never runs a migration** (ADR-0024): its Backlog step offers to stop
+with these commands instead.
+
+**After a migration, `backlog/` is kept unless the run says otherwise, and
+removal deletes it.** `--remove-backlog` writes a verified ZIP of every file to
+`.lore/archive/` and then **deletes** `backlog/` from the working tree. That
+archive is repository-local and gitignored (the directory carries its own
+`.gitignore`), never committed and never published, so it is a convenience copy
+rather than the safety net: **git is**, and until the deletion is committed
+`git checkout -- backlog/` restores every file. For that reason the removal is
+only performed when git can prove the recovery — `backlog/` must be tracked and
+clean. An untracked or modified `backlog/`, or a directory git cannot answer
+about at all, is reported and left alone rather than deleted.
+
+A scripted run that passes neither flag keeps `backlog/` — the unchanged
+default — and says so on stderr naming both flags, so the outcome is never
+silent. `--no-remove-backlog` keeps it without that notice: the choice was
+already explicit. `--remove-backlog` over a `backlog/` git cannot prove
+recoverable is refused with `denied` (exit `4`); the migration itself still
+stands, because the refusal is of the deletion, not of the selection. Both flags
+are valid only with `--migrate-backlog` and never with `--adopt-manifest` (whose
+coordinated cutover already archives and deletes `backlog/` as a verified phase
+of its own).
 
 **Choosing `jira` configures it in the same run.** A jira selection is useless
 without a `[tracker.jira]` table — `createTrackerAdapter` refuses the backend
@@ -238,9 +257,9 @@ whatever already succeeded rather than erroring or duplicating anything.
 | | |
 |---|---|
 | **Args** | none |
-| **Key flags** | `--yes` / `--non-interactive` (skip the wizard even on a TTY) · `--tracker <quest\|backlog\|jira>` (persist the tracker choice without prompting) · `--migrate-backlog` (valid only with `--tracker quest` over a real Backlog.md project) · `--keep-backlog-tasks` (select Quest and deliberately leave an existing Backlog project in place) · `--remove-backlog` / `--no-remove-backlog` (after a successful `--migrate-backlog`: delete `backlog/` from the working tree behind a verified gitignored archive, or keep it explicitly — neither is valid without `--migrate-backlog`, and neither may be combined with `--adopt-manifest`) · `--claude` (Claude Code bridge; `--agents` alias) · `--codex` (Codex bridge: `AGENTS.md` + `.codex/skills/lore/`) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-tracker` / `--no-tracker` (force/skip the selected tracker's capability check; `--check-backlog` / `--no-backlog` are aliases) · `--allow-no-git` (scaffold a docs-only bundle outside a git worktree) · `--install-tracker` / `--no-install-tracker` (install, or never install, a missing tracker binary) · `--jira-profile <name>` / `--jira-project <KEY>` (answer the jira configuration questions without prompting; both require `--tracker jira`) · `--skill-source <repo\|plugin>` (persist `[agents].skill_source`; `plugin` opts into the `opum-lore` marketplace plugin owning `.claude/skills/lore/SKILL.md` instead of this repository — see `agents` below) |
-| **Output** | `kind: init` — created/skipped scaffold paths, plus `interactive`/`scaffolds` always present (`false`/`[]` on the default path); `tracker` is present after a wizard or explicit `--tracker` choice; `migration` reports the applied digest, source fingerprint, mappings, survivors, `excluded`, and task fingerprints after a successful Backlog-to-Quest migration — `survivors` is receipt idempotency bookkeeping (the target ids this apply resulted in, whether written this run or already present from an earlier resumed one), not "left behind"; `excluded` is the field that actually means that (LCLI-521): the `{sourceIdentifier, family}` records `--preserve-source-ids` did not import because they belong to a different id family than the one selected for this run (Quest imports one family per run), always present and empty (`[]`) outside preservation mode; `backlogRemoval` answers what then happened to `backlog/` on a plain `--migrate-backlog` run — `removed`, plus `zipRel`/`entryCount` when it was deleted, or `reason` when it was kept; `agents` (Claude), `codex`, and `trackerCheck` are present only when those steps ran; `trackerCheck` names whichever backend was probed and is the only capability field (the deprecated `backlog` field, which could only ever describe a Backlog bundle, was removed in 0.5.0 — LCLI-359); `trackerEnvironment` reports what each backend's CLI and this repository looked like, and `installed` names a package this run installed; `plugins` is present only when a Claude or Codex bridge was selected (flag or wizard), keyed by runtime (`plugins.claude`, `plugins.codex`), each the `opum-lore` marketplace plugin state `{runtime, id, state, version?, scope?, reason?, remedy?}` read before any bridge file is written — see `agents` below for the four states, and note `init` only reports it: it never installs, enables or updates the plugin, and the state never changes the exit code (LCLI-592) |
-| **Exit** | `0` ok (the tracker check is advisory-only and never changes this) · `2` usage (bad flag/unknown `--scaffold` target, an invalid migration-flag combination, a missing `--tracker`/`--skill-source` value, a jira flag without `--tracker jira`, a non-interactive `--tracker jira` missing `--jira-profile`/`--jira-project`, or the wizard's stdin closed before finishing) · `3` not found (jira-cli has no credential profiles, the `jira` binary is missing, or the Jira project key does not resolve) · `4` permission denied, `--remove-backlog` refused because git cannot prove `backlog/` is recoverable (untracked, modified, or unanswerable), or the wizard's collision retry declined to import one family and leave another behind once it saw what `--preserve-source-ids` would exclude (LCLI-521; the non-interactive flag path never refuses this — it warns on stderr and proceeds, since prompting is impossible there) · `5` a non-regular entry (directory/symlink) blocks a scaffold path, or a scaffold target collides with a differing hand-edited file · `6` malformed configuration, unknown tracker backend or skill source, a `--jira-profile` jira-cli does not know, a `--tracker quest` selection over a real Backlog project with neither `--migrate-backlog` nor `--keep-backlog-tasks`, lossless-migration preflight failure, a `--migrate-backlog` run against Quest with no actor declared (see `lore instructions linking`), or the directory is not a git worktree and `--allow-no-git` was not passed |
+| **Key flags** | `--yes` / `--non-interactive` (skip the wizard even on a TTY) · `--tracker <quest\|backlog\|jira>` (persist the tracker choice without prompting; a not-ready backend stops with instructions rather than persisting — ADR-0024) · `--migrate-backlog` (valid only with `--tracker quest` over a real Backlog.md project) · `--keep-backlog-tasks` (select Quest and deliberately leave an existing Backlog project in place) · `--remove-backlog` / `--no-remove-backlog` (after a successful `--migrate-backlog`: delete `backlog/` from the working tree behind a verified gitignored archive, or keep it explicitly — neither is valid without `--migrate-backlog`, and neither may be combined with `--adopt-manifest`) · `--claude` (Claude Code bridge; `--agents` alias) · `--codex` (Codex bridge: `AGENTS.md` + `.codex/skills/lore/`) · `--scaffold <target>` (repeatable; `mkdocs`\|`docusaurus`\|`obsidian`) · `--obsidian` (shorthand for `--scaffold obsidian`) · `--check-tracker` / `--no-tracker` (force/skip the selected tracker's capability check; `--check-backlog` / `--no-backlog` are aliases) · `--allow-no-git` (scaffold a docs-only bundle outside a git worktree) · `--install-tracker` / `--no-install-tracker` (**deprecated** — accepted for one release, installs nothing on any path, and prints a deprecation note; the two together are still a usage error, and both are removed in the next release) · `--jira-profile <name>` / `--jira-project <KEY>` (answer the jira configuration questions without prompting; both require `--tracker jira`) · `--skill-source <repo\|plugin>` (persist `[agents].skill_source`; `plugin` opts into the `opum-lore` marketplace plugin owning `.claude/skills/lore/SKILL.md` instead of this repository — see `agents` below) |
+| **Output** | `kind: init` — created/skipped scaffold paths, plus `interactive`/`scaffolds` always present (`false`/`[]` on the default path); `tracker` is present after a wizard or explicit `--tracker` choice; `migration` reports the applied digest, source fingerprint, mappings, survivors, `excluded`, and task fingerprints after a successful Backlog-to-Quest migration — `survivors` is receipt idempotency bookkeeping (the target ids this apply resulted in, whether written this run or already present from an earlier resumed one), not "left behind"; `excluded` is the field that actually means that (LCLI-521): the `{sourceIdentifier, family}` records `--preserve-source-ids` did not import because they belong to a different id family than the one selected for this run (Quest imports one family per run), always present and empty (`[]`) outside preservation mode; `backlogRemoval` answers what then happened to `backlog/` on a plain `--migrate-backlog` run — `removed`, plus `zipRel`/`entryCount` when it was deleted, or `reason` when it was kept; `agents` (Claude), `codex`, and `trackerCheck` are present only when those steps ran; `trackerCheck` names whichever backend was probed and is the only capability field (the deprecated `backlog` field, which could only ever describe a Backlog bundle, was removed in 0.5.0 — LCLI-359); `trackerEnvironment` reports what each backend's CLI and this repository looked like, and `installed` is **deprecated and always absent since 0.12.0** — it named a package the run installed, and `lore init` installs nothing any more (ADR-0024); the field is retained for one release rather than removed from the envelope; `plugins` is present only when a Claude or Codex bridge was selected (flag or wizard), keyed by runtime (`plugins.claude`, `plugins.codex`), each the `opum-lore` marketplace plugin state `{runtime, id, state, version?, scope?, reason?, remedy?}` read before any bridge file is written — see `agents` below for the four states, and note `init` only reports it: it never installs, enables or updates the plugin, and the state never changes the exit code (LCLI-592) |
+| **Exit** | `0` ok (the tracker check is advisory-only and never changes this) · `2` usage (bad flag/unknown `--scaffold` target, an invalid migration-flag combination, `--install-tracker` with `--no-install-tracker`, a missing `--tracker`/`--skill-source` value, a jira flag without `--tracker jira`, a non-interactive `--tracker jira` missing `--jira-profile`/`--jira-project`, or the wizard's stdin closed before finishing) · `3` not found (the `quest` or `backlog` CLI is not on PATH — the accepted readiness stop in the wizard, and the `--tracker quest`/`--tracker backlog` stop on the flag path (N1/N5); jira-cli has no credential profiles; the `jira` binary is missing; or the Jira project key does not resolve) · `4` permission denied, or `--remove-backlog` refused because git cannot prove `backlog/` is recoverable (untracked, modified, or unanswerable) · `5` a non-regular entry (directory/symlink) blocks a scaffold path, a scaffold target collides with a differing hand-edited file, or Quest refuses a `--migrate-backlog` run over an id collision · `6` malformed configuration, unknown tracker backend or skill source, a `--jira-profile` jira-cli does not know, a `--tracker quest` selection over a real Backlog project with neither `--migrate-backlog` nor `--keep-backlog-tasks`, an accepted Backlog-migration offer (which stops with the commands and writes nothing), a `quest`/`backlog` selection whose repository marker is missing (`.quest/workspace.toml`, `backlog/config.yml` — ADR-0024's N2/N6 and the wizard's O2/O5), lossless-migration preflight failure, a `--migrate-backlog` run against Quest with no actor declared (see `lore instructions linking`), or the directory is not a git worktree and `--allow-no-git` was not passed |
 
 ### `new`
 

@@ -16,6 +16,7 @@
 
 import { Command } from "commander";
 import type { BacklogAdapter } from "./adapters/backlog";
+import type { TrackerEnvironment } from "./adapters/tracker-environment";
 import { runAgent } from "./commands/agent";
 import { runAgents } from "./commands/agents";
 import { commanderOption, commanderUnknownCommand, commanderUsageError } from "./commands/args";
@@ -124,6 +125,16 @@ export interface RunContext {
   prompter?: InitPrompter;
   /** Injectable executable discovery for `lore init`; keeps router tests independent of the host PATH. */
   agentAvailability?: () => AgentAvailability;
+  /**
+   * Tracker CLI/repository detection for `lore init` (ADR-0024): which tracker binaries are on this
+   * machine's PATH and which markers this repository carries. Injected so a router test never reads
+   * the host — the LORE-260 wizard test used to be decided by whichever tracker binaries happened to
+   * be installed wherever it ran, and the readiness stops now read this seam on every wizard run.
+   *
+   * There is deliberately NO installer seam alongside it: `lore init` installs nothing (DEC-57), so
+   * forwarding one would hand tests a way to make the router mutate the machine it runs on.
+   */
+  trackerEnvironment?: () => TrackerEnvironment;
   /** How `lore init` and `lore agents --check` read the opum-lore marketplace plugin (LCLI-592); defaults to each runtime's own `plugin list --json`, or nothing under `LORE_AGENT_PLUGINS=off`. */
   agentPlugins?: AgentPluginPort;
 }
@@ -428,6 +439,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
       prompter: context.prompter,
       agentAvailability: context.agentAvailability,
       agentPlugins: context.agentPlugins,
+      trackerEnvironment: context.trackerEnvironment,
     });
   },
   new: (args, context, output) =>
