@@ -288,6 +288,7 @@
 - 2026-09-29T12:02:42-05:00 10274f641a9e5e6408772eeede1780a8a9bef9a2 fix(LCLI-544): assert bun.lock's platform pins against package.json (#431)
 - 2026-09-29T12:14:30-05:00 788229458f0587cace85af956f22c286abbeac28 chore(LCLI-621): RECYCLE HANDOFF 17, written after the recycle request (#432)
 - 2026-09-29T13:50:17-05:00 dd8ece1a122004de0a88a626119a70ef3e8fddf6 chore(LCLI-621): RECYCLE HANDOFF 18, landed on dev (#435)
+- 2026-09-29T15:13:05-05:00 376b7b94a2931971d9b3d225ff01c3f3b23d7f1c docs(LCLI-655): land the DEC-57 draft ADR — lore init stops and instructs (no installs)
 - 2026-09-29T16:39:04-05:00 16343bea2c84d9ce71e8570fd28fd5f0d8589657 chore(LCLI-621): RECYCLE HANDOFF 19, written at opum-agent's instruction (#437)
 
 ## docs/adr
