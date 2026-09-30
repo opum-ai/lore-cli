@@ -260,8 +260,12 @@ step_json "LCLI-358.3: init reports one detection entry per backend" \
    and ([.data.trackerEnvironment[].backend] | sort) == ["backlog", "jira", "quest"]
    and (.data.trackerEnvironment | all(has("installed") and has("package")))' \
   -- bash -c 'cd /tmp/env-probe && lore init --tracker none --json'
+# The `cd` is inside the substitution on purpose: this section runs before Phase 1's bootstrap, so
+# the harness's own cwd is not yet a git repository and an unwrapped `lore init` here would fail on
+# the git preflight instead of on anything this check asserts (measured: exit 6, "not a git
+# worktree"). The sibling step_json cases above already scope their `cd` this way.
 check "LCLI-358.3 (ADR-0024): --install-tracker is accepted, installs nothing, and prints the deprecation note" \
-  'out="$(lore init --tracker none --install-tracker --json 2>/tmp/env-probe-install.err)"; rc=$?;
+  'out="$(cd /tmp/env-probe && lore init --tracker none --install-tracker --json 2>/tmp/env-probe-install.err)"; rc=$?;
    [ "$rc" = 0 ] && [ -n "$out" ] &&
    ! printf %s "$out" | jq -e ".data.installed" >/dev/null &&
    grep -q "no longer installs tracker CLIs" /tmp/env-probe-install.err'
