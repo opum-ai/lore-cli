@@ -17,6 +17,8 @@ import {
   parsePackageQualificationArgs,
   removeQualificationScratch,
   resolveInstalledOptionalPackageJson,
+  WINDOWS_ADDON_LOAD_FAILURE_MESSAGE,
+  windowsAddonLoadFailurePolicyHolds,
 } from "../benchmark/ladybug/package-qualification";
 
 const RELEASE_PATH = join(import.meta.dir, "..", ".github", "workflows", "release.yml");
@@ -511,6 +513,7 @@ describe("matching-host Ladybug package qualification", () => {
       native: {
         supportClaim: "native-index",
         probeOutcome: "pass",
+        addonLoadFailureMessage: null,
         databaseCreated: true,
         executableEvidence: true,
         commandOutputsStable: true,
@@ -574,6 +577,32 @@ describe("matching-host Ladybug package qualification", () => {
         native: { ...windowsFallback.native, supportClaim: "native-index" },
       }),
     ).toThrow("approved native platform verdict");
+
+    // LCLI-657 / DEC-80, through the VALIDATOR rather than the predicate: the recorded win32-x64
+    // load failure is a report the suite accepts, and each of the ruling's refused shapes is one
+    // it rejects. This is the wiring check the predicate's own unit test cannot make.
+    const windowsLoadFailure = {
+      ...windowsFallback,
+      native: {
+        ...windowsFallback.native,
+        probeOutcome: "unavailable",
+        addonLoadFailureMessage: WINDOWS_ADDON_LOAD_FAILURE_MESSAGE,
+      },
+    };
+    expect(() => assertPackageQualificationReport(windowsLoadFailure)).not.toThrow();
+    const refused = (native: Record<string, unknown>) =>
+      expect(() => assertPackageQualificationReport({ ...windowsLoadFailure, native: { ...native } })).toThrow(
+        "approved native platform verdict",
+      );
+    refused({ ...windowsLoadFailure.native, addonLoadFailureMessage: null }); // nothing recorded
+    refused({ ...windowsLoadFailure.native, addonLoadFailureMessage: "LoadLibrary failed: other" });
+    refused({ ...windowsLoadFailure.native, probeOutcome: "crash" }); // failure recorded beside a crash
+    expect(() =>
+      assertPackageQualificationReport({
+        ...windowsLoadFailure,
+        platform: { bun: "1.4.2", os: "win32", cpu: "arm64" },
+      }),
+    ).toThrow("approved native platform verdict"); // the same shape on another platform
   });
 
   test("native indexing and Windows fallback evidence stay process-isolated and explicit", () => {
@@ -656,36 +685,42 @@ describe("matching-host Ladybug package qualification", () => {
     // marker fragment parked in the sibling refusal; the excerpt parked in a comment). The same
     // review then showed the follow-up wiring regex pinned only the callee's NAME -- a shadowed
     // binding or a decoy in a comment satisfied it. So the transition itself is a value now.
-    const refusal = classifyWindowsProbeOutcome({
-      exitCode: 1,
-      signal: null,
-      importStarted: true,
-      importCompleted: false,
-      importFailed: true,
-      stdoutSha256: `sha256:${"e3b0".repeat(16)}`,
-      stderrSha256: `sha256:${"da81".repeat(16)}`,
-      stderr:
-        "Error: LoadLibrary failed: A dynamic link library (DLL) initialization routine failed.\n    at dlopen (unknown)\n    at lbug_native.js:12:8",
-    });
+    const win32x64 = { os: "win32" as const, cpu: "x64" };
+    // A rejection that is NOT the one documented load failure. The real captured stderr is now
+    // the ACCEPTED shape on win32-x64 (DEC-80), so it lives in its own test below; using it here
+    // would test the carve-out while claiming to test the refusal.
+    const refusal = classifyWindowsProbeOutcome(
+      {
+        exitCode: 1,
+        signal: null,
+        importStarted: true,
+        importCompleted: false,
+        importFailed: true,
+        stdoutSha256: `sha256:${"e3b0".repeat(16)}`,
+        stderrSha256: `sha256:${"da81".repeat(16)}`,
+        stderr: "Error: the fixture could not be opened\n    at probe (native-probe.ts:40)",
+      },
+      win32x64,
+    );
     expect(refusal.kind).toBe("refused");
     if (refusal.kind !== "refused") throw new Error("unreachable");
     expect(refusal.message).toContain("exit=1, signal=none");
     expect(refusal.message).toContain("markers={started:true, completed:false, failed:true}");
     expect(refusal.message).toContain(`stdout=sha256:${"e3b0".repeat(16)}`);
     expect(refusal.message).toContain(`stderr=sha256:${"da81".repeat(16)}`);
-    expect(refusal.message).toContain("LoadLibrary failed");
-    expect(refusal.message).toContain("at lbug_native.js:12:8");
+    expect(refusal.message).toContain("the fixture could not be opened");
+    expect(refusal.message).toContain("at probe (native-probe.ts:40)");
     // The excerpt is JSON-quoted and therefore still ONE log line: a raw multi-line excerpt would
     // scatter the refusal across the log and break every consumer of a single-line message.
     expect(refusal.message).toContain('stderrExcerpt="');
     expect(refusal.message).not.toContain("\n");
 
-    // The classifier is TOTAL over the policy's three outcomes: a clean import and a proven
-    // abrupt stop must come back as themselves and not as refusals, or the refusal text above
-    // would never be reached in practice. An earlier form of it handled only the two non-clean
-    // arms, so a clean import classified as a REFUSAL -- this assertion is what caught that.
+    // The classifier is TOTAL over the policy's outcomes: a clean import and a proven abrupt
+    // stop must come back as themselves and not as refusals, or the refusal text above would
+    // never be reached in practice. An earlier form of it handled only the two non-clean arms,
+    // so a clean import classified as a REFUSAL -- this assertion is what caught that.
     const kindOf = (evidence: Parameters<typeof classifyWindowsProbeOutcome>[0]) =>
-      classifyWindowsProbeOutcome(evidence).kind;
+      classifyWindowsProbeOutcome(evidence, win32x64).kind;
     expect(
       kindOf({
         exitCode: 0,
@@ -726,6 +761,73 @@ describe("matching-host Ladybug package qualification", () => {
         stderr: "import failed",
       }),
     ).toBe("clean-import");
+  });
+
+  test("the win32-x64 add-on load failure is accepted in exactly one shape and refused in every other (DEC-80)", () => {
+    // The operator's ruling, as the acceptance it names: on win32-x64 ONLY, accept the verdict
+    // when stderr carries the exact add-on load-failure message; record that message in the
+    // report; refuse every other shape. Each refusal below is one the ruling names explicitly.
+    const win32x64 = { os: "win32" as const, cpu: "x64" };
+    // Transcribed from the captured run, NOT read from the constant, so that a drifted constant
+    // reddens these tests instead of riding along with them. This literal is the second,
+    // independent declaration of the accepted bytes.
+    const documentedMessage = "LoadLibrary failed: A dynamic link library (DLL) initialization routine failed.";
+    expect(WINDOWS_ADDON_LOAD_FAILURE_MESSAGE).toBe(documentedMessage);
+    const loadFailure = `Error: ${documentedMessage}\n    at dlopen (unknown)\n    at lbug_native.js:12:8`;
+    const rejected = (stderr: string) => ({
+      exitCode: 1,
+      signal: null,
+      importStarted: true,
+      importCompleted: false,
+      importFailed: true,
+      stdoutSha256: "sha256:empty",
+      stderrSha256: "sha256:failed",
+      stderr,
+    });
+
+    const accepted = classifyWindowsProbeOutcome(rejected(loadFailure), win32x64);
+    expect(accepted.kind).toBe("addon-load-unavailable");
+    if (accepted.kind !== "addon-load-unavailable") throw new Error("unreachable");
+    expect(accepted.message).toBe(documentedMessage);
+
+    // A DIFFERENT message, refused -- including one that merely CONTAINS the documented text.
+    // The match is the child's own first line, which is what makes the carve-out narrow enough
+    // to be worth having: a substring match would accept an unrelated failure that named LoadLibrary.
+    expect(classifyWindowsProbeOutcome(rejected("Error: something else went wrong"), win32x64).kind).toBe("refused");
+    expect(
+      classifyWindowsProbeOutcome(rejected(`Error: wrapper\n${WINDOWS_ADDON_LOAD_FAILURE_MESSAGE}`), win32x64).kind,
+    ).toBe("refused");
+
+    // A DIFFERENT platform, refused: the same bytes on win32-arm64 and on linux.
+    expect(classifyWindowsProbeOutcome(rejected(loadFailure), { os: "win32", cpu: "arm64" }).kind).toBe("refused");
+    expect(classifyWindowsProbeOutcome(rejected(loadFailure), { os: "linux", cpu: "x64" }).kind).toBe("refused");
+
+    // SUCCESS where unavailable is expected can never be reported as a load failure: a clean
+    // import is classified before the carve-out is ever consulted.
+    expect(
+      classifyWindowsProbeOutcome(
+        { ...rejected(loadFailure), exitCode: 0, importCompleted: true, importFailed: false },
+        win32x64,
+      ).kind,
+    ).toBe("clean-import");
+
+    // The REPORT-side policy, total in both directions.
+    const policy = (
+      probeOutcome: string,
+      addonLoadFailureMessage: string | null,
+      platform: { os: NodeJS.Platform; cpu: string } = win32x64,
+    ) => windowsAddonLoadFailurePolicyHolds({ ...platform, probeOutcome, addonLoadFailureMessage });
+    expect(policy("unavailable", WINDOWS_ADDON_LOAD_FAILURE_MESSAGE)).toBe(true);
+    expect(policy("unavailable", null)).toBe(false); // claims the carve-out with nothing recorded
+    expect(policy("pass", WINDOWS_ADDON_LOAD_FAILURE_MESSAGE)).toBe(false); // success carrying a failure
+    expect(policy("crash", WINDOWS_ADDON_LOAD_FAILURE_MESSAGE)).toBe(false);
+    expect(policy("unavailable", "LoadLibrary failed: something else")).toBe(false); // different message
+    expect(policy("unavailable", WINDOWS_ADDON_LOAD_FAILURE_MESSAGE, { os: "win32", cpu: "arm64" })).toBe(false); // different platform
+    expect(policy("unavailable", WINDOWS_ADDON_LOAD_FAILURE_MESSAGE, { os: "linux", cpu: "x64" })).toBe(false);
+    // And the shapes that carry no message stay valid, so the carve-out does not narrow them.
+    expect(policy("unavailable", null, { os: "win32", cpu: "arm64" })).toBe(true); // the ARM64 absence
+    expect(policy("crash", null)).toBe(true);
+    expect(policy("pass", null)).toBe(true);
   });
 
   test("the sibling non-Windows refusal names what its child said too (LCLI-657)", () => {

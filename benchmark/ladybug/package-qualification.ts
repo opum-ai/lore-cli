@@ -87,6 +87,13 @@ interface NativeEvidence {
   readonly supportClaim: "native-index" | "reference-fallback-only";
   readonly probeMode: "indexed" | "import" | "unavailable";
   readonly probeOutcome: "pass" | "crash" | "unavailable";
+  /**
+   * The documented win32-x64 add-on load failure, recorded VERBATIM, or null everywhere else
+   * (LCLI-657 / DEC-80). Non-null is valid only alongside `probeOutcome: "unavailable"` on
+   * win32-x64, and the validator enforces both directions -- see
+   * {@link windowsAddonLoadFailurePolicyHolds}.
+   */
+  readonly addonLoadFailureMessage: string | null;
   readonly exitCode: number | null;
   readonly signal: NodeJS.Signals | null;
   readonly stdoutSha256: string;
@@ -234,7 +241,15 @@ export function assertPackageQualificationReport(value: unknown): asserts value 
     (report.platform?.os === "win32"
       ? report.native.supportClaim !== "reference-fallback-only" ||
         report.native.referenceFallbackDatabaseAbsent !== true ||
-        report.native.databaseCreated
+        report.native.databaseCreated ||
+        // LCLI-657 / DEC-80: the carve-out is visible HERE rather than absorbed into the
+        // predicate, so a reader of the assertion can see exactly what Windows now accepts.
+        !windowsAddonLoadFailurePolicyHolds({
+          os: report.platform.os,
+          cpu: report.platform.cpu,
+          probeOutcome: report.native.probeOutcome,
+          addonLoadFailureMessage: report.native.addonLoadFailureMessage,
+        })
       : report.native.supportClaim !== "native-index" ||
         report.native.probeOutcome !== "pass" ||
         !report.native.databaseCreated ||
@@ -662,6 +677,7 @@ async function runNativeProbe(input: PackageQualificationInput, scratch: string)
       supportClaim: "reference-fallback-only",
       probeMode: "unavailable",
       probeOutcome: "unavailable",
+      addonLoadFailureMessage: null,
       exitCode: null,
       signal: null,
       stdoutSha256: digest(""),
@@ -708,16 +724,19 @@ async function runNativeProbe(input: PackageQualificationInput, scratch: string)
 
   if (input.os === "win32") {
     if (existsSync(databasePath)) throw new Error("Windows import-only native probe created a database");
-    const outcome = classifyWindowsProbeOutcome({
-      exitCode,
-      signal,
-      importStarted,
-      importCompleted,
-      importFailed,
-      stdoutSha256,
-      stderrSha256,
-      stderr,
-    });
+    const outcome = classifyWindowsProbeOutcome(
+      {
+        exitCode,
+        signal,
+        importStarted,
+        importCompleted,
+        importFailed,
+        stdoutSha256,
+        stderrSha256,
+        stderr,
+      },
+      { os: input.os, cpu: input.cpu },
+    );
     if (outcome.kind === "refused") throw new Error(outcome.message);
     if (outcome.kind === "clean-import") {
       if (!importStarted || !importCompleted) throw new Error("Windows native import markers are incomplete");
@@ -728,6 +747,7 @@ async function runNativeProbe(input: PackageQualificationInput, scratch: string)
         supportClaim: "reference-fallback-only",
         probeMode,
         probeOutcome: "pass",
+        addonLoadFailureMessage: null,
         exitCode,
         signal,
         stdoutSha256,
@@ -736,10 +756,15 @@ async function runNativeProbe(input: PackageQualificationInput, scratch: string)
         executableEvidence: false,
       };
     }
+    // The only two arms left are the proven abrupt stop and the recorded win32-x64 load failure
+    // (DEC-80). They differ in exactly two fields, so they share a return rather than diverging
+    // in a copy that could drift.
+    const loadFailure = outcome.kind === "addon-load-unavailable";
     return {
       supportClaim: "reference-fallback-only",
       probeMode,
-      probeOutcome: "crash",
+      probeOutcome: loadFailure ? "unavailable" : "crash",
+      addonLoadFailureMessage: loadFailure ? outcome.message : null,
       exitCode,
       signal,
       stdoutSha256,
@@ -769,6 +794,7 @@ async function runNativeProbe(input: PackageQualificationInput, scratch: string)
     supportClaim: "native-index",
     probeMode,
     probeOutcome: "pass",
+    addonLoadFailureMessage: null,
     exitCode,
     signal,
     stdoutSha256,
@@ -908,29 +934,86 @@ export function nativeIndexingProbeRefusalMessage(evidence: {
  * refusal string itself is unguarded for the same reason -- `isProvenAbruptWindowsImportCrash`
  * is the guard, and it is called here.
  */
+/**
+ * The one native load failure lore accepts as a Windows outcome (LCLI-657 / DEC-80, operator
+ * choice A). Bun 1.4.2 cannot load the Ladybug add-on on win32-x64 -- the DLL's initialization
+ * routine fails -- through both `require` and a direct `process.dlopen`, while the same add-on
+ * bytes load cleanly under 1.3.14 on the same runner image. Windows is reference-fallback-only
+ * by construction, so the probe's subject is a capability the product does not use there; the
+ * carve-out records the failure rather than inferring anything from it.
+ *
+ * Deliberately the WHOLE message, matched against the child's own first stderr line. A shorter
+ * substring would accept a different failure that happened to mention LoadLibrary, and any
+ * future change to Bun's wording stops matching -- which fails CLOSED, back to a red leg
+ * somebody must look at.
+ */
+export const WINDOWS_ADDON_LOAD_FAILURE_MESSAGE =
+  "LoadLibrary failed: A dynamic link library (DLL) initialization routine failed.";
+
+/** The child writes `${error.stack ?? error.message}`, so its error line carries this prefix. */
+function isExactWindowsAddonLoadFailure(stderr: string): boolean {
+  const [firstLine = ""] = stderr.split("\n");
+  return firstLine.replace(/\r$/, "") === `Error: ${WINDOWS_ADDON_LOAD_FAILURE_MESSAGE}`;
+}
+
 export type WindowsProbeOutcome =
   | { readonly kind: "clean-import" }
   | { readonly kind: "proven-abrupt-stop" }
+  | { readonly kind: "addon-load-unavailable"; readonly message: string }
   | { readonly kind: "refused"; readonly message: string };
 
-export function classifyWindowsProbeOutcome(evidence: {
-  readonly exitCode: number;
-  readonly signal: NodeJS.Signals | null;
-  readonly importStarted: boolean;
-  readonly importCompleted: boolean;
-  readonly importFailed: boolean;
-  readonly stdoutSha256: string;
-  readonly stderrSha256: string;
-  readonly stderr: string;
-}): WindowsProbeOutcome {
-  // TOTAL over the three outcomes the Windows policy has: it names which arm applies and does
-  // nothing else -- each arm's own work stays with the caller. An earlier form of this function
-  // handled only the two non-clean arms, which made a clean import classify as a REFUSAL; the
-  // test caught it, and a function whose contract depends on a check performed somewhere else is
-  // the footgun the extraction was meant to remove.
+export function classifyWindowsProbeOutcome(
+  evidence: {
+    readonly exitCode: number;
+    readonly signal: NodeJS.Signals | null;
+    readonly importStarted: boolean;
+    readonly importCompleted: boolean;
+    readonly importFailed: boolean;
+    readonly stdoutSha256: string;
+    readonly stderrSha256: string;
+    readonly stderr: string;
+  },
+  platform: { readonly os: NodeJS.Platform; readonly cpu: string },
+): WindowsProbeOutcome {
+  // TOTAL over the outcomes the Windows policy has: it names which arm applies and does nothing
+  // else -- each arm's own work stays with the caller. An earlier form of this function handled
+  // only the two non-clean arms, which made a clean import classify as a REFUSAL; the test caught
+  // it, and a function whose contract depends on a check performed somewhere else is the footgun
+  // the extraction was meant to remove.
   if (evidence.exitCode === 0 && evidence.signal === null) return { kind: "clean-import" };
   if (isProvenAbruptWindowsImportCrash(evidence)) return { kind: "proven-abrupt-stop" };
+  // The DEC-80 carve-out, and it is deliberately the LAST arm before refusal: it can only be
+  // reached by an outcome that is neither a clean import nor a proven abrupt stop -- so a
+  // success can never be reported as a load failure, which is one of the shapes the ruling
+  // requires to be refused.
+  if (platform.os === "win32" && platform.cpu === "x64" && isExactWindowsAddonLoadFailure(evidence.stderr)) {
+    return { kind: "addon-load-unavailable", message: WINDOWS_ADDON_LOAD_FAILURE_MESSAGE };
+  }
   return { kind: "refused", message: windowsNativeProbeRefusalMessage(evidence) };
+}
+
+/**
+ * The DEC-80 carve-out stated from the REPORT's side, and TOTAL in both directions: a recorded
+ * load failure is valid if and only if it is the documented message on a win32-x64
+ * `unavailable` verdict.
+ *
+ * Exported so the validator and its test speak the same sentence. It refuses, by construction:
+ * a DIFFERENT message; a DIFFERENT platform (win32-arm64's own `unavailable` verdict carries no
+ * message, and must not); a message recorded beside any non-`unavailable` verdict -- the
+ * "success where unavailable is expected" shape; and an `unavailable` verdict on win32-x64 with
+ * NO message, which would claim the carve-out without recording why, exactly what the ruling
+ * says must be recorded.
+ */
+export function windowsAddonLoadFailurePolicyHolds(evidence: {
+  readonly os: NodeJS.Platform;
+  readonly cpu: string;
+  readonly probeOutcome: string;
+  readonly addonLoadFailureMessage: string | null;
+}): boolean {
+  const claimsUnavailable =
+    evidence.os === "win32" && evidence.cpu === "x64" && evidence.probeOutcome === "unavailable";
+  if (evidence.addonLoadFailureMessage === null) return !claimsUnavailable;
+  return claimsUnavailable && evidence.addonLoadFailureMessage === WINDOWS_ADDON_LOAD_FAILURE_MESSAGE;
 }
 
 async function smoke(
