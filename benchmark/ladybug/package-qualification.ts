@@ -708,7 +708,18 @@ async function runNativeProbe(input: PackageQualificationInput, scratch: string)
 
   if (input.os === "win32") {
     if (existsSync(databasePath)) throw new Error("Windows import-only native probe created a database");
-    if (exitCode === 0 && signal === null) {
+    const outcome = classifyWindowsProbeOutcome({
+      exitCode,
+      signal,
+      importStarted,
+      importCompleted,
+      importFailed,
+      stdoutSha256,
+      stderrSha256,
+      stderr,
+    });
+    if (outcome.kind === "refused") throw new Error(outcome.message);
+    if (outcome.kind === "clean-import") {
       if (!importStarted || !importCompleted) throw new Error("Windows native import markers are incomplete");
       const report = parseNativeProbeReport(stdout);
       assertNativeProbeReport(report, input, "import");
@@ -725,20 +736,6 @@ async function runNativeProbe(input: PackageQualificationInput, scratch: string)
         executableEvidence: false,
       };
     }
-    if (!isProvenAbruptWindowsImportCrash({ exitCode, signal, importStarted, importCompleted, importFailed })) {
-      throw new Error(
-        windowsNativeProbeRefusalMessage({
-          exitCode,
-          signal,
-          importStarted,
-          importCompleted,
-          importFailed,
-          stdoutSha256,
-          stderrSha256,
-          stderr,
-        }),
-      );
-    }
     return {
       supportClaim: "reference-fallback-only",
       probeMode,
@@ -753,9 +750,7 @@ async function runNativeProbe(input: PackageQualificationInput, scratch: string)
   }
 
   if (exitCode !== 0 || signal !== null) {
-    throw new Error(
-      `native indexing probe failed (exit=${exitCode}, signal=${signal ?? "none"}, stdout=${stdoutSha256}, stderr=${stderrSha256}, stderrExcerpt=${JSON.stringify(boundedNativeProbeOutput(stderr))})`,
-    );
+    throw new Error(nativeIndexingProbeRefusalMessage({ exitCode, signal, stdoutSha256, stderrSha256, stderr }));
   }
   const report = parseNativeProbeReport(stdout);
   assertNativeProbeReport(report, input, "indexed");
@@ -851,12 +846,13 @@ export const NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT = 4_000;
  * message claimed to have elided.
  */
 export function boundedNativeProbeOutput(value: string, limit = NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT): string {
-  if (value.length <= limit) return value;
-  const half = Math.floor(limit / 2);
-  if (half < 1) {
-    const kept = Math.max(0, limit);
-    return `${value.slice(0, kept)}...[${value.length - kept} UTF-16 code units elided]`;
-  }
+  // Normalise FIRST: a fractional, negative or NaN limit must not reach the slicing, because
+  // `slice(-NaN)` is `slice(0)` -- which returns the whole value while the message claims to
+  // have elided. A non-finite limit falls back to the default rather than to nothing.
+  const whole = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT;
+  if (value.length <= whole) return value;
+  const half = Math.floor(whole / 2);
+  if (half < 1) return `${value.slice(0, whole)}...[${value.length - whole} UTF-16 code units elided]`;
   const kept = half * 2;
   return `${value.slice(0, half)}...[${value.length - kept} UTF-16 code units elided]...${value.slice(-half)}`;
 }
@@ -883,6 +879,58 @@ export function windowsNativeProbeRefusalMessage(evidence: {
 }): string {
   const markers = `markers={started:${evidence.importStarted}, completed:${evidence.importCompleted}, failed:${evidence.importFailed}}`;
   return `Windows native probe failed without a proven abrupt native stop (exit=${evidence.exitCode}, signal=${evidence.signal ?? "none"}, ${markers}, stdout=${evidence.stdoutSha256}, stderr=${evidence.stderrSha256}, stderrExcerpt=${JSON.stringify(boundedNativeProbeOutput(evidence.stderr))})`;
+}
+
+/**
+ * The refusal text for a non-Windows probe whose child did not exit cleanly (LCLI-657).
+ *
+ * A VALUE for the same reason as its Windows sibling above: an assertion written against the
+ * runner's source cannot tell a refusal that carries the child's words from one that dropped
+ * them, and the sibling branch had no control at all once the Windows assertions were scoped.
+ */
+export function nativeIndexingProbeRefusalMessage(evidence: {
+  readonly exitCode: number;
+  readonly signal: NodeJS.Signals | null;
+  readonly stdoutSha256: string;
+  readonly stderrSha256: string;
+  readonly stderr: string;
+}): string {
+  return `native indexing probe failed (exit=${evidence.exitCode}, signal=${evidence.signal ?? "none"}, stdout=${evidence.stdoutSha256}, stderr=${evidence.stderrSha256}, stderrExcerpt=${JSON.stringify(boundedNativeProbeOutput(evidence.stderr))})`;
+}
+
+/**
+ * What the sacrificial Windows probe's captured outcome MEANS, as a decision rather than as an
+ * inline `if` inside a function that spawns a child -- so the transition the refusal guards,
+ * and the message it produces, are both exercised by a test (LCLI-657).
+ *
+ * It is deliberately not a guard on its behalf: handed evidence that is not a refusal, it says
+ * so, and rendering the refusal message for such evidence is the caller's error to make. The
+ * refusal string itself is unguarded for the same reason -- `isProvenAbruptWindowsImportCrash`
+ * is the guard, and it is called here.
+ */
+export type WindowsProbeOutcome =
+  | { readonly kind: "clean-import" }
+  | { readonly kind: "proven-abrupt-stop" }
+  | { readonly kind: "refused"; readonly message: string };
+
+export function classifyWindowsProbeOutcome(evidence: {
+  readonly exitCode: number;
+  readonly signal: NodeJS.Signals | null;
+  readonly importStarted: boolean;
+  readonly importCompleted: boolean;
+  readonly importFailed: boolean;
+  readonly stdoutSha256: string;
+  readonly stderrSha256: string;
+  readonly stderr: string;
+}): WindowsProbeOutcome {
+  // TOTAL over the three outcomes the Windows policy has: it names which arm applies and does
+  // nothing else -- each arm's own work stays with the caller. An earlier form of this function
+  // handled only the two non-clean arms, which made a clean import classify as a REFUSAL; the
+  // test caught it, and a function whose contract depends on a check performed somewhere else is
+  // the footgun the extraction was meant to remove.
+  if (evidence.exitCode === 0 && evidence.signal === null) return { kind: "clean-import" };
+  if (isProvenAbruptWindowsImportCrash(evidence)) return { kind: "proven-abrupt-stop" };
+  return { kind: "refused", message: windowsNativeProbeRefusalMessage(evidence) };
 }
 
 async function smoke(

@@ -7,15 +7,16 @@ import { packageBuildConfig, windowsReferenceOnlyLadybugPlugin } from "../benchm
 import {
   assertPackageQualificationReport,
   boundedNativeProbeOutput,
+  classifyWindowsProbeOutcome,
   isKnownNativeCrash,
   isProvenAbruptWindowsImportCrash,
   LADYBUG_PACKAGE_QUALIFICATION_SCHEMA,
   NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT,
+  nativeIndexingProbeRefusalMessage,
   packageCompileCommand,
   parsePackageQualificationArgs,
   removeQualificationScratch,
   resolveInstalledOptionalPackageJson,
-  windowsNativeProbeRefusalMessage,
 } from "../benchmark/ladybug/package-qualification";
 
 const RELEASE_PATH = join(import.meta.dir, "..", ".github", "workflows", "release.yml");
@@ -649,14 +650,13 @@ describe("matching-host Ladybug package qualification", () => {
     ).toBe(true);
   });
 
-  test("a refusal names the marker state and repeats what the child said (LCLI-657)", () => {
-    // This drives a DELIBERATE rejection -- the shape the win32-x64 probe actually produced --
-    // through the message the refusal is built from. It replaces a first revision that asserted
-    // these fragments in the runner's SOURCE, which a peer review showed stayed green while the
-    // refusal lost the property: the marker fragment parked in the sibling non-Windows refusal
-    // (whose three locals are also in scope), or the excerpt parked in a comment. Both mutants
-    // are why this asserts a value instead of file bytes.
-    const message = windowsNativeProbeRefusalMessage({
+  test("the Windows refusal decision refuses a deliberate rejection and names what it measured (LCLI-657)", () => {
+    // Drives the DECISION, not the source: a peer review showed the first revision asserted these
+    // fragments in the runner's text, which stayed green while the refusal lost the property (the
+    // marker fragment parked in the sibling refusal; the excerpt parked in a comment). The same
+    // review then showed the follow-up wiring regex pinned only the callee's NAME -- a shadowed
+    // binding or a decoy in a comment satisfied it. So the transition itself is a value now.
+    const refusal = classifyWindowsProbeOutcome({
       exitCode: 1,
       signal: null,
       importStarted: true,
@@ -667,29 +667,81 @@ describe("matching-host Ladybug package qualification", () => {
       stderr:
         "Error: LoadLibrary failed: A dynamic link library (DLL) initialization routine failed.\n    at dlopen (unknown)\n    at lbug_native.js:12:8",
     });
-    expect(message).toContain("exit=1, signal=none");
-    expect(message).toContain("markers={started:true, completed:false, failed:true}");
-    expect(message).toContain(`stdout=sha256:${"e3b0".repeat(16)}`);
-    expect(message).toContain(`stderr=sha256:${"da81".repeat(16)}`);
-    expect(message).toContain("LoadLibrary failed");
-    expect(message).toContain("at lbug_native.js:12:8");
+    expect(refusal.kind).toBe("refused");
+    if (refusal.kind !== "refused") throw new Error("unreachable");
+    expect(refusal.message).toContain("exit=1, signal=none");
+    expect(refusal.message).toContain("markers={started:true, completed:false, failed:true}");
+    expect(refusal.message).toContain(`stdout=sha256:${"e3b0".repeat(16)}`);
+    expect(refusal.message).toContain(`stderr=sha256:${"da81".repeat(16)}`);
+    expect(refusal.message).toContain("LoadLibrary failed");
+    expect(refusal.message).toContain("at lbug_native.js:12:8");
+    // The excerpt is JSON-quoted and therefore still ONE log line: a raw multi-line excerpt would
+    // scatter the refusal across the log and break every consumer of a single-line message.
+    expect(refusal.message).toContain('stderrExcerpt="');
+    expect(refusal.message).not.toContain("\n");
 
-    // The same evidence must be one the policy REFUSES: if this predicate ever accepted it, the
-    // message above would never be reached and the assertions would be pinning dead text.
+    // The classifier is TOTAL over the policy's three outcomes: a clean import and a proven
+    // abrupt stop must come back as themselves and not as refusals, or the refusal text above
+    // would never be reached in practice. An earlier form of it handled only the two non-clean
+    // arms, so a clean import classified as a REFUSAL -- this assertion is what caught that.
+    const kindOf = (evidence: Parameters<typeof classifyWindowsProbeOutcome>[0]) =>
+      classifyWindowsProbeOutcome(evidence).kind;
     expect(
-      isProvenAbruptWindowsImportCrash({
+      kindOf({
+        exitCode: 0,
+        signal: null,
+        importStarted: true,
+        importCompleted: true,
+        importFailed: false,
+        stdoutSha256: "sha256:clean",
+        stderrSha256: "sha256:empty",
+        stderr: "",
+      }),
+    ).toBe("clean-import");
+    expect(
+      kindOf({
         exitCode: 1,
         signal: null,
         importStarted: true,
         importCompleted: false,
-        importFailed: true,
+        importFailed: false,
+        stdoutSha256: "sha256:empty",
+        stderrSha256: "sha256:empty",
+        stderr: "",
       }),
-    ).toBe(false);
+    ).toBe("proven-abrupt-stop");
+    // A ZERO exit with an incomplete marker set stays `clean-import` -- the classifier answers
+    // "which arm", and that arm's own marker check is what rejects it ("Windows native import
+    // markers are incomplete"). Pinned because the earlier two-arm form got this wrong in the
+    // other direction, and because the refusal is only for an outcome the policy has no arm for.
+    expect(
+      kindOf({
+        exitCode: 0,
+        signal: null,
+        importStarted: true,
+        importCompleted: false,
+        importFailed: true,
+        stdoutSha256: "sha256:empty",
+        stderrSha256: "sha256:failed",
+        stderr: "import failed",
+      }),
+    ).toBe("clean-import");
+  });
 
-    // One narrow structural assertion survives, and only for WIRING: the Windows refusal must be
-    // built by that function rather than a drifted copy of its text.
-    const runner = readFileSync(PACKAGE_RUNNER_PATH, "utf8");
-    expect(runner).toMatch(/throw new Error\(\s*windowsNativeProbeRefusalMessage\(/);
+  test("the sibling non-Windows refusal names what its child said too (LCLI-657)", () => {
+    // This branch lost its only coverage when the Windows assertions were scoped to the Windows
+    // builder -- a peer review measured that deleting its excerpt reddened nothing.
+    const message = nativeIndexingProbeRefusalMessage({
+      exitCode: 3,
+      signal: null,
+      stdoutSha256: `sha256:${"11".repeat(32)}`,
+      stderrSha256: `sha256:${"22".repeat(32)}`,
+      stderr: "native probe could not open its fixture",
+    });
+    expect(message).toContain("exit=3, signal=none");
+    expect(message).toContain(`stdout=sha256:${"11".repeat(32)}`);
+    expect(message).toContain(`stderr=sha256:${"22".repeat(32)}`);
+    expect(message).toContain("native probe could not open its fixture");
   });
 
   test("the bounded excerpt keeps both ends and claims only the elision it did (LCLI-657)", () => {
@@ -711,5 +763,17 @@ describe("matching-host Ladybug package qualification", () => {
     expect(boundedNativeProbeOutput("abcdefghij", 5)).toBe("ab...[6 UTF-16 code units elided]...ij");
     expect(boundedNativeProbeOutput("abcdefghij", 1)).toBe("a...[9 UTF-16 code units elided]");
     expect(boundedNativeProbeOutput("abcdefghij", 0)).toBe("...[10 UTF-16 code units elided]");
+    expect(boundedNativeProbeOutput("abcdefghij", -5)).toBe("...[10 UTF-16 code units elided]");
+
+    // A fractional or NaN limit must not slip past normalisation into the slicing: a peer review
+    // measured `slice(-NaN)` degenerating to `slice(0)`, returning the whole value while the
+    // message claimed to have elided. Fractions floor; a non-finite limit falls back to the
+    // default, which is still bounded.
+    expect(boundedNativeProbeOutput("abcdefghij", 0.5)).toBe("...[10 UTF-16 code units elided]");
+    expect(boundedNativeProbeOutput("abcdefghij", 1.5)).toBe("a...[9 UTF-16 code units elided]");
+    expect(boundedNativeProbeOutput("abcdefghij", Number.NaN)).toBe("abcdefghij");
+    expect(boundedNativeProbeOutput(long, Number.NaN)).toHaveLength(
+      NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT + "...[1000 UTF-16 code units elided]...".length,
+    );
   });
 });
