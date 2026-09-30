@@ -44,14 +44,23 @@ fi
 # A test killed by its own budget is reported at (or a hair above) that budget -- the timeout
 # fires first and the duration is measured after. Anything below it finished on its own, which
 # means the assertion failed rather than the runtime hanging.
+# THE LAST BRACKET, not the first, and that is a correctness requirement rather than a style
+# choice: a test's NAME may itself contain a duration-looking bracket, and reading the first one
+# would score a genuine assertion failure as a hang -- the wrong direction, since it is exactly
+# the failure the rule exists to keep fatal. Anchoring the match to the end of the line is what
+# selects the recorded duration, which bun always appends last. The anchor also tolerates a
+# trailing CR, so a CRLF log is classified by the same path.
 awk -v budget="$budget" '
   /^\(fail\) / {
     failures++
-    if (match($0, /\[[0-9]+(\.[0-9]+)?ms\]/)) {
+    if (match($0, /\[[0-9]+(\.[0-9]+)?ms\][^[]*$/)) {
       duration = substr($0, RSTART + 1, RLENGTH - 4) + 0
       if (duration >= budget) {
         hung++
-        print $0
+        # Bun prints a failure twice -- inline and again in its summary -- so the names are
+        # deduplicated for the reader. The COUNTS above stay as-is: the equality the verdict
+        # rests on is scale-invariant, which is why a doubled log still classifies correctly.
+        if (!seen[$0]++) print $0
       }
     }
   }

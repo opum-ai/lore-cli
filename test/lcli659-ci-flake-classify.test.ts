@@ -75,6 +75,35 @@ describe("LCLI-659 CI flake classifier", () => {
     expect(classify(hang("exactly at the budget", 10_000)).status).toBe(0);
   });
 
+  test("a duration-looking bracket in a test's NAME is not the recorded duration", () => {
+    // Review F1. The parse must take the LAST bracket: a genuine assertion failure whose name
+    // contains a bracket at or above the budget would otherwise be scored as a hang -- the wrong
+    // direction, since it is exactly the failure this rule exists to keep fatal. The mutant that
+    // reads the first bracket again reddens this case and nothing else.
+    const result = classify(assertion("reads the [10000ms] budget marker"));
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+  });
+
+  test("a CRLF log takes the same path, so a carriage return is not a missed retry", () => {
+    // Review F2: the tolerance was correct but unpinned, and an end-anchored mutant that ignores
+    // the trailing CR flips this from retryable to fatal with every other case still green.
+    const result = classify(hang("one") + hang("two").replace(/\n/g, "\r\n"));
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("one");
+    expect(result.stdout).toContain("two");
+  });
+
+  test("each hung test is NAMED once, though bun prints every failure twice", () => {
+    // Bun reports a failure inline and again in its summary. The counts stay as they are -- the
+    // equality the verdict rests on is scale-invariant -- but the list a human reads should not
+    // repeat itself.
+    const twice = hang("duplicated failure");
+    const result = classify(twice + twice);
+    expect(result.status).toBe(0);
+    expect(result.stdout.split("\n").filter((line) => line.includes("duplicated failure")).length).toBe(1);
+  });
+
   test("it refuses a missing log or a non-numeric budget rather than guessing", () => {
     const dir = mkdtempSync(join(tmpdir(), "lcli-659-usage-"));
     try {
