@@ -1637,7 +1637,12 @@ describe("lore init — legacy zero-config tracker boundary", () => {
         return base.multiselect(question, options, defaultSelected);
       },
     };
-    const { result } = await init({ stdinIsTTY: true, stderrIsTTY: true, prompter, adapter: fakeAdapter([], { probe: "ok" }) });
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      adapter: fakeAdapter([], { probe: "ok" }),
+    });
 
     // Positive control, in the same invocation: the run DID write, and DID ask. Without both, the
     // emptiness assertion below would pass because nothing happened, not because the order held.
