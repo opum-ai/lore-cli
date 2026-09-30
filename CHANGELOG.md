@@ -59,13 +59,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one for you** (LCLI-656; DEC-57, adopting ADR-0024). Every path that used to act on the operator's
   behalf now stops with the exact commands instead. A `quest` selection with no `quest` on `PATH`
   stops with the install pinned to lore's own exact version (`npm install -g
-  @opum-ai/quest@<lore's version>`) plus `quest init` and the rerun; a `backlog` selection likewise
-  names `backlog.md` and its floor. A repository holding a Backlog project is offered the migration
-  commands rather than migrated from the wizard, and no TTY means the same stop rather than an
-  assumed "no". Marked breaking because three previously-advisory cases are now stops: `--tracker
-  quest` or `--tracker backlog` with the CLI missing or the project uninitialized used to warn and
-  persist a selection (exit `0`) and now stop with the instructions (exit `3`/`6`) while writing
-  nothing. `--install-tracker` and `--no-install-tracker` are accepted for one release as no-ops that
+  @opum-ai/quest@<lore's version>`) plus `quest init` (dropped when the repository already has a
+  Quest workspace) and the rerun; a `backlog` selection likewise names `backlog.md` and its floor.
+  A repository holding a Backlog project is offered the migration commands rather than migrated
+  from the wizard, and no TTY means the same stop rather than an assumed "no". Marked breaking
+  because three previously-advisory cases are now stops: `--tracker quest` or `--tracker backlog`
+  with the CLI missing or the project uninitialized used to warn and persist a selection (exit `0`)
+  and now stop with the instructions (exit `3`/`6`) without persisting it — the *selection* is what
+  stops; the bundle scaffold on that path still lands, as it did. `--install-tracker` and `--no-install-tracker` are accepted for one release as no-ops that
   print a deprecation note — they install nothing, on any path, and together remain a usage error.
   The wizard's post-migration `backlog/` removal offer is gone with the wizard's migration arm
   (the flag path's `--remove-backlog`/`--no-remove-backlog` is unchanged), `--no-tracker` remains the
