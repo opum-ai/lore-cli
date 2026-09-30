@@ -603,6 +603,17 @@ describe("matching-host Ladybug package qualification", () => {
         platform: { bun: "1.4.2", os: "win32", cpu: "arm64" },
       }),
     ).toThrow("approved native platform verdict"); // the same shape on another platform
+
+    // And the policy is consulted for EVERY platform, not only inside the win32 arm. This report
+    // is the base linux fixture -- otherwise valid, native-index, probeOutcome pass -- carrying
+    // only the recorded message. With the policy consulted inside the win32 arm alone, nothing
+    // would catch it; a peer review measured exactly that gap.
+    expect(() =>
+      assertPackageQualificationReport({
+        ...report,
+        native: { ...report.native, addonLoadFailureMessage: WINDOWS_ADDON_LOAD_FAILURE_MESSAGE },
+      }),
+    ).toThrow("approved native platform verdict");
   });
 
   test("native indexing and Windows fallback evidence stay process-isolated and explicit", () => {
@@ -810,6 +821,41 @@ describe("matching-host Ladybug package qualification", () => {
         win32x64,
       ).kind,
     ).toBe("clean-import");
+
+    // A first line that CONTAINS the message with a suffix is NOT the message. The match is an
+    // equality against the child's own line, so a future loosening to a first-line `includes` --
+    // which would accept "Error: <message> (error 1114)" -- reddens here. A peer review measured
+    // that loosening surviving the suite before this case existed.
+    expect(classifyWindowsProbeOutcome(rejected(`Error: ${documentedMessage} (error 1114)`), win32x64).kind).toBe(
+      "refused",
+    );
+
+    // CRLF IS tolerated, deliberately: the child may run on a host that translates line endings.
+    // Pinned so the tolerance is a decision rather than an accident -- a peer review listed it as
+    // accepted-but-untested, which is the state that lets a later edit remove it unnoticed.
+    expect(classifyWindowsProbeOutcome(rejected(`Error: ${documentedMessage}\r\n    at dlopen`), win32x64).kind).toBe(
+      "addon-load-unavailable",
+    );
+
+    // The MARKER SET is part of "exactly one shape". Each case below carries the documented
+    // message and is neither clean nor a proven crash; none may reach the carve-out. The
+    // observed shape is the catch handler's signature -- started, not completed, failed --
+    // and before this was pinned, `importCompleted: true` (an import that SUCCEEDED) classified
+    // as a load failure. A peer review measured that whole family.
+    const markerKind = (over: Partial<Parameters<typeof classifyWindowsProbeOutcome>[0]>) =>
+      classifyWindowsProbeOutcome({ ...rejected(loadFailure), ...over }, win32x64).kind;
+    expect(markerKind({ importCompleted: true })).toBe("refused");
+    expect(markerKind({ importStarted: false })).toBe("refused");
+    // Without the failed marker the CRASH arm matches instead, which is a legitimate outcome --
+    // the assertion that matters is that it is not the carve-out.
+    expect(markerKind({ importFailed: false })).toBe("proven-abrupt-stop");
+    // The EXIT CODE and SIGNAL are not part of the boundary, and the test says so rather than
+    // leaving it to be re-derived: DEC-80 keys the acceptance on the message, and the markers
+    // prove the catch handler ran. A peer review flagged this family as "accepted beyond the
+    // documented shape"; it is accepted ON PURPOSE, and this pins the decision either way.
+    expect(markerKind({ exitCode: 139 })).toBe("addon-load-unavailable");
+    expect(markerKind({ exitCode: -1_073_741_819 })).toBe("addon-load-unavailable");
+    expect(markerKind({ exitCode: 0, signal: "SIGSEGV" })).toBe("addon-load-unavailable");
 
     // The REPORT-side policy, total in both directions.
     const policy = (

@@ -238,18 +238,26 @@ export function assertPackageQualificationReport(value: unknown): asserts value 
   if (
     report.smoke?.outputsStable !== true ||
     report.native?.commandOutputsStable !== true ||
+    // LCLI-657 / DEC-80, and it is consulted for EVERY platform rather than inside the win32
+    // arm. Inside that arm alone, a linux or darwin report could carry the recorded load failure
+    // with nothing to refuse it -- while the predicate itself returns false for those platforms.
+    // The doc claimed both directions and the call site delivered one; a peer review measured
+    // the gap. A missing platform fails closed here too: "" is never "win32".
+    // LCLI-657 / DEC-80, and it is consulted for EVERY platform rather than inside the win32
+    // arm. Inside that arm alone, a linux or darwin report could carry the recorded load failure
+    // with nothing to refuse it -- while the predicate itself returns false for those platforms.
+    // The doc claimed both directions and the call site delivered one; a peer review measured
+    // the gap. A missing platform fails closed here too: "" is never "win32".
+    !windowsAddonLoadFailurePolicyHolds({
+      os: report.platform?.os ?? "",
+      cpu: report.platform?.cpu ?? "",
+      probeOutcome: report.native?.probeOutcome ?? "",
+      addonLoadFailureMessage: report.native?.addonLoadFailureMessage ?? null,
+    }) ||
     (report.platform?.os === "win32"
       ? report.native.supportClaim !== "reference-fallback-only" ||
         report.native.referenceFallbackDatabaseAbsent !== true ||
-        report.native.databaseCreated ||
-        // LCLI-657 / DEC-80: the carve-out is visible HERE rather than absorbed into the
-        // predicate, so a reader of the assertion can see exactly what Windows now accepts.
-        !windowsAddonLoadFailurePolicyHolds({
-          os: report.platform.os,
-          cpu: report.platform.cpu,
-          probeOutcome: report.native.probeOutcome,
-          addonLoadFailureMessage: report.native.addonLoadFailureMessage,
-        })
+        report.native.databaseCreated
       : report.native.supportClaim !== "native-index" ||
         report.native.probeOutcome !== "pass" ||
         !report.native.databaseCreated ||
@@ -986,7 +994,26 @@ export function classifyWindowsProbeOutcome(
   // reached by an outcome that is neither a clean import nor a proven abrupt stop -- so a
   // success can never be reported as a load failure, which is one of the shapes the ruling
   // requires to be refused.
-  if (platform.os === "win32" && platform.cpu === "x64" && isExactWindowsAddonLoadFailure(evidence.stderr)) {
+  //
+  // The marker set is pinned too, and that is not decoration. "Exactly one shape" has to mean
+  // the catch handler's signature -- the import STARTED, did NOT complete, and its failure WAS
+  // recorded -- because without it an `importCompleted: true` outcome (an import that SUCCEEDED)
+  // would classify as a load failure. A peer review measured that family before this line was
+  // tightened: completed=true and started=false both reached the carve-out.
+  //
+  // The EXIT CODE and SIGNAL are deliberately NOT part of the boundary, which is a reading of
+  // the ruling rather than an oversight: DEC-80 keys the acceptance on the message ("accept
+  // `unavailable` when stderr carries the exact add-on load-failure message"). What the markers
+  // add is proof that the child's catch handler ran at all -- which is what keeps a successful
+  // import, or a failure before the import, from being reported as this.
+  if (
+    platform.os === "win32" &&
+    platform.cpu === "x64" &&
+    evidence.importStarted &&
+    !evidence.importCompleted &&
+    evidence.importFailed &&
+    isExactWindowsAddonLoadFailure(evidence.stderr)
+  ) {
     return { kind: "addon-load-unavailable", message: WINDOWS_ADDON_LOAD_FAILURE_MESSAGE };
   }
   return { kind: "refused", message: windowsNativeProbeRefusalMessage(evidence) };
@@ -1005,7 +1032,10 @@ export function classifyWindowsProbeOutcome(
  * says must be recorded.
  */
 export function windowsAddonLoadFailurePolicyHolds(evidence: {
-  readonly os: NodeJS.Platform;
+  // `string`, not `NodeJS.Platform`: the validator calls this for every report, including one
+  // whose platform is missing entirely, and an absent platform must fail closed rather than
+  // need a cast. It only ever compares against the literal "win32".
+  readonly os: string;
   readonly cpu: string;
   readonly probeOutcome: string;
   readonly addonLoadFailureMessage: string | null;
