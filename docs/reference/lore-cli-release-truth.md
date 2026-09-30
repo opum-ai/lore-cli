@@ -91,6 +91,18 @@ automatically after the move: the readme npm serves for `@opum-ai/lore` is byte-
 `0.12.0`'s packed `README.md`, read 2026-09-30T18:11:18Z. Its subject is recorded honestly as
 the package-level `readme` field, which is not per-version.
 
+**The row that could only pass after the move has passed.** opum-cli-e2e's
+`packaging/lore :: the installed lore launcher is byte-identical to the published root package`
+blocked by construction while nothing was published at `0.12.0`; after the promotion they re-ran
+it and it PASSES — the installed and published launchers both read `b779e360…` — and their bound
+post-move run diffs
+against the pass-2 run at **1 FIXED / 0 REGRESSED / 0 OTHER / 0 ADDED / 0 REMOVED** — the one
+moved row being exactly that launcher row, so nothing else in the pair moved either way. They
+also re-downloaded the published launcher with a fresh `npm pack`, which returned its
+`50156745…` digest byte-equal to the receipt's recorded final launcher — **the fresh publish
+shipped the qualified bytes, not a repack.** Those are their measurements, recorded here as
+theirs (TASK-149).
+
 **`0.12.0` carries NO provenance attestation (LCLI-482, open).** It was staged by
 `scripts/publish-release.sh` as a tarball-file publish, which carries none — so a reader must not
 infer one from the trusted-publishing machinery in `release.yml`, which this path does not use.
