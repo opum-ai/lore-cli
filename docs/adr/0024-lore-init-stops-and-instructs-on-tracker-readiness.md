@@ -479,8 +479,13 @@ LORE-260 test injects a detected environment; it must never depend on, or mutate
 `test/init.test.ts` (the offer tests become stop-and-instruct tests; the `--install-tracker` tests
 become deprecation tests; the migration-prompt tests become offer tests); `docs/reference/cli-surface.md`
 (its exit-4 clause for "the wizard's collision retry declined to import one family" retires with the
-wizard's migration arm — exit 4 itself remains in use for scaffold collisions and `--remove-backlog`
-refusals); ADR-0017 gets its amendment pointer at acceptance time.
+wizard's migration arm — exit 4 itself remains in use for `--remove-backlog` refusals; **correction,
+2026-09-30 (LCLI-656): this sentence named "scaffold collisions" as an exit-4 case, and they are
+not. Scaffold collisions are `conflict`, exit 5 — `test/init.test.ts:1928` pins it and the same
+`cli-surface.md` row already recorded it — so the aside named the wrong class. The exit-5 row now
+also names Quest's id-collision refusal on the `--migrate-backlog` flag path, which was exit 5
+already (`src/tracker-migration.ts:244`) and was simply not spelled out there.**); ADR-0017 gets
+its amendment pointer at acceptance time.
 
 ## Consequences
 

@@ -15,6 +15,13 @@
  * what lets the wizard render a summary for three backends without paying three subprocess spawns
  * for choices the operator will not make.
  *
+ * **This module detects; it never installs** (ADR-0024, DEC-57). The two facts above are the
+ * operator's to establish with their own package manager and the tracker's own init command; what
+ * lore hands them is {@link installCommandFor}'s text, which nothing in lore ever executes. The
+ * install seam that used to live here (`installTrackerPackage`) was this repository's only
+ * global-install site and is retired — see the ADR's "Consequences" for why the machine-mutating
+ * behavior itself, not the Windows red it caused, was the thing to remove.
+ *
  * Jira's `initialized` is deliberately `undefined` rather than `false`. Its readiness is
  * credential-profile state that `jira-cli` owns and that has no repository-local marker at all, so
  * reporting `false` would assert something this module cannot know. `adapters/jira-onboarding.ts`
@@ -25,7 +32,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { TrackerBackend } from "../config";
-import { LoreError, stderrHint } from "../errors";
+import { VERSION } from "../meta";
 
 /** What is known about one backend's CLI and this repository's setup for it. */
 export interface TrackerEnvironmentEntry {
@@ -34,13 +41,19 @@ export interface TrackerEnvironmentEntry {
   readonly binary: string;
   /** The npm package that provides {@link binary}, used verbatim in install commands and hints. */
   readonly package: string;
-  /** Whether {@link binary} is on PATH. */
+  /** The PATH lookup of {@link binary}. */
   readonly installed: boolean;
   /**
    * Whether this repository is already set up for the backend. `undefined` means "not knowable from
    * the repository" — the jira case, whose readiness lives in jira-cli's own credential profiles.
    */
   readonly initialized: boolean | undefined;
+  /**
+   * The repository-local file {@link initialized} is read from, or `undefined` when the backend has
+   * none. Carried so a stop can NAME the missing marker (`.quest/workspace.toml`) rather than
+   * describe it, the same way {@link binary} and {@link package} are carried for the remedy text.
+   */
+  readonly marker: string | undefined;
 }
 
 /** One entry per backend `lore init` can offer, in the order the wizard presents them. */
@@ -72,6 +85,7 @@ export function detectTrackerEnvironment(root: string): TrackerEnvironment {
     package: entry.package,
     installed: onPath(entry.binary),
     initialized: entry.marker === undefined ? undefined : existsSync(join(root, entry.marker)),
+    marker: entry.marker,
   }));
 }
 
@@ -83,45 +97,26 @@ export function trackerEntry(
   return environment.find((entry) => entry.backend === backend);
 }
 
-/** The exact command an operator can run to install one backend's CLI themselves. */
+/**
+ * The exact command an operator can run, themselves, to install one backend's CLI. **Text only:
+ * nothing in lore runs it** (ADR-0024).
+ *
+ * Quest's command is pinned to **lore's own exact version** (LCLI-650's pair lock, DEC-31): lore X
+ * runs only against quest X, so handing a new user a bare `npm install -g @opum-ai/quest` — which
+ * resolves to `latest` — can install a quest that the very next command refuses. The onboarding
+ * message and the runtime remedy are then one sentence. Backlog keeps its own package name
+ * unpinned, because only lore and quest share a version; Backlog's requirement is the `1.49.0`
+ * FLOOR its adapter enforces, not an exact pair.
+ */
 export function installCommandFor(entry: TrackerEnvironmentEntry): string {
-  return `npm install -g ${entry.package}`;
+  return entry.backend === "quest" ? `npm install -g ${entry.package}@${VERSION}` : `npm install -g ${entry.package}`;
 }
 
-/**
- * Install one backend's package globally and report whether its binary is on PATH afterwards.
- *
- * Shells the same `npm install -g <package>` this module hands the operator in {@link
- * installCommandFor}, so what `lore init` does on their behalf is exactly what they would have run —
- * no private install path, nothing to reverse-engineer from a failure. A non-zero npm exit is a
- * classified {@link LoreError} carrying npm's own stderr rather than a bare "install failed".
- *
- * The re-detection is not ceremony: a `npm install -g` that succeeds can still leave the binary off
- * PATH (a prefix outside PATH, a shell that caches lookups), and reporting success on npm's exit
- * code alone would send the caller straight into a probe that fails for a reason it cannot explain.
+/*
+ * There is deliberately no installer here any more (ADR-0024). `installTrackerPackage` — the
+ * `npm install -g <package>` this module used to shell on the operator's behalf — was removed with
+ * the whole install arm: `lore init` detects, offers, and instructs, and never installs. What
+ * survives is the TEXT (`installCommandFor` above), which a stop hands the operator to run
+ * themselves, exactly where `lore init` used to run it for them. If an install path is ever
+ * re-added, it belongs behind ADR-0024's own principle rather than back in this module.
  */
-export async function installTrackerPackage(entry: TrackerEnvironmentEntry): Promise<boolean> {
-  const command = installCommandFor(entry);
-  let exitCode: number;
-  let stderr: string;
-  try {
-    const child = Bun.spawn(["npm", "install", "-g", entry.package], { stdout: "pipe", stderr: "pipe" });
-    [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited]);
-  } catch (cause) {
-    throw new LoreError(
-      "not_found",
-      `could not run \`${command}\`: npm is not installed or not on PATH`,
-      `install ${entry.package} with your own package manager, then rerun \`lore init\``,
-      { cause: cause instanceof Error ? cause.message : String(cause) },
-    );
-  }
-  if (exitCode !== 0) {
-    throw new LoreError(
-      "validation",
-      `\`${command}\` exited ${exitCode}: could not install ${entry.package}`,
-      stderrHint(stderr) ?? `run \`${command}\` yourself to see npm's own diagnostic, then rerun \`lore init\``,
-      { exitCode, package: entry.package },
-    );
-  }
-  return onPath(entry.binary);
-}

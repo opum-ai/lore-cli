@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -74,6 +75,77 @@ function gitStub(repository = true, onInitialize?: () => void): GitPreflight & {
 }
 
 /**
+ * A detected {@link TrackerEnvironment} with every backend installed and initialized in this
+ * repository, unless `overrides` says otherwise.
+ *
+ * The `init()` helper defaults to this, which is a deliberate choice rather than a convenience.
+ * Detection reads the HOST (PATH) as well as the repository, and since ADR-0024 the answer decides
+ * whether a selection is served or stopped — so without a default, every test that names a backend
+ * would be decided by whichever tracker CLIs the machine running the suite happens to have, and a
+ * missing binary would surface as a red that says nothing about the code under test. It is the same
+ * reasoning the helper already applies to `jira` (`fakeJira()`) and to `agentAvailability`.
+ */
+function detectedEnvironment(
+  overrides: Partial<Record<"quest" | "backlog" | "jira", Partial<TrackerEnvironmentEntry>>> = {},
+): TrackerEnvironment {
+  const base = [
+    {
+      backend: "quest",
+      binary: "quest",
+      package: "@opum-ai/quest",
+      installed: true,
+      initialized: true,
+      marker: ".quest/workspace.toml",
+    },
+    {
+      backend: "backlog",
+      binary: "backlog",
+      package: "backlog.md",
+      installed: true,
+      initialized: true,
+      marker: "backlog/config.yml",
+    },
+    {
+      backend: "jira",
+      binary: "jira",
+      package: "@salient-ai/jira-cli",
+      installed: true,
+      initialized: undefined,
+      marker: undefined,
+    },
+  ] as const;
+  return base.map((entry) => ({ ...entry, ...(overrides[entry.backend] ?? {}) })) as TrackerEnvironment;
+}
+
+/**
+ * Sorted `relative/path <sha256 of its bytes>` lines for everything under `dir` — a recursive,
+ * content-level snapshot, for the assertions that claim a refused run wrote NOTHING.
+ *
+ * A bare `readdirSync(root)` cannot carry that claim: it sees one level, so a regression that wrote
+ * `.lore/profile.toml` or a schema before an offer would still pass, and in a `legacyBundle()` root
+ * (where `.lore/` and `backlog/` already exist) an empty first level was never assertable at all
+ * (LCLI-656 review D6). Non-regular entries are recorded by kind rather than read.
+ */
+function treeDigest(dir: string, prefix = ""): string[] {
+  const lines: string[] = [];
+  for (const entry of readdirSync(join(dir, prefix), { withFileTypes: true })) {
+    const rel = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+    if (entry.isDirectory()) {
+      lines.push(...treeDigest(dir, rel));
+    } else if (entry.isFile()) {
+      lines.push(
+        `${rel} ${createHash("sha256")
+          .update(readFileSync(join(dir, rel)))
+          .digest("hex")}`,
+      );
+    } else {
+      lines.push(`${rel} <${entry.isSymbolicLink() ? "symlink" : "non-regular"}>`);
+    }
+  }
+  return lines.sort();
+}
+
+/**
  * Run `init` in JSON mode and return the parsed `data` payload, exit code, and captured stderr.
  * Every field beyond `clock` is optional so the vast majority of tests (the pre-LORE-260 bare-init
  * behavior) read exactly as before; the wizard/flags/backlog-check tests pass the rest.
@@ -88,11 +160,9 @@ async function init(
     prompter?: InitPrompter;
     adapter?: BacklogAdapter;
     migrateBacklog?: InitOptions["migrateBacklog"];
-    previewBacklogMigration?: InitOptions["previewBacklogMigration"];
     agentAvailability?: () => { claude: boolean; codex: boolean };
     git?: GitPreflight;
     trackerEnvironment?: () => TrackerEnvironment;
-    installTracker?: InitOptions["installTracker"];
     jira?: JiraOnboarding;
     agentPlugins?: InitOptions["agentPlugins"];
   } = {},
@@ -116,11 +186,12 @@ async function init(
     prompter: extra.prompter,
     adapter: extra.adapter,
     migrateBacklog: extra.migrateBacklog,
-    previewBacklogMigration: extra.previewBacklogMigration,
     agentAvailability: extra.agentAvailability ?? (() => ({ claude: true, codex: false })),
     git: extra.git ?? gitStub(),
-    trackerEnvironment: extra.trackerEnvironment,
-    installTracker: extra.installTracker,
+    // Defaulted, never left to the real seam (see `detectedEnvironment`): a test that cares about
+    // readiness injects its own, and every other test gets a deterministic answer instead of
+    // whichever tracker CLIs this machine has on PATH.
+    trackerEnvironment: extra.trackerEnvironment ?? (() => detectedEnvironment()),
     // Defaulted, never left to the real seam: without this a jira-selecting test would shell the
     // machine's own `jira` binary and read whichever credential profiles the developer happens to
     // have (LCLI-358.4).
@@ -170,40 +241,26 @@ function scriptedPrompter(answers: {
   site?: string;
   obsidian?: boolean;
   git?: boolean;
-  install?: boolean;
-  switchTracker?: boolean;
   jiraProfile?: string;
   jiraProject?: string;
-  backlogTasks?: string;
-  retryPreservingIds?: boolean;
-  sourceFamily?: string;
-  removeBacklog?: boolean;
-  confirmExclusions?: boolean;
+  /** The O3/O6 Backlog-takeover offer: `true` takes it (and the run stops), `false` is the keep. */
+  backlogTakeover?: boolean;
+  /** The O1/O2 readiness offer: `true` accepts the stop (the run ends), `false` returns to the tracker question. */
+  readinessStop?: boolean;
 }): InitPrompter {
   return {
     confirm: async (question, defaultValue) => {
-      // LCLI-467's post-migration removal offer, matched before the catch-all below for the same
-      // reason every branch here is: without it, `obsidian: false` would quietly decline a question
-      // it was never asked about — or, worse, `obsidian: true` would accept a deletion.
-      if (question.includes("Delete backlog/")) return answers.removeBacklog ?? defaultValue;
       // Matched before the catch-all below (LCLI-358.1): the git preflight is a `confirm` too, and
       // without its own branch a test that answers `obsidian: false` would silently decline git.
-      // The same applies to LCLI-358.3's install and switch-tracker offers, and to LCLI-466's
-      // post-refusal retry offer.
-      if (question.includes("own Backlog id")) return answers.retryPreservingIds ?? defaultValue;
-      // LCLI-521's pre-apply exclusion confirm, matched before the catch-all for the same reason as
-      // every branch above: without it, `obsidian: false` would silently decline a partial import
-      // the test never meant to answer.
-      if (question.includes("leave the record(s) above")) return answers.confirmExclusions ?? defaultValue;
+      // The same applies to the readiness offers (O1/O2) and the takeover offer (O3/O6).
+      if (question.includes("Quest can take its tasks over")) return answers.backlogTakeover ?? defaultValue;
       if (question.includes("git repository")) return answers.git ?? defaultValue;
-      if (question.includes("is not installed")) return answers.install ?? defaultValue;
-      if (question.includes("different tracker")) return answers.switchTracker ?? defaultValue;
+      // "not installed" and "is not set up for it" are the two readiness offers, O1 and O2.
+      if (question.includes("not installed") || question.includes("is not set up for it"))
+        return answers.readinessStop ?? defaultValue;
       return answers.obsidian ?? defaultValue;
     },
     choose: async (question, _choices, defaultValue) => {
-      // Matched FIRST: LCLI-358.5's migration question ends "...or use Backlog as the tracker?", so
-      // the looser `tracker` branch below would otherwise answer it with the tracker backend.
-      if (question.includes("Backlog.md project")) return answers.backlogTasks ?? defaultValue;
       if (question.includes("tracker")) return answers.tracker ?? defaultValue;
       return answers.site ?? defaultValue;
     },
@@ -227,9 +284,6 @@ function scriptedPrompter(answers: {
     ask: async (question, defaultValue) => {
       if (question.includes("jira-cli profile")) return answers.jiraProfile ?? defaultValue;
       if (question.includes("project key")) return answers.jiraProject ?? defaultValue;
-      // LCLI-466's family prompt. Unanswered, it falls through to `defaultValue` like every other
-      // question here — which is the suggestion Lore read out of Quest's own refusal.
-      if (question.includes("id family")) return answers.sourceFamily ?? defaultValue;
       return defaultValue;
     },
     close: () => {},
@@ -1139,17 +1193,6 @@ describe("lore init — legacy zero-config tracker boundary", () => {
     taskFingerprints: { "T-1": "sha256:task" },
     state: "applied" as const,
   };
-  test("refuses a Quest switch without the explicit migration flag and names both safe commands", () => {
-    legacyBundle();
-    const error = expectError("validation", () =>
-      runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), args: ["--tracker", "quest"] }),
-    );
-    expect(error.hint).toContain("quest init");
-    expect(error.hint).toContain("lore init --tracker quest --migrate-backlog");
-    expect(error.hint).toContain("lore init --tracker backlog");
-    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
-  });
-
   test("persists Quest only after an explicit migration succeeds", async () => {
     legacyBundle();
     const { result } = await init({
@@ -1291,7 +1334,16 @@ describe("lore init — legacy zero-config tracker boundary", () => {
     expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
 
     const silent = expectError("validation", () =>
-      runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), args: ["--tracker", "quest"] }),
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        args: ["--tracker", "quest"],
+        // A READY quest: this test is about the Backlog-project guard (N3), which the ADR conditions
+        // on exactly that state. With quest unusable the readiness stop fires first (D2, below).
+        trackerEnvironment: () => detectedEnvironment(),
+      }),
     );
     expect(silent.message).toContain("must be a deliberate choice");
     expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
@@ -1357,12 +1409,13 @@ describe("lore init — legacy zero-config tracker boundary", () => {
     expect(err.message).toContain(expected);
   });
 
-  test("the tracker question is asked in full, and the migration question follows it (LCLI-358.5)", async () => {
+  test("the tracker question is asked in full, and the takeover offer follows it (LCLI-358.5, ADR-0024 AC#6)", async () => {
     legacyBundle();
     const asked: { question: string; choices: string[] }[] = [];
+    const offers: string[] = [];
     const base = scriptedPrompter({
       tracker: "quest",
-      backlogTasks: "backlog",
+      backlogTakeover: false, // the explicit keep: proceed with Quest, leave backlog/ in place
       agents: false,
       site: "none",
       obsidian: false,
@@ -1373,436 +1426,245 @@ describe("lore init — legacy zero-config tracker boundary", () => {
         asked.push({ question, choices: [...values] });
         return base.choose(question, values, defaultValue);
       },
-    };
-    const { result } = await init({
-      stdinIsTTY: true,
-      stderrIsTTY: true,
-      prompter,
-      adapter: fakeAdapter([], { probe: "ok" }),
-      agentAvailability: () => ({ claude: false, codex: false }),
-    });
-    // The full vocabulary, in order: the tracker question first (AC#1), then the migration question
-    // it makes meaningful (AC#3). Neither replaces the other.
-    expect(asked[0]?.choices).toEqual(["quest", "backlog", "jira", "none"]);
-    expect(asked[1]?.choices).toEqual(["migrate", "keep", "backlog"]);
-    expect(asked[1]?.question).toContain("backlog/config.yml");
-    // Answering `backlog` to the migration question pins Backlog, as the old two-way choice did.
-    expect(result.tracker).toBe("backlog");
-    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
-  });
-
-  test("interactive migration preserves the legacy backend until the copy succeeds", async () => {
-    legacyBundle();
-    const { result } = await init({
-      stdinIsTTY: true,
-      stderrIsTTY: true,
-      prompter: scriptedPrompter({
-        tracker: "quest",
-        backlogTasks: "migrate",
-        agents: false,
-        site: "none",
-        obsidian: false,
-      }),
-      adapter: fakeAdapter([], { probe: "ok" }),
-      migrateBacklog: async () => migrationResult,
-      agentAvailability: () => ({ claude: false, codex: false }),
-    });
-    expect(result.migration).toEqual(migrationResult);
-    expect(result.tracker).toBe("quest");
-    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
-  });
-
-  /**
-   * LCLI-466. Both strings are copied VERBATIM from quest 0.7.1 on this machine, produced by two
-   * real repros with the real `backlog` and `quest` binaries: one where a dotted subtask's
-   * positional renumbering shifted a later allocation, and one where the destination workspace
-   * already held the ids. Quest returns the SAME default-mode sentence for both — it names both
-   * causes rather than the one that occurred — which is why the wizard asks and then lets Quest's
-   * own preservation-mode preview decide, instead of reading the cause out of the prose.
-   */
-  const ALIAS_COLLISION =
-    'Alias collision: "TASK-2" conflicts with "TASK-2". If this is from positional renumbering ' +
-    "(for example a dotted subtask flattening and shifting a later allocation), --preserve-source-ids " +
-    "--source-family <PREFIX> avoids it by keeping each record's own source id instead. If instead " +
-    "this exact id is already a live, unrelated claim in the destination workspace, " +
-    "--preserve-source-ids will not resolve it -- rename or remove the conflicting record in the " +
-    "destination, or rename the id in the source, before retrying.";
-  const PRESERVATION_REFUSED =
-    "Backlog id preservation refused: 2 id collision(s). See the itemized report for detail. No " +
-    "further flag resolves a remaining id collision here: rename or remove the conflicting record in " +
-    "the destination workspace, or rename the id in the source, then retry.";
-  type MigrationOptions = { preserveSourceIds?: boolean; sourceFamily?: string } | undefined;
-
-  function migrationWizard(answers: {
-    retryPreservingIds?: boolean;
-    sourceFamily?: string;
-    confirmExclusions?: boolean;
-  }): {
-    prompter: InitPrompter;
-    askedDefaults: string[];
-  } {
-    const askedDefaults: string[] = [];
-    const base = scriptedPrompter({
-      tracker: "quest",
-      backlogTasks: "migrate",
-      agents: false,
-      site: "none",
-      obsidian: false,
-      ...answers,
-    });
-    return {
-      askedDefaults,
-      prompter: {
-        ...base,
-        ask: async (question, defaultValue) => {
-          if (question.includes("id family")) askedDefaults.push(defaultValue);
-          return base.ask(question, defaultValue);
-        },
-      },
-    };
-  }
-
-  test("an id-collision refusal is retried with --preserve-source-ids in the same run (AC#2, LCLI-466)", async () => {
-    legacyBundle();
-    const calls: MigrationOptions[] = [];
-    const { prompter, askedDefaults } = migrationWizard({ retryPreservingIds: true });
-    const { result, stderr } = await init({
-      stdinIsTTY: true,
-      stderrIsTTY: true,
-      prompter,
-      adapter: fakeAdapter([], { probe: "ok" }),
-      agentAvailability: () => ({ claude: false, codex: false }),
-      migrateBacklog: async (migrationOptions) => {
-        calls.push(migrationOptions);
-        // Exactly what Quest does: the default positional-renumbering run refuses, the
-        // preservation run produces a plan.
-        if (migrationOptions?.preserveSourceIds !== true) throw new LoreError("conflict", ALIAS_COLLISION);
-        return migrationResult;
-      },
-      // LCLI-521's pre-apply exclusion check calls this separately, before `migrateBacklog` runs the
-      // real retry — nothing excluded here, so `confirmFamilyExclusions` returns without prompting.
-      previewBacklogMigration: async () => ({
-        sourceFingerprint: "sha256:source",
-        digest: "sha256:reviewed",
-        mappings: [],
-        requiresApproval: true,
-        excluded: [],
-      }),
-    });
-    // The retry carries BOTH flags Quest requires together, and only after the first attempt failed.
-    expect(calls).toEqual([undefined, { preserveSourceIds: true, sourceFamily: "TASK" }]);
-    // The family prompt is pre-filled from the id Quest quoted — a suggestion, overtypable.
-    expect(askedDefaults).toEqual(["TASK"]);
-    // No second `lore init`: this run completes the migration and pins Quest.
-    expect(result.migration).toEqual(migrationResult);
-    expect(result.tracker).toBe("quest");
-    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
-    expect(stderr).toContain("Alias collision");
-    expect(stderr).toContain("wrote nothing");
-  });
-
-  test("the operator's own family answer overrides the suggestion read out of Quest's message", async () => {
-    legacyBundle();
-    const calls: MigrationOptions[] = [];
-    const { prompter } = migrationWizard({ retryPreservingIds: true, sourceFamily: "LCLI" });
-    await init({
-      stdinIsTTY: true,
-      stderrIsTTY: true,
-      prompter,
-      adapter: fakeAdapter([], { probe: "ok" }),
-      agentAvailability: () => ({ claude: false, codex: false }),
-      migrateBacklog: async (migrationOptions) => {
-        calls.push(migrationOptions);
-        if (migrationOptions?.preserveSourceIds !== true) throw new LoreError("conflict", ALIAS_COLLISION);
-        return migrationResult;
-      },
-      previewBacklogMigration: async () => ({
-        sourceFingerprint: "sha256:source",
-        digest: "sha256:reviewed",
-        mappings: [],
-        requiresApproval: true,
-        excluded: [],
-      }),
-    });
-    expect(calls[1]).toEqual({ preserveSourceIds: true, sourceFamily: "LCLI" });
-  });
-
-  test("a genuine dual id claim is reported as needing manual resolution, with no retry that cannot work", async () => {
-    legacyBundle();
-    const calls: MigrationOptions[] = [];
-    const report = { collisions: [{ candidate: "TASK-1", conflictsWith: "TASK-1" }], unpreservable: [] };
-    const { prompter } = migrationWizard({ retryPreservingIds: true });
-    const promise = runInit({
-      root,
-      git: gitStub(),
-      output: JSON_CTX,
-      stdout: capture(),
-      stderr: capture(),
-      stdinIsTTY: true,
-      stderrIsTTY: true,
-      prompter,
-      adapter: fakeAdapter([], { probe: "ok" }),
-      agentAvailability: () => ({ claude: false, codex: false }),
-      jira: fakeJira(),
-      migrateBacklog: async (migrationOptions) => {
-        calls.push(migrationOptions);
-        // Quest's preservation-mode preview is the authority, and here it refuses outright.
-        if (migrationOptions?.preserveSourceIds === true)
-          throw new LoreError("conflict", PRESERVATION_REFUSED, undefined, report);
-        throw new LoreError("conflict", ALIAS_COLLISION);
-      },
-      // LCLI-521's own exclusion-check preview hits the SAME preservation refusal a real Quest
-      // would give — `confirmFamilyExclusions` must classify and report it exactly like
-      // `retryWithPreservedIds` does, before ever reaching the retry that carries `calls`.
-      previewBacklogMigration: async () => {
-        throw new LoreError("conflict", PRESERVATION_REFUSED, undefined, report);
-      },
-    });
-    let thrown: unknown;
-    try {
-      await promise;
-    } catch (cause) {
-      thrown = cause;
-    }
-    expect(thrown).toBeInstanceOf(LoreError);
-    const error = thrown as LoreError;
-    // Still exit 5, and Quest's own words are carried rather than paraphrased.
-    expect(error.type).toBe("conflict");
-    expect(error.message).toContain("no migration flag resolves it");
-    expect(error.message).toContain("No further flag resolves a remaining id collision here");
-    expect(error.hint).toContain("rename or remove the conflicting record");
-    expect(error.input).toEqual(report);
-    // One attempt through the full migrate lifecycle (the default-mode refusal), never a second: the
-    // preservation-mode dead end is now discovered by LCLI-521's own pre-apply exclusion check, which
-    // calls Quest's read-only preview directly rather than through `retryWithPreservedIds` — so it
-    // stops before `migrateBacklog` would ever be asked for a real preservation-mode attempt.
-    expect(calls).toEqual([undefined]);
-    // And the backend is left unpinned, exactly as a failed flag-path migration leaves it.
-    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).not.toContain("[tracker]");
-  });
-
-  /**
-   * LCLI-521 AC#2 (the fleet-preferred fix): the wizard's retry asks BEFORE applying whenever the
-   * chosen family leaves other records behind, rather than only reporting it in the finished
-   * summary. Proven with a fake seam here; proven against real `backlog`/`quest` binaries in the
-   * task's implementation notes (a real two-family repro: LCLI-1, LCLI-1.1, LCLI-2 plus LORE-1,
-   * LORE-2, quest task-id-prefix `LCLI` so the flattened dotted subtask collides with the literal
-   * `LCLI-2` — exactly this test's shape, just driven by a real subprocess instead of a fake).
-   */
-  test("the wizard warns and asks before applying when the chosen family leaves others behind, and proceeds on confirm (LCLI-521 AC#2)", async () => {
-    legacyBundle();
-    const calls: MigrationOptions[] = [];
-    const previewCalls: MigrationOptions[] = [];
-    const { prompter, askedDefaults } = migrationWizard({ retryPreservingIds: true, confirmExclusions: true });
-    const { result, stderr } = await init({
-      stdinIsTTY: true,
-      stderrIsTTY: true,
-      prompter,
-      adapter: fakeAdapter([], { probe: "ok" }),
-      agentAvailability: () => ({ claude: false, codex: false }),
-      migrateBacklog: async (migrationOptions) => {
-        calls.push(migrationOptions);
-        if (migrationOptions?.preserveSourceIds !== true) throw new LoreError("conflict", ALIAS_COLLISION);
-        return migrationResult;
-      },
-      previewBacklogMigration: async (migrationOptions) => {
-        previewCalls.push(migrationOptions);
-        return {
-          sourceFingerprint: "sha256:source",
-          digest: "sha256:reviewed",
-          mappings: [],
-          requiresApproval: true,
-          excluded: [
-            { sourceIdentifier: "LORE-1", family: "LORE" },
-            { sourceIdentifier: "LORE-2", family: "LORE" },
-          ],
-        };
-      },
-    });
-    // The exclusion check runs with the SAME family the operator just answered, before the retry
-    // that actually applies anything.
-    expect(previewCalls).toEqual([{ preserveSourceIds: true, sourceFamily: "TASK" }]);
-    expect(askedDefaults).toEqual(["TASK"]);
-    expect(calls).toEqual([undefined, { preserveSourceIds: true, sourceFamily: "TASK" }]);
-    expect(result.migration).toEqual(migrationResult);
-    expect(result.tracker).toBe("quest");
-    // Named in the warning: the count, the family left behind, and what to run instead.
-    expect(stderr).toContain("2 record(s) in LORE will NOT be imported");
-    expect(stderr).toContain("LORE-1");
-    expect(stderr).toContain("LORE-2");
-    expect(stderr).toContain("--preserve-source-ids --source-family <PREFIX>");
-  });
-
-  test("the wizard aborts a partial import when the operator declines the exclusion warning (LCLI-521 AC#2)", async () => {
-    legacyBundle();
-    const calls: MigrationOptions[] = [];
-    const { prompter } = migrationWizard({ retryPreservingIds: true, confirmExclusions: false });
-    const promise = runInit({
-      root,
-      git: gitStub(),
-      output: JSON_CTX,
-      stdout: capture(),
-      stderr: capture(),
-      stdinIsTTY: true,
-      stderrIsTTY: true,
-      prompter,
-      adapter: fakeAdapter([], { probe: "ok" }),
-      agentAvailability: () => ({ claude: false, codex: false }),
-      jira: fakeJira(),
-      migrateBacklog: async (migrationOptions) => {
-        calls.push(migrationOptions);
-        if (migrationOptions?.preserveSourceIds !== true) throw new LoreError("conflict", ALIAS_COLLISION);
-        return migrationResult;
-      },
-      previewBacklogMigration: async () => ({
-        sourceFingerprint: "sha256:source",
-        digest: "sha256:reviewed",
-        mappings: [],
-        requiresApproval: true,
-        excluded: [{ sourceIdentifier: "LORE-1", family: "LORE" }],
-      }),
-    });
-    let thrown: unknown;
-    try {
-      await promise;
-    } catch (cause) {
-      thrown = cause;
-    }
-    expect(thrown).toBeInstanceOf(LoreError);
-    const error = thrown as LoreError;
-    // A declined confirmation, not a Quest refusal: exit 4 (denied), not the collision's exit 5.
-    expect(error.type).toBe("denied");
-    expect(error.message).toContain("was not confirmed");
-    expect(error.message).toContain("1 record(s) outside TASK");
-    expect(error.hint).toContain("one family per run");
-    // The full preview+apply migrate lifecycle is never reached a second time: nothing was applied.
-    expect(calls).toEqual([undefined]);
-    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).not.toContain("[tracker]");
-  });
-
-  test("no exclusion prompt when the chosen family leaves nothing behind", async () => {
-    legacyBundle();
-    let promptedForExclusions = false;
-    const { prompter } = migrationWizard({ retryPreservingIds: true });
-    const wrapped: InitPrompter = {
-      ...prompter,
       confirm: async (question, defaultValue) => {
-        if (question.includes("leave the record(s) above")) promptedForExclusions = true;
-        return prompter.confirm(question, defaultValue);
-      },
-    };
-    const { result } = await init({
-      stdinIsTTY: true,
-      stderrIsTTY: true,
-      prompter: wrapped,
-      adapter: fakeAdapter([], { probe: "ok" }),
-      agentAvailability: () => ({ claude: false, codex: false }),
-      migrateBacklog: async (migrationOptions) => {
-        if (migrationOptions?.preserveSourceIds !== true) throw new LoreError("conflict", ALIAS_COLLISION);
-        return migrationResult;
-      },
-      previewBacklogMigration: async () => ({
-        sourceFingerprint: "sha256:source",
-        digest: "sha256:reviewed",
-        mappings: [],
-        requiresApproval: true,
-        excluded: [],
-      }),
-    });
-    expect(promptedForExclusions).toBe(false);
-    expect(result.migration).toEqual(migrationResult);
-  });
-
-  test("declining the retry re-raises Quest's own refusal untouched", async () => {
-    legacyBundle();
-    const refusal = new LoreError("conflict", ALIAS_COLLISION);
-    const calls: MigrationOptions[] = [];
-    const { prompter } = migrationWizard({ retryPreservingIds: false });
-    const promise = runInit({
-      root,
-      git: gitStub(),
-      output: JSON_CTX,
-      stdout: capture(),
-      stderr: capture(),
-      stdinIsTTY: true,
-      stderrIsTTY: true,
-      prompter,
-      adapter: fakeAdapter([], { probe: "ok" }),
-      agentAvailability: () => ({ claude: false, codex: false }),
-      jira: fakeJira(),
-      migrateBacklog: async (migrationOptions) => {
-        calls.push(migrationOptions);
-        throw refusal;
-      },
-    });
-    await expect(promise).rejects.toBe(refusal);
-    expect(calls).toEqual([undefined]);
-  });
-
-  test("a migration failure that is not an id collision is re-raised without any retry offer", async () => {
-    legacyBundle();
-    const failure = new LoreError("validation", "Quest workspace is not available");
-    const base = scriptedPrompter({
-      tracker: "quest",
-      backlogTasks: "migrate",
-      agents: false,
-      site: "none",
-      obsidian: false,
-    });
-    const prompter: InitPrompter = {
-      ...base,
-      confirm: async (question, defaultValue) => {
-        if (question.includes("own Backlog id")) throw new Error("no retry may be offered for a non-collision failure");
+        if (question.includes("Quest can take its tasks over")) offers.push(question);
         return base.confirm(question, defaultValue);
       },
     };
-    const promise = runInit({
-      root,
-      git: gitStub(),
-      output: JSON_CTX,
-      stdout: capture(),
-      stderr: capture(),
+    const { result } = await init({
       stdinIsTTY: true,
       stderrIsTTY: true,
       prompter,
       adapter: fakeAdapter([], { probe: "ok" }),
       agentAvailability: () => ({ claude: false, codex: false }),
-      jira: fakeJira(),
-      migrateBacklog: async () => Promise.reject(failure),
     });
-    await expect(promise).rejects.toBe(failure);
+    // The tracker question still comes first and still offers the whole vocabulary (AC#1).
+    expect(asked[0]?.choices).toEqual(["quest", "backlog", "jira", "none"]);
+    // ...and the Backlog question is now the ADR's offer, not a migrate/keep/backlog menu.
+    expect(offers).toHaveLength(1);
+    expect(offers[0]).toContain("backlog/config.yml");
+    expect(result.tracker).toBe("quest");
+    expect(result.migration).toBeUndefined();
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
+  });
+
+  test("accepting the O3 offer stops with the migration commands and writes nothing (ADR-0024 AC#6)", async () => {
+    legacyBundle();
+    const before = treeDigest(root);
+    const base = scriptedPrompter({ tracker: "quest", agents: false, site: "none", obsidian: false });
+    const defaults: boolean[] = [];
+    const prompter: InitPrompter = {
+      ...base,
+      confirm: async (question, defaultValue) => {
+        if (question.includes("Quest can take its tasks over")) {
+          defaults.push(defaultValue);
+          return true; // "yes": stop and run the migration first
+        }
+        return base.confirm(question, defaultValue);
+      },
+    };
+    const err = await Promise.resolve(
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        clock: FIXED_CLOCK,
+        stdinIsTTY: true,
+        stderrIsTTY: true,
+        prompter,
+        adapter: fakeAdapter([], { probe: "ok" }),
+        agentAvailability: () => ({ claude: false, codex: false }),
+        trackerEnvironment: () => detectedEnvironment(),
+      }),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught as LoreError,
+    );
+    // A quest selection defaults to YES (ADR-0024's proposed defaults: they chose Quest, and the
+    // migration is the useful next step), unlike O6 below.
+    expect(defaults).toEqual([true]);
+    expect(err?.type).toBe("validation"); // exit 6: the tasks' fate is still unresolved
+    expect(err?.hint).toContain("lore init --tracker quest --migrate-backlog");
+    expect(err?.hint).toContain("--keep-backlog-tasks");
+    expect(err?.hint).toContain("lore init --tracker backlog");
+    // Nothing is written — at any depth — and lore runs no migration on the operator's behalf.
+    expect(treeDigest(root)).toEqual(before);
+  });
+
+  test("a deliberate Backlog choice is never interrupted: the O6 offer defaults to NO and proceeds (ADR-0024 AC#6)", async () => {
+    legacyBundle();
+    let sawOffer = false;
+    const base = scriptedPrompter({ tracker: "backlog", agents: false, site: "none", obsidian: false });
+    const prompter: InitPrompter = {
+      ...base,
+      confirm: async (question, defaultValue) => {
+        if (question.includes("Quest can take its tasks over")) {
+          sawOffer = true;
+          // A bare Enter must not turn "use Backlog" into "stop and migrate".
+          expect(defaultValue).toBe(false);
+          return defaultValue;
+        }
+        return base.confirm(question, defaultValue);
+      },
+    };
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      adapter: fakeAdapter([], { probe: "ok" }),
+      agentAvailability: () => ({ claude: false, codex: false }),
+    });
+    expect(sawOffer).toBe(true);
+    expect(result.tracker).toBe("backlog");
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
+    expect(existsSync(join(root, "backlog", "config.yml"))).toBe(true);
+  });
+
+  test("accepting the O6 offer stops with the same commands as O3 and writes nothing (ADR-0024 AC#6)", async () => {
+    legacyBundle();
+    const before = treeDigest(root);
+    const base = scriptedPrompter({ tracker: "backlog", agents: false, site: "none", obsidian: false });
+    const prompter: InitPrompter = {
+      ...base,
+      confirm: async (question, defaultValue) => {
+        if (question.includes("Quest can take its tasks over")) return true;
+        return base.confirm(question, defaultValue);
+      },
+    };
+    const err = await Promise.resolve(
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        clock: FIXED_CLOCK,
+        stdinIsTTY: true,
+        stderrIsTTY: true,
+        prompter,
+        adapter: fakeAdapter([], { probe: "ok" }),
+        agentAvailability: () => ({ claude: false, codex: false }),
+        trackerEnvironment: () => detectedEnvironment(),
+      }),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught as LoreError,
+    );
+    expect(err?.type).toBe("validation");
+    expect(err?.hint).toContain("lore init --tracker quest --migrate-backlog");
+    expect(treeDigest(root)).toEqual(before);
+  });
+
+  test("the N3 refusal names the actor context the handed-over command needs (ADR-0024 AC#9)", () => {
+    legacyBundle();
+    const error = expectError("validation", () =>
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        args: ["--tracker", "quest"],
+        trackerEnvironment: () => detectedEnvironment(),
+      }),
+    );
+    expect(error.message).toContain("must be a deliberate choice");
+    expect(error.hint).toContain("LORE_QUEST_ACTOR=<you>");
+    expect(error.hint).toContain("LORE_QUEST_ACTOR_KIND=human");
+    expect(error.hint).toContain("LORE_QUEST_ACCOUNTABLE_HUMAN");
+    expect(error.hint).toContain("lore init --tracker quest --migrate-backlog");
+    expect(error.hint).toContain("--keep-backlog-tasks");
+    expect(error.hint).toContain("lore init --tracker backlog");
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("backlog");
+  });
+
+  test("with a Backlog project AND no usable quest, the readiness stop wins over N3 — install remedy, exit 3 (D2)", () => {
+    // The combined case the ADR's tables do not spell out. N3's row is conditioned on the detected
+    // state "ready, backlog/config.yml present"; here that state does NOT hold and N1's does. The
+    // ordering matters because N3 hands over the `--migrate-backlog` command, which cannot run in a
+    // repository with no quest — ADR-0024's own principle is that a "yes" hands over commands that
+    // work. So the readiness gate is evaluated BEFORE the Backlog-project guard.
+    legacyBundle();
+    const before = treeDigest(root); // `.lore/` and `backlog/` are already there — the point
+    const err = expectError("not_found", () =>
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        args: ["--tracker", "quest"],
+        trackerEnvironment: () => detectedEnvironment({ quest: { installed: false, initialized: false } }),
+      }),
+    );
+    expect(exitCodeFor(err)).toBe(EXIT_CODES.not_found); // exit 3, N1's class
+    expect(err.hint).toContain(`npm install -g @opum-ai/quest@${VERSION}`);
+    expect(err.hint).toContain("run `quest init`");
+    expect(err.message).not.toContain("must be a deliberate choice");
+    // No scaffold either: the gate runs before the first write, so the legacy bundle is untouched.
+    expect(treeDigest(root)).toEqual(before);
+  });
+
+  test("with a Backlog project AND a usable quest, N3 still refuses at exit 6 — unchanged (D2)", () => {
+    // The other half of the precedence: the ready case must reach exactly today's message, not the
+    // readiness stop. Both halves are asserted because a gate that swallows N3 entirely would pass
+    // the test above.
+    legacyBundle();
+    const err = expectError("validation", () =>
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        args: ["--tracker", "quest"],
+        trackerEnvironment: () => detectedEnvironment(),
+      }),
+    );
+    expect(exitCodeFor(err)).toBe(EXIT_CODES.validation); // exit 6, N3's class
+    expect(err.message).toContain("must be a deliberate choice");
+    expect(err.hint).toContain("lore init --tracker quest --migrate-backlog");
   });
 
   test("jira and none stay reachable in a repository that has Backlog tasks (AC#1)", async () => {
     // The regression: the tracker question used to be REPLACED by a migrate-or-pin choice whenever
-    // the bundle looked legacy, so these two backends could not be selected at all here.
+    // the bundle looked legacy, so these two backends could not be selected at all here — and a
+    // deliberate `none` is still never interrupted by the takeover offer (ADR-0024's Scope).
     legacyBundle();
+    let offered = false;
+    const base = scriptedPrompter({ tracker: "none", agents: false, site: "none", obsidian: false });
+    const prompter: InitPrompter = {
+      ...base,
+      confirm: async (question, defaultValue) => {
+        if (question.includes("Quest can take its tasks over")) offered = true;
+        return base.confirm(question, defaultValue);
+      },
+    };
     const { result } = await init({
       stdinIsTTY: true,
       stderrIsTTY: true,
-      prompter: scriptedPrompter({ tracker: "none", agents: false, site: "none", obsidian: false }),
+      prompter,
       agentAvailability: () => ({ claude: false, codex: false }),
     });
+    expect(offered).toBe(false);
     expect(result.tracker).toBe("none");
     expect(loadConfig({ root, env: {} }).tracker.backend).toBe("none");
   });
 
-  test("`keep` selects Quest and leaves the Backlog project exactly as found (AC#3)", async () => {
+  test("declining the offer is the explicit keep: Quest selected, backlog/ exactly as found (AC#3)", async () => {
     legacyBundle();
     const { result } = await init({
       stdinIsTTY: true,
       stderrIsTTY: true,
       prompter: scriptedPrompter({
         tracker: "quest",
-        backlogTasks: "keep",
+        backlogTakeover: false,
         agents: false,
         site: "none",
         obsidian: false,
       }),
       adapter: fakeAdapter([], { probe: "ok" }),
-      migrateBacklog: async () => {
-        throw new Error("no migration must run for `keep`");
-      },
       agentAvailability: () => ({ claude: false, codex: false }),
     });
     expect(result.tracker).toBe("quest");
@@ -1811,16 +1673,16 @@ describe("lore init — legacy zero-config tracker boundary", () => {
     expect(existsSync(join(root, "backlog", "config.yml"))).toBe(true);
   });
 
-  test("no Backlog project means no migration question at all (AC#2)", async () => {
+  test("no Backlog project means no takeover offer at all (AC#2)", async () => {
     // A bare `backlog/` directory: present, but not a project. Nothing to migrate, nothing to ask.
     mkdirSync(join(root, "backlog", "tasks"), { recursive: true });
     const asked: string[] = [];
     const base = scriptedPrompter({ tracker: "quest", agents: false, site: "none", obsidian: false });
     const prompter: InitPrompter = {
       ...base,
-      choose: async (question, values, defaultValue) => {
+      confirm: async (question, defaultValue) => {
         asked.push(question);
-        return base.choose(question, values, defaultValue);
+        return base.confirm(question, defaultValue);
       },
     };
     const { result } = await init({
@@ -2197,6 +2059,7 @@ describe("lore init — EOF (Ctrl-D) mid-wizard is a `usage` error, not a silent
         stderrIsTTY: true,
         prompter,
         clock: FIXED_CLOCK,
+        trackerEnvironment: () => detectedEnvironment(),
       }),
     ).rejects.toThrow(LoreError);
     expect(closed).toBe(true);
@@ -2228,6 +2091,7 @@ describe("lore init — EOF (Ctrl-D) mid-wizard is a `usage` error, not a silent
         prompter,
         stdout,
         stderr,
+        trackerEnvironment: () => detectedEnvironment(),
       });
     } catch (err) {
       caught = err;
@@ -2397,6 +2261,7 @@ describe("lore init — the git preflight runs before the first byte is written 
         stdinIsTTY: true,
         stderrIsTTY: true,
         prompter,
+        trackerEnvironment: () => detectedEnvironment(),
       }),
     ).rejects.toBe(eof);
     directoryIsUntouched();
@@ -2654,6 +2519,7 @@ describe("lore init — the capability probe follows the selected tracker (LCLI-
       clock: FIXED_CLOCK,
       args: ["--tracker", "quest", "--check-tracker"],
       adapter: fakeAdapter([], { probe: "ok" }),
+      trackerEnvironment: () => detectedEnvironment(),
     });
     expect(stdout.lines()).toContain("quest capable");
     expect(stdout.text()).not.toContain("backlog capable");
@@ -2685,6 +2551,9 @@ describe("lore init — an unsupported tracker version is rejected at selection 
         clock: FIXED_CLOCK,
         args: ["--tracker", "quest"],
         adapter: mismatchedPairAdapter(),
+        // The readiness gate consults the detected environment first (ADR-0024); this test is
+        // about the PROBE's verdict, so the environment is the ready one.
+        trackerEnvironment: () => detectedEnvironment(),
       }),
     ).then(
       () => undefined,
@@ -2727,6 +2596,9 @@ describe("lore init — an unsupported tracker version is rejected at selection 
         clock: FIXED_CLOCK,
         args: ["--tracker", "backlog"],
         adapter: belowFloorBacklogAdapter(),
+        // The readiness gate consults the detected environment first (ADR-0024); this test is
+        // about the PROBE's verdict, so the environment is the ready one.
+        trackerEnvironment: () => detectedEnvironment(),
       }),
     ).then(
       () => undefined,
@@ -2758,6 +2630,9 @@ describe("lore init — an unsupported tracker version is rejected at selection 
         clock: FIXED_CLOCK,
         args: ["--tracker", "quest"],
         adapter: workspaceNotInitialized,
+        // The readiness gate consults the detected environment first (ADR-0024); this test is
+        // about the PROBE's verdict, so the environment is the ready one.
+        trackerEnvironment: () => detectedEnvironment(),
       }),
     ).then(
       () => undefined,
@@ -2827,16 +2702,6 @@ describe("the version-floor primitive (LCLI-356; Quest's floor superseded by the
 });
 
 describe("lore init — the tracker environment is detected before the choice (LCLI-358.3)", () => {
-  /** A detected environment with every backend's state stated explicitly. */
-  function env(overrides: Partial<Record<"quest" | "backlog" | "jira", Partial<TrackerEnvironmentEntry>>> = {}) {
-    const base = [
-      { backend: "quest", binary: "quest", package: "@opum-ai/quest", installed: true, initialized: true },
-      { backend: "backlog", binary: "backlog", package: "backlog.md", installed: true, initialized: false },
-      { backend: "jira", binary: "jira", package: "@salient-ai/jira-cli", installed: false, initialized: undefined },
-    ] as const;
-    return base.map((entry) => ({ ...entry, ...(overrides[entry.backend] ?? {}) })) as TrackerEnvironment;
-  }
-
   test("detection reads PATH and the repository's own markers, not the backends themselves", () => {
     // A bare `backlog/` directory is deliberately NOT a project: `backlog init` writes config.yml.
     mkdirSync(join(root, "backlog"));
@@ -2875,7 +2740,7 @@ describe("lore init — the tracker environment is detected before the choice (L
       stdinIsTTY: true,
       stderrIsTTY: true,
       prompter,
-      trackerEnvironment: () => env(),
+      trackerEnvironment: () => detectedEnvironment({ backlog: { initialized: false }, jira: { installed: false } }),
       adapter: fakeAdapter([], { probe: "ok" }),
     });
     const trackerQuestion = asked.find((entry) => entry.includes("tracker backend"));
@@ -2884,31 +2749,34 @@ describe("lore init — the tracker environment is detected before the choice (L
     expect(trackerQuestion).toContain("jira: not installed (npm install -g @salient-ai/jira-cli)");
   });
 
-  test("choosing a backend with no binary offers the install, then continues (AC#2)", async () => {
-    const installs: string[] = [];
-    const { result } = await init({
+  test("the summary's not-installed line names lore's own exact quest version, never `latest` (LCLI-650, ADR-0024)", async () => {
+    // The pair lock (DEC-31) accepts exactly lore's own version, so `npm install -g @opum-ai/quest`
+    // can hand a new user a quest the very next command refuses.
+    const { stderr } = await init({
       stdinIsTTY: true,
       stderrIsTTY: true,
-      prompter: scriptedPrompter({ tracker: "jira", jiraProject: "ENG", site: "none", obsidian: false }),
-      trackerEnvironment: () => env(),
-      installTracker: async (entry) => {
-        installs.push(entry.package);
-        return true;
-      },
-      adapter: fakeAdapter([], { probe: "ok" }),
+      prompter: scriptedPrompter({ tracker: "none", site: "none", obsidian: false }),
+      trackerEnvironment: () => detectedEnvironment({ quest: { installed: false } }),
     });
-    expect(installs).toEqual(["@salient-ai/jira-cli"]);
-    expect(result.tracker).toBe("jira");
-    expect(result.installed).toBe("@salient-ai/jira-cli");
+    expect(stderr).toContain(`not installed (npm install -g @opum-ai/quest@${VERSION})`);
+    expect(stderr).not.toContain("npm install -g @opum-ai/quest)");
   });
 
-  test("declining the install and declining to switch exits with the exact install command (AC#2)", async () => {
+  test("selecting quest with no binary offers O1; yes stops with the pinned remedy and writes nothing (ADR-0024 AC#1)", async () => {
+    // O1. The offer is a STOP, not an install: nothing is executed, and the directory the run
+    // started with is the directory it leaves behind — the wizard's every-prompt-precedes-the-first
+    // -write invariant, which is what makes "nothing written" checkable rather than aspirational.
+    // Snapshot at content level: a `.lore/` written before the offer would be invisible to a
+    // top-level listing (D6).
+    const before = treeDigest(root);
+    const asked: string[] = [];
+    const base = scriptedPrompter({ tracker: "quest", site: "none", obsidian: false });
     const prompter: InitPrompter = {
-      confirm: async (question) => !question.includes("not installed") && !question.includes("different tracker"),
-      choose: async (question, _choices, defaultValue) => (question.includes("tracker") ? "jira" : defaultValue),
-      ask: async (_question, defaultValue) => defaultValue,
-      multiselect: async () => [], // never reached — the run fails before the wizard gets this far
-      close: () => {},
+      ...base,
+      confirm: async (question, defaultValue) => {
+        if (question.includes("not installed")) asked.push(question);
+        return base.confirm(question, defaultValue);
+      },
     };
     const err = await Promise.resolve(
       runInit({
@@ -2921,60 +2789,165 @@ describe("lore init — the tracker environment is detected before the choice (L
         stdinIsTTY: true,
         stderrIsTTY: true,
         prompter,
-        trackerEnvironment: () => env(),
-        installTracker: async () => {
-          throw new Error("must not install");
-        },
+        trackerEnvironment: () => detectedEnvironment({ quest: { installed: false, initialized: false } }),
       }),
     ).then(
       () => undefined,
       (caught: unknown) => caught as LoreError,
     );
-    expect(err?.type).toBe("not_found");
-    expect(err?.hint).toContain("npm install -g @salient-ai/jira-cli");
+    expect(asked).toEqual(["Quest is not installed. Stop `lore init` here so you can install it, then rerun?"]);
+    expect(err?.type).toBe("not_found"); // exit 3: the state, not the answer
+    expect(err?.hint).toContain(`npm install -g @opum-ai/quest@${VERSION}`);
+    expect(err?.hint).toContain("run `quest init`");
+    expect(err?.hint).toContain("rerun `lore init`");
+    expect(treeDigest(root)).toEqual(before); // byte-identical, at every depth: nothing was written
   });
 
-  test("declining the install and switching returns to the question, bounded to two passes (AC#3)", async () => {
-    // First pass picks the uninstalled jira and declines; the second picks quest and proceeds. A
-    // prompter that answered "jira, decline, switch" forever must still terminate.
+  test("O1 drops the `quest init` step when the workspace marker is already there (ADR-0024 AC#1)", async () => {
+    const err = await Promise.resolve(
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        clock: FIXED_CLOCK,
+        stdinIsTTY: true,
+        stderrIsTTY: true,
+        prompter: scriptedPrompter({ tracker: "quest", site: "none", obsidian: false }),
+        // Uninstalled, but this repository is already initialized for Quest: telling it to
+        // initialize again is noise, and the ADR drops exactly that step.
+        trackerEnvironment: () => detectedEnvironment({ quest: { installed: false, initialized: true } }),
+      }),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught as LoreError,
+    );
+    expect(err?.hint).toContain(`npm install -g @opum-ai/quest@${VERSION}`);
+    expect(err?.hint).not.toContain("quest init");
+  });
+
+  test("declining O1 returns to the tracker question and detection continues (O1b, ADR-0024 AC#1)", async () => {
     let trackerAsks = 0;
     const prompter: InitPrompter = {
-      confirm: async (question) => {
-        if (question.includes("not installed")) return false;
-        if (question.includes("different tracker")) return true;
-        return false;
-      },
+      confirm: async (question) => !question.includes("not installed"), // declines O1
       choose: async (question, _choices, defaultValue) => {
         if (!question.includes("tracker backend")) return defaultValue;
         trackerAsks += 1;
-        return trackerAsks === 1 ? "jira" : "quest";
+        return trackerAsks === 1 ? "quest" : "none"; // declines the offer, then picks a ready backend
       },
       ask: async (_question, defaultValue) => defaultValue,
-      multiselect: async () => [], // consistent with this prompter's own decline-by-default confirm
+      multiselect: async () => [],
       close: () => {},
     };
     const { result } = await init({
       stdinIsTTY: true,
       stderrIsTTY: true,
       prompter,
-      trackerEnvironment: () => env(),
+      trackerEnvironment: () => detectedEnvironment({ quest: { installed: false, initialized: false } }),
       adapter: fakeAdapter([], { probe: "ok" }),
     });
-    expect(trackerAsks).toBe(2);
-    expect(result.tracker).toBe("quest");
+    expect(trackerAsks).toBe(2); // back to the question, once
+    expect(result.tracker).toBe("none");
   });
 
-  test("the loop cannot spin: a prompter that always declines still terminates (AC#3)", async () => {
+  test("selecting quest installed but uninitialized offers O2; yes stops with `quest init`, exit 6, nothing written (ADR-0024 AC#2)", async () => {
+    const before = treeDigest(root);
+    const err = await Promise.resolve(
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        clock: FIXED_CLOCK,
+        stdinIsTTY: true,
+        stderrIsTTY: true,
+        prompter: scriptedPrompter({ tracker: "quest", site: "none", obsidian: false }),
+        trackerEnvironment: () => detectedEnvironment({ quest: { installed: true, initialized: false } }),
+      }),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught as LoreError,
+    );
+    expect(err?.type).toBe("validation"); // exit 6: the state, not the answer
+    expect(err?.message).toContain(".quest/workspace.toml");
+    expect(err?.hint).toContain("run `quest init` here, then rerun `lore init`");
+    expect(treeDigest(root)).toEqual(before);
+  });
+
+  test("declining O2 returns to the tracker question (O2b, ADR-0024 AC#2)", async () => {
     let trackerAsks = 0;
     const prompter: InitPrompter = {
-      confirm: async (question) => question.includes("different tracker"),
+      confirm: async () => false, // declines O2
       choose: async (question, _choices, defaultValue) => {
         if (!question.includes("tracker backend")) return defaultValue;
         trackerAsks += 1;
-        return "jira"; // never installed, never accepted — the adversarial answer
+        return trackerAsks === 1 ? "quest" : "none";
       },
       ask: async (_question, defaultValue) => defaultValue,
-      multiselect: async () => [], // never reached — the loop bound trips before the wizard gets this far
+      multiselect: async () => [],
+      close: () => {},
+    };
+    const { result } = await init({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompter,
+      trackerEnvironment: () => detectedEnvironment({ quest: { installed: true, initialized: false } }),
+      adapter: fakeAdapter([], { probe: "ok" }),
+    });
+    expect(trackerAsks).toBe(2);
+    expect(result.tracker).toBe("none");
+  });
+
+  test("a second selection of the same unready backend prints no second offer and stops (O12, ADR-0024 AC#3)", async () => {
+    let trackerAsks = 0;
+    const offers: string[] = [];
+    const base = scriptedPrompter({ tracker: "quest", site: "none", obsidian: false });
+    const prompter: InitPrompter = {
+      ...base,
+      confirm: async (question) => {
+        if (question.includes("not installed")) offers.push(question);
+        return false; // always declines the readiness offer
+      },
+      choose: async (question, _choices, defaultValue) => {
+        if (!question.includes("tracker backend")) return defaultValue;
+        trackerAsks += 1;
+        return "quest"; // the adversarial answer: the same unready backend, every pass
+      },
+    };
+    const err = await Promise.resolve(
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        clock: FIXED_CLOCK,
+        stdinIsTTY: true,
+        stderrIsTTY: true,
+        prompter,
+        trackerEnvironment: () => detectedEnvironment({ quest: { installed: false, initialized: false } }),
+      }),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught as LoreError,
+    );
+    expect(trackerAsks).toBe(2); // still bounded by MAX_TRACKER_ATTEMPTS
+    expect(offers).toHaveLength(1); // the one-shot bound: one offer per backend per run
+    // The stop is the SAME one the first offer's "yes" would have produced.
+    expect(err?.type).toBe("not_found");
+    expect(err?.hint).toContain(`npm install -g @opum-ai/quest@${VERSION}`);
+  });
+
+  test("selecting backlog with no binary stops immediately, with no offer and no prompt (O4, ADR-0024 AC#4)", async () => {
+    const prompter: InitPrompter = {
+      confirm: () => {
+        throw new Error("O4 has no offer — no prompt may be shown");
+      },
+      choose: async (question, _choices, defaultValue) => (question.includes("tracker") ? "backlog" : defaultValue),
+      ask: async (_question, defaultValue) => defaultValue,
+      multiselect: async () => [],
       close: () => {},
     };
     const err = await Promise.resolve(
@@ -2988,52 +2961,186 @@ describe("lore init — the tracker environment is detected before the choice (L
         stdinIsTTY: true,
         stderrIsTTY: true,
         prompter,
-        trackerEnvironment: () => env(),
+        trackerEnvironment: () => detectedEnvironment({ backlog: { installed: false, initialized: false } }),
       }),
     ).then(
       () => undefined,
       (caught: unknown) => caught as LoreError,
     );
-    expect(trackerAsks).toBe(2); // the bound, not the operator's patience
     expect(err?.type).toBe("not_found");
+    expect(err?.hint).toContain("npm install -g backlog.md");
+    expect(err?.hint).toContain("1.49.0 or newer"); // the floor the adapter enforces, named
+    expect(err?.hint).toContain("backlog init");
+    expect(err?.hint).toContain("rerun `lore init`");
   });
 
-  test("--install-tracker installs without prompting; --no-install-tracker never installs (AC#4)", async () => {
-    const installs: string[] = [];
-    const { result } = await init({
-      args: ["--tracker", "jira", "--jira-profile", "salient", "--jira-project", "ENG", "--install-tracker"],
-      trackerEnvironment: () => env(),
-      installTracker: async (entry) => {
-        installs.push(entry.package);
-        return true;
-      },
-    });
-    expect(installs).toEqual(["@salient-ai/jira-cli"]);
-    expect(result.installed).toBe("@salient-ai/jira-cli");
-
-    const second = await init({
-      args: ["--tracker", "jira", "--jira-profile", "salient", "--jira-project", "ENG", "--no-install-tracker"],
-      trackerEnvironment: () => env(),
-      installTracker: async () => {
-        throw new Error("must not install");
-      },
-    });
-    expect(second.result.installed).toBeUndefined();
+  test("selecting backlog with no project stops immediately at exit 6 (O5, ADR-0024 AC#4)", async () => {
+    const err = await Promise.resolve(
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        clock: FIXED_CLOCK,
+        stdinIsTTY: true,
+        stderrIsTTY: true,
+        prompter: scriptedPrompter({ tracker: "backlog", site: "none", obsidian: false }),
+        trackerEnvironment: () => detectedEnvironment({ backlog: { installed: true, initialized: false } }),
+      }),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught as LoreError,
+    );
+    expect(err?.type).toBe("validation");
+    expect(err?.message).toContain("backlog/config.yml");
+    expect(err?.hint).toContain("run `backlog init` here, then rerun `lore init`");
   });
 
-  test("nothing is ever installed without an explicit confirmation or flag", async () => {
-    // A bare non-interactive run must never mutate the machine's global packages.
-    const { result } = await init({
-      args: ["--tracker", "jira", "--jira-profile", "salient", "--jira-project", "ENG"],
-      trackerEnvironment: () => env(),
-      installTracker: async () => {
-        throw new Error("must not install");
-      },
+  test("--tracker quest with quest not on PATH stops with the O1 remedy at exit 3 (N1, ADR-0024 AC#4)", () => {
+    // Today (before this change) the same invocation was advisory and exited 0 having written
+    // `backend = "quest"` into a repository with no quest — the LCLI-356 defect.
+    // Thrown SYNCHRONOUSLY: the readiness gate runs ahead of every async step in `runInit`, which
+    // is what lets it precede the Backlog-project guard (D2) and what leaves the directory
+    // completely untouched — no scaffold either.
+    const err = expectError("not_found", () =>
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        clock: FIXED_CLOCK,
+        args: ["--tracker", "quest"],
+        trackerEnvironment: () => detectedEnvironment({ quest: { installed: false, initialized: false } }),
+      }),
+    );
+    expect(err.hint).toContain(`npm install -g @opum-ai/quest@${VERSION}`);
+    expect(err.hint).toContain("run `quest init`");
+    expect(readdirSync(root)).toEqual([]);
+  });
+
+  test("--tracker quest with no workspace stops at exit 6 (N2, ADR-0024 AC#4)", () => {
+    const err = expectError("validation", () =>
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        clock: FIXED_CLOCK,
+        args: ["--tracker", "quest"],
+        trackerEnvironment: () => detectedEnvironment({ quest: { installed: true, initialized: false } }),
+      }),
+    );
+    expect(err.hint).toContain("run `quest init` here, then rerun `lore init`");
+    expect(readdirSync(root)).toEqual([]);
+  });
+
+  test("--tracker backlog stops at exit 3 when missing (N5) and exit 6 when uninitialized (N6)", () => {
+    const missing = expectError("not_found", () =>
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        clock: FIXED_CLOCK,
+        args: ["--tracker", "backlog"],
+        trackerEnvironment: () => detectedEnvironment({ backlog: { installed: false } }),
+      }),
+    );
+    expect(missing.hint).toContain("npm install -g backlog.md");
+    expect(readdirSync(root)).toEqual([]);
+
+    const uninitialized = expectError("validation", () =>
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        clock: FIXED_CLOCK,
+        args: ["--tracker", "backlog"],
+        trackerEnvironment: () => detectedEnvironment({ backlog: { installed: true, initialized: false } }),
+      }),
+    );
+    expect(uninitialized.hint).toContain("run `backlog init` here, then rerun `lore init`");
+    expect(readdirSync(root)).toEqual([]);
+  });
+
+  test("a bare non-TTY `lore init` with no --tracker is unchanged: it pins the default and probes nothing (N8, ADR-0024 AC#4)", async () => {
+    // LORE-260's guarantee, and the ADR's explicit "unchanged in both directions": no choice was
+    // expressed, so no readiness verdict is reached and no tracker subprocess runs.
+    const { code, result } = await init({
+      // Detected as thoroughly UNREADY — the point is that nothing consults it on this path.
+      trackerEnvironment: () => detectedEnvironment({ quest: { installed: false, initialized: false } }),
+      adapter: fakeAdapter([], { probe: "ok" }),
     });
+    expect(code).toBe(0);
+    expect(result.tracker).toBeUndefined();
+    expect(result.trackerCheck).toBeUndefined();
+    expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
+  });
+
+  test("--install-tracker is accepted, installs nothing, and prints the deprecation note (N9, ADR-0024 AC#5)", async () => {
+    const { code, result, stderr } = await init({
+      args: ["--tracker", "backlog", "--install-tracker"],
+      trackerEnvironment: () => detectedEnvironment(),
+    });
+    expect(code).toBe(0);
+    expect(result.installed).toBeUndefined(); // nothing is ever installed any more
+    expect(stderr).toContain("deprecation: lore no longer installs tracker CLIs on your behalf");
+    expect(stderr).toContain("will be removed in the next release");
+    expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).toContain('backend = "backlog"');
+  });
+
+  test("--no-install-tracker is accepted as a no-op with the same note (N9, ADR-0024 AC#5)", async () => {
+    const { code, result, stderr } = await init({
+      args: ["--tracker", "backlog", "--no-install-tracker"],
+      trackerEnvironment: () => detectedEnvironment(),
+    });
+    expect(code).toBe(0);
     expect(result.installed).toBeUndefined();
+    expect(stderr).toContain("deprecation: lore no longer installs tracker CLIs on your behalf");
   });
 
-  test("--install-tracker and --no-install-tracker together is a usage error", () => {
+  test("a not-ready selection stops as N1/N2/N5/N6 with the deprecation note printed (N9)", () => {
+    const stderr = capture();
+    const err = expectError("not_found", () =>
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr,
+        clock: FIXED_CLOCK,
+        args: ["--tracker", "quest", "--install-tracker"],
+        trackerEnvironment: () => detectedEnvironment({ quest: { installed: false, initialized: false } }),
+      }),
+    );
+    expect(err.hint).toContain(`npm install -g @opum-ai/quest@${VERSION}`);
+    // The note is written before the gate that stops, so a caller that passes the deprecated flag
+    // learns it no longer means anything on the very run it stopped on.
+    expect(stderr.text()).toContain("deprecation: lore no longer installs tracker CLIs on your behalf");
+  });
+
+  test("nothing is ever installed: no path reaches an installer at all", async () => {
+    // The property the ADR exists for, stated as a test rather than a promise: `lore init` has no
+    // installer seam to inject (see `InitOptions`), so the strongest available assertion is that a
+    // run over a ready environment, over an unready one, and with both deprecated flags installed
+    // nothing and reports nothing installed.
+    for (const extra of [
+      { args: ["--tracker", "backlog"] },
+      { args: ["--tracker", "backlog", "--install-tracker"] },
+      { args: ["--tracker", "backlog", "--no-install-tracker"] },
+    ]) {
+      const { result } = await init({ ...extra, trackerEnvironment: () => detectedEnvironment() });
+      expect(result.installed).toBeUndefined();
+    }
+  });
+
+  test("--install-tracker and --no-install-tracker together is a usage error (N9, ADR-0024 AC#5)", () => {
     const err = expectError("usage", () =>
       runInit({
         root,
@@ -3083,28 +3190,6 @@ describe("lore init — the tracker environment is detected before the choice (L
       }),
     );
     expect(err.message).toContain("--migrate-backlog");
-  });
-
-  test("an install that leaves the binary off PATH is its own diagnostic, not a silent success", async () => {
-    const err = await Promise.resolve(
-      runInit({
-        root,
-        git: gitStub(),
-        output: JSON_CTX,
-        stdout: capture(),
-        stderr: capture(),
-        clock: FIXED_CLOCK,
-        args: ["--tracker", "jira", "--install-tracker"],
-        trackerEnvironment: () => env(),
-        installTracker: async () => false,
-      }),
-    ).then(
-      () => undefined,
-      (caught: unknown) => caught as LoreError,
-    );
-    expect(err?.type).toBe("not_found");
-    expect(err?.message).toContain("is still not on PATH");
-    expect(err?.hint).toContain("npm prefix -g");
   });
 });
 
@@ -3333,6 +3418,12 @@ describe("lore init — configuring the jira backend (LCLI-358.4)", () => {
  * whole safety argument for this feature is "git already holds these bytes", and a stub that says
  * so proves nothing about the transport `lore init` actually uses. The deletion, the archive, and
  * the uncommitted-deletion residue are all read back from the filesystem and from git itself.
+ *
+ * **Flag path only since ADR-0024.** The wizard used to offer the same removal after running its
+ * own migration; it no longer runs a migration at all (a "yes" to O3/O6 stops with the commands
+ * instead), which left the offer unreachable. What a wizard user gets now is the stop, and this
+ * question is answered by `--remove-backlog`/`--no-remove-backlog` when they run the migration
+ * themselves — the same flags the stop hands them.
  */
 describe("lore init — removing backlog/ after a plain --migrate-backlog (LCLI-467)", () => {
   const migrationResult = {
@@ -3357,110 +3448,6 @@ describe("lore init — removing backlog/ after a plain --migrate-backlog (LCLI-
   function git(args: string[]): { exitCode: number; stdout: string } {
     return bunGitPreflightSpawn(root)(args);
   }
-
-  test("the wizard offers removal, and accepting DELETES backlog/ behind a verified, ignored archive (AC#1)", async () => {
-    committedBacklog();
-    const { result, stderr } = await init({
-      stdinIsTTY: true,
-      stderrIsTTY: true,
-      prompter: scriptedPrompter({
-        tracker: "quest",
-        backlogTasks: "migrate",
-        agents: false,
-        site: "none",
-        obsidian: false,
-        removeBacklog: true,
-      }),
-      adapter: fakeAdapter([], { probe: "ok" }),
-      migrateBacklog: async () => migrationResult,
-      agentAvailability: () => ({ claude: false, codex: false }),
-    });
-    // The copy says what happens, in the words AC#1 requires: deletion, a verified local zip, the
-    // zip being gitignored rather than committed, and git as the bounded recovery route.
-    expect(stderr).toContain("DELETES every file under backlog/ from your working tree");
-    expect(stderr).toContain(".lore/archive/");
-    expect(stderr).toContain("gitignored and never committed");
-    expect(stderr).toContain("git checkout --");
-    // The files are genuinely gone, not moved aside.
-    expect(existsSync(join(root, "backlog"))).toBe(false);
-    const removal = result.backlogRemoval;
-    expect(removal?.removed).toBe(true);
-    expect(removal?.entryCount).toBe(2);
-    // The archive is present, and gitignored — so "not committed" is enforced, not merely intended.
-    expect(existsSync(join(root, removal?.zipRel ?? ""))).toBe(true);
-    expect(git(["check-ignore", "-q", removal?.zipRel ?? ""]).exitCode).toBe(0);
-    // And git sees the deletion as UNCOMMITTED work, which is what `git checkout -- backlog/` acts on.
-    const status = git(["status", "--porcelain", "--", "backlog"]).stdout;
-    expect(status).toContain("backlog/config.yml");
-    expect(status.trimStart().startsWith("D")).toBe(true);
-    gitRun(root, ["checkout", "--", "backlog"]);
-    expect(existsSync(join(root, "backlog", "config.yml"))).toBe(true);
-  });
-
-  test("declining leaves backlog/ exactly as found, and the offered default is NO", async () => {
-    committedBacklog();
-    const offeredDefaults: boolean[] = [];
-    const base = scriptedPrompter({
-      tracker: "quest",
-      backlogTasks: "migrate",
-      agents: false,
-      site: "none",
-      obsidian: false,
-      removeBacklog: false,
-    });
-    const { result } = await init({
-      stdinIsTTY: true,
-      stderrIsTTY: true,
-      prompter: {
-        ...base,
-        confirm: async (question, defaultValue) => {
-          if (question.includes("Delete backlog/")) offeredDefaults.push(defaultValue);
-          return base.confirm(question, defaultValue);
-        },
-      },
-      adapter: fakeAdapter([], { probe: "ok" }),
-      migrateBacklog: async () => migrationResult,
-      agentAvailability: () => ({ claude: false, codex: false }),
-    });
-    expect(existsSync(join(root, "backlog", "config.yml"))).toBe(true);
-    expect(result.backlogRemoval).toEqual({ removed: false, reason: "declined at the prompt" });
-    expect(existsSync(join(root, ".lore/archive"))).toBe(false);
-    // A bare Enter must not delete anything: the one destructive question here defaults to NO.
-    expect(offeredDefaults).toEqual([false]);
-  });
-
-  test("an UNRECOVERABLE backlog/ is never offered for deletion at all (the question is not asked)", async () => {
-    committedBacklog();
-    writeFileSync(join(root, "backlog", "tasks", "task-2 - Uncommitted.md"), "---\nid: task-2\n---\n");
-    const asked: string[] = [];
-    const base = scriptedPrompter({
-      tracker: "quest",
-      backlogTasks: "migrate",
-      agents: false,
-      site: "none",
-      obsidian: false,
-      // Answering YES is the point: even a would-be acceptance cannot reach a deletion git cannot undo.
-      removeBacklog: true,
-    });
-    const { result, stderr } = await init({
-      stdinIsTTY: true,
-      stderrIsTTY: true,
-      prompter: {
-        ...base,
-        confirm: async (question, defaultValue) => {
-          asked.push(question);
-          return base.confirm(question, defaultValue);
-        },
-      },
-      adapter: fakeAdapter([], { probe: "ok" }),
-      migrateBacklog: async () => migrationResult,
-      agentAvailability: () => ({ claude: false, codex: false }),
-    });
-    expect(asked.some((question) => question.includes("Delete backlog/"))).toBe(false);
-    expect(stderr).toContain("uncommitted changes");
-    expect(existsSync(join(root, "backlog", "tasks", "task-2 - Uncommitted.md"))).toBe(true);
-    expect(result.backlogRemoval?.removed).toBe(false);
-  });
 
   test("--remove-backlog is the scripted equivalent, and removes it without a prompt (AC#3)", async () => {
     committedBacklog();
