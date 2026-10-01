@@ -290,6 +290,9 @@
 - 2026-09-29T13:50:17-05:00 dd8ece1a122004de0a88a626119a70ef3e8fddf6 chore(LCLI-621): RECYCLE HANDOFF 18, landed on dev (#435)
 - 2026-09-29T15:13:05-05:00 376b7b94a2931971d9b3d225ff01c3f3b23d7f1c docs(LCLI-655): land the DEC-57 draft ADR — lore init stops and instructs (no installs)
 - 2026-09-29T16:39:04-05:00 16343bea2c84d9ce71e8570fd28fd5f0d8589657 chore(LCLI-621): RECYCLE HANDOFF 19, written at opum-agent's instruction (#437)
+- 2026-09-29T16:58:42-05:00 7351fba1513cabd828e441ab28cad759d4b3119c chore(LCLI-621): RECYCLE HANDOFF 20, written after the orchestrator's recycle request (#438)
+- 2026-09-29T19:00:23-05:00 09d15238335b7f9e400c7c15cd7fbd4993c92598 docs(LCLI-655): land the DEC-57 draft ADR — lore init stops and instructs (no installs) (#436)
+- 2026-09-29T21:03:34-05:00 488b66a983bf30c220a9ad248744f03e9954f589 feat(LCLI-656): lore init detects, offers, and instructs — it never installs (ADR-0024, DEC-57) (#440)
 
 ## docs/adr
 
@@ -301,6 +304,7 @@
 - 2026-07-26T21:25:31-05:00 dccfabfe1eea13ceeee034c70cc21ab68d52c8b1 docs(wave2-integration): fix label-flag comment/test contradictions and ADR-0002 item 6
 - 2026-09-03T02:33:01Z 043939c049ed1fe53d4b21ead70d9d39db1bb349 docs(new,adr): document the NNNN- ADR auto-numbering scheme (LCLI-373) (#527)
 - 2026-09-14T18:43:14-05:00 063ab399cf44384d24fb4ad3f3f0833e0f0a7958 docs(LCLI-477): ADR-0021 fixes the typed-relationship vocabulary before the code
+- 2026-09-29T21:16:09-05:00 5781f7ba13f9f894fc3e4c28f8b3620c166d4517 chore(LCLI-653, LCLI-654): bump lore to 0.12.0, and resolve quest from a pinned source build when its version is not on npm (DEC-55) (#433)
 
 ## docs/reference
 
@@ -387,6 +391,7 @@
 - 2026-09-28T13:05:54-05:00 a1cfcf685ef8526ac842dce96c9c6edd1838a7c5 feat(LCLI-615): lore read renders markdown in pretty mode; --plain, piped and --json stay verbatim (#371)
 - 2026-09-29T04:14:34-05:00 32944509c545ffb8932af655c2f16092c035d7df chore(LCLI-648): pin Bun 1.4.2, keeping lore on the same runtime as quest-cli (#414)
 - 2026-09-29T10:51:37-05:00 50a02c5b50cb20bc6a326feba1b26a52e483e806 feat(LCLI-652): read the bundle across refs with `lore query --across-refs` (#429)
+- 2026-09-30T13:33:52-05:00 a60a4f27863a14aa29d37c63b028ab94724c28b5 docs(LCLI-621): the release-truth record now states 0.12.0 is released (#450)
 
 ## docs/runbooks
 

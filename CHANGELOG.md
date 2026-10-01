@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The capacity measurement now stands for the largest pack a real task can compile** (LCLI-662;
+  DEC-98 B, [ADR-0025](docs/adr/0025-the-capacity-measurement-reserves-the-worst-case-bundle-wide-query-section-and-renders-score-annotations-at-full-width-dec-98.md)).
+  `lore check`'s `agent-profile-capacity` measurement previously excluded the bundle-wide query
+  section a real `lore agent context` pack renders, and rendered its score placeholders one character
+  wide where real scores render seven to ten — so a green check could certify a profile whose real
+  task pack dropped a declared source by budget (measured: a declared set green at 2957 tokens
+  against a 2982-token budget, `omitted-by-budget` on the pack; and hit-free packs up to ~500 tokens
+  larger than the measurement on this repository's own profiles). The measurement now reserves the
+  query section's worst case, task-independently, and renders score annotations at full width, so a
+  budget that satisfies it cannot start dropping declared evidence on a task. The finding is still
+  computed from the declaration and the bundle, never from a task. This ships as a **warning** for
+  one release before LCLI-646 flips it to an error (DEC-11).
+
 ## [0.12.0] - 2026-09-29
 
 ### Added
