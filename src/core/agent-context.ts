@@ -464,24 +464,33 @@ export interface AgentProfileSourceCapacity {
  *
  * `declaredTokens` is measured by the compiler itself — the same pins, the same candidate
  * partition, the same canonical Markdown rendering as {@link compilePack} — with every candidate
- * selected, so it is the size of the pack that would carry the profile's whole declared set. It is
- * task-independent by construction: no query section is rendered (that section exists only for a
- * task), a fixed measurement task stands in the header, and each candidate carries a constant
- * placeholder score so the per-item and catalog score annotations a real pack always pays are
- * counted ({@link CAPACITY_MEASUREMENT_SCORE}).
+ * selected, so it is the size of the largest pack that would carry the profile's whole declared set
+ * for any task **within the header residual**: the measurement renders a fixed stand-in task, and a
+ * real task text much longer than it can still consume the margin, which is the one residual
+ * ADR-0025 records. Otherwise the size is task-independent by construction: each candidate carries a
+ * full-width placeholder score so the per-item and catalog score annotations a real pack always pays
+ * are counted ({@link CAPACITY_MEASUREMENT_SCORE}), and the
+ * worst-case bundle-wide query section is reserved ({@link AgentProfileCapacity.querySectionReserve})
+ * rather than rendered, because its hits are what a task would choose (LCLI-662, DEC-98 B).
  *
  * `sources` attributes the shortfall in DECLARATION order, which is the compiler's own order when a
- * task matches no candidate (spec step 7's fallback). Which sources drop for a REAL task is
- * task-driven; that is exactly why the finding built from this says "declared sources cannot fit"
- * and never claims a per-task omission set.
+ * task matches no candidate (spec step 7's fallback), filled against the reserve-inclusive budget.
+ * Which sources drop for a REAL task is task-driven; that is exactly why the finding built from this
+ * says "declared sources cannot fit" and never claims a per-task omission set.
  */
 export interface AgentProfileCapacity {
   readonly name: string;
   /** The `.lore/agents/<name>.toml` profile path, as {@link AgentProfile.path} carries it. */
   readonly path: string;
   readonly maxTokens: number;
-  /** The rendered estimate of the complete declared set: pins plus every declared candidate. */
+  /** The rendered estimate of the complete declared set — pins, every declared candidate, and {@link querySectionReserve}. */
   readonly declaredTokens: number;
+  /**
+   * The worst-case bundle-wide query section, in tokens, included in `declaredTokens` (LCLI-662):
+   * the largest section any task's pack can render in this bundle. Exposed so a reader (and the
+   * finding) can say how much of the measurement is reserve rather than declared evidence.
+   */
+  readonly querySectionReserve: number;
   /** `declaredTokens > maxTokens`, computed HERE so a caller never re-derives the comparison. */
   readonly overCapacity: boolean;
   readonly sources: readonly AgentProfileSourceCapacity[];
@@ -489,15 +498,80 @@ export interface AgentProfileCapacity {
 
 /**
  * The score annotation every real pack renders, held constant here so the measurement's bytes match
- * a real pack's (LCLI-642 review F2). `compilePack` scores every candidate, and `renderItem` then
- * prints `; score: <n>` on each item and `; top score <n>` on each scored source's catalog line; a
- * measurement that handed raw, unscored candidates to `assemble` was ~1000 tokens SMALLER than the
- * pack it stands for, so the gate fired late — a profile could start dropping declared candidates on
- * a real task while `lore check` stayed silent, which is the failure DEC-11 exists to catch. The
- * value only has to be non-zero and fixed-width: `1.000000` occupies the same bytes as any real
- * score, so the measurement stands for a pack of ANY task, not just one that matched nothing.
+ * a real pack's (LCLI-642 review F2, completed by LCLI-662).
+ *
+ * `compilePack` scores every candidate, and `renderItem` then prints `; score: <n>` on each item and
+ * `; top score <n>` on each scored source's catalog line; a measurement that handed raw, unscored
+ * candidates to `assemble` was ~1000 tokens SMALLER than the pack it stands for, so the gate fired
+ * late — a profile could start dropping declared candidates on a real task while `lore check` stayed
+ * silent, which is the failure DEC-11 exists to catch.
+ *
+ * F2 held the placeholder at `1` on the reasoning that a non-zero constant is fixed-width. It is
+ * not: {@link formatScore} strips trailing zeros, so `1` renders as ONE character while a real score
+ * for a matching task renders as seven to ten (`0.142617`, `12.345678`). Measured 2026-10-01
+ * (LCLI-662): the hit-free pack of this repository's `implementation` profile — 254 items — runs
+ * ~500 tokens larger than the measurement on a matching task, mostly this annotation. The
+ * placeholder therefore carries four integer digits and six decimals, rendering to 11 characters —
+ * at least the widest score observed in this repository's bundle (10, measured 2026-10-01). A score
+ * wider than 11 characters is a recorded residual of ADR-0025, not a claim that real scores are
+ * bounded.
  */
-const CAPACITY_MEASUREMENT_SCORE = 1;
+const CAPACITY_MEASUREMENT_SCORE = 1234.567891;
+
+/**
+ * A hit line for `concept` as `lore query` would render it if a task ranked it: id, frontmatter
+ * title, and the snippet rule `toHit` applies (`oneLine(summary ?? title)`) — the same three fields
+ * {@link renderQueryHit} prints. Used only to size the worst-case query section (LCLI-662), never to
+ * build a real pack. No workspace `[memberId]`: the capacity check measures the bare bundle.
+ */
+function capacityReserveHit(concept: Concept): AgentContextQueryHit {
+  const title = frontmatterScalar(concept.frontmatter.title);
+  const snippet = frontmatterScalar(concept.frontmatter.summary) ?? title;
+  return {
+    id: concept.id,
+    ...(title === undefined ? {} : { title }),
+    ...(snippet === undefined ? {} : { snippet: oneLine(snippet) }),
+    score: CAPACITY_MEASUREMENT_SCORE,
+  };
+}
+
+/**
+ * The worst-case bundle-wide query section, in tokens (LCLI-662, DEC-98 B): the largest section a
+ * real task's pack can render, so a budget that satisfies {@link measureAgentProfileCapacity}
+ * cannot start dropping declared evidence on a task.
+ *
+ * The section is `renderQueryHitsSection`'s output, and its size over all tasks is bounded by the
+ * largest hit LINES the bundle can produce — built from the concepts themselves, task-independently
+ * — across every shape the compiler can render: three hits with no footer; two, one, or none shown
+ * with the omitted-count footer; and the two empty-corpus lines. Taking the maximum over the shapes
+ * matters because a footer is not always smaller than a hit line, and a pack whose budget shrank its
+ * hit limit renders the footer instead.
+ *
+ * This is the query section's half of the promise that a budget satisfying
+ * {@link measureAgentProfileCapacity} cannot start dropping declared evidence; the pack header's task
+ * line is the other, unbounded half, left to ADR-0025's recorded residual.
+ *
+ * The bound is computed from the bundle, never a task, so the finding stays "the same on every task"
+ * (the property that separates it from task-ranked omission, which is normal retention).
+ */
+function worstCaseQuerySectionTokens(graph: BundleGraph): number {
+  const drawn = [...graph.concepts.values()].map((concept) => {
+    const hit = capacityReserveHit(concept);
+    return { hit, line: renderQueryHit(hit) };
+  });
+  const hits = drawn
+    .sort((a, b) => b.line.length - a.line.length)
+    .slice(0, AGENT_CONTEXT_QUERY_HIT_LIMIT)
+    .map(({ hit }) => hit);
+  const shapes = [
+    renderQueryHitsSection(hits, 0),
+    renderQueryHitsSection(hits.slice(0, 2), 1),
+    renderQueryHitsSection(hits.slice(0, 1), 2),
+    renderQueryHitsSection([], Math.min(AGENT_CONTEXT_QUERY_HIT_LIMIT, graph.concepts.size)),
+    renderQueryHitsSection([], 0),
+  ];
+  return Math.max(...shapes.map((section) => estimateTokens(section.join("\n"))));
+}
 
 /**
  * Measure one profile's declared set against its own budget (LCLI-642, DEC-11).
@@ -516,6 +590,13 @@ const CAPACITY_MEASUREMENT_SCORE = 1;
  *   classifiable `validation` error. Declining keeps `lore check` from turning that into a finding
  *   about a profile it cannot read in this bundle at all: history and the reasoning are in LCLI-642
  *   review F1 and LCLI-647.
+ *
+ * Since LCLI-662 (DEC-98 B) the measured size also stands for the query section a real pack
+ * renders, so a budget that satisfies it cannot start dropping declared evidence on a task — up to
+ * ADR-0025's recorded residual, the pack header's task line, which no task-independent measurement
+ * can bound: the section's worst case is reserved rather than rendered —
+ * {@link worstCaseQuerySectionTokens}, the `querySectionReserve` on the result — and score
+ * annotations render at full width ({@link CAPACITY_MEASUREMENT_SCORE}).
  */
 export function measureAgentProfileCapacity(
   profile: AgentProfile,
@@ -566,13 +647,16 @@ export function measureAgentProfileCapacity(
       false,
     );
 
-  const declaredTokens = render(candidates).tokenEstimate;
+  const querySectionReserve = worstCaseQuerySectionTokens(graph);
+  const declaredTokens = render(candidates).tokenEstimate + querySectionReserve;
   // The fill is the compiler's own first-fit, on the compiler's own deck order, but in DECLARATION
-  // order and with no query section: which sources survive is the attribution AC1 asks for.
+  // order and with no query section: which sources survive is the attribution AC1 asks for. It
+  // fills against the reserve-inclusive budget, so a source the reserve alone pushed out is named
+  // here rather than silently attributed to a real task's ranking (LCLI-662, DEC-98 B).
   const selected: RankedCandidate[] = [];
   const chosen = new Set<string>();
   for (const candidate of candidates) {
-    if (render([...selected, candidate]).tokenEstimate <= profile.maxTokens) {
+    if (render([...selected, candidate]).tokenEstimate + querySectionReserve <= profile.maxTokens) {
       selected.push(candidate);
       chosen.add(candidate.key);
     }
@@ -583,6 +667,7 @@ export function measureAgentProfileCapacity(
     path: profile.path,
     maxTokens: profile.maxTokens,
     declaredTokens,
+    querySectionReserve,
     overCapacity: declaredTokens > profile.maxTokens,
     sources: sources.map((source) => {
       const includedCount = source.items.filter((item) => chosen.has(item.key)).length;

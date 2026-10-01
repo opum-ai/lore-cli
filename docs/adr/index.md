@@ -51,4 +51,5 @@ the same convention rather than a bare `slug.md`.
 - [Tracker status flow is backend-polymorphic, not Backlog config](0022-tracker-status-flow-is-backend-polymorphic-not-backlog-config.md)
 - [Resolve the Quest CLI in CI from a pinned source build when its version is not on npm](0023-resolve-the-quest-cli-in-ci-from-a-pinned-source-build-when-its-version-is-not-on-npm.md)
 - [Tracker readiness is the operator's step: lore init detects, offers, and instructs — it never installs, initializes, or migrates a tracker for you (DEC-57)](0024-lore-init-stops-and-instructs-on-tracker-readiness.md)
+- [The capacity measurement reserves the worst-case bundle-wide query section and renders score annotations at full width (DEC-98)](0025-the-capacity-measurement-reserves-the-worst-case-bundle-wide-query-section-and-renders-score-annotations-at-full-width-dec-98.md)
 <!-- lore:index:end -->

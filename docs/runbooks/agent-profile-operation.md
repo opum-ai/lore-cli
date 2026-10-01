@@ -169,7 +169,15 @@ another.
 
 **Do not confuse this with the capacity floor.** `lore check` reports
 `agent-profile-capacity` for a profile whose *complete declared set* cannot fit
-its budget at all, computed from the declaration alone with no task involved. It
+its budget at all — computed from the declaration and the bundle, never from a
+task: the measurement renders score annotations at full width and reserves the
+worst-case bundle-wide query section, so it stands for the largest pack a task
+can compile, up to one recorded residual: the pack header renders the task text
+verbatim, so a task much longer than the measurement's fixed stand-in can still
+consume the margin (LCLI-662, DEC-98 B; the definition, the measured boundary
+and the second residual are
+[ADR-0025](../adr/0025-the-capacity-measurement-reserves-the-worst-case-bundle-wide-query-section-and-renders-score-annotations-at-full-width-dec-98.md)).
+It
 ships as a warning for one release, then as an error (LCLI-646). That is a floor
 rather than an answer to which budget is well chosen: a capacity finding means
 the profile can never hold the evidence it declares and names the size to raise

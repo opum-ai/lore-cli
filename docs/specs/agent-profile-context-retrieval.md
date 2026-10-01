@@ -96,11 +96,18 @@ Contract:
   A profile whose declared set cannot fit is reported by `lore check`
   as `agent-profile-capacity`, naming the profile, its budget, and the sources
   that cannot fit (LCLI-642). That measurement is the size of the set **as a real
-  pack renders it** — the per-item and catalog score annotations included — so a
+  pack renders it** — the per-item and catalog score annotations at full score
+  width, and the worst-case bundle-wide query section reserved rather than
+  rendered — so it stands for the largest pack a task can compile, up to the one
+  residual [ADR-0025](../adr/0025-the-capacity-measurement-reserves-the-worst-case-bundle-wide-query-section-and-renders-score-annotations-at-full-width-dec-98.md)
+  records and measures: the pack header renders the task text verbatim, so a task
+  much longer than the measurement's fixed stand-in can still consume the margin.
+  Within that bound, a
   budget that satisfies it cannot start dropping declared evidence on a task, and
-  a budget that only appears to satisfy it cannot hide behind that appearance. DEC-11 rules that this ships as a **warning for one
+  a budget that only appears to satisfy it cannot hide behind that appearance (LCLI-662, DEC-98 B). DEC-11 rules that this ships as a **warning for one
   release and then as an error**; the flip is held by LCLI-646. The finding is
-  computed from the declaration alone, so it is the same on every task and never
+  computed from the declaration and the bundle, never from a task, so it is the
+  same on every task and never
   depends on what a particular pack happens to retain — task-ranked omission is
   normal retention and is not this finding.
 - `pinned` and `sources` are optional ordered arrays defaulting to empty. Each

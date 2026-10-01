@@ -4,8 +4,10 @@ description = "Reviews a lore-cli change against the accepted architecture decis
 kind = "specialist"
 # Holds this profile's COMPLETE declared set, as a real pack renders it (LCLI-642, DEC-11: a profile
 # whose declared sources cannot fit its budget is the `lore check` finding `agent-profile-capacity`).
-# The headroom above that measurement covers document growth plus the two things the measurement
-# deliberately does NOT count -- the task line and the bundle-wide query section. No number is
+# The headroom above that measurement covers document growth plus the one thing it still does not
+# count -- the pack header's task line, which grows with the task text. Since LCLI-662 (DEC-98 B,
+# ADR-0025) the measurement reserves the bundle-wide query section's worst case and renders score
+# annotations at full width, so the query section is inside it. No number is
 # written here on purpose: it moves with every edit to a declared source, and `lore check` prints
 # the current requirement when it is exceeded.
 max_tokens = 63000

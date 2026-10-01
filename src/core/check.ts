@@ -1024,9 +1024,11 @@ export const AGENT_PROFILE_CAPACITY_SEVERITY: CheckSeverity = "warning";
 const AGENT_PROFILE_CAPACITY_NAMED_SOURCES = 5;
 
 /**
- * One finding per over-capacity profile (LCLI-642, DEC-11). The comparison itself is
- * {@link AgentProfileCapacity.overCapacity}, computed beside the measurement from the declaration
- * alone — this function only renders it, so there is no second place the capacity test could drift.
+ * One finding per over-capacity profile (LCLI-642, DEC-11; LCLI-662, DEC-98 B). The comparison
+ * itself is {@link AgentProfileCapacity.overCapacity}, computed beside the measurement — this
+ * function only renders it, so there is no second place the capacity test could drift. The
+ * measurement now stands for the largest pack a real task can compile, so the message separates the
+ * declared set from the worst-case query section rather than presenting one number as evidence.
  *
  * Every finding it returns is reported at `severity`, which defaults to
  * {@link AGENT_PROFILE_CAPACITY_SEVERITY}; passing one explicitly is how the tests exercise both
@@ -1047,8 +1049,9 @@ export function agentProfileCapacityFindings(
         rule: "agent-profile-capacity" as const,
         file: capacity.path,
         message:
-          `agent profile "${capacity.name}" declares ~${capacity.declaredTokens} tokens of evidence against a ` +
-          `${capacity.maxTokens}-token budget, so it cannot fit its declared sources: ${unfitting.length} of ` +
+          `agent profile "${capacity.name}" cannot hold its declared sources against a ` +
+          `${capacity.maxTokens}-token budget: the declared set renders to ~${capacity.declaredTokens - capacity.querySectionReserve} ` +
+          `tokens and the worst-case bundle-wide query section adds ~${capacity.querySectionReserve}, so ${unfitting.length} of ` +
           `${capacity.sources.length} sources drop (wholly or partly) when the budget is filled in declaration order ` +
           `— ${named.join(", ")}${more > 0 ? `, +${more} more` : ""}. Raise max_tokens to ~${capacity.declaredTokens} ` +
           `(or narrow the declared sources to what ${capacity.maxTokens} holds)`,
