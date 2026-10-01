@@ -35,14 +35,26 @@ trap 'rm -f "${stdout_file}" "${stderr_file}"' EXIT
 status=0
 "$@" >"${stdout_file}" 2>"${stderr_file}" || status=$?
 
+# Replay one captured stream, ending it on its own line. A stream whose last byte is not a
+# newline would otherwise GLUE to the next echo: the resume marker lands mid-line, the runner
+# never sees it as a command, and the stop block stays open for the rest of the step, so the
+# guard's own failure annotation would be silently swallowed (review F2, measured byte-level).
+replay_file() {
+  [[ -s "$1" ]] || return 0
+  cat "$1"
+  if [[ "$(tail -c 1 "$1" | od -An -tx1 | tr -d ' \n')" != "0a" ]]; then
+    echo
+  fi
+}
+
 # A fresh token per run: replay is safe unless the captured text contains the exact resume
 # marker, and nothing durable can contain 32 random hex characters.
 token="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
 echo "::stop-commands::${token}"
-cat "${stdout_file}"
+replay_file "${stdout_file}"
 if [[ -s "${stderr_file}" ]]; then
   echo "--- stderr ---"
-  cat "${stderr_file}"
+  replay_file "${stderr_file}"
 fi
 echo "::${token}::"
 

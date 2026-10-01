@@ -357,7 +357,13 @@ jobs:
             echo "::error::quest task list --json exited ${status}; the tracker does not read cleanly"
             token="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
             echo "::stop-commands::${token}"
-            cat "${out}.stderr"
+            if [ -s "${out}.stderr" ]; then
+              cat "${out}.stderr"
+              # A stream not ending in a newline would glue to the resume marker and leave
+              # the stop block open for the rest of the step (LCLI-661 review F2).
+              [ "$(tail -c 1 "${out}.stderr" | od -An -tx1 | tr -d ' \n')" = "0a" ] || echo
+            fi
+            echo "(captured stdout: $(wc -c < "${out}") bytes, not replayed)"
             echo "::${token}::"
             exit "${status}"
           fi

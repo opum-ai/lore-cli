@@ -425,19 +425,32 @@ describe("tracker and docs reads stay out of the workflow-command parser (LCLI-6
     expect(run).toContain('exit "${status}"');
   });
 
-  test("every quest/lore step in the tracker and docs-gate jobs is guarded or explicitly redirected", () => {
-    const jobs = loadWorkflow().jobs;
+  test("every quest/lore step in every workflow is guarded or explicitly redirected", () => {
+    // A tripwire over every job of every workflow, not just the two jobs this change
+    // touched: a future bare `quest`/`lore` read anywhere reintroduces the forgery. It is a
+    // tripwire and not a proof — `env FOO=1 quest …` or an `if quest …` would evade it —
+    // which is why the behavioural tests below and review carry the real weight.
+    const runsQuestOrLore = /(^|&&|;|\|)\s*(quest|lore|bunx lore|bun run lore)\b/;
     const offenders: string[] = [];
-    for (const jobId of ["tracker", "docs-gate"]) {
-      for (const step of jobs[jobId]?.steps ?? []) {
-        const unguarded = (step.run ?? "")
-          .split("\n")
-          .map((line) => line.trim())
-          .filter((line) => /^(quest|lore|bun run lore)\b/.test(line))
-          // The tracker read is the one deliberate exception: its own redirect names it.
-          .filter((line) => !line.includes("quest task list --json >"));
-        if (unguarded.length > 0) {
-          offenders.push(`${jobId}/${step.name}: ${unguarded.join("; ")}`);
+    for (const file of ["ci.yml", "main-fast-forward-guard.yml", "release.yml"]) {
+      const workflow = loadWorkflow(join(WORKFLOWS_DIR, file));
+      for (const [jobId, job] of Object.entries(workflow.jobs ?? {})) {
+        for (const step of job?.steps ?? []) {
+          const unguarded = (step.run ?? "")
+            .split("\n")
+            .map((line) => line.trim())
+            .filter((line) => runsQuestOrLore.test(line))
+            // The guard invocation itself is the sanctioned wrapper.
+            .filter((line) => !line.startsWith("scripts/ci-quiet-gate.sh "))
+            // The tracker read is the one deliberate exception, and only as the WHOLE line:
+            // matching the command as a substring would discard the rest of a line carrying
+            // a second, bare command behind the redirect (review F4, measured).
+            .filter(
+              (line) => !/^quest task list --json >"\$\{out\}" 2>"\$\{out\}\.stderr" \|\| status=\$\?$/.test(line),
+            );
+          if (unguarded.length > 0) {
+            offenders.push(`${file}/${jobId}/${step.name}: ${unguarded.join("; ")}`);
+          }
         }
       }
     }
@@ -483,7 +496,7 @@ describe("scripts/ci-quiet-gate.sh (LCLI-661)", () => {
     expect(result.stdout).toContain("::error::bash exited 3");
   });
 
-  test("a clean run keeps status 0 and still keeps the output inside the markers", () => {
+  test("a clean run keeps status 0, keeps the output inside the markers, and raises no error annotation", () => {
     const result = spawnSync("bash", [SCRIPT, "bash", "-c", "echo all-clear"], { encoding: "utf8" });
     expect(result.status).toBe(0);
     const token = result.stdout.match(/::stop-commands::([0-9a-f]{32})/)?.[1];
@@ -493,11 +506,71 @@ describe("scripts/ci-quiet-gate.sh (LCLI-661)", () => {
     const at = result.stdout.indexOf("all-clear");
     expect(at).toBeGreaterThan(open);
     expect(at).toBeLessThan(close);
+    // A guard that raised a failure annotation on a clean run would be this change's own
+    // defect class wearing the guard's name (review F5: measured, unpinned before this).
+    expect(result.stdout).not.toContain("::error::");
+  });
+
+  test("a child whose output does not end in a newline still leaves the resume marker on its own line", () => {
+    // Review F2, measured byte-level: with a bare `cat`, a stream not ending in a newline
+    // glues to the marker (`no-trailing-newline::<token>::`), the runner never sees the
+    // resume command, and the stop block stays open for the rest of the step — swallowing
+    // any later annotation the step raises.
+    const result = spawnSync("bash", [SCRIPT, "bash", "-c", 'printf "no-trailing-newline"'], { encoding: "utf8" });
+    expect(result.status).toBe(0);
+    const token = result.stdout.match(/::stop-commands::([0-9a-f]{32})/)?.[1];
+    expect(token).toBeDefined();
+    expect(result.stdout.split("\n")).toContain(`::${token}::`);
+  });
+
+  test("two runs use different resume tokens", () => {
+    const a = spawnSync("bash", [SCRIPT, "true"], { encoding: "utf8" });
+    const b = spawnSync("bash", [SCRIPT, "true"], { encoding: "utf8" });
+    const tokenOf = (stdout: string) => stdout.match(/::stop-commands::([0-9a-f]{32})/)?.[1];
+    expect(tokenOf(a.stdout)).toBeDefined();
+    expect(tokenOf(a.stdout)).not.toBe(tokenOf(b.stdout));
   });
 
   test("is a usage error when handed no command", () => {
     const result = spawnSync("bash", [SCRIPT], { encoding: "utf8" });
     expect(result.status).toBe(2);
+  });
+});
+
+describe("scripts a workflow invokes by path are committed executable (LCLI-661 review F1)", () => {
+  // The guard was committed 100644 while every routed step invoked it by path, so CI failed
+  // with "Permission denied" (exit 126) in three required contexts — while every local gate
+  // stayed green, because the tests spawn `bash <script>` (which needs no exec bit) and
+  // shellcheck, biome and tsc all read text. The bit is read from the GIT INDEX, not the
+  // working file: the working file's mode is not what a fresh checkout materialises.
+  function directlyInvokedScripts(): string[] {
+    const found = new Set<string>();
+    for (const file of ["ci.yml", "main-fast-forward-guard.yml", "release.yml"]) {
+      const workflow = loadWorkflow(join(WORKFLOWS_DIR, file));
+      for (const job of Object.values(workflow.jobs ?? {})) {
+        for (const step of job?.steps ?? []) {
+          for (const line of (step.run ?? "").split("\n")) {
+            const match = line.trim().match(/^(?:\.\/)?(scripts\/[\w-]+\.sh)(?:\s|$)/);
+            const script = match?.[1];
+            if (script) found.add(script);
+          }
+        }
+      }
+    }
+    return [...found].sort();
+  }
+
+  test("the walk finds the direct invocations it exists to check (positive control)", () => {
+    // Without this, a walk that matched nothing would pass the suite and gate nothing.
+    expect(directlyInvokedScripts()).toContain("scripts/ci-quiet-gate.sh");
+  });
+
+  test("each directly-invoked script is mode 100755 in the git index", () => {
+    const repoRoot = join(import.meta.dir, "..");
+    for (const script of directlyInvokedScripts()) {
+      const result = spawnSync("git", ["ls-files", "-s", "--", script], { cwd: repoRoot, encoding: "utf8" });
+      expect({ script, mode: result.stdout.trim().split(/\s+/)[0] }).toEqual({ script, mode: "100755" });
+    }
   });
 });
 
