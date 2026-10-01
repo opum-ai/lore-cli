@@ -8,7 +8,7 @@ tags:
   - check
   - dec-98
   - lcli-662
-summary: "lore check's capacity measurement reserves the worst-case bundle-wide query section and renders score annotations at full width, so a green check means no declared source can drop."
+summary: "lore check's capacity measurement reserves the worst-case bundle-wide query section and renders score annotations at full width; the task-line residual is recorded and measured here."
 timestamp: 2026-10-01T03:12:40.980Z
 status: stable
 ---
@@ -108,18 +108,23 @@ task-ranked omission is still normal retention rather than this finding.
 ## Consequences
 
 - The finding fires earlier — by up to the reserve — which is the point: a green check now stands for
-  the real pack. This repository's own four profiles keep their margins (declared 57886-104232 against
-  budgets 63000-108000; the reserve is a few hundred tokens against margins of 2155-5114, measured
-  2026-10-01).
+  the real pack. This repository's own four profiles keep their margins: declared 58616-105406
+  against budgets 63000-108000 after the change, margins 1160-4384 with a 353-token reserve each
+  (measured on this branch 2026-10-01; `verification` is the tightest at 1160). All four read
+  `overCapacity: false` and `lore check` reports "4 read, 0 over capacity".
 - **LCLI-646 waits one release** (DEC-11): the strengthened boundary warns first, then the flip turns
   it into an error in a release strictly after this one.
 - The spec bullet and the runbook's capacity paragraph are updated to say what the measurement now
   includes, so the promise and the gate agree.
 - **Residuals, recorded rather than closed.** Two bounds stay outside the measurement, because no
-  finite task-independent measurement can reserve them: the pack header's task line (the measurement
-  renders a fixed 22-character task; the `[pack-size]` case's slack has covered real tasks in
-  practice), and any score wider than the placeholder's 11 characters. Both are documented here so a
-  later reader can decide whether they need closing.
+  finite task-independent measurement can reserve them: the pack header's task line, and any score
+  wider than the placeholder's 11 characters. The task line is the reachable one, and it is
+  measured: at a budget equal to `declaredTokens`, a fixture's task texts of up to 140 characters
+  fitted while 200 characters truncated the pack and dropped a declared source (measured 2026-10-01;
+  the exact boundary sits between the two, and its position depends on how much slack the declared
+  set leaves). Both bounds are documented here so a later reader can decide whether they need
+  closing — closing the first would need the header's task text bounded, which is a product decision
+  rather than a measurement one.
 
 ## Alternatives considered
 

@@ -30,11 +30,12 @@
  *                   renders narrower than a real score (LCLI-662 completed F2's intent).
  *   [query-reserve] 1 case: the worst-case bundle-wide query section is reserved, so a budget the
  *                   measurement certifies holds every declared candidate for a task with three
- *                   bundle-wide hits -> RED if the reserve is removed from `declaredTokens`.
+ *                   bundle-wide hits -> RED if the reserve is zeroed (and doubly RED if it is
+ *                   dropped from `declaredTokens` alone, which also reddens [pack-size]).
  *
  * Measured against that map (re-measured 2026-10-01 over the 12 cases here, after LCLI-662 added
  * [query-reserve]): forcing the comparison false reddens 4 of 12 (both [capacity], the
- * over-capacity [count], the command-level [severity]); removing the query-section reserve reddens
+ * over-capacity [count], the command-level [severity]); zeroing the query-section reserve reddens
  * [query-reserve] alone, 1 of 12; rendering the score placeholder at one character reddens
  * [pack-size] alone, 1 of 12. The map is written out because predicting the subset from the file is the
  * point.
@@ -262,7 +263,9 @@ describe("lore check gates agent profile capacity (LCLI-642, DEC-11)", () => {
     // annotation and the section is the [query-reserve] case's subject — already holds the real
     // hit-free pack, scores and all. That is the narrowing placeholder's failure: with it, the
     // declared set is ~6 characters per item short of the pack it stands for, and this assertion
-    // reddens. Measured against the fix: the declared set is 6134 against a real pack of 6133.
+    // reddens. Measured against the fix: the declared set renders to 6179 tokens against a real
+    // pack of 6133 — a ~46-token margin here, because the 11-character placeholder is wider than
+    // this fixture's 7-character scores — so the case pins the direction, not a razor-thin size.
     const declaredSetTokens = capacity.declaredTokens - capacity.querySectionReserve;
     expect(compile(declaredSetTokens).truncated).toBe(false);
     // And the whole measurement, section included, holds it with room to spare; 400 is comfortably

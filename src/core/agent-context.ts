@@ -465,9 +465,11 @@ export interface AgentProfileSourceCapacity {
  * `declaredTokens` is measured by the compiler itself — the same pins, the same candidate
  * partition, the same canonical Markdown rendering as {@link compilePack} — with every candidate
  * selected, so it is the size of the largest pack that would carry the profile's whole declared set
- * for ANY task. It is task-independent by construction: a fixed measurement task stands in the
- * header, each candidate carries a full-width placeholder score so the per-item and catalog score
- * annotations a real pack always pays are counted ({@link CAPACITY_MEASUREMENT_SCORE}), and the
+ * for any task **within the header residual**: the measurement renders a fixed stand-in task, and a
+ * real task text much longer than it can still consume the margin, which is the one residual
+ * ADR-0025 records. Otherwise the size is task-independent by construction: each candidate carries a
+ * full-width placeholder score so the per-item and catalog score annotations a real pack always pays
+ * are counted ({@link CAPACITY_MEASUREMENT_SCORE}), and the
  * worst-case bundle-wide query section is reserved ({@link AgentProfileCapacity.querySectionReserve})
  * rather than rendered, because its hits are what a task would choose (LCLI-662, DEC-98 B).
  *
@@ -545,6 +547,10 @@ function capacityReserveHit(concept: Concept): AgentContextQueryHit {
  * matters because a footer is not always smaller than a hit line, and a pack whose budget shrank its
  * hit limit renders the footer instead.
  *
+ * This is the query section's half of the promise that a budget satisfying
+ * {@link measureAgentProfileCapacity} cannot start dropping declared evidence; the pack header's task
+ * line is the other, unbounded half, left to ADR-0025's recorded residual.
+ *
  * The bound is computed from the bundle, never a task, so the finding stays "the same on every task"
  * (the property that separates it from task-ranked omission, which is normal retention).
  */
@@ -586,10 +592,11 @@ function worstCaseQuerySectionTokens(graph: BundleGraph): number {
  *   review F1 and LCLI-647.
  *
  * Since LCLI-662 (DEC-98 B) the measured size also stands for the query section a real pack
- * renders, so a budget that satisfies it cannot start dropping declared evidence on a task: the
- * section's worst case is reserved rather than rendered — {@link worstCaseQuerySectionTokens}, the
- * `querySectionReserve` on the result — and score annotations render at full width
- * ({@link CAPACITY_MEASUREMENT_SCORE}).
+ * renders, so a budget that satisfies it cannot start dropping declared evidence on a task — up to
+ * ADR-0025's recorded residual, the pack header's task line, which no task-independent measurement
+ * can bound: the section's worst case is reserved rather than rendered —
+ * {@link worstCaseQuerySectionTokens}, the `querySectionReserve` on the result — and score
+ * annotations render at full width ({@link CAPACITY_MEASUREMENT_SCORE}).
  */
 export function measureAgentProfileCapacity(
   profile: AgentProfile,

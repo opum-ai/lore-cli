@@ -18,7 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against a 2982-token budget, `omitted-by-budget` on the pack; and hit-free packs up to ~500 tokens
   larger than the measurement on this repository's own profiles). The measurement now reserves the
   query section's worst case, task-independently, and renders score annotations at full width, so a
-  budget that satisfies it cannot start dropping declared evidence on a task. The finding is still
+  budget that satisfies it cannot start dropping declared evidence on a task — up to the one residual
+  ADR-0025 records and measures: the pack header renders the task text verbatim, so a task much
+  longer than the measurement's fixed stand-in can still consume the margin. The finding is still
   computed from the declaration and the bundle, never from a task. This ships as a **warning** for
   one release before LCLI-646 flips it to an error (DEC-11).
 
