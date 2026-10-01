@@ -339,16 +339,54 @@ jobs:
       # Catches a duplicated task identity — the same id present in both
       # .quest/tasks/ and .quest/completed/ — which exits conflict/5 and makes
       # every tracker read in the repository fail.
+      #
+      # LCLI-661: the read is redirected rather than streamed. The runner parses a step's
+      # stdout as workflow commands, record text is session-written and arbitrary, and a
+      # record quoting a CI log line ("##[error]Process completed with exit code 1." lives
+      # in .quest/completed/LCLI-507.json) forged a failure annotation on this job while it
+      # was green (check-run 110060733763, 2026-09-30). Both streams go to $RUNNER_TEMP; on
+      # failure the tracker's own error text is replayed inside a stop-commands block. The
+      # record count is the positive control: zero records is a failed read, not a clean one.
       - name: Tracker reads cleanly
-        run: quest task list --json
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/quest-task-list.json"
+          status=0
+          quest task list --json >"${out}" 2>"${out}.stderr" || status=$?
+          if [ "${status}" -ne 0 ]; then
+            echo "::error::quest task list --json exited ${status}; the tracker does not read cleanly"
+            token="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+            echo "::stop-commands::${token}"
+            if [ -s "${out}.stderr" ]; then
+              cat "${out}.stderr"
+              # A stream not ending in a newline would glue to the resume marker and leave
+              # the stop block open for the rest of the step (LCLI-661 review F2).
+              [ "$(tail -c 1 "${out}.stderr" | od -An -tx1 | tr -d ' \n')" = "0a" ] || echo
+            fi
+            echo "(captured stdout: $(wc -c < "${out}") bytes, not replayed)"
+            echo "::${token}::"
+            exit "${status}"
+          fi
+          count="$(jq -er 'if (.data | type) == "array" then (.data | length) else error(".data is not an array") end' "${out}")" || {
+            echo "::error::could not count the task records quest returned; treating the read as failed"
+            exit 1
+          }
+          if [ "${count}" -eq 0 ]; then
+            echo "::error::quest task list --json returned zero task records; failing rather than reading as clean"
+            exit 1
+          fi
+          echo "read ${count} task record(s)"
 
       # Catches managed skill/instruction drift, which exits 6. This drifts on its
       # own whenever the CLI moves underneath the committed copy, with no commit
       # here to blame. Checked against the version CLAUDE.md declares, so a
       # version-only difference against a newer locally-installed CLI — tolerated,
       # exit 0 — cannot turn into a red here.
+      #
+      # Routed through ci-quiet-gate.sh (LCLI-661) so drift text cannot be parsed as
+      # workflow commands; the script's header has the full reason.
       - name: Managed instructions are current
-        run: quest agents --check --require-installed --target claude
+        run: scripts/ci-quiet-gate.sh quest agents --check --require-installed --target claude
 
   docs-gate:
     # LCLI-504. The fleet operating rule is "`lore check` exiting 0 is the definition of
@@ -407,15 +445,20 @@ jobs:
       # stronger assertion of the two: a PR that breaks `lore check` fails on its own
       # code rather than on whatever version happens to be installed, and the docs bundle
       # is validated by the lore the PR actually proposes.
+      #
+      # Routed through ci-quiet-gate.sh (LCLI-661): findings quote document text, and a
+      # line beginning "::" in that text would otherwise be parsed as a workflow command.
       - name: lore check
-        run: bun run lore check
+        run: scripts/ci-quiet-gate.sh bun run lore check
 
       # Bridge currency (OPAG-378 AC4, LCLI-579). This runs from source, not from a pinned
       # published binary: this repository owns the generator, so a PR that changes generated
       # bridge text must regenerate CLAUDE.md's lore:agents block (`bun run lore agents`) in the
       # same PR. Exit 6 means the block is stale.
+      #
+      # Routed through ci-quiet-gate.sh (LCLI-661) like the sibling steps above.
       - name: lore agents --check (bridge currency)
-        run: bun run lore agents --check
+        run: scripts/ci-quiet-gate.sh bun run lore agents --check
 
   package-set:
     # LCLI-513. The platform package SET on disk (the directories under npm/) must equal the
