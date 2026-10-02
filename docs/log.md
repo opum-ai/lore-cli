@@ -293,6 +293,7 @@
 - 2026-09-29T16:58:42-05:00 7351fba1513cabd828e441ab28cad759d4b3119c chore(LCLI-621): RECYCLE HANDOFF 20, written after the orchestrator's recycle request (#438)
 - 2026-09-29T19:00:23-05:00 09d15238335b7f9e400c7c15cd7fbd4993c92598 docs(LCLI-655): land the DEC-57 draft ADR — lore init stops and instructs (no installs) (#436)
 - 2026-09-29T21:03:34-05:00 488b66a983bf30c220a9ad248744f03e9954f589 feat(LCLI-656): lore init detects, offers, and instructs — it never installs (ADR-0024, DEC-57) (#440)
+- 2026-09-30T23:17:48-05:00 0d568f0f0d353511435107a7c1ea57018682fd2d fix(LCLI-662): reserve the query section's worst case in the capacity measurement (DEC-98 B) (#460)
 
 ## docs/adr
 
