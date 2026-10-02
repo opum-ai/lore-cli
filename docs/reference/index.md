@@ -18,6 +18,7 @@
 - [Lore CLI release truth](lore-cli-release-truth.md)
 - [Lore CLI repository notes](lore-cli-repository-notes.md)
 - [Lore competitive feature matrix](lore-competitive-feature-matrix.md)
+- [Lore pane mod](lore-pane-mod.md)
 - [MCP tools and resources (ON HOLD design)](mcp-tools.md)
 - [OKF conformance](okf-conformance.md)
 - [OKF projection contract](okf-projection-contract.md)

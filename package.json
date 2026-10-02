@@ -80,7 +80,8 @@
     "lint:fix": "biome check --write .",
     "test": "bun test",
     "test:browser": "playwright test",
-    "test:coverage": "bun test --coverage"
+    "test:coverage": "bun test --coverage",
+    "test:mod": "node scripts/mod-test.mjs"
   },
   "trustedDependencies": [
     "@ladybugdb/core"

@@ -82,6 +82,9 @@ docs/.obsidian/*
 .claude/settings.local.json
 CLAUDE.local.md
 
+# Written by the Claude Code engine when it loads this plugin from a checkout.
+.claude-plugin/types/
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db

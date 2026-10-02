@@ -25,6 +25,14 @@
     // Bun runtime globals (Bun.spawn, Bun.file, process, …).
     "types": ["bun"]
   },
+  // The mod's hooks/ (.ts/.tsx), types/ (.d.ts) and tests/ (.ts/.tsx) are deliberately NOT here: these
+  // globs stop at .ts, and the mod's own harness covers them -- scripts/mod-test.mjs (`bun run test:mod`,
+  // LCLI-664) runs `claude plugin validate --strict` and `claude plugin test`, and typechecks only where
+  // a declaration for the running Claude Code exists. The engine writes that declaration for a
+  // session-loaded plugin, so the typecheck is machine-local by nature: CI's runner has none, and there
+  // the harness reports NOT TYPECHECKED rather than implying a typecheck it did not run. A green CI run
+  // is therefore validate + tests, not a typecheck (LCLI-664 review F3; measured in the job's own log).
+  // tsconfig.scripts.json's coverage covenant records every top-level directory and what covers it.
   "include": ["src/**/*.ts", "test/**/*.ts", "benchmark/**/*.ts", "scripts/**/*.ts", "*.ts"],
   "exclude": ["node_modules", "dist"]
 }

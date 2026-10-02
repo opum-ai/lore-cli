@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The `opum-lore` plugin now ships the Lore pane** (LCLI-664; OPAG-1075) — a Claude Code
+  hooks module ("mod") that puts the repository's documentation bundle in a pane. It browses
+  the bundle's concepts by type from `lore query` and opens one rendered as Markdown or raw
+  with its frontmatter; internal link clicks navigate in the pane with a Back history; search
+  takes free text with type and tag filters, and a refs toggle adds `--across-refs` to read
+  open pull requests; New creates a document through `lore new` and opens whatever id comes
+  back, so the pane mints no ids of its own and cannot collide with documents created on a
+  branch; a fields form rewrites the open document's frontmatter, then validates the written
+  file with `lore validate`, keeping the previous bytes and showing lore's own message when
+  validation fails; rename, supersede, link and unlink run the matching `lore` command and
+  then `lore sync`. Everything goes through the CLI rather than a reimplementation, so link
+  repointing on rename and managed task blocks stay lore's own behaviour. Body editing is the
+  fields form, a **lightweight inline editor** for the body (text, cursor, insert/delete and
+  undo/redo in a `Client` region, drawn with the engine's own elements and saving through the
+  same `lore validate` path), an **Open in editor** action that hands the file to the person's
+  own `$EDITOR` through the session's shell escape, and an **Ask Claude…** button that fills
+  the prompt box and sends nothing itself, so Claude's normal permissions and this
+  repository's documentation rules apply; Markdown, diff and syntax highlighting use the
+  engine's own `Markdown` and `Code` elements rather than a bundled renderer, and the editing
+  model is vendored `@codemirror/state` with its license and provenance recorded beside it
+  (a hooks module can import only its own files and `claude-code`). The
+  pane ships in the plugin cut from this repository's release tag, so a plugin user gets the
+  pane matching the CLI version they installed; mods need Claude Code 2.1.287 or later. Its
+  component reference is [Lore pane mod](docs/reference/lore-pane-mod.md).
+  The module's tests run under the Claude Code engine against a stage of exactly what the
+  plugin ships — `bun run test:mod` (`scripts/mod-test.mjs`) — and CI runs them in a
+  `mod gate (opum-lore plugin)` job. That harness fails rather than skipping when it cannot
+  test anything (no `claude`, one older than 2.1.287, a shipped directory absent, a stage with
+  no module), and it reports its typecheck as **NOT TYPECHECKED** rather than implying one it
+  could not run: the typecheck is machine-local against the engine's own declaration and CI
+  cannot assert it. Covered by the module's tests: browse, read, Back, Raw, search and its refs
+  toggle, New, the fields form with its validation-failure path, the inline editor (a key,
+  the cursor cell, undo, Save through `lore validate`, and the rejected-save restore), and the
+  rename/`lore sync` argv. Not covered, and so not claimed: supersede, link, unlink, Ask
+  Claude…, Open in editor, and the uncommitted-changes landing strip.
+
 ### Fixed
 
 - **The capacity measurement now stands for the largest pack a real task can compile** (LCLI-662;

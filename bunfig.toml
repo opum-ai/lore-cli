@@ -1,6 +1,17 @@
 # Bun configuration. The Bun version itself is pinned in .bun-version (see DEVELOPMENT.md).
 
 [test]
+# LCLI-664. The opum-lore plugin ships a hooks module ("mod") whose tests belong to the Claude
+# Code engine (`claude plugin test`), not to bun: they import from `claude-code/testing`, which
+# exists only inside that engine, and they live in tests/ -- deliberately a different directory
+# from this repository's CLI suite under test/. Without this key `bun test` discovers
+# tests/**/*.test.tsx and fails on that import, locally and in CI alike; ci.yml's check job
+# invokes `bun test` directly rather than through `bun run test`, so a flag in the test script
+# would not have covered it. `pathIgnorePatterns` prunes the directory during discovery, so
+# this single site covers both. `bun run test:mod` (scripts/mod-test.mjs) is what runs them.
+# A `--path-ignore-patterns` flag on the command line replaces this list rather than adding to it.
+pathIgnorePatterns = ["tests/**"]
+
 # Coverage is opt-in via `bun test --coverage` (package.json -> test:coverage); a
 # plain `bun test` stays fast and coverage-free. These keys shape the coverage run.
 coverageReporter = ["text", "lcov"]
