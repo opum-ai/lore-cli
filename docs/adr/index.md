@@ -54,4 +54,5 @@ the same convention rather than a bare `slug.md`.
 - [The capacity measurement reserves the worst-case bundle-wide query section and renders score annotations at full width (DEC-98)](0025-the-capacity-measurement-reserves-the-worst-case-bundle-wide-query-section-and-renders-score-annotations-at-full-width-dec-98.md)
 - [The Lore pane's body editing ships a lightweight inline editor and a desktop-editor action (DEC-132)](0026-the-lore-pane-s-body-editing-ships-a-lightweight-inline-editor-and-a-desktop-editor-action-dec-132.md)
 - [The Lore pane reads only the session's own repository bundle in v1 (DEC-133)](0027-the-lore-pane-reads-only-the-session-s-own-repository-bundle-in-v1-dec-133.md)
+- [The Lore pane ships as its own mod in opum-lore, one of two mods, each in the plugin it drives (DEC-136)](0028-the-lore-pane-ships-as-its-own-mod-in-opum-lore-one-of-two-mods-each-in-the-plugin-it-drives-dec-136.md)
 <!-- lore:index:end -->

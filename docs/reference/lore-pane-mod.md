@@ -153,8 +153,12 @@ showed.
 
 ### The uncommitted-changes landing strip
 
-Reads `git status --porcelain` in the repository root and keeps the Markdown paths
-(renames resolved to the new path). When any exist, the pane shows the count and an
+Reads `git -c core.quotePath=false status --porcelain` in the repository root and keeps
+the Markdown paths (renames resolved to the new name). The setting is deliberate and was
+measured against git: without it a non-ASCII path arrives octal-escaped (`"caf\303\251.md"`)
+and was dropped from the count, and with it only a backslash, a double quote or a control
+byte is quoted at all — so the parser unquotes exactly those, ASCII escapes only. When any
+exist, the pane shows the count and an
 "Ask Claude to land them" button that fills the prompt with an instruction to land
 them through a branch and pull request following the opum-sdlc skill, naming
 `lore check` as the definition of done.
@@ -191,8 +195,15 @@ Two consequences the module states and relies on:
 
 - **Parse stdout alone.** `lore` prints lint warnings to stderr even under `--json`, so
   the pane reads stderr only to explain a non-zero exit. A command that cannot start at
-  all resolves exit code `-1` and says "lore could not run (is it on PATH?)"; a run
-  times out at 30 seconds.
+  all resolves exit code `-1` and says "lore could not run (is it on PATH?)"; a run that
+  is still going at the 30-second budget is killed by the engine and reported as the
+  timeout it was. The result carries no flag for that and neither shape it can take says
+  so on its own — a killed child's exit status is `1`, the same as a plain failure's, and
+  the declaration has the call reject instead — so `runLore` measures the run against its
+  own budget with `$.clock.now` on both the resolved and the rejected path.
+- **A vocabulary that fails to read is a note, not a dead end.** Browse draws the
+  concepts whenever the query succeeded; a failed `lore types` keeps the vocabulary
+  already read and shows lore's own message in the pane's notice line.
 - **Run lore's commands rather than reimplementing them.** Rename, supersede, link,
   unlink and the fields form all go through the CLI — the same reason the pane's
   `lore validate` step exists instead of a hand-rolled frontmatter check.
@@ -200,10 +211,20 @@ Two consequences the module states and relies on:
 Three more constraints the inline editor was built against, each measured on Claude
 Code 2.1.287 (2026-10-02) rather than read off a document:
 
-- **Only the plugin's own files and `claude-code` can be imported.** The validator's own
-  words, for `import { marked } from "marked"`: *"a hooks module imports its own files
-  by relative path and \"claude-code\", nothing else"*. A library is therefore vendored
-  source, never a dependency.
+- **Only the plugin's own files and `claude-code` can be imported into the module.**
+  The validator's own words, for `import { marked } from "marked"`: *"a hooks module
+  imports its own files by relative path and \"claude-code\", nothing else"*. A library
+  used inside the module is therefore vendored source, never a dependency.
+  **Corrected 2026-10-02 on an operator finding, recorded verbatim on opum-agent's
+  `OPAG-1075` and read by ref:** the restriction binds the module's own JavaScript
+  environment, not the mod. Direct imports of `node:` built-ins and `node_modules`
+  packages are rejected there, but a **Node helper** run through `$.process.run([...])`
+  or the streaming `$.process.spawn()` can import normal packages and Node built-ins —
+  mods are not OS-sandboxed. The operator's shape is the one this module already has:
+  *"Mods for Claude's UI, commands, and event hooks, with a Node process handling the
+  package ecosystem and heavier application logic"* — the pane's UI lives in the module
+  and its heavy work in the `lore` process it runs. A future surface with package-heavy,
+  non-interactive work should take the helper route rather than vendor around it.
 - **No Node, and no DOM.** A vendored file that throws when `document` is undefined
   stops the module loading with `no DOM in this runtime`, and one that throws on
   `process` says `no Node in this runtime`. So no DOM editor can run here, and there is
@@ -353,12 +374,13 @@ this Reference and on the task record. These are the module's own:
 - **No ADR of the module's own.** The operator's questions are recorded as their own
   ADRs, with their answers verbatim —
   [ADR-0026](../adr/0026-the-lore-pane-s-body-editing-ships-a-lightweight-inline-editor-and-a-desktop-editor-action-dec-132.md)
-  for body editing and
+  for body editing,
   [ADR-0027](../adr/0027-the-lore-pane-reads-only-the-session-s-own-repository-bundle-in-v1-dec-133.md)
-  for fleet view (both 2026-10-02). The module's choices are the bullets above, and
-  nothing here re-derives an operator decision or settles one locally. The third
-  question — one mod or two — is still with the operator and is answered before any
-  release.
+  for fleet view (both 2026-10-02), and
+  [ADR-0028](../adr/0028-the-lore-pane-ships-as-its-own-mod-in-opum-lore-one-of-two-mods-each-in-the-plugin-it-drives-dec-136.md)
+  for the mod's shape (DEC-136 A, two mods, one per plugin, answered 2026-10-02). The
+  module's choices are the bullets above, and nothing here re-derives an operator
+  decision or settles one locally.
 - **No behaviour beyond the tests.** Anything the tests do not press is unclaimed
   above, and the pane's shape is described at its landing commit rather than at what
   the brief proposed.

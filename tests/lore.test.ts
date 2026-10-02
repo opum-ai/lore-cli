@@ -22,6 +22,8 @@ import {
   groupByType,
   hasSection,
   internalHrefs,
+  parseBrowse,
+  parsePorcelain,
   patchFrontmatter,
   replaceBody,
   repoPathFor,
@@ -153,6 +155,58 @@ test("a truncated run is reported as an incomplete answer, not a parse failure",
   expect(failure({ code: 2, stdout: "", stderr: "unknown option" }, "Search")).toBe(
     "Search failed (lore exited 2): unknown option",
   );
+});
+
+test("a run killed at the timeout budget says so, in both shapes it can take", () => {
+  // The engine kills the child at timeoutMs. Neither shape that can come back
+  // says so -- the declaration has the call reject, the review note has the
+  // result read as exit 1 -- so runLore sets timedOutMs from the elapsed time and
+  // the pane names the timeout instead of blaming lore or PATH (review F8).
+  const timed = "Browse: lore did not answer within 30 seconds and was killed; run it in the terminal to see why";
+  expect(failure({ code: 1, stdout: "", stderr: "", timedOutMs: 30_000 }, "Browse")).toBe(timed);
+  expect(failure({ code: -1, stdout: "", stderr: "the call rejected", timedOutMs: 30_000 }, "Browse")).toBe(timed);
+  // Without the flag, a run that could not start keeps its own message: the
+  // timeout is measured, never inferred from the failure.
+  expect(failure({ code: -1, stdout: "", stderr: "" }, "Browse")).toBe("Browse: lore could not run (is it on PATH?)");
+});
+
+test("a failed vocabulary read leaves the concepts browsable and says why", () => {
+  const query = {
+    code: 0,
+    stdout: JSON.stringify({ kind: "query.results", data: { hits: [{ id: "adr/1", type: "ADR", title: "One" }] } }),
+    stderr: "",
+  };
+  const types = { code: 1, stdout: "", stderr: "tracker unavailable" };
+  const browse = parseBrowse(query, types);
+  expect(browse.ok).toBe(true);
+  expect(browse.ok ? browse.concepts.map((one) => one.id) : []).toEqual(["adr/1"]);
+  expect(browse.ok ? browse.types : "unset").toBe(null);
+  expect(browse.ok ? browse.typesNote : "unset").toBe("Types failed (lore exited 1): tracker unavailable");
+  // The query itself failing is still a dead end: there is nothing to browse.
+  expect(parseBrowse({ code: 1, stdout: "", stderr: "no bundle" }, types).ok).toBe(false);
+});
+
+test("porcelain paths survive git's quoting, including a rename's new name", () => {
+  // The caller passes -c core.quotePath=false, so a non-ASCII name arrives raw
+  // (measured against git) and quoting remains only for a backslash, a double
+  // quote or a control byte. Before review F8 a quoted path was dropped.
+  const stdout = [
+    "?? docs/reference/notes.md",
+    "?? docs/reference/café.md",
+    '?? "docs/reference/we\\"ird.md"',
+    '?? "docs/reference/ctrl\\ttab.md"',
+    '?? "docs/reference/\\007bell.md"',
+    'R  "docs/reference/old\\"name.md" -> "docs/reference/new\\"name.md"',
+    "?? src/not-markdown.ts",
+  ].join("\n");
+  expect(parsePorcelain(stdout)).toEqual([
+    "docs/reference/notes.md",
+    "docs/reference/café.md",
+    'docs/reference/we"ird.md',
+    "docs/reference/ctrl\ttab.md",
+    "docs/reference/\x07bell.md",
+    'docs/reference/new"name.md',
+  ]);
 });
 
 test("only internal hrefs are pressable, and sections match case-insensitively", () => {

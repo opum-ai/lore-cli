@@ -18,7 +18,19 @@ import type { ConceptDoc, ConceptSummary, LinkedTask, SearchHit, TypeInfo } from
 // isStderrTruncated: the engine caps each stream at its first 4 MiB, and a
 // truncated answer is not a parse failure to be reported as one -- it is an
 // incomplete answer, and it says so (LCLI-664 review F7).
-export type Run = { code: number; stdout: string; stderr: string; truncated?: boolean };
+//
+// `timedOutMs` is set by the caller when the run was still going at the engine's
+// timeoutMs budget, which the engine answers by killing the child: neither a
+// killed child nor a rejected call says it was a timeout -- one reads as exit 1,
+// the other as any other failure -- so without this the pane blames lore or PATH
+// for a run it killed itself (LCLI-664 review F8).
+export type Run = {
+  code: number;
+  stdout: string;
+  stderr: string;
+  truncated?: boolean;
+  timedOutMs?: number;
+};
 
 type Envelope = { kind?: unknown; data?: unknown };
 
@@ -34,6 +46,11 @@ function firstLine(text: string): string {
 export function failure(run: Run, verb: string): string {
   if (run.truncated) {
     return `${verb}: lore's output was cut off at the engine's 4 MiB cap, so this answer is incomplete; narrow the query`;
+  }
+  if (run.timedOutMs !== undefined) {
+    const seconds = Math.round(run.timedOutMs / 1000);
+
+    return `${verb}: lore did not answer within ${seconds} seconds and was killed; run it in the terminal to see why`;
   }
   const detail = firstLine(run.stderr) || firstLine(run.stdout);
   if (run.code === -1) {
@@ -171,8 +188,16 @@ export function actionArgv(
 
 // ── Parsers ───────────────────────────────────────────────────────────────────
 
-/** The two reads Browse needs: the query hits and the type vocabulary. */
-export type Browse = { ok: true; concepts: ConceptSummary[]; types: TypeInfo[] } | { ok: false; error: string };
+/**
+ * The two reads Browse needs: the query hits and the type vocabulary.
+ *
+ * `types` is null when only the vocabulary read failed: the concepts still
+ * browse, the caller keeps the vocabulary it already had, and `typesNote` carries
+ * lore's own words for why it is missing (LCLI-664 review F8).
+ */
+export type Browse =
+  | { ok: true; concepts: ConceptSummary[]; types: TypeInfo[] | null; typesNote?: string }
+  | { ok: false; error: string };
 
 export type Found = { ok: true; hits: SearchHit[] } | { ok: false; error: string };
 
@@ -232,7 +257,9 @@ export function parseBrowse(query: Run, types: Run): Browse {
   }
   const report = envelope(types, "types.report", "Types");
   if ("error" in report) {
-    return { ok: false, error: report.error };
+    // The concepts are what Browse is for; the vocabulary failing leaves the list
+    // browsable and says so, rather than failing the whole surface (F8).
+    return { ok: true, concepts: conceptsFrom(found.data), types: null, typesNote: report.error };
   }
 
   return { ok: true, concepts: conceptsFrom(found.data), types: typeInfos(report.data) };
@@ -360,14 +387,73 @@ export function parseValidate(run: Run): Outcome {
   };
 }
 
+// The escapes git leaves in a C-quoted path once the caller passes
+// `-c core.quotePath=false`: with that setting only a backslash, a double quote
+// or a control byte is quoted at all, so every escape is ASCII (LCLI-664 review
+// F8, measured against git on this machine).
+const C_ESCAPES: Record<string, string> = {
+  a: "\x07",
+  b: "\b",
+  f: "\f",
+  n: "\n",
+  r: "\r",
+  t: "\t",
+  v: "\v",
+  '"': '"',
+  "\\": "\\",
+};
+
+/**
+ * One path from a `git status --porcelain` line, C-quoted or raw, and where the
+ * text after it starts. Null when the line carries no path at all -- an
+ * unterminated quote is nothing trustworthy to read (LCLI-664 review F8).
+ */
+function takePorcelainPath(text: string, from: number): { path: string; next: number } | null {
+  if (text[from] !== '"') {
+    const path = text.slice(from).trim();
+
+    return path.length === 0 ? null : { path, next: text.length };
+  }
+
+  let path = "";
+  for (let at = from + 1; at < text.length; at += 1) {
+    const char = text[at] ?? "";
+    if (char === '"') {
+      return { path, next: at + 1 };
+    }
+    if (char !== "\\") {
+      path += char;
+      continue;
+    }
+    const octal = /^[0-7]{1,3}/.exec(text.slice(at + 1))?.[0];
+    if (octal !== undefined) {
+      path += String.fromCharCode(Number.parseInt(octal, 8));
+      at += octal.length;
+      continue;
+    }
+    path += C_ESCAPES[text[at + 1] ?? ""] ?? (text[at + 1] ?? "");
+    at += 1;
+  }
+
+  return null;
+}
+
 /** Uncommitted Markdown paths from `git status --porcelain`, for the landing strip. */
 export function parsePorcelain(stdout: string): string[] {
   return stdout.split("\n").flatMap((line: string) => {
-    if (line.trim().length === 0) {
+    const rest = line.slice(3).trim();
+    if (rest.length === 0) {
       return [];
     }
-    const rest = line.slice(3).trim();
-    const path = rest.includes(" -> ") ? (rest.split(" -> ")[1] ?? rest) : rest;
+    const first = takePorcelainPath(rest, 0);
+    if (first === null) {
+      return [];
+    }
+    // A rename is `old -> new`, each side quoted or not; the strip counts the
+    // new name, which is the one that exists.
+    const after = rest.slice(first.next).trim();
+    const renamed = after.startsWith("->") ? takePorcelainPath(after.slice(2).trim(), 0) : null;
+    const path = renamed?.path ?? first.path;
 
     return path.endsWith(".md") ? [path] : [];
   });

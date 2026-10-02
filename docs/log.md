@@ -295,6 +295,7 @@
 - 2026-09-29T21:03:34-05:00 488b66a983bf30c220a9ad248744f03e9954f589 feat(LCLI-656): lore init detects, offers, and instructs — it never installs (ADR-0024, DEC-57) (#440)
 - 2026-09-30T23:17:48-05:00 0d568f0f0d353511435107a7c1ea57018682fd2d fix(LCLI-662): reserve the query section's worst case in the capacity measurement (DEC-98 B) (#460)
 - 2026-10-02T12:07:00-05:00 38f2affd4df8470019293189c09ddbaa0b28ecd4 docs(LCLI-664): describe the Lore pane mod
+- 2026-10-02T13:38:00-05:00 1f9d70e383ee576c108ccc626a691be2e9e48a6a docs(LCLI-664): record the operator's design answers as ADRs, verbatim
 
 ## docs/adr
 
@@ -395,6 +396,8 @@
 - 2026-09-29T10:51:37-05:00 50a02c5b50cb20bc6a326feba1b26a52e483e806 feat(LCLI-652): read the bundle across refs with `lore query --across-refs` (#429)
 - 2026-09-30T13:33:52-05:00 a60a4f27863a14aa29d37c63b028ab94724c28b5 docs(LCLI-621): the release-truth record now states 0.12.0 is released (#450)
 - 2026-10-02T12:38:10-05:00 07dbc136fd2e949fc9bb463caff18ee193557866 fix(LCLI-664): address the pre-landing review findings in the Lore pane mod
+- 2026-10-02T13:51:43-05:00 632b95530a93da200d6c281a0814eb904edf6260 feat(LCLI-664): the inline body editor, under the library pick the operator's instruction required
+- 2026-10-02T15:23:18-05:00 ebfbcced850ed759c4440c7bbce1edb16aa854e3 fix(LCLI-664): address the editor-arm review findings in the Lore pane mod
 
 ## docs/runbooks
 

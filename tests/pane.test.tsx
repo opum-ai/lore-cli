@@ -211,6 +211,10 @@ test("the fields form saves through lore validate, and a failed validation resto
   ).toBe(true);
   expect(seen.some((argv) => argv[1] === "validate")).toBe(true);
   expect(seen).toContainEqual(["lore", "validate", "docs/adr/0001-x.md", "--json"]);
+  // The strip's read asks git for raw paths: `-c core.quotePath=false` is the half of
+  // the contract parsePorcelain's unquoting is written against, so a change to either
+  // half reddens here (LCLI-664 review F8).
+  expect(seen).toContainEqual(["git", "-c", "core.quotePath=false", "status", "--porcelain"]);
   expect(await ui.find({ type: "Text", text: /Saved and validated\./ })).toBeDefined();
   await ui.unmount();
 });
@@ -550,5 +554,94 @@ test("the editor's region has an explicit height, so it is not sized by what it 
   const editor = await ui.find({ type: "Client", key: "body-editor" });
   expect(typeof editor?.props.height).toBe("number");
   expect(Number(editor?.props.height)).toBeGreaterThan(1);
+  await ui.unmount();
+});
+
+/**
+ * Holds every lore run until the test releases it, so the test can move the
+ * mocked clock while a run is in flight. A handler that moves the clock itself
+ * leaves `press` returning before the pane has drawn, which is a test artifact
+ * rather than the pane's behaviour.
+ */
+function holdRuns(on: On, reply: () => ReturnType<typeof ok>): () => void {
+  let release: (() => void) | null = null;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  on("process.run", async (_$, e) => {
+    if (e.argv[0] === "git") {
+      return ok("/repo\n");
+    }
+    await gate;
+    return reply();
+  });
+
+  return () => release?.();
+}
+
+test("a run killed at the timeout budget says so, in the shape that rejects", async ($, on) => {
+  // The engine kills the child at timeoutMs; the declaration has the call reject.
+  // The message must name the timeout rather than report the bare rejection
+  // (LCLI-664 review F8).
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const release = holdRuns(on, () => {
+    throw new Error("the run was killed");
+  });
+  const ui = await $.ui.mount({
+    plugin: "opum-lore",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "lore-pane",
+    props: PANE,
+  });
+  await ui.press({ key: "refresh" });
+  await clock.advance(31_000);
+  release();
+  await clock.settle();
+  expect(await ui.find({ type: "Text", text: /did not answer within 30 seconds/ })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: /the run was killed/ })).toBeUndefined();
+  await ui.unmount();
+});
+
+test("a run that reads as exit 1 past the budget is still the timeout it was", async ($, on) => {
+  // The other shape the timeout can take: a killed child's exit status is 1, the
+  // same as a plain failure's, so only the elapsed time separates them.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const release = holdRuns(on, () => ok("", 1));
+  const ui = await $.ui.mount({
+    plugin: "opum-lore",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "lore-pane",
+    props: PANE,
+  });
+  await ui.press({ key: "refresh" });
+  await clock.advance(31_000);
+  release();
+  await clock.settle();
+  expect(await ui.find({ type: "Text", text: /did not answer within 30 seconds/ })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: /lore exited 1/ })).toBeUndefined();
+  await ui.unmount();
+});
+
+test("a run that fails fast keeps its own message, not the timeout's", async ($, on) => {
+  // The control for the two above: the same exit-1 result without the elapsed
+  // time is a plain failure, so the timeout text is earned by the clock and
+  // never shown merely because a run failed.
+  mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  on("process.run", async (_$, e) => (e.argv[0] === "git" ? ok("/repo\n") : ok("", 1)));
+  const ui = await $.ui.mount({
+    plugin: "opum-lore",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "lore-pane",
+    props: PANE,
+  });
+  await ui.press({ key: "refresh" });
+  expect(await ui.find({ type: "Text", text: /lore exited 1/ })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: /did not answer within/ })).toBeUndefined();
   await ui.unmount();
 });

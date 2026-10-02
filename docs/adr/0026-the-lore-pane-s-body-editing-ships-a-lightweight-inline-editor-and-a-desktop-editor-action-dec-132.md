@@ -35,9 +35,29 @@ the written file with `lore validate` and restores the previous bytes when valid
 — the authored prose — had no editing path in the pane at all. The design brief's first open question
 put two arms to the operator: **A**, hand the body to the person's own editor and re-read and validate
 on refresh; **B**, build an in-pane editor in a `Client` region. Both arms were shaped by a measured
-constraint: a Claude Code hooks module runs with **no Node and no DOM**, and imports **its own files
-by relative path and `claude-code`, nothing else** — so no npm dependency can be installed, and any
-library must be vendored source that touches neither.
+constraint: a Claude Code hooks module's **own JavaScript environment** runs with **no Node and no
+DOM**, and imports **its own files by relative path and `claude-code`, nothing else** — so no npm
+dependency can be installed into the module, and a library used there must be vendored source that
+touches neither.
+
+**Corrected 2026-10-02, on an operator finding, before this landed.** The constraint above binds the
+hooks module's own JavaScript, not the mod as a whole. The operator inspected the 2.1.287 loader, ran a
+working proof, and recorded the finding verbatim on `OPAG-1075` at opum-agent's `origin/dev` (the same
+relay as DEC-136, `ODOC-OP-2026-10-02-14`, seq 160, 2026-10-02T21:44:03Z; read by ref): direct imports
+of `node:` built-ins and of `node_modules` packages are rejected and relative ESM imports work, **but a
+Node helper run through `$.process.run([...])` or the streaming `$.process.spawn()` can import normal
+packages and Node built-ins** — mods are not OS-sandboxed. The operator's recommendation: *"Mods for
+Claude's UI, commands, and event hooks, with a Node process handling the package ecosystem and heavier
+application logic."*
+
+That changes no choice below, and the reason is the measurement the decision already stood on rather
+than a preference. The inline editor is interactive and drawn in the pane, so its text model runs in
+the module's own environment — a helper round trip per keystroke is not a design this pane takes — and
+the vendored pair is DOM-free and Node-free by construction, which is exactly what fits there. The
+heavier logic already sits behind a process: the module runs the `lore` CLI through `$.process.run`,
+which is the helper pattern the operator names. What the correction fixes is the *scope* of the claim,
+not the pick; a future surface with package-heavy, non-interactive work has the helper route open to it
+and should take it.
 
 ## Decision
 

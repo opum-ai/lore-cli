@@ -88,25 +88,46 @@ const edits = atom({ plugin: "opum-lore", key: "edits" } as const, {
 
 // ── The call sites ────────────────────────────────────────────────────────────
 
+/**
+ * Whether the run was still going when the engine's timeoutMs budget ran out.
+ *
+ * The engine enforces that budget by killing the child, and neither shape it can
+ * take says so: the declaration has the call reject, the review note has it read
+ * as exit 1, and the result carries no field either way. Elapsed time is the one
+ * signal both shapes carry, so the run is measured against its own budget on the
+ * way out of `runLore`, resolved or rejected (LCLI-664 review F8).
+ */
+async function timedOutMs($: EngineInterface, startedAt: number): Promise<number | null> {
+  const elapsed = (await $.clock.now()) - startedAt;
+
+  return elapsed >= TIMEOUT_MS ? TIMEOUT_MS : null;
+}
+
 /** Runs `lore <argv>` in the repository root; a command that cannot start resolves code -1. */
 async function runLore($: EngineInterface, root: string | null, argv: readonly string[]): Promise<Run> {
+  const startedAt = await $.clock.now();
   try {
     const result = await $.process.run(["lore", ...argv], {
       ...(root ? { cwd: root } : {}),
       timeoutMs: TIMEOUT_MS,
     });
+    const timed = await timedOutMs($, startedAt);
 
     return {
       code: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,
       truncated: result.isStdoutTruncated || result.isStderrTruncated,
+      ...(timed === null ? {} : { timedOutMs: timed }),
     };
   } catch (error) {
+    const timed = await timedOutMs($, startedAt);
+
     return {
       code: -1,
       stdout: "",
       stderr: error instanceof Error ? error.message : String(error),
+      ...(timed === null ? {} : { timedOutMs: timed }),
     };
   }
 }
@@ -169,7 +190,9 @@ async function uncommittedPaths($: EngineInterface, root: string | null): Promis
     return [];
   }
   try {
-    const result = await $.process.run(["git", "status", "--porcelain"], {
+    // -c core.quotePath=false keeps a non-ASCII path raw instead of octal-escaping
+    // it, so parsePorcelain only has git's ASCII escapes left to unquote.
+    const result = await $.process.run(["git", "-c", "core.quotePath=false", "status", "--porcelain"], {
       cwd: root,
       timeoutMs: TIMEOUT_MS,
     });
@@ -230,13 +253,12 @@ async function refresh($: EngineInterface): Promise<void> {
   ]);
   const browse = parseBrowse(query, types);
   if (browse.ok) {
-    await update($, catalog, (c) => ({
-      ...c,
-      concepts: browse.concepts,
-      types: browse.types,
-    }));
-    await seedDraftType($, browse.types);
-    await setView($, { isLoading: false, error: null });
+    // A failed vocabulary read leaves the concepts browsable: the note says why
+    // the type list is missing and the vocabulary already read is kept (F8).
+    const vocabulary = browse.types ?? (await read($, catalog)).types;
+    await update($, catalog, (c) => ({ ...c, concepts: browse.concepts, types: vocabulary }));
+    await seedDraftType($, vocabulary);
+    await setView($, { isLoading: false, error: null, notice: browse.typesNote ?? null });
   } else {
     await setView($, { isLoading: false, error: browse.error });
   }
