@@ -1,12 +1,24 @@
 import { expect, test } from "claude-code/testing";
 
 import {
+  editorCreate,
+  editorCursor,
+  editorText,
+  editorView,
+  insertText,
+  deleteBackward,
+  moveCursor,
+  redo,
+  undo,
+} from "../hooks/editor-ops";
+import {
   bundleIdFor,
   failure,
   groupByType,
   hasSection,
   internalHrefs,
   patchFrontmatter,
+  replaceBody,
   repoPathFor,
   searchArgv,
 } from "../hooks/lore";
@@ -45,6 +57,18 @@ test("patchFrontmatter replaces, removes and inserts keys, and touches nothing e
 
 test("patchFrontmatter refuses a file with no frontmatter", () => {
   expect(patchFrontmatter("no frontmatter here\n", { title: "x" })).toBeNull();
+});
+
+test("replaceBody keeps the frontmatter byte for byte and owns everything after it", () => {
+  // The inline editor writes a body and must not disturb a single byte above the
+  // closing delimiter -- the fields form is the only thing that edits frontmatter.
+  expect(replaceBody(RAW, "New body.\n")).toBe(`${RAW.slice(0, RAW.indexOf("\n---\n") + 5)}New body.\n`);
+  // Normalised the way the file format expects: no leading blank lines, one trailing
+  // newline, and an empty body leaves the file ending at the delimiter.
+  expect(replaceBody(RAW, "\n\nBody.\n\n\n")).toBe(replaceBody(RAW, "Body.\n"));
+  expect(replaceBody(RAW, "")).toBe(RAW.slice(0, RAW.indexOf("\n---\n") + 5));
+  // No frontmatter is a refusal, not a silent whole-file rewrite.
+  expect(replaceBody("no frontmatter here\n", "Body.")).toBeNull();
 });
 
 test("an internal href resolves to a bundle id relative to the open concept", () => {
@@ -114,4 +138,52 @@ test("groupByType groups rows under their type, in name order", () => {
   ]);
   expect(groups.map((group) => group.type)).toEqual(["ADR", "Reference"]);
   expect(groups[0]?.rows.map((row) => row.id)).toEqual(["a/1", "a/3"]);
+});
+
+test("editor ops insert, delete and cross a grapheme cluster in one step", () => {
+  // The vendored CodeMirror state under these ops is what makes the boundaries
+  // grapheme-correct; a code-unit implementation would leave half a cluster behind
+  // (LCLI-664, ADR-0026).
+  const start = editorCreate("a👍🏽b");
+  expect(editorText(start)).toBe("a👍🏽b");
+  expect(editorText(insertText(start, "!"))).toBe("a👍🏽b!");
+
+  const trimmed = deleteBackward(deleteBackward(insertText(start, "!")));
+  expect(editorText(trimmed)).toBe("a👍🏽");
+  // One more backspace removes the WHOLE cluster: the emoji, its skin-tone modifier.
+  expect(editorText(deleteBackward(trimmed))).toBe("a");
+
+  // Cursor motion crosses it in one step as well: from the end, left is before `b`,
+  // and left again is before the emoji, never inside it.
+  // "a👍🏽b" is six code units; the cursor starts after `b` (6), one step left is
+  // before it (5), and the next step left crosses the whole cluster to 1 — never 3
+  // or 4, which is where a code-unit implementation would stop.
+  const beforeB = moveCursor(start, "left");
+  expect(editorCursor(beforeB)).toBe(5);
+  expect(editorCursor(moveCursor(beforeB, "left"))).toBe(1);
+});
+
+test("editor ops undo and redo walk the ring, and a new edit drops the redo ring", () => {
+  const typed = insertText(editorCreate("one"), " two");
+  expect(editorText(typed)).toBe("one two");
+  const undone = undo(typed);
+  expect(editorText(undone)).toBe("one");
+  expect(editorText(redo(undone))).toBe("one two");
+  expect(editorText(undo(undone))).toBe("one");
+  // A new edit after an undo discards what redo would have restored: redo is then a
+  // no-op, returning the very state it was given.
+  const branched = insertText(undone, "!");
+  expect(editorText(branched)).toBe("one!");
+  expect(redo(branched)).toBe(branched);
+});
+
+test("the editor's window follows the cursor", () => {
+  const local = editorCreate("one\ntwo\nthree\nfour");
+  const atEnd = editorView(local, 2);
+  expect(atEnd.rows.map((row) => row.number)).toEqual([3, 4]);
+  expect(atEnd.cursorRow).toBe(1);
+
+  const atTop = editorView(moveCursor(moveCursor(moveCursor(local, "up"), "up"), "up"), 2);
+  expect(atTop.rows.map((row) => row.number)).toEqual([1, 2]);
+  expect(atTop.cursorRow).toBe(0);
 });

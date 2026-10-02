@@ -38,6 +38,7 @@ import {
   parseValidate,
   patchFrontmatter,
   queryArgv,
+  replaceBody,
   requiredSectionsFor,
   searchArgv,
 } from "./lore";
@@ -78,6 +79,9 @@ const edits = atom({ plugin: "opum-lore", key: "edits" } as const, {
   draft: { type: "", title: "", summary: "", tags: "" },
   fields: null,
   uncommitted: [],
+  bodyEditing: false,
+  bodyText: "",
+  bodyRevision: 0,
 } satisfies Edits);
 
 // ── The call sites ────────────────────────────────────────────────────────────
@@ -381,6 +385,99 @@ async function saveFields($: EngineInterface): Promise<void> {
   await countUncommitted($);
 }
 
+/**
+ * Opens the inline body editor on the open document's body. The revision bump makes
+ * the editor adopt `concept.body` as it stands — it is the pane saying "this is the
+ * text", as against the editor's own keystrokes, which the pane takes as given.
+ */
+async function beginBodyEdit($: EngineInterface): Promise<void> {
+  const { concept } = await read($, doc);
+  if (!concept) {
+    return;
+  }
+  await update($, edits, (e) => ({
+    ...e,
+    bodyEditing: true,
+    bodyText: concept.body,
+    bodyRevision: e.bodyRevision + 1,
+  }));
+  await setView($, { error: null, notice: null });
+}
+
+async function cancelBodyEdit($: EngineInterface): Promise<void> {
+  await update($, edits, (e) => ({ ...e, bodyEditing: false, bodyText: "" }));
+}
+
+/** The inline editor's Save: the same write, validate and restore path as the fields form. */
+async function saveBody($: EngineInterface): Promise<void> {
+  const current = await read($, view);
+  const { concept } = await read($, doc);
+  const { bodyText } = await read($, edits);
+  if (!concept || !current.root) {
+    return;
+  }
+  if (!concept.raw) {
+    await setView($, { error: "The file has not been read yet." });
+
+    return;
+  }
+  const next = replaceBody(concept.raw, bodyText);
+  if (next === null) {
+    await setView($, { error: "The file carries no frontmatter to keep." });
+
+    return;
+  }
+  await update($, edits, (e) => ({ ...e, isWriting: true }));
+  const wrote = await writeFileText($, current.root, concept.repoPath, next);
+  if (!wrote.ok) {
+    await update($, edits, (e) => ({ ...e, isWriting: false }));
+    await setView($, { error: `Could not write ${concept.repoPath}: ${wrote.error}` });
+
+    return;
+  }
+  const checked = parseValidate(await runLore($, current.root, ["validate", concept.repoPath, "--json"]));
+  if (!checked.ok) {
+    const restored = await writeFileText($, current.root, concept.repoPath, concept.raw);
+    await update($, edits, (e) => ({ ...e, isWriting: false, bodyRevision: e.bodyRevision + 1 }));
+    await setView($, {
+      error: restored.ok
+        ? checked.error
+        : `${checked.error} (and restoring the previous file failed: ${restored.error})`,
+    });
+
+    return;
+  }
+  await update($, edits, (e) => ({ ...e, isWriting: false, bodyEditing: false, bodyText: "" }));
+  await setView($, { notice: "Saved and validated.", error: null });
+  await loadConcept($, concept.id);
+  await countUncommitted($);
+}
+
+/**
+ * The desktop-editor action: the other half of DEC-132. Nothing of the editor is
+ * reimplemented here — the document is handed to the person's own tool, and the pane
+ * re-reads and validates when it comes back (the Refresh button, or the 30-second
+ * refresh). On the terminal that is the session's own shell escape to `$EDITOR`,
+ * filled into the prompt rather than run, so the person sends it; on the desktop
+ * surface it is the platform's file opener.
+ */
+async function openInEditor($: EngineInterface): Promise<void> {
+  const current = await read($, view);
+  const { concept } = await read($, doc);
+  if (!concept || !current.root) {
+    return;
+  }
+  const path = `${current.root}/${concept.repoPath}`;
+  // The shell escape on every surface, rather than a platform opener chosen in code:
+  // the runtime has no Node (measured — `process` is undefined), so there is no
+  // `process.platform` to branch on, and `$EDITOR` resolves on the person's own
+  // machine to the editor they actually use. It is filled, not submitted: the person
+  // sends it, so the harness's own shell-escape rules and permissions apply.
+  const editor = "${EDITOR:-vi}";
+  await $.prompt.fill({ text: `!${editor} "${path}"`, mode: "replace" });
+  await setView($, { notice: `Sent ${concept.repoPath} to your editor; refresh when you are done.` });
+}
+
 async function createNew($: EngineInterface): Promise<void> {
   const current = await read($, view);
   const { draft } = await read($, edits);
@@ -484,6 +581,21 @@ export const register: Register = (on, _options) => {
     return { text: "Lore pane opened." };
   });
 
+  // The inline editor posts its text here; `e.data` is code's, not the engine's, so
+  // every field is checked rather than trusted (ClientSurface.post's own note: input
+  // to validate, not a fact).
+  on("ui.message", async ($, e, next) => {
+    const data = e.data;
+    if (typeof data === "object" && data !== null && !Array.isArray(data)) {
+      const posted = data as { kind?: unknown; text?: unknown };
+      if (posted.kind === "text" && typeof posted.text === "string") {
+        await update($, edits, (state) => ({ ...state, bodyText: posted.text as string }));
+      }
+    }
+
+    return next(e);
+  });
+
   on("ui.render", { component: "Pane", requestId: PANE }, async ($, e) => {
     if (e.surface === "mobile") {
       const { Box, Text } = $.ui.resolve(e);
@@ -495,11 +607,17 @@ export const register: Register = (on, _options) => {
       );
     }
 
-    const { Box, Button, Code, Input, Markdown, Select, Text } = $.ui.resolve(e);
+    const elements = $.ui.resolve(e);
+    const { Box, Button, Code, Input, Markdown, Select, Text } = elements;
+    // Only the terminal and desktop surfaces carry `Client` — the vscode surface does
+    // not — so the editor is offered where a region exists, and the surface that has
+    // none says so instead of drawing nothing.
+    const Client = "Client" in elements ? elements.Client : null;
     const current = await read($, view);
     const { concepts, types, hits } = await read($, catalog);
     const { concept } = await read($, doc);
-    const { isWriting, draft, fields, uncommitted } = await read($, edits);
+    const { isWriting, draft, fields, uncommitted, bodyEditing, bodyText, bodyRevision } = await read($, edits);
+    const editsOpen = bodyEditing && concept !== null;
 
     const tabs = (
       <Box>
@@ -955,6 +1073,15 @@ export const register: Register = (on, _options) => {
           <Button key="edit-fields" label="Edit fields" hotkey="e" onPress={() => void openFields($)} />
           <Text> </Text>
           <Button
+            key="edit-body"
+            label="Edit body"
+            variant={editsOpen ? "primary" : undefined}
+            onPress={() => void (editsOpen ? cancelBodyEdit($) : beginBodyEdit($))}
+          />
+          <Text> </Text>
+          <Button key="open-editor" label="Open in editor" onPress={() => void openInEditor($)} />
+          <Text> </Text>
+          <Button
             key="ask"
             label="Ask Claude…"
             onPress={() =>
@@ -999,8 +1126,28 @@ export const register: Register = (on, _options) => {
             {missing.length === 0 ? " (all present)" : ""}
           </Text>
         ) : null}
+        {editsOpen ? (
+          <Box flexDirection="column">
+            {Client ? (
+              <Client key="body-editor" module="./editor.tsx" props={{ text: bodyText, revision: bodyRevision }} />
+            ) : (
+              <Text dimColor>This surface has no editor region; use Open in editor instead.</Text>
+            )}
+            <Box>
+              <Button
+                key="body-save"
+                label={isWriting ? "Saving…" : "Save body"}
+                variant="primary"
+                onPress={() => void saveBody($)}
+              />
+              <Text> </Text>
+              <Button key="body-cancel" label="Cancel" onPress={() => void cancelBodyEdit($)} />
+              <Text dimColor> Save writes the file, then `lore validate`; a rejection keeps the file.</Text>
+            </Box>
+          </Box>
+        ) : null}
         <Box marginTop={1}>
-          {current.isRaw ? (
+          {editsOpen ? null : current.isRaw ? (
             <Code source={cap(concept.raw ?? concept.body)} path={concept.path} startLine={1} />
           ) : (
             <Markdown
@@ -1016,12 +1163,12 @@ export const register: Register = (on, _options) => {
             />
           )}
         </Box>
-        {isCapped(concept.raw ?? concept.body) && !current.isRaw ? (
+        {!editsOpen && isCapped(concept.raw ?? concept.body) && !current.isRaw ? (
           <Text dimColor wrap="truncate">
             Truncated at {BODY_CAP} characters; switch to Raw or open the file for the rest.
           </Text>
         ) : null}
-        {isCapped(concept.raw ?? concept.body) && current.isRaw ? (
+        {!editsOpen && isCapped(concept.raw ?? concept.body) && current.isRaw ? (
           <Text dimColor wrap="truncate">
             Truncated at {BODY_CAP} characters; open {concept.repoPath} for the rest.
           </Text>

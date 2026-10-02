@@ -109,6 +109,19 @@ export type Edits = {
   fields: (Draft & { status: string }) | null;
   /** Bundle-relative paths with uncommitted changes, for the landing strip. */
   uncommitted: string[];
+  /** Whether the inline body editor is open on the Read tab. */
+  bodyEditing: boolean;
+  /**
+   * The body as the editor last posted it. The live text is the editor instance's
+   * own state; this is the pane's copy of it, which Save writes.
+   */
+  bodyText: string;
+  /**
+   * Bumped when the pane wants the editor to adopt `bodyText` (opening, a revert
+   * after a failed save, a reload after one). The editor adopts on a change and
+   * keeps the person's own keystrokes otherwise.
+   */
+  bodyRevision: number;
 };
 
 declare module "claude-code" {

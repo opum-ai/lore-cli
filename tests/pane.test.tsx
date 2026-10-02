@@ -318,6 +318,85 @@ test("a type filter and a rename reach lore with the right argv", async ($, on) 
   await ui.unmount();
 });
 
+test("the inline body editor keys, draws the document and saves through lore validate", async ($, on) => {
+  mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  const writes: { path: string; text: string }[] = [];
+  mockLore(on, seen);
+  on("fs.write", async (_$, e) => {
+    writes.push({
+      path: typeof e.path === "string" ? e.path : "",
+      text: typeof e.text === "string" ? e.text : "",
+    });
+    return { value: undefined };
+  });
+  const ui = await $.ui.mount({
+    plugin: "opum-lore",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "lore-pane",
+    props: PANE,
+  });
+  await ui.press({ key: "refresh" });
+  await ui.press({ key: "open-adr/0001-x" });
+  await ui.press({ key: "edit-body" });
+  // The editor opened on the body with the cursor at its end, and the cursor's own
+  // cell is the character under it ("." — the body's last character).
+  expect(await ui.find({ type: "Text", text: /Saved and validated|The body of the notes/, in: "body-editor" })).toBeDefined();
+  await ui.key({ key: "!", in: "body-editor" });
+  expect(await ui.find({ type: "Text", text: "!", in: "body-editor" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "The body of the notes.", in: "body-editor" })).toBeDefined();
+  // Ctrl+Z takes it back, and typing again returns it — the operations run through
+  // the vendored CodeMirror state, not through a buffer of this module's own.
+  await ui.key({ key: "z", ctrl: true, in: "body-editor" });
+  expect(await ui.find({ type: "Text", text: "!", in: "body-editor" })).toBeUndefined();
+  await ui.key({ key: "?", in: "body-editor" });
+
+  await ui.press({ key: "body-save" });
+  const saved = writes.find((one) => one.text.includes("?"));
+  expect(saved?.path).toBe("/repo/docs/adr/0001-x.md");
+  // The frontmatter is untouched, byte for byte, and the body is the editor's.
+  expect(saved?.text.startsWith("---\ntype: Reference\ntitle: Notes\ntags: [reference]\nstatus: stable\n---\n")).toBe(true);
+  expect(saved?.text).toContain("The body of the notes.?");
+  expect(seen).toContainEqual(["lore", "validate", "docs/adr/0001-x.md", "--json"]);
+  expect(await ui.find({ type: "Text", text: /Saved and validated\./ })).toBeDefined();
+  await ui.unmount();
+});
+
+test("a rejected body keeps the file and shows lore's message", async ($, on) => {
+  mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  const writes: { path: string; text: string }[] = [];
+  mockLore(on, seen, true);
+  on("fs.write", async (_$, e) => {
+    writes.push({
+      path: typeof e.path === "string" ? e.path : "",
+      text: typeof e.text === "string" ? e.text : "",
+    });
+    return { value: undefined };
+  });
+  const ui = await $.ui.mount({
+    plugin: "opum-lore",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "lore-pane",
+    props: PANE,
+  });
+  await ui.press({ key: "refresh" });
+  await ui.press({ key: "open-adr/0001-x" });
+  await ui.press({ key: "edit-body" });
+  await ui.key({ key: "!", in: "body-editor" });
+  await ui.press({ key: "body-save" });
+  // The edited bytes went to the right file, and the file's previous bytes went back
+  // to that same file when lore refused it.
+  expect(writes.some((one) => one.path === "/repo/docs/adr/0001-x.md" && one.text.includes("!"))).toBe(true);
+  expect(writes[writes.length - 1]).toEqual({ path: "/repo/docs/adr/0001-x.md", text: READ_RAW });
+  expect(await ui.find({ type: "Text", text: /Validation failed: summary is required/ })).toBeDefined();
+  await ui.unmount();
+});
+
 test("a link press in the body opens the linked concept", async ($, on) => {
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
   mock.store(on);

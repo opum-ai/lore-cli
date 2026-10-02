@@ -34,9 +34,12 @@ the branch tip does.
 
 - Files, in the plugin-root layout: `hooks/hooks.json` (which registers the module —
   `{"modules": ["./register.tsx"]}`), `hooks/register.tsx` (the pane), `hooks/lore.ts`
-  (the lore-CLI half), `types/index.d.ts` (the state contract), and `tests/` (the
-  engine's tests). `.claude-plugin/plugin.json` names the types file and describes the
-  plugin as shipping the pane.
+  (the lore-CLI half), `hooks/editor.tsx` (the inline editor's `Client` surface
+  module), `hooks/editor-ops.ts` (its editing operations, engine-free),
+  `hooks/vendor/` (the vendored editing model, with its licenses and record),
+  `types/index.d.ts` (the state contract), and `tests/` (the engine's tests).
+  `.claude-plugin/plugin.json` names the types file and describes the plugin as
+  shipping the pane.
 - **Mods need Claude Code 2.1.287 or later**; the fleet freeze is the 2.1.287 pair.
   The harness enforces the floor itself — it fails rather than skips on a missing or
   older `claude`.
@@ -82,10 +85,31 @@ type's required sections as a present/missing checklist from `lore types`.
   flow list, the body untouched), writes the file, then runs `lore validate` on it. A
   validation failure restores the previous bytes and shows lore's own first
   error-severity message; a success says so and reloads the concept.
+- **Body editing** is the arm DEC-132 decided (ADR-0026), and it ships as two: a
+  **lightweight inline editor** and an **Open in editor** action.
+  - *Edit body* opens the inline editor on the Read tab: a `Client` surface module
+    (`hooks/editor.tsx`) drawing the body's lines with the cursor cell inverted, keyed
+    by `hooks/editor-ops.ts` — arrows, home/end, backspace/delete, Enter, and
+    Ctrl/⌘+Z and Ctrl/⌘+Shift+Z (or Ctrl+Y) for undo and redo. Save writes the file
+    through the same path the fields form uses — the frontmatter byte for byte as it
+    is, the body as the editor holds it — then runs `lore validate`; a rejection
+    restores the previous bytes and shows lore's own message. Cancel closes it. The
+    editor's scope is the operator's "lightweight": text, cursor, insert/delete and
+    undo/redo, with **no highlighting while typing, no multi-cursor and no in-editor
+    search**.
+  - *Open in editor* is the other arm: it fills the prompt with the session's own shell
+    escape to `$EDITOR` (`!${EDITOR:-vi} "<absolute path>"`) and sends nothing itself,
+    so the person sends it and the harness's own rules apply; the pane re-reads and
+    validates on refresh. It is the shell escape on every surface because the runtime
+    has no Node — measured, so there is no `process.platform` to choose a desktop
+    opener with — and `$EDITOR` is the person's own editor on their own machine.
+  - The editing model is **vendored** `@codemirror/state` with its one dependency, in
+    `hooks/vendor/`, because a hooks module can import only its own files and
+    `claude-code` (see the engine constraint below). The vendor record there carries
+    both versions, licenses and sha256 digests, and the one rewritten import specifier.
 - **Ask Claude…** fills the prompt box with `Revise the document <id> in this
   repository: ` and sends nothing itself — the person sends it, so Claude's normal
-  permissions and this repository's documentation rules apply. This is the body-editing
-  arm shipped while the operator's body-editing question is open (see below).
+  permissions and this repository's documentation rules apply.
 - **Structural operations** — Rename…, Supersede…, Link task…, Unlink task… — run
   `lore rename` / `lore supersede` / `lore link` / `lore unlink` and then `lore sync`.
   Rename and Supersede take one target id; Link and Unlink take whitespace-separated
@@ -129,8 +153,12 @@ declares. Four atoms carry the pane: `view` (tab, root, search text, type/tag fi
 the refs toggle, the open concept and its history, Raw, the structural action form,
 loading/error/notice), `catalog` (concepts, the type vocabulary, search hits), `doc`
 (the open concept), and `edits` (the write-in-flight flag, the New draft, the fields
-form, the uncommitted paths). The module imports it with `import type`, so the file
-carries no runtime code.
+form, the uncommitted paths, and the inline editor's three keys — whether it is open,
+the text it last posted, and the revision the pane bumps to make the editor adopt that
+text). The module imports it with `import type`, so the file carries no runtime code.
+The editor's live text is *not* here: it is the `Client` instance's own state, which
+survives the pane's redraws, and the pane's copy is only what the editor posted for
+Save to write.
 
 ## The engine constraint it is built around
 
@@ -150,6 +178,27 @@ Two consequences the module states and relies on:
 - **Run lore's commands rather than reimplementing them.** Rename, supersede, link,
   unlink and the fields form all go through the CLI — the same reason the pane's
   `lore validate` step exists instead of a hand-rolled frontmatter check.
+
+Three more constraints the inline editor was built against, each measured on Claude
+Code 2.1.287 (2026-10-02) rather than read off a document:
+
+- **Only the plugin's own files and `claude-code` can be imported.** The validator's own
+  words, for `import { marked } from "marked"`: *"a hooks module imports its own files
+  by relative path and \"claude-code\", nothing else"*. A library is therefore vendored
+  source, never a dependency.
+- **No Node, and no DOM.** A vendored file that throws when `document` is undefined
+  stops the module loading with `no DOM in this runtime`, and one that throws on
+  `process` says `no Node in this runtime`. So no DOM editor can run here, and there is
+  no `process.platform` to branch on.
+- **A `Client` element is read off the source.** `<Client module="./editor.tsx">` with
+  the tag named `Client` and the path a string literal loads; the same element bound to
+  another name does not — *"the plugin loaded no surface module (its hooks module builds
+  no Client from a literal path)"*. The module keeps the tag's name and guards the
+  surface that lacks the element (`Client` is on the terminal and desktop tables, not
+  the vscode one).
+- The vendored pair itself was proven by mounting before it was adopted: the two files
+  load, create a state, apply a change and set a selection inside a mounted mod, and
+  `claude plugin validate --strict` passes over them.
 
 ## The harness
 
@@ -186,15 +235,15 @@ records that it is deliberately not a required status context.
 
 ### What the tests prove, and what they do not
 
-Measured at the pre-landing reviewer pass (2026-10-02, `node scripts/mod-test.mjs` on
-this checkout): `claude plugin validate --strict` exit 0 — its inventory holding the
+Measured on 2026-10-02 with the inline editor in (`node scripts/mod-test.mjs` on this
+checkout): `claude plugin validate --strict` exit 0 — its inventory holding the
 `session.start` hook, the `command.run{command=lore-pane}` registration,
 `ui.render{Pane}`, the calls (`process.run`, `fs.read`, `fs.write`, `prompt.fill`,
 `command.register`, `clock.every`, `ui.open`, `ui.panes`, `ui.resolve`) and the four
-state keys — `claude plugin test` 16/16 pass (8 engine tests in `tests/pane.test.tsx`,
-8 unit tests in `tests/lore.test.ts`), and `tsc` against the 2.1.287 engine declaration
-exit 0. The earlier reading of 12/12 was the first slice at `f71bed1c`, before the
-review pass's four tests; a count here is a reading, not a constant.
+state keys — `claude plugin test` 22/22 pass (10 engine tests in `tests/pane.test.tsx`,
+12 unit tests in `tests/lore.test.ts`), and `tsc` against the 2.1.287 engine declaration
+exit 0. Earlier readings — 12/12 at `f71bed1c`, 16/16 before the editor — were the state
+at those points; a count here is a reading, not a constant.
 
 The engine tests cover: browse, open, Back and the Raw toggle (the first test mounts
 on both the terminal and the desktop surface; the rest mount the terminal); search
@@ -202,18 +251,27 @@ submission and the `--across-refs --allow-partial` argv; the type filter; the fi
 form saving through `lore validate`, asserting the path the bytes went to as well as
 the bytes; a failed validation restoring the previous file to that same path and
 showing lore's own message; New running `lore new` and opening the result, both with
-the type picker chosen in and with it untouched; the rename and `lore sync` argvs; and
-a body link press opening the linked concept in-pane. Unit tests cover the pure
-helpers: `patchFrontmatter` (replace, remove, insert, and the no-frontmatter refusal),
+the type picker chosen in and with it untouched; the rename and `lore sync` argvs; a
+body link press opening the linked concept in-pane; and the inline editor end to end —
+opening on the body, a key typed into the `Client` drawing in its region, the cursor's
+own cell, Ctrl+Z taking the keystroke back, and Save writing the file through
+`lore validate` with the frontmatter byte for byte, plus the rejected-save path
+restoring the previous bytes to that same file. Unit tests cover the pure helpers:
+`patchFrontmatter` (replace, remove, insert, and the no-frontmatter refusal),
+`replaceBody` (frontmatter preserved, body normalised, no-frontmatter refusal),
 `bundleIdFor`, `internalHrefs`, `hasSection`, `groupByType`, `repoPathFor`'s
-unconditional prefix, `searchArgv`'s `--` before a term, and `failure`'s truncated-run
-message.
+unconditional prefix, `searchArgv`'s `--` before a term, `failure`'s truncated-run
+message, and the editor operations — insert, backspace and cursor motion across a
+grapheme cluster (the vendored library's boundary arithmetic), the undo/redo ring and
+its truncation by a new edit, and the window following the cursor.
 
 What they do **not** cover, and this record therefore does not claim: pressing
-Supersede, Link task or Unlink task; Ask Claude…; the landing strip's button; the
-mobile branch; and the `session.start`/`command.run` registrations beyond what
-`claude plugin validate`'s inventory reads. No test runs a live `lore`: every command
-is mocked at the engine boundary.
+Supersede, Link task or Unlink task; Ask Claude…; Open in editor; the landing strip's
+button; the mobile and vscode branches; and the `session.start`/`command.run`
+registrations beyond what `claude plugin validate`'s inventory reads. No test runs a
+live `lore`: every command is mocked at the engine boundary, and no test runs a live
+`$EDITOR` — the desktop arm is a prompt fill, which is asserted only by reading the
+code.
 
 ## Decisions recorded here
 

@@ -428,6 +428,28 @@ export function patchFrontmatter(raw: string, patch: Record<string, string | str
   return `---\n${next.join("\n")}\n---${match[2] ?? "\n"}${raw.slice(match[0].length)}`;
 }
 
+/**
+ * The file's own frontmatter, byte for byte, with everything after it replaced by
+ * `body`. `patchFrontmatter` owns the frontmatter; this owns the rest, so the inline
+ * editor writes a body and touches nothing above the closing `---`.
+ *
+ * Returns null for a file with no frontmatter, exactly as `patchFrontmatter` refuses
+ * one: a body rewrite that silently dropped a (possibly malformed) frontmatter block
+ * would be `lore validate`'s problem to catch afterwards, not this function's to hide.
+ * The body is normalised the way the file format expects it — no leading blank lines
+ * (the closing delimiter's newline is the separator) and exactly one trailing newline.
+ */
+export function replaceBody(raw: string, body: string): string | null {
+  const match = /^---\r?\n[\s\S]*?\r?\n---(\r?\n?)/u.exec(raw);
+  if (match === null) {
+    return null;
+  }
+  const head = raw.slice(0, match[0].length);
+  const text = body.replace(/^\n+/u, "").replace(/\n*$/u, "");
+
+  return text === "" ? head : `${head}${text}\n`;
+}
+
 // ── Pure helpers ──────────────────────────────────────────────────────────────
 
 /** Bodies are long; the pane draws a first slice and says so. */
