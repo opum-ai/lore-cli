@@ -14,7 +14,11 @@
 
 import type { ConceptDoc, ConceptSummary, LinkedTask, SearchHit, TypeInfo } from "../types";
 
-export type Run = { code: number; stdout: string; stderr: string };
+// `truncated` is set by the caller from the engine's own isStdoutTruncated /
+// isStderrTruncated: the engine caps each stream at its first 4 MiB, and a
+// truncated answer is not a parse failure to be reported as one -- it is an
+// incomplete answer, and it says so (LCLI-664 review F7).
+export type Run = { code: number; stdout: string; stderr: string; truncated?: boolean };
 
 type Envelope = { kind?: unknown; data?: unknown };
 
@@ -28,6 +32,9 @@ function firstLine(text: string): string {
 
 /** A short, readable failure: lore's own words when it gave any. */
 export function failure(run: Run, verb: string): string {
+  if (run.truncated) {
+    return `${verb}: lore's output was cut off at the engine's 4 MiB cap, so this answer is incomplete; narrow the query`;
+  }
   const detail = firstLine(run.stderr) || firstLine(run.stdout);
   if (run.code === -1) {
     return `${verb}: ${detail || "lore could not run (is it on PATH?)"}`;
@@ -38,6 +45,9 @@ export function failure(run: Run, verb: string): string {
 
 /** lore's {schemaVersion, kind, data} envelope, or a readable failure. */
 function envelope(run: Run, want: string, verb: string): { data: unknown } | { error: string } {
+  if (run.truncated) {
+    return { error: failure(run, verb) };
+  }
   if (run.code !== 0) {
     return { error: failure(run, verb) };
   }
@@ -97,12 +107,17 @@ export function queryArgv(view: FilterView): string[] {
 
 /** `lore query "<text>"` under the chrome's filters. */
 export function searchArgv(view: FilterView & { query: string }): string[] {
-  const argv = ["query", "--json"];
+  // The filters come first and `--` separates them from the text: everything
+  // after `--` is positional, so a search term that begins with `-` (or is
+  // `--anything`) is a term rather than an unknown option -- measured on lore
+  // 0.12.0, `query --json "-foo"` exits 2 with `unknown option "-foo"`, while
+  // `query --json -- "-foo"` answers with a query.results envelope (LCLI-664
+  // review F5).
+  const argv = ["query", "--json", ...filters(view)];
   const text = view.query.trim();
   if (text) {
-    argv.push(text);
+    argv.push("--", text);
   }
-  argv.push(...filters(view));
 
   return argv;
 }
@@ -293,7 +308,14 @@ export function parseRead(read: Run, tasks: Run, id: string): ReadResult {
  * root, which is why the pane carries this as `repoPath`.
  */
 export function repoPathFor(bundlePath: string): string {
-  return bundlePath.startsWith("docs/") ? bundlePath : `docs/${bundlePath}`;
+  // The prefix is unconditional, never guarded on `startsWith("docs/")`: the
+  // only producer is `lore read`'s own `path`, which is bundle-relative by
+  // contract, so a bundle path that itself begins with `docs/` is a concept
+  // inside the bundle's own `docs/` folder (id `docs/x`, file `docs/docs/x.md`)
+  // rather than an already-prefixed path. Guarding on the string made that case
+  // resolve to `docs/x.md` -- a different file, which the write path would have
+  // created and reported as saved (LCLI-664 review F4).
+  return `docs/${bundlePath}`;
 }
 
 export function parseCreated(run: Run): Created {

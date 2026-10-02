@@ -25,7 +25,10 @@ mirroring the Quest board mod in `quest-cli` (QCLI-431, draft
 The pane drives the `lore` CLI rather than reimplementing it: browsing, reading,
 searching, creating and editing all run lore's own commands, so frontmatter validation,
 link repointing on rename, and managed task blocks stay lore's behaviour. Everything
-below is as built at `f71bed1c` (2026-10-02), the first slice's landing commit.
+below is as built on this task's branch (2026-10-02) — the module at `f71bed1c`, the
+bundle-path fix `5e9c8ab4`, the harness `f444a654`, the documentation slice `38f2affd`,
+and the pre-landing reviewer pass that followed them. No single commit holds all of it;
+the branch tip does.
 
 ## Where it ships
 
@@ -102,7 +105,10 @@ refusing.
 
 A type picker from `lore types` (with the type's required sections named as a hint), a
 title, summary and tags; Create runs `lore new <type> <title>` with those fields and
-opens the result in Read. The pane allocates no id of its own and passes no path: the
+opens the result in Read. The picker draws its first option as the chosen one before
+anything has been chosen, so the vocabulary read writes that type into the draft: what
+the picker shows is what Create submits, with no re-pick needed, and a draft the person
+has already chosen in is left alone. The pane allocates no id of its own and passes no path: the
 id it opens is whatever `lore new` returns, so it cannot mint ids that ignore other
 refs — the create-path counterpart of the id-collision defect the quest-cli prototype
 showed.
@@ -180,21 +186,28 @@ records that it is deliberately not a required status context.
 
 ### What the tests prove, and what they do not
 
-Against the engine at `f71bed1c`, the record's measurement was `claude plugin validate
---strict` exit 0 — its inventory holding the `session.start` hook, the
-`command.run{command=lore-pane}` registration, `ui.render{Pane}`, the calls
-(`process.run`, `fs.read`, `fs.write`, `prompt.fill`, `command.register`, `clock.every`,
-`ui.open`, `ui.panes`, `ui.resolve`) and the four state keys — `claude plugin test`
-12/12 pass, and `tsc` against the 2.1.287 engine declaration exit 0.
+Measured at the pre-landing reviewer pass (2026-10-02, `node scripts/mod-test.mjs` on
+this checkout): `claude plugin validate --strict` exit 0 — its inventory holding the
+`session.start` hook, the `command.run{command=lore-pane}` registration,
+`ui.render{Pane}`, the calls (`process.run`, `fs.read`, `fs.write`, `prompt.fill`,
+`command.register`, `clock.every`, `ui.open`, `ui.panes`, `ui.resolve`) and the four
+state keys — `claude plugin test` 16/16 pass (8 engine tests in `tests/pane.test.tsx`,
+8 unit tests in `tests/lore.test.ts`), and `tsc` against the 2.1.287 engine declaration
+exit 0. The earlier reading of 12/12 was the first slice at `f71bed1c`, before the
+review pass's four tests; a count here is a reading, not a constant.
 
 The engine tests cover: browse, open, Back and the Raw toggle (the first test mounts
 on both the terminal and the desktop surface; the rest mount the terminal); search
-submission and the `--across-refs --allow-partial` argv; the type filter; the fields form saving through
-`lore validate`; a failed validation restoring the previous file and showing lore's own
-message; New running `lore new` and opening the result; the rename and `lore sync`
-argvs; and a body link press opening the linked concept in-pane. Unit tests cover the
-pure helpers: `patchFrontmatter` (replace, remove, insert, and the no-frontmatter
-refusal), `bundleIdFor`, `internalHrefs`, `hasSection` and `groupByType`.
+submission and the `--across-refs --allow-partial` argv; the type filter; the fields
+form saving through `lore validate`, asserting the path the bytes went to as well as
+the bytes; a failed validation restoring the previous file to that same path and
+showing lore's own message; New running `lore new` and opening the result, both with
+the type picker chosen in and with it untouched; the rename and `lore sync` argvs; and
+a body link press opening the linked concept in-pane. Unit tests cover the pure
+helpers: `patchFrontmatter` (replace, remove, insert, and the no-frontmatter refusal),
+`bundleIdFor`, `internalHrefs`, `hasSection`, `groupByType`, `repoPathFor`'s
+unconditional prefix, `searchArgv`'s `--` before a term, and `failure`'s truncated-run
+message.
 
 What they do **not** cover, and this record therefore does not claim: pressing
 Supersede, Link task or Unlink task; Ask Claude…; the landing strip's button; the

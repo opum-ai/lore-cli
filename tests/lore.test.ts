@@ -1,6 +1,15 @@
 import { expect, test } from "claude-code/testing";
 
-import { bundleIdFor, groupByType, hasSection, internalHrefs, patchFrontmatter, repoPathFor } from "../hooks/lore";
+import {
+  bundleIdFor,
+  failure,
+  groupByType,
+  hasSection,
+  internalHrefs,
+  patchFrontmatter,
+  repoPathFor,
+  searchArgv,
+} from "../hooks/lore";
 
 const RAW = [
   "---",
@@ -48,7 +57,42 @@ test("an internal href resolves to a bundle id relative to the open concept", ()
 
 test("a bundle-relative path becomes the repository-relative one, once", () => {
   expect(repoPathFor("adr/0001-x.md")).toBe("docs/adr/0001-x.md");
-  expect(repoPathFor("docs/already.md")).toBe("docs/already.md");
+  // A bundle path that itself starts with `docs/` is a concept in the bundle's own
+  // `docs/` folder (id `docs/x`, file `docs/docs/x.md`), not an already-prefixed
+  // path: `lore read`'s `path` is bundle-relative by contract and the prefix is
+  // unconditional. Guarding on `startsWith("docs/")` addressed `docs/x.md`, a
+  // different file the write path would have created and reported as saved
+  // (LCLI-664 review F4).
+  expect(repoPathFor("docs/x.md")).toBe("docs/docs/x.md");
+});
+
+test("a search term that starts with a dash is a term, not an option", () => {
+  // Measured on lore 0.12.0: `query --json "-foo"` exits 2 ("unknown option
+  // \"-foo\""), `query --json -- "-foo"` answers with a query.results envelope.
+  // The filters precede `--`, because everything after it is positional
+  // (LCLI-664 review F5).
+  expect(searchArgv({ query: "-foo", typeFilter: "", tagFilter: "", acrossRefs: false })).toEqual([
+    "query",
+    "--json",
+    "--",
+    "-foo",
+  ]);
+  expect(
+    searchArgv({ query: "-foo", typeFilter: "ADR", tagFilter: "fleet", acrossRefs: true }),
+  ).toEqual(["query", "--json", "--type", "ADR", "--tag", "fleet", "--across-refs", "--allow-partial", "--", "-foo"]);
+  expect(searchArgv({ query: "  ", typeFilter: "", tagFilter: "", acrossRefs: false })).toEqual(["query", "--json"]);
+});
+
+test("a truncated run is reported as an incomplete answer, not a parse failure", () => {
+  // The engine caps each stream at 4 MiB; the pane sets `truncated` from its own
+  // isStdoutTruncated/isStderrTruncated, and an answer that was cut off says so
+  // rather than reading as malformed JSON (LCLI-664 review F7).
+  expect(failure({ code: 0, stdout: '{"kind":"que', stderr: "", truncated: true }, "Browse")).toBe(
+    "Browse: lore's output was cut off at the engine's 4 MiB cap, so this answer is incomplete; narrow the query",
+  );
+  expect(failure({ code: 2, stdout: "", stderr: "unknown option" }, "Search")).toBe(
+    "Search failed (lore exited 2): unknown option",
+  );
 });
 
 test("only internal hrefs are pressable, and sections match case-insensitively", () => {

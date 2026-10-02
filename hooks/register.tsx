@@ -90,7 +90,12 @@ async function runLore($: EngineInterface, root: string | null, argv: readonly s
       timeoutMs: TIMEOUT_MS,
     });
 
-    return { code: result.exitCode, stdout: result.stdout, stderr: result.stderr };
+    return {
+      code: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      truncated: result.isStdoutTruncated || result.isStderrTruncated,
+    };
   } catch (error) {
     return {
       code: -1,
@@ -175,6 +180,23 @@ async function setView($: EngineInterface, patch: Partial<View>): Promise<void> 
   await update($, view, (current) => ({ ...current, ...patch }));
 }
 
+/**
+ * The New tab's type picker draws its first option as the chosen one before
+ * anything has been chosen, so a draft left at "" blanks the type's
+ * required-sections hint and makes Create refuse a form that visibly names a
+ * type -- "A type and a title are required." with no `lore new` sent at all
+ * (LCLI-664 review F1). The vocabulary read is the first moment the default is
+ * knowable, so it is written into the draft here; a draft the person has
+ * already chosen in is left alone.
+ */
+async function seedDraftType($: EngineInterface, types: readonly { name: string }[]): Promise<void> {
+  const first = types[0]?.name ?? "";
+  if (!first) {
+    return;
+  }
+  await update($, edits, (e) => (e.draft.type ? e : { ...e, draft: { ...e.draft, type: first } }));
+}
+
 async function refresh($: EngineInterface): Promise<void> {
   const root = await ensureRoot($);
   const current = await read($, view);
@@ -188,6 +210,7 @@ async function refresh($: EngineInterface): Promise<void> {
     const types = parseTypes(typesRun);
     if (found.ok) {
       await update($, catalog, (c) => ({ ...c, hits: found.hits, types: types ?? c.types }));
+      await seedDraftType($, types ?? []);
       await setView($, { isLoading: false, error: null });
     } else {
       await setView($, { isLoading: false, error: found.error });
@@ -206,6 +229,7 @@ async function refresh($: EngineInterface): Promise<void> {
       concepts: browse.concepts,
       types: browse.types,
     }));
+    await seedDraftType($, browse.types);
     await setView($, { isLoading: false, error: null });
   } else {
     await setView($, { isLoading: false, error: browse.error });

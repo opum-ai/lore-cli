@@ -172,7 +172,7 @@ test("search submits text and the refs toggle reads across refs", async ($, on) 
   });
   await ui.press({ key: "tab-search" });
   await ui.input({ key: "search-text", text: "retention" });
-  expect(seen).toContainEqual(["lore", "query", "--json", "retention"]);
+  expect(seen).toContainEqual(["lore", "query", "--json", "--", "retention"]);
   await ui.press({ key: "across" });
   expect(seen.some((argv) => argv.includes("--across-refs") && argv.includes("--allow-partial"))).toBe(true);
   await ui.unmount();
@@ -182,10 +182,16 @@ test("the fields form saves through lore validate, and a failed validation resto
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
   mock.store(on);
   const seen: string[][] = [];
-  const writes: string[] = [];
+  const writes: { path: string; text: string }[] = [];
   mockLore(on, seen);
   on("fs.write", async (_$, e) => {
-    writes.push(typeof e.text === "string" ? e.text : "");
+    // The path is recorded, not just the bytes: a write that lands at the wrong
+    // repository path still carries the right text, and would otherwise be green
+    // (LCLI-664 review F2).
+    writes.push({
+      path: typeof e.path === "string" ? e.path : "",
+      text: typeof e.text === "string" ? e.text : "",
+    });
     return { value: undefined };
   });
   const ui = await $.ui.mount({
@@ -200,8 +206,11 @@ test("the fields form saves through lore validate, and a failed validation resto
   await ui.press({ key: "edit-fields" });
   await ui.input({ key: "f-title", text: "Renamed notes" });
   await ui.press({ key: "f-save" });
-  expect(writes.some((text) => text.includes('title: "Renamed notes"'))).toBe(true);
+  expect(
+    writes.some((one) => one.text.includes('title: "Renamed notes"') && one.path === "/repo/docs/adr/0001-x.md"),
+  ).toBe(true);
   expect(seen.some((argv) => argv[1] === "validate")).toBe(true);
+  expect(seen).toContainEqual(["lore", "validate", "docs/adr/0001-x.md", "--json"]);
   expect(await ui.find({ type: "Text", text: /Saved and validated\./ })).toBeDefined();
   await ui.unmount();
 });
@@ -210,10 +219,13 @@ test("a validation failure keeps the previous file and shows lore's message", as
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
   mock.store(on);
   const seen: string[][] = [];
-  const writes: string[] = [];
+  const writes: { path: string; text: string }[] = [];
   mockLore(on, seen, true);
   on("fs.write", async (_$, e) => {
-    writes.push(typeof e.text === "string" ? e.text : "");
+    writes.push({
+      path: typeof e.path === "string" ? e.path : "",
+      text: typeof e.text === "string" ? e.text : "",
+    });
     return { value: undefined };
   });
   const ui = await $.ui.mount({
@@ -228,8 +240,10 @@ test("a validation failure keeps the previous file and shows lore's message", as
   await ui.press({ key: "edit-fields" });
   await ui.input({ key: "f-title", text: "Bad edit" });
   await ui.press({ key: "f-save" });
-  expect(writes.some((text) => text.includes('title: "Bad edit"'))).toBe(true);
-  expect(writes[writes.length - 1]).toBe(READ_RAW);
+  expect(writes.some((one) => one.text.includes('title: "Bad edit"'))).toBe(true);
+  // The restore writes the previous bytes back to the same file the bad edit went
+  // to -- a restore that landed somewhere else would leave the bad edit in place.
+  expect(writes[writes.length - 1]).toEqual({ path: "/repo/docs/adr/0001-x.md", text: READ_RAW });
   expect(await ui.find({ type: "Text", text: /Validation failed: summary is required/ })).toBeDefined();
   await ui.unmount();
 });
@@ -248,6 +262,31 @@ test("new creates through lore new and opens the result", async ($, on) => {
   });
   await ui.press({ key: "tab-new" });
   await ui.select({ key: "new-type", value: "ADR" });
+  await ui.input({ key: "new-title", text: "A new ADR" });
+  await ui.press({ key: "create" });
+  expect(seen).toContainEqual(["lore", "new", "ADR", "A new ADR", "--json"]);
+  expect(seen.some((argv) => argv[1] === "read" && argv[2] === "adr/0009-new")).toBe(true);
+  await ui.unmount();
+});
+
+test("new creates with the type the picker already shows, untouched", async ($, on) => {
+  // The picker draws its first option as the chosen one before anything is
+  // chosen, so Create must submit that type: pressing Create with only a title
+  // typed, and no Select interaction at all, sent no `lore new` and answered
+  // "A type and a title are required." for a form visibly naming a type
+  // (LCLI-664 review F1).
+  mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  const ui = await $.ui.mount({
+    plugin: "opum-lore",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "lore-pane",
+    props: PANE,
+  });
+  await ui.press({ key: "tab-new" });
   await ui.input({ key: "new-title", text: "A new ADR" });
   await ui.press({ key: "create" });
   expect(seen).toContainEqual(["lore", "new", "ADR", "A new ADR", "--json"]);
