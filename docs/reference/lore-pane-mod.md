@@ -90,7 +90,21 @@ type's required sections as a present/missing checklist from `lore types`.
   - *Edit body* opens the inline editor on the Read tab: a `Client` surface module
     (`hooks/editor.tsx`) drawing the body's lines with the cursor cell inverted, keyed
     by `hooks/editor-ops.ts` — arrows, home/end, backspace/delete, Enter, and
-    Ctrl/⌘+Z and Ctrl/⌘+Shift+Z (or Ctrl+Y) for undo and redo. Save writes the file
+    Ctrl/⌘+Z and Ctrl/⌘+Shift+Z (or Ctrl+Y) for undo and redo. A key is text when the
+    engine hands over a single character and a key's *name* otherwise, with one
+    exception the engine makes: the space bar arrives as the name `space`, so it is
+    handled by name rather than typed as itself. Backspace and Delete join two lines
+    across a line break; an arrow at either end of the document does nothing rather than
+    throwing, which would unmount the instance. The editor's region is given an explicit
+    height, because a `Client` with none is as tall as what it draws and this module
+    draws one row fewer than its region — a region sized by its own content, which
+    settles at a single visible line. It opens only on a body it can hand back: the pane
+    passes the whole body to the `Client` as props, and past the engine's bound the
+    refusal lands on the **pane**, not the editor — so a body already over the bound is
+    refused before the editor opens, and a body that *grows* past it closes the editor
+    again, each pointing at Open in editor, which has no such bound. That is reachable
+    here rather than hypothetical: `docs/runbooks/release-publishing.md` carries a
+    108,718-character body. Save writes the file
     through the same path the fields form uses — the frontmatter byte for byte as it
     is, the body as the editor holds it — then runs `lore validate`; a rejection
     restores the previous bytes and shows lore's own message. Cancel closes it. The
@@ -153,12 +167,16 @@ declares. Four atoms carry the pane: `view` (tab, root, search text, type/tag fi
 the refs toggle, the open concept and its history, Raw, the structural action form,
 loading/error/notice), `catalog` (concepts, the type vocabulary, search hits), `doc`
 (the open concept), and `edits` (the write-in-flight flag, the New draft, the fields
-form, the uncommitted paths, and the inline editor's three keys — whether it is open,
-the text it last posted, and the revision the pane bumps to make the editor adopt that
-text). The module imports it with `import type`, so the file carries no runtime code.
-The editor's live text is *not* here: it is the `Client` instance's own state, which
-survives the pane's redraws, and the pane's copy is only what the editor posted for
-Save to write.
+form, the uncommitted paths, and the inline editor's four keys — whether it is open,
+**which document it is open on**, the text it last posted, and the revision the pane
+bumps to make the editor adopt that text). The module imports it with `import type`,
+so the file carries no runtime code. The editor's live text is *not* here: it is the
+`Client` instance's own state, which survives the pane's redraws, and the pane's copy
+is only what the editor posted for Save to write. The document key is what keeps those
+two apart: the posted text is a *body*, and Save pairs it with the open document's
+*file*, so an editor left open across a document change would write one document's text
+into another's file. It is closed when the document changes, and `saveBody` refuses if
+the pair ever disagrees.
 
 ## The engine constraint it is built around
 
@@ -240,10 +258,11 @@ checkout): `claude plugin validate --strict` exit 0 — its inventory holding th
 `session.start` hook, the `command.run{command=lore-pane}` registration,
 `ui.render{Pane}`, the calls (`process.run`, `fs.read`, `fs.write`, `prompt.fill`,
 `command.register`, `clock.every`, `ui.open`, `ui.panes`, `ui.resolve`) and the four
-state keys — `claude plugin test` 22/22 pass (10 engine tests in `tests/pane.test.tsx`,
-12 unit tests in `tests/lore.test.ts`), and `tsc` against the 2.1.287 engine declaration
-exit 0. Earlier readings — 12/12 at `f71bed1c`, 16/16 before the editor — were the state
-at those points; a count here is a reading, not a constant.
+state keys — `claude plugin test` 31/31 pass (14 engine tests in `tests/pane.test.tsx`,
+17 unit tests in `tests/lore.test.ts`), and `tsc` against the 2.1.287 engine declaration
+exit 0. Earlier readings — 12/12 at `f71bed1c`, 16/16 before the editor, 22/22 before
+the editor-arm review — were the state at those points; a count here is a reading, not
+a constant.
 
 The engine tests cover: browse, open, Back and the Raw toggle (the first test mounts
 on both the terminal and the desktop surface; the rest mount the terminal); search
@@ -256,14 +275,36 @@ body link press opening the linked concept in-pane; and the inline editor end to
 opening on the body, a key typed into the `Client` drawing in its region, the cursor's
 own cell, Ctrl+Z taking the keystroke back, and Save writing the file through
 `lore validate` with the frontmatter byte for byte, plus the rejected-save path
-restoring the previous bytes to that same file. Unit tests cover the pure helpers:
+restoring the previous bytes to that same file, opening another document with the
+editor open closing it rather than writing across documents, a body too large to hand
+the editor being refused while the pane keeps drawing, a body that grows past that bound
+closing the editor, and the editor's region carrying an explicit height. Unit tests cover
+the pure helpers:
 `patchFrontmatter` (replace, remove, insert, and the no-frontmatter refusal),
 `replaceBody` (frontmatter preserved, body normalised, no-frontmatter refusal),
 `bundleIdFor`, `internalHrefs`, `hasSection`, `groupByType`, `repoPathFor`'s
 unconditional prefix, `searchArgv`'s `--` before a term, `failure`'s truncated-run
 message, and the editor operations — insert, backspace and cursor motion across a
 grapheme cluster (the vendored library's boundary arithmetic), the undo/redo ring and
-its truncation by a new edit, and the window following the cursor.
+its truncation by a new edit, the window following the cursor, the space bar typing a
+space rather than the word `space`, no key's *name* ever being typed into the body, an
+arrow at either end of the document doing nothing instead of throwing, Delete and
+Backspace joining two lines across a line break, a key that cannot change anything
+leaving the undo and redo rings alone, and a body past the engine's props or single-line
+bound being refused while a body of ordinary short lines at the same length is not.
+
+The cases added by the editor-arm review pass were each mutation-checked against its own
+defect's shape — one mutant per fix, with the defective line restored — and each reddened
+exactly the one test written for it, the rest staying green. Three of them are worth
+naming because the result was not the obvious one. The review's own lead that the space
+bar might insert the word `space` was first refuted from the engine's TypeScript
+declaration and then confirmed from the 2.1.287 binary, where the dispatch that builds a
+Client's key event maps it (`? "space" : o`). The cross-document close is defended twice,
+so removing either defence alone leaves the suite green — only removing both reddens its
+test, which therefore pins the behaviour rather than either guard. And removing either
+size guard reddens its test with the engine's own words in the output — `opum-lore drew
+nothing on the terminal surface: ui.render (Pane) refused` — which is the evidence that
+the bound takes the whole pane, not just the editor.
 
 What they do **not** cover, and this record therefore does not claim: pressing
 Supersede, Link task or Unlink task; Ask Claude…; Open in editor; the landing strip's

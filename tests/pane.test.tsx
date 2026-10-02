@@ -415,3 +415,140 @@ test("a link press in the body opens the linked concept", async ($, on) => {
   expect(seen.some((argv) => argv[1] === "read" && argv[2] === "reference/notes")).toBe(true);
   await ui.unmount();
 });
+
+test("opening another document closes the body editor rather than writing across documents", async ($, on) => {
+  // The editor holds a BODY; Save pairs it with the OPEN document's FILE. Left open
+  // across a document change, the first document's text sat beside the second
+  // document's file and Save wrote it there — the second document's own body gone, its
+  // frontmatter kept, so it still validated and the pane still said "Saved and
+  // validated." (LCLI-664 editor-arm review F1.)
+  mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  const writes: { path: string; text: string }[] = [];
+  mockLore(on, seen);
+  on("fs.write", async (_$, e) => {
+    writes.push({
+      path: typeof e.path === "string" ? e.path : "",
+      text: typeof e.text === "string" ? e.text : "",
+    });
+    return { value: undefined };
+  });
+  const ui = await $.ui.mount({
+    plugin: "opum-lore",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "lore-pane",
+    props: PANE,
+  });
+  await ui.press({ key: "refresh" });
+  await ui.press({ key: "open-adr/0001-x" });
+  await ui.press({ key: "edit-body" });
+  await ui.key({ key: "!", in: "body-editor" });
+
+  // Move to a different document with the editor still open.
+  await ui.press({ key: "tab-browse" });
+  await ui.press({ key: "open-reference/notes" });
+
+  // The editor is bound to the document it opened on, so it is gone — and the Save
+  // control that would have paired the first document's text with the second's file
+  // went with it.
+  expect(await ui.findAll({ type: "Button", key: "body-save" })).toHaveLength(0);
+  expect(writes).toEqual([]);
+  await ui.unmount();
+});
+
+test("a body too large to hand the editor is refused, and the pane keeps drawing", async ($, on) => {
+  // The failure this guards is not the editor's. The pane passes the WHOLE body to the
+  // `Client` as props, so a body past the engine's bound makes the engine refuse the
+  // PANE's render — measured without the guard, on this body: `opum-lore drew nothing on
+  // the terminal surface: opum-lore: ui.render (Pane) refused`. docs/runbooks/
+  // release-publishing.md in this repository carries a 108,718-character body.
+  mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen, false, "x".repeat(108_718));
+  const ui = await $.ui.mount({
+    plugin: "opum-lore",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "lore-pane",
+    props: PANE,
+  });
+  await ui.press({ key: "refresh" });
+  await ui.press({ key: "open-adr/0001-x" });
+  await ui.press({ key: "edit-body" });
+
+  // The pane still draws, the refusal says why, and no editor region opened.
+  expect(await ui.find({ type: "Text", text: /too large for the inline editor/ })).toBeDefined();
+  expect(await ui.findAll({ type: "Button", key: "body-save" })).toHaveLength(0);
+  expect(await ui.findAll({ type: "Button", key: "open-editor" })).toHaveLength(1);
+  await ui.unmount();
+});
+
+test("a body that GROWS past what the editor can hand back closes the editor instead of killing the pane", async ($, on) => {
+  // The other way a body gets too big: it opens small and grows. The posted text becomes
+  // the editor's props on the next draw, and the engine refuses the whole pane's render
+  // past its bound — a refusal the pane cannot be escaped from, because its own buttons
+  // stop drawing with it. So the growth is refused and the editor closed.
+  mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  const writes: { path: string; text: string }[] = [];
+  mockLore(on, seen);
+  on("fs.write", async (_$, e) => {
+    writes.push({
+      path: typeof e.path === "string" ? e.path : "",
+      text: typeof e.text === "string" ? e.text : "",
+    });
+    return { value: undefined };
+  });
+  const ui = await $.ui.mount({
+    plugin: "opum-lore",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "lore-pane",
+    props: PANE,
+  });
+  await ui.press({ key: "refresh" });
+  await ui.press({ key: "open-adr/0001-x" });
+  await ui.press({ key: "edit-body" });
+
+  // The editor is open and posting normally.
+  await ui.post({ kind: "text", text: "The body of the notes.!" }, { in: "body-editor" });
+  expect(await ui.findAll({ type: "Button", key: "body-save" })).toHaveLength(1);
+
+  // Now it posts something past the bound.
+  await ui.post({ kind: "text", text: "x".repeat(108_718) }, { in: "body-editor" });
+
+  // The pane still draws, the editor closed, and nothing was written.
+  expect(await ui.find({ type: "Text", text: /grew past what the editor can hand back/ })).toBeDefined();
+  expect(await ui.findAll({ type: "Button", key: "body-save" })).toHaveLength(0);
+  expect(writes).toEqual([]);
+  await ui.unmount();
+});
+
+test("the editor's region has an explicit height, so it is not sized by what it draws", async ($, on) => {
+  // A `Client` with no `height` is "as tall as what the module draws", and the module
+  // draws `surface.rows - 1` document rows — a region sized by its own content, whose
+  // only fixed point is a single visible document line (LCLI-664 editor-arm review F4).
+  mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  const ui = await $.ui.mount({
+    plugin: "opum-lore",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "lore-pane",
+    props: PANE,
+  });
+  await ui.press({ key: "refresh" });
+  await ui.press({ key: "open-adr/0001-x" });
+  await ui.press({ key: "edit-body" });
+
+  const editor = await ui.find({ type: "Client", key: "body-editor" });
+  expect(typeof editor?.props.height).toBe("number");
+  expect(Number(editor?.props.height)).toBeGreaterThan(1);
+  await ui.unmount();
+});

@@ -112,14 +112,27 @@ export type Edits = {
   /** Whether the inline body editor is open on the Read tab. */
   bodyEditing: boolean;
   /**
+   * The concept the open body editor belongs to, or null when it is closed.
+   *
+   * `bodyText` is a BODY and `saveBody` pairs it with the open concept's file, so the
+   * two have to be bound together: without this, opening a document, editing it and
+   * then opening another one would leave the first document's text paired with the
+   * second document's file, and Save would write it there.
+   */
+  bodyDocId: string | null;
+  /**
    * The body as the editor last posted it. The live text is the editor instance's
    * own state; this is the pane's copy of it, which Save writes.
    */
   bodyText: string;
   /**
-   * Bumped when the pane wants the editor to adopt `bodyText` (opening, a revert
-   * after a failed save, a reload after one). The editor adopts on a change and
-   * keeps the person's own keystrokes otherwise.
+   * Bumped when the pane wants the editor to adopt `bodyText` — opening the editor, or
+   * re-opening it on text that changed underneath. The editor adopts on a change and
+   * keeps the person's own keystrokes otherwise, so a bump is NOT free: adopting
+   * re-creates the instance, which parks the cursor at the end and drops the redo ring.
+   * A failed save therefore does not bump: `bodyText` still holds the person's text,
+   * the editor's own state is already that text, and re-creating it would only lose
+   * their place while they fix what validation complained about.
    */
   bodyRevision: number;
 };

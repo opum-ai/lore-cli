@@ -463,6 +463,32 @@ export function isCapped(text: string): boolean {
   return text.length > BODY_CAP;
 }
 
+/**
+ * The largest body the inline editor will open on, and the longest line within it.
+ *
+ * The engine bounds what a `Client` may be handed and draw: its props and the tree it
+ * returns serialize to 100,000 characters, and one `Text` child to 10,000 — "or the
+ * instance unmounts". The pane hands the editor the WHOLE body as props, so a body past
+ * those bounds does not fail the editor alone: the engine refuses the PANE's render and
+ * reports `opum-lore drew nothing on the terminal surface`. Both caps therefore sit
+ * under the engine's bounds with room for JSON escaping, which inflates a body full of
+ * quotes and newlines past its own length. Measured on Claude Code 2.1.287: a
+ * 108,718-character body (`docs/runbooks/release-publishing.md` in this repository)
+ * refuses the pane, and 99,000 characters opens cleanly. `Open in editor` has no such
+ * bound, and is where a refusal sends the person.
+ */
+export const EDITOR_BODY_CAP = 90_000;
+export const EDITOR_LINE_CAP = 9_000;
+
+/** Whether the inline body editor can open on this body without refusing the pane. */
+export function editorFits(body: string): boolean {
+  if (body.length > EDITOR_BODY_CAP) {
+    return false;
+  }
+
+  return !body.split("\n").some((line) => line.length > EDITOR_LINE_CAP);
+}
+
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }

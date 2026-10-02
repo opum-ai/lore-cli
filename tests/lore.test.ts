@@ -3,16 +3,21 @@ import { expect, test } from "claude-code/testing";
 import {
   editorCreate,
   editorCursor,
+  editorKey,
   editorText,
   editorView,
   insertText,
   deleteBackward,
+  deleteForward,
   moveCursor,
   redo,
   undo,
 } from "../hooks/editor-ops";
 import {
+  EDITOR_BODY_CAP,
+  EDITOR_LINE_CAP,
   bundleIdFor,
+  editorFits,
   failure,
   groupByType,
   hasSection,
@@ -36,6 +41,37 @@ const RAW = [
   "Body stays put.",
   "",
 ].join("\n");
+
+test("a body the engine's bounds cannot carry is refused before it can refuse the pane", () => {
+  // The pane hands the editor the WHOLE body as `Client` props, and the engine bounds a
+  // Client's props and tree at 100,000 characters "or the instance unmounts" — but the
+  // refusal lands on the PANE's render, not the editor's ("opum-lore drew nothing on the
+  // terminal surface"). Measured on 2.1.287: a 108,718-character body refuses the pane
+  // and 99,000 opens cleanly. docs/runbooks/release-publishing.md in this repository
+  // carries a 108,718-character body, so this is reachable without contriving anything.
+  const manyShortLines = (length: number): string => {
+    const out: string[] = [];
+    let size = 0;
+    while (size <= length) {
+      out.push("x".repeat(50));
+      size += 51; // the 50 characters plus the newline that will join this to the next
+    }
+
+    return out.join("\n").slice(0, length);
+  };
+
+  expect(editorFits("The body of the notes.")).toBe(true);
+  expect(manyShortLines(EDITOR_BODY_CAP).length).toBe(EDITOR_BODY_CAP);
+  expect(editorFits(manyShortLines(EDITOR_BODY_CAP))).toBe(true);
+  expect(editorFits(manyShortLines(EDITOR_BODY_CAP + 1))).toBe(false);
+  expect(editorFits(manyShortLines(108_718))).toBe(false);
+
+  // A single line past what one `Text` child may hold unmounts the instance on its own,
+  // inside a body well under the props bound: the module draws a line as one Text. So a
+  // long body of short lines is fine while one enormous line is not, at equal length.
+  expect(editorFits(`${"x".repeat(EDITOR_LINE_CAP)}\nshort`)).toBe(true);
+  expect(editorFits(`${"x".repeat(EDITOR_LINE_CAP + 1)}\nshort`)).toBe(false);
+});
 
 test("patchFrontmatter replaces, removes and inserts keys, and touches nothing else", () => {
   const next = patchFrontmatter(RAW, {
@@ -186,4 +222,89 @@ test("the editor's window follows the cursor", () => {
   const atTop = editorView(moveCursor(moveCursor(moveCursor(local, "up"), "up"), "up"), 2);
   expect(atTop.rows.map((row) => row.number)).toEqual([1, 2]);
   expect(atTop.cursorRow).toBe(0);
+});
+
+// ── Regressions from the LCLI-664 editor-arm review pass ──────────────────────
+// Each of these fails on the pre-review code and passes after it. They are separate
+// cases rather than one, so a regression names which behaviour it broke.
+
+test("the space bar types a space, and no key's NAME is ever typed into the body", () => {
+  // The engine delivers the space bar as the NAME "space" rather than as the character
+  // typed — measured on Claude Code 2.1.287, in the dispatch that builds a Client's key
+  // event: `Jr.find(([m]) => i[m])?.[1] ?? (o === " " ? "space" : o)`, where every other
+  // key is its table name (`up`, `return`, `backspace`, …) or the character itself.
+  // A length heuristic ("a name of 8 characters or fewer is text") therefore typed the
+  // word "space" into the document (LCLI-664 editor-arm review F2).
+  const start = editorCreate("one two");
+  expect(editorText(editorKey(start, "space"))).toBe("one two ");
+  // Handled defensively too: if a surface ever hands the character itself, it types.
+  expect(editorText(editorKey(start, " "))).toBe("one two ");
+  // Every other multi-character key is a name this editor does not act on.
+  for (const name of ["wheelup", "wheeldown", "f5", "insert", "pageup", "home"]) {
+    expect(editorText(editorKey(start, name))).toBe("one two");
+  }
+  // A single character still types itself.
+  expect(editorText(editorKey(start, "!"))).toBe("one two!");
+});
+
+test("an arrow key at either end of the document does nothing rather than throwing", () => {
+  // `Text.line` THROWS on an out-of-range number rather than returning nothing, and
+  // `editorCreate` opens with the cursor on the LAST line — so the unguarded ±1 was a
+  // throw on the first Down press after opening the editor. The engine answers a throw
+  // in a Client's key listener by unmounting the instance (LCLI-664 review F3).
+  const last = editorCreate("one\ntwo");
+  expect(moveCursor(last, "down")).toBe(last);
+
+  const first = moveCursor(last, "up");
+  // Column-preserving, not column-resetting: the cursor was at column 3 of "two" and
+  // lands at column 3 of "one", which is that line's end.
+  expect(editorCursor(first)).toBe(3);
+  expect(moveCursor(first, "up")).toBe(first);
+
+  // A one-line body — which is also what an empty document is.
+  const single = editorCreate("only");
+  expect(moveCursor(single, "down")).toBe(single);
+  expect(moveCursor(single, "up")).toBe(single);
+});
+
+test("delete joins lines across a line break, which lives outside the line's text", () => {
+  // At a line's end the character ahead is the line BREAK, which is not part of
+  // `line.text` — so a cluster walk inside the line found nothing, the range came out
+  // empty, and the newline was never crossed (LCLI-664 review F5).
+  const two = editorCreate("alpha\nbeta");
+
+  const endOfFirst = moveCursor(moveCursor(moveCursor(two, "home"), "up"), "end");
+  expect(editorCursor(endOfFirst)).toBe(5);
+  const joinedForward = deleteForward(endOfFirst);
+  expect(editorText(joinedForward)).toBe("alphabeta");
+  expect(joinedForward.past.length).toBe(1);
+
+  const startOfSecond = moveCursor(two, "home");
+  expect(editorCursor(startOfSecond)).toBe(6);
+  const joinedBack = deleteBackward(startOfSecond);
+  expect(editorText(joinedBack)).toBe("alphabeta");
+  expect(joinedBack.past.length).toBe(1);
+});
+
+test("a key that cannot change anything leaves the undo and redo rings alone", () => {
+  // `state.update` returns a NEW state for a transaction whose change range is empty.
+  // Adopting one put a step on the undo ring that undoes nothing — a Ctrl+Z that
+  // appears dead — and dropped the redo ring with it (LCLI-664 review F5).
+  const typed = insertText(editorCreate("one"), "!");
+  const undone = undo(typed);
+  expect(editorText(undone)).toBe("one");
+
+  // Delete at the end of the LAST line has nothing to remove, and says so by returning
+  // the very state it was given rather than an equal one.
+  const atEnd = moveCursor(editorCreate("only"), "end");
+  expect(deleteForward(atEnd)).toBe(atEnd);
+
+  // Backspace at the very start of an empty document, where there is nothing behind it.
+  const empty = editorCreate("");
+  expect(deleteBackward(empty)).toBe(empty);
+
+  // A no-op key on an undone document leaves a pending redo intact.
+  const noop = editorKey(undone, "f5");
+  expect(noop).toBe(undone);
+  expect(editorText(redo(noop))).toBe("one!");
 });

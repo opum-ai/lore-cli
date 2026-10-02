@@ -23,6 +23,7 @@ import {
   actionVerb,
   bundleIdFor,
   cap,
+  editorFits,
   failure,
   groupByType,
   hasSection,
@@ -80,6 +81,7 @@ const edits = atom({ plugin: "opum-lore", key: "edits" } as const, {
   fields: null,
   uncommitted: [],
   bodyEditing: false,
+  bodyDocId: null,
   bodyText: "",
   bodyRevision: 0,
 } satisfies Edits);
@@ -254,6 +256,13 @@ async function loadConcept($: EngineInterface, id: string, patch: Partial<View> 
   }
   const raw = await readFileText($, root, result.doc.repoPath);
   await update($, doc, () => ({ concept: { ...result.doc, raw } }));
+  // The open body editor belongs to ONE document. Left open across a concept change,
+  // `bodyText` — a body — would sit beside the NEW document's file, and Save would
+  // write one document's text into the other's file. Closing it here covers every way
+  // the open document changes: Browse, Search, a link press, Back/forward, Refresh.
+  await update($, edits, (e) =>
+    e.bodyEditing && e.bodyDocId !== result.doc.id ? { ...e, bodyEditing: false, bodyDocId: null, bodyText: "" } : e,
+  );
   await setView($, {
     isLoading: false,
     error: null,
@@ -395,9 +404,22 @@ async function beginBodyEdit($: EngineInterface): Promise<void> {
   if (!concept) {
     return;
   }
+  // Refused BEFORE the editor opens, because the failure is not the editor's: the pane
+  // passes the whole body to the `Client` as props, and a body past the engine's bound
+  // makes the engine refuse the PANE's render ("opum-lore drew nothing on the terminal
+  // surface") rather than the editor's. `Open in editor` has no such bound.
+  if (!editorFits(concept.body)) {
+    await setView($, {
+      error: `${concept.path} is too large for the inline editor (${concept.body.length} characters). Use Open in editor, which has no such limit.`,
+      notice: null,
+    });
+
+    return;
+  }
   await update($, edits, (e) => ({
     ...e,
     bodyEditing: true,
+    bodyDocId: concept.id,
     bodyText: concept.body,
     bodyRevision: e.bodyRevision + 1,
   }));
@@ -405,15 +427,24 @@ async function beginBodyEdit($: EngineInterface): Promise<void> {
 }
 
 async function cancelBodyEdit($: EngineInterface): Promise<void> {
-  await update($, edits, (e) => ({ ...e, bodyEditing: false, bodyText: "" }));
+  await update($, edits, (e) => ({ ...e, bodyEditing: false, bodyDocId: null, bodyText: "" }));
 }
 
 /** The inline editor's Save: the same write, validate and restore path as the fields form. */
 async function saveBody($: EngineInterface): Promise<void> {
   const current = await read($, view);
   const { concept } = await read($, doc);
-  const { bodyText } = await read($, edits);
+  const { bodyText, bodyDocId } = await read($, edits);
   if (!concept || !current.root) {
+    return;
+  }
+  // Defence in depth behind `loadConcept`: the editor holds a BODY and the write pairs
+  // it with the open document's FILE. When those are not the same document, writing
+  // would put one document's body into another document's file — so this refuses.
+  if (bodyDocId !== concept.id) {
+    await update($, edits, (e) => ({ ...e, bodyEditing: false, bodyDocId: null, bodyText: "" }));
+    await setView($, { error: "The editor was open on another document, so nothing was written. Open it again." });
+
     return;
   }
   if (!concept.raw) {
@@ -438,7 +469,11 @@ async function saveBody($: EngineInterface): Promise<void> {
   const checked = parseValidate(await runLore($, current.root, ["validate", concept.repoPath, "--json"]));
   if (!checked.ok) {
     const restored = await writeFileText($, current.root, concept.repoPath, concept.raw);
-    await update($, edits, (e) => ({ ...e, isWriting: false, bodyRevision: e.bodyRevision + 1 }));
+    // No revision bump here, deliberately. `bodyText` still holds the person's own
+    // text and the editor's state is already that text, so there is nothing to adopt —
+    // and adopting would re-create the instance, parking the cursor at the end and
+    // dropping the redo ring, exactly while they are fixing what validation flagged.
+    await update($, edits, (e) => ({ ...e, isWriting: false }));
     await setView($, {
       error: restored.ok
         ? checked.error
@@ -447,7 +482,7 @@ async function saveBody($: EngineInterface): Promise<void> {
 
     return;
   }
-  await update($, edits, (e) => ({ ...e, isWriting: false, bodyEditing: false, bodyText: "" }));
+  await update($, edits, (e) => ({ ...e, isWriting: false, bodyEditing: false, bodyDocId: null, bodyText: "" }));
   await setView($, { notice: "Saved and validated.", error: null });
   await loadConcept($, concept.id);
   await countUncommitted($);
@@ -589,6 +624,21 @@ export const register: Register = (on, _options) => {
     if (typeof data === "object" && data !== null && !Array.isArray(data)) {
       const posted = data as { kind?: unknown; text?: unknown };
       if (posted.kind === "text" && typeof posted.text === "string") {
+        // The posted text becomes the editor's props on the next draw, and the engine
+        // refuses the WHOLE PANE's render once a `Client`'s props pass its bound. That
+        // refusal is unescapable in place — the pane's own buttons stop drawing with it —
+        // so the growth is refused here instead: the editor closes, nothing is written,
+        // and the person is sent to the arm that has no such bound. Opening is guarded
+        // too (`beginBodyEdit`); this is the other way a body gets too big, by growing.
+        if (!editorFits(posted.text)) {
+          await update($, edits, (state) => ({ ...state, bodyEditing: false, bodyDocId: null, bodyText: "" }));
+          await setView($, {
+            error: `The body grew past what the editor can hand back (${posted.text.length} characters), so the editor was closed and nothing was written. Use Open in editor, which has no such limit.`,
+            notice: null,
+          });
+
+          return next(e);
+        }
         await update($, edits, (state) => ({ ...state, bodyText: posted.text as string }));
       }
     }
@@ -616,8 +666,16 @@ export const register: Register = (on, _options) => {
     const current = await read($, view);
     const { concepts, types, hits } = await read($, catalog);
     const { concept } = await read($, doc);
-    const { isWriting, draft, fields, uncommitted, bodyEditing, bodyText, bodyRevision } = await read($, edits);
-    const editsOpen = bodyEditing && concept !== null;
+    const { isWriting, draft, fields, uncommitted, bodyEditing, bodyDocId, bodyText, bodyRevision } = await read($, edits);
+    // The editor is open only while it is open on THIS document — the same binding
+    // `saveBody` enforces on the write.
+    const editsOpen = bodyEditing && concept !== null && bodyDocId === concept.id;
+    // The editor's region, in rows. A `Client` with no `height` is "as tall as what the
+    // module draws", and the module draws `surface.rows - 1` document rows — a region
+    // sized by its own content, whose only fixed point is a single document line. An
+    // explicit height breaks that feedback loop: what is drawn no longer decides how
+    // much room there is to draw it in. Sized off the pane, less the Read tab's chrome.
+    const editorRows = Math.max(6, Math.min(24, e.props.scroll.bodyRows - 12));
 
     const tabs = (
       <Box>
@@ -1129,7 +1187,12 @@ export const register: Register = (on, _options) => {
         {editsOpen ? (
           <Box flexDirection="column">
             {Client ? (
-              <Client key="body-editor" module="./editor.tsx" props={{ text: bodyText, revision: bodyRevision }} />
+              <Client
+                key="body-editor"
+                module="./editor.tsx"
+                props={{ text: bodyText, revision: bodyRevision }}
+                height={editorRows}
+              />
             ) : (
               <Text dimColor>This surface has no editor region; use Open in editor instead.</Text>
             )}

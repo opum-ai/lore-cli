@@ -8,8 +8,10 @@
 // edited is not round-tripped through `$.state` on every keystroke.
 //
 // The props carry a `revision`: the pane bumps it when it wants the editor to adopt
-// the text in the props (opening, a revert after a failed save, a reload after one).
-// Equal revisions mean the person is typing and their text wins.
+// the text in the props — opening the editor, or re-opening it on text that changed
+// underneath. Equal revisions mean the person is typing and their text wins. A failed
+// save does NOT bump: its text is already what the editor holds, so adopting would only
+// re-create the instance — parking the cursor at the end and dropping the redo ring.
 
 import type { ClientModule } from "claude-code";
 import { editorCreate, editorKey, editorText, editorView, splitGrapheme, type EditorLocal } from "./editor-ops";

@@ -16,6 +16,8 @@ export declare class Text {
   lineAt(pos: number): { from: number; to: number; number: number; text: string; length: number };
   /** The 1-based line number `number`; throws when out of range. */
   line(number: number): { from: number; to: number; number: number; text: string; length: number };
+  /** Content equality: whether `other` is the same document text. */
+  eq(other: Text): boolean;
 }
 
 export declare class EditorSelection {

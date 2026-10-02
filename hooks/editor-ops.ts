@@ -38,9 +38,16 @@ export function editorCursor(local: EditorLocal): number {
   return local.state.selection.main.head;
 }
 
-/** One edit: the previous state joins the undo ring and the redo ring is dropped. */
+/**
+ * One edit: the previous state joins the undo ring and the redo ring is dropped.
+ *
+ * An update that leaves the document alone is not an edit. `state.update` returns a
+ * NEW state for a transaction whose change range is empty, and adopting it would put
+ * a step on the undo ring that undoes nothing — a Ctrl+Z that appears dead — and drop
+ * the redo ring along with it.
+ */
 function edited(local: EditorLocal, next: EditorState): EditorLocal {
-  if (next === local.state) {
+  if (next === local.state || next.doc.eq(local.state.doc)) {
     return local;
   }
 
@@ -77,7 +84,10 @@ export function deleteBackward(local: EditorLocal): EditorLocal {
   // The line, not the document: the boundary is a property of the text around the
   // cursor, and a body can be long enough that copying it per keystroke shows.
   const line = local.state.doc.lineAt(from);
-  const back = findClusterBreak(line.text, from - line.from, false) + line.from;
+  // At a line's start the character behind the cursor is the line break, which is not
+  // part of `line.text`, so the cluster walk has nothing to step over and the range
+  // would come out empty. Backspace there joins the line with the one above it.
+  const back = from === line.from ? from - 1 : findClusterBreak(line.text, from - line.from, false) + line.from;
 
   return edited(
     local,
@@ -91,8 +101,18 @@ export function deleteForward(local: EditorLocal): EditorLocal {
     return edited(local, local.state.update({ changes: { from, to, insert: "" }, selection: { anchor: from } }).state);
   }
   const line = local.state.doc.lineAt(from);
-  if (from === line.to && line.number === local.state.doc.lines) {
-    return local;
+  if (from === line.to) {
+    // At a line's end the character ahead of the cursor is the line break, which is
+    // not part of `line.text`. Only the last line has nothing after it; anywhere else
+    // the delete removes the break and joins the next line up.
+    if (line.number === local.state.doc.lines) {
+      return local;
+    }
+
+    return edited(
+      local,
+      local.state.update({ changes: { from, to: from + 1, insert: "" }, selection: { anchor: from } }).state,
+    );
   }
   const forward = findClusterBreak(line.text, from - line.from, true) + line.from;
 
@@ -121,7 +141,15 @@ export function moveCursor(local: EditorLocal, key: MoveKey): EditorLocal {
   if (key === "end") {
     return moved(local, line.to);
   }
-  const target = local.state.doc.line(line.number + (key === "up" ? -1 : 1));
+  const number = line.number + (key === "up" ? -1 : 1);
+  // Off either end of the document there is no line to move to, so the key does
+  // nothing. `Text.line` THROWS on an out-of-range number rather than returning
+  // nothing, and `editorCreate` opens with the cursor on the last line — so an
+  // unguarded +1 here is a throw on the first Down press of a freshly opened editor.
+  if (number < 1 || number > local.state.doc.lines) {
+    return local;
+  }
+  const target = local.state.doc.line(number);
   // Character column, deliberately: a visual column would need the surface's width
   // and the line's tab stops, which is more than "lightweight" pays for.
   return moved(local, Math.min(target.from + (from - line.from), target.to));
@@ -175,21 +203,27 @@ export function editorKey(
   if (key === "left" || key === "right" || key === "up" || key === "down" || key === "home" || key === "end") {
     return moveCursor(local, key);
   }
+  if (key === "space") {
+    // The space bar is the ONE key the engine delivers as a name rather than as the
+    // character typed. Measured on Claude Code 2.1.287, in the dispatch that builds a
+    // Client's key event: `Jr.find(([m]) => i[m])?.[1] ?? (o === " " ? "space" : o)` —
+    // every other key is its table name (`up`, `return`, `backspace`, …) or the
+    // character itself. Inserting the name would type the word "space" into the body.
+    return insertText(local, " ");
+  }
   if (key === "tab" || key === "escape" || key.startsWith("page")) {
     return local;
   }
-  // A printable key is "the character typed" — one character, or a whole grapheme.
-  // Anything longer is a named key this editor does not act on: inserting it would
-  // put the key's name into the document.
-  if ([...key].length <= 8 && !NAMED_KEYS.has(key)) {
+  // A printable key is "the character typed", and nothing else is: one character is
+  // text, and anything longer is a key's NAME this editor does not act on. An earlier
+  // heuristic here accepted any name up to 8 characters that was not in a hand-kept
+  // list, which let "space" through — and would have let any name the engine adds.
+  if ([...key].length === 1) {
     return insertText(local, key);
   }
 
   return local;
 }
-
-/** Key names that reach a handler as a name rather than as text. */
-const NAMED_KEYS = new Set(["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "insert"]);
 
 /**
  * One line split so its middle is a whole grapheme — the cursor's cell. The surface
