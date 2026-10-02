@@ -1671,13 +1671,22 @@ intent: a Quest task whose schedule names the release it waits for, plus the one
 line of production code the flip changes. Read this list when cutting a release;
 each item says which release it belongs to.
 
-- **`agent-profile-capacity` flips from warning to error** (LCLI-642, DEC-11).
-  The **warning ships in the release that carries LCLI-642** and the error ships
-  in the release **after** it — not the same one, which would leave external
-  repositories no notice at all. The flip is **one line**:
-  `AGENT_PROFILE_CAPACITY_SEVERITY` in `src/core/check.ts`, from `"warning"` to
-  `"error"`. LCLI-646 holds it and its criteria require the ordering to be read
-  off what was actually published rather than assumed.
+- **`agent-profile-capacity` flips from warning to error** (LCLI-642 and
+  LCLI-662; DEC-11, DEC-98 B). A boundary ships as the **warning** in the release
+  that first carries the measurement being enforced, and as the error in the
+  release **after** it — not the same one, which would leave external
+  repositories no notice at all. Resolve "first carries" off the tag, never off
+  the severity constant: `git merge-base --is-ancestor <sha> <tag>` and `git tag
+  --contains <sha>` answer which release carries a change, where the constant in
+  a tag's tree only says which release has the *old* behaviour. LCLI-642's
+  finding shipped in v0.12.0, whose tree carries `= "warning"`; LCLI-662 then
+  strengthened the measurement (`0d568f0f`, DEC-98 B), and no tag contained it
+  when this was written (2026-10-02 — re-check by ref before cutting), so the
+  first release to carry `0d568f0f` is the warning release for the boundary
+  actually enforced, and the flip waits for the release after that one. The flip
+  is **one line**: `AGENT_PROFILE_CAPACITY_SEVERITY` in `src/core/check.ts`, from
+  `"warning"` to `"error"`. LCLI-646 holds it and its criteria require the
+  ordering to be read off what was actually published rather than assumed.
 
 ## Rollback
 
