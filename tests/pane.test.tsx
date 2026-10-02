@@ -60,8 +60,17 @@ const readOf = (id: string, body = "The body of the notes.") =>
 
 const ROLLUP = JSON.stringify({ kind: "tasks.rollup", data: { concept: "x", tasks: [] } });
 
-function mockLore(on: On, seen: string[][], validateFails = false, body = "The body of the notes.") {
-  on("fs.read", async () => ({ value: READ_RAW }));
+function mockLore(
+  on: On,
+  seen: string[][],
+  validateFails = false,
+  body = "The body of the notes.",
+  reads?: string[],
+) {
+  on("fs.read", async (_$, e) => {
+    reads?.push(e.path);
+    return { value: READ_RAW };
+  });
   on("process.run", async (_$, e) => {
     seen.push([...e.argv]);
     if (e.argv[0] === "git") {
@@ -113,7 +122,8 @@ test("browse lists concepts, opens one, navigates back, and toggles raw", async 
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
   mock.store(on);
   const seen: string[][] = [];
-  mockLore(on, seen);
+  const reads: string[] = [];
+  mockLore(on, seen, false, "The body of the notes.", reads);
 
   for (const surface of ["terminal", "desktop"] as const) {
     seen.length = 0;
@@ -131,6 +141,9 @@ test("browse lists concepts, opens one, navigates back, and toggles raw", async 
 
     await ui.press({ key: "open-adr/0001-x" });
     expect(seen).toContainEqual(["lore", "read", "adr/0001-x", "--json"]);
+    // The raw read addresses the file from the repository root: `lore read`
+    // reports a bundle-relative path, and the pane must not join it blindly.
+    expect(reads).toContain("/repo/docs/adr/0001-x.md");
     expect(await ui.find({ type: "Markdown", text: /The body of the notes\./ })).toBeDefined();
 
     await ui.press({ key: "view-raw" });
@@ -139,8 +152,8 @@ test("browse lists concepts, opens one, navigates back, and toggles raw", async 
     await ui.press({ key: "tab-browse" });
     await ui.press({ key: "open-reference/notes" });
     await ui.press({ key: "back" });
-    const reads = seen.filter((argv) => argv[1] === "read").map((argv) => argv[2]);
-    expect(reads[reads.length - 1]).toBe("adr/0001-x");
+    const readIds = seen.filter((argv) => argv[1] === "read").map((argv) => argv[2]);
+    expect(readIds[readIds.length - 1]).toBe("adr/0001-x");
     await ui.unmount();
   }
 });

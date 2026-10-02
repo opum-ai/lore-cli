@@ -36,8 +36,10 @@ export type LinkedTask = {
 /** The open concept, as Read draws it. */
 export type ConceptDoc = {
   id: string;
-  /** Repository-relative path, as `lore read` reports it. */
+  /** Bundle-relative path, exactly as `lore read` reports it (`adr/x.md`). */
   path: string;
+  /** Repository-relative path (`docs/adr/x.md`), what `lore validate` and `$.fs` address. */
+  repoPath: string;
   type: string;
   title: string;
   summary: string | null;

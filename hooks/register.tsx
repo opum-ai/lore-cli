@@ -224,7 +224,7 @@ async function loadConcept($: EngineInterface, id: string, patch: Partial<View> 
     await setView($, { isLoading: false, error: result.error });
     return;
   }
-  const raw = await readFileText($, root, result.doc.path);
+  const raw = await readFileText($, root, result.doc.repoPath);
   await update($, doc, () => ({ concept: { ...result.doc, raw } }));
   await setView($, {
     isLoading: false,
@@ -330,18 +330,18 @@ async function saveFields($: EngineInterface): Promise<void> {
     return;
   }
   await update($, edits, (e) => ({ ...e, isWriting: true }));
-  const wrote = await writeFileText($, current.root, concept.path, next);
+  const wrote = await writeFileText($, current.root, concept.repoPath, next);
   if (!wrote.ok) {
     await update($, edits, (e) => ({ ...e, isWriting: false }));
-    await setView($, { error: `Could not write ${concept.path}: ${wrote.error}` });
+    await setView($, { error: `Could not write ${concept.repoPath}: ${wrote.error}` });
 
     return;
   }
-  const checked = parseValidate(await runLore($, current.root, ["validate", concept.path, "--json"]));
+  const checked = parseValidate(await runLore($, current.root, ["validate", concept.repoPath, "--json"]));
   if (!checked.ok) {
     // A failed validation keeps the previous file: the bytes read before the
     // edit go back, and lore's own message is what the person sees.
-    const restored = await writeFileText($, current.root, concept.path, concept.raw);
+    const restored = await writeFileText($, current.root, concept.repoPath, concept.raw);
     await update($, edits, (e) => ({ ...e, isWriting: false }));
     await setView($, {
       error: restored.ok
@@ -999,7 +999,7 @@ export const register: Register = (on, _options) => {
         ) : null}
         {isCapped(concept.raw ?? concept.body) && current.isRaw ? (
           <Text dimColor wrap="truncate">
-            Truncated at {BODY_CAP} characters; open {concept.path} for the rest.
+            Truncated at {BODY_CAP} characters; open {concept.repoPath} for the rest.
           </Text>
         ) : null}
       </Box>

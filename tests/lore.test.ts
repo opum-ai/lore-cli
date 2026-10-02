@@ -1,6 +1,6 @@
 import { expect, test } from "claude-code/testing";
 
-import { bundleIdFor, groupByType, hasSection, internalHrefs, patchFrontmatter } from "../hooks/lore";
+import { bundleIdFor, groupByType, hasSection, internalHrefs, patchFrontmatter, repoPathFor } from "../hooks/lore";
 
 const RAW = [
   "---",
@@ -44,6 +44,11 @@ test("an internal href resolves to a bundle id relative to the open concept", ()
   expect(bundleIdFor("./sibling.md#section", "reference/notes/page")).toBe("reference/notes/sibling");
   expect(bundleIdFor("https://example.com/x", "reference/notes/page")).toBeNull();
   expect(bundleIdFor("/absolute/path.md", "reference/notes/page")).toBeNull();
+});
+
+test("a bundle-relative path becomes the repository-relative one, once", () => {
+  expect(repoPathFor("adr/0001-x.md")).toBe("docs/adr/0001-x.md");
+  expect(repoPathFor("docs/already.md")).toBe("docs/already.md");
 });
 
 test("only internal hrefs are pressable, and sections match case-insensitively", () => {

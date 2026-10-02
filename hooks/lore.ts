@@ -268,6 +268,7 @@ export function parseRead(read: Run, tasks: Run, id: string): ReadResult {
   const doc: ConceptDoc = {
     id: asString(data.id) ?? id,
     path: asString(data.path) ?? "",
+    repoPath: repoPathFor(asString(data.path) ?? ""),
     type: asString(data.type) ?? asString(frontmatter.type) ?? "Concept",
     title: asString(frontmatter.title) ?? id,
     summary: asString(frontmatter.summary),
@@ -280,6 +281,19 @@ export function parseRead(read: Run, tasks: Run, id: string): ReadResult {
   };
 
   return { ok: true, doc };
+}
+
+/**
+ * The repository-relative path of a concept file.
+ *
+ * `lore read` reports `path` relative to the bundle, and the bundle directory
+ * is lore's own constant (`docs/`, src/core/scaffold.ts DOCS_DIR); no CLI
+ * surface reports the repository-relative path, so the prefix is applied once
+ * here. `lore validate` and `$.fs` both address files from the repository
+ * root, which is why the pane carries this as `repoPath`.
+ */
+export function repoPathFor(bundlePath: string): string {
+  return bundlePath.startsWith("docs/") ? bundlePath : `docs/${bundlePath}`;
 }
 
 export function parseCreated(run: Run): Created {
