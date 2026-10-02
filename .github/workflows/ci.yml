@@ -825,3 +825,63 @@ jobs:
           path: docker/e2e/results/report.jsonl
           if-no-files-found: warn
           overwrite: true
+
+  mod-gate:
+    # LCLI-664. The opum-lore plugin ships a hooks module (a "mod"): hooks/register.tsx draws
+    # the Lore pane, and tests/ holds the tests Claude Code's own engine runs for it. Neither
+    # is executed by anything else in this workflow — the mod's tests import
+    # 'claude-code/testing', which exists only inside that engine, and tests/ is deliberately
+    # NOT this repository's CLI suite under test/ (bunfig.toml's [test] pathIgnorePatterns
+    # keeps `bun test` out of it) — so the one gate over them is scripts/mod-test.mjs
+    # (`bun run test:mod`), which stages what the plugin ships and runs `claude plugin
+    # validate --strict` plus `claude plugin test` against the stage.
+    #
+    # The pin is the fleet freeze, 2.1.287: mods need >= 2.1.287, and the harness fails rather
+    # than skipping on anything older, so a runner that resolves a different CLI is red here
+    # rather than quietly testing another build.
+    #
+    # NOT a required context, deliberately: this change adds it to no ruleset. Plain ASCII
+    # name, so that if it is ever promoted it can be typed into the ruleset without a
+    # codepoint check.
+    name: mod gate (opum-lore plugin)
+    # The shared narrow-mode skip guard, as on every job but `check` and the two promotion
+    # guardrails; test/ci-workflow.test.ts asserts it on every job that has it.
+    if: github.event_name != 'workflow_dispatch' || inputs.ladybug_exact_hosts_only != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: ./.github/actions/setup-bun
+      # Node is not used by the harness itself; it is how the Claude Code CLI is installed,
+      # and the pinned setup-node + global-install pattern is the one the tracker, docs and
+      # build jobs already use for the quest binary.
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+      - name: Install the Claude Code CLI the mod's tests are run by
+        run: |
+          set -euo pipefail
+          npm install -g @anthropic-ai/claude-code@2.1.287
+          # The wrapper package's own postinstall copies the platform-native binary over the
+          # bin/claude.exe stub, and npm may gate dependency lifecycle scripts (measured on
+          # npm 12.2.0: the install prints "install scripts blocked" and leaves the stub,
+          # whose `claude --version` exits 1). The remedy the stub itself names is run
+          # unconditionally rather than probed for: it is idempotent, it removes the
+          # dependency on the runner's npm policy, and `claude --version` below fails this
+          # step if the result is not a working binary. Validated against an unauthenticated
+          # npm install: validate and test are local engine operations and make no model calls.
+          node "$(npm root -g)/@anthropic-ai/claude-code/install.cjs"
+          claude --version
+      # The versions this gate resolved, in the log rather than inferred from the pin: a
+      # reader comparing a run against their own machine needs the numbers, not the exit code.
+      - name: Toolchain
+        run: |
+          echo "bun $(bun --version)"
+          echo "node $(node --version)"
+          echo "claude $(claude --version)"
+      # Routed through ci-quiet-gate.sh (LCLI-661): the harness replays the engine's output
+      # for source-controlled test files, and the runner parses a step's stdout as workflow
+      # commands — the same reason the tracker and docs gates are routed. The script keeps
+      # the child's exit status, so the gate gates exactly as it would bare.
+      - name: Run the mod gate
+        run: scripts/ci-quiet-gate.sh node scripts/mod-test.mjs

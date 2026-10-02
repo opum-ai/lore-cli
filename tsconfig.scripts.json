@@ -18,6 +18,17 @@
 //   scripts/                  .mjs       — HERE + biome.json
 //   bin/                      .cjs       — HERE + biome.json  (this file SHIPS to users)
 //   playwright.config.ts      root .ts   — tsconfig.json already; biome.json now too
+//   hooks/ (.ts/.tsx), types/ (.d.ts), tests/ (.ts/.tsx)  — the mod's three directories (LCLI-664),
+//     covered by the mod's own harness (scripts/mod-test.mjs, `bun run test:mod`) and deliberately NOT
+//     here: neither tsconfig's include names them, and biome.json's includes do not either (measured
+//     2026-10-02 with a positive control: a file outside those globs is not scanned at all). What the
+//     harness runs is the whole coverage -- `claude plugin validate --strict` reads the module's source,
+//     `claude plugin test` runs tests/ against the engine, and tsc runs against the engine's declaration
+//     (laid beside the stage, or the plugin-authoring skill's in temp); with no declaration the harness
+//     reports NOT TYPECHECKED rather than passing quietly. `bun test` never sees tests/ (bunfig.toml
+//     [test] pathIgnorePatterns), and hooks/register.tsx is the stage guard's hook.
+//   .claude-plugin/           .json      — `claude plugin validate --strict`, in that same harness, reads
+//     the manifest; biome's "*.json" glob is root-only.
 //   docker/, evals/, npm/, patches/, research/, skills/, archive/  — no .ts/.js/.mjs/.cjs
 //     tracked at all, so there is nothing to include. Re-check if that changes.
 //

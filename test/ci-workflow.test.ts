@@ -90,6 +90,7 @@ describe("ci.yml exact-host LadybugDB qualification", () => {
       "scaffold-mkdocs",
       "scaffold-docusaurus",
       "docker-e2e",
+      "mod-gate",
     ]);
 
     // promotion-is-manual (LCLI-458) is a pull_request-scoped promotion guardrail, not

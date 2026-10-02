@@ -1,7 +1,7 @@
 {
   "name": "opum-lore",
   "version": "0.12.0",
-  "description": "Drive the lore CLI: author, retrieve, and maintain OKF documentation bundles, including explicit multi-repository workspaces. Cut from the same lore-cli repository and tag as the CLI itself, so this skill can never describe a version you don't have.",
+  "description": "Drive the lore CLI: author, retrieve, and maintain OKF documentation bundles, including explicit multi-repository workspaces. Cut from the same lore-cli repository and tag as the CLI itself, so this skill can never describe a version you don't have. Also ships the Lore pane: a pane that browses, reads (rendered and raw), searches, creates and edits the repository's documentation bundle through the lore CLI, editable in the session's own repository.",
   "author": {
     "name": "Opum AI",
     "url": "https://github.com/opum-ai"
@@ -9,5 +9,6 @@
   "homepage": "https://github.com/opum-ai/lore-cli",
   "repository": "https://github.com/opum-ai/lore-cli",
   "license": "MIT",
-  "keywords": ["lore", "documentation", "okf", "docs", "cli"]
+  "keywords": ["lore", "documentation", "okf", "docs", "cli"],
+  "types": "./types/index.d.ts"
 }

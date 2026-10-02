@@ -25,6 +25,11 @@
     // Bun runtime globals (Bun.spawn, Bun.file, process, …).
     "types": ["bun"]
   },
+  // The mod's hooks/ (.ts/.tsx), types/ (.d.ts) and tests/ (.ts/.tsx) are deliberately NOT here: these
+  // globs stop at .ts, and the mod's own harness covers them end to end -- scripts/mod-test.mjs
+  // (`bun run test:mod`, LCLI-664) runs `claude plugin validate --strict`, `claude plugin test` and
+  // tsc against the Claude Code engine's declaration. tsconfig.scripts.json's coverage covenant
+  // records every top-level directory and what covers it.
   "include": ["src/**/*.ts", "test/**/*.ts", "benchmark/**/*.ts", "scripts/**/*.ts", "*.ts"],
   "exclude": ["node_modules", "dist"]
 }
