@@ -294,6 +294,7 @@
 - 2026-09-29T19:00:23-05:00 09d15238335b7f9e400c7c15cd7fbd4993c92598 docs(LCLI-655): land the DEC-57 draft ADR — lore init stops and instructs (no installs) (#436)
 - 2026-09-29T21:03:34-05:00 488b66a983bf30c220a9ad248744f03e9954f589 feat(LCLI-656): lore init detects, offers, and instructs — it never installs (ADR-0024, DEC-57) (#440)
 - 2026-09-30T23:17:48-05:00 0d568f0f0d353511435107a7c1ea57018682fd2d fix(LCLI-662): reserve the query section's worst case in the capacity measurement (DEC-98 B) (#460)
+- 2026-10-02T12:07:00-05:00 38f2affd4df8470019293189c09ddbaa0b28ecd4 docs(LCLI-664): describe the Lore pane mod
 
 ## docs/adr
 
@@ -393,6 +394,7 @@
 - 2026-09-29T04:14:34-05:00 32944509c545ffb8932af655c2f16092c035d7df chore(LCLI-648): pin Bun 1.4.2, keeping lore on the same runtime as quest-cli (#414)
 - 2026-09-29T10:51:37-05:00 50a02c5b50cb20bc6a326feba1b26a52e483e806 feat(LCLI-652): read the bundle across refs with `lore query --across-refs` (#429)
 - 2026-09-30T13:33:52-05:00 a60a4f27863a14aa29d37c63b028ab94724c28b5 docs(LCLI-621): the release-truth record now states 0.12.0 is released (#450)
+- 2026-10-02T12:38:10-05:00 07dbc136fd2e949fc9bb463caff18ee193557866 fix(LCLI-664): address the pre-landing review findings in the Lore pane mod
 
 ## docs/runbooks
 

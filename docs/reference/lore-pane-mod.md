@@ -221,10 +221,13 @@ The orchestrator's review of 2026-10-02 settled where design choices are recorde
 **ADRs only for decisions the operator actually makes**; the module's own choices go in
 this Reference and on the task record. These are the module's own:
 
-- **Repository-only scope in v1.** The pane resolves the session's git toplevel and
-  reads and writes there. A fleet/workspace view — reading other repositories' bundles
-  through a Lore workspace manifest — is deferred to the operator's open question;
-  `opum-family` currently fails to load because one member does not validate.
+- **Repository-only scope in v1** — the operator's, and now decided:
+  [ADR-0027](../adr/0027-the-lore-pane-reads-only-the-session-s-own-repository-bundle-in-v1-dec-133.md)
+  (DEC-133 A, 2026-10-02). The pane resolves the session's git toplevel and reads and
+  writes there. A fleet/workspace view — reading other repositories' bundles through a
+  Lore workspace manifest — follows that decision, not an open question; `opum-family`
+  currently fails to load because one member does not validate, which is `opum-doc`'s
+  open item.
 - **One canonical source.** The module was built in the repo layout from the start
   rather than as a dev-mods hot-reload copy, so there is a single source and the same
   staged validate/test/tsc loop runs locally and in CI.
@@ -235,17 +238,28 @@ this Reference and on the task record. These are the module's own:
   scanned at all).
 - **No local id allocation.** New hands the type, title, summary and tags to
   `lore new` and opens whatever id comes back.
-- **Body editing is not yet the operator's chosen arm.** The brief named three arms —
-  an external editor, an in-pane editor, or Claude-assisted only — and the operator's
-  question has not been answered as of 2026-10-02. Until it is relayed, the pane ships
-  Claude-assisted revision (Ask Claude…) and the fields form; the selected arm is
-  LCLI-664's separate acceptance criterion.
+- **Body editing is decided — both arms** — and the operator's, not the module's:
+  [ADR-0026](../adr/0026-the-lore-pane-s-body-editing-ships-a-lightweight-inline-editor-and-a-desktop-editor-action-dec-132.md)
+  (DEC-132, 2026-10-02). A lightweight inline editor in a `Client` region — text,
+  cursor, insert/delete, undo/redo, saving through the same `lore validate` path — plus
+  a separate action that opens the document in the person's own editor. "Lightweight" is
+  the operator's scoping: no highlighting while typing, no multi-cursor, no in-editor
+  search. The same relay carried the instruction that decided how it is built: reuse a
+  well-supported framework rather than building one — which the engine's own elements
+  answer for Markdown, diff and highlighting, and a vendored, recorded CodeMirror state
+  answers for the editing model. The arm is LCLI-664's sixth acceptance criterion.
 
 ## What is deliberately not here
 
-- **No ADR.** The operator's design questions (body editing; fleet view; one mod or
-  two) are unanswered as of 2026-10-02. Their answers, once relayed, are recorded
-  verbatim as ADRs under LCLI-664 — not re-derived here, and not decided locally.
+- **No ADR of the module's own.** The operator's questions are recorded as their own
+  ADRs, with their answers verbatim —
+  [ADR-0026](../adr/0026-the-lore-pane-s-body-editing-ships-a-lightweight-inline-editor-and-a-desktop-editor-action-dec-132.md)
+  for body editing and
+  [ADR-0027](../adr/0027-the-lore-pane-reads-only-the-session-s-own-repository-bundle-in-v1-dec-133.md)
+  for fleet view (both 2026-10-02). The module's choices are the bullets above, and
+  nothing here re-derives an operator decision or settles one locally. The third
+  question — one mod or two — is still with the operator and is answered before any
+  release.
 - **No behaviour beyond the tests.** Anything the tests do not press is unclaimed
   above, and the pane's shape is described at its landing commit rather than at what
   the brief proposed.
