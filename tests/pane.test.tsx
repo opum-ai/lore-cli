@@ -648,3 +648,336 @@ test("a run that fails fast keeps its own message, not the timeout's", async ($,
   expect(await ui.find({ type: "Text", text: /did not answer within/ })).toBeUndefined();
   await ui.unmount();
 });
+
+// ── The full-screen toggle (LCLI-666) ─────────────────────────────────────────
+
+/** Every `$.ui.open` the module made, in order: the args are what the toggle is. */
+function captureOpens(on: On): Record<string, unknown>[] {
+  const opens: Record<string, unknown>[] = [];
+  on("ui.open", async (_$, e) => {
+    opens.push({ ...e });
+
+    return { value: { isPlaced: true } };
+  });
+
+  return opens;
+}
+
+/**
+ * The two engine answers a session needs beneath it: nothing answers them on its
+ * own, so a test that starts a session says what the session start and the
+ * command registration return.
+ */
+function mockSession(on: On): void {
+  on("command.register", async (_$, e) => ({ value: { command: e.name } }));
+  // `session.start` is one of the engine's own events: its hook answers the result
+  // itself, where a plugin-noun event answers `{ value }`.
+  on("session.start", async (_$, e) => ({ cwd: e.cwd }));
+}
+
+/** The props a docked pane draws with: a terminal of `columns` and a body of `bodyColumns`. */
+const docked = (columns: number, bodyColumns: number, rows = 50) => ({
+  ...PANE,
+  placement: "dock" as const,
+  bodyColumns,
+  scroll: { offset: 0, bodyRows: rows - 12 },
+});
+
+/** The props an inline pane draws with: the main screen, a block above the prompt. */
+const inlinePane = (rows: number, bodyRows: number, columns = 100) => ({
+  ...PANE,
+  placement: "inline" as const,
+  bodyColumns: columns,
+  scroll: { offset: 0, bodyRows },
+});
+
+test("z asks for the largest docked width, and a second press asks for the normal share again", async ($, on) => {
+  // The criterion's evidence is the open ARGS the module passes, so they are
+  // asserted whole: an open that carried `closeOnEscape` would make the pane a
+  // dialog rather than a pane, and one that carried a size on the way back would
+  // never return to the normal size.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  const opens = captureOpens(on);
+  for (const surface of ["terminal", "desktop"] as const) {
+    opens.length = 0;
+    const ui = await $.ui.mount({
+      plugin: "opum-lore",
+      surface,
+      component: "Pane",
+      requestId: "lore-pane",
+      props: docked(160, 80),
+      viewport: { columns: 160, rows: 50, isFullscreen: true },
+    });
+    // The hotkey is the pane's only key hook: a Button's `hotkey` is pressed while
+    // the pane holds the focus, which is how `z` reaches the toggle.
+    expect((await ui.find({ key: "full" }))?.props.hotkey).toBe("z");
+
+    await ui.press({ key: "full" });
+    await clock.settle();
+    // 160 columns of terminal, less the transcript margin the design keeps.
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true, columns: 140 });
+
+    await ui.press({ key: "full" });
+    await clock.settle();
+    // Back to the normal size: no `columns` at all, which is the request for the
+    // surface's own share (`PaneOpenArgs`: left out, the share).
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true });
+    await ui.unmount();
+  }
+});
+
+test("an inline pane asks for rows, the viewport less the prompt area", async ($, on) => {
+  // The other axis: on the main screen the pane is a block above the prompt, so
+  // it is `rows` that asks for its size and a `columns` request is ignored.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  const opens = captureOpens(on);
+  for (const surface of ["terminal", "desktop"] as const) {
+    opens.length = 0;
+    const ui = await $.ui.mount({
+      plugin: "opum-lore",
+      surface,
+      component: "Pane",
+      requestId: "lore-pane",
+      props: inlinePane(40, 12),
+      viewport: { columns: 100, rows: 40, isFullscreen: false },
+    });
+    await ui.press({ key: "full" });
+    await clock.settle();
+    // 40 rows of surface less the prompt area (PROMPT_AREA_ROWS in the module).
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true, rows: 32 });
+    await ui.press({ key: "full" });
+    await clock.settle();
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true });
+    await ui.unmount();
+  }
+});
+
+test("a pane at its normal size asks the surface for nothing", async ($, on) => {
+  // The control for the toggle: without a mode change there is no size to ask
+  // for, so the pane must not reopen on every draw. `session.start` opens it
+  // unsized and unfocused, and the draws after that add nothing.
+  mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  const opens = captureOpens(on);
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  expect(opens).toEqual([{ id: "lore-pane", title: "Lore" }]);
+  opens.length = 0;
+  const ui = await $.ui.mount({
+    plugin: "opum-lore",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "lore-pane",
+    props: docked(160, 80),
+    viewport: { columns: 160, rows: 50, isFullscreen: true },
+  });
+  expect(opens).toEqual([]);
+  await ui.unmount();
+});
+
+test("the full-or-normal choice is written to the plugin's store, and a session opens where it was left", async ($, on) => {
+  // The setting is read at session start and written on every toggle, so the test
+  // reads it the way the module does: a session start, then a draw. The first
+  // session of each round starts from a store holding `full` and asks for the full
+  // width; the toggle then writes `normal`, and the SECOND session of the round
+  // asks for nothing -- which it can only do if what it read was the toggle's
+  // write. A write that never landed would leave the store at `full` and this
+  // session would ask for the full width again.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on, { "pane-mode": "full" });
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  const opens = captureOpens(on);
+  const start = () => $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  for (const surface of ["terminal", "desktop"] as const) {
+    await start();
+    opens.length = 0;
+    const restored = await $.ui.mount({
+      plugin: "opum-lore",
+      surface,
+      component: "Pane",
+      requestId: "lore-pane",
+      props: docked(160, 80),
+      viewport: { columns: 160, rows: 50, isFullscreen: true },
+    });
+    await clock.settle();
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true, columns: 140 });
+    // The draw that asked says so too: the toggle offers the way back.
+    expect((await restored.find({ key: "full" }))?.props.label).toBe("Normal size");
+    await restored.press({ key: "full" });
+    await clock.settle();
+    await restored.unmount();
+
+    await start();
+    opens.length = 0;
+    const reopened = await $.ui.mount({
+      plugin: "opum-lore",
+      surface,
+      component: "Pane",
+      requestId: "lore-pane",
+      props: docked(160, 80),
+      viewport: { columns: 160, rows: 50, isFullscreen: true },
+    });
+    await clock.settle();
+    expect(opens).toEqual([]);
+    expect((await reopened.find({ key: "full" }))?.props.label).toBe("Full screen");
+    // Left at `full` again, so the next round's premise is the one it started from.
+    await reopened.press({ key: "full" });
+    await clock.settle();
+    await reopened.unmount();
+  }
+});
+
+test("a session starting with no remembered choice opens at the normal size", async ($, on) => {
+  // The control for the restore above: the same session, the same store, with
+  // nothing remembered.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  const opens = captureOpens(on);
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  opens.length = 0;
+  const ui = await $.ui.mount({
+    plugin: "opum-lore",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "lore-pane",
+    props: docked(160, 80),
+    viewport: { columns: 160, rows: 50, isFullscreen: true },
+  });
+  await clock.settle();
+  expect(opens).toEqual([]);
+  await ui.unmount();
+});
+
+test("a pane that did not get the size it asked for says so, in one line", async ($, on) => {
+  // The engine keeps a size the person dragged, and the request is a request. The
+  // pane then says what it is and what to press rather than claiming the size it
+  // asked for. Measured against the size the module itself would ask for from the
+  // viewport it was handed, so a body that matches it shows no hint -- which is
+  // the control, in the same test.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on, { "pane-mode": "full" });
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  captureOpens(on);
+  const HINT = "Drag the pane edge to resize; z switches layouts";
+  for (const surface of ["terminal", "desktop"] as const) {
+    // Asked for 140 (160 less the margin), drawn 60: not the size it asked for.
+    await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+    const dragged = await $.ui.mount({
+      plugin: "opum-lore",
+      surface,
+      component: "Pane",
+      requestId: "lore-pane",
+      props: docked(160, 60),
+      viewport: { columns: 160, rows: 50, isFullscreen: true },
+    });
+    await clock.settle();
+    expect(await dragged.find({ type: "Text", text: HINT })).toBeDefined();
+    await dragged.unmount();
+
+    // Asked for 140, drawn 140: the hint is not drawn, so it is earned by the
+    // size rather than shown whenever the pane is in full mode.
+    const granted = await $.ui.mount({
+      plugin: "opum-lore",
+      surface,
+      component: "Pane",
+      requestId: "lore-pane",
+      props: docked(160, 140),
+      viewport: { columns: 160, rows: 50, isFullscreen: true },
+    });
+    await clock.settle();
+    expect(await granted.find({ type: "Text", text: HINT })).toBeUndefined();
+    await granted.unmount();
+  }
+});
+
+test("a pane at its normal size shows no hint, however small the surface keeps it", async ($, on) => {
+  // The second control: only a pane that asked for a size can have been denied
+  // one, so a normal-size pane says nothing about the size it drew at.
+  mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  captureOpens(on);
+  const ui = await $.ui.mount({
+    plugin: "opum-lore",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "lore-pane",
+    props: docked(160, 60),
+    viewport: { columns: 160, rows: 50, isFullscreen: true },
+  });
+  expect(await ui.find({ type: "Text", text: /Drag the pane edge to resize/ })).toBeUndefined();
+  await ui.unmount();
+});
+
+test("the pane command toggles with its argument and answers with the state it left", async ($, on) => {
+  // `/lore-pane full` is the toggle's other arm, and `args` carries everything
+  // after the name. The answer names the state, and an argument that is not
+  // `full` changes nothing rather than being guessed at.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  const opens = captureOpens(on);
+  // `args` is "" for a bare `/lore-pane`, which is what the engine passes when the
+  // person types the name alone; the presentation is the docked fullscreen layout.
+  const run = (args: string) =>
+    $.command.run({
+      command: "lore-pane",
+      args,
+      origin: { kind: "composer" },
+      presentation: { isFullscreen: true, columns: 160 },
+    });
+
+  // The argument is a toggle, and each answer names the state it left.
+  expect((await run("full")).text).toBe("Lore pane is full screen.");
+  expect((await run("full")).text).toBe("Lore pane is at its normal size.");
+
+  // An argument that is not `full` is refused rather than guessed at, and leaves
+  // the pane where it was.
+  const refused = await run("sideways");
+  expect(refused.text).toContain("full");
+  expect((await run("")).text).toBe("Lore pane opened.");
+
+  // The bare command reopens the pane at the size it remembers. Docked, the
+  // command's own columns are enough to ask with (160 less the margin); at the
+  // normal size there is no size to ask for at all.
+  await clock.settle();
+  expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true });
+  await run("full");
+  expect((await run("")).text).toBe("Lore pane is full screen.");
+  await clock.settle();
+  expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true, columns: 140 });
+
+  // And what it left is remembered: the next session starts full.
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  opens.length = 0;
+  const ui = await $.ui.mount({
+    plugin: "opum-lore",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "lore-pane",
+    props: docked(160, 80),
+    viewport: { columns: 160, rows: 50, isFullscreen: true },
+  });
+  await clock.settle();
+  expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true, columns: 140 });
+  await ui.unmount();
+  expect(seen.some((argv) => argv[1] === "query")).toBe(true);
+});

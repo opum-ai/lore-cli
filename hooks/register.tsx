@@ -15,7 +15,7 @@
 import { atom, read, update } from "claude-code";
 import type { EngineInterface, Register } from "claude-code";
 
-import type { Catalog, DocState, Edits, View } from "../types";
+import type { Catalog, DocState, Edits, PaneMode, PaneState, View } from "../types";
 import type { Outcome, Run } from "./lore";
 import {
   BODY_CAP,
@@ -49,6 +49,58 @@ const COMMAND = "lore-pane";
 const REFRESH_MS = 30_000;
 const TIMEOUT_MS = 30_000;
 const ROW_CAP = 120;
+
+// ── The full-screen toggle (LCLI-666) ─────────────────────────────────────────
+
+/** Where the surface seated the pane, as the `Pane` render props carry it. */
+type Placement = "dock" | "inline";
+
+/** The `$.store` key holding the remembered full-or-normal choice (a `PaneMode`). */
+const MODE_KEY = "pane-mode";
+
+/**
+ * The transcript columns a docked full pane leaves visible.
+ *
+ * A request is the largest the surface allows only up to the layout's own
+ * arithmetic, and a docked pane that asks for every column takes the
+ * conversation with it: the design keeps a margin (~20 columns) so the
+ * transcript stays readable beside the pane.
+ */
+const DOCK_MARGIN_COLUMNS = 20;
+
+/**
+ * The rows the prompt area takes on the main screen.
+ *
+ * The engine has no figure for this: `e.viewport.rows` is "cells down the whole
+ * surface" and `RenderViewport` carries nothing for the composer, while the
+ * inline pane's own `scroll.bodyRows` measures the pane rather than the prompt.
+ * So it is one named constant -- a bordered composer (three rows), a status
+ * line and a hint line -- and the request it feeds is a request, not a grant:
+ * the surface clamps to what the layout spares, so a short terminal costs the
+ * pane rows rather than overflowing.
+ */
+const PROMPT_AREA_ROWS = 8;
+
+/**
+ * The cells between the size a request asks for and the size the body measures.
+ *
+ * `columns` and `rows` are the pane's own size; `bodyColumns` is "cells across
+ * the body, inside the frame". One slack covers the frame and the chrome a
+ * surface draws around the body, so a pane that got what it asked for is not
+ * read as short of it.
+ */
+const SIZE_SLACK = 4;
+
+/** The one-line hint a pane shows when the size it drew is not the size it asked for. */
+const FULL_HINT = "Drag the pane edge to resize; z switches layouts";
+
+/**
+ * The normal size, as the request that asks for it: an open with no `columns`
+ * and no `rows`. Both are requests a surface re-reads on every open ("Each open
+ * sets it anew"), so returning to the normal size is asking for the surface's
+ * own share again rather than leaving the last full-size request standing.
+ */
+const NORMAL_REQUEST = "normal";
 
 const view = atom({ plugin: "opum-lore", key: "view" } as const, {
   tab: "browse",
@@ -85,6 +137,21 @@ const edits = atom({ plugin: "opum-lore", key: "edits" } as const, {
   bodyText: "",
   bodyRevision: 0,
 } satisfies Edits);
+
+const pane = atom({ plugin: "opum-lore", key: "pane" } as const, { mode: "normal" } satisfies PaneState);
+
+/**
+ * The size request this pane last made, as `requestKey` names it.
+ *
+ * The render hook is the only place that knows `e.viewport`, so it is the only
+ * place that can size a request -- but a draw is not an event: the asked-for
+ * size must not be re-asked on every draw (the person's own drag wins, so the
+ * drawn size would never come to match it and the pane would ask forever). This
+ * is the guard that makes each distinct request once-only. `NORMAL_REQUEST`
+ * matches the unsized open `session.start` makes, so a session that opens
+ * normally asks nothing until someone toggles.
+ */
+let lastRequest = NORMAL_REQUEST;
 
 // ── The call sites ────────────────────────────────────────────────────────────
 
@@ -201,6 +268,70 @@ async function uncommittedPaths($: EngineInterface, root: string | null): Promis
   } catch {
     return [];
   }
+}
+
+// ── The pane's size ───────────────────────────────────────────────────────────
+
+/**
+ * The size a full-screen request asks for, or null when there is nothing to ask
+ * from: docked panes ask in `columns`, inline ones in `rows` (`PaneOpenArgs`),
+ * and a surface that was never measured -- or one too small to hold the margin
+ * and the pane both -- has no size to request.
+ */
+function wantedSize(placement: Placement, columns: number, rows: number): number | null {
+  const size = placement === "dock" ? columns - DOCK_MARGIN_COLUMNS : rows - PROMPT_AREA_ROWS;
+
+  return size > 0 ? size : null;
+}
+
+/** How a request is named for the once-only guard: the normal share, or a sized request. */
+function requestKey(placement: Placement, wanted: number | null): string {
+  return wanted === null ? NORMAL_REQUEST : `${placement}:${wanted}`;
+}
+
+/**
+ * Asks the surface for the pane, sized when there is a size to ask for.
+ *
+ * `focus` rides every reopen (a request, not a grant: the surface hands the
+ * pane the keyboard only over an empty composer) and `closeOnEscape` is never
+ * passed -- that pair is what would make the pane a dialog rather than a pane.
+ */
+async function requestPane($: EngineInterface, placement: Placement, wanted: number | null): Promise<void> {
+  if (wanted === null) {
+    await $.ui.open({ id: PANE, title: "Lore", focus: true });
+
+    return;
+  }
+  await $.ui.open(
+    placement === "dock"
+      ? { id: PANE, title: "Lore", focus: true, columns: wanted }
+      : { id: PANE, title: "Lore", focus: true, rows: wanted },
+  );
+}
+
+/**
+ * Flips the pane between its normal size and the largest the surface allows.
+ *
+ * The size itself is asked for by the next draw, which is the only place that
+ * knows `e.viewport`; this leaves the choice where a draw will find it. The
+ * store write is best-effort: a store that refuses loses the memory of the
+ * choice, which is not a reason to refuse the toggle.
+ */
+async function togglePane($: EngineInterface): Promise<PaneMode> {
+  const next: PaneMode = (await read($, pane)).mode === "full" ? "normal" : "full";
+  await update($, pane, (state) => ({ ...state, mode: next }));
+  try {
+    await $.store.set(MODE_KEY, next);
+  } catch {
+    // The pane toggles either way; only the next session's memory of it is lost.
+  }
+
+  return next;
+}
+
+/** What the pane says it did, in the words both the command and a toggle answer with. */
+function modeText(mode: PaneMode): string {
+  return mode === "full" ? "Lore pane is full screen." : "Lore pane is at its normal size.";
 }
 
 // ── Actions ───────────────────────────────────────────────────────────────────
@@ -615,6 +746,14 @@ export const register: Register = (on, _options) => {
       description:
         "Open the Lore pane: browse, read (rendered or raw), search, create and edit this repository’s docs through the lore CLI.",
     });
+    // The remembered size is restored here and ASKED for by the first draw: the
+    // session's own surface has not been measured yet (`SessionStartInput` carries
+    // no viewport), and a draw is the first moment `e.viewport` exists. The open
+    // below is the normal-size request this session starts from, which is what
+    // `NORMAL_REQUEST` names for the once-only guard.
+    const remembered: PaneMode = (await $.store.get(MODE_KEY)) === "full" ? "full" : "normal";
+    await update($, pane, (state) => ({ ...state, mode: remembered }));
+    lastRequest = NORMAL_REQUEST;
     void refresh($);
     void countUncommitted($);
     void $.ui.open({ id: PANE, title: "Lore" });
@@ -631,11 +770,30 @@ export const register: Register = (on, _options) => {
     return next(e);
   });
 
-  on("command.run", { command: COMMAND }, async ($) => {
-    await $.ui.open({ id: PANE, title: "Lore", focus: true });
+  on("command.run", { command: COMMAND }, async ($, e) => {
+    const arg = e.args.trim().toLowerCase();
+    if (arg !== "" && arg !== "full") {
+      return { text: `Lore pane: /${COMMAND} takes one argument, \`full\`. "${e.args.trim()}" was not understood.` };
+    }
     void refresh($);
+    if (arg === "full") {
+      // The size is asked for by the draw that follows this state change, which is
+      // the only place that knows the viewport; the answer reports the state the
+      // pane was left in.
+      return { text: modeText(await togglePane($)) };
+    }
+    // The bare command reopens the pane at the size it already remembers. The
+    // command knows its own columns and which layout it runs in, but no rows
+    // (`CommandPresentation`), so only the docked arm can be sized from here: an
+    // inline one opens at the surface's own share and the draw that follows asks
+    // for the height, which is why the guard is left naming what was asked.
+    const mode = (await read($, pane)).mode;
+    const placement: Placement = e.presentation.isFullscreen ? "dock" : "inline";
+    const wanted = mode === "full" && placement === "dock" ? wantedSize(placement, e.presentation.columns, 0) : null;
+    lastRequest = requestKey(placement, wanted);
+    await requestPane($, placement, wanted);
 
-    return { text: "Lore pane opened." };
+    return { text: mode === "full" ? modeText("full") : "Lore pane opened." };
   });
 
   // The inline editor posts its text here; `e.data` is code's, not the engine's, so
@@ -679,6 +837,29 @@ export const register: Register = (on, _options) => {
       );
     }
 
+    // The pane's size: a draw is the only place `e.viewport` exists, so a full-size
+    // request is made here rather than at the key or the command that asked for it.
+    const { mode } = await read($, pane);
+    // A surface that has not measured reports no viewport at all, and 0 stands in
+    // for it here: nothing can be asked for from a surface with no size.
+    const wanted =
+      mode === "full" ? wantedSize(e.props.placement, e.viewport?.columns ?? 0, e.viewport?.rows ?? 0) : null;
+    const request = requestKey(e.props.placement, wanted);
+    if (request !== lastRequest) {
+      // Recorded before the call, so a draw that runs while the open is in flight
+      // does not ask a second time for the same size.
+      lastRequest = request;
+      void requestPane($, e.props.placement, wanted);
+    }
+    // The size actually drawn, against the size asked for. Only ever compared in
+    // full mode: the normal size is whatever the surface's own share is, so there
+    // is nothing there for the pane to have been denied. The hint says the pane is
+    // not the size it asked for, which is also what a surface that clamped the
+    // request to what the layout spares looks like -- the render event carries the
+    // drawn size, not why it is that size, so a drag and a clamp are one signal.
+    const drawn = e.props.placement === "dock" ? e.props.bodyColumns : e.props.scroll.bodyRows;
+    const shortOfFull = wanted !== null && drawn < wanted - SIZE_SLACK;
+
     const elements = $.ui.resolve(e);
     const { Box, Button, Code, Input, Markdown, Select, Text } = elements;
     // Only the terminal and desktop surfaces carry `Client` — the vscode surface does
@@ -698,6 +879,15 @@ export const register: Register = (on, _options) => {
     // explicit height breaks that feedback loop: what is drawn no longer decides how
     // much room there is to draw it in. Sized off the pane, less the Read tab's chrome.
     const editorRows = Math.max(6, Math.min(24, e.props.scroll.bodyRows - 12));
+
+    // The one line the pane shows instead of claiming a size it did not get. It says
+    // what the pane is short of and what to press, and never which of the two ways it
+    // got there: the render event carries the drawn size, not its reason.
+    const fullHint = shortOfFull ? (
+      <Text dimColor wrap="truncate">
+        {FULL_HINT}
+      </Text>
+    ) : null;
 
     const tabs = (
       <Box>
@@ -740,6 +930,13 @@ export const register: Register = (on, _options) => {
           label={current.acrossRefs ? "Refs: on" : "Refs: off"}
           hotkey="a"
           onPress={() => void toggleAcross($)}
+        />
+        <Text> </Text>
+        <Button
+          key="full"
+          label={mode === "full" ? "Normal size" : "Full screen"}
+          hotkey="z"
+          onPress={() => void togglePane($)}
         />
       </Box>
     );
@@ -803,6 +1000,7 @@ export const register: Register = (on, _options) => {
         <Box flexDirection="column">
           {tabs}
           {statusLine}
+          {fullHint}
           {strip}
           <Text dimColor wrap="truncate">
             {concepts.length} {concepts.length === 1 ? "concept" : "concepts"}
@@ -840,6 +1038,7 @@ export const register: Register = (on, _options) => {
         <Box flexDirection="column">
           {tabs}
           {statusLine}
+          {fullHint}
           <Input
             key="search-text"
             placeholder="Search the bundle"
@@ -898,6 +1097,7 @@ export const register: Register = (on, _options) => {
         <Box flexDirection="column">
           {tabs}
           {statusLine}
+          {fullHint}
           {typeOptions.length === 0 ? (
             <Text dimColor>No type vocabulary read yet — press Refresh.</Text>
           ) : (
@@ -997,6 +1197,7 @@ export const register: Register = (on, _options) => {
         <Box flexDirection="column">
           {tabs}
           {statusLine}
+          {fullHint}
           <Text dimColor>Pick a document from Browse or Search.</Text>
         </Box>
       );
@@ -1114,6 +1315,7 @@ export const register: Register = (on, _options) => {
       <Box flexDirection="column">
         {tabs}
         {statusLine}
+        {fullHint}
         {strip}
         <Box>
           <Text bold wrap="truncate">
