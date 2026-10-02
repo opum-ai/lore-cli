@@ -147,7 +147,10 @@ test("browse lists concepts, opens one, navigates back, and toggles raw", async 
     expect(await ui.find({ type: "Markdown", text: /The body of the notes\./ })).toBeDefined();
 
     await ui.press({ key: "view-raw" });
-    expect(await ui.find({ type: "Code" })).toBeDefined();
+    // The Raw view shows the source FILE, frontmatter included -- asserted on the
+    // Code element's own text, so a view that drew only the body fails here
+    // (LCLI-664 acceptance criterion 2).
+    expect(await ui.find({ type: "Code", text: /type: Reference/ })).toBeDefined();
 
     await ui.press({ key: "tab-browse" });
     await ui.press({ key: "open-reference/notes" });
