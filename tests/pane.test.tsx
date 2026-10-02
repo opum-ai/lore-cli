@@ -675,6 +675,38 @@ function mockSession(on: On): void {
   on("session.start", async (_$, e) => ({ cwd: e.cwd }));
 }
 
+/**
+ * The children of the first element carrying `key`, in drawing order: the split's
+ * two columns as the surface received them, so which is left and which is right is
+ * measured rather than assumed from the two being present.
+ */
+function childrenUnder(node: unknown, key: string): unknown[] {
+  if (typeof node !== "object" || node === null) {
+    return [];
+  }
+  const element = node as { props?: Record<string, unknown>; children?: unknown };
+  if (element.props?.key === key) {
+    return Array.isArray(element.children)
+      ? element.children
+      : element.children === undefined
+        ? []
+        : [element.children];
+  }
+  const children = Array.isArray(element.children)
+    ? element.children
+    : element.children === undefined
+      ? []
+      : [element.children];
+  for (const child of children) {
+    const found = childrenUnder(child, key);
+    if (found.length > 0) {
+      return found;
+    }
+  }
+
+  return [];
+}
+
 /** The props a docked pane draws with: a terminal of `columns` and a body of `bodyColumns`. */
 const docked = (columns: number, bodyColumns: number, rows = 50) => ({
   ...PANE,
@@ -980,4 +1012,137 @@ test("the pane command toggles with its argument and answers with the state it l
   expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true, columns: 140 });
   await ui.unmount();
   expect(seen.some((argv) => argv[1] === "query")).toBe(true);
+});
+
+// ── The side-by-side layout (LCLI-666, design section 1's layout bullet) ──────
+
+/** A full-mode docked pane of `bodyColumns` cells, which is what the split is measured on. */
+const splitPane = (bodyColumns: number) => ({
+  plugin: "opum-lore" as const,
+  component: "Pane" as const,
+  requestId: "lore-pane",
+  props: docked(160, bodyColumns, 50),
+  viewport: { columns: 160, rows: 50, isFullscreen: true },
+});
+
+test("in full mode at 120 body columns Read draws the bundle list beside the document", async ($, on) => {
+  // The design keeps the list in a left column with the document on the right from
+  // 120 body columns, and the stacked layout below that. The list is the same bundle
+  // list Browse draws, with the open document at full strength; the document is the
+  // tree the stacked Read draws, so both are asserted in the one drawing.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on, { "pane-mode": "full" });
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  captureOpens(on);
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  // Open a document once, from Browse, where the row is the tab's own body rather
+  // than the split's left column: every mount after this one draws the Read tab with
+  // it already open, which is also the state the threshold is measured in.
+  const browse = await $.ui.mount({ ...splitPane(140), surface: "terminal" });
+  await clock.settle();
+  await browse.press({ key: "tab-browse" });
+  await browse.press({ key: "refresh" });
+  await browse.press({ key: "open-adr/0001-x" });
+  await browse.unmount();
+
+  for (const surface of ["terminal", "desktop"] as const) {
+    // At 140, and at exactly the 120 the design names: the list is drawn beside the
+    // document. One column under it is the control, and the drawing is otherwise the
+    // same one -- the document is there in all three.
+    for (const columns of [140, 120, 119]) {
+      const ui = await $.ui.mount({ ...splitPane(columns), surface });
+      await clock.settle();
+      const [row, sibling, document] = await Promise.all([
+        ui.find({ key: "open-adr/0001-x" }),
+        ui.find({ key: "open-reference/notes" }),
+        ui.find({ type: "Markdown", text: /The body of the notes\./ }),
+      ]);
+      // The document is drawn either way; the list and its container only at 120+.
+      expect(document).toBeDefined();
+      const split = await ui.find({ key: "side-by-side" });
+      if (columns >= 120) {
+        expect(split).toBeDefined();
+        expect(row).toBeDefined();
+        // The open document's own row is at full strength; its sibling stays dim.
+        expect(row?.props.dimColor).toBe(false);
+        expect(sibling?.props.dimColor).toBe(true);
+        // The list is the LEFT column and the document the right one, which the two
+        // being drawn in one row does not by itself say.
+        const [left, right] = childrenUnder(await ui.drawn(), "side-by-side");
+        expect(JSON.stringify(left)).toContain("open-adr/0001-x");
+        expect(JSON.stringify(left)).not.toContain("The body of the notes.");
+        expect(JSON.stringify(right)).toContain("The body of the notes.");
+        expect(JSON.stringify(right)).not.toContain('"open-adr/0001-x"');
+      } else {
+        expect(split).toBeUndefined();
+        expect(row).toBeUndefined();
+      }
+      await ui.unmount();
+    }
+  }
+});
+
+test("in full mode at 120 body columns Search draws the results beside the document", async ($, on) => {
+  // On Search the list is the results. The form that makes them stays pane-wide, and
+  // the open document's own hit is at full strength beside the document it names.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on, { "pane-mode": "full" });
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  captureOpens(on);
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  for (const surface of ["terminal", "desktop"] as const) {
+    const search = async (bodyColumns: number) => {
+      const ui = await $.ui.mount({ ...splitPane(bodyColumns), surface });
+      await clock.settle();
+      await ui.press({ key: "refresh" });
+      await ui.press({ key: "open-adr/0001-x" });
+      await ui.press({ key: "tab-search" });
+      await ui.input({ key: "search-text", text: "notes" });
+
+      return ui;
+    };
+
+    const split = await search(140);
+    expect(await split.find({ key: "side-by-side" })).toBeDefined();
+    // Both lists are drawn at once: the results on the left, the document on the right.
+    expect(await split.find({ key: "open-adr/0001-x" })).toBeDefined();
+    expect(await split.find({ type: "Markdown", text: /The body of the notes\./ })).toBeDefined();
+    expect((await split.find({ key: "open-adr/0001-x" }))?.props.dimColor).toBe(false);
+    const [results, document] = childrenUnder(await split.drawn(), "side-by-side");
+    expect(JSON.stringify(results)).toContain("open-adr/0001-x");
+    expect(JSON.stringify(results)).not.toContain("The body of the notes.");
+    expect(JSON.stringify(document)).toContain("The body of the notes.");
+    await split.unmount();
+
+    // Below the threshold the results are still drawn, stacked under the form.
+    const stacked = await search(119);
+    expect(await stacked.find({ key: "side-by-side" })).toBeUndefined();
+    expect(await stacked.find({ key: "open-adr/0001-x" })).toBeDefined();
+    await stacked.unmount();
+  }
+});
+
+test("the split is full mode's, not a wide pane's on its own", async ($, on) => {
+  // The design adapts the layout "in full mode". A normal-size pane that happens to
+  // be wide -- a docked pane on a wide terminal -- keeps the stacked layout, so the
+  // split is the mode's and not only the width's.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  captureOpens(on);
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  const ui = await $.ui.mount({ ...splitPane(140), surface: "terminal" });
+  await clock.settle();
+  await ui.press({ key: "refresh" });
+  await ui.press({ key: "open-adr/0001-x" });
+  expect(await ui.find({ key: "side-by-side" })).toBeUndefined();
+  expect(await ui.find({ key: "open-adr/0001-x" })).toBeUndefined();
+  expect(await ui.find({ type: "Markdown", text: /The body of the notes\./ })).toBeDefined();
+  await ui.unmount();
 });

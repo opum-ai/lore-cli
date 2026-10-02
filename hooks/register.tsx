@@ -95,6 +95,20 @@ const SIZE_SLACK = 4;
 const FULL_HINT = "Drag the pane edge to resize; z switches layouts";
 
 /**
+ * The body columns from which the pane draws its list in a left column and the
+ * document in the right one, instead of stacked (design: "at least 120 body
+ * columns", the same threshold the Quest board splits at). Below it -- and outside
+ * full mode, where the pane is whatever size the surface's share gave it -- both
+ * tabs keep the stacked layout.
+ */
+const SIDE_BY_SIDE_COLUMNS = 120;
+
+/** One line of the bundle list: a type's heading, or a concept that opens. */
+type BrowseRow =
+  | { kind: "group"; key: string; type: string; count: number }
+  | { kind: "row"; key: string; id: string; title: string };
+
+/**
  * The normal size, as the request that asks for it: an open with no `columns`
  * and no `rows`. Both are requests a surface re-reads on every open ("Each open
  * sets it anew"), so returning to the normal size is asking for the surface's
@@ -889,94 +903,21 @@ export const register: Register = (on, _options) => {
       </Text>
     ) : null;
 
-    const tabs = (
-      <Box>
-        <Button
-          key="tab-browse"
-          label="Browse"
-          hotkey="1"
-          variant={current.tab === "browse" ? "primary" : undefined}
-          onPress={() => void showTab($, "browse")}
-        />
-        <Text> </Text>
-        <Button
-          key="tab-read"
-          label="Read"
-          hotkey="2"
-          variant={current.tab === "read" ? "primary" : undefined}
-          onPress={() => void showTab($, "read")}
-        />
-        <Text> </Text>
-        <Button
-          key="tab-search"
-          label="Search"
-          hotkey="3"
-          variant={current.tab === "search" ? "primary" : undefined}
-          onPress={() => void showTab($, "search")}
-        />
-        <Text> </Text>
-        <Button
-          key="tab-new"
-          label="New"
-          hotkey="4"
-          variant={current.tab === "new" ? "primary" : undefined}
-          onPress={() => void showTab($, "new")}
-        />
-        <Text> </Text>
-        <Button key="refresh" label="Refresh" hotkey="r" onPress={() => void refresh($)} />
-        <Text> </Text>
-        <Button
-          key="across"
-          label={current.acrossRefs ? "Refs: on" : "Refs: off"}
-          hotkey="a"
-          onPress={() => void toggleAcross($)}
-        />
-        <Text> </Text>
-        <Button
-          key="full"
-          label={mode === "full" ? "Normal size" : "Full screen"}
-          hotkey="z"
-          onPress={() => void togglePane($)}
-        />
-      </Box>
-    );
+    // The split layout, and how wide its list column is. The column takes about a
+    // third of the body, kept inside a width a title reads at: under ~24 columns a
+    // title is all ellipsis, and past ~48 the list costs the document more than a
+    // list of titles earns back.
+    const sideBySide = mode === "full" && e.props.bodyColumns >= SIDE_BY_SIDE_COLUMNS;
+    const listColumns = Math.max(24, Math.min(48, Math.floor(e.props.bodyColumns / 3)));
 
-    const statusLine = current.error ? (
-      <Text color="red" wrap="truncate">
-        {current.error}
-      </Text>
-    ) : current.notice ? (
-      <Text dimColor wrap="truncate">
-        {current.notice}
-      </Text>
-    ) : current.isLoading ? (
-      <Text dimColor>Reading the bundle…</Text>
-    ) : null;
-
-    const strip =
-      uncommitted.length > 0 && current.root ? (
-        <Box>
-          <Text color="yellow" wrap="truncate">
-            {uncommitted.length} documentation {uncommitted.length === 1 ? "change" : "changes"} not committed yet.{" "}
-          </Text>
-          <Button
-            key="land"
-            label="Ask Claude to land them"
-            onPress={() =>
-              void $.prompt.fill({
-                text: "Land the uncommitted documentation changes in this repository through a branch and pull request, following the opum-sdlc skill. Run `lore check` as the definition of done.",
-                mode: "replace",
-              })
-            }
-          />
-        </Box>
-      ) : null;
-
-    if (current.tab === "browse") {
-      const room = Math.max(6, e.props.scroll.bodyRows - 10);
-      type BrowseRow =
-        | { kind: "group"; key: string; type: string; count: number }
-        | { kind: "row"; key: string; id: string; title: string };
+    /**
+     * The bundle list: one heading per type, one row per concept, capped to the room
+     * it is given. Browse draws it as its whole body; the Read tab draws it in the
+     * left column, where `highlight` is the open document -- the one row at full
+     * strength, since a plain Button draws the same under `variant` and the row's own
+     * emphasis is what is left to mark it with.
+     */
+    const bundleRows = (room: number, highlight: string | null) => {
       const flat: BrowseRow[] = [];
       for (const group of groupByType(concepts)) {
         if (flat.length >= room || flat.length >= ROW_CAP) {
@@ -996,212 +937,34 @@ export const register: Register = (on, _options) => {
         }
       }
 
-      return (
-        <Box flexDirection="column">
-          {tabs}
-          {statusLine}
-          {fullHint}
-          {strip}
-          <Text dimColor wrap="truncate">
-            {concepts.length} {concepts.length === 1 ? "concept" : "concepts"}
-            {current.typeFilter ? ` of type ${current.typeFilter}` : ""}
-            {current.tagFilter ? ` tagged ${current.tagFilter}` : ""}
-            {current.acrossRefs ? ", across refs" : ""}.
+      return flat.map((entry) =>
+        entry.kind === "group" ? (
+          <Text key={entry.key} bold>
+            {entry.type} ({entry.count})
           </Text>
-          {flat.map((entry) =>
-            entry.kind === "group" ? (
-              <Text key={entry.key} bold>
-                {entry.type} ({entry.count})
-              </Text>
-            ) : (
-              <Button
-                key={entry.key}
-                label={entry.title}
-                plain
-                dimColor
-                onPress={() => void openConcept($, entry.id)}
-              />
-            ),
-          )}
-        </Box>
-      );
-    }
-
-    if (current.tab === "search") {
-      const room = Math.max(5, e.props.scroll.bodyRows - 12);
-      const typeOptions = [
-        { value: "", label: "all types" },
-        ...types.map((one) => ({ value: one.name, label: one.name })),
-      ];
-
-      return (
-        <Box flexDirection="column">
-          {tabs}
-          {statusLine}
-          {fullHint}
-          <Input
-            key="search-text"
-            placeholder="Search the bundle"
-            value={current.query}
-            submitLabel="Search"
-            onInput={(value: string) => void setView($, { query: value })}
-            onSubmit={(value: string) => void submitWith($, { query: value })}
+        ) : (
+          <Button
+            key={entry.key}
+            label={entry.title}
+            plain
+            dimColor={entry.id !== highlight}
+            onPress={() => void openConcept($, entry.id)}
           />
-          <Box>
-            <Select
-              key="search-type"
-              label="type:"
-              options={typeOptions}
-              value={current.typeFilter}
-              onSelect={(value: string) => void pickFilter($, "typeFilter", value)}
-            />
-            <Text> </Text>
-            <Input
-              key="search-tag"
-              label="tag:"
-              placeholder="any"
-              value={current.tagFilter}
-              submitLabel="Filter"
-              onInput={(value: string) => void setView($, { tagFilter: value })}
-              onSubmit={(value: string) => void submitWith($, { tagFilter: value })}
-            />
-          </Box>
-          <Text dimColor wrap="truncate">
-            {hits.length} {hits.length === 1 ? "result" : "results"}
-            {current.acrossRefs ? ", across refs" : ""}.
-          </Text>
-          {hits.slice(0, room).map((hit) => (
-            <Box key={`hit-${hit.id}`} flexDirection="column">
-              <Button
-                key={`open-${hit.id}`}
-                label={hit.title}
-                plain
-                dimColor
-                onPress={() => void openConcept($, hit.id)}
-              />
-              <Text dimColor wrap="truncate">
-                {hit.type} · {hit.id}
-              </Text>
-              {hit.snippet ? <Text wrap="truncate">{hit.snippet}</Text> : null}
-            </Box>
-          ))}
-        </Box>
+        ),
       );
-    }
+    };
 
-    if (current.tab === "new") {
-      const typeOptions = types.map((one) => ({ value: one.name, label: one.name }));
-      const required = types.find((one) => one.name === draft.type)?.requiredSections ?? [];
-
-      return (
-        <Box flexDirection="column">
-          {tabs}
-          {statusLine}
-          {fullHint}
-          {typeOptions.length === 0 ? (
-            <Text dimColor>No type vocabulary read yet — press Refresh.</Text>
-          ) : (
-            <Select
-              key="new-type"
-              label="type:"
-              options={typeOptions}
-              value={draft.type || (typeOptions[0]?.value ?? "")}
-              onSelect={(value: string) =>
-                void update($, edits, (state) => ({
-                  ...state,
-                  draft: { ...state.draft, type: value },
-                }))
-              }
-            />
-          )}
-          <Input
-            key="new-title"
-            label="title:"
-            placeholder="A title for the new document"
-            value={draft.title}
-            submitLabel="Set"
-            onInput={(value: string) =>
-              void update($, edits, (state) => ({
-                ...state,
-                draft: { ...state.draft, title: value },
-              }))
-            }
-            onSubmit={(value: string) =>
-              void update($, edits, (state) => ({
-                ...state,
-                draft: { ...state.draft, title: value },
-              }))
-            }
-          />
-          <Input
-            key="new-summary"
-            label="summary:"
-            placeholder="One sentence"
-            value={draft.summary}
-            submitLabel="Set"
-            onInput={(value: string) =>
-              void update($, edits, (state) => ({
-                ...state,
-                draft: { ...state.draft, summary: value },
-              }))
-            }
-            onSubmit={(value: string) =>
-              void update($, edits, (state) => ({
-                ...state,
-                draft: { ...state.draft, summary: value },
-              }))
-            }
-          />
-          <Input
-            key="new-tags"
-            label="tags:"
-            placeholder="comma-separated"
-            value={draft.tags}
-            submitLabel="Set"
-            onInput={(value: string) =>
-              void update($, edits, (state) => ({
-                ...state,
-                draft: { ...state.draft, tags: value },
-              }))
-            }
-            onSubmit={(value: string) =>
-              void update($, edits, (state) => ({
-                ...state,
-                draft: { ...state.draft, tags: value },
-              }))
-            }
-          />
-          {required.length > 0 ? (
-            <Text dimColor wrap="truncate">
-              Afterwards the type wants: {required.join(", ")}.
-            </Text>
-          ) : null}
-          <Box>
-            <Button
-              key="create"
-              label={isWriting ? "Creating…" : "Create"}
-              variant="primary"
-              onPress={() => void createNew($)}
-            />
-          </Box>
-          <Text dimColor wrap="truncate">
-            Runs `lore new` in this repository; the result opens in Read.
-          </Text>
-        </Box>
-      );
-    }
-
-    // Read tab.
-    if (!concept) {
-      return (
-        <Box flexDirection="column">
-          {tabs}
-          {statusLine}
-          {fullHint}
-          <Text dimColor>Pick a document from Browse or Search.</Text>
-        </Box>
-      );
-    }
+    /**
+     * The open document, as the Read tab draws it and as a side-by-side Search draws
+     * it in the right column. Before anything is open it is the pane's own prompt.
+     *
+     * A function rather than a value: both layouts draw the same tree, and the tab
+     * that shows it is the only one that builds it.
+     */
+    const documentColumn = () => {
+      if (!concept) {
+        return <Text dimColor>Pick a document from Browse or Search.</Text>;
+      }
     const required = requiredSectionsFor(types, concept.type);
     const missing = required.filter((name) => !hasSection(concept.body, name));
 
@@ -1311,12 +1074,8 @@ export const register: Register = (on, _options) => {
       </Box>
     ) : null;
 
-    return (
-      <Box flexDirection="column">
-        {tabs}
-        {statusLine}
-        {fullHint}
-        {strip}
+      return (
+        <Box flexDirection="column">
         <Box>
           <Text bold wrap="truncate">
             {concept.title}
@@ -1460,6 +1219,320 @@ export const register: Register = (on, _options) => {
             Truncated at {BODY_CAP} characters; open {concept.repoPath} for the rest.
           </Text>
         ) : null}
+        </Box>
+      );
+    };
+
+    const tabs = (
+      <Box>
+        <Button
+          key="tab-browse"
+          label="Browse"
+          hotkey="1"
+          variant={current.tab === "browse" ? "primary" : undefined}
+          onPress={() => void showTab($, "browse")}
+        />
+        <Text> </Text>
+        <Button
+          key="tab-read"
+          label="Read"
+          hotkey="2"
+          variant={current.tab === "read" ? "primary" : undefined}
+          onPress={() => void showTab($, "read")}
+        />
+        <Text> </Text>
+        <Button
+          key="tab-search"
+          label="Search"
+          hotkey="3"
+          variant={current.tab === "search" ? "primary" : undefined}
+          onPress={() => void showTab($, "search")}
+        />
+        <Text> </Text>
+        <Button
+          key="tab-new"
+          label="New"
+          hotkey="4"
+          variant={current.tab === "new" ? "primary" : undefined}
+          onPress={() => void showTab($, "new")}
+        />
+        <Text> </Text>
+        <Button key="refresh" label="Refresh" hotkey="r" onPress={() => void refresh($)} />
+        <Text> </Text>
+        <Button
+          key="across"
+          label={current.acrossRefs ? "Refs: on" : "Refs: off"}
+          hotkey="a"
+          onPress={() => void toggleAcross($)}
+        />
+        <Text> </Text>
+        <Button
+          key="full"
+          label={mode === "full" ? "Normal size" : "Full screen"}
+          hotkey="z"
+          onPress={() => void togglePane($)}
+        />
+      </Box>
+    );
+
+    const statusLine = current.error ? (
+      <Text color="red" wrap="truncate">
+        {current.error}
+      </Text>
+    ) : current.notice ? (
+      <Text dimColor wrap="truncate">
+        {current.notice}
+      </Text>
+    ) : current.isLoading ? (
+      <Text dimColor>Reading the bundle…</Text>
+    ) : null;
+
+    const strip =
+      uncommitted.length > 0 && current.root ? (
+        <Box>
+          <Text color="yellow" wrap="truncate">
+            {uncommitted.length} documentation {uncommitted.length === 1 ? "change" : "changes"} not committed yet.{" "}
+          </Text>
+          <Button
+            key="land"
+            label="Ask Claude to land them"
+            onPress={() =>
+              void $.prompt.fill({
+                text: "Land the uncommitted documentation changes in this repository through a branch and pull request, following the opum-sdlc skill. Run `lore check` as the definition of done.",
+                mode: "replace",
+              })
+            }
+          />
+        </Box>
+      ) : null;
+
+    if (current.tab === "browse") {
+      return (
+        <Box flexDirection="column">
+          {tabs}
+          {statusLine}
+          {fullHint}
+          {strip}
+          <Text dimColor wrap="truncate">
+            {concepts.length} {concepts.length === 1 ? "concept" : "concepts"}
+            {current.typeFilter ? ` of type ${current.typeFilter}` : ""}
+            {current.tagFilter ? ` tagged ${current.tagFilter}` : ""}
+            {current.acrossRefs ? ", across refs" : ""}.
+          </Text>
+          {bundleRows(Math.max(6, e.props.scroll.bodyRows - 10), null)}
+        </Box>
+      );
+    }
+
+    if (current.tab === "search") {
+      const room = Math.max(5, e.props.scroll.bodyRows - 12);
+      const typeOptions = [
+        { value: "", label: "all types" },
+        ...types.map((one) => ({ value: one.name, label: one.name })),
+      ];
+      // The results, as the stacked tab draws them below the form and as the left
+      // column of the split draws them beside the document. `highlight` marks the
+      // open document's own hit where the document is on screen next to it; the
+      // stacked tab passes none, exactly as it drew before there was a split.
+      const results = (highlight: string | null) =>
+        hits.slice(0, room).map((hit) => (
+          <Box key={`hit-${hit.id}`} flexDirection="column">
+            <Button
+              key={`open-${hit.id}`}
+              label={hit.title}
+              plain
+              dimColor={hit.id !== highlight}
+              onPress={() => void openConcept($, hit.id)}
+            />
+            <Text dimColor wrap="truncate">
+              {hit.type} · {hit.id}
+            </Text>
+            {hit.snippet ? <Text wrap="truncate">{hit.snippet}</Text> : null}
+          </Box>
+        ));
+      const form = (
+        <>
+          <Input
+            key="search-text"
+            placeholder="Search the bundle"
+            value={current.query}
+            submitLabel="Search"
+            onInput={(value: string) => void setView($, { query: value })}
+            onSubmit={(value: string) => void submitWith($, { query: value })}
+          />
+          <Box>
+            <Select
+              key="search-type"
+              label="type:"
+              options={typeOptions}
+              value={current.typeFilter}
+              onSelect={(value: string) => void pickFilter($, "typeFilter", value)}
+            />
+            <Text> </Text>
+            <Input
+              key="search-tag"
+              label="tag:"
+              placeholder="any"
+              value={current.tagFilter}
+              submitLabel="Filter"
+              onInput={(value: string) => void setView($, { tagFilter: value })}
+              onSubmit={(value: string) => void submitWith($, { tagFilter: value })}
+            />
+          </Box>
+          <Text dimColor wrap="truncate">
+            {hits.length} {hits.length === 1 ? "result" : "results"}
+            {current.acrossRefs ? ", across refs" : ""}.
+          </Text>
+        </>
+      );
+
+      return (
+        <Box flexDirection="column">
+          {tabs}
+          {statusLine}
+          {fullHint}
+          {form}
+          {sideBySide ? (
+            // The search form stays pane-wide -- it is how the list is made -- and the
+            // list it makes takes the left column, the open document the right one.
+            <Box flexDirection="row" key="side-by-side">
+              <Box flexDirection="column" width={listColumns} paddingRight={1}>
+                {results(current.selectedId)}
+              </Box>
+              <Box flexDirection="column" flexGrow={1}>
+                {documentColumn()}
+              </Box>
+            </Box>
+          ) : (
+            results(null)
+          )}
+        </Box>
+      );
+    }
+
+    if (current.tab === "new") {
+      const typeOptions = types.map((one) => ({ value: one.name, label: one.name }));
+      const required = types.find((one) => one.name === draft.type)?.requiredSections ?? [];
+
+      return (
+        <Box flexDirection="column">
+          {tabs}
+          {statusLine}
+          {fullHint}
+          {typeOptions.length === 0 ? (
+            <Text dimColor>No type vocabulary read yet — press Refresh.</Text>
+          ) : (
+            <Select
+              key="new-type"
+              label="type:"
+              options={typeOptions}
+              value={draft.type || (typeOptions[0]?.value ?? "")}
+              onSelect={(value: string) =>
+                void update($, edits, (state) => ({
+                  ...state,
+                  draft: { ...state.draft, type: value },
+                }))
+              }
+            />
+          )}
+          <Input
+            key="new-title"
+            label="title:"
+            placeholder="A title for the new document"
+            value={draft.title}
+            submitLabel="Set"
+            onInput={(value: string) =>
+              void update($, edits, (state) => ({
+                ...state,
+                draft: { ...state.draft, title: value },
+              }))
+            }
+            onSubmit={(value: string) =>
+              void update($, edits, (state) => ({
+                ...state,
+                draft: { ...state.draft, title: value },
+              }))
+            }
+          />
+          <Input
+            key="new-summary"
+            label="summary:"
+            placeholder="One sentence"
+            value={draft.summary}
+            submitLabel="Set"
+            onInput={(value: string) =>
+              void update($, edits, (state) => ({
+                ...state,
+                draft: { ...state.draft, summary: value },
+              }))
+            }
+            onSubmit={(value: string) =>
+              void update($, edits, (state) => ({
+                ...state,
+                draft: { ...state.draft, summary: value },
+              }))
+            }
+          />
+          <Input
+            key="new-tags"
+            label="tags:"
+            placeholder="comma-separated"
+            value={draft.tags}
+            submitLabel="Set"
+            onInput={(value: string) =>
+              void update($, edits, (state) => ({
+                ...state,
+                draft: { ...state.draft, tags: value },
+              }))
+            }
+            onSubmit={(value: string) =>
+              void update($, edits, (state) => ({
+                ...state,
+                draft: { ...state.draft, tags: value },
+              }))
+            }
+          />
+          {required.length > 0 ? (
+            <Text dimColor wrap="truncate">
+              Afterwards the type wants: {required.join(", ")}.
+            </Text>
+          ) : null}
+          <Box>
+            <Button
+              key="create"
+              label={isWriting ? "Creating…" : "Create"}
+              variant="primary"
+              onPress={() => void createNew($)}
+            />
+          </Box>
+          <Text dimColor wrap="truncate">
+            Runs `lore new` in this repository; the result opens in Read.
+          </Text>
+        </Box>
+      );
+    }
+
+    // Read tab, and the fallthrough: every other tab has answered above. The document
+    // is `documentColumn`, which the split draws in the right column beside the list
+    // and the stacked layout draws under the pane's own chrome.
+    return (
+      <Box flexDirection="column">
+        {tabs}
+        {statusLine}
+        {fullHint}
+        {strip}
+        {sideBySide ? (
+          <Box flexDirection="row" key="side-by-side">
+            <Box flexDirection="column" width={listColumns} paddingRight={1}>
+              {bundleRows(Math.max(6, e.props.scroll.bodyRows - 6), concept ? concept.id : null)}
+            </Box>
+            <Box flexDirection="column" flexGrow={1}>
+              {documentColumn()}
+            </Box>
+          </Box>
+        ) : (
+          documentColumn()
+        )}
       </Box>
     );
   });
