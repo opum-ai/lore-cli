@@ -95,13 +95,13 @@ command:
 
 ### Full screen
 
-`z` inside the pane, and the tool's `full` argument (see below), each flip
-the pane between its normal size and the largest the surface allows; a second press
-flips it back, and the command answers with the state it left the pane in. Anything
-else after the command name is refused by name rather than ignored. The **size is
-requested by a draw, not by the key**: `e.viewport` exists only on a render event, so
-the key, the command and `session.start` record the choice and the next draw asks the
-surface for the size it implies.
+`z` inside the pane, and the dashboard tool's `full` argument (see "Opening the
+pane"), each flip the pane between its normal size and the largest the surface allows;
+a second press flips it back, and the tool answers with the state it left the pane in.
+Anything else after the `dashboard` verb is refused by name rather than ignored. The
+**size is requested by a draw, not by the key**: `e.viewport` exists only on a render
+event, so the key, the tool and `session.start` record the choice and the next draw asks
+the surface for the size it implies.
 
 - **Docked** panes ask in `columns` — the viewport's width less 20 columns, so the
   transcript stays readable beside the pane (`DOCK_MARGIN_COLUMNS`); **inline** panes ask
@@ -425,7 +425,7 @@ the bound takes the whole pane, not just the editor.
 
 What they do **not** cover, and this record therefore does not claim: pressing
 Supersede, Link task or Unlink task; Ask Claude…; Open in editor; the landing strip's
-button; the mobile and vscode branches; and the `session.start`/`command.run`
+button; the mobile and vscode branches; and the `session.start`/`tool.call`
 registrations beyond what `claude plugin validate`'s inventory reads. No test runs a
 live `lore`: every command is mocked at the engine boundary, and no test runs a live
 `$EDITOR` — the desktop arm is a prompt fill, which is asserted only by reading the
