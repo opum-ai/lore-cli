@@ -52,11 +52,64 @@ the branch tip does.
 
 ## What the pane does today
 
-The module registers a `lore-pane` command that opens the pane (`session.start` also
-opens it, unfocused, and registers the command). The pane's id is `lore-pane`, its
+The module registers a `lore` command that opens the pane (`session.start` also
+opens it, unfocused, and registers the command). The pane's **id** stayed `lore-pane`
+when the command was renamed from it in 0.13.0, so every internal id, state key and the
+`pane-mode` store key keep the older spelling and settings saved before the rename still
+apply — this record uses `lore-pane` for the pane and `/lore` for the command. The pane's
+title is "Lore", its
 title "Lore", and on a mobile surface it says it needs the terminal or desktop. Its
 root is the session cwd's git toplevel (`git rev-parse --show-toplevel`); it refreshes
-on an explicit Refresh button and every 30 seconds while it is shown.
+on an explicit Refresh button and every 30 seconds while it is shown. It takes one
+argument, `full` (see below).
+
+### Full screen
+
+`z` inside the pane, and the command's `full` argument (`/lore full`), each flip
+the pane between its normal size and the largest the surface allows; a second press
+flips it back, and the command answers with the state it left the pane in. Anything
+else after the command name is refused by name rather than ignored. The **size is
+requested by a draw, not by the key**: `e.viewport` exists only on a render event, so
+the key, the command and `session.start` record the choice and the next draw asks the
+surface for the size it implies.
+
+- **Docked** panes ask in `columns` — the viewport's width less 20 columns, so the
+  transcript stays readable beside the pane (`DOCK_MARGIN_COLUMNS`); **inline** panes ask
+  in `rows` — the viewport's height less 6 rows for the prompt area
+  (`PROMPT_AREA_ROWS`). The engine has no read for the composer — `e.viewport.rows` is
+  the whole surface and `RenderViewport` carries nothing for the prompt — so the design
+  names that margin and the module uses its figure. Both are requests, not grants — the
+  surface clamps to what the layout spares, and the docked arm computes the same way as
+  the command's own `presentation.columns`.
+- **A reopen the person started carries `focus`** — `z`, `/lore full`, or the bare
+  command. One the pane makes by itself — a remembered full mode's first draw, or a
+  re-request after the viewport changes — carries none, so a full pane restored at
+  startup never takes the keyboard from the prompt; a Tab or a click gives it the keys.
+  `closeOnEscape` is never passed: that flag is what would make the pane a dialog rather
+  than a pane.
+- **Each distinct request is made once** (the module's `lastRequest`), and again when the
+  viewport's size changes, which the request key carries. A size the person dragged wins
+  over the request, so a pane that re-asked on every draw would ask forever. A surface
+  that reports no viewport asks for nothing.
+- **The choice is remembered** in `$.store` under `pane-mode` and restored at
+  `session.start`, where the first draw applies it. A store that refuses the write loses
+  only the memory, not the toggle.
+- **When the surface keeps a size other than the one asked for**, the pane draws one line
+  — `Drag the pane edge to resize; z switches layouts` — rather than claiming a size it
+  did not get. A granted size measures a few cells short inside the frame, so a request
+  within 4 cells of the size drawn counts as granted (`SIZE_SLACK`) and anything further
+  off is read as the person's own drag. The render event carries the size drawn and not
+  its reason, so a drag and a clamp by the layout read identically; the hint is
+  suppressed in normal mode, where there is no requested size to fall short of.
+- **At 120 or more body columns** (`e.props.bodyColumns`, full mode only) the bundle list
+  draws in a left column with the document on the right, on Read and Search alike. On
+  Read the left column is the browse list, with the open document's row drawn at full
+  strength where the rest are dim; on Search it is the results, marked the same way.
+  Below 120, and at the normal size, both tabs keep the stacked layout. The list column
+  takes about a third of the body, clamped to 24–48 columns, and the Search form stays
+  pane-wide: it is how the list is made rather than part of it, and a third-width column
+  would crush it. The design names no width and does not say where the form goes; both
+  are the module's own choices, recorded here.
 
 ### Browse
 
@@ -274,16 +327,19 @@ records that it is deliberately not a required status context.
 
 ### What the tests prove, and what they do not
 
-Measured on 2026-10-02 with the inline editor in (`node scripts/mod-test.mjs` on this
-checkout): `claude plugin validate --strict` exit 0 — its inventory holding the
-`session.start` hook, the `command.run{command=lore-pane}` registration,
+Measured on 2026-10-02 with the full-screen toggle in (`node scripts/mod-test.mjs` on
+this checkout): `claude plugin validate --strict` exit 0 — its inventory holding the
+`session.start` hook, the `command.run{command=lore}` registration,
 `ui.render{Pane}`, the calls (`process.run`, `fs.read`, `fs.write`, `prompt.fill`,
-`command.register`, `clock.every`, `ui.open`, `ui.panes`, `ui.resolve`) and the four
-state keys — `claude plugin test` 31/31 pass (14 engine tests in `tests/pane.test.tsx`,
-17 unit tests in `tests/lore.test.ts`), and `tsc` against the 2.1.287 engine declaration
-exit 0. Earlier readings — 12/12 at `f71bed1c`, 16/16 before the editor, 22/22 before
-the editor-arm review — were the state at those points; a count here is a reading, not
-a constant.
+`command.register`, `clock.every`, `ui.open`, `ui.panes`, `ui.resolve`, `store.get`,
+`store.set`) and the five state keys — `claude plugin test` 48/48 pass (28 engine tests
+in `tests/pane.test.tsx`, 20 unit tests in `tests/lore.test.ts`), and `tsc` against the
+2.1.287 engine declaration exit 0. The typecheck is machine-local: the harness uses the
+declaration the engine lays beside the stage, which names the build running the tests,
+and reports **NOT TYPECHECKED** rather than implying one it could not run. Earlier
+readings — 12/12 at `f71bed1c`, 16/16 before the editor, 22/22 before the editor-arm
+review, 31/31 before the toggle — were the state at those points; a count here is a
+reading, not a constant.
 
 The engine tests cover: browse, open, Back and the Raw toggle (the first test mounts
 on both the terminal and the desktop surface; the rest mount the terminal); search
@@ -299,7 +355,14 @@ own cell, Ctrl+Z taking the keystroke back, and Save writing the file through
 restoring the previous bytes to that same file, opening another document with the
 editor open closing it rather than writing across documents, a body too large to hand
 the editor being refused while the pane keeps drawing, a body that grows past that bound
-closing the editor, and the editor's region carrying an explicit height. Unit tests cover
+closing the editor, and the editor's region carrying an explicit height; and the
+full-screen toggle — the docked `columns` and inline `rows` a full request asks for, the
+unsized request that returns the pane to normal, the `pane-mode` store round-trip across
+a remount, the drag-wins hint and its suppression at the normal size, and the command's
+`full` argument with its refusal of anything else — plus the 120-column split on Read
+(asserted at 140, at exactly 120 and at 119 on the same document) and on Search, with
+the two columns inspected in order so a swap cannot pass, and a control proving the split
+is full mode's rather than any wide pane's. Unit tests cover
 the pure helpers:
 `patchFrontmatter` (replace, remove, insert, and the no-frontmatter refusal),
 `replaceBody` (frontmatter preserved, body normalised, no-frontmatter refusal),
