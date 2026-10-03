@@ -762,6 +762,9 @@ export const register: Register = (on, _options) => {
       name: COMMAND,
       description:
         "Open the Lore pane: browse, read (rendered or raw), search, create and edit this repository’s docs through the lore CLI.",
+      // The one argument the command takes, drawn dim after the name so the pane's
+      // full-screen toggle is findable without reading its source (`CommandSpec`).
+      argumentHint: "full",
     });
     // The remembered size is restored here and ASKED for by the first draw: the
     // session's own surface has not been measured yet (`SessionStartInput` carries

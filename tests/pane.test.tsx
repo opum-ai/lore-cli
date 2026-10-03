@@ -666,10 +666,15 @@ function captureOpens(on: On): Record<string, unknown>[] {
 /**
  * The two engine answers a session needs beneath it: nothing answers them on its
  * own, so a test that starts a session says what the session start and the
- * command registration return.
+ * command registration return. `registrations`, when given, collects the command
+ * specs the module registered, which is the only place they are visible.
  */
-function mockSession(on: On): void {
-  on("command.register", async (_$, e) => ({ value: { command: e.name } }));
+function mockSession(on: On, registrations?: Record<string, unknown>[]): void {
+  on("command.register", async (_$, e) => {
+    registrations?.push({ ...e });
+
+    return { value: { command: e.name } };
+  });
   // `session.start` is one of the engine's own events: its hook answers the result
   // itself, where a plugin-noun event answers `{ value }`.
   on("session.start", async (_$, e) => ({ cwd: e.cwd }));
@@ -836,17 +841,23 @@ test("a viewport that changed asks for the full size again, and one that did not
   }
 });
 
-test("a pane at its normal size asks the surface for nothing", async ($, on) => {
-  // The control for the toggle: without a mode change there is no size to ask
-  // for, so the pane must not reopen on every draw. `session.start` opens it
-  // unsized and unfocused, and the draws after that add nothing.
+test("a session opens the pane unsized, registers the command with its argument, and asks for no size", async ($, on) => {
+  // What a session start does, in one place. It opens the pane unsized and unfocused;
+  // it registers the command, whose one argument is advertised rather than only
+  // findable in the hook that parses it; and the draws that follow ask for nothing,
+  // which is the control for the toggle -- without a mode change there is no size to
+  // ask for, so the pane must not reopen on every draw.
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen);
-  mockSession(on);
+  const registrations: Record<string, unknown>[] = [];
+  mockSession(on, registrations);
   const opens = captureOpens(on);
   await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  expect(registrations).toEqual([
+    { name: "lore-pane", description: expect.any(String), argumentHint: "full" },
+  ]);
   expect(opens).toEqual([{ id: "lore-pane", title: "Lore" }]);
   opens.length = 0;
   const ui = await $.ui.mount({
