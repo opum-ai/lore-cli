@@ -67,6 +67,18 @@ export type PaneMode = "normal" | "full";
  */
 export type PaneState = {
   mode: PaneMode;
+  /**
+   * Whether the last open the module made left the pane OPEN AND UNDRAWN (LCLI-672).
+   *
+   * The engine places an open nobody asked for by hand only from a floor of terminal
+   * columns, so a model's call can leave the pane waiting rather than drawn. This is the
+   * module's record of that answer, and it is the band's reading wherever the engine's own
+   * listing cannot be had: `$.ui.panes` is where the live answer comes from -- it is what
+   * notices the pane being placed by a widened terminal, with no open to ask -- but the
+   * engine's test kit carries no such call at all (measured: `$.ui.panes is not a
+   * function`), and a listing that fails leaves nothing to read either.
+   */
+  isWaiting: boolean;
 };
 
 /** Which structural action form the Read tab is showing, if any. */
