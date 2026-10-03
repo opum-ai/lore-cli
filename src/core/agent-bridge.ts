@@ -193,6 +193,12 @@ its \`query\`. No other argument opens the pane — anything that does not start
 to the \`lore\` CLI. The tool never takes the keyboard, so the person presses Tab or clicks to use the
 pane.
 
+Where the pane waits undrawn — a terminal below the engine's width floor, which is where an open
+nobody asked for by hand waits, and a tool call is one of those — a band above the prompt offers it:
+\`Lore pane ready · [Open] (ctrl+x tab, o)\`. Tell the person to click **Open**, or to reach the \`o\`
+hotkey by giving the band the keys first (ctrl+x tab): a bare \`o\` in the composer only types into it.
+A click needs no focus. The band is gone once the pane is up.
+
 **Fallback:** where that tool is unavailable — Claude Code older than 2.1.287, a \`claude -p\` run, or
 mods turned off — say the pane is unavailable here and answer from the CLI instead, with
 \`lore read <id>\` or \`lore query "<text>"\`. Every other request goes through the \`lore\` CLI as it
