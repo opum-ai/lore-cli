@@ -80,6 +80,36 @@ describe("agent bridges stay in lockstep with the CLI (LCLI-573)", () => {
     }
   });
 
+  test("the plugin skill teaches the pane verb and its fallback, and the repo skill does not (LCLI-668)", () => {
+    // The pane verb routes to a tool the `opum-lore` mod registers, so only the copy the
+    // plugin federates may teach it: a per-repository bridge (`lore agents`) is written into
+    // repositories whose Claude Code loads no mod, and pointing them at a tool that is not
+    // there is the "unshipped command" trap this file exists to catch, in a new shape.
+    const plugin = buildSkillDoc("plugin");
+    expect(plugin).toContain("mcp__opum-lore__dashboard");
+    expect(plugin).toContain("lore dashboard");
+    // The routing the rename decisions settled (LCLI-667; opum-doc relays
+    // ODOC-OP-2026-10-03-07 then -11, the second superseding the first): the skill owns the
+    // bare name `lore`, so the tool is reached through it, as ONE `dashboard` verb whose
+    // modifiers are the tool's inputs -- never as bare `full`/`pane` verbs.
+    expect(plugin).toContain("`dashboard` verb");
+    for (const form of ["/lore dashboard full", "/lore dashboard <doc-id>", "/lore dashboard search <text>"]) {
+      expect(plugin).toContain(form);
+    }
+    expect(plugin).toContain("`full: true`");
+    expect(plugin).toContain("does not start with `dashboard` goes");
+    // The tool is the pane's only entry point: the slash command that used to open it is gone.
+    expect(plugin).toContain("the pane's only entry point");
+    // The fallback names all three ways the tool is unavailable, and what to do instead.
+    expect(plugin).toContain("2.1.287");
+    expect(plugin).toContain("claude -p");
+    expect(plugin).toContain("mods turned off");
+    expect(plugin).toContain("lore read <id>");
+    // Everything else still goes through the CLI.
+    expect(plugin).toContain("goes through the `lore` CLI");
+    expect(buildSkillDoc("repo")).not.toContain("mcp__opum-lore__dashboard");
+  });
+
   test("`retrieval` is a served topic and the overview starts from it, not from docs/index.md", () => {
     expect(findInstructionTopic("retrieval")).toBeDefined();
     const overview = findInstructionTopic("overview")?.body ?? "";

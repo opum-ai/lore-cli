@@ -52,11 +52,93 @@ the branch tip does.
 
 ## What the pane does today
 
-The module registers a `lore-pane` command that opens the pane (`session.start` also
-opens it, unfocused, and registers the command). The pane's id is `lore-pane`, its
-title "Lore", and on a mobile surface it says it needs the terminal or desktop. Its
-root is the session cwd's git toplevel (`git rev-parse --show-toplevel`); it refreshes
-on an explicit Refresh button and every 30 seconds while it is shown.
+**The pane has no slash command of its own.** The `lore` skill owns the bare slash
+name, so a mod command named `lore` is unreachable -- and on Claude Code 2.1.288
+registering one does worse than go unreachable: it throws and the whole `session.start`
+hook is skipped. Measured 2026-10-03 against a clean export of the tree that carried the
+rename: `opum-lore: session.start hook skipped: threw opum-lore: $.command.register:
+"/lore" refused: it is the plugin's /opum-lore:lore` -- with the pre-rename tree as the
+control, where the same probe printed `opum-lore: Lore pane opened.` and no skip. Both
+`claude plugin validate --strict` and the module's tests pass over it, so only a live
+session sees it. The registration is therefore dropped (opum-doc seq 176/180) rather
+than left dead, and the pane opens through the skill's `dashboard` verb calling the
+module's tool (see "Opening the pane").
+
+`session.start` registers that tool and opens the pane, unfocused. The pane's id is
+`lore-pane`, its title "Lore", and on a mobile surface it says it needs the terminal or
+desktop. Its root is the session cwd's git toplevel (`git rev-parse --show-toplevel`);
+it refreshes on an explicit Refresh button and every 30 seconds while it is shown.
+
+### Opening the pane
+
+The pane's only entry point is the module's tool, `mcp__opum-lore__dashboard`, which
+`session.start` registers and a `tool.call` hook serves. Claude can call it directly, and
+the `lore` skill routes to it so a person can ask for the pane in words or as a slash
+command:
+
+- `/lore dashboard`, `/lore dashboard full`, `/lore dashboard <doc-id>` and
+  `/lore dashboard search <text>` -- and the same phrases in plain words -- reach the
+  tool, mapping to its `full`, `doc` and `query` inputs. There is no bare `full` or
+  `pane` verb, and every argument that does not start with `dashboard` goes to the CLI as
+  it always has.
+- **The tool never takes the keyboard.** Every open it makes is without `focus`, because
+  Claude may call it while the person is typing; a Tab or a click gives the pane the keys.
+- **Its arguments are validated, not trusted** -- any plugin can call it -- so a
+  non-string `doc`, a non-boolean `full` and an unknown concept id are each refused by
+  name, and an unknown id opens nothing else in its place.
+- The skill states the **fallback** for where the tool cannot exist -- Claude Code older
+  than 2.1.287, a `claude -p` run, or mods off: say the pane is unavailable and answer
+  from the CLI instead. `skills/lore/SKILL.md` is **generated**
+  (`bun run scripts/plugin-skill.ts --write`, from `buildSkillDoc()` in
+  `src/core/agent-bridge.ts`), never hand-edited, and the pane section is written for
+  the plugin variant only: a per-repository bridge has no mod to call.
+
+### Full screen
+
+`z` inside the pane, and the dashboard tool's `full` argument (see "Opening the
+pane"), each flip the pane between its normal size and the largest the surface allows;
+a second press flips it back, and the tool answers with the state it left the pane in.
+Anything else after the `dashboard` verb is refused by name rather than ignored. The
+**size is requested by a draw, not by the key**: `e.viewport` exists only on a render
+event, so the key, the tool and `session.start` record the choice and the next draw asks
+the surface for the size it implies.
+
+- **Docked** panes ask in `columns` — the viewport's width less 20 columns, so the
+  transcript stays readable beside the pane (`DOCK_MARGIN_COLUMNS`); **inline** panes ask
+  in `rows` — the viewport's height less 6 rows for the prompt area
+  (`PROMPT_AREA_ROWS`). The engine has no read for the composer — `e.viewport.rows` is
+  the whole surface and `RenderViewport` carries nothing for the prompt — so the design
+  names that margin and the module uses its figure. Both are requests, not grants — the
+  surface clamps to what the layout spares, and the docked arm computes the same way as
+  the command's own `presentation.columns`.
+- **A reopen the person started carries `focus`** — the `z` hotkey. The tool never does. One the pane makes by itself — a remembered full mode's first draw, or a
+  re-request after the viewport changes — carries none, so a full pane restored at
+  startup never takes the keyboard from the prompt; a Tab or a click gives it the keys.
+  `closeOnEscape` is never passed: that flag is what would make the pane a dialog rather
+  than a pane.
+- **Each distinct request is made once** (the module's `lastRequest`), and again when the
+  viewport's size changes, which the request key carries. A size the person dragged wins
+  over the request, so a pane that re-asked on every draw would ask forever. A surface
+  that reports no viewport asks for nothing.
+- **The choice is remembered** in `$.store` under `pane-mode` and restored at
+  `session.start`, where the first draw applies it. A store that refuses the write loses
+  only the memory, not the toggle.
+- **When the surface keeps a size other than the one asked for**, the pane draws one line
+  — `Drag the pane edge to resize; z switches layouts` — rather than claiming a size it
+  did not get. A granted size measures a few cells short inside the frame, so a request
+  within 4 cells of the size drawn counts as granted (`SIZE_SLACK`) and anything further
+  off is read as the person's own drag. The render event carries the size drawn and not
+  its reason, so a drag and a clamp by the layout read identically; the hint is
+  suppressed in normal mode, where there is no requested size to fall short of.
+- **At 120 or more body columns** (`e.props.bodyColumns`, full mode only) the bundle list
+  draws in a left column with the document on the right, on Read and Search alike. On
+  Read the left column is the browse list, with the open document's row drawn at full
+  strength where the rest are dim; on Search it is the results, marked the same way.
+  Below 120, and at the normal size, both tabs keep the stacked layout. The list column
+  takes about a third of the body, clamped to 24–48 columns, and the Search form stays
+  pane-wide: it is how the list is made rather than part of it, and a third-width column
+  would crush it. The design names no width and does not say where the form goes; both
+  are the module's own choices, recorded here.
 
 ### Browse
 
@@ -274,16 +356,20 @@ records that it is deliberately not a required status context.
 
 ### What the tests prove, and what they do not
 
-Measured on 2026-10-02 with the inline editor in (`node scripts/mod-test.mjs` on this
-checkout): `claude plugin validate --strict` exit 0 — its inventory holding the
-`session.start` hook, the `command.run{command=lore-pane}` registration,
-`ui.render{Pane}`, the calls (`process.run`, `fs.read`, `fs.write`, `prompt.fill`,
-`command.register`, `clock.every`, `ui.open`, `ui.panes`, `ui.resolve`) and the four
-state keys — `claude plugin test` 31/31 pass (14 engine tests in `tests/pane.test.tsx`,
-17 unit tests in `tests/lore.test.ts`), and `tsc` against the 2.1.287 engine declaration
-exit 0. Earlier readings — 12/12 at `f71bed1c`, 16/16 before the editor, 22/22 before
-the editor-arm review — were the state at those points; a count here is a reading, not
-a constant.
+Measured on 2026-10-03, with the dashboard tool in and the command registration dropped
+(`node scripts/mod-test.mjs` on this checkout): `claude plugin validate --strict` exit 0
+— its inventory holding the `session.start` hook, `ui.render{Pane}`, the calls
+(`process.run`, `fs.read`, `fs.write`, `prompt.fill`, `tool.register`, `clock.every`,
+`ui.open`, `ui.panes`, `ui.resolve`, `store.get`, `store.set`) and the five state keys —
+`claude plugin test` 51/51 pass (31 engine tests in `tests/pane.test.tsx`, 20 unit tests
+in `tests/lore.test.ts`), and `tsc` against the 2.1.287 engine declaration exit 0. No
+`command.register` and no `command.run` remain — the registration's absence, not an
+omission. The typecheck is machine-local: the harness uses the declaration the engine lays
+beside the stage, which names the build running the tests, and reports **NOT TYPECHECKED**
+rather than implying one it could not run. Earlier readings — 12/12 at `f71bed1c`, 16/16
+before the editor, 22/22 before the editor-arm review, 31/31 before the toggle, 48/48
+before the dashboard tool — were the state at those points; a count here is a reading,
+not a constant.
 
 The engine tests cover: browse, open, Back and the Raw toggle (the first test mounts
 on both the terminal and the desktop surface; the rest mount the terminal); search
@@ -299,7 +385,17 @@ own cell, Ctrl+Z taking the keystroke back, and Save writing the file through
 restoring the previous bytes to that same file, opening another document with the
 editor open closing it rather than writing across documents, a body too large to hand
 the editor being refused while the pane keeps drawing, a body that grows past that bound
-closing the editor, and the editor's region carrying an explicit height. Unit tests cover
+closing the editor, and the editor's region carrying an explicit height; and the
+full-screen toggle — the docked `columns` and inline `rows` a full request asks for, the
+unsized request that returns the pane to normal, the `pane-mode` store round-trip across
+a remount, the drag-wins hint and its suppression at the normal size, and the command's
+`full` argument with its refusal of anything else — plus the 120-column split on Read
+(asserted at 140, at exactly 120 and at 119 on the same document) and on Search, with
+the two columns inspected in order so a swap cannot pass, and a control proving the split
+is full mode's rather than any wide pane's; and the dashboard tool -- its registration and
+description, the focusless open with a misspelled-name control, each input landing where it
+should (`doc` on Read, `query` on Search, `full` asking for the width), and an unknown id
+refused by name with no open and nothing drawn. Unit tests cover
 the pure helpers:
 `patchFrontmatter` (replace, remove, insert, and the no-frontmatter refusal),
 `replaceBody` (frontmatter preserved, body normalised, no-frontmatter refusal),
@@ -329,7 +425,7 @@ the bound takes the whole pane, not just the editor.
 
 What they do **not** cover, and this record therefore does not claim: pressing
 Supersede, Link task or Unlink task; Ask Claude…; Open in editor; the landing strip's
-button; the mobile and vscode branches; and the `session.start`/`command.run`
+button; the mobile and vscode branches; and the `session.start`/`tool.call`
 registrations beyond what `claude plugin validate`'s inventory reads. No test runs a
 live `lore`: every command is mocked at the engine boundary, and no test runs a live
 `$EDITOR` — the desktop arm is a prompt fill, which is asserted only by reading the

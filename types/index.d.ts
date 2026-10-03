@@ -56,6 +56,19 @@ export type ConceptDoc = {
 
 export type Tab = "browse" | "read" | "search" | "new";
 
+/** The pane's size: its normal size, or the largest the surface allows. */
+export type PaneMode = "normal" | "full";
+
+/**
+ * The pane's size, as the pane's `z` key and the dashboard tool's `full` leave it.
+ *
+ * Held in `$.state` so a change redraws the pane, and mirrored into `$.store`
+ * under `pane-mode` so the next session opens where this one left off.
+ */
+export type PaneState = {
+  mode: PaneMode;
+};
+
 /** Which structural action form the Read tab is showing, if any. */
 export type Action = "rename" | "supersede" | "link" | "unlink" | null;
 
@@ -139,6 +152,6 @@ export type Edits = {
 
 declare module "claude-code" {
   interface PluginState {
-    "opum-lore": { view: View; catalog: Catalog; doc: DocState; edits: Edits };
+    "opum-lore": { view: View; catalog: Catalog; doc: DocState; edits: Edits; pane: PaneState };
   }
 }

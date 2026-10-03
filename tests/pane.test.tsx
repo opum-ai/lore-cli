@@ -66,6 +66,7 @@ function mockLore(
   validateFails = false,
   body = "The body of the notes.",
   reads?: string[],
+  unknownIds: readonly string[] = [],
 ) {
   on("fs.read", async (_$, e) => {
     reads?.push(e.path);
@@ -84,7 +85,14 @@ function mockLore(
       return ok(TYPES);
     }
     if (sub === "read") {
-      return ok(readOf(e.argv[2] ?? "", body));
+      const id = e.argv[2] ?? "";
+      if (unknownIds.includes(id)) {
+        // What `lore read` does for a concept the bundle does not have: nothing on
+        // stdout, its own words on stderr, exit 3 (not_found).
+        return { value: { exitCode: 3, stdout: "", stderr: `lore: no concept "${id}"\n`, isStdoutTruncated: false, isStderrTruncated: false } };
+      }
+
+      return ok(readOf(id, body));
     }
     if (sub === "tasks") {
       return ok(ROLLUP);
@@ -647,4 +655,868 @@ test("a run that fails fast keeps its own message, not the timeout's", async ($,
   expect(await ui.find({ type: "Text", text: /lore exited 1/ })).toBeDefined();
   expect(await ui.find({ type: "Text", text: /did not answer within/ })).toBeUndefined();
   await ui.unmount();
+});
+
+// ── The full-screen toggle (LCLI-666) ─────────────────────────────────────────
+
+/** Every `$.ui.open` the module made, in order: the args are what the toggle is. */
+function captureOpens(on: On): Record<string, unknown>[] {
+  const opens: Record<string, unknown>[] = [];
+  on("ui.open", async (_$, e) => {
+    opens.push({ ...e });
+
+    return { value: { isPlaced: true } };
+  });
+
+  return opens;
+}
+
+/**
+ * The engine answers a session needs beneath it: nothing answers them on its own, so a
+ * test that starts a session says what the session start and the registrations return.
+ * `commands` and `tools`, when given, collect the command and tool specs the module
+ * registered, which is the only place they are visible: a command spec is captured so a
+ * test can assert there is NONE (LCLI-667 -- the engine's `lore` skill owns that name,
+ * so the pane registers no slash command), and a tool spec because the engine's own
+ * registry sits below the test's hooks (LCLI-668).
+ */
+function mockSession(
+  on: On,
+  commands?: Record<string, unknown>[],
+  tools?: Record<string, unknown>[],
+): void {
+  on("command.register", async (_$, e) => {
+    commands?.push({ ...e });
+
+    return { value: { command: e.name } };
+  });
+  on("tool.register", async (_$, e) => {
+    tools?.push({ ...e });
+
+    // What the engine answers with: the full name the model calls the tool by
+    // (`ToolSpec` spells a declared name `mcp__<plugin>__<name>`).
+    return { value: { tool: `mcp__opum-lore__${e.name}` } };
+  });
+  // `session.start` is one of the engine's own events: its hook answers the result
+  // itself, where a plugin-noun event answers `{ value }`.
+  on("session.start", async (_$, e) => ({ cwd: e.cwd }));
+}
+
+/**
+ * The children of the first element carrying `key`, in drawing order: the split's
+ * two columns as the surface received them, so which is left and which is right is
+ * measured rather than assumed from the two being present.
+ */
+function childrenUnder(node: unknown, key: string): unknown[] {
+  if (typeof node !== "object" || node === null) {
+    return [];
+  }
+  const element = node as { props?: Record<string, unknown>; children?: unknown };
+  if (element.props?.key === key) {
+    return Array.isArray(element.children)
+      ? element.children
+      : element.children === undefined
+        ? []
+        : [element.children];
+  }
+  const children = Array.isArray(element.children)
+    ? element.children
+    : element.children === undefined
+      ? []
+      : [element.children];
+  for (const child of children) {
+    const found = childrenUnder(child, key);
+    if (found.length > 0) {
+      return found;
+    }
+  }
+
+  return [];
+}
+
+/** The props a docked pane draws with: a terminal of `columns` and a body of `bodyColumns`. */
+const docked = (columns: number, bodyColumns: number, rows = 50) => ({
+  ...PANE,
+  placement: "dock" as const,
+  bodyColumns,
+  scroll: { offset: 0, bodyRows: rows - 12 },
+});
+
+/** The props an inline pane draws with: the main screen, a block above the prompt. */
+const inlinePane = (rows: number, bodyRows: number, columns = 100) => ({
+  ...PANE,
+  placement: "inline" as const,
+  bodyColumns: columns,
+  scroll: { offset: 0, bodyRows },
+});
+
+test("z asks for the largest docked width, and a second press asks for the normal share again", async ($, on) => {
+  // The criterion's evidence is the open ARGS the module passes, so they are
+  // asserted whole: an open that carried `closeOnEscape` would make the pane a
+  // dialog rather than a pane, and one that carried a size on the way back would
+  // never return to the normal size.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  const opens = captureOpens(on);
+  for (const surface of ["terminal", "desktop"] as const) {
+    opens.length = 0;
+    const ui = await $.ui.mount({
+      plugin: "opum-lore",
+      surface,
+      component: "Pane",
+      requestId: "lore-pane",
+      props: docked(160, 80),
+      viewport: { columns: 160, rows: 50, isFullscreen: true },
+    });
+    // The hotkey is the pane's only key hook: a Button's `hotkey` is pressed while
+    // the pane holds the focus, which is how `z` reaches the toggle.
+    expect((await ui.find({ key: "full" }))?.props.hotkey).toBe("z");
+
+    await ui.press({ key: "full" });
+    await clock.settle();
+    // 160 columns of terminal, less the transcript margin the design keeps.
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true, columns: 140 });
+
+    await ui.press({ key: "full" });
+    await clock.settle();
+    // Back to the normal size: no `columns` at all, which is the request for the
+    // surface's own share (`PaneOpenArgs`: left out, the share).
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true });
+    await ui.unmount();
+  }
+});
+
+test("an inline pane asks for rows, the viewport less the prompt area", async ($, on) => {
+  // The other axis: on the main screen the pane is a block above the prompt, so
+  // it is `rows` that asks for its size and a `columns` request is ignored.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  const opens = captureOpens(on);
+  for (const surface of ["terminal", "desktop"] as const) {
+    opens.length = 0;
+    const ui = await $.ui.mount({
+      plugin: "opum-lore",
+      surface,
+      component: "Pane",
+      requestId: "lore-pane",
+      props: inlinePane(40, 12),
+      viewport: { columns: 100, rows: 40, isFullscreen: false },
+    });
+    await ui.press({ key: "full" });
+    await clock.settle();
+    // 40 rows of surface less the design's 6 for the prompt area (PROMPT_AREA_ROWS).
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true, rows: 34 });
+    await ui.press({ key: "full" });
+    await clock.settle();
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true });
+    await ui.unmount();
+  }
+});
+
+test("a viewport that changed asks for the full size again, and one that did not asks for nothing", async ($, on) => {
+  // The design's "Sizing details": a full-mode pane asks for its full size "on its
+  // first draw, and again whenever the viewport size changes" -- the person widening
+  // the terminal, or the dock growing. The request is named by the size it asks for,
+  // so a draw at a new viewport is a new request; a draw at the same one is the
+  // control, and asks nothing, which is what keeps the pane from asking on every draw
+  // for a size the surface has already refused.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on, { "pane-mode": "full" });
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  const opens = captureOpens(on);
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  for (const surface of ["terminal", "desktop"] as const) {
+    const at = async (columns: number) => {
+      const ui = await $.ui.mount({
+        plugin: "opum-lore",
+        surface,
+        component: "Pane",
+        requestId: "lore-pane",
+        props: docked(columns, 80),
+        viewport: { columns, rows: 50, isFullscreen: true },
+      });
+      await clock.settle();
+
+      return ui;
+    };
+
+    opens.length = 0;
+    const first = await at(160);
+    // Nobody asked for this one: the session remembered `full`, so the draw that
+    // sizes it opens WITHOUT `focus` rather than taking the keyboard at startup.
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", columns: 140 });
+    await first.unmount();
+
+    opens.length = 0;
+    const same = await at(160);
+    expect(opens).toEqual([]);
+    await same.unmount();
+
+    opens.length = 0;
+    const wider = await at(200);
+    // The viewport moved under the pane; the re-request is still nobody's ask.
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", columns: 180 });
+    await wider.unmount();
+  }
+});
+
+test("a session opens the pane unsized, registers no command, and asks for no size", async ($, on) => {
+  // What a session start does, in one place. It opens the pane unsized and unfocused;
+  // it registers NO slash command (LCLI-667: the engine's `lore` skill owns that name,
+  // and a command of the same name is refused on 2.1.288, which takes the whole hook
+  // down with it -- the pane's entry point is the tool, asserted below the dashboard
+  // tests); and the draws that follow ask for nothing, which is the control for the
+  // toggle -- without a mode change there is no size to ask for, so the pane must not
+  // reopen on every draw.
+  mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  const commands: Record<string, unknown>[] = [];
+  mockSession(on, commands);
+  const opens = captureOpens(on);
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  expect(commands).toEqual([]);
+  expect(opens).toEqual([{ id: "lore-pane", title: "Lore" }]);
+  opens.length = 0;
+  const ui = await $.ui.mount({
+    plugin: "opum-lore",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "lore-pane",
+    props: docked(160, 80),
+    viewport: { columns: 160, rows: 50, isFullscreen: true },
+  });
+  expect(opens).toEqual([]);
+  await ui.unmount();
+});
+
+test("the full-or-normal choice is written to the plugin's store, and a session opens where it was left", async ($, on) => {
+  // The setting is read at session start and written on every toggle, so the test
+  // reads it the way the module does: a session start, then a draw. The first
+  // session of each round starts from a store holding `full` and asks for the full
+  // width; the toggle then writes `normal`, and the SECOND session of the round
+  // asks for nothing -- which it can only do if what it read was the toggle's
+  // write. A write that never landed would leave the store at `full` and this
+  // session would ask for the full width again.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on, { "pane-mode": "full" });
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  const opens = captureOpens(on);
+  const start = () => $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  for (const surface of ["terminal", "desktop"] as const) {
+    await start();
+    opens.length = 0;
+    const restored = await $.ui.mount({
+      plugin: "opum-lore",
+      surface,
+      component: "Pane",
+      requestId: "lore-pane",
+      props: docked(160, 80),
+      viewport: { columns: 160, rows: 50, isFullscreen: true },
+    });
+    await clock.settle();
+    // Restored, not asked for: the request carries no `focus`.
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", columns: 140 });
+    // The draw that asked says so too: the toggle offers the way back.
+    expect((await restored.find({ key: "full" }))?.props.label).toBe("Normal size");
+    await restored.press({ key: "full" });
+    await clock.settle();
+    await restored.unmount();
+
+    await start();
+    opens.length = 0;
+    const reopened = await $.ui.mount({
+      plugin: "opum-lore",
+      surface,
+      component: "Pane",
+      requestId: "lore-pane",
+      props: docked(160, 80),
+      viewport: { columns: 160, rows: 50, isFullscreen: true },
+    });
+    await clock.settle();
+    expect(opens).toEqual([]);
+    expect((await reopened.find({ key: "full" }))?.props.label).toBe("Full screen");
+    // Left at `full` again, so the next round's premise is the one it started from.
+    await reopened.press({ key: "full" });
+    await clock.settle();
+    await reopened.unmount();
+  }
+});
+
+test("a session starting with no remembered choice opens at the normal size", async ($, on) => {
+  // The control for the restore above: the same session, the same store, with
+  // nothing remembered.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  const opens = captureOpens(on);
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  opens.length = 0;
+  const ui = await $.ui.mount({
+    plugin: "opum-lore",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "lore-pane",
+    props: docked(160, 80),
+    viewport: { columns: 160, rows: 50, isFullscreen: true },
+  });
+  await clock.settle();
+  expect(opens).toEqual([]);
+  await ui.unmount();
+});
+
+test("a pane that did not get the size it asked for says so, in one line", async ($, on) => {
+  // The engine keeps a size the person dragged, and the request is a request. The
+  // pane then says what it is and what to press rather than claiming the size it
+  // asked for. Measured against the size the module itself would ask for from the
+  // viewport it was handed, so a body that matches it shows no hint -- which is
+  // the control, in the same test.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on, { "pane-mode": "full" });
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  captureOpens(on);
+  const HINT = "Drag the pane edge to resize; z switches layouts";
+  // Asked for 140 (160 less the margin). The design's rule for telling a granted size
+  // from a person's drag: "a size within 4 cells of the request as granted, and
+  // anything further off as the person's own drag", so the boundary is drawn at 136
+  // and 135 as well as at the two ends -- a slack of 4 is a number, and these are the
+  // two drawings that say which side of it each one falls on.
+  const cases = [
+    { columns: 60, hint: true },
+    { columns: 135, hint: true },
+    { columns: 136, hint: false },
+    { columns: 140, hint: false },
+  ] as const;
+  for (const surface of ["terminal", "desktop"] as const) {
+    await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+    for (const one of cases) {
+      const ui = await $.ui.mount({
+        plugin: "opum-lore",
+        surface,
+        component: "Pane",
+        requestId: "lore-pane",
+        props: docked(160, one.columns),
+        viewport: { columns: 160, rows: 50, isFullscreen: true },
+      });
+      await clock.settle();
+      const shown = await ui.find({ type: "Text", text: HINT });
+      expect(shown === undefined, `drawn ${one.columns} of the 140 asked for`).toBe(!one.hint);
+      await ui.unmount();
+    }
+  }
+});
+
+test("a pane at its normal size shows no hint, however small the surface keeps it", async ($, on) => {
+  // The second control: only a pane that asked for a size can have been denied
+  // one, so a normal-size pane says nothing about the size it drew at.
+  mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  captureOpens(on);
+  const ui = await $.ui.mount({
+    plugin: "opum-lore",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "lore-pane",
+    props: docked(160, 60),
+    viewport: { columns: 160, rows: 50, isFullscreen: true },
+  });
+  expect(await ui.find({ type: "Text", text: /Drag the pane edge to resize/ })).toBeUndefined();
+  await ui.unmount();
+});
+
+// ── The side-by-side layout (LCLI-666, design section 1's layout bullet) ──────
+
+/** A full-mode docked pane of `bodyColumns` cells, which is what the split is measured on. */
+const splitPane = (bodyColumns: number) => ({
+  plugin: "opum-lore" as const,
+  component: "Pane" as const,
+  requestId: "lore-pane",
+  props: docked(160, bodyColumns, 50),
+  viewport: { columns: 160, rows: 50, isFullscreen: true },
+});
+
+test("in full mode at 120 body columns Read draws the bundle list beside the document", async ($, on) => {
+  // The design keeps the list in a left column with the document on the right from
+  // 120 body columns, and the stacked layout below that. The list is the same bundle
+  // list Browse draws, with the open document at full strength; the document is the
+  // tree the stacked Read draws, so both are asserted in the one drawing.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on, { "pane-mode": "full" });
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  captureOpens(on);
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  // Open a document once, from Browse, where the row is the tab's own body rather
+  // than the split's left column: every mount after this one draws the Read tab with
+  // it already open, which is also the state the threshold is measured in.
+  const browse = await $.ui.mount({ ...splitPane(140), surface: "terminal" });
+  await clock.settle();
+  await browse.press({ key: "tab-browse" });
+  await browse.press({ key: "refresh" });
+  await browse.press({ key: "open-adr/0001-x" });
+  await browse.unmount();
+
+  for (const surface of ["terminal", "desktop"] as const) {
+    // At 140, and at exactly the 120 the design names: the list is drawn beside the
+    // document. One column under it is the control, and the drawing is otherwise the
+    // same one -- the document is there in all three.
+    for (const columns of [140, 120, 119]) {
+      const ui = await $.ui.mount({ ...splitPane(columns), surface });
+      await clock.settle();
+      const [row, sibling, document] = await Promise.all([
+        ui.find({ key: "open-adr/0001-x" }),
+        ui.find({ key: "open-reference/notes" }),
+        ui.find({ type: "Markdown", text: /The body of the notes\./ }),
+      ]);
+      // The document is drawn either way; the list and its container only at 120+.
+      expect(document).toBeDefined();
+      const split = await ui.find({ key: "side-by-side" });
+      if (columns >= 120) {
+        expect(split).toBeDefined();
+        expect(row).toBeDefined();
+        // The open document's own row is at full strength; its sibling stays dim.
+        expect(row?.props.dimColor).toBe(false);
+        expect(sibling?.props.dimColor).toBe(true);
+        // The list is the LEFT column and the document the right one, which the two
+        // being drawn in one row does not by itself say.
+        const [left, right] = childrenUnder(await ui.drawn(), "side-by-side");
+        expect(JSON.stringify(left)).toContain("open-adr/0001-x");
+        expect(JSON.stringify(left)).not.toContain("The body of the notes.");
+        expect(JSON.stringify(right)).toContain("The body of the notes.");
+        expect(JSON.stringify(right)).not.toContain('"open-adr/0001-x"');
+      } else {
+        expect(split).toBeUndefined();
+        expect(row).toBeUndefined();
+      }
+      await ui.unmount();
+    }
+  }
+});
+
+test("in full mode at 120 body columns Search draws the results beside the document", async ($, on) => {
+  // On Search the list is the results. The form that makes them stays pane-wide, and
+  // the open document's own hit is at full strength beside the document it names.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on, { "pane-mode": "full" });
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  captureOpens(on);
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  for (const surface of ["terminal", "desktop"] as const) {
+    const search = async (bodyColumns: number) => {
+      const ui = await $.ui.mount({ ...splitPane(bodyColumns), surface });
+      await clock.settle();
+      await ui.press({ key: "refresh" });
+      await ui.press({ key: "open-adr/0001-x" });
+      await ui.press({ key: "tab-search" });
+      await ui.input({ key: "search-text", text: "notes" });
+
+      return ui;
+    };
+
+    const split = await search(140);
+    expect(await split.find({ key: "side-by-side" })).toBeDefined();
+    // Both lists are drawn at once: the results on the left, the document on the right.
+    expect(await split.find({ key: "open-adr/0001-x" })).toBeDefined();
+    expect(await split.find({ type: "Markdown", text: /The body of the notes\./ })).toBeDefined();
+    expect((await split.find({ key: "open-adr/0001-x" }))?.props.dimColor).toBe(false);
+    const [results, document] = childrenUnder(await split.drawn(), "side-by-side");
+    expect(JSON.stringify(results)).toContain("open-adr/0001-x");
+    expect(JSON.stringify(results)).not.toContain("The body of the notes.");
+    expect(JSON.stringify(document)).toContain("The body of the notes.");
+    await split.unmount();
+
+    // Below the threshold the results are still drawn, stacked under the form.
+    const stacked = await search(119);
+    expect(await stacked.find({ key: "side-by-side" })).toBeUndefined();
+    expect(await stacked.find({ key: "open-adr/0001-x" })).toBeDefined();
+    await stacked.unmount();
+  }
+});
+
+test("the split is full mode's, not a wide pane's on its own", async ($, on) => {
+  // The design adapts the layout "in full mode". A normal-size pane that happens to
+  // be wide -- a docked pane on a wide terminal -- keeps the stacked layout, so the
+  // split is the mode's and not only the width's.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  captureOpens(on);
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  const ui = await $.ui.mount({ ...splitPane(140), surface: "terminal" });
+  await clock.settle();
+  await ui.press({ key: "refresh" });
+  await ui.press({ key: "open-adr/0001-x" });
+  expect(await ui.find({ key: "side-by-side" })).toBeUndefined();
+  expect(await ui.find({ key: "open-adr/0001-x" })).toBeUndefined();
+  expect(await ui.find({ type: "Markdown", text: /The body of the notes\./ })).toBeDefined();
+  await ui.unmount();
+});
+
+// ── The dashboard tool (LCLI-668) ─────────────────────────────────────────────
+
+/**
+ * The tool the model calls, as `ToolSpec` spells a declared name: `mcp__<plugin>__<name>`,
+ * with the plugin's name `opum-lore` from `.claude-plugin/plugin.json`. Spelled out here
+ * rather than imported, because this is the model's side of the contract: a module whose
+ * matcher disagreed with its registration would leave every call unanswered, which is
+ * what the misspelled-name control below measures.
+ */
+const DASHBOARD = "mcp__opum-lore__dashboard";
+
+test("the dashboard tool registers at session start, and a bare call opens the pane without the keyboard", async ($, on) => {
+  // Registration is asserted on the SPEC the module handed the engine, which is what the
+  // model is listed; the full name cannot be read back in a test, because the engine's own
+  // tool registry sits below the test's hooks. The call below is the other half: only a
+  // matcher spelled as the engine spells the tool answers, and the misspelling control
+  // after the loop is what says so.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  const tools: Record<string, unknown>[] = [];
+  mockSession(on, undefined, tools);
+  const opens = captureOpens(on);
+
+  for (const surface of ["terminal", "desktop"] as const) {
+    await $.session.start({ cwd: "/repo", surface, isInteractive: true });
+    // The session's own refresh is waited out, so what the assertions read is the tool's
+    // doing and not a race with the start.
+    await clock.settle();
+    opens.length = 0;
+
+    expect(tools).toHaveLength(1);
+    const spec = tools[0] ?? {};
+    expect(spec.name).toBe("dashboard");
+    // The description is listed to the model in EVERY session that loads the mod, so it
+    // stays to one or two sentences (design of record).
+    const description = String(spec.description ?? "");
+    const sentences = (description.match(/[.!?](?:\s|$)/gu) ?? []).length;
+    expect(sentences).toBeGreaterThanOrEqual(1);
+    expect(sentences).toBeLessThanOrEqual(2);
+    const schema = spec.inputSchema as { required?: unknown; properties: Record<string, unknown> };
+    // Every field is optional, so a bare call is a valid call.
+    expect(schema.required).toBeUndefined();
+    expect(Object.keys(schema.properties)).toEqual(["doc", "query", "full"]);
+
+    const answer = await $.tool.call({ tool: DASHBOARD });
+    expect(answer.result).toBe("Opened the Lore pane.");
+    // The open is what the pane was TOLD, not what a surface did with it: no `focus`,
+    // because Claude may call this while the person is typing, and no `closeOnEscape` --
+    // with `focus`, that pair is what would make the pane a dialog rather than a pane.
+    expect(opens).toEqual([{ id: "lore-pane", title: "Lore" }]);
+
+    // And the pane it opened draws on the surface that session is on.
+    const ui = await $.ui.mount({
+      plugin: "opum-lore",
+      surface,
+      component: "Pane",
+      requestId: "lore-pane",
+      props: PANE,
+    });
+    expect(await ui.find({ key: "tab-browse" })).toBeDefined();
+    await ui.unmount();
+
+    tools.length = 0;
+  }
+
+  // The control: a name one character off is not this tool, so nothing answers it.
+  opens.length = 0;
+  let refused: unknown = null;
+  try {
+    await $.tool.call({ tool: "mcp__opum-lore__dashboards" });
+  } catch (error) {
+    refused = error;
+  }
+  expect(refused).not.toBeNull();
+  expect(opens).toEqual([]);
+});
+
+test("each dashboard input lands where it should, on the terminal and the desktop", async ($, on) => {
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  const opens = captureOpens(on);
+
+  for (const surface of ["terminal", "desktop"] as const) {
+    // `doc`: the concept is read through the CLI, and the pane is left on it.
+    await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+    // The session's own background refresh is allowed to land before the call, so what
+    // the assertions below read is the tool's doing and not a race with the start.
+    await clock.settle();
+    opens.length = 0;
+    seen.length = 0;
+    const opened = await $.tool.call({ tool: DASHBOARD, doc: "adr/0001-x" });
+    expect(opened.result).toBe("Opened the Lore pane, adr/0001-x on Read.");
+    expect(seen).toContainEqual(["lore", "read", "adr/0001-x", "--json"]);
+    expect(opens).toEqual([{ id: "lore-pane", title: "Lore" }]);
+    const reading = await $.ui.mount({
+      plugin: "opum-lore",
+      surface,
+      component: "Pane",
+      requestId: "lore-pane",
+      props: PANE,
+    });
+    expect((await reading.find({ key: "tab-read" }))?.props.variant).toBe("primary");
+    expect(await reading.find({ type: "Markdown", text: /The body of the notes\./ })).toBeDefined();
+    await reading.unmount();
+
+    // `query`: the text reaches `lore query` after the `--`, and the pane is left on the
+    // Search tab, drawing the results that text produced.
+    await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+    await clock.settle();
+    opens.length = 0;
+    seen.length = 0;
+    const searched = await $.tool.call({ tool: DASHBOARD, query: "retention" });
+    expect(searched.result).toBe('Opened the Lore pane, Search for "retention".');
+    expect(seen).toContainEqual(["lore", "query", "--json", "--", "retention"]);
+    expect(opens).toEqual([{ id: "lore-pane", title: "Lore" }]);
+    const searching = await $.ui.mount({
+      plugin: "opum-lore",
+      surface,
+      component: "Pane",
+      requestId: "lore-pane",
+      props: PANE,
+    });
+    expect((await searching.find({ key: "tab-search" }))?.props.variant).toBe("primary");
+    await searching.unmount();
+
+    // `full`: the mode changes, and the DRAW that follows asks the surface for the size --
+    // with no `focus`, because the ask is Claude's and the keyboard is the person's. The
+    // button's own label is a second reading of the same state.
+    await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+    await clock.settle();
+    opens.length = 0;
+    const sized = await $.tool.call({ tool: DASHBOARD, full: true });
+    expect(sized.result).toBe("Opened the Lore pane, the full size.");
+    const full = await $.ui.mount({
+      plugin: "opum-lore",
+      surface,
+      component: "Pane",
+      requestId: "lore-pane",
+      props: docked(160, 80),
+      viewport: { columns: 160, rows: 50, isFullscreen: true },
+    });
+    await clock.settle();
+    // Two opens, and both are the tool's: the immediate one that shows the pane, then the
+    // draw's sized request -- which is where the full size is actually asked for, because
+    // a draw is the only place that knows the viewport. Neither carries `focus`.
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", columns: 140 });
+    expect(opens.every((one) => one.focus === undefined)).toBe(true);
+    expect((await full.find({ key: "full" }))?.props.label).toBe("Normal size");
+    await full.unmount();
+
+    // `full: false` asks for the normal size back, and leaves the store where the next
+    // round's session start reads it: the size is remembered, as the toggle's is.
+    const back = await $.tool.call({ tool: DASHBOARD, full: false });
+    expect(back.result).toBe("Opened the Lore pane, its normal size.");
+    // The call refreshed the pane, and that read is still in flight; it is waited out so
+    // nothing a test started outlives the test.
+    await clock.settle();
+  }
+});
+
+test("a dashboard call on a pane that is already up re-asks the size its mode implies", async ($, on) => {
+  // The live shape: the pane is MOUNTED before the call, and already full -- the steady
+  // state of a remembered full mode, or of a `z` the person just pressed. The tool's open
+  // is unsized (a `tool.call` carries no viewport to size from) and "each open sets it
+  // anew", so that open CLEARS the size the surface was holding. The once-only guard has to
+  // be reset with it, or nothing re-asks: the guard still holds the key that would ask.
+  // The signal is the open args, not the drag hint -- the harness draws whatever size the
+  // props name, so it cannot show what a cleared request leaves on screen (review F2).
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on, { "pane-mode": "full" });
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  const opens = captureOpens(on);
+
+  for (const surface of ["terminal", "desktop"] as const) {
+    await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+    await clock.settle();
+    opens.length = 0;
+    const ui = await $.ui.mount({ ...splitPane(140), surface });
+    await clock.settle();
+    // The pane is up and full before the call, which is the premise.
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", columns: 140 });
+
+    // A call that asks for the size the pane is ALREADY at: the mode does not change, so
+    // the re-ask is the only thing that can put the size back.
+    opens.length = 0;
+    const same = await $.tool.call({ tool: DASHBOARD, full: true });
+    expect(same.result).toBe("Opened the Lore pane, the full size.");
+    // The engine redraws a state change itself ("the sites that read it while drawing are
+    // drawn again"); the harness draws on an act, so this press stands in for that redraw.
+    // What is under test is the DRAW it causes, not the press.
+    await ui.press({ key: "refresh" });
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", columns: 140 });
+    // Nobody asked the person's keyboard for it, then or now.
+    expect(opens.every((one) => one.focus === undefined)).toBe(true);
+
+    // And a bare call, which changes no state at all, still has to leave the pane at the
+    // size its mode implies rather than at the surface's share.
+    opens.length = 0;
+    const bare = await $.tool.call({ tool: DASHBOARD });
+    expect(bare.result).toBe("Opened the Lore pane.");
+    await ui.press({ key: "refresh" });
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", columns: 140 });
+    await ui.unmount();
+  }
+});
+
+test("an unknown doc id is refused by name, and opens nothing else in its place", async ($, on) => {
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  // `adr/nope` is the one id this bundle does not have.
+  mockLore(on, seen, false, "The body of the notes.", undefined, ["adr/nope"]);
+  mockSession(on);
+  const opens = captureOpens(on);
+
+  for (const surface of ["terminal", "desktop"] as const) {
+    await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+    await clock.settle();
+    opens.length = 0;
+    const answer = await $.tool.call({ tool: DASHBOARD, doc: "adr/nope" });
+    // The model reads an error result naming the id it asked for, so it can correct the
+    // call itself; nothing is opened and no tab is switched.
+    expect(answer.deny).toContain("adr/nope");
+    expect(answer.result).toBeUndefined();
+    expect(opens).toEqual([]);
+    // Nothing in the document's place: the pane draws lore's own message and no document
+    // at all, rather than the last one that happened to be open.
+    const ui = await $.ui.mount({
+      plugin: "opum-lore",
+      surface,
+      component: "Pane",
+      requestId: "lore-pane",
+      props: PANE,
+    });
+    expect(await ui.find({ type: "Markdown", text: /The body of the notes\./ })).toBeUndefined();
+    expect(await ui.find({ type: "Text", text: /Read adr\/nope failed \(lore exited 3\)/ })).toBeDefined();
+    await ui.unmount();
+  }
+});
+
+test("the landing strip belongs to an open document, not to an empty Read tab", async ($, on) => {
+  // Restored to the base (LCLI-668 review F4): the Read tab drew the landing strip only
+  // once a document was open, and the LCLI-666 move folded the empty-document tree into
+  // the fallthrough that carries it. Whether the strip BELONGS on an empty Read tab is a
+  // separate question; this pins that the move did not answer it by accident.
+  //
+  // The reads are mocked here rather than through `mockLore`, because the strip needs a
+  // repository whose status read reports a changed `.md` -- `mockLore` answers every git
+  // argv with the toplevel, which parses to no paths at all.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  mockSession(on);
+  captureOpens(on);
+  on("process.run", async (_$, e) => {
+    const argv = [...e.argv];
+    if (argv[0] === "git") {
+      return ok(argv.includes("status") ? " M docs/adr/0001-x.md\n" : "/repo\n");
+    }
+    const sub = argv[1] ?? "";
+    if (sub === "query") {
+      return ok(CONCEPTS);
+    }
+    if (sub === "types") {
+      return ok(TYPES);
+    }
+    if (sub === "read") {
+      return ok(readOf(argv[2] ?? ""));
+    }
+    if (sub === "tasks") {
+      return ok(ROLLUP);
+    }
+
+    return ok(JSON.stringify({ kind: "ok", data: {} }));
+  });
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  await clock.settle();
+  const ui = await $.ui.mount({
+    plugin: "opum-lore",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "lore-pane",
+    props: PANE,
+  });
+  await ui.press({ key: "refresh" });
+
+  // Read with nothing open: the prompt, and no landed-work strip.
+  await ui.press({ key: "tab-read" });
+  expect(await ui.find({ type: "Text", text: /Pick a document from Browse or Search\./ })).toBeDefined();
+  expect(await ui.find({ key: "land" })).toBeUndefined();
+
+  // With a document open the strip is there, which is what makes the assertion above
+  // about the empty tab rather than about a strip that never draws here.
+  await ui.press({ key: "tab-browse" });
+  await ui.press({ key: "open-adr/0001-x" });
+  expect(await ui.find({ type: "Markdown", text: /The body of the notes\./ })).toBeDefined();
+  expect(await ui.find({ key: "land" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: /not committed yet/ })).toBeDefined();
+  await ui.unmount();
+});
+
+test("every dashboard call refreshes the pane, as every slash-command call did", async ($, on) => {
+  // The command this tool replaced ran `void refresh($)` on every accepted invocation, and
+  // the tool has to keep that: only the `query` arm refreshes by itself -- through
+  // `showTab` -- so a bare call or a `full`-only one would otherwise leave the catalogue as
+  // stale as the 30-second timer allows. Counted rather than merely seen: the arm that
+  // refreshes on its own must not be refreshed a second time for one ask.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  captureOpens(on);
+  /** The catalogue reads since the last reset: `lore query`, on either arm of the pane. */
+  const catalogReads = () => seen.filter((argv) => argv[1] === "query").length;
+  const fresh = async () => {
+    await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+    await clock.settle();
+    seen.length = 0;
+  };
+
+  await fresh();
+  await $.tool.call({ tool: DASHBOARD });
+  await clock.settle();
+  expect(catalogReads()).toBe(1);
+
+  await fresh();
+  await $.tool.call({ tool: DASHBOARD, full: true });
+  await clock.settle();
+  expect(catalogReads()).toBe(1);
+
+  await fresh();
+  await $.tool.call({ tool: DASHBOARD, doc: "adr/0001-x" });
+  await clock.settle();
+  expect(catalogReads()).toBe(1);
+
+  // The query arm's own refresh IS the call's refresh.
+  await fresh();
+  await $.tool.call({ tool: DASHBOARD, query: "retention" });
+  await clock.settle();
+  expect(catalogReads()).toBe(1);
 });

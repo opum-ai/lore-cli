@@ -15,7 +15,7 @@
 import { atom, read, update } from "claude-code";
 import type { EngineInterface, Register } from "claude-code";
 
-import type { Catalog, DocState, Edits, View } from "../types";
+import type { Catalog, DocState, Edits, PaneMode, PaneState, View } from "../types";
 import type { Outcome, Run } from "./lore";
 import {
   BODY_CAP,
@@ -44,11 +44,121 @@ import {
   searchArgv,
 } from "./lore";
 
+// The pane's ID, which is not what opens it: the pane has no slash command (LCLI-667 --
+// the engine's `lore` skill owns that name, so a command of the same name is refused), and
+// `mcp__opum-lore__dashboard` below is its entry point. The id keeps its older spelling
+// because it is what `$.ui.open`, the store and `$.state` are keyed by: renaming it would
+// lose an open pane and a preference saved before the rename.
 const PANE = "lore-pane";
-const COMMAND = "lore-pane";
 const REFRESH_MS = 30_000;
 const TIMEOUT_MS = 30_000;
 const ROW_CAP = 120;
+
+// ── The full-screen toggle (LCLI-666) ─────────────────────────────────────────
+
+/** Where the surface seated the pane, as the `Pane` render props carry it. */
+type Placement = "dock" | "inline";
+
+/** The `$.store` key holding the remembered full-or-normal choice (a `PaneMode`). */
+const MODE_KEY = "pane-mode";
+
+/**
+ * The transcript columns a docked full pane leaves visible.
+ *
+ * A request is the largest the surface allows only up to the layout's own
+ * arithmetic, and a docked pane that asks for every column takes the
+ * conversation with it: the design keeps a margin (~20 columns) so the
+ * transcript stays readable beside the pane.
+ */
+const DOCK_MARGIN_COLUMNS = 20;
+
+/**
+ * The rows the prompt area takes on the main screen, subtracted from the viewport
+ * height when an inline pane asks for its full size.
+ *
+ * The design's figure, not this module's estimate: `rows` is "the viewport height
+ * minus 6 rows for the prompt area" (opum-doc,
+ * `pane-full-screen-and-quest-migration-skill-design.md` at 080b63a, where quest-cli's
+ * measurement settled what the design had left open). It stays a constant because the
+ * engine exposes no such reading -- `e.viewport.rows` is "cells down the whole
+ * surface" and `RenderViewport` carries nothing for the composer, while the inline
+ * pane's own `scroll.bodyRows` measures the pane rather than the prompt. The request
+ * it feeds is a request, not a grant: the surface clamps to what the layout spares,
+ * so a short terminal costs the pane rows rather than overflowing.
+ */
+const PROMPT_AREA_ROWS = 6;
+
+/**
+ * The cells between the size a request asks for and the size the body measures.
+ *
+ * `columns` and `rows` are the pane's own size; `bodyColumns` is "cells across
+ * the body, inside the frame". One slack covers the frame and the chrome a
+ * surface draws around the body, so a pane that got what it asked for is not
+ * read as short of it.
+ */
+const SIZE_SLACK = 4;
+
+/** The one-line hint a pane shows when the size it drew is not the size it asked for. */
+const FULL_HINT = "Drag the pane edge to resize; z switches layouts";
+
+// ── The dashboard tool (LCLI-668) ─────────────────────────────────────────────
+
+/** The tool's own name, which is what `$.tool.register` declares. */
+const TOOL_NAME = "dashboard";
+
+/**
+ * The tool as the engine lists it to the model: `ToolSpec` spells a declared name
+ * `mcp__<plugin>__<name>`, and the plugin's name is `opum-lore` in
+ * `.claude-plugin/plugin.json`. The hook that serves the tool is matched at register
+ * time, before any registration has returned a name, so the spelling lives here and
+ * both sides are built from the one pair of constants.
+ */
+const TOOL = `mcp__opum-lore__${TOOL_NAME}` as const;
+
+/**
+ * The tool's listed description.
+ *
+ * One or two sentences, and no more: the description is listed to Claude in every
+ * session that loads the mod, so it is a standing cost on every prompt (design of
+ * record, opum-doc `docs/reference/pane-dashboard-tool-design.md` at dfde45e).
+ */
+const TOOL_DESCRIPTION =
+  "Open the Lore pane in this session: browse, read, search and create this repository’s documentation. " +
+  "`doc` opens a concept on the Read tab, `query` searches on the Search tab, `full` asks for the full size, " +
+  "and the pane never takes the keyboard.";
+
+/** What the tool takes: every field optional, so a bare call opens the pane as it stands. */
+const TOOL_INPUT_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    doc: { type: "string", description: "A concept id to open on the Read tab." },
+    query: { type: "string", description: "Text to search the bundle for, on the Search tab." },
+    full: { type: "boolean", description: "Ask for the pane's full size." },
+  },
+  additionalProperties: false,
+};
+
+/**
+ * The body columns from which the pane draws its list in a left column and the
+ * document in the right one, instead of stacked (design: "at least 120 body
+ * columns", the same threshold the Quest board splits at). Below it -- and outside
+ * full mode, where the pane is whatever size the surface's share gave it -- both
+ * tabs keep the stacked layout.
+ */
+const SIDE_BY_SIDE_COLUMNS = 120;
+
+/** One line of the bundle list: a type's heading, or a concept that opens. */
+type BrowseRow =
+  | { kind: "group"; key: string; type: string; count: number }
+  | { kind: "row"; key: string; id: string; title: string };
+
+/**
+ * The normal size, as the request that asks for it: an open with no `columns`
+ * and no `rows`. Both are requests a surface re-reads on every open ("Each open
+ * sets it anew"), so returning to the normal size is asking for the surface's
+ * own share again rather than leaving the last full-size request standing.
+ */
+const NORMAL_REQUEST = "normal";
 
 const view = atom({ plugin: "opum-lore", key: "view" } as const, {
   tab: "browse",
@@ -85,6 +195,21 @@ const edits = atom({ plugin: "opum-lore", key: "edits" } as const, {
   bodyText: "",
   bodyRevision: 0,
 } satisfies Edits);
+
+const pane = atom({ plugin: "opum-lore", key: "pane" } as const, { mode: "normal" } satisfies PaneState);
+
+/**
+ * The size request this pane last made, as `requestKey` names it.
+ *
+ * The render hook is the only place that knows `e.viewport`, so it is the only
+ * place that can size a request -- but a draw is not an event: the asked-for
+ * size must not be re-asked on every draw (the person's own drag wins, so the
+ * drawn size would never come to match it and the pane would ask forever). This
+ * is the guard that makes each distinct request once-only. `NORMAL_REQUEST`
+ * matches the unsized open `session.start` makes, so a session that opens
+ * normally asks nothing until someone toggles.
+ */
+let lastRequest = NORMAL_REQUEST;
 
 // ── The call sites ────────────────────────────────────────────────────────────
 
@@ -203,6 +328,103 @@ async function uncommittedPaths($: EngineInterface, root: string | null): Promis
   }
 }
 
+// ── The pane's size ───────────────────────────────────────────────────────────
+
+/**
+ * The size a full-screen request asks for, or null when there is nothing to ask
+ * from: docked panes ask in `columns`, inline ones in `rows` (`PaneOpenArgs`),
+ * and a surface that was never measured -- or one too small to hold the margin
+ * and the pane both -- has no size to request.
+ */
+function wantedSize(placement: Placement, columns: number, rows: number): number | null {
+  const size = placement === "dock" ? columns - DOCK_MARGIN_COLUMNS : rows - PROMPT_AREA_ROWS;
+
+  return size > 0 ? size : null;
+}
+
+/** How a request is named for the once-only guard: the normal share, or a sized request. */
+function requestKey(placement: Placement, wanted: number | null): string {
+  return wanted === null ? NORMAL_REQUEST : `${placement}:${wanted}`;
+}
+
+/**
+ * The mode the person's own toggle asked for, and no request has answered yet; null
+ * when nobody is waiting on one.
+ *
+ * A person asking for a size -- the pane's `z` key -- gets a pane that takes the
+ * keyboard; a pane that widens itself because the session remembered `full`, because the
+ * viewport changed under it, or because the dashboard tool asked for it is nobody's ask
+ * and must not take the keyboard from the prompt. Both are the same open, built in the
+ * same place, so the difference is carried here. It is carried as the MODE that was
+ * asked for rather than as a bare flag (LCLI-668 review F5): the request that answers it
+ * has to be the one applying that mode, and a draw with nothing to ask leaves the ask
+ * standing for the draw that does ask, instead of spending it on the way past.
+ */
+let personRequest: PaneMode | null = null;
+
+/**
+ * Asks the surface for the pane, sized when there is a size to ask for.
+ *
+ * `focus` only when the person asked (a request, not a grant either way: the
+ * surface hands the pane the keyboard only over an empty composer), and
+ * `closeOnEscape` is never passed -- that pair is what would make the pane a
+ * dialog rather than a pane. The key is left OUT rather than set false, so what
+ * the module asked for is what the open carries.
+ */
+async function requestPane(
+  $: EngineInterface,
+  placement: Placement,
+  wanted: number | null,
+  focus: boolean,
+): Promise<void> {
+  const asked = focus ? { focus: true as const } : {};
+  if (wanted === null) {
+    await $.ui.open({ id: PANE, title: "Lore", ...asked });
+
+    return;
+  }
+  await $.ui.open({
+    id: PANE,
+    title: "Lore",
+    ...asked,
+    ...(placement === "dock" ? { columns: wanted } : { rows: wanted }),
+  });
+}
+
+/**
+ * Leaves the pane at `mode`, in `$.state` and in the store.
+ *
+ * `personRequest` is deliberately NOT touched here: the person's own toggle sets it
+ * itself, and a size nobody asked for -- a restored one, the viewport moving under
+ * the pane, or the dashboard tool asking for `full` -- must not take the keyboard
+ * from the prompt. The size itself is asked for by the next draw, which is the only
+ * place that knows `e.viewport`; this leaves the choice where a draw will find it.
+ * The store write is best-effort: a store that refuses loses the memory of the
+ * choice, which is not a reason to refuse the change.
+ */
+async function setPaneMode($: EngineInterface, mode: PaneMode): Promise<void> {
+  await update($, pane, (state) => ({ ...state, mode }));
+  try {
+    await $.store.set(MODE_KEY, mode);
+  } catch {
+    // The pane changes size either way; only the next session's memory of it is lost.
+  }
+}
+
+/**
+ * Flips the pane between its normal size and the largest the surface allows.
+ *
+ * `personRequest` leaves the person's intent beside the change -- they pressed the
+ * key, so the pane it produces may take the keyboard.
+ */
+async function togglePane($: EngineInterface): Promise<PaneMode> {
+  const next: PaneMode = (await read($, pane)).mode === "full" ? "normal" : "full";
+  personRequest = next;
+  await setPaneMode($, next);
+
+  return next;
+}
+
 // ── Actions ───────────────────────────────────────────────────────────────────
 
 async function setView($: EngineInterface, patch: Partial<View>): Promise<void> {
@@ -264,7 +486,15 @@ async function refresh($: EngineInterface): Promise<void> {
   }
 }
 
-async function loadConcept($: EngineInterface, id: string, patch: Partial<View> = {}): Promise<void> {
+/**
+ * Loads one concept into the pane and leaves it open on the Read tab.
+ *
+ * The outcome is returned rather than only drawn: the person's own presses read it
+ * as "nothing happened, the pane says why", but the dashboard tool has to report a
+ * bad id back to the model, and it can only do that if the read's own answer reaches
+ * its caller (LCLI-668).
+ */
+async function loadConcept($: EngineInterface, id: string, patch: Partial<View> = {}): Promise<Outcome> {
   const root = await ensureRoot($);
   await setView($, { isLoading: true });
   const [readRun, tasksRun] = await Promise.all([
@@ -274,7 +504,8 @@ async function loadConcept($: EngineInterface, id: string, patch: Partial<View> 
   const result = parseRead(readRun, tasksRun, id);
   if (!result.ok) {
     await setView($, { isLoading: false, error: result.error });
-    return;
+
+    return { ok: false, error: result.error };
   }
   const raw = await readFileText($, root, result.doc.repoPath);
   await update($, doc, () => ({ concept: { ...result.doc, raw } }));
@@ -294,15 +525,19 @@ async function loadConcept($: EngineInterface, id: string, patch: Partial<View> 
     actionValue: "",
     ...patch,
   });
+
+  return { ok: true };
 }
 
-async function openConcept($: EngineInterface, id: string): Promise<void> {
+/** Opens one concept on the Read tab, carrying the back history; see `loadConcept`. */
+async function openConcept($: EngineInterface, id: string): Promise<Outcome> {
   const current = await read($, view);
   const history =
     current.selectedId && current.selectedId !== id
       ? [...current.history, current.selectedId].slice(-50)
       : current.history;
-  await loadConcept($, id, { tab: "read", history });
+
+  return await loadConcept($, id, { tab: "read", history });
 }
 
 async function goBack($: EngineInterface): Promise<void> {
@@ -605,16 +840,159 @@ async function submitAction($: EngineInterface): Promise<void> {
   await countUncommitted($);
 }
 
+// ── The dashboard tool (LCLI-668) ─────────────────────────────────────────────
+
+/** One text argument of the call, read as input rather than trusted. */
+type TextArg = { ok: true; text: string | null } | { ok: false; why: string };
+
+/**
+ * Reads one text argument.
+ *
+ * Everything that crosses `tool.call` is input to validate, never a fact: the model
+ * sends it, and `$.tool.call` lets any plugin send it too (the rule `ui.message`
+ * already follows for its posted data). Absent, and blank -- which is the same ask,
+ * a model that meant "nothing here" -- leave nothing to do. Present and not text is
+ * refused by naming what it was: opening something in its place would be guessing at
+ * what was meant.
+ */
+function textArg(value: unknown): TextArg {
+  if (value === undefined || value === null) {
+    return { ok: true, text: null };
+  }
+  if (typeof value !== "string") {
+    return { ok: false, why: `must be a string, and this was ${describe(value)}` };
+  }
+
+  return { ok: true, text: value.trim() || null };
+}
+
+/** `full` as the tool reads it: absent, true, or false; anything else is refused. */
+function boolArg(value: unknown): { ok: true; value: boolean | null } | { ok: false; why: string } {
+  if (value === undefined || value === null) {
+    return { ok: true, value: null };
+  }
+  if (typeof value !== "boolean") {
+    return { ok: false, why: `must be true or false, and this was ${describe(value)}` };
+  }
+
+  return { ok: true, value };
+}
+
+/** What an argument that should have been text or a boolean is called in the refusal. */
+function describe(value: unknown): string {
+  if (Array.isArray(value)) {
+    return "an array";
+  }
+  if (typeof value === "object") {
+    return "an object";
+  }
+
+  return `the ${typeof value} ${String(value)}`;
+}
+
+/**
+ * Opens the pane for the model, and answers with what it opened.
+ *
+ * Every open is made WITHOUT `focus`, and the mode is set without `personRequest`:
+ * Claude may call this while the person is typing, so the tool never takes the
+ * keyboard from the prompt (design of record, opum-doc
+ * `docs/reference/pane-dashboard-tool-design.md` at dfde45e). `full` is a state
+ * change rather than an open carrying a size, because the draw that follows is the
+ * only place that knows the viewport -- exactly how the person's own toggle is
+ * answered.
+ *
+ * A `doc` the bundle does not have opens nothing else in its place: it is read FIRST, and
+ * the refusal returns before any other argument is applied -- no pane open, no tab switch,
+ * no search. The failed read is not without trace: it leaves the pane's own status line
+ * carrying lore's message, which is what the person sees if the pane is already up. That
+ * line is a report of the failure, not something opened in the document's place.
+ */
+async function openDashboard(
+  $: EngineInterface,
+  args: Readonly<Record<string, unknown>>,
+): Promise<{ result: string } | { deny: string }> {
+  const doc = textArg(args.doc);
+  if (!doc.ok) {
+    return { deny: `The dashboard tool's "doc" ${doc.why}.` };
+  }
+  const query = textArg(args.query);
+  if (!query.ok) {
+    return { deny: `The dashboard tool's "query" ${query.why}.` };
+  }
+  const full = boolArg(args.full);
+  if (!full.ok) {
+    return { deny: `The dashboard tool's "full" ${full.why}.` };
+  }
+
+  const opened: string[] = [];
+  if (doc.text !== null) {
+    const outcome = await openConcept($, doc.text);
+    if (!outcome.ok) {
+      return { deny: `No document "${doc.text}" in this bundle: ${outcome.error}` };
+    }
+    opened.push(`${doc.text} on Read`);
+  }
+  if (query.text !== null) {
+    await setView($, { query: query.text });
+    if (doc.text === null) {
+      await showTab($, "search");
+      opened.push(`Search for "${query.text}"`);
+    } else {
+      // The Read tab holds the pane, so the search is loaded rather than shown; the
+      // line says which of the two the person sees.
+      opened.push(`"${query.text}" waiting in Search`);
+    }
+  }
+  if (full.value !== null) {
+    await setPaneMode($, full.value ? "full" : "normal");
+    opened.push(full.value ? "the full size" : "its normal size");
+  }
+  // The pane is refreshed on every call, as it was on every invocation of the slash command
+  // this tool replaced: only the `query` arm refreshes on its own -- through `showTab` -- so
+  // without this a bare call or a `full`-only one would leave the catalogue as stale as the
+  // 30-second timer allows. Fired after the state above is applied, so it reads what the call
+  // leaves behind, and skipped in the one case that has already refreshed that same state
+  // (the query arm with no `doc`, where the tab switch is the refresh), so no call runs
+  // `lore query` twice for one ask.
+  const refreshedByTab = doc.text === null && query.text !== null;
+  if (!refreshedByTab) {
+    void refresh($);
+  }
+  // This open is unsized, and "each open sets it anew": a size asked for earlier is cleared
+  // by it, not left standing. So the once-only guard is reset alongside it, exactly as
+  // `session.start` resets it -- the next draw then re-asks the size the mode implies. Without
+  // this, a call that did NOT change the mode (an already-full pane, which is the steady state
+  // of a remembered full mode, or a `full: true` call on one) would leave the surface at its
+  // share and nothing to re-ask, because the guard already holds the very key that would ask
+  // (LCLI-668 review F2).
+  lastRequest = NORMAL_REQUEST;
+  await $.ui.open({ id: PANE, title: "Lore" });
+
+  return { result: `Opened the Lore pane${opened.length > 0 ? `, ${opened.join(", ")}` : ""}.` };
+}
+
 // ── The module ────────────────────────────────────────────────────────────────
 
 export const register: Register = (on, _options) => {
   on("session.start", async ($, e, next) => {
     await setView($, { root: await resolveRoot($) });
-    await $.command.register({
-      name: COMMAND,
-      description:
-        "Open the Lore pane: browse, read (rendered or raw), search, create and edit this repository’s docs through the lore CLI.",
-    });
+    // The pane's ONLY entry point (LCLI-667/668, opum-doc design of record): the tool the
+    // `lore` skill routes `dashboard` to. No slash command is registered -- the engine's
+    // `lore` skill owns that name, so a command of the same name is refused and takes this
+    // whole hook down with it (measured on Claude Code 2.1.288). Awaited, because the first
+    // `session.start` is awaited before the first prompt and a registration not awaited
+    // there is not listed by turn one; its description stays short for the same reason it
+    // exists at all -- it is listed to the model in every session that loads this mod.
+    await $.tool.register({ name: TOOL_NAME, description: TOOL_DESCRIPTION, inputSchema: TOOL_INPUT_SCHEMA });
+    // The remembered size is restored here and ASKED for by the first draw: the
+    // session's own surface has not been measured yet (`SessionStartInput` carries
+    // no viewport), and a draw is the first moment `e.viewport` exists. The open
+    // below is the normal-size request this session starts from, which is what
+    // `NORMAL_REQUEST` names for the once-only guard.
+    const remembered: PaneMode = (await $.store.get(MODE_KEY)) === "full" ? "full" : "normal";
+    await update($, pane, (state) => ({ ...state, mode: remembered }));
+    lastRequest = NORMAL_REQUEST;
+    personRequest = null;
     void refresh($);
     void countUncommitted($);
     void $.ui.open({ id: PANE, title: "Lore" });
@@ -631,12 +1009,11 @@ export const register: Register = (on, _options) => {
     return next(e);
   });
 
-  on("command.run", { command: COMMAND }, async ($) => {
-    await $.ui.open({ id: PANE, title: "Lore", focus: true });
-    void refresh($);
-
-    return { text: "Lore pane opened." };
-  });
+  // The tool the mod registers at session start, served here. Its arguments arrive
+  // as the model sent them, so `openDashboard` reads them as input to validate; the
+  // answer is one short line naming what it opened, or a `deny` -- which the model
+  // reads as an error result -- naming the argument that was wrong.
+  on("tool.call", { tool: TOOL }, async ($, e) => await openDashboard($, e));
 
   // The inline editor posts its text here; `e.data` is code's, not the engine's, so
   // every field is checked rather than trusted (ClientSurface.post's own note: input
@@ -679,6 +1056,37 @@ export const register: Register = (on, _options) => {
       );
     }
 
+    // The pane's size: a draw is the only place `e.viewport` exists, so a full-size
+    // request is made here rather than at the key or the command that asked for it.
+    const { mode } = await read($, pane);
+    // A surface that has not measured reports no viewport at all, and 0 stands in
+    // for it here: nothing can be asked for from a surface with no size.
+    const wanted =
+      mode === "full" ? wantedSize(e.props.placement, e.viewport?.columns ?? 0, e.viewport?.rows ?? 0) : null;
+    const request = requestKey(e.props.placement, wanted);
+    if (request !== lastRequest) {
+      // The person's ask is answered only by a request that applies the mode it was raised
+      // for, and only when a request is actually made (LCLI-668 review F5): a draw that
+      // finds nothing to ask leaves the ask standing for the draw that does, and one that
+      // is applying some other mode -- a stale draw still in flight -- does not spend it.
+      const askedByThePerson = personRequest === mode;
+      if (askedByThePerson) {
+        personRequest = null;
+      }
+      // Recorded before the call, so a draw that runs while the open is in flight
+      // does not ask a second time for the same size.
+      lastRequest = request;
+      void requestPane($, e.props.placement, wanted, askedByThePerson);
+    }
+    // The size actually drawn, against the size asked for. Only ever compared in
+    // full mode: the normal size is whatever the surface's own share is, so there
+    // is nothing there for the pane to have been denied. The hint says the pane is
+    // not the size it asked for, which is also what a surface that clamped the
+    // request to what the layout spares looks like -- the render event carries the
+    // drawn size, not why it is that size, so a drag and a clamp are one signal.
+    const drawn = e.props.placement === "dock" ? e.props.bodyColumns : e.props.scroll.bodyRows;
+    const shortOfFull = wanted !== null && drawn < wanted - SIZE_SLACK;
+
     const elements = $.ui.resolve(e);
     const { Box, Button, Code, Input, Markdown, Select, Text } = elements;
     // Only the terminal and desktop surfaces carry `Client` — the vscode surface does
@@ -699,87 +1107,30 @@ export const register: Register = (on, _options) => {
     // much room there is to draw it in. Sized off the pane, less the Read tab's chrome.
     const editorRows = Math.max(6, Math.min(24, e.props.scroll.bodyRows - 12));
 
-    const tabs = (
-      <Box>
-        <Button
-          key="tab-browse"
-          label="Browse"
-          hotkey="1"
-          variant={current.tab === "browse" ? "primary" : undefined}
-          onPress={() => void showTab($, "browse")}
-        />
-        <Text> </Text>
-        <Button
-          key="tab-read"
-          label="Read"
-          hotkey="2"
-          variant={current.tab === "read" ? "primary" : undefined}
-          onPress={() => void showTab($, "read")}
-        />
-        <Text> </Text>
-        <Button
-          key="tab-search"
-          label="Search"
-          hotkey="3"
-          variant={current.tab === "search" ? "primary" : undefined}
-          onPress={() => void showTab($, "search")}
-        />
-        <Text> </Text>
-        <Button
-          key="tab-new"
-          label="New"
-          hotkey="4"
-          variant={current.tab === "new" ? "primary" : undefined}
-          onPress={() => void showTab($, "new")}
-        />
-        <Text> </Text>
-        <Button key="refresh" label="Refresh" hotkey="r" onPress={() => void refresh($)} />
-        <Text> </Text>
-        <Button
-          key="across"
-          label={current.acrossRefs ? "Refs: on" : "Refs: off"}
-          hotkey="a"
-          onPress={() => void toggleAcross($)}
-        />
-      </Box>
-    );
-
-    const statusLine = current.error ? (
-      <Text color="red" wrap="truncate">
-        {current.error}
-      </Text>
-    ) : current.notice ? (
+    // The one line the pane shows instead of claiming a size it did not get. It says
+    // what the pane is short of and what to press, and never which of the two ways it
+    // got there: the render event carries the drawn size, not its reason.
+    const fullHint = shortOfFull ? (
       <Text dimColor wrap="truncate">
-        {current.notice}
+        {FULL_HINT}
       </Text>
-    ) : current.isLoading ? (
-      <Text dimColor>Reading the bundle…</Text>
     ) : null;
 
-    const strip =
-      uncommitted.length > 0 && current.root ? (
-        <Box>
-          <Text color="yellow" wrap="truncate">
-            {uncommitted.length} documentation {uncommitted.length === 1 ? "change" : "changes"} not committed yet.{" "}
-          </Text>
-          <Button
-            key="land"
-            label="Ask Claude to land them"
-            onPress={() =>
-              void $.prompt.fill({
-                text: "Land the uncommitted documentation changes in this repository through a branch and pull request, following the opum-sdlc skill. Run `lore check` as the definition of done.",
-                mode: "replace",
-              })
-            }
-          />
-        </Box>
-      ) : null;
+    // The split layout, and how wide its list column is. The column takes about a
+    // third of the body, kept inside a width a title reads at: under ~24 columns a
+    // title is all ellipsis, and past ~48 the list costs the document more than a
+    // list of titles earns back.
+    const sideBySide = mode === "full" && e.props.bodyColumns >= SIDE_BY_SIDE_COLUMNS;
+    const listColumns = Math.max(24, Math.min(48, Math.floor(e.props.bodyColumns / 3)));
 
-    if (current.tab === "browse") {
-      const room = Math.max(6, e.props.scroll.bodyRows - 10);
-      type BrowseRow =
-        | { kind: "group"; key: string; type: string; count: number }
-        | { kind: "row"; key: string; id: string; title: string };
+    /**
+     * The bundle list: one heading per type, one row per concept, capped to the room
+     * it is given. Browse draws it as its whole body; the Read tab draws it in the
+     * left column, where `highlight` is the open document -- the one row at full
+     * strength, since a plain Button draws the same under `variant` and the row's own
+     * emphasis is what is left to mark it with.
+     */
+    const bundleRows = (room: number, highlight: string | null) => {
       const flat: BrowseRow[] = [];
       for (const group of groupByType(concepts)) {
         if (flat.length >= room || flat.length >= ROW_CAP) {
@@ -799,208 +1150,34 @@ export const register: Register = (on, _options) => {
         }
       }
 
-      return (
-        <Box flexDirection="column">
-          {tabs}
-          {statusLine}
-          {strip}
-          <Text dimColor wrap="truncate">
-            {concepts.length} {concepts.length === 1 ? "concept" : "concepts"}
-            {current.typeFilter ? ` of type ${current.typeFilter}` : ""}
-            {current.tagFilter ? ` tagged ${current.tagFilter}` : ""}
-            {current.acrossRefs ? ", across refs" : ""}.
+      return flat.map((entry) =>
+        entry.kind === "group" ? (
+          <Text key={entry.key} bold>
+            {entry.type} ({entry.count})
           </Text>
-          {flat.map((entry) =>
-            entry.kind === "group" ? (
-              <Text key={entry.key} bold>
-                {entry.type} ({entry.count})
-              </Text>
-            ) : (
-              <Button
-                key={entry.key}
-                label={entry.title}
-                plain
-                dimColor
-                onPress={() => void openConcept($, entry.id)}
-              />
-            ),
-          )}
-        </Box>
-      );
-    }
-
-    if (current.tab === "search") {
-      const room = Math.max(5, e.props.scroll.bodyRows - 12);
-      const typeOptions = [
-        { value: "", label: "all types" },
-        ...types.map((one) => ({ value: one.name, label: one.name })),
-      ];
-
-      return (
-        <Box flexDirection="column">
-          {tabs}
-          {statusLine}
-          <Input
-            key="search-text"
-            placeholder="Search the bundle"
-            value={current.query}
-            submitLabel="Search"
-            onInput={(value: string) => void setView($, { query: value })}
-            onSubmit={(value: string) => void submitWith($, { query: value })}
+        ) : (
+          <Button
+            key={entry.key}
+            label={entry.title}
+            plain
+            dimColor={entry.id !== highlight}
+            onPress={() => void openConcept($, entry.id)}
           />
-          <Box>
-            <Select
-              key="search-type"
-              label="type:"
-              options={typeOptions}
-              value={current.typeFilter}
-              onSelect={(value: string) => void pickFilter($, "typeFilter", value)}
-            />
-            <Text> </Text>
-            <Input
-              key="search-tag"
-              label="tag:"
-              placeholder="any"
-              value={current.tagFilter}
-              submitLabel="Filter"
-              onInput={(value: string) => void setView($, { tagFilter: value })}
-              onSubmit={(value: string) => void submitWith($, { tagFilter: value })}
-            />
-          </Box>
-          <Text dimColor wrap="truncate">
-            {hits.length} {hits.length === 1 ? "result" : "results"}
-            {current.acrossRefs ? ", across refs" : ""}.
-          </Text>
-          {hits.slice(0, room).map((hit) => (
-            <Box key={`hit-${hit.id}`} flexDirection="column">
-              <Button
-                key={`open-${hit.id}`}
-                label={hit.title}
-                plain
-                dimColor
-                onPress={() => void openConcept($, hit.id)}
-              />
-              <Text dimColor wrap="truncate">
-                {hit.type} · {hit.id}
-              </Text>
-              {hit.snippet ? <Text wrap="truncate">{hit.snippet}</Text> : null}
-            </Box>
-          ))}
-        </Box>
+        ),
       );
-    }
+    };
 
-    if (current.tab === "new") {
-      const typeOptions = types.map((one) => ({ value: one.name, label: one.name }));
-      const required = types.find((one) => one.name === draft.type)?.requiredSections ?? [];
-
-      return (
-        <Box flexDirection="column">
-          {tabs}
-          {statusLine}
-          {typeOptions.length === 0 ? (
-            <Text dimColor>No type vocabulary read yet — press Refresh.</Text>
-          ) : (
-            <Select
-              key="new-type"
-              label="type:"
-              options={typeOptions}
-              value={draft.type || (typeOptions[0]?.value ?? "")}
-              onSelect={(value: string) =>
-                void update($, edits, (state) => ({
-                  ...state,
-                  draft: { ...state.draft, type: value },
-                }))
-              }
-            />
-          )}
-          <Input
-            key="new-title"
-            label="title:"
-            placeholder="A title for the new document"
-            value={draft.title}
-            submitLabel="Set"
-            onInput={(value: string) =>
-              void update($, edits, (state) => ({
-                ...state,
-                draft: { ...state.draft, title: value },
-              }))
-            }
-            onSubmit={(value: string) =>
-              void update($, edits, (state) => ({
-                ...state,
-                draft: { ...state.draft, title: value },
-              }))
-            }
-          />
-          <Input
-            key="new-summary"
-            label="summary:"
-            placeholder="One sentence"
-            value={draft.summary}
-            submitLabel="Set"
-            onInput={(value: string) =>
-              void update($, edits, (state) => ({
-                ...state,
-                draft: { ...state.draft, summary: value },
-              }))
-            }
-            onSubmit={(value: string) =>
-              void update($, edits, (state) => ({
-                ...state,
-                draft: { ...state.draft, summary: value },
-              }))
-            }
-          />
-          <Input
-            key="new-tags"
-            label="tags:"
-            placeholder="comma-separated"
-            value={draft.tags}
-            submitLabel="Set"
-            onInput={(value: string) =>
-              void update($, edits, (state) => ({
-                ...state,
-                draft: { ...state.draft, tags: value },
-              }))
-            }
-            onSubmit={(value: string) =>
-              void update($, edits, (state) => ({
-                ...state,
-                draft: { ...state.draft, tags: value },
-              }))
-            }
-          />
-          {required.length > 0 ? (
-            <Text dimColor wrap="truncate">
-              Afterwards the type wants: {required.join(", ")}.
-            </Text>
-          ) : null}
-          <Box>
-            <Button
-              key="create"
-              label={isWriting ? "Creating…" : "Create"}
-              variant="primary"
-              onPress={() => void createNew($)}
-            />
-          </Box>
-          <Text dimColor wrap="truncate">
-            Runs `lore new` in this repository; the result opens in Read.
-          </Text>
-        </Box>
-      );
-    }
-
-    // Read tab.
-    if (!concept) {
-      return (
-        <Box flexDirection="column">
-          {tabs}
-          {statusLine}
-          <Text dimColor>Pick a document from Browse or Search.</Text>
-        </Box>
-      );
-    }
+    /**
+     * The open document, as the Read tab draws it and as a side-by-side Search draws
+     * it in the right column. Before anything is open it is the pane's own prompt.
+     *
+     * A function rather than a value: both layouts draw the same tree, and the tab
+     * that shows it is the only one that builds it.
+     */
+    const documentColumn = () => {
+      if (!concept) {
+        return <Text dimColor>Pick a document from Browse or Search.</Text>;
+      }
     const required = requiredSectionsFor(types, concept.type);
     const missing = required.filter((name) => !hasSection(concept.body, name));
 
@@ -1110,11 +1287,8 @@ export const register: Register = (on, _options) => {
       </Box>
     ) : null;
 
-    return (
-      <Box flexDirection="column">
-        {tabs}
-        {statusLine}
-        {strip}
+      return (
+        <Box flexDirection="column">
         <Box>
           <Text bold wrap="truncate">
             {concept.title}
@@ -1258,6 +1432,324 @@ export const register: Register = (on, _options) => {
             Truncated at {BODY_CAP} characters; open {concept.repoPath} for the rest.
           </Text>
         ) : null}
+        </Box>
+      );
+    };
+
+    const tabs = (
+      <Box>
+        <Button
+          key="tab-browse"
+          label="Browse"
+          hotkey="1"
+          variant={current.tab === "browse" ? "primary" : undefined}
+          onPress={() => void showTab($, "browse")}
+        />
+        <Text> </Text>
+        <Button
+          key="tab-read"
+          label="Read"
+          hotkey="2"
+          variant={current.tab === "read" ? "primary" : undefined}
+          onPress={() => void showTab($, "read")}
+        />
+        <Text> </Text>
+        <Button
+          key="tab-search"
+          label="Search"
+          hotkey="3"
+          variant={current.tab === "search" ? "primary" : undefined}
+          onPress={() => void showTab($, "search")}
+        />
+        <Text> </Text>
+        <Button
+          key="tab-new"
+          label="New"
+          hotkey="4"
+          variant={current.tab === "new" ? "primary" : undefined}
+          onPress={() => void showTab($, "new")}
+        />
+        <Text> </Text>
+        <Button key="refresh" label="Refresh" hotkey="r" onPress={() => void refresh($)} />
+        <Text> </Text>
+        <Button
+          key="across"
+          label={current.acrossRefs ? "Refs: on" : "Refs: off"}
+          hotkey="a"
+          onPress={() => void toggleAcross($)}
+        />
+        <Text> </Text>
+        <Button
+          key="full"
+          label={mode === "full" ? "Normal size" : "Full screen"}
+          hotkey="z"
+          onPress={() => void togglePane($)}
+        />
+      </Box>
+    );
+
+    const statusLine = current.error ? (
+      <Text color="red" wrap="truncate">
+        {current.error}
+      </Text>
+    ) : current.notice ? (
+      <Text dimColor wrap="truncate">
+        {current.notice}
+      </Text>
+    ) : current.isLoading ? (
+      <Text dimColor>Reading the bundle…</Text>
+    ) : null;
+
+    const strip =
+      uncommitted.length > 0 && current.root ? (
+        <Box>
+          <Text color="yellow" wrap="truncate">
+            {uncommitted.length} documentation {uncommitted.length === 1 ? "change" : "changes"} not committed yet.{" "}
+          </Text>
+          <Button
+            key="land"
+            label="Ask Claude to land them"
+            onPress={() =>
+              void $.prompt.fill({
+                text: "Land the uncommitted documentation changes in this repository through a branch and pull request, following the opum-sdlc skill. Run `lore check` as the definition of done.",
+                mode: "replace",
+              })
+            }
+          />
+        </Box>
+      ) : null;
+
+    if (current.tab === "browse") {
+      return (
+        <Box flexDirection="column">
+          {tabs}
+          {statusLine}
+          {fullHint}
+          {strip}
+          <Text dimColor wrap="truncate">
+            {concepts.length} {concepts.length === 1 ? "concept" : "concepts"}
+            {current.typeFilter ? ` of type ${current.typeFilter}` : ""}
+            {current.tagFilter ? ` tagged ${current.tagFilter}` : ""}
+            {current.acrossRefs ? ", across refs" : ""}.
+          </Text>
+          {bundleRows(Math.max(6, e.props.scroll.bodyRows - 10), null)}
+        </Box>
+      );
+    }
+
+    if (current.tab === "search") {
+      const room = Math.max(5, e.props.scroll.bodyRows - 12);
+      const typeOptions = [
+        { value: "", label: "all types" },
+        ...types.map((one) => ({ value: one.name, label: one.name })),
+      ];
+      // The results, as the stacked tab draws them below the form and as the left
+      // column of the split draws them beside the document. `highlight` marks the
+      // open document's own hit where the document is on screen next to it; the
+      // stacked tab passes none, exactly as it drew before there was a split.
+      const results = (highlight: string | null) =>
+        hits.slice(0, room).map((hit) => (
+          <Box key={`hit-${hit.id}`} flexDirection="column">
+            <Button
+              key={`open-${hit.id}`}
+              label={hit.title}
+              plain
+              dimColor={hit.id !== highlight}
+              onPress={() => void openConcept($, hit.id)}
+            />
+            <Text dimColor wrap="truncate">
+              {hit.type} · {hit.id}
+            </Text>
+            {hit.snippet ? <Text wrap="truncate">{hit.snippet}</Text> : null}
+          </Box>
+        ));
+      const form = (
+        <>
+          <Input
+            key="search-text"
+            placeholder="Search the bundle"
+            value={current.query}
+            submitLabel="Search"
+            onInput={(value: string) => void setView($, { query: value })}
+            onSubmit={(value: string) => void submitWith($, { query: value })}
+          />
+          <Box>
+            <Select
+              key="search-type"
+              label="type:"
+              options={typeOptions}
+              value={current.typeFilter}
+              onSelect={(value: string) => void pickFilter($, "typeFilter", value)}
+            />
+            <Text> </Text>
+            <Input
+              key="search-tag"
+              label="tag:"
+              placeholder="any"
+              value={current.tagFilter}
+              submitLabel="Filter"
+              onInput={(value: string) => void setView($, { tagFilter: value })}
+              onSubmit={(value: string) => void submitWith($, { tagFilter: value })}
+            />
+          </Box>
+          <Text dimColor wrap="truncate">
+            {hits.length} {hits.length === 1 ? "result" : "results"}
+            {current.acrossRefs ? ", across refs" : ""}.
+          </Text>
+        </>
+      );
+
+      return (
+        <Box flexDirection="column">
+          {tabs}
+          {statusLine}
+          {fullHint}
+          {form}
+          {sideBySide ? (
+            // The search form stays pane-wide -- it is how the list is made -- and the
+            // list it makes takes the left column, the open document the right one.
+            <Box flexDirection="row" key="side-by-side">
+              <Box flexDirection="column" width={listColumns} paddingRight={1}>
+                {results(current.selectedId)}
+              </Box>
+              <Box flexDirection="column" flexGrow={1}>
+                {documentColumn()}
+              </Box>
+            </Box>
+          ) : (
+            results(null)
+          )}
+        </Box>
+      );
+    }
+
+    if (current.tab === "new") {
+      const typeOptions = types.map((one) => ({ value: one.name, label: one.name }));
+      const required = types.find((one) => one.name === draft.type)?.requiredSections ?? [];
+
+      return (
+        <Box flexDirection="column">
+          {tabs}
+          {statusLine}
+          {fullHint}
+          {typeOptions.length === 0 ? (
+            <Text dimColor>No type vocabulary read yet — press Refresh.</Text>
+          ) : (
+            <Select
+              key="new-type"
+              label="type:"
+              options={typeOptions}
+              value={draft.type || (typeOptions[0]?.value ?? "")}
+              onSelect={(value: string) =>
+                void update($, edits, (state) => ({
+                  ...state,
+                  draft: { ...state.draft, type: value },
+                }))
+              }
+            />
+          )}
+          <Input
+            key="new-title"
+            label="title:"
+            placeholder="A title for the new document"
+            value={draft.title}
+            submitLabel="Set"
+            onInput={(value: string) =>
+              void update($, edits, (state) => ({
+                ...state,
+                draft: { ...state.draft, title: value },
+              }))
+            }
+            onSubmit={(value: string) =>
+              void update($, edits, (state) => ({
+                ...state,
+                draft: { ...state.draft, title: value },
+              }))
+            }
+          />
+          <Input
+            key="new-summary"
+            label="summary:"
+            placeholder="One sentence"
+            value={draft.summary}
+            submitLabel="Set"
+            onInput={(value: string) =>
+              void update($, edits, (state) => ({
+                ...state,
+                draft: { ...state.draft, summary: value },
+              }))
+            }
+            onSubmit={(value: string) =>
+              void update($, edits, (state) => ({
+                ...state,
+                draft: { ...state.draft, summary: value },
+              }))
+            }
+          />
+          <Input
+            key="new-tags"
+            label="tags:"
+            placeholder="comma-separated"
+            value={draft.tags}
+            submitLabel="Set"
+            onInput={(value: string) =>
+              void update($, edits, (state) => ({
+                ...state,
+                draft: { ...state.draft, tags: value },
+              }))
+            }
+            onSubmit={(value: string) =>
+              void update($, edits, (state) => ({
+                ...state,
+                draft: { ...state.draft, tags: value },
+              }))
+            }
+          />
+          {required.length > 0 ? (
+            <Text dimColor wrap="truncate">
+              Afterwards the type wants: {required.join(", ")}.
+            </Text>
+          ) : null}
+          <Box>
+            <Button
+              key="create"
+              label={isWriting ? "Creating…" : "Create"}
+              variant="primary"
+              onPress={() => void createNew($)}
+            />
+          </Box>
+          <Text dimColor wrap="truncate">
+            Runs `lore new` in this repository; the result opens in Read.
+          </Text>
+        </Box>
+      );
+    }
+
+    // Read tab, and the fallthrough: every other tab has answered above. The document
+    // is `documentColumn`, which the split draws in the right column beside the list
+    // and the stacked layout draws under the pane's own chrome. With no document open
+    // there is nothing to land: the landing strip is the document view's own chrome, and
+    // this tab drew it only once a document was open until the LCLI-666 move folded the
+    // two trees together. Restored here (LCLI-668 review F4) -- whether the strip belongs
+    // on an empty Read tab is a separate question, for whoever owns that tab.
+    return (
+      <Box flexDirection="column">
+        {tabs}
+        {statusLine}
+        {fullHint}
+        {concept ? strip : null}
+        {sideBySide ? (
+          <Box flexDirection="row" key="side-by-side">
+            <Box flexDirection="column" width={listColumns} paddingRight={1}>
+              {bundleRows(Math.max(6, e.props.scroll.bodyRows - 6), concept ? concept.id : null)}
+            </Box>
+            <Box flexDirection="column" flexGrow={1}>
+              {documentColumn()}
+            </Box>
+          </Box>
+        ) : (
+          documentColumn()
+        )}
       </Box>
     );
   });
