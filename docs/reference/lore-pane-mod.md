@@ -356,19 +356,20 @@ records that it is deliberately not a required status context.
 
 ### What the tests prove, and what they do not
 
-Measured on 2026-10-02 with the full-screen toggle in (`node scripts/mod-test.mjs` on
-this checkout): `claude plugin validate --strict` exit 0 — its inventory holding the
-`session.start` hook, the `command.run{command=lore}` registration,
-`ui.render{Pane}`, the calls (`process.run`, `fs.read`, `fs.write`, `prompt.fill`,
-`command.register`, `clock.every`, `ui.open`, `ui.panes`, `ui.resolve`, `store.get`,
-`store.set`) and the five state keys — `claude plugin test` 48/48 pass (28 engine tests
-in `tests/pane.test.tsx`, 20 unit tests in `tests/lore.test.ts`), and `tsc` against the
-2.1.287 engine declaration exit 0. The typecheck is machine-local: the harness uses the
-declaration the engine lays beside the stage, which names the build running the tests,
-and reports **NOT TYPECHECKED** rather than implying one it could not run. Earlier
-readings — 12/12 at `f71bed1c`, 16/16 before the editor, 22/22 before the editor-arm
-review, 31/31 before the toggle — were the state at those points; a count here is a
-reading, not a constant.
+Measured on 2026-10-03, with the dashboard tool in and the command registration dropped
+(`node scripts/mod-test.mjs` on this checkout): `claude plugin validate --strict` exit 0
+— its inventory holding the `session.start` hook, `ui.render{Pane}`, the calls
+(`process.run`, `fs.read`, `fs.write`, `prompt.fill`, `tool.register`, `clock.every`,
+`ui.open`, `ui.panes`, `ui.resolve`, `store.get`, `store.set`) and the five state keys —
+`claude plugin test` 51/51 pass (31 engine tests in `tests/pane.test.tsx`, 20 unit tests
+in `tests/lore.test.ts`), and `tsc` against the 2.1.287 engine declaration exit 0. No
+`command.register` and no `command.run` remain — the registration's absence, not an
+omission. The typecheck is machine-local: the harness uses the declaration the engine lays
+beside the stage, which names the build running the tests, and reports **NOT TYPECHECKED**
+rather than implying one it could not run. Earlier readings — 12/12 at `f71bed1c`, 16/16
+before the editor, 22/22 before the editor-arm review, 31/31 before the toggle, 48/48
+before the dashboard tool — were the state at those points; a count here is a reading,
+not a constant.
 
 The engine tests cover: browse, open, Back and the Raw toggle (the first test mounts
 on both the terminal and the desktop surface; the rest mount the terminal); search
@@ -391,7 +392,10 @@ a remount, the drag-wins hint and its suppression at the normal size, and the co
 `full` argument with its refusal of anything else — plus the 120-column split on Read
 (asserted at 140, at exactly 120 and at 119 on the same document) and on Search, with
 the two columns inspected in order so a swap cannot pass, and a control proving the split
-is full mode's rather than any wide pane's. Unit tests cover
+is full mode's rather than any wide pane's; and the dashboard tool -- its registration and
+description, the focusless open with a misspelled-name control, each input landing where it
+should (`doc` on Read, `query` on Search, `full` asking for the width), and an unknown id
+refused by name with no open and nothing drawn. Unit tests cover
 the pure helpers:
 `patchFrontmatter` (replace, remove, insert, and the no-frontmatter refusal),
 `replaceBody` (frontmatter preserved, body normalised, no-frontmatter refusal),
