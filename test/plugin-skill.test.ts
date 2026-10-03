@@ -88,12 +88,18 @@ describe("agent bridges stay in lockstep with the CLI (LCLI-573)", () => {
     const plugin = buildSkillDoc("plugin");
     expect(plugin).toContain("mcp__opum-lore__dashboard");
     expect(plugin).toContain("lore dashboard");
-    // The entry-point arguments the rename decision settled (LCLI-667, opum-doc relay
-    // ODOC-OP-2026-10-03-07): the skill owns the bare name `lore`, so the tool is reached
-    // through it, and each argument has to be routed rather than fall through to the CLI.
-    for (const argument of ["dashboard", "pane", "full"]) expect(plugin).toContain(`\`${argument}\``);
+    // The routing the rename decisions settled (LCLI-667; opum-doc relays
+    // ODOC-OP-2026-10-03-07 then -11, the second superseding the first): the skill owns the
+    // bare name `lore`, so the tool is reached through it, as ONE `dashboard` verb whose
+    // modifiers are the tool's inputs -- never as bare `full`/`pane` verbs.
+    expect(plugin).toContain("`dashboard` verb");
+    for (const form of ["/lore dashboard full", "/lore dashboard <doc-id>", "/lore dashboard search <text>"]) {
+      expect(plugin).toContain(form);
+    }
     expect(plugin).toContain("`full: true`");
-    expect(plugin).toContain("its `doc` or `query`");
+    expect(plugin).toContain("does not start with `dashboard` goes");
+    // The tool is the pane's only entry point: the slash command that used to open it is gone.
+    expect(plugin).toContain("the pane's only entry point");
     // The fallback names all three ways the tool is unavailable, and what to do instead.
     expect(plugin).toContain("2.1.287");
     expect(plugin).toContain("claude -p");

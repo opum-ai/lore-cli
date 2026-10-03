@@ -22,12 +22,13 @@ instructions (its CLAUDE.md or AGENTS.md) for any commit-authority rule before r
 ## Show the pane
 
 The `opum-lore` plugin ships a pane that browses, reads, searches and creates this repository's
-docs, opened through the `mcp__opum-lore__dashboard` tool. This skill is that tool's entry point:
-invoked with `dashboard`, `pane` or `full` (`/lore dashboard`, `/lore full`), or asked for the
-pane in words — "lore dashboard", "open this doc in the pane" — call the tool, not the CLI. `full` is
-its `full: true`; a concept id or search text after `dashboard` is its `doc` or `query`; a bare
-call opens the pane as it stands. The tool never takes the keyboard, so the person presses Tab or
-clicks to use the pane.
+docs, opened through the `mcp__opum-lore__dashboard` tool — the pane's only entry point. This skill
+routes the `dashboard` verb to it, in plain words too ("lore dashboard", "open this doc in the
+pane"): `/lore dashboard` opens the pane as it stands, `/lore dashboard full` is the tool's
+`full: true`, `/lore dashboard <doc-id>` is its `doc`, and `/lore dashboard search <text>` is
+its `query`. No other argument opens the pane — anything that does not start with `dashboard` goes
+to the `lore` CLI. The tool never takes the keyboard, so the person presses Tab or clicks to use the
+pane.
 
 **Fallback:** where that tool is unavailable — Claude Code older than 2.1.287, a `claude -p` run, or
 mods turned off — say the pane is unavailable here and answer from the CLI instead, with
