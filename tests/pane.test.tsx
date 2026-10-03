@@ -1331,6 +1331,9 @@ test("each dashboard input lands where it should, on the terminal and the deskto
     // round's session start reads it: the size is remembered, as the toggle's is.
     const back = await $.tool.call({ tool: DASHBOARD, full: false });
     expect(back.result).toBe("Opened the Lore pane, its normal size.");
+    // The call refreshed the pane, and that read is still in flight; it is waited out so
+    // nothing a test started outlives the test.
+    await clock.settle();
   }
 });
 
@@ -1474,4 +1477,46 @@ test("the landing strip belongs to an open document, not to an empty Read tab", 
   expect(await ui.find({ key: "land" })).toBeDefined();
   expect(await ui.find({ type: "Text", text: /not committed yet/ })).toBeDefined();
   await ui.unmount();
+});
+
+test("every dashboard call refreshes the pane, as every slash-command call did", async ($, on) => {
+  // The command this tool replaced ran `void refresh($)` on every accepted invocation, and
+  // the tool has to keep that: only the `query` arm refreshes by itself -- through
+  // `showTab` -- so a bare call or a `full`-only one would otherwise leave the catalogue as
+  // stale as the 30-second timer allows. Counted rather than merely seen: the arm that
+  // refreshes on its own must not be refreshed a second time for one ask.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  captureOpens(on);
+  /** The catalogue reads since the last reset: `lore query`, on either arm of the pane. */
+  const catalogReads = () => seen.filter((argv) => argv[1] === "query").length;
+  const fresh = async () => {
+    await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+    await clock.settle();
+    seen.length = 0;
+  };
+
+  await fresh();
+  await $.tool.call({ tool: DASHBOARD });
+  await clock.settle();
+  expect(catalogReads()).toBe(1);
+
+  await fresh();
+  await $.tool.call({ tool: DASHBOARD, full: true });
+  await clock.settle();
+  expect(catalogReads()).toBe(1);
+
+  await fresh();
+  await $.tool.call({ tool: DASHBOARD, doc: "adr/0001-x" });
+  await clock.settle();
+  expect(catalogReads()).toBe(1);
+
+  // The query arm's own refresh IS the call's refresh.
+  await fresh();
+  await $.tool.call({ tool: DASHBOARD, query: "retention" });
+  await clock.settle();
+  expect(catalogReads()).toBe(1);
 });

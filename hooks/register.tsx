@@ -947,6 +947,17 @@ async function openDashboard(
     await setPaneMode($, full.value ? "full" : "normal");
     opened.push(full.value ? "the full size" : "its normal size");
   }
+  // The pane is refreshed on every call, as it was on every invocation of the slash command
+  // this tool replaced: only the `query` arm refreshes on its own -- through `showTab` -- so
+  // without this a bare call or a `full`-only one would leave the catalogue as stale as the
+  // 30-second timer allows. Fired after the state above is applied, so it reads what the call
+  // leaves behind, and skipped in the one case that has already refreshed that same state
+  // (the query arm with no `doc`, where the tab switch is the refresh), so no call runs
+  // `lore query` twice for one ask.
+  const refreshedByTab = doc.text === null && query.text !== null;
+  if (!refreshedByTab) {
+    void refresh($);
+  }
   // This open is unsized, and "each open sets it anew": a size asked for earlier is cleared
   // by it, not left standing. So the once-only guard is reset alongside it, exactly as
   // `session.start` resets it -- the next draw then re-asks the size the mode implies. Without
