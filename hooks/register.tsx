@@ -44,11 +44,12 @@ import {
   searchArgv,
 } from "./lore";
 
+// The pane's ID, which is not what opens it: the pane has no slash command (LCLI-667 --
+// the engine's `lore` skill owns that name, so a command of the same name is refused), and
+// `mcp__opum-lore__dashboard` below is its entry point. The id keeps its older spelling
+// because it is what `$.ui.open`, the store and `$.state` are keyed by: renaming it would
+// lose an open pane and a preference saved before the rename.
 const PANE = "lore-pane";
-// The slash command the person types (`/lore`), which is not the pane's id: the id
-// is what `$.ui.open`, the store and `$.state` are keyed by, and it keeps its name so
-// a pane opened and a preference saved before the rename survive it.
-const COMMAND = "lore";
 const REFRESH_MS = 30_000;
 const TIMEOUT_MS = 30_000;
 const ROW_CAP = 120;
@@ -419,11 +420,6 @@ async function togglePane($: EngineInterface): Promise<PaneMode> {
   await setPaneMode($, next);
 
   return next;
-}
-
-/** What the pane says it did, in the words both the command and a toggle answer with. */
-function modeText(mode: PaneMode): string {
-  return mode === "full" ? "Lore pane is full screen." : "Lore pane is at its normal size.";
 }
 
 // ── Actions ───────────────────────────────────────────────────────────────────
@@ -956,20 +952,13 @@ async function openDashboard(
 export const register: Register = (on, _options) => {
   on("session.start", async ($, e, next) => {
     await setView($, { root: await resolveRoot($) });
-    await $.command.register({
-      name: COMMAND,
-      description:
-        "Open the Lore pane: browse, read (rendered or raw), search, create and edit this repository’s docs through the lore CLI.",
-      // The one argument the command takes, drawn dim after the name so the pane's
-      // full-screen toggle is findable without reading its source (`CommandSpec`).
-      argumentHint: "full",
-    });
-    // The tool the lore skill's "dashboard" verb calls, so the pane can be opened
-    // from a prompt without the person typing a slash command. Awaited, because the
-    // first `session.start` is awaited before the first prompt and a registration not
-    // awaited there is not listed by turn one; its description stays short for the
-    // same reason it exists at all -- it is listed to the model in every session that
-    // loads this mod.
+    // The pane's ONLY entry point (LCLI-667/668, opum-doc design of record): the tool the
+    // `lore` skill routes `dashboard` to. No slash command is registered -- the engine's
+    // `lore` skill owns that name, so a command of the same name is refused and takes this
+    // whole hook down with it (measured on Claude Code 2.1.288). Awaited, because the first
+    // `session.start` is awaited before the first prompt and a registration not awaited
+    // there is not listed by turn one; its description stays short for the same reason it
+    // exists at all -- it is listed to the model in every session that loads this mod.
     await $.tool.register({ name: TOOL_NAME, description: TOOL_DESCRIPTION, inputSchema: TOOL_INPUT_SCHEMA });
     // The remembered size is restored here and ASKED for by the first draw: the
     // session's own surface has not been measured yet (`SessionStartInput` carries
@@ -994,35 +983,6 @@ export const register: Register = (on, _options) => {
     });
 
     return next(e);
-  });
-
-  on("command.run", { command: COMMAND }, async ($, e) => {
-    const arg = e.args.trim().toLowerCase();
-    if (arg !== "" && arg !== "full") {
-      return { text: `Lore pane: /${COMMAND} takes one argument, \`full\`. "${e.args.trim()}" was not understood.` };
-    }
-    void refresh($);
-    if (arg === "full") {
-      // The size is asked for by the draw that follows this state change, which is
-      // the only place that knows the viewport; the answer reports the state the
-      // pane was left in.
-      return { text: modeText(await togglePane($)) };
-    }
-    // The bare `/lore` reopens the pane at the size it already remembers, and it is
-    // the person's own command, so it asks for the keyboard. The command knows its
-    // own columns and which layout it runs in, but no rows (`CommandPresentation`),
-    // so only the docked arm can be sized from here: an inline one opens at the
-    // surface's own share and the draw that follows asks for the height, which is
-    // why the guard is left naming what was asked. `personRequest` is cleared so the
-    // draw that answers an inline command does not read a stale intent.
-    const mode = (await read($, pane)).mode;
-    const placement: Placement = e.presentation.isFullscreen ? "dock" : "inline";
-    const wanted = mode === "full" && placement === "dock" ? wantedSize(placement, e.presentation.columns, 0) : null;
-    lastRequest = requestKey(placement, wanted);
-    personRequest = false;
-    await requestPane($, placement, wanted, true);
-
-    return { text: mode === "full" ? modeText("full") : "Lore pane opened." };
   });
 
   // The tool the mod registers at session start, served here. Its arguments arrive

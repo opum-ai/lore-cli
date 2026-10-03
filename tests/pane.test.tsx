@@ -672,18 +672,21 @@ function captureOpens(on: On): Record<string, unknown>[] {
 }
 
 /**
- * The engine answers a session needs beneath it: nothing answers them on its own,
- * so a test that starts a session says what the session start and the registrations
- * return. `registrations` and `tools`, when given, collect the command and tool specs
- * the module registered, which is the only place they are visible (LCLI-668).
+ * The engine answers a session needs beneath it: nothing answers them on its own, so a
+ * test that starts a session says what the session start and the registrations return.
+ * `commands` and `tools`, when given, collect the command and tool specs the module
+ * registered, which is the only place they are visible: a command spec is captured so a
+ * test can assert there is NONE (LCLI-667 -- the engine's `lore` skill owns that name,
+ * so the pane registers no slash command), and a tool spec because the engine's own
+ * registry sits below the test's hooks (LCLI-668).
  */
 function mockSession(
   on: On,
-  registrations?: Record<string, unknown>[],
+  commands?: Record<string, unknown>[],
   tools?: Record<string, unknown>[],
 ): void {
   on("command.register", async (_$, e) => {
-    registrations?.push({ ...e });
+    commands?.push({ ...e });
 
     return { value: { command: e.name } };
   });
@@ -863,23 +866,23 @@ test("a viewport that changed asks for the full size again, and one that did not
   }
 });
 
-test("a session opens the pane unsized, registers the command with its argument, and asks for no size", async ($, on) => {
+test("a session opens the pane unsized, registers no command, and asks for no size", async ($, on) => {
   // What a session start does, in one place. It opens the pane unsized and unfocused;
-  // it registers the command, whose one argument is advertised rather than only
-  // findable in the hook that parses it; and the draws that follow ask for nothing,
-  // which is the control for the toggle -- without a mode change there is no size to
-  // ask for, so the pane must not reopen on every draw.
+  // it registers NO slash command (LCLI-667: the engine's `lore` skill owns that name,
+  // and a command of the same name is refused on 2.1.288, which takes the whole hook
+  // down with it -- the pane's entry point is the tool, asserted below the dashboard
+  // tests); and the draws that follow ask for nothing, which is the control for the
+  // toggle -- without a mode change there is no size to ask for, so the pane must not
+  // reopen on every draw.
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen);
-  const registrations: Record<string, unknown>[] = [];
-  mockSession(on, registrations);
+  const commands: Record<string, unknown>[] = [];
+  mockSession(on, commands);
   const opens = captureOpens(on);
   await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
-  expect(registrations).toEqual([
-    { name: "lore", description: expect.any(String), argumentHint: "full" },
-  ]);
+  expect(commands).toEqual([]);
   expect(opens).toEqual([{ id: "lore-pane", title: "Lore" }]);
   opens.length = 0;
   const ui = await $.ui.mount({
@@ -1034,65 +1037,6 @@ test("a pane at its normal size shows no hint, however small the surface keeps i
   });
   expect(await ui.find({ type: "Text", text: /Drag the pane edge to resize/ })).toBeUndefined();
   await ui.unmount();
-});
-
-test("the pane command toggles with its argument and answers with the state it left", async ($, on) => {
-  // `/lore full` is the toggle's other arm, and `args` carries everything
-  // after the name. The answer names the state, and an argument that is not
-  // `full` changes nothing rather than being guessed at.
-  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
-  mock.store(on);
-  const seen: string[][] = [];
-  mockLore(on, seen);
-  mockSession(on);
-  const opens = captureOpens(on);
-  // `args` is "" for a bare `/lore`, which is what the engine passes when the
-  // person types the name alone; the presentation is the docked fullscreen layout.
-  const run = (args: string) =>
-    $.command.run({
-      command: "lore",
-      args,
-      origin: { kind: "composer" },
-      presentation: { isFullscreen: true, columns: 160 },
-    });
-
-  // The argument is a toggle, and each answer names the state it left.
-  expect((await run("full")).text).toBe("Lore pane is full screen.");
-  expect((await run("full")).text).toBe("Lore pane is at its normal size.");
-
-  // An argument that is not `full` is refused rather than guessed at, and leaves
-  // the pane where it was.
-  const refused = await run("sideways");
-  expect(refused.text).toContain("full");
-  expect((await run("")).text).toBe("Lore pane opened.");
-
-  // The bare command reopens the pane at the size it remembers, and it is the
-  // person's own command, so it asks for the keyboard. Docked, the command's own
-  // columns are enough to ask with (160 less the margin); at the normal size there
-  // is no size to ask for at all.
-  await clock.settle();
-  expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true });
-  await run("full");
-  expect((await run("")).text).toBe("Lore pane is full screen.");
-  await clock.settle();
-  expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true, columns: 140 });
-
-  // And what it left is remembered: the next session starts full -- restored on its
-  // first draw, which is nobody's ask, so that open carries no `focus`.
-  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
-  opens.length = 0;
-  const ui = await $.ui.mount({
-    plugin: "opum-lore",
-    surface: "terminal",
-    component: "Pane",
-    requestId: "lore-pane",
-    props: docked(160, 80),
-    viewport: { columns: 160, rows: 50, isFullscreen: true },
-  });
-  await clock.settle();
-  expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", columns: 140 });
-  await ui.unmount();
-  expect(seen.some((argv) => argv[1] === "query")).toBe(true);
 });
 
 // ── The side-by-side layout (LCLI-666, design section 1's layout bullet) ──────

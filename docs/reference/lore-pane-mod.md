@@ -52,20 +52,50 @@ the branch tip does.
 
 ## What the pane does today
 
-The module registers a `lore` command that opens the pane (`session.start` also
-opens it, unfocused, and registers the command). The pane's **id** stayed `lore-pane`
-when the command was renamed from it in 0.13.0, so every internal id, state key and the
-`pane-mode` store key keep the older spelling and settings saved before the rename still
-apply — this record uses `lore-pane` for the pane and `/lore` for the command. The pane's
-title is "Lore", its
-title "Lore", and on a mobile surface it says it needs the terminal or desktop. Its
-root is the session cwd's git toplevel (`git rev-parse --show-toplevel`); it refreshes
-on an explicit Refresh button and every 30 seconds while it is shown. It takes one
-argument, `full` (see below).
+**The pane has no slash command of its own.** The `lore` skill owns the bare slash
+name, so a mod command named `lore` is unreachable -- and on Claude Code 2.1.288
+registering one does worse than go unreachable: it throws and the whole `session.start`
+hook is skipped. Measured 2026-10-03 against a clean export of the tree that carried the
+rename: `opum-lore: session.start hook skipped: threw opum-lore: $.command.register:
+"/lore" refused: it is the plugin's /opum-lore:lore` -- with the pre-rename tree as the
+control, where the same probe printed `opum-lore: Lore pane opened.` and no skip. Both
+`claude plugin validate --strict` and the module's tests pass over it, so only a live
+session sees it. The registration is therefore dropped (opum-doc seq 176/180) rather
+than left dead, and the pane opens through the skill's `dashboard` verb calling the
+module's tool (see "Opening the pane").
+
+`session.start` registers that tool and opens the pane, unfocused. The pane's id is
+`lore-pane`, its title "Lore", and on a mobile surface it says it needs the terminal or
+desktop. Its root is the session cwd's git toplevel (`git rev-parse --show-toplevel`);
+it refreshes on an explicit Refresh button and every 30 seconds while it is shown.
+
+### Opening the pane
+
+The pane's only entry point is the module's tool, `mcp__opum-lore__dashboard`, which
+`session.start` registers and a `tool.call` hook serves. Claude can call it directly, and
+the `lore` skill routes to it so a person can ask for the pane in words or as a slash
+command:
+
+- `/lore dashboard`, `/lore dashboard full`, `/lore dashboard <doc-id>` and
+  `/lore dashboard search <text>` -- and the same phrases in plain words -- reach the
+  tool, mapping to its `full`, `doc` and `query` inputs. There is no bare `full` or
+  `pane` verb, and every argument that does not start with `dashboard` goes to the CLI as
+  it always has.
+- **The tool never takes the keyboard.** Every open it makes is without `focus`, because
+  Claude may call it while the person is typing; a Tab or a click gives the pane the keys.
+- **Its arguments are validated, not trusted** -- any plugin can call it -- so a
+  non-string `doc`, a non-boolean `full` and an unknown concept id are each refused by
+  name, and an unknown id opens nothing else in its place.
+- The skill states the **fallback** for where the tool cannot exist -- Claude Code older
+  than 2.1.287, a `claude -p` run, or mods off: say the pane is unavailable and answer
+  from the CLI instead. `skills/lore/SKILL.md` is **generated**
+  (`bun run scripts/plugin-skill.ts --write`, from `buildSkillDoc()` in
+  `src/core/agent-bridge.ts`), never hand-edited, and the pane section is written for
+  the plugin variant only: a per-repository bridge has no mod to call.
 
 ### Full screen
 
-`z` inside the pane, and the command's `full` argument (`/lore full`), each flip
+`z` inside the pane, and the tool's `full` argument (see below), each flip
 the pane between its normal size and the largest the surface allows; a second press
 flips it back, and the command answers with the state it left the pane in. Anything
 else after the command name is refused by name rather than ignored. The **size is
@@ -81,8 +111,7 @@ surface for the size it implies.
   names that margin and the module uses its figure. Both are requests, not grants — the
   surface clamps to what the layout spares, and the docked arm computes the same way as
   the command's own `presentation.columns`.
-- **A reopen the person started carries `focus`** — `z`, `/lore full`, or the bare
-  command. One the pane makes by itself — a remembered full mode's first draw, or a
+- **A reopen the person started carries `focus`** — the `z` hotkey. The tool never does. One the pane makes by itself — a remembered full mode's first draw, or a
   re-request after the viewport changes — carries none, so a full pane restored at
   startup never takes the keyboard from the prompt; a Tab or a click gives it the keys.
   `closeOnEscape` is never passed: that flag is what would make the pane a dialog rather
