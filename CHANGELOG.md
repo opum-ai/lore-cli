@@ -61,6 +61,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer than the measurement's fixed stand-in can still consume the margin. The finding is still
   computed from the declaration and the bundle, never from a task. This ships as a **warning** for
   one release before LCLI-646 flips it to an error (DEC-11).
+- **The Lore pane's full mode now follows the engine's own sizing, and its answers report what
+  actually drew** (LCLI-675; DEC-154). The pane asked for `rows - 6` inline, where the engine caps
+  an inline pane at `rows - 11`, so a full request could never be granted as asked; its docked
+  request was computed from the conversation column — a shrink request that a kept
+  `pluginPanes.dockColumns` then beat anyway — and the `dashboard` tool answered with the size it
+  asked for rather than the size that drew. The module now asks `rows - 11` inline and recovers
+  the terminal width in the dock from one render (transcript + the drawn body + the divider, less
+  the engine's 24-column floor), asks once per toggle rather than on every resize, tells the
+  person plainly when a width they set is being kept (`Width kept at 80 (you set it): drag the
+  pane edge to change`) instead of a generic hint, and reports the drawn size — `the full size`
+  only within 4 cells of the ask, the drawn size and its reason otherwise, `full requested` when
+  the draw is not yet known.
 
 ## [0.12.0] - 2026-09-29
 
