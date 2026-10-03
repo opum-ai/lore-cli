@@ -348,16 +348,19 @@ function requestKey(placement: Placement, wanted: number | null): string {
 }
 
 /**
- * Whether the next open the pane builds answers the person's own toggle.
+ * The mode the person's own toggle asked for, and no request has answered yet; null
+ * when nobody is waiting on one.
  *
- * A person asking for the full size -- `z`, or `/lore full`, or a bare
- * `/lore` -- gets a pane that takes the keyboard; a pane that widens itself
- * because the session remembered `full`, or because the viewport changed under
- * it, is nobody's ask and must not take the keyboard from the prompt. Both are
- * the same open, built in the same place, so the difference is carried here: the
- * toggle sets it, the next request consumes it whatever it decides.
+ * A person asking for a size -- the pane's `z` key -- gets a pane that takes the
+ * keyboard; a pane that widens itself because the session remembered `full`, because the
+ * viewport changed under it, or because the dashboard tool asked for it is nobody's ask
+ * and must not take the keyboard from the prompt. Both are the same open, built in the
+ * same place, so the difference is carried here. It is carried as the MODE that was
+ * asked for rather than as a bare flag (LCLI-668 review F5): the request that answers it
+ * has to be the one applying that mode, and a draw with nothing to ask leaves the ask
+ * standing for the draw that does ask, instead of spending it on the way past.
  */
-let personRequest = false;
+let personRequest: PaneMode | null = null;
 
 /**
  * Asks the surface for the pane, sized when there is a size to ask for.
@@ -416,7 +419,7 @@ async function setPaneMode($: EngineInterface, mode: PaneMode): Promise<void> {
  */
 async function togglePane($: EngineInterface): Promise<PaneMode> {
   const next: PaneMode = (await read($, pane)).mode === "full" ? "normal" : "full";
-  personRequest = true;
+  personRequest = next;
   await setPaneMode($, next);
 
   return next;
@@ -898,9 +901,11 @@ function describe(value: unknown): string {
  * only place that knows the viewport -- exactly how the person's own toggle is
  * answered.
  *
- * A `doc` the bundle does not have opens nothing else in its place: it is read
- * FIRST, and the refusal returns before any other state is touched, so the view is
- * left exactly as the call found it.
+ * A `doc` the bundle does not have opens nothing else in its place: it is read FIRST, and
+ * the refusal returns before any other argument is applied -- no pane open, no tab switch,
+ * no search. The failed read is not without trace: it leaves the pane's own status line
+ * carrying lore's message, which is what the person sees if the pane is already up. That
+ * line is a report of the failure, not something opened in the document's place.
  */
 async function openDashboard(
   $: EngineInterface,
@@ -942,6 +947,14 @@ async function openDashboard(
     await setPaneMode($, full.value ? "full" : "normal");
     opened.push(full.value ? "the full size" : "its normal size");
   }
+  // This open is unsized, and "each open sets it anew": a size asked for earlier is cleared
+  // by it, not left standing. So the once-only guard is reset alongside it, exactly as
+  // `session.start` resets it -- the next draw then re-asks the size the mode implies. Without
+  // this, a call that did NOT change the mode (an already-full pane, which is the steady state
+  // of a remembered full mode, or a `full: true` call on one) would leave the surface at its
+  // share and nothing to re-ask, because the guard already holds the very key that would ask
+  // (LCLI-668 review F2).
+  lastRequest = NORMAL_REQUEST;
   await $.ui.open({ id: PANE, title: "Lore" });
 
   return { result: `Opened the Lore pane${opened.length > 0 ? `, ${opened.join(", ")}` : ""}.` };
@@ -968,7 +981,7 @@ export const register: Register = (on, _options) => {
     const remembered: PaneMode = (await $.store.get(MODE_KEY)) === "full" ? "full" : "normal";
     await update($, pane, (state) => ({ ...state, mode: remembered }));
     lastRequest = NORMAL_REQUEST;
-    personRequest = false;
+    personRequest = null;
     void refresh($);
     void countUncommitted($);
     void $.ui.open({ id: PANE, title: "Lore" });
@@ -1040,12 +1053,15 @@ export const register: Register = (on, _options) => {
     const wanted =
       mode === "full" ? wantedSize(e.props.placement, e.viewport?.columns ?? 0, e.viewport?.rows ?? 0) : null;
     const request = requestKey(e.props.placement, wanted);
-    // The person's intent is consumed by this draw whether or not it asks: it was set
-    // by a toggle for the request that follows it, and a draw that finds nothing to
-    // ask for has nothing to hand it to.
-    const askedByThePerson = personRequest;
-    personRequest = false;
     if (request !== lastRequest) {
+      // The person's ask is answered only by a request that applies the mode it was raised
+      // for, and only when a request is actually made (LCLI-668 review F5): a draw that
+      // finds nothing to ask leaves the ask standing for the draw that does, and one that
+      // is applying some other mode -- a stale draw still in flight -- does not spend it.
+      const askedByThePerson = personRequest === mode;
+      if (askedByThePerson) {
+        personRequest = null;
+      }
       // Recorded before the call, so a draw that runs while the open is in flight
       // does not ask a second time for the same size.
       lastRequest = request;
@@ -1700,13 +1716,17 @@ export const register: Register = (on, _options) => {
 
     // Read tab, and the fallthrough: every other tab has answered above. The document
     // is `documentColumn`, which the split draws in the right column beside the list
-    // and the stacked layout draws under the pane's own chrome.
+    // and the stacked layout draws under the pane's own chrome. With no document open
+    // there is nothing to land: the landing strip is the document view's own chrome, and
+    // this tab drew it only once a document was open until the LCLI-666 move folded the
+    // two trees together. Restored here (LCLI-668 review F4) -- whether the strip belongs
+    // on an empty Read tab is a separate question, for whoever owns that tab.
     return (
       <Box flexDirection="column">
         {tabs}
         {statusLine}
         {fullHint}
-        {strip}
+        {concept ? strip : null}
         {sideBySide ? (
           <Box flexDirection="row" key="side-by-side">
             <Box flexDirection="column" width={listColumns} paddingRight={1}>

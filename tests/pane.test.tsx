@@ -1334,6 +1334,54 @@ test("each dashboard input lands where it should, on the terminal and the deskto
   }
 });
 
+test("a dashboard call on a pane that is already up re-asks the size its mode implies", async ($, on) => {
+  // The live shape: the pane is MOUNTED before the call, and already full -- the steady
+  // state of a remembered full mode, or of a `z` the person just pressed. The tool's open
+  // is unsized (a `tool.call` carries no viewport to size from) and "each open sets it
+  // anew", so that open CLEARS the size the surface was holding. The once-only guard has to
+  // be reset with it, or nothing re-asks: the guard still holds the key that would ask.
+  // The signal is the open args, not the drag hint -- the harness draws whatever size the
+  // props name, so it cannot show what a cleared request leaves on screen (review F2).
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on, { "pane-mode": "full" });
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  const opens = captureOpens(on);
+
+  for (const surface of ["terminal", "desktop"] as const) {
+    await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+    await clock.settle();
+    opens.length = 0;
+    const ui = await $.ui.mount({ ...splitPane(140), surface });
+    await clock.settle();
+    // The pane is up and full before the call, which is the premise.
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", columns: 140 });
+
+    // A call that asks for the size the pane is ALREADY at: the mode does not change, so
+    // the re-ask is the only thing that can put the size back.
+    opens.length = 0;
+    const same = await $.tool.call({ tool: DASHBOARD, full: true });
+    expect(same.result).toBe("Opened the Lore pane, the full size.");
+    // The engine redraws a state change itself ("the sites that read it while drawing are
+    // drawn again"); the harness draws on an act, so this press stands in for that redraw.
+    // What is under test is the DRAW it causes, not the press.
+    await ui.press({ key: "refresh" });
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", columns: 140 });
+    // Nobody asked the person's keyboard for it, then or now.
+    expect(opens.every((one) => one.focus === undefined)).toBe(true);
+
+    // And a bare call, which changes no state at all, still has to leave the pane at the
+    // size its mode implies rather than at the surface's share.
+    opens.length = 0;
+    const bare = await $.tool.call({ tool: DASHBOARD });
+    expect(bare.result).toBe("Opened the Lore pane.");
+    await ui.press({ key: "refresh" });
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", columns: 140 });
+    await ui.unmount();
+  }
+});
+
 test("an unknown doc id is refused by name, and opens nothing else in its place", async ($, on) => {
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
   mock.store(on);
@@ -1366,4 +1414,64 @@ test("an unknown doc id is refused by name, and opens nothing else in its place"
     expect(await ui.find({ type: "Text", text: /Read adr\/nope failed \(lore exited 3\)/ })).toBeDefined();
     await ui.unmount();
   }
+});
+
+test("the landing strip belongs to an open document, not to an empty Read tab", async ($, on) => {
+  // Restored to the base (LCLI-668 review F4): the Read tab drew the landing strip only
+  // once a document was open, and the LCLI-666 move folded the empty-document tree into
+  // the fallthrough that carries it. Whether the strip BELONGS on an empty Read tab is a
+  // separate question; this pins that the move did not answer it by accident.
+  //
+  // The reads are mocked here rather than through `mockLore`, because the strip needs a
+  // repository whose status read reports a changed `.md` -- `mockLore` answers every git
+  // argv with the toplevel, which parses to no paths at all.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  mockSession(on);
+  captureOpens(on);
+  on("process.run", async (_$, e) => {
+    const argv = [...e.argv];
+    if (argv[0] === "git") {
+      return ok(argv.includes("status") ? " M docs/adr/0001-x.md\n" : "/repo\n");
+    }
+    const sub = argv[1] ?? "";
+    if (sub === "query") {
+      return ok(CONCEPTS);
+    }
+    if (sub === "types") {
+      return ok(TYPES);
+    }
+    if (sub === "read") {
+      return ok(readOf(argv[2] ?? ""));
+    }
+    if (sub === "tasks") {
+      return ok(ROLLUP);
+    }
+
+    return ok(JSON.stringify({ kind: "ok", data: {} }));
+  });
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  await clock.settle();
+  const ui = await $.ui.mount({
+    plugin: "opum-lore",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "lore-pane",
+    props: PANE,
+  });
+  await ui.press({ key: "refresh" });
+
+  // Read with nothing open: the prompt, and no landed-work strip.
+  await ui.press({ key: "tab-read" });
+  expect(await ui.find({ type: "Text", text: /Pick a document from Browse or Search\./ })).toBeDefined();
+  expect(await ui.find({ key: "land" })).toBeUndefined();
+
+  // With a document open the strip is there, which is what makes the assertion above
+  // about the empty tab rather than about a strip that never draws here.
+  await ui.press({ key: "tab-browse" });
+  await ui.press({ key: "open-adr/0001-x" });
+  expect(await ui.find({ type: "Markdown", text: /The body of the notes\./ })).toBeDefined();
+  expect(await ui.find({ key: "land" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: /not committed yet/ })).toBeDefined();
+  await ui.unmount();
 });
