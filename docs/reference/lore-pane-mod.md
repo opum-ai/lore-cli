@@ -153,8 +153,10 @@ ruled in DEC-154 (2026-10-03):
 - **Docked** panes ask in `columns`: the terminal width less the engine's 24-column
   floor (`DOCK_FLOOR_COLUMNS`). A docked render does not report the terminal --
   `viewport.columns` is the transcript column beside the pane -- so the terminal is
-  recovered from one render as `viewport.columns` + the pane's current drawn width + 1
-  for the divider, and the ask is built from that draw's own numbers. **Inline** panes
+  recovered from one render as `viewport.columns` + the pane's drawn body
+  (`e.props.bodyColumns`, the cells inside its frame) + 1, that last column being the
+  pane's frame edge where it meets the transcript, and the ask is built from that draw's
+  own numbers. **Inline** panes
   ask in `rows`: the viewport height less the engine's own reservation of 11 rows -- 8
   for the prompt (`PROMPT_FLOOR_ROWS`) and 3 of transcript (`TRANSCRIPT_PEEK_ROWS`) --
   which is the ceiling the engine actually grants on the main screen. Both are requests,
@@ -169,10 +171,11 @@ ruled in DEC-154 (2026-10-03):
   than a pane.
 - **The ask is made once per toggle** (`pendingAsk`): a person's `z`, a tool call
   carrying `full`, or a stored full mode on its first render. An unsized open — a tool
-  call, the band's press, a session start — clears the size the surface was holding,
-  and raises the one restoration ask that puts it back. A resize or a redraw never asks,
-  because re-deriving the ask from every render would chase the pane's own new width. A
-  surface that reports no viewport asks for nothing.
+  call, the band's press, a session start — clears the size the surface was holding and,
+  for a full-mode pane, raises the one restoration ask that puts it back; the open never
+  lowers an ask already standing, because its mode read can trail a toggle's write. A
+  resize or a redraw never asks, because re-deriving the ask from every render would
+  chase the pane's own new width. A surface that reports no viewport asks for nothing.
 - **The choice is remembered** in `$.store` under `pane-mode` and restored at
   `session.start`, where the first draw applies it. A store that refuses the write loses
   only the memory, not the toggle.
@@ -180,17 +183,20 @@ ruled in DEC-154 (2026-10-03):
   engine (`pluginPanes.dockColumns` in `~/.claude.json`) and wins over every request,
   across sessions; the module never edits that file or works around it. A granted size
   measures a few cells short inside the frame, so a request within 4 cells of the size
-  drawn counts as granted (`SIZE_SLACK`) and anything further off is read as a kept
-  width. While one holds, the pane draws one line naming it — `Width kept at <columns>
-  (you set it): drag the pane edge to change` — instead of a generic hint, and it never
-  labels itself `Full screen`. In normal mode there is no requested size to fall short
-  of, and an inline pane short of its ask is content-sized, which is honest and says
-  nothing.
+  drawn counts as granted (`SIZE_SLACK`). "A width holds" is read from the ask's outcome
+  rather than the shortfall alone: only a spent ask whose grant has not arrived — and
+  not the render that spends it, which is pre-grant by definition — reads as held, so a
+  shortfall a resize leaves behind, with nothing re-asked, claims no owner. While a
+  width holds, the pane draws one line naming it — `Width kept at <columns> (you set
+  it): drag the pane edge to change` — instead of a generic hint, and it never labels
+  itself `Full screen`. In normal mode there is no requested size to fall short of, and
+  an inline pane short of its ask is content-sized, which is honest and says nothing.
 - **The dashboard tool reports the drawn size**, never the asked one: `the full size`
   when the latest draw of a full pane came within the same 4 cells of its ask, otherwise
-  the drawn size and why — `opened at <n> rows; the screen keeps room for the prompt`,
-  or the kept width in the dock's own words — and `full requested` when no draw of the
-  mode the call asked for has completed yet.
+  the drawn size and why — `opened at <n> rows; the screen keeps room for the prompt`
+  inline; in the dock either the kept width in the pane's own words when that draw read
+  one as held, or `the pane kept its width` when nothing does — and `full requested`
+  when no draw of the mode the call asked for has completed yet.
 - **At 120 or more body columns** (`e.props.bodyColumns`, full mode only) the bundle list
   draws in a left column with the document on the right, on Read and Search alike. On
   Read the left column is the browse list, with the open document's row drawn at full
@@ -448,17 +454,20 @@ editor open closing it rather than writing across documents, a body too large to
 the editor being refused while the pane keeps drawing, a body that grows past that bound
 closing the editor, and the editor's region carrying an explicit height; and the
 full-screen toggle — the docked `columns` recovered from the transcript plus the drawn
-body, the inline `rows` less the engine's 11, the unsized request that returns the pane
-to normal, the one ask per session with a resize asking nothing, the `pane-mode` store
-round-trip across a remount, the kept-width line and its absence on a granted pane and
-at the normal size, and the command's
+body, the inline `rows` less the engine's 11 on the key, stored-mode and tool paths, the
+unsized request that returns the pane to normal, the one ask per toggle and per session
+with a resize and a redraw asking nothing, an unsized open that never lowers a standing
+ask, the `pane-mode` store round-trip across a remount, the kept-width line (and its
+absence on a granted pane, after a resize with nothing held, and at the normal size),
+and the command's
 `full` argument with its refusal of anything else — plus the 120-column split on Read
 (asserted at 140, at exactly 120 and at 119 on the same document) and on Search, with
 the two columns inspected in order so a swap cannot pass, and a control proving the split
 is full mode's rather than any wide pane's; and the dashboard tool -- its registration and
 description, the focusless open with a misspelled-name control, each input landing where it
 should (`doc` on Read, `query` on Search, `full` reporting the drawn size or `full
-requested`, and the restoration ask a tool call's unsized open raises), and an unknown id
+requested` across all three arms with the slack pinned at its 4-cell boundary, and the
+restoration ask a tool call's unsized open raises), and an unknown id
 refused by name with no open and nothing drawn. Unit tests cover
 the pure helpers:
 `patchFrontmatter` (replace, remove, insert, and the no-frontmatter refusal),

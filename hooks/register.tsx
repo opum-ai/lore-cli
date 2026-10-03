@@ -79,7 +79,16 @@ const MODE_KEY = "pane-mode";
  */
 async function openPane($: EngineInterface): Promise<UiOpenResult> {
   const { mode } = await read($, pane);
-  pendingAsk = mode === "full" ? { mode: "full", byPerson: false } : null;
+  // Raise the restoration ask a full-mode open owes -- and never LOWER one already
+  // standing. This read can be stale against a toggle whose write has not landed yet
+  // (measured, LCLI-675 review F1: a tool call racing the person's `z` read `normal`,
+  // nulled the ask, and left the pane full-mode and unsized), and a standing ask may
+  // carry the person's keyboard intent, which this open knows nothing about. Every mode
+  // change assigns its own ask and the draws that spend one are mode-guarded, so an ask
+  // this open does not need cannot outlive the next toggle.
+  if (pendingAsk === null && mode === "full") {
+    pendingAsk = { mode: "full", byPerson: false };
+  }
   const asked = await $.ui.open({ id: PANE, title: "Lore" });
   await update($, pane, (state) => ({ ...state, isWaiting: asked.isPlaced === false }));
 
@@ -274,9 +283,30 @@ let pendingAsk: { mode: PaneMode; byPerson: boolean } | null = null;
  * size" only when the draw came within `SIZE_SLACK` of its ask. A tool call returns after
  * an unsized open, often before the restore draw has run, so this is the most recent
  * render as of the answer -- and a missing record, or one of another mode, is what the
- * answer honestly calls "full requested".
+ * answer honestly calls "full requested". `holding` is that draw's reading of a held
+ * width (see `awaitingGrant`), so the answer's stated reason is the reason that draw saw.
  */
-let lastDraw: { mode: PaneMode; placement: Placement; wanted: number | null; drawn: number } | null = null;
+let lastDraw: {
+  mode: PaneMode;
+  placement: Placement;
+  wanted: number | null;
+  drawn: number;
+  holding: boolean;
+} | null = null;
+
+/**
+ * Whether the last full ask has so far gone ungranted -- the module's reading of "a
+ * width is holding".
+ *
+ * Only a SPENT ask sets it, and a later draw at the ask's own size clears it, so it is
+ * an outcome rather than a shortfall: rule 2 as amended forbids re-asking on a resize,
+ * so after a widening the ask moves under a pane whose grant was honoured, and that
+ * shortfall has no width of anyone's behind it (measured, LCLI-675 review F2). Reading
+ * `drawn < asked - SIZE_SLACK` alone would claim a kept width there, and after a granted
+ * ask the engine's clamp arithmetic leaves nothing else that can hold a dock pane short
+ * of the ceiling it just asked for.
+ */
+let awaitingGrant = false;
 
 // ── The call sites ────────────────────────────────────────────────────────────
 
@@ -402,11 +432,13 @@ async function uncommittedPaths($: EngineInterface, root: string | null): Promis
  *
  * `PaneOpenArgs` takes a size per placement: docked panes in `columns`, inline ones in
  * `rows`. DEC-154 rule 1 (inline) asks `rows - 11`; rule 2 as amended (dock) recovers the
- * TERMINAL width from one render -- `viewport.columns` is the transcript column beside a
- * docked pane, not the terminal, so terminal = transcript + the pane's drawn width + 1
- * for the divider -- and asks for all of it less the engine's 24-column floor. A surface
- * that was never measured, or one too small to hold the floor and a pane both, has no
- * size to request.
+ * TERMINAL width from one render: `viewport.columns` is the transcript column beside a
+ * docked pane, not the terminal, and the pane's `bodyColumns` are the cells inside its
+ * frame -- so terminal = transcript + drawn body + 1, and that last column is the pane's
+ * frame edge, the divider at the transcript's own (LCLI-674 measured 79 body cells under
+ * an 80-wide pane at a 160-column terminal) -- and asks for all of it less the engine's
+ * 24-column floor. A surface that was never measured, or one too small to hold the floor
+ * and a pane both, has no size to request.
  */
 function wantedSize(placement: Placement, columns: number, rows: number, drawn: number): number | null {
   if (placement === "dock") {
@@ -991,9 +1023,11 @@ function describe(value: unknown): string {
  * when the latest draw came within `SIZE_SLACK` of its ask; otherwise the drawn size
  * and why; and "full requested" when no draw of the mode the call asked for has
  * completed (a fresh toggle's restore draw still in flight, say). The dock's short
- * case is the kept width of rule 3 in near the pane's own words, named as the pane's
- * width -- the body plus the frame column LCLI-674 measured; the inline short case is
- * the surface keeping room for the prompt above the block.
+ * case mirrors rule 3's pane line -- the width the person set, named as the pane's own
+ * width, the drawn body plus the frame column LCLI-674 measured (79 body cells under an
+ * 80-wide pane) -- but only while that draw read a width as holding; a shortfall with
+ * nothing holding names no owner, because after a resize it has none (review F2). The
+ * inline short case is the surface keeping room for the prompt above the block.
  */
 function fullSizeAnswer(): string {
   const draw = lastDraw;
@@ -1005,7 +1039,9 @@ function fullSizeAnswer(): string {
   }
 
   return draw.placement === "dock"
-    ? `opened at ${draw.drawn + 1} columns; the width you set is kept`
+    ? draw.holding
+      ? `opened at ${draw.drawn + 1} columns; the width you set is kept`
+      : `opened at ${draw.drawn + 1} columns; the pane kept its width`
     : `opened at ${draw.drawn} rows; the screen keeps room for the prompt`;
 }
 
@@ -1142,8 +1178,12 @@ export const register: Register = (on, _options) => {
     const remembered: PaneMode = (await $.store.get(MODE_KEY)) === "full" ? "full" : "normal";
     await update($, pane, (state) => ({ ...state, mode: remembered }));
     // Raised synchronously, so the first draw cannot beat the ask to the state: the
-    // open below raises the same one again for its own callers.
+    // open below raises the same one again for its own callers. The drawings of a
+    // previous session in this process are dropped with it -- the tool's answer and
+    // the held-width reading both describe the pane THIS session draws.
     pendingAsk = remembered === "full" ? { mode: "full", byPerson: false } : null;
+    lastDraw = null;
+    awaitingGrant = false;
     void refresh($);
     void countUncommitted($);
     // The session's own open, which nobody asked for by hand: on a terminal under the
@@ -1224,8 +1264,14 @@ export const register: Register = (on, _options) => {
     // whatever the surface's own share is, so there is nothing there for the pane to
     // have been denied.
     const drawn = e.props.placement === "dock" ? e.props.bodyColumns : e.props.scroll.bodyRows;
-    // The latest render, for the dashboard tool's answer (DEC-154 rule 4).
-    lastDraw = { mode, placement: e.props.placement, wanted, drawn };
+    const shortOfFull = wanted !== null && drawn < wanted - SIZE_SLACK;
+    // Spend the ask a toggle (or an open that cleared the size) raised, and record the
+    // ask's outcome: only a SPENT ask sets `awaitingGrant`, and a later full-mode draw at
+    // the ask's own size clears it -- so a shortfall alone, which is what a resize leaves
+    // behind, is holding nothing (DEC-154 rule 3's condition; LCLI-675 review F2). The
+    // render that spends the ask is pre-grant by definition, so it is suppressed below
+    // rather than read for a held width.
+    let spentNow = false;
     if (pendingAsk !== null && pendingAsk.mode === mode) {
       // The ask a toggle (or an open that cleared the size) raised, spent by the first
       // draw that can build it -- and only by one applying the mode it was raised for,
@@ -1237,10 +1283,20 @@ export const register: Register = (on, _options) => {
       if (mode === "normal" || wanted !== null) {
         const askedByThePerson = pendingAsk.byPerson;
         pendingAsk = null;
+        if (wanted !== null) {
+          awaitingGrant = true;
+          spentNow = true;
+        }
         void requestPane($, e.props.placement, wanted, askedByThePerson);
       }
+    } else if (wanted !== null && !shortOfFull) {
+      // A full-mode draw at the size the ask built is a granter: this machine honours
+      // asks, so nothing is holding.
+      awaitingGrant = false;
     }
-    const shortOfFull = wanted !== null && drawn < wanted - SIZE_SLACK;
+    const holding = awaitingGrant && !spentNow;
+    // The latest render, for the dashboard tool's answer (DEC-154 rule 4).
+    lastDraw = { mode, placement: e.props.placement, wanted, drawn, holding };
 
     const elements = $.ui.resolve(e);
     const { Box, Button, Code, Input, Markdown, Select, Text } = elements;
@@ -1262,13 +1318,14 @@ export const register: Register = (on, _options) => {
     // much room there is to draw it in. Sized off the pane, less the Read tab's chrome.
     const editorRows = Math.max(6, Math.min(24, e.props.scroll.bodyRows - 12));
 
-    // The one line a short full docked pane shows, in place of a generic hint (DEC-154
-    // rule 3). A dock ask is the engine clamp's ceiling, so a pane that did not reach it
-    // is one a kept width -- the person's own drag, or a chosen size -- is holding, and
-    // the line says so with the width they set. Inline shortfalls are the content-sized
-    // pane being honest, and show nothing (rule 1).
+    // The one line a full docked pane shows while an ask has gone ungranted -- the
+    // module's reading of a width holding against the ask. It names that width and how
+    // to change it (DEC-154 rule 3), shows no generic held hint, and stays silent on the
+    // render that spent the ask (pre-grant by definition) and wherever nothing is
+    // holding: a resize leaves no one's width behind. Inline shortfalls are the
+    // content-sized pane being honest, and show nothing (rule 1).
     const fullHint =
-      shortOfFull && e.props.placement === "dock" ? (
+      shortOfFull && e.props.placement === "dock" && holding ? (
         <Text dimColor wrap="truncate">
           {keptWidthLine(drawn + 1)}
         </Text>

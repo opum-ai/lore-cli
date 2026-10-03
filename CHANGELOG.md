@@ -70,9 +70,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the terminal width in the dock from one render (transcript + the drawn body + the divider, less
   the engine's 24-column floor), asks once per toggle rather than on every resize, tells the
   person plainly when a width they set is being kept (`Width kept at 80 (you set it): drag the
-  pane edge to change`) instead of a generic hint, and reports the drawn size — `the full size`
-  only within 4 cells of the ask, the drawn size and its reason otherwise, `full requested` when
-  the draw is not yet known.
+  pane edge to change`) — and stays quiet when a resize leaves the pane short with nothing
+  held — instead of a generic hint, and reports the drawn size — `the full size` only within
+  4 cells of the ask, the drawn size and its reason otherwise, `full requested` when the draw
+  is not yet known.
 
 ## [0.12.0] - 2026-09-29
 

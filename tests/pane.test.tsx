@@ -799,15 +799,25 @@ test("z asks for the largest docked width, and a second press asks for the norma
     await ui.press({ key: "full" });
     await clock.settle();
     // DEC-154 rule 2 as amended: the ask is the terminal width recovered from this one
-    // render -- the 80-column transcript plus the 79 drawn plus 1 for the divider, 160 --
-    // less the engine's 24-column floor: 136.
-    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true, columns: 136 });
+    // render -- the 80-column transcript plus the 79-cell drawn body plus 1, the pane's
+    // frame edge where it meets the transcript (LCLI-674: 79 body cells under an 80-wide
+    // pane) = 160 -- less the engine's 24-column floor: 136. Asserted as the WHOLE list,
+    // so a second ask for the one toggle cannot pass (review F4).
+    expect(opens).toEqual([{ id: "lore-pane", title: "Lore", focus: true, columns: 136 }]);
+
+    // A redraw raises no ask of its own: the person's toggle asked once (review F4).
+    await ui.press({ key: "refresh" });
+    await clock.settle();
+    expect(opens).toHaveLength(1);
 
     await ui.press({ key: "full" });
     await clock.settle();
     // Back to the normal size: no `columns` at all, which is the request for the
     // surface's own share (`PaneOpenArgs`: left out, the share).
-    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true });
+    expect(opens).toEqual([
+      { id: "lore-pane", title: "Lore", focus: true, columns: 136 },
+      { id: "lore-pane", title: "Lore", focus: true },
+    ]);
     await ui.unmount();
   }
 });
@@ -835,11 +845,107 @@ test("an inline pane asks for rows, the viewport less the prompt area", async ($
     // 40 rows of surface less the engine's 11 (PROMPT_FLOOR_ROWS 8 plus
     // TRANSCRIPT_PEEK_ROWS 3, DEC-154 rule 1): the ceiling the engine actually grants.
     expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true, rows: 29 });
+    // An inline pane short of its ask says NOTHING about it: the shortfall is the
+    // content-sized pane being honest (rule 1), and the generic held hint is gone.
+    expect(await ui.find({ type: "Text", text: /Width kept at/ })).toBeUndefined();
+    expect(await ui.find({ type: "Text", text: /Drag the pane edge to resize/ })).toBeUndefined();
     await ui.press({ key: "full" });
     await clock.settle();
     expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true });
     await ui.unmount();
   }
+});
+
+test("a stored full mode and a tool call raise the same inline ask as the person's key", async ($, on) => {
+  // DEC-154 rule 1's ask on the other paths that raise it -- the stored full mode's
+  // first render, and a tool call carrying `full` -- so "every path" is measured on the
+  // inline axis too and not only the dock's (LCLI-675 review, rule-1 note).
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on, { "pane-mode": "full" });
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  const opens = captureOpens(on);
+  for (const surface of ["terminal", "desktop"] as const) {
+    const at = async () => {
+      const ui = await $.ui.mount({
+        plugin: "opum-lore",
+        surface,
+        component: "Pane",
+        requestId: "lore-pane",
+        props: inlinePane(40, 12),
+        viewport: { columns: 100, rows: 40, isFullscreen: false },
+      });
+      await clock.settle();
+
+      return ui;
+    };
+
+    // The stored mode's first render, nobody's ask: unfocused, rows - 11.
+    await $.session.start({ cwd: "/repo", surface, isInteractive: true });
+    await clock.settle();
+    opens.length = 0;
+    const stored = await at();
+    expect(opens).toEqual([{ id: "lore-pane", title: "Lore", rows: 29 }]);
+    await stored.unmount();
+
+    // The tool's ask, on the same surface: the mode does not change (it is already
+    // full), so the tool's own open is what raises it -- unfocused too.
+    await $.tool.call({ tool: DASHBOARD, full: true });
+    opens.length = 0;
+    const byTool = await at();
+    expect(opens).toEqual([{ id: "lore-pane", title: "Lore", rows: 29 }]);
+    await byTool.unmount();
+  }
+});
+
+test("an open never lowers the ask a person's toggle left standing", async ($, on) => {
+  // LCLI-675 review F1, measured there as a race: a tool call's open reads the mode from
+  // before the person's toggle write lands, and the first implementation nulled the
+  // standing ask on that stale read -- the pane then sat in full mode at the surface's
+  // share with nothing left to ask. Staged deterministically here: the person's ask is
+  // raised and STAYS (no viewport yet, so no draw can build it), a tool call opens the
+  // pane beside it, and the next measured draw must spend the PERSON's ask -- keyboard
+  // intent included.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  const opens = captureOpens(on);
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  await clock.settle();
+  opens.length = 0;
+  // A draw with no viewport at all: the full ask has nothing to build from, and stays.
+  const blind = await $.ui.mount({
+    plugin: "opum-lore",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "lore-pane",
+    props: docked(79),
+  });
+  await clock.settle();
+  await blind.press({ key: "full" });
+  await clock.settle();
+  expect(opens).toEqual([]);
+  // The concurrent call: its open must leave the standing ask -- and the person's
+  // keyboard intent with it -- exactly where it found it.
+  const raced = await $.tool.call({ tool: DASHBOARD, full: true });
+  expect(raced.result).toBe("Opened the Lore pane, full requested.");
+  await blind.unmount();
+  // The next measured draw spends the person's ask, with the focus their press carries.
+  opens.length = 0;
+  const sized = await $.ui.mount({
+    plugin: "opum-lore",
+    surface: "terminal",
+    component: "Pane",
+    requestId: "lore-pane",
+    props: docked(79),
+    viewport: { columns: 80, rows: 50, isFullscreen: true },
+  });
+  await clock.settle();
+  expect(opens).toEqual([{ id: "lore-pane", title: "Lore", focus: true, columns: 136 }]);
+  await sized.unmount();
 });
 
 test("a full pane asks once, on its first draw; a resize asks for nothing", async ($, on) => {
@@ -875,8 +981,9 @@ test("a full pane asks once, on its first draw; a resize asks for nothing", asyn
     const first = await at(80);
     // Nobody asked for this one: the session remembered `full`, so the draw that sizes it
     // opens WITHOUT `focus` rather than taking the keyboard at startup. The one ask: the
-    // 80-column transcript plus the 79 drawn plus 1 for the divider, less the floor.
-    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", columns: 136 });
+    // 80-column transcript plus the 79 drawn plus 1, less the floor -- asserted as the
+    // WHOLE list, so "exactly one ask on its first render" cannot pass on a second.
+    expect(opens).toEqual([{ id: "lore-pane", title: "Lore", columns: 136 }]);
     await first.unmount();
 
     opens.length = 0;
@@ -1004,13 +1111,15 @@ test("a session starting with no remembered choice opens at the normal size", as
   await ui.unmount();
 });
 
-test("a full docked pane held short of its ask names the kept width, in one line", async ($, on) => {
-  // DEC-154 rule 3: a dock ask is the engine clamp's own ceiling, so a docked pane that
-  // did not reach its ask is one a width the person set is holding. The pane names that
-  // width and how to change it, and shows no generic held hint. The control is a pane
-  // that DID get its ask: with the transcript at the engine's 24-column floor, the drawn
-  // body is the size the ask built, and nothing is drawn. The old generic hint is
-  // asserted absent in both cases, so its removal is measured rather than assumed.
+test("a full docked pane names a held width in one line, and only when one holds", async ($, on) => {
+  // DEC-154 rule 3: while a width holds against the ask, the pane names it and how to
+  // change it, and shows no generic held hint. "Holds" is read from the ask's outcome --
+  // only a spent ask sets it and a draw at the ask's own size clears it -- so the
+  // controls are direct: a pane that GOT its ask draws nothing (matched as a PATTERN, so
+  // a line naming another width cannot pass as absence -- review F5), the render that
+  // spends the ask is pre-grant and draws nothing, and a resize after a granted ask --
+  // the case a bare drawn-vs-ask comparison read as a kept width nobody set (review F2)
+  // -- draws nothing too.
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
   mock.store(on, { "pane-mode": "full" });
   const seen: string[][] = [];
@@ -1019,30 +1128,54 @@ test("a full docked pane held short of its ask names the kept width, in one line
   captureOpens(on);
   const GENERIC = /Drag the pane edge to resize/;
   const KEPT = "Width kept at 80 (you set it): drag the pane edge to change";
-  const cases = [
-    { name: "kept", body: 79, transcript: 80 },
-    { name: "granted", body: 135, transcript: 24 },
-  ] as const;
   for (const surface of ["terminal", "desktop"] as const) {
-    await $.session.start({ cwd: "/repo", surface, isInteractive: true });
-    for (const one of cases) {
+    const at = async (transcript: number, body: number) => {
       const ui = await $.ui.mount({
         plugin: "opum-lore",
         surface,
         component: "Pane",
         requestId: "lore-pane",
-        props: docked(one.body),
-        viewport: { columns: one.transcript, rows: 50, isFullscreen: true },
+        props: docked(body),
+        viewport: { columns: transcript, rows: 50, isFullscreen: true },
       });
       await clock.settle();
-      // The kept machine: a 79-cell body under its 80-wide frame, an 80-column
-      // transcript beside it, a 160-column terminal, and so an ask of 136 -- far short
-      // of what drew, and the line names the width the person set.
-      const kept = await ui.find({ type: "Text", text: KEPT });
-      expect(kept === undefined, one.name).toBe(one.name !== "kept");
-      expect(await ui.find({ type: "Text", text: GENERIC })).toBeUndefined();
-      await ui.unmount();
-    }
+
+      return ui;
+    };
+
+    // The kept machine: a 79-cell body under its 80-wide frame beside an 80-column
+    // transcript -- terminal 160, ask 136, far short of what drew. The mount's own
+    // render spends the ask (pre-grant by definition); the engine's redraw of it is the
+    // render with an answer, and this ask has gone ungranted -- the pane keeps its
+    // 79-cell body -- so the line is drawn.
+    await $.session.start({ cwd: "/repo", surface, isInteractive: true });
+    const kept = await at(80, 79);
+    expect(await kept.find({ type: "Text", text: KEPT })).toBeDefined();
+    await kept.press({ key: "refresh" });
+    await clock.settle();
+    expect(await kept.find({ type: "Text", text: KEPT })).toBeDefined();
+    expect(await kept.find({ type: "Text", text: GENERIC })).toBeUndefined();
+    await kept.unmount();
+
+    // Granted: the transcript at the engine's 24-column floor, the drawn body within the
+    // slack of the ask -- nothing is drawn, before or after a redraw.
+    await $.session.start({ cwd: "/repo", surface, isInteractive: true });
+    const granted = await at(24, 135);
+    expect(await granted.find({ type: "Text", text: /Width kept at/ })).toBeUndefined();
+    await granted.press({ key: "refresh" });
+    await clock.settle();
+    expect(await granted.find({ type: "Text", text: /Width kept at/ })).toBeUndefined();
+    expect(await granted.find({ type: "Text", text: GENERIC })).toBeUndefined();
+    await granted.unmount();
+
+    // The resize: the ask moved under a pane whose grant was honoured and nothing was
+    // set, so the pane stays quiet rather than claiming a width of the person's.
+    const resized = await at(80, 79);
+    await resized.press({ key: "refresh" });
+    await clock.settle();
+    expect(await resized.find({ type: "Text", text: /Width kept at/ })).toBeUndefined();
+    expect(await resized.find({ type: "Text", text: GENERIC })).toBeUndefined();
+    await resized.unmount();
   }
 });
 
@@ -1217,6 +1350,85 @@ test("the split is full mode's, not a wide pane's on its own", async ($, on) => 
  * what the misspelled-name control below measures.
  */
 const DASHBOARD = "mcp__opum-lore__dashboard";
+
+test("the dashboard tool answers with the drawn size and why, and pins the slack at 4", async ($, on) => {
+  // DEC-154 rule 4's middle arm -- the LCLI-674 photographed defect, "the full size"
+  // claimed while the pane drew something else -- is the reason this task exists, so all
+  // three arms are driven here, and the slack's own value is pinned by two renders one
+  // column apart: the comparison is `drawn >= asked - SIZE_SLACK`, and with
+  // wanted - drawn equal to transcript - 23 (the formula's own identity), a 27-column
+  // transcript lands exactly on the boundary where 28 is the first miss.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on, { "pane-mode": "full" });
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  const opens = captureOpens(on);
+  for (const surface of ["terminal", "desktop"] as const) {
+    const at = async (transcript: number, body: number) => {
+      const ui = await $.ui.mount({
+        plugin: "opum-lore",
+        surface,
+        component: "Pane",
+        requestId: "lore-pane",
+        props: docked(body),
+        viewport: { columns: transcript, rows: 50, isFullscreen: true },
+      });
+      await clock.settle();
+
+      return ui;
+    };
+    const answer = async () => (await $.tool.call({ tool: DASHBOARD, full: true })).result;
+
+    // No pane has drawn in this session: the size is unknown, and the answer says only
+    // that it was asked for -- no number, no claim.
+    await $.session.start({ cwd: "/repo", surface, isInteractive: true });
+    await clock.settle();
+    expect(await answer()).toBe("Opened the Lore pane, full requested.");
+
+    // The granted shape: ask 136, drawn body 135 -- within the slack.
+    const granted = await at(24, 135);
+    expect(await answer()).toBe("Opened the Lore pane, the full size.");
+    await granted.unmount();
+
+    // The resize: the ask moved under a pane whose grant was honoured and nothing is
+    // holding -- the drawn size is named, and no owner is invented for the shortfall.
+    const resized = await at(80, 79);
+    expect(await answer()).toBe("Opened the Lore pane, opened at 80 columns; the pane kept its width.");
+    await resized.unmount();
+
+    // The slack boundary, from the same identity: 27 lands exactly on
+    // `drawn >= asked - 4` and 28 is the first miss.
+    const edge = await at(27, 100);
+    expect(await answer()).toBe("Opened the Lore pane, the full size.");
+    await edge.unmount();
+    const past = await at(28, 100);
+    expect(await answer()).toBe("Opened the Lore pane, opened at 101 columns; the pane kept its width.");
+    await past.unmount();
+
+    // Held: a fresh ask is spent and never granted (the pane keeps its 79-cell body), so
+    // the shortfall is named as the person's own width, in the pane's own words.
+    await $.session.start({ cwd: "/repo", surface, isInteractive: true });
+    const held = await at(80, 79);
+    await held.press({ key: "refresh" });
+    await clock.settle();
+    expect(await answer()).toBe("Opened the Lore pane, opened at 80 columns; the width you set is kept.");
+    await held.unmount();
+
+    // Inline: the drawn size and the prompt's own reason, on the other axis.
+    const inline = await $.ui.mount({
+      plugin: "opum-lore",
+      surface,
+      component: "Pane",
+      requestId: "lore-pane",
+      props: inlinePane(40, 12),
+      viewport: { columns: 100, rows: 40, isFullscreen: false },
+    });
+    await clock.settle();
+    expect(await answer()).toBe("Opened the Lore pane, opened at 12 rows; the screen keeps room for the prompt.");
+    await inline.unmount();
+  }
+});
 
 test("the dashboard tool registers at session start, and a bare call opens the pane without the keyboard", async ($, on) => {
   // Registration is asserted on the SPEC the module handed the engine, which is what the
