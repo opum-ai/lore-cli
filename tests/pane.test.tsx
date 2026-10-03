@@ -826,7 +826,9 @@ test("a viewport that changed asks for the full size again, and one that did not
 
     opens.length = 0;
     const first = await at(160);
-    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true, columns: 140 });
+    // Nobody asked for this one: the session remembered `full`, so the draw that
+    // sizes it opens WITHOUT `focus` rather than taking the keyboard at startup.
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", columns: 140 });
     await first.unmount();
 
     opens.length = 0;
@@ -836,7 +838,8 @@ test("a viewport that changed asks for the full size again, and one that did not
 
     opens.length = 0;
     const wider = await at(200);
-    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true, columns: 180 });
+    // The viewport moved under the pane; the re-request is still nobody's ask.
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", columns: 180 });
     await wider.unmount();
   }
 });
@@ -899,7 +902,8 @@ test("the full-or-normal choice is written to the plugin's store, and a session 
       viewport: { columns: 160, rows: 50, isFullscreen: true },
     });
     await clock.settle();
-    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true, columns: 140 });
+    // Restored, not asked for: the request carries no `focus`.
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", columns: 140 });
     // The draw that asked says so too: the toggle offers the way back.
     expect((await restored.find({ key: "full" }))?.props.label).toBe("Normal size");
     await restored.press({ key: "full" });
@@ -1043,9 +1047,10 @@ test("the pane command toggles with its argument and answers with the state it l
   expect(refused.text).toContain("full");
   expect((await run("")).text).toBe("Lore pane opened.");
 
-  // The bare command reopens the pane at the size it remembers. Docked, the
-  // command's own columns are enough to ask with (160 less the margin); at the
-  // normal size there is no size to ask for at all.
+  // The bare command reopens the pane at the size it remembers, and it is the
+  // person's own command, so it asks for the keyboard. Docked, the command's own
+  // columns are enough to ask with (160 less the margin); at the normal size there
+  // is no size to ask for at all.
   await clock.settle();
   expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true });
   await run("full");
@@ -1053,7 +1058,8 @@ test("the pane command toggles with its argument and answers with the state it l
   await clock.settle();
   expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true, columns: 140 });
 
-  // And what it left is remembered: the next session starts full.
+  // And what it left is remembered: the next session starts full -- restored on its
+  // first draw, which is nobody's ask, so that open carries no `focus`.
   await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
   opens.length = 0;
   const ui = await $.ui.mount({
@@ -1065,7 +1071,7 @@ test("the pane command toggles with its argument and answers with the state it l
     viewport: { columns: 160, rows: 50, isFullscreen: true },
   });
   await clock.settle();
-  expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true, columns: 140 });
+  expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", columns: 140 });
   await ui.unmount();
   expect(seen.some((argv) => argv[1] === "query")).toBe(true);
 });

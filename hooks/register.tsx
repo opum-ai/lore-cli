@@ -307,35 +307,59 @@ function requestKey(placement: Placement, wanted: number | null): string {
 }
 
 /**
+ * Whether the next open the pane builds answers the person's own toggle.
+ *
+ * A person asking for the full size -- `z`, or `/lore-pane full`, or a bare
+ * `/lore-pane` -- gets a pane that takes the keyboard; a pane that widens itself
+ * because the session remembered `full`, or because the viewport changed under
+ * it, is nobody's ask and must not take the keyboard from the prompt. Both are
+ * the same open, built in the same place, so the difference is carried here: the
+ * toggle sets it, the next request consumes it whatever it decides.
+ */
+let personRequest = false;
+
+/**
  * Asks the surface for the pane, sized when there is a size to ask for.
  *
- * `focus` rides every reopen (a request, not a grant: the surface hands the
- * pane the keyboard only over an empty composer) and `closeOnEscape` is never
- * passed -- that pair is what would make the pane a dialog rather than a pane.
+ * `focus` only when the person asked (a request, not a grant either way: the
+ * surface hands the pane the keyboard only over an empty composer), and
+ * `closeOnEscape` is never passed -- that pair is what would make the pane a
+ * dialog rather than a pane. The key is left OUT rather than set false, so what
+ * the module asked for is what the open carries.
  */
-async function requestPane($: EngineInterface, placement: Placement, wanted: number | null): Promise<void> {
+async function requestPane(
+  $: EngineInterface,
+  placement: Placement,
+  wanted: number | null,
+  focus: boolean,
+): Promise<void> {
+  const asked = focus ? { focus: true as const } : {};
   if (wanted === null) {
-    await $.ui.open({ id: PANE, title: "Lore", focus: true });
+    await $.ui.open({ id: PANE, title: "Lore", ...asked });
 
     return;
   }
-  await $.ui.open(
-    placement === "dock"
-      ? { id: PANE, title: "Lore", focus: true, columns: wanted }
-      : { id: PANE, title: "Lore", focus: true, rows: wanted },
-  );
+  await $.ui.open({
+    id: PANE,
+    title: "Lore",
+    ...asked,
+    ...(placement === "dock" ? { columns: wanted } : { rows: wanted }),
+  });
 }
 
 /**
  * Flips the pane between its normal size and the largest the surface allows.
  *
  * The size itself is asked for by the next draw, which is the only place that
- * knows `e.viewport`; this leaves the choice where a draw will find it. The
- * store write is best-effort: a store that refuses loses the memory of the
- * choice, which is not a reason to refuse the toggle.
+ * knows `e.viewport`; this leaves the choice where a draw will find it, and
+ * `personRequest` leaves the person's intent beside it -- they pressed the key,
+ * so the pane it produces may take the keyboard. The store write is best-effort: a
+ * store that refuses loses the memory of the choice, which is not a reason to
+ * refuse the toggle.
  */
 async function togglePane($: EngineInterface): Promise<PaneMode> {
   const next: PaneMode = (await read($, pane)).mode === "full" ? "normal" : "full";
+  personRequest = true;
   await update($, pane, (state) => ({ ...state, mode: next }));
   try {
     await $.store.set(MODE_KEY, next);
@@ -774,6 +798,7 @@ export const register: Register = (on, _options) => {
     const remembered: PaneMode = (await $.store.get(MODE_KEY)) === "full" ? "full" : "normal";
     await update($, pane, (state) => ({ ...state, mode: remembered }));
     lastRequest = NORMAL_REQUEST;
+    personRequest = false;
     void refresh($);
     void countUncommitted($);
     void $.ui.open({ id: PANE, title: "Lore" });
@@ -802,16 +827,19 @@ export const register: Register = (on, _options) => {
       // pane was left in.
       return { text: modeText(await togglePane($)) };
     }
-    // The bare command reopens the pane at the size it already remembers. The
-    // command knows its own columns and which layout it runs in, but no rows
-    // (`CommandPresentation`), so only the docked arm can be sized from here: an
-    // inline one opens at the surface's own share and the draw that follows asks
-    // for the height, which is why the guard is left naming what was asked.
+    // The bare command reopens the pane at the size it already remembers, and it is
+    // the person's own command, so it asks for the keyboard. The command knows its
+    // own columns and which layout it runs in, but no rows (`CommandPresentation`),
+    // so only the docked arm can be sized from here: an inline one opens at the
+    // surface's own share and the draw that follows asks for the height, which is
+    // why the guard is left naming what was asked. `personRequest` is cleared so the
+    // draw that answers an inline command does not read a stale intent.
     const mode = (await read($, pane)).mode;
     const placement: Placement = e.presentation.isFullscreen ? "dock" : "inline";
     const wanted = mode === "full" && placement === "dock" ? wantedSize(placement, e.presentation.columns, 0) : null;
     lastRequest = requestKey(placement, wanted);
-    await requestPane($, placement, wanted);
+    personRequest = false;
+    await requestPane($, placement, wanted, true);
 
     return { text: mode === "full" ? modeText("full") : "Lore pane opened." };
   });
@@ -865,11 +893,16 @@ export const register: Register = (on, _options) => {
     const wanted =
       mode === "full" ? wantedSize(e.props.placement, e.viewport?.columns ?? 0, e.viewport?.rows ?? 0) : null;
     const request = requestKey(e.props.placement, wanted);
+    // The person's intent is consumed by this draw whether or not it asks: it was set
+    // by a toggle for the request that follows it, and a draw that finds nothing to
+    // ask for has nothing to hand it to.
+    const askedByThePerson = personRequest;
+    personRequest = false;
     if (request !== lastRequest) {
       // Recorded before the call, so a draw that runs while the open is in flight
       // does not ask a second time for the same size.
       lastRequest = request;
-      void requestPane($, e.props.placement, wanted);
+      void requestPane($, e.props.placement, wanted, askedByThePerson);
     }
     // The size actually drawn, against the size asked for. Only ever compared in
     // full mode: the normal size is whatever the surface's own share is, so there
