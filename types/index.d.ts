@@ -60,7 +60,7 @@ export type Tab = "browse" | "read" | "search" | "new";
 export type PaneMode = "normal" | "full";
 
 /**
- * The pane's size, as `z` and `/lore-pane full` leave it.
+ * The pane's size, as `z` and `/lore full` leave it.
  *
  * Held in `$.state` so a change redraws the pane, and mirrored into `$.store`
  * under `pane-mode` so the next session opens where this one left off.

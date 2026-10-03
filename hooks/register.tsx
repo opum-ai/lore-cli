@@ -45,7 +45,10 @@ import {
 } from "./lore";
 
 const PANE = "lore-pane";
-const COMMAND = "lore-pane";
+// The slash command the person types (`/lore`), which is not the pane's id: the id
+// is what `$.ui.open`, the store and `$.state` are keyed by, and it keeps its name so
+// a pane opened and a preference saved before the rename survive it.
+const COMMAND = "lore";
 const REFRESH_MS = 30_000;
 const TIMEOUT_MS = 30_000;
 const ROW_CAP = 120;
@@ -309,8 +312,8 @@ function requestKey(placement: Placement, wanted: number | null): string {
 /**
  * Whether the next open the pane builds answers the person's own toggle.
  *
- * A person asking for the full size -- `z`, or `/lore-pane full`, or a bare
- * `/lore-pane` -- gets a pane that takes the keyboard; a pane that widens itself
+ * A person asking for the full size -- `z`, or `/lore full`, or a bare
+ * `/lore` -- gets a pane that takes the keyboard; a pane that widens itself
  * because the session remembered `full`, or because the viewport changed under
  * it, is nobody's ask and must not take the keyboard from the prompt. Both are
  * the same open, built in the same place, so the difference is carried here: the
@@ -827,7 +830,7 @@ export const register: Register = (on, _options) => {
       // pane was left in.
       return { text: modeText(await togglePane($)) };
     }
-    // The bare command reopens the pane at the size it already remembers, and it is
+    // The bare `/lore` reopens the pane at the size it already remembers, and it is
     // the person's own command, so it asks for the keyboard. The command knows its
     // own columns and which layout it runs in, but no rows (`CommandPresentation`),
     // so only the docked arm can be sized from here: an inline one opens at the

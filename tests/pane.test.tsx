@@ -859,7 +859,7 @@ test("a session opens the pane unsized, registers the command with its argument,
   const opens = captureOpens(on);
   await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
   expect(registrations).toEqual([
-    { name: "lore-pane", description: expect.any(String), argumentHint: "full" },
+    { name: "lore", description: expect.any(String), argumentHint: "full" },
   ]);
   expect(opens).toEqual([{ id: "lore-pane", title: "Lore" }]);
   opens.length = 0;
@@ -1018,7 +1018,7 @@ test("a pane at its normal size shows no hint, however small the surface keeps i
 });
 
 test("the pane command toggles with its argument and answers with the state it left", async ($, on) => {
-  // `/lore-pane full` is the toggle's other arm, and `args` carries everything
+  // `/lore full` is the toggle's other arm, and `args` carries everything
   // after the name. The answer names the state, and an argument that is not
   // `full` changes nothing rather than being guessed at.
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
@@ -1027,11 +1027,11 @@ test("the pane command toggles with its argument and answers with the state it l
   mockLore(on, seen);
   mockSession(on);
   const opens = captureOpens(on);
-  // `args` is "" for a bare `/lore-pane`, which is what the engine passes when the
+  // `args` is "" for a bare `/lore`, which is what the engine passes when the
   // person types the name alone; the presentation is the docked fullscreen layout.
   const run = (args: string) =>
     $.command.run({
-      command: "lore-pane",
+      command: "lore",
       args,
       origin: { kind: "composer" },
       presentation: { isFullscreen: true, columns: 160 },
