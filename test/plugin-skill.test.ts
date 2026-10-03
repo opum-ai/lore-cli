@@ -80,6 +80,30 @@ describe("agent bridges stay in lockstep with the CLI (LCLI-573)", () => {
     }
   });
 
+  test("the plugin skill teaches the pane verb and its fallback, and the repo skill does not (LCLI-668)", () => {
+    // The pane verb routes to a tool the `opum-lore` mod registers, so only the copy the
+    // plugin federates may teach it: a per-repository bridge (`lore agents`) is written into
+    // repositories whose Claude Code loads no mod, and pointing them at a tool that is not
+    // there is the "unshipped command" trap this file exists to catch, in a new shape.
+    const plugin = buildSkillDoc("plugin");
+    expect(plugin).toContain("mcp__opum-lore__dashboard");
+    expect(plugin).toContain("lore dashboard");
+    // The entry-point arguments the rename decision settled (LCLI-667, opum-doc relay
+    // ODOC-OP-2026-10-03-07): the skill owns the bare name `lore`, so the tool is reached
+    // through it, and each argument has to be routed rather than fall through to the CLI.
+    for (const argument of ["dashboard", "pane", "full"]) expect(plugin).toContain(`\`${argument}\``);
+    expect(plugin).toContain("`full: true`");
+    expect(plugin).toContain("its `doc` or `query`");
+    // The fallback names all three ways the tool is unavailable, and what to do instead.
+    expect(plugin).toContain("2.1.287");
+    expect(plugin).toContain("claude -p");
+    expect(plugin).toContain("mods turned off");
+    expect(plugin).toContain("lore read <id>");
+    // Everything else still goes through the CLI.
+    expect(plugin).toContain("goes through the `lore` CLI");
+    expect(buildSkillDoc("repo")).not.toContain("mcp__opum-lore__dashboard");
+  });
+
   test("`retrieval` is a served topic and the overview starts from it, not from docs/index.md", () => {
     expect(findInstructionTopic("retrieval")).toBeDefined();
     const overview = findInstructionTopic("overview")?.body ?? "";

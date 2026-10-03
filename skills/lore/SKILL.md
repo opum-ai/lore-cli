@@ -19,6 +19,21 @@ coupling, managed blocks, provenance, and cross-links stay coherent.
 configured tracker is Backlog; Quest and Jira keep their own storage. Check the repository's own
 instructions (its CLAUDE.md or AGENTS.md) for any commit-authority rule before running them.
 
+## Show the pane
+
+The `opum-lore` plugin ships a pane that browses, reads, searches and creates this repository's
+docs, opened through the `mcp__opum-lore__dashboard` tool. This skill is that tool's entry point:
+invoked with `dashboard`, `pane` or `full` (`/lore dashboard`, `/lore full`), or asked for the
+pane in words — "lore dashboard", "open this doc in the pane" — call the tool, not the CLI. `full` is
+its `full: true`; a concept id or search text after `dashboard` is its `doc` or `query`; a bare
+call opens the pane as it stands. The tool never takes the keyboard, so the person presses Tab or
+clicks to use the pane.
+
+**Fallback:** where that tool is unavailable — Claude Code older than 2.1.287, a `claude -p` run, or
+mods turned off — say the pane is unavailable here and answer from the CLI instead, with
+`lore read <id>` or `lore query "<text>"`. Every other request goes through the `lore` CLI as it
+does today.
+
 ## Find and read docs: query, then read
 
 To answer a question from the docs, search before you browse — do not start from

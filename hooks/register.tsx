@@ -100,6 +100,43 @@ const SIZE_SLACK = 4;
 /** The one-line hint a pane shows when the size it drew is not the size it asked for. */
 const FULL_HINT = "Drag the pane edge to resize; z switches layouts";
 
+// ── The dashboard tool (LCLI-668) ─────────────────────────────────────────────
+
+/** The tool's own name, which is what `$.tool.register` declares. */
+const TOOL_NAME = "dashboard";
+
+/**
+ * The tool as the engine lists it to the model: `ToolSpec` spells a declared name
+ * `mcp__<plugin>__<name>`, and the plugin's name is `opum-lore` in
+ * `.claude-plugin/plugin.json`. The hook that serves the tool is matched at register
+ * time, before any registration has returned a name, so the spelling lives here and
+ * both sides are built from the one pair of constants.
+ */
+const TOOL = `mcp__opum-lore__${TOOL_NAME}` as const;
+
+/**
+ * The tool's listed description.
+ *
+ * One or two sentences, and no more: the description is listed to Claude in every
+ * session that loads the mod, so it is a standing cost on every prompt (design of
+ * record, opum-doc `docs/reference/pane-dashboard-tool-design.md` at dfde45e).
+ */
+const TOOL_DESCRIPTION =
+  "Open the Lore pane in this session: browse, read, search and create this repository’s documentation. " +
+  "`doc` opens a concept on the Read tab, `query` searches on the Search tab, `full` asks for the full size, " +
+  "and the pane never takes the keyboard.";
+
+/** What the tool takes: every field optional, so a bare call opens the pane as it stands. */
+const TOOL_INPUT_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    doc: { type: "string", description: "A concept id to open on the Read tab." },
+    query: { type: "string", description: "Text to search the bundle for, on the Search tab." },
+    full: { type: "boolean", description: "Ask for the pane's full size." },
+  },
+  additionalProperties: false,
+};
+
 /**
  * The body columns from which the pane draws its list in a left column and the
  * document in the right one, instead of stacked (design: "at least 120 body
@@ -351,24 +388,35 @@ async function requestPane(
 }
 
 /**
+ * Leaves the pane at `mode`, in `$.state` and in the store.
+ *
+ * `personRequest` is deliberately NOT touched here: the person's own toggle sets it
+ * itself, and a size nobody asked for -- a restored one, the viewport moving under
+ * the pane, or the dashboard tool asking for `full` -- must not take the keyboard
+ * from the prompt. The size itself is asked for by the next draw, which is the only
+ * place that knows `e.viewport`; this leaves the choice where a draw will find it.
+ * The store write is best-effort: a store that refuses loses the memory of the
+ * choice, which is not a reason to refuse the change.
+ */
+async function setPaneMode($: EngineInterface, mode: PaneMode): Promise<void> {
+  await update($, pane, (state) => ({ ...state, mode }));
+  try {
+    await $.store.set(MODE_KEY, mode);
+  } catch {
+    // The pane changes size either way; only the next session's memory of it is lost.
+  }
+}
+
+/**
  * Flips the pane between its normal size and the largest the surface allows.
  *
- * The size itself is asked for by the next draw, which is the only place that
- * knows `e.viewport`; this leaves the choice where a draw will find it, and
- * `personRequest` leaves the person's intent beside it -- they pressed the key,
- * so the pane it produces may take the keyboard. The store write is best-effort: a
- * store that refuses loses the memory of the choice, which is not a reason to
- * refuse the toggle.
+ * `personRequest` leaves the person's intent beside the change -- they pressed the
+ * key, so the pane it produces may take the keyboard.
  */
 async function togglePane($: EngineInterface): Promise<PaneMode> {
   const next: PaneMode = (await read($, pane)).mode === "full" ? "normal" : "full";
   personRequest = true;
-  await update($, pane, (state) => ({ ...state, mode: next }));
-  try {
-    await $.store.set(MODE_KEY, next);
-  } catch {
-    // The pane toggles either way; only the next session's memory of it is lost.
-  }
+  await setPaneMode($, next);
 
   return next;
 }
@@ -439,7 +487,15 @@ async function refresh($: EngineInterface): Promise<void> {
   }
 }
 
-async function loadConcept($: EngineInterface, id: string, patch: Partial<View> = {}): Promise<void> {
+/**
+ * Loads one concept into the pane and leaves it open on the Read tab.
+ *
+ * The outcome is returned rather than only drawn: the person's own presses read it
+ * as "nothing happened, the pane says why", but the dashboard tool has to report a
+ * bad id back to the model, and it can only do that if the read's own answer reaches
+ * its caller (LCLI-668).
+ */
+async function loadConcept($: EngineInterface, id: string, patch: Partial<View> = {}): Promise<Outcome> {
   const root = await ensureRoot($);
   await setView($, { isLoading: true });
   const [readRun, tasksRun] = await Promise.all([
@@ -449,7 +505,8 @@ async function loadConcept($: EngineInterface, id: string, patch: Partial<View> 
   const result = parseRead(readRun, tasksRun, id);
   if (!result.ok) {
     await setView($, { isLoading: false, error: result.error });
-    return;
+
+    return { ok: false, error: result.error };
   }
   const raw = await readFileText($, root, result.doc.repoPath);
   await update($, doc, () => ({ concept: { ...result.doc, raw } }));
@@ -469,15 +526,19 @@ async function loadConcept($: EngineInterface, id: string, patch: Partial<View> 
     actionValue: "",
     ...patch,
   });
+
+  return { ok: true };
 }
 
-async function openConcept($: EngineInterface, id: string): Promise<void> {
+/** Opens one concept on the Read tab, carrying the back history; see `loadConcept`. */
+async function openConcept($: EngineInterface, id: string): Promise<Outcome> {
   const current = await read($, view);
   const history =
     current.selectedId && current.selectedId !== id
       ? [...current.history, current.selectedId].slice(-50)
       : current.history;
-  await loadConcept($, id, { tab: "read", history });
+
+  return await loadConcept($, id, { tab: "read", history });
 }
 
 async function goBack($: EngineInterface): Promise<void> {
@@ -780,6 +841,116 @@ async function submitAction($: EngineInterface): Promise<void> {
   await countUncommitted($);
 }
 
+// ── The dashboard tool (LCLI-668) ─────────────────────────────────────────────
+
+/** One text argument of the call, read as input rather than trusted. */
+type TextArg = { ok: true; text: string | null } | { ok: false; why: string };
+
+/**
+ * Reads one text argument.
+ *
+ * Everything that crosses `tool.call` is input to validate, never a fact: the model
+ * sends it, and `$.tool.call` lets any plugin send it too (the rule `ui.message`
+ * already follows for its posted data). Absent, and blank -- which is the same ask,
+ * a model that meant "nothing here" -- leave nothing to do. Present and not text is
+ * refused by naming what it was: opening something in its place would be guessing at
+ * what was meant.
+ */
+function textArg(value: unknown): TextArg {
+  if (value === undefined || value === null) {
+    return { ok: true, text: null };
+  }
+  if (typeof value !== "string") {
+    return { ok: false, why: `must be a string, and this was ${describe(value)}` };
+  }
+
+  return { ok: true, text: value.trim() || null };
+}
+
+/** `full` as the tool reads it: absent, true, or false; anything else is refused. */
+function boolArg(value: unknown): { ok: true; value: boolean | null } | { ok: false; why: string } {
+  if (value === undefined || value === null) {
+    return { ok: true, value: null };
+  }
+  if (typeof value !== "boolean") {
+    return { ok: false, why: `must be true or false, and this was ${describe(value)}` };
+  }
+
+  return { ok: true, value };
+}
+
+/** What an argument that should have been text or a boolean is called in the refusal. */
+function describe(value: unknown): string {
+  if (Array.isArray(value)) {
+    return "an array";
+  }
+  if (typeof value === "object") {
+    return "an object";
+  }
+
+  return `the ${typeof value} ${String(value)}`;
+}
+
+/**
+ * Opens the pane for the model, and answers with what it opened.
+ *
+ * Every open is made WITHOUT `focus`, and the mode is set without `personRequest`:
+ * Claude may call this while the person is typing, so the tool never takes the
+ * keyboard from the prompt (design of record, opum-doc
+ * `docs/reference/pane-dashboard-tool-design.md` at dfde45e). `full` is a state
+ * change rather than an open carrying a size, because the draw that follows is the
+ * only place that knows the viewport -- exactly how the person's own toggle is
+ * answered.
+ *
+ * A `doc` the bundle does not have opens nothing else in its place: it is read
+ * FIRST, and the refusal returns before any other state is touched, so the view is
+ * left exactly as the call found it.
+ */
+async function openDashboard(
+  $: EngineInterface,
+  args: Readonly<Record<string, unknown>>,
+): Promise<{ result: string } | { deny: string }> {
+  const doc = textArg(args.doc);
+  if (!doc.ok) {
+    return { deny: `The dashboard tool's "doc" ${doc.why}.` };
+  }
+  const query = textArg(args.query);
+  if (!query.ok) {
+    return { deny: `The dashboard tool's "query" ${query.why}.` };
+  }
+  const full = boolArg(args.full);
+  if (!full.ok) {
+    return { deny: `The dashboard tool's "full" ${full.why}.` };
+  }
+
+  const opened: string[] = [];
+  if (doc.text !== null) {
+    const outcome = await openConcept($, doc.text);
+    if (!outcome.ok) {
+      return { deny: `No document "${doc.text}" in this bundle: ${outcome.error}` };
+    }
+    opened.push(`${doc.text} on Read`);
+  }
+  if (query.text !== null) {
+    await setView($, { query: query.text });
+    if (doc.text === null) {
+      await showTab($, "search");
+      opened.push(`Search for "${query.text}"`);
+    } else {
+      // The Read tab holds the pane, so the search is loaded rather than shown; the
+      // line says which of the two the person sees.
+      opened.push(`"${query.text}" waiting in Search`);
+    }
+  }
+  if (full.value !== null) {
+    await setPaneMode($, full.value ? "full" : "normal");
+    opened.push(full.value ? "the full size" : "its normal size");
+  }
+  await $.ui.open({ id: PANE, title: "Lore" });
+
+  return { result: `Opened the Lore pane${opened.length > 0 ? `, ${opened.join(", ")}` : ""}.` };
+}
+
 // ── The module ────────────────────────────────────────────────────────────────
 
 export const register: Register = (on, _options) => {
@@ -793,6 +964,13 @@ export const register: Register = (on, _options) => {
       // full-screen toggle is findable without reading its source (`CommandSpec`).
       argumentHint: "full",
     });
+    // The tool the lore skill's "dashboard" verb calls, so the pane can be opened
+    // from a prompt without the person typing a slash command. Awaited, because the
+    // first `session.start` is awaited before the first prompt and a registration not
+    // awaited there is not listed by turn one; its description stays short for the
+    // same reason it exists at all -- it is listed to the model in every session that
+    // loads this mod.
+    await $.tool.register({ name: TOOL_NAME, description: TOOL_DESCRIPTION, inputSchema: TOOL_INPUT_SCHEMA });
     // The remembered size is restored here and ASKED for by the first draw: the
     // session's own surface has not been measured yet (`SessionStartInput` carries
     // no viewport), and a draw is the first moment `e.viewport` exists. The open
@@ -846,6 +1024,12 @@ export const register: Register = (on, _options) => {
 
     return { text: mode === "full" ? modeText("full") : "Lore pane opened." };
   });
+
+  // The tool the mod registers at session start, served here. Its arguments arrive
+  // as the model sent them, so `openDashboard` reads them as input to validate; the
+  // answer is one short line naming what it opened, or a `deny` -- which the model
+  // reads as an error result -- naming the argument that was wrong.
+  on("tool.call", { tool: TOOL }, async ($, e) => await openDashboard($, e));
 
   // The inline editor posts its text here; `e.data` is code's, not the engine's, so
   // every field is checked rather than trusted (ClientSurface.post's own note: input

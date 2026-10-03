@@ -66,6 +66,7 @@ function mockLore(
   validateFails = false,
   body = "The body of the notes.",
   reads?: string[],
+  unknownIds: readonly string[] = [],
 ) {
   on("fs.read", async (_$, e) => {
     reads?.push(e.path);
@@ -84,7 +85,14 @@ function mockLore(
       return ok(TYPES);
     }
     if (sub === "read") {
-      return ok(readOf(e.argv[2] ?? "", body));
+      const id = e.argv[2] ?? "";
+      if (unknownIds.includes(id)) {
+        // What `lore read` does for a concept the bundle does not have: nothing on
+        // stdout, its own words on stderr, exit 3 (not_found).
+        return { value: { exitCode: 3, stdout: "", stderr: `lore: no concept "${id}"\n`, isStdoutTruncated: false, isStderrTruncated: false } };
+      }
+
+      return ok(readOf(id, body));
     }
     if (sub === "tasks") {
       return ok(ROLLUP);
@@ -664,16 +672,27 @@ function captureOpens(on: On): Record<string, unknown>[] {
 }
 
 /**
- * The two engine answers a session needs beneath it: nothing answers them on its
- * own, so a test that starts a session says what the session start and the
- * command registration return. `registrations`, when given, collects the command
- * specs the module registered, which is the only place they are visible.
+ * The engine answers a session needs beneath it: nothing answers them on its own,
+ * so a test that starts a session says what the session start and the registrations
+ * return. `registrations` and `tools`, when given, collect the command and tool specs
+ * the module registered, which is the only place they are visible (LCLI-668).
  */
-function mockSession(on: On, registrations?: Record<string, unknown>[]): void {
+function mockSession(
+  on: On,
+  registrations?: Record<string, unknown>[],
+  tools?: Record<string, unknown>[],
+): void {
   on("command.register", async (_$, e) => {
     registrations?.push({ ...e });
 
     return { value: { command: e.name } };
+  });
+  on("tool.register", async (_$, e) => {
+    tools?.push({ ...e });
+
+    // What the engine answers with: the full name the model calls the tool by
+    // (`ToolSpec` spells a declared name `mcp__<plugin>__<name>`).
+    return { value: { tool: `mcp__opum-lore__${e.name}` } };
   });
   // `session.start` is one of the engine's own events: its hook answers the result
   // itself, where a plugin-noun event answers `{ value }`.
@@ -1207,4 +1226,200 @@ test("the split is full mode's, not a wide pane's on its own", async ($, on) => 
   expect(await ui.find({ key: "open-adr/0001-x" })).toBeUndefined();
   expect(await ui.find({ type: "Markdown", text: /The body of the notes\./ })).toBeDefined();
   await ui.unmount();
+});
+
+// ── The dashboard tool (LCLI-668) ─────────────────────────────────────────────
+
+/**
+ * The tool the model calls, as `ToolSpec` spells a declared name: `mcp__<plugin>__<name>`,
+ * with the plugin's name `opum-lore` from `.claude-plugin/plugin.json`. Spelled out here
+ * rather than imported, because this is the model's side of the contract: a module whose
+ * matcher disagreed with its registration would leave every call unanswered, which is
+ * what the misspelled-name control below measures.
+ */
+const DASHBOARD = "mcp__opum-lore__dashboard";
+
+test("the dashboard tool registers at session start, and a bare call opens the pane without the keyboard", async ($, on) => {
+  // Registration is asserted on the SPEC the module handed the engine, which is what the
+  // model is listed; the full name cannot be read back in a test, because the engine's own
+  // tool registry sits below the test's hooks. The call below is the other half: only a
+  // matcher spelled as the engine spells the tool answers, and the misspelling control
+  // after the loop is what says so.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  const tools: Record<string, unknown>[] = [];
+  mockSession(on, undefined, tools);
+  const opens = captureOpens(on);
+
+  for (const surface of ["terminal", "desktop"] as const) {
+    await $.session.start({ cwd: "/repo", surface, isInteractive: true });
+    // The session's own refresh is waited out, so what the assertions read is the tool's
+    // doing and not a race with the start.
+    await clock.settle();
+    opens.length = 0;
+
+    expect(tools).toHaveLength(1);
+    const spec = tools[0] ?? {};
+    expect(spec.name).toBe("dashboard");
+    // The description is listed to the model in EVERY session that loads the mod, so it
+    // stays to one or two sentences (design of record).
+    const description = String(spec.description ?? "");
+    const sentences = (description.match(/[.!?](?:\s|$)/gu) ?? []).length;
+    expect(sentences).toBeGreaterThanOrEqual(1);
+    expect(sentences).toBeLessThanOrEqual(2);
+    const schema = spec.inputSchema as { required?: unknown; properties: Record<string, unknown> };
+    // Every field is optional, so a bare call is a valid call.
+    expect(schema.required).toBeUndefined();
+    expect(Object.keys(schema.properties)).toEqual(["doc", "query", "full"]);
+
+    const answer = await $.tool.call({ tool: DASHBOARD });
+    expect(answer.result).toBe("Opened the Lore pane.");
+    // The open is what the pane was TOLD, not what a surface did with it: no `focus`,
+    // because Claude may call this while the person is typing, and no `closeOnEscape` --
+    // with `focus`, that pair is what would make the pane a dialog rather than a pane.
+    expect(opens).toEqual([{ id: "lore-pane", title: "Lore" }]);
+
+    // And the pane it opened draws on the surface that session is on.
+    const ui = await $.ui.mount({
+      plugin: "opum-lore",
+      surface,
+      component: "Pane",
+      requestId: "lore-pane",
+      props: PANE,
+    });
+    expect(await ui.find({ key: "tab-browse" })).toBeDefined();
+    await ui.unmount();
+
+    tools.length = 0;
+  }
+
+  // The control: a name one character off is not this tool, so nothing answers it.
+  opens.length = 0;
+  let refused: unknown = null;
+  try {
+    await $.tool.call({ tool: "mcp__opum-lore__dashboards" });
+  } catch (error) {
+    refused = error;
+  }
+  expect(refused).not.toBeNull();
+  expect(opens).toEqual([]);
+});
+
+test("each dashboard input lands where it should, on the terminal and the desktop", async ($, on) => {
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  const opens = captureOpens(on);
+
+  for (const surface of ["terminal", "desktop"] as const) {
+    // `doc`: the concept is read through the CLI, and the pane is left on it.
+    await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+    // The session's own background refresh is allowed to land before the call, so what
+    // the assertions below read is the tool's doing and not a race with the start.
+    await clock.settle();
+    opens.length = 0;
+    seen.length = 0;
+    const opened = await $.tool.call({ tool: DASHBOARD, doc: "adr/0001-x" });
+    expect(opened.result).toBe("Opened the Lore pane, adr/0001-x on Read.");
+    expect(seen).toContainEqual(["lore", "read", "adr/0001-x", "--json"]);
+    expect(opens).toEqual([{ id: "lore-pane", title: "Lore" }]);
+    const reading = await $.ui.mount({
+      plugin: "opum-lore",
+      surface,
+      component: "Pane",
+      requestId: "lore-pane",
+      props: PANE,
+    });
+    expect((await reading.find({ key: "tab-read" }))?.props.variant).toBe("primary");
+    expect(await reading.find({ type: "Markdown", text: /The body of the notes\./ })).toBeDefined();
+    await reading.unmount();
+
+    // `query`: the text reaches `lore query` after the `--`, and the pane is left on the
+    // Search tab, drawing the results that text produced.
+    await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+    await clock.settle();
+    opens.length = 0;
+    seen.length = 0;
+    const searched = await $.tool.call({ tool: DASHBOARD, query: "retention" });
+    expect(searched.result).toBe('Opened the Lore pane, Search for "retention".');
+    expect(seen).toContainEqual(["lore", "query", "--json", "--", "retention"]);
+    expect(opens).toEqual([{ id: "lore-pane", title: "Lore" }]);
+    const searching = await $.ui.mount({
+      plugin: "opum-lore",
+      surface,
+      component: "Pane",
+      requestId: "lore-pane",
+      props: PANE,
+    });
+    expect((await searching.find({ key: "tab-search" }))?.props.variant).toBe("primary");
+    await searching.unmount();
+
+    // `full`: the mode changes, and the DRAW that follows asks the surface for the size --
+    // with no `focus`, because the ask is Claude's and the keyboard is the person's. The
+    // button's own label is a second reading of the same state.
+    await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+    await clock.settle();
+    opens.length = 0;
+    const sized = await $.tool.call({ tool: DASHBOARD, full: true });
+    expect(sized.result).toBe("Opened the Lore pane, the full size.");
+    const full = await $.ui.mount({
+      plugin: "opum-lore",
+      surface,
+      component: "Pane",
+      requestId: "lore-pane",
+      props: docked(160, 80),
+      viewport: { columns: 160, rows: 50, isFullscreen: true },
+    });
+    await clock.settle();
+    // Two opens, and both are the tool's: the immediate one that shows the pane, then the
+    // draw's sized request -- which is where the full size is actually asked for, because
+    // a draw is the only place that knows the viewport. Neither carries `focus`.
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", columns: 140 });
+    expect(opens.every((one) => one.focus === undefined)).toBe(true);
+    expect((await full.find({ key: "full" }))?.props.label).toBe("Normal size");
+    await full.unmount();
+
+    // `full: false` asks for the normal size back, and leaves the store where the next
+    // round's session start reads it: the size is remembered, as the toggle's is.
+    const back = await $.tool.call({ tool: DASHBOARD, full: false });
+    expect(back.result).toBe("Opened the Lore pane, its normal size.");
+  }
+});
+
+test("an unknown doc id is refused by name, and opens nothing else in its place", async ($, on) => {
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  // `adr/nope` is the one id this bundle does not have.
+  mockLore(on, seen, false, "The body of the notes.", undefined, ["adr/nope"]);
+  mockSession(on);
+  const opens = captureOpens(on);
+
+  for (const surface of ["terminal", "desktop"] as const) {
+    await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+    await clock.settle();
+    opens.length = 0;
+    const answer = await $.tool.call({ tool: DASHBOARD, doc: "adr/nope" });
+    // The model reads an error result naming the id it asked for, so it can correct the
+    // call itself; nothing is opened and no tab is switched.
+    expect(answer.deny).toContain("adr/nope");
+    expect(answer.result).toBeUndefined();
+    expect(opens).toEqual([]);
+    // Nothing in the document's place: the pane draws lore's own message and no document
+    // at all, rather than the last one that happened to be open.
+    const ui = await $.ui.mount({
+      plugin: "opum-lore",
+      surface,
+      component: "Pane",
+      requestId: "lore-pane",
+      props: PANE,
+    });
+    expect(await ui.find({ type: "Markdown", text: /The body of the notes\./ })).toBeUndefined();
+    expect(await ui.find({ type: "Text", text: /Read adr\/nope failed \(lore exited 3\)/ })).toBeDefined();
+    await ui.unmount();
+  }
 });
