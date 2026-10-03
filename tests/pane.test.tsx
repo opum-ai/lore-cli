@@ -781,12 +781,58 @@ test("an inline pane asks for rows, the viewport less the prompt area", async ($
     });
     await ui.press({ key: "full" });
     await clock.settle();
-    // 40 rows of surface less the prompt area (PROMPT_AREA_ROWS in the module).
-    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true, rows: 32 });
+    // 40 rows of surface less the design's 6 for the prompt area (PROMPT_AREA_ROWS).
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true, rows: 34 });
     await ui.press({ key: "full" });
     await clock.settle();
     expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true });
     await ui.unmount();
+  }
+});
+
+test("a viewport that changed asks for the full size again, and one that did not asks for nothing", async ($, on) => {
+  // The design's "Sizing details": a full-mode pane asks for its full size "on its
+  // first draw, and again whenever the viewport size changes" -- the person widening
+  // the terminal, or the dock growing. The request is named by the size it asks for,
+  // so a draw at a new viewport is a new request; a draw at the same one is the
+  // control, and asks nothing, which is what keeps the pane from asking on every draw
+  // for a size the surface has already refused.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on, { "pane-mode": "full" });
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  const opens = captureOpens(on);
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  for (const surface of ["terminal", "desktop"] as const) {
+    const at = async (columns: number) => {
+      const ui = await $.ui.mount({
+        plugin: "opum-lore",
+        surface,
+        component: "Pane",
+        requestId: "lore-pane",
+        props: docked(columns, 80),
+        viewport: { columns, rows: 50, isFullscreen: true },
+      });
+      await clock.settle();
+
+      return ui;
+    };
+
+    opens.length = 0;
+    const first = await at(160);
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true, columns: 140 });
+    await first.unmount();
+
+    opens.length = 0;
+    const same = await at(160);
+    expect(opens).toEqual([]);
+    await same.unmount();
+
+    opens.length = 0;
+    const wider = await at(200);
+    expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", focus: true, columns: 180 });
+    await wider.unmount();
   }
 });
 
@@ -906,34 +952,33 @@ test("a pane that did not get the size it asked for says so, in one line", async
   mockSession(on);
   captureOpens(on);
   const HINT = "Drag the pane edge to resize; z switches layouts";
+  // Asked for 140 (160 less the margin). The design's rule for telling a granted size
+  // from a person's drag: "a size within 4 cells of the request as granted, and
+  // anything further off as the person's own drag", so the boundary is drawn at 136
+  // and 135 as well as at the two ends -- a slack of 4 is a number, and these are the
+  // two drawings that say which side of it each one falls on.
+  const cases = [
+    { columns: 60, hint: true },
+    { columns: 135, hint: true },
+    { columns: 136, hint: false },
+    { columns: 140, hint: false },
+  ] as const;
   for (const surface of ["terminal", "desktop"] as const) {
-    // Asked for 140 (160 less the margin), drawn 60: not the size it asked for.
     await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
-    const dragged = await $.ui.mount({
-      plugin: "opum-lore",
-      surface,
-      component: "Pane",
-      requestId: "lore-pane",
-      props: docked(160, 60),
-      viewport: { columns: 160, rows: 50, isFullscreen: true },
-    });
-    await clock.settle();
-    expect(await dragged.find({ type: "Text", text: HINT })).toBeDefined();
-    await dragged.unmount();
-
-    // Asked for 140, drawn 140: the hint is not drawn, so it is earned by the
-    // size rather than shown whenever the pane is in full mode.
-    const granted = await $.ui.mount({
-      plugin: "opum-lore",
-      surface,
-      component: "Pane",
-      requestId: "lore-pane",
-      props: docked(160, 140),
-      viewport: { columns: 160, rows: 50, isFullscreen: true },
-    });
-    await clock.settle();
-    expect(await granted.find({ type: "Text", text: HINT })).toBeUndefined();
-    await granted.unmount();
+    for (const one of cases) {
+      const ui = await $.ui.mount({
+        plugin: "opum-lore",
+        surface,
+        component: "Pane",
+        requestId: "lore-pane",
+        props: docked(160, one.columns),
+        viewport: { columns: 160, rows: 50, isFullscreen: true },
+      });
+      await clock.settle();
+      const shown = await ui.find({ type: "Text", text: HINT });
+      expect(shown === undefined, `drawn ${one.columns} of the 140 asked for`).toBe(!one.hint);
+      await ui.unmount();
+    }
   }
 });
 

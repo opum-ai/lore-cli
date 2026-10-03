@@ -69,17 +69,20 @@ const MODE_KEY = "pane-mode";
 const DOCK_MARGIN_COLUMNS = 20;
 
 /**
- * The rows the prompt area takes on the main screen.
+ * The rows the prompt area takes on the main screen, subtracted from the viewport
+ * height when an inline pane asks for its full size.
  *
- * The engine has no figure for this: `e.viewport.rows` is "cells down the whole
- * surface" and `RenderViewport` carries nothing for the composer, while the
- * inline pane's own `scroll.bodyRows` measures the pane rather than the prompt.
- * So it is one named constant -- a bordered composer (three rows), a status
- * line and a hint line -- and the request it feeds is a request, not a grant:
- * the surface clamps to what the layout spares, so a short terminal costs the
- * pane rows rather than overflowing.
+ * The design's figure, not this module's estimate: `rows` is "the viewport height
+ * minus 6 rows for the prompt area" (opum-doc,
+ * `pane-full-screen-and-quest-migration-skill-design.md` at 080b63a, where quest-cli's
+ * measurement settled what the design had left open). It stays a constant because the
+ * engine exposes no such reading -- `e.viewport.rows` is "cells down the whole
+ * surface" and `RenderViewport` carries nothing for the composer, while the inline
+ * pane's own `scroll.bodyRows` measures the pane rather than the prompt. The request
+ * it feeds is a request, not a grant: the surface clamps to what the layout spares,
+ * so a short terminal costs the pane rows rather than overflowing.
  */
-const PROMPT_AREA_ROWS = 8;
+const PROMPT_AREA_ROWS = 6;
 
 /**
  * The cells between the size a request asks for and the size the body measures.
