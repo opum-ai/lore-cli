@@ -13,7 +13,7 @@
 // values (an argv to run, a run's result) and answers with parsed shapes.
 
 import { atom, read, update } from "claude-code";
-import type { EngineInterface, Register } from "claude-code";
+import type { EngineInterface, Register, UiOpenResult, UiPane } from "claude-code";
 
 import type { Catalog, DocState, Edits, PaneMode, PaneState, View } from "../types";
 import type { Outcome, Run } from "./lore";
@@ -61,6 +61,27 @@ type Placement = "dock" | "inline";
 
 /** The `$.store` key holding the remembered full-or-normal choice (a `PaneMode`). */
 const MODE_KEY = "pane-mode";
+
+/**
+ * Opens the pane the way every caller here must, and records what the engine answered.
+ *
+ * Unsized and without `focus`: an unsized open is what "each open sets it anew" means for
+ * the size (so `lastRequest` is reset with it, and the next draw re-asks the size the mode
+ * implies), and no caller here may take the keyboard from a person who might be typing.
+ *
+ * The record it leaves is `pane.isWaiting`, and it is the BAND's reading wherever the
+ * engine's listing cannot be had (LCLI-672): a refused open is what the band exists to
+ * answer, and this is that refusal kept. It is only a record of the last open, so it is
+ * never the first choice -- `paneStanding` is, because a widened terminal seats the pane
+ * with no open to hear about it, which a record cannot notice and a listing can.
+ */
+async function openPane($: EngineInterface): Promise<UiOpenResult> {
+  lastRequest = NORMAL_REQUEST;
+  const asked = await $.ui.open({ id: PANE, title: "Lore" });
+  await update($, pane, (state) => ({ ...state, isWaiting: asked.isPlaced === false }));
+
+  return asked;
+}
 
 /**
  * The transcript columns a docked full pane leaves visible.
@@ -147,6 +168,20 @@ const TOOL_INPUT_SCHEMA: Record<string, unknown> = {
  */
 const SIDE_BY_SIDE_COLUMNS = 120;
 
+// ── The band above the prompt (LCLI-672) ──────────────────────────────────────
+
+/**
+ * The one line the band above the prompt shows while the pane is open and undrawn.
+ *
+ * It exists because of a rule measured rather than read (LCLI-672 note, Claude Code
+ * 2.1.288): an open nobody ASKED for by hand waits undrawn below the engine's floor -- 144
+ * terminal columns, or 110 for an id the person has opened before -- and a model's tool
+ * call is one of those. A press is not: the engine places an open asked by a Button at any
+ * width, which is the one door onto a pane the model opened on a narrow terminal. So the
+ * line says what is ready and the Button seats it, and both are gone once it is drawn.
+ */
+const BAND_TEXT = "Lore pane ready";
+
 /** One line of the bundle list: a type's heading, or a concept that opens. */
 type BrowseRow =
   | { kind: "group"; key: string; type: string; count: number }
@@ -196,7 +231,10 @@ const edits = atom({ plugin: "opum-lore", key: "edits" } as const, {
   bodyRevision: 0,
 } satisfies Edits);
 
-const pane = atom({ plugin: "opum-lore", key: "pane" } as const, { mode: "normal" } satisfies PaneState);
+const pane = atom({ plugin: "opum-lore", key: "pane" } as const, {
+  mode: "normal",
+  isWaiting: false,
+} satisfies PaneState);
 
 /**
  * The size request this pane last made, as `requestKey` names it.
@@ -878,6 +916,39 @@ function boolArg(value: unknown): { ok: true; value: boolean | null } | { ok: fa
   return { ok: true, value };
 }
 
+/**
+ * What the engine says about our pane right now: its own record, NOT OPEN when the listing
+ * carries no pane of ours, or UNKNOWN when this engine cannot be asked at all.
+ *
+ * The engine's record rather than this module's, and the only reading that separates the
+ * three states an open can leave the pane in: drawn, open-but-undrawn, and drawn behind
+ * another pane's tab. `$.ui.open`'s own answer gives the first two and cannot give the
+ * third, because the tab in front is not the open's business.
+ *
+ * UNKNOWN is a real answer and not a failure to report, and the catch below carries BOTH
+ * ways it happens. The engine's test kit has no `$.ui.panes` at all -- measured there:
+ * `$.ui.panes is not a function` -- and a listing that refuses can say nothing either. A
+ * caller then falls back to the answer the open itself gave rather than to a state nobody
+ * measured. `typeof $.ui.panes !== "function"` is NOT how this is asked: the mod validator
+ * refuses `$` read as a value at all ("$.ui.panes is used as a value ... instead of
+ * called"), so the call is made and its absence is one of the things the catch catches.
+ *
+ * The call itself is on every engine this mod supports (checked in the 2.1.287 declaration,
+ * the mod's declared floor), so this fallback is what a test drives and what a refused or
+ * absent listing leaves -- not the path a real session takes.
+ */
+type PaneStanding = { known: true; pane: UiPane | null } | { known: false };
+
+async function paneStanding($: EngineInterface): Promise<PaneStanding> {
+  try {
+    const panes = await $.ui.panes();
+
+    return { known: true, pane: panes.find((listed) => listed.id === PANE) ?? null };
+  } catch {
+    return { known: false };
+  }
+}
+
 /** What an argument that should have been text or a boolean is called in the refusal. */
 function describe(value: unknown): string {
   if (Array.isArray(value)) {
@@ -965,10 +1036,40 @@ async function openDashboard(
   // of a remembered full mode, or a `full: true` call on one) would leave the surface at its
   // share and nothing to re-ask, because the guard already holds the very key that would ask
   // (LCLI-668 review F2).
-  lastRequest = NORMAL_REQUEST;
-  await $.ui.open({ id: PANE, title: "Lore" });
+  const asked = await openPane($);
+  // What actually happened, from the engine rather than from the ask: the listing says
+  // whether the pane is drawn and whether it is the tab on top, and the open's own answer
+  // stands where the engine cannot be asked or lists nothing of ours.
+  const standing = await paneStanding($);
+  const listed = standing.known ? standing.pane : null;
+  const isPlaced = listed?.isPlaced ?? asked.isPlaced;
+  const isShown = listed?.isShown ?? isPlaced;
+  const detail = opened.length > 0 ? `, ${opened.join(", ")}` : "";
 
-  return { result: `Opened the Lore pane${opened.length > 0 ? `, ${opened.join(", ")}` : ""}.` };
+  if (!isPlaced) {
+    // The open is UNASKED -- nobody's command, prompt or press is behind a tool call --
+    // so below the engine's floor it WAITS UNDRAWN, and the answer has to say that rather
+    // than report the ask (opum-doc seq 182 item 3). Measured on Claude Code 2.1.288
+    // (LCLI-672): a model's tool call at 100 columns answered `{ isPlaced: false }` and
+    // drew nothing, where the same pane opened from a band Button press drew at once.
+    //
+    // The reason is the ENGINE'S own, because the floor is not a constant: it is 144
+    // columns for a pane nobody has opened, 110 for one the person has opened before (in
+    // this session or an earlier one), and a surface that places no panes has no floor at
+    // all. A number written here would be wrong in exactly the case the person is asking
+    // about, so the engine's sentence -- which names the floor that applies and the width
+    // now -- is carried instead of one composed here.
+    const reason = asked.isPlaced === false ? asked.reason : "it waits undrawn at this surface's size";
+
+    return { result: `The Lore pane is open but not drawn${detail}: ${reason}` };
+  }
+  if (!isShown) {
+    // Drawn, and behind another pane's tab: open, and not the one in front. "Opened" alone
+    // would be as wrong as "not drawn", so the answer says which it is.
+    return { result: `Opened the Lore pane${detail}, behind the pane in front.` };
+  }
+
+  return { result: `Opened the Lore pane${detail}.` };
 }
 
 // ── The module ────────────────────────────────────────────────────────────────
@@ -991,11 +1092,12 @@ export const register: Register = (on, _options) => {
     // `NORMAL_REQUEST` names for the once-only guard.
     const remembered: PaneMode = (await $.store.get(MODE_KEY)) === "full" ? "full" : "normal";
     await update($, pane, (state) => ({ ...state, mode: remembered }));
-    lastRequest = NORMAL_REQUEST;
     personRequest = null;
     void refresh($);
     void countUncommitted($);
-    void $.ui.open({ id: PANE, title: "Lore" });
+    // The session's own open, which nobody asked for by hand: on a terminal under the
+    // engine's floor it is refused, and the refused answer is what the band then offers.
+    void openPane($);
     $.clock.every(REFRESH_MS, () => {
       void (async () => {
         const panes = await $.ui.panes();
@@ -1750,6 +1852,42 @@ export const register: Register = (on, _options) => {
         ) : (
           documentColumn()
         )}
+      </Box>
+    );
+  });
+
+  // The band above the prompt, drawn while the pane is open and NOT drawn. It is the whole
+  // reason the honest answer above matters: a model can open the pane on a terminal too
+  // narrow to show an unasked pane, and the person then needs one press to seat it. Read
+  // from the engine on every draw rather than remembered, so widening the terminal -- which
+  // seats the pane and redraws -- takes the band away on its own, with nothing to expire.
+  on("ui.render", { component: "AbovePrompt" }, async ($, e, next) => {
+    // A survey holds the band; every hook on it yields, and so does this one.
+    if (e.props.hasSurvey) {
+      return next(e);
+    }
+    // The engine's listing first -- it is the only reading that notices the pane being
+    // placed without an open (a terminal widened past the floor) and so the only one that
+    // takes this line away by itself. Where it cannot be read, the module's own record of
+    // its last open stands in.
+    const standing = await paneStanding($);
+    const { isWaiting } = await read($, pane);
+    const waits = standing.known ? standing.pane !== null && !standing.pane.isPlaced : isWaiting;
+    if (!waits) {
+      return next(e);
+    }
+    // The press makes the open ITSELF, in the press, because "asked" is the press the
+    // engine is running: an open deferred out of it -- to a timer, or to a later draw --
+    // is unasked again and waits at the same width (measured, LCLI-672).
+    const open = async () => {
+      await openPane($);
+    };
+    const { Box, Button, Text } = $.ui.resolve(e);
+
+    return (
+      <Box>
+        <Text dimColor>{BAND_TEXT} </Text>
+        <Button key="open" label="Open" hotkey="o" onPress={open} />
       </Box>
     );
   });

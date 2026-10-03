@@ -93,6 +93,45 @@ command:
   `src/core/agent-bridge.ts`), never hand-edited, and the pane section is written for
   the plugin variant only: a per-repository bridge has no mod to call.
 
+### An honest answer, and the band that seats an unasked pane (LCLI-672)
+
+The engine places an open it was ASKED for by hand -- a command the person typed, a prompt
+they entered, a Button they pressed -- at any width, and an open nobody asked for only from
+a floor of terminal columns: 144, or 110 for a pane id the person has opened before and not
+closed since. A model's tool call is one of the unasked ones, so on a narrow terminal the
+tool's own open waits undrawn. Measured on 2.1.288 rather than read off the declaration: a
+tool call at 100 columns answered `{ isPlaced: false, reason: "unasked below 144 columns
+(100 now): placed when the person opens it, or when the terminal is widened to 144
+columns" }` and drew nothing, while a band Button press at the same width answered
+`{ isPlaced: true }` and drew the pane.
+
+- **The tool answers for the pane it FOUND.** After opening it reads `$.ui.panes()` and
+  says what is true of the pane now: `Opened the Lore pane...` only where the engine has it
+  placed AND shown; the waiting sentence carrying the engine's own `reason` -- which names
+  the floor that applies and the width now, because the floor is not a constant -- where it
+  waits undrawn; and `behind the pane in front` where it is placed but another pane's tab is
+  on top. The work the call asked for still happens in the waiting case: only the DRAWING
+  waits, so a `doc` is read and a `query` run before the answer says the pane is not up.
+  This is opum-doc seq 182 item 3 (`ODOC-OP-2026-10-03-13`).
+- **The band is how a person seats it.** While the pane is open and undrawn, one line draws
+  above the prompt -- `Lore pane ready` -- with an `[Open]` Button on the `o` hotkey. The
+  press makes the open inside the press, which is what makes it asked, and the pane then
+  seats at any width; the band is gone on its next draw. It yields to a survey
+  (`e.props.hasSurvey`), and it reads `$.ui.panes()` on every draw rather than remembering,
+  so a widened terminal seats the pane and takes the band away with nothing to expire.
+- **The engine is read, not assumed, and the reading is two-stage.** `$.ui.panes` is the
+  live answer and the only one that notices a pane placed without an open. Where it cannot
+  be had -- the engine's own test kit carries no such call at all: `$.ui.panes is not a
+  function`, measured -- the module falls back to `pane.isWaiting`, its record of what the
+  last open answered. That is also the arm every mod test runs, because the kit has nothing
+  beneath the plugins for a band to yield to; the behind-a-tab arm needs the listing and is
+  covered by the live measurement above rather than by a unit test.
+- **The hotkey needs the band focused.** Measured in the same session: a bare `o` typed
+  into an empty composer does nothing (it lands in the composer), a bare digit presses a
+  band Button from an empty composer, and `o` presses this one once ctrl+x tab has given the
+  band the keys. The design names `o`; a person reaching for it focuses the band first, or
+  clicks the Button.
+
 ### Full screen
 
 `z` inside the pane, and the dashboard tool's `full` argument (see "Opening the

@@ -1,4 +1,4 @@
-import type { On } from "claude-code";
+import type { On, UiOpenResult } from "claude-code";
 import { expect, mock, test } from "claude-code/testing";
 
 const PANE = {
@@ -659,13 +659,28 @@ test("a run that fails fast keeps its own message, not the timeout's", async ($,
 
 // ── The full-screen toggle (LCLI-666) ─────────────────────────────────────────
 
-/** Every `$.ui.open` the module made, in order: the args are what the toggle is. */
-function captureOpens(on: On): Record<string, unknown>[] {
+/**
+ * Every `$.ui.open` the module made, in order: the args are what the toggle is.
+ *
+ * `answer` is what the engine replies with, defaulting to the placed arm. A test that
+ * wants the other arm -- the engine refusing to place an unasked open below its floor --
+ * passes one, because the module's honest answer is composed from it (LCLI-672).
+ *
+ * `$.ui.panes` is deliberately NOT answered anywhere in this file: the engine's test kit
+ * has no such call at all (measured: `$.ui.panes is not a function`), so every path here
+ * runs the arm the module keeps for an engine it cannot ask -- and that arm is what these
+ * tests hold. The listing arm is measured in a live session instead (LCLI-672 note), where
+ * the call exists and answers.
+ */
+function captureOpens(
+  on: On,
+  answer: () => UiOpenResult = () => ({ isPlaced: true }),
+): Record<string, unknown>[] {
   const opens: Record<string, unknown>[] = [];
   on("ui.open", async (_$, e) => {
     opens.push({ ...e });
 
-    return { value: { isPlaced: true } };
+    return { value: answer() };
   });
 
   return opens;
@@ -1519,4 +1534,162 @@ test("every dashboard call refreshes the pane, as every slash-command call did",
   await $.tool.call({ tool: DASHBOARD, query: "retention" });
   await clock.settle();
   expect(catalogReads()).toBe(1);
+});
+
+// ── The honest result and the band (LCLI-672) ─────────────────────────────────
+
+/**
+ * The engine's refusal, verbatim from a live session (Claude Code 2.1.288, LCLI-672 note):
+ * a model's open of this pane at 100 columns. Its wording matters here -- it is what the
+ * tool's answer carries, and the floor inside it moves with the pane's history (144
+ * columns for a pane nobody has opened, 110 once the person has), which is why the module
+ * reports the engine's sentence instead of composing one.
+ */
+const REFUSED =
+  "unasked below 144 columns (100 now): placed when the person opens it, or when the terminal is widened to 144 columns";
+
+test("the dashboard tool answers for the pane it found, not the pane it asked for", async ($, on) => {
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  // The engine refuses the open: the call is the model's, and nobody asked for the pane by
+  // hand. The kit cannot answer `$.ui.panes` at all, so this is the arm the module keeps for
+  // an engine it cannot ask -- and the open's own answer is what decides in it.
+  let answer: UiOpenResult = { isPlaced: false, reason: REFUSED };
+  const refused = captureOpens(on, () => answer);
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  await clock.settle();
+
+  const waiting = await $.tool.call({ tool: DASHBOARD, doc: "adr/0001-x" });
+  expect(waiting.result).toBe(`The Lore pane is open but not drawn, adr/0001-x on Read: ${REFUSED}`);
+  // The answer is the ENGINE'S sentence, not one composed here: the floor inside it is 144
+  // columns or 110, depending on whether the person has opened this pane before, so a
+  // number written into the module would be wrong exactly where it mattered.
+  expect(String(waiting.result)).toContain("144");
+  expect(String(waiting.result)).not.toContain("Opened the Lore pane");
+  // The work the call asked for still happened: only the DRAWING waits.
+  expect(seen).toContainEqual(["lore", "read", "adr/0001-x", "--json"]);
+  // The refused open is still an open: it names the pane and its title, and asks for no
+  // keyboard (`focus`) and no size -- the same shape every other open here has.
+  expect(refused.at(-1)).toEqual({ id: "lore-pane", title: "Lore" });
+
+  // The control: the same call and the same test, with the engine placing the pane. What
+  // changes the answer is what the engine answered, not something the module decided.
+  answer = { isPlaced: true };
+  const shown = await $.tool.call({ tool: DASHBOARD, doc: "adr/0001-x" });
+  expect(shown.result).toBe("Opened the Lore pane, adr/0001-x on Read.");
+  // The calls above each start a refresh, and one left in flight when the environment goes
+  // rejects with nothing to handle it -- a file-level failure rooted in no case at all.
+  await clock.settle();
+});
+
+
+test("the band draws the line that offers the pane, and its Button seats what the engine would not", async ($, on) => {
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  // What the engine answers every open with in this test: refused, because nobody has asked
+  // for this pane by hand -- the narrow-terminal case the band exists for. Held rather than
+  // fixed, because the press below is the engine changing that answer.
+  let answer: UiOpenResult = { isPlaced: false, reason: REFUSED };
+  const opens = captureOpens(on, () => answer);
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  await clock.settle();
+  opens.length = 0;
+
+  const props = {
+    hasSurvey: false,
+    isWorking: false,
+    maxRows: 10,
+    bodyColumns: 80,
+    scroll: { offset: 0, bodyRows: 10 },
+    view: {},
+  };
+  const band = await $.ui.mount({ plugin: "opum-lore", surface: "terminal", component: "AbovePrompt", props });
+  // The line is read by its text and the Button by its key, because that is how a band mount
+  // addresses them: the engine keeps an element's `key` for the ones it dispatches to (a
+  // Button), and draws a plain Text with the key dropped -- measured on the kit, where
+  // `find({ key: "ready" })` answers undefined over a Text that is plainly drawn.
+  expect((await band.find({ type: "Text", text: / ready/ }))?.text).toContain("ready");
+  const button = await band.find({ key: "open" });
+  expect(button?.props.hotkey).toBe("o");
+  expect(button?.props.label).toBe("Open");
+
+  // The press IS the open, made inside the press -- which is what makes it asked, and so
+  // what seats it at a width where the session's own open could not. Measured (LCLI-672): an
+  // open deferred out of the press waits undrawn at that same width, so the shape is the
+  // feature rather than an implementation detail. No `focus` either: the pane never takes
+  // the keyboard from a person who may be typing, and this press is no exception.
+  answer = { isPlaced: true };
+  await band.press({ key: "open" });
+  expect(opens).toEqual([{ id: "lore-pane", title: "Lore" }]);
+  await band.unmount();
+  await clock.settle();
+});
+
+test("the band yields where a survey holds it, and where the pane is drawn", async ($, on) => {
+  // A second test because the engine's own band has to stand in for this one, and `on` may
+  // only be called before the test first uses `$` -- the kit's own words: `on("ui.render")
+  // after the test first called $`. The stand-in matters because a draw the module YIELDS on
+  // has nothing beneath it in the kit: the redraw would reject rather than draw an empty
+  // band. Every call it takes is one the module yielded -- counted rather than inferred from
+  // an absent element, so a Button that failed to draw cannot read as one never drawn.
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.store(on);
+  const seen: string[][] = [];
+  mockLore(on, seen);
+  mockSession(on);
+  let answer: UiOpenResult = { isPlaced: false, reason: REFUSED };
+  captureOpens(on, () => answer);
+  let stoodIn = 0;
+  on("ui.render", { component: "AbovePrompt" }, async ($, e) => {
+    stoodIn += 1;
+    const { Box, Text } = $.ui.resolve(e);
+
+    return (
+      <Box>
+        <Text>nothing above the prompt</Text>
+      </Box>
+    );
+  });
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  await clock.settle();
+
+  const props = {
+    hasSurvey: false,
+    isWorking: false,
+    maxRows: 10,
+    bodyColumns: 80,
+    scroll: { offset: 0, bodyRows: 10 },
+    view: {},
+  };
+  const band = await $.ui.mount({ plugin: "opum-lore", surface: "terminal", component: "AbovePrompt", props });
+  // Waiting: the module draws, and the stand-in is not reached. This is the control for the
+  // yield counted below -- an absence there means the survey took the band, not that the
+  // band was never drawn at all.
+  expect(await band.find({ key: "open" })).toBeDefined();
+  expect(stoodIn).toBe(0);
+
+  // A survey holds the band, and every hook on it yields -- this one with them. The pane is
+  // the same waiting pane as the read above, so the absence is the survey's doing.
+  await band.redraw({ ...props, hasSurvey: true });
+  expect(await band.find({ key: "open" })).toBeUndefined();
+  expect(await band.find({ type: "Text", text: /nothing above the prompt/ })).toBeDefined();
+  expect(stoodIn).toBeGreaterThan(0);
+
+  // Drawn: the pane's last open came back placed, and the band has nothing left to offer.
+  // The tool's own call is what moves that -- the engine places this one, where the
+  // session's was refused -- and the yield it takes to get there is counted, the same way.
+  const beforeDrawn = stoodIn;
+  answer = { isPlaced: true };
+  await $.tool.call({ tool: DASHBOARD });
+  await band.redraw(props);
+  expect(await band.find({ key: "open" })).toBeUndefined();
+  expect(stoodIn).toBeGreaterThan(beforeDrawn);
+  await band.unmount();
+  await clock.settle();
 });
