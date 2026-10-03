@@ -70,10 +70,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the terminal width in the dock from one render (transcript + the drawn body + the divider, less
   the engine's 24-column floor), asks once per toggle rather than on every resize, tells the
   person plainly when a width they set is being kept (`Width kept at 80 (you set it): drag the
-  pane edge to change`) — and stays quiet when a resize leaves the pane short with nothing
-  held — instead of a generic hint, and reports the drawn size — `the full size` only within
+  pane edge to change`) instead of a generic hint — its first cut read "held" from an ask's
+  outcome and stayed quiet on a bare shortfall, which LCLI-676 corrected to the design's own
+  rule and Quest's board's, below — and reports the drawn size — `the full size` only within
   4 cells of the ask, the drawn size and its reason otherwise, `full requested` when the draw
   is not yet known.
+- **The Lore pane's kept-width line, its tool answer and its mode control now read the same
+  state the same way** (LCLI-676; seq 243, `ODOC-OP-2026-10-03-74`). The operator's re-test at
+  `466dee64` found the held-width line (`Width kept at 80 (you set it): drag the pane edge to
+  change`) never drawing while `pluginPanes.dockColumns` was kept, and the `dashboard` tool
+  answering `opened at 80 columns; the pane kept its width` — the not-held wording, with
+  "opened" twice — where Quest's board said `the width is kept` for the same state. Measured
+  in a real pty on Claude Code 2.1.288: the line's condition suppressed the render that spends
+  a full ask, and a kept width makes the module's size request a no-op, so no further draw
+  came to say it on and the suppressed draw stood permanently. The line now reads the
+  design's own rule on every short docked draw (within 4 cells granted, anything further off
+  the person's own — the classification Quest's board makes of the same state, seq 234), the
+  tool's dock short case uses that classification and Quest's wording (`Opened the Lore pane
+  at 80 columns; the width is kept.`), and the header's mode control shows the current state
+  with the key as its hint (`Normal · z for full` / `Full · z for normal`) rather than the
+  action it used to name.
 
 ## [0.12.0] - 2026-09-29
 

@@ -143,7 +143,11 @@ columns" }` and drew nothing, while a band Button press at the same width answer
 `z` inside the pane, and the dashboard tool's `full` argument (see "Opening the
 pane"), each flip the pane between its normal size and the largest the surface allows;
 a second press flips it back, and the tool's answer reports the size the pane actually
-drew, never the size it asked for. Anything else after the `dashboard` verb is refused
+drew, never the size it asked for. The control in the pane's header shows the CURRENT
+mode as state with the key as the hint — `Normal · z for full` in normal mode, `Full ·
+z for normal` in full mode (ruled by opum-doc for both panes, seq 243) — rather than the
+action it used to name, which read as a state the pane was not in; while a width is
+kept, the held line under the header says so. Anything else after the `dashboard` verb is refused
 by name rather than ignored. The **size is requested by a draw, not by the key**:
 `e.viewport` exists only on a render event, so the key, the tool and `session.start`
 record the choice and the next draw asks the surface for the size it implies. The
@@ -183,20 +187,25 @@ ruled in DEC-154 (2026-10-03):
   engine (`pluginPanes.dockColumns` in `~/.claude.json`) and wins over every request,
   across sessions; the module never edits that file or works around it. A granted size
   measures a few cells short inside the frame, so a request within 4 cells of the size
-  drawn counts as granted (`SIZE_SLACK`). "A width holds" is read from the ask's outcome
-  rather than the shortfall alone: only a spent ask whose grant has not arrived — and
-  not the render that spends it, which is pre-grant by definition — reads as held, so a
-  shortfall a resize leaves behind, with nothing re-asked, claims no owner. While a
-  width holds, the pane draws one line naming it — `Width kept at <columns> (you set
-  it): drag the pane edge to change` — instead of a generic hint, and it never labels
-  itself `Full screen`. In normal mode there is no requested size to fall short of, and
+  drawn counts as granted (`SIZE_SLACK`), and a draw further off than that is the
+  surface keeping a width rather than granting the ask — the design's own reading, and
+  the one Quest's board makes of the same state (seq 234; `ODOC-OP-2026-10-03-74`).
+  It is read on every full docked draw, the one that asks included: a kept width keeps
+  the surface's answer, and an ignored request raises no further draw to say it on, so
+  a reading that waited for the grant to be refused never got to speak (measured on
+  2.1.288 in a real pty, LCLI-676). While a width holds, the pane draws one line naming
+  it — `Width kept at <columns> (you set it): drag the pane edge to change` — instead
+  of a generic hint. In normal mode there is no requested size to fall short of, and
   an inline pane short of its ask is content-sized, which is honest and says nothing.
 - **The dashboard tool reports the drawn size**, never the asked one: `the full size`
   when the latest draw of a full pane came within the same 4 cells of its ask, otherwise
-  the drawn size and why — `opened at <n> rows; the screen keeps room for the prompt`
-  inline; in the dock either the kept width in the pane's own words when that draw read
-  one as held, or `the pane kept its width` when nothing does — and `full requested`
-  when no draw of the mode the call asked for has completed yet.
+  the drawn size and why — `at <n> rows; the screen keeps room for the prompt` inline,
+  `at <n> columns; the width is kept` in the dock (the same held state the pane's own
+  line words, classified the same way) — and `full requested` when no draw of the mode
+  the call asked for has completed yet. The size clause joins the answer's head
+  directly, the way Quest's board joins it (seq 243), so no shape repeats the word
+  "opened": a docked short draw reads `Opened the Lore pane at 80 columns; the width is
+  kept.`
 - **At 120 or more body columns** (`e.props.bodyColumns`, full mode only) the bundle list
   draws in a left column with the document on the right, on Read and Search alike. On
   Read the left column is the browse list, with the open document's row drawn at full
@@ -458,7 +467,9 @@ body, the inline `rows` less the engine's 11 on the key, stored-mode and tool pa
 unsized request that returns the pane to normal, the one ask per toggle and per session
 with a resize and a redraw asking nothing, an unsized open that never lowers a standing
 ask, the `pane-mode` store round-trip across a remount, the kept-width line (and its
-absence on a granted pane, after a resize with nothing held, and at the normal size),
+absence on a granted pane and at the normal size, its presence on a shortfall no ask
+raised -- the arm a reintroduced spend-state suppression reddens -- and the header's
+mode-as-state labels),
 and the command's
 `full` argument with its refusal of anything else — plus the 120-column split on Read
 (asserted at 140, at exactly 120 and at 119 on the same document) and on Search, with

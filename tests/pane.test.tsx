@@ -1061,8 +1061,9 @@ test("the full-or-normal choice is written to the plugin's store, and a session 
     // Restored, not asked for: the request carries no `focus`, and carries the ask the
     // amended rule builds -- 80 transcript + 79 drawn + 1, less the 24-column floor.
     expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", columns: 136 });
-    // The draw that asked says so too: the toggle offers the way back.
-    expect((await restored.find({ key: "full" }))?.props.label).toBe("Normal size");
+    // The draw that asked says so too: the toggle now shows the CURRENT mode as state
+    // with the key as the hint (seq 243), not the action it used to name.
+    expect((await restored.find({ key: "full" }))?.props.label).toBe("Full · z for normal");
     await restored.press({ key: "full" });
     await clock.settle();
     await restored.unmount();
@@ -1079,7 +1080,7 @@ test("the full-or-normal choice is written to the plugin's store, and a session 
     });
     await clock.settle();
     expect(opens).toEqual([]);
-    expect((await reopened.find({ key: "full" }))?.props.label).toBe("Full screen");
+    expect((await reopened.find({ key: "full" }))?.props.label).toBe("Normal · z for full");
     // Left at `full` again, so the next round's premise is the one it started from.
     await reopened.press({ key: "full" });
     await clock.settle();
@@ -1113,13 +1114,17 @@ test("a session starting with no remembered choice opens at the normal size", as
 
 test("a full docked pane names a held width in one line, and only when one holds", async ($, on) => {
   // DEC-154 rule 3: while a width holds against the ask, the pane names it and how to
-  // change it, and shows no generic held hint. "Holds" is read from the ask's outcome --
-  // only a spent ask sets it and a draw at the ask's own size clears it -- so the
-  // controls are direct: a pane that GOT its ask draws nothing (matched as a PATTERN, so
-  // a line naming another width cannot pass as absence -- review F5), the render that
-  // spends the ask is pre-grant and draws nothing, and a resize after a granted ask --
-  // the case a bare drawn-vs-ask comparison read as a kept width nobody set (review F2)
-  // -- draws nothing too.
+  // change it, and shows no generic held hint. "Holds" is the DESIGN'S OWN reading and
+  // Quest's board's alike (seq 234): a docked full pane more than `SIZE_SLACK` short of
+  // its ask is at a width the surface kept -- within 4 cells granted, anything further
+  // off the person's own -- read on every draw, the spending render included, because a
+  // kept width keeps the surface's answer and an ignored request raises no further draw
+  // to say it on (measured, LCLI-676). The controls are direct: a pane that GOT its ask
+  // draws nothing (matched as a PATTERN, so a line naming another width cannot pass as
+  // absence -- review F5), and a shortfall with no ask in flight this session -- the
+  // shape LCLI-675's F2 kept quiet and the LCLI-676 re-test (seq 243) put back in the
+  // kept words, the same state both panes now classify the same way -- draws the line
+  // too. That last arm is what a reintroduced spend-state suppression reddens.
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
   mock.store(on, { "pane-mode": "full" });
   const seen: string[][] = [];
@@ -1145,9 +1150,8 @@ test("a full docked pane names a held width in one line, and only when one holds
 
     // The kept machine: a 79-cell body under its 80-wide frame beside an 80-column
     // transcript -- terminal 160, ask 136, far short of what drew. The mount's own
-    // render spends the ask (pre-grant by definition); the engine's redraw of it is the
-    // render with an answer, and this ask has gone ungranted -- the pane keeps its
-    // 79-cell body -- so the line is drawn.
+    // render spends the ask and is short, and a short docked draw is the line's
+    // condition itself, so it is drawn there and on every redraw after it.
     await $.session.start({ cwd: "/repo", surface, isInteractive: true });
     const kept = await at(80, 79);
     expect(await kept.find({ type: "Text", text: KEPT })).toBeDefined();
@@ -1168,12 +1172,17 @@ test("a full docked pane names a held width in one line, and only when one holds
     expect(await granted.find({ type: "Text", text: GENERIC })).toBeUndefined();
     await granted.unmount();
 
-    // The resize: the ask moved under a pane whose grant was honoured and nothing was
-    // set, so the pane stays quiet rather than claiming a width of the person's.
+    // A shortfall with no ask in flight -- the same 80/79 machine mounted again, with
+    // the previous arms' asks long spent and none raised since (a terminal widened under
+    // a granted pane reads exactly this way). A short docked draw is at a kept width by
+    // the design's own reading (seq 234, the state Quest's board words the same way), so
+    // the line is drawn -- LCLI-675's F2 kept this quiet; the re-test ruled otherwise.
+    // No open rides this arm, so nothing redraws it and the assertion reads the draw
+    // itself: this is where a reintroduced spend-state suppression reddens.
     const resized = await at(80, 79);
     await resized.press({ key: "refresh" });
     await clock.settle();
-    expect(await resized.find({ type: "Text", text: /Width kept at/ })).toBeUndefined();
+    expect(await resized.find({ type: "Text", text: KEPT })).toBeDefined();
     expect(await resized.find({ type: "Text", text: GENERIC })).toBeUndefined();
     await resized.unmount();
   }
@@ -1391,10 +1400,14 @@ test("the dashboard tool answers with the drawn size and why, and pins the slack
     expect(await answer()).toBe("Opened the Lore pane, the full size.");
     await granted.unmount();
 
-    // The resize: the ask moved under a pane whose grant was honoured and nothing is
-    // holding -- the drawn size is named, and no owner is invented for the shortfall.
+    // The dock short shape, with no ask in flight this session: a docked full pane more
+    // than the slack short of its ask is at a width the surface kept -- the design's own
+    // rule (within 4 cells granted, anything further off the person's own, seq 234) and
+    // the same classification Quest's board makes of the same state. LCLI-675's F2 had
+    // this shape name no owner; the LCLI-676 re-test (seq 243) ruled the two panes word
+    // it alike, so the kept wording stands wherever the shortfall does.
     const resized = await at(80, 79);
-    expect(await answer()).toBe("Opened the Lore pane, opened at 80 columns; the pane kept its width.");
+    expect(await answer()).toBe("Opened the Lore pane at 80 columns; the width is kept.");
     await resized.unmount();
 
     // The slack boundary, from the same identity: 27 lands exactly on
@@ -1403,19 +1416,21 @@ test("the dashboard tool answers with the drawn size and why, and pins the slack
     expect(await answer()).toBe("Opened the Lore pane, the full size.");
     await edge.unmount();
     const past = await at(28, 100);
-    expect(await answer()).toBe("Opened the Lore pane, opened at 101 columns; the pane kept its width.");
+    expect(await answer()).toBe("Opened the Lore pane at 101 columns; the width is kept.");
     await past.unmount();
 
     // Held: a fresh ask is spent and never granted (the pane keeps its 79-cell body), so
-    // the shortfall is named as the person's own width, in the pane's own words.
+    // the shortfall is named as the person's own width -- the same words as the shape
+    // above, because they are the same held state, however the ask got there.
     await $.session.start({ cwd: "/repo", surface, isInteractive: true });
     const held = await at(80, 79);
     await held.press({ key: "refresh" });
     await clock.settle();
-    expect(await answer()).toBe("Opened the Lore pane, opened at 80 columns; the width you set is kept.");
+    expect(await answer()).toBe("Opened the Lore pane at 80 columns; the width is kept.");
     await held.unmount();
 
-    // Inline: the drawn size and the prompt's own reason, on the other axis.
+    // Inline: the drawn size and the prompt's own reason, on the other axis -- joined the
+    // same way, with no second "opened" (seq 243).
     const inline = await $.ui.mount({
       plugin: "opum-lore",
       surface,
@@ -1425,7 +1440,7 @@ test("the dashboard tool answers with the drawn size and why, and pins the slack
       viewport: { columns: 100, rows: 40, isFullscreen: false },
     });
     await clock.settle();
-    expect(await answer()).toBe("Opened the Lore pane, opened at 12 rows; the screen keeps room for the prompt.");
+    expect(await answer()).toBe("Opened the Lore pane at 12 rows; the screen keeps room for the prompt.");
     await inline.unmount();
   }
 });
@@ -1574,7 +1589,7 @@ test("each dashboard input lands where it should, on the terminal and the deskto
     // a draw is the only place that knows the viewport. Neither carries `focus`.
     expect(opens[opens.length - 1]).toEqual({ id: "lore-pane", title: "Lore", columns: 136 });
     expect(opens.every((one) => one.focus === undefined)).toBe(true);
-    expect((await full.find({ key: "full" }))?.props.label).toBe("Normal size");
+    expect((await full.find({ key: "full" }))?.props.label).toBe("Full · z for normal");
     await full.unmount();
 
     // `full: false` asks for the normal size back, and leaves the store where the next
