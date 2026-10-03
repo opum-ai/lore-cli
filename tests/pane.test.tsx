@@ -1618,6 +1618,12 @@ test("the band draws the line that offers the pane, and its Button seats what th
   const button = await band.find({ key: "open" });
   expect(button?.props.hotkey).toBe("o");
   expect(button?.props.label).toBe("Open");
+  // The focus step is pinned as text, not merely described, because the line is the only place
+  // the affordance teaches its own keystroke: `o` reaches the Button only once ctrl+x tab has
+  // given the band the keys, and a click needs none (opum-doc seq 212, ODOC-OP-2026-10-03-43).
+  // Asserting the hint's absence would pass just as well over a band that drew no line at all,
+  // so the ready text above is this assertion's control.
+  expect((await band.find({ type: "Text", text: /\(ctrl\+x tab, o\)/ }))?.text).toContain("ctrl+x tab, o");
 
   // The press IS the open, made inside the press -- which is what makes it asked, and so
   // what seats it at a width where the session's own open could not. Measured (LCLI-672): an

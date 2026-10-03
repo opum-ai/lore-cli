@@ -179,8 +179,17 @@ const SIDE_BY_SIDE_COLUMNS = 120;
  * call is one of those. A press is not: the engine places an open asked by a Button at any
  * width, which is the one door onto a pane the model opened on a narrow terminal. So the
  * line says what is ready and the Button seats it, and both are gone once it is drawn.
+ *
+ * The line carries the focus step too (`BAND_HINT`), because the Button's letter hotkey is
+ * not reachable from an empty composer the way a digit is: `o` presses it only once ctrl+x
+ * tab has given the band the keys, where a click needs no focus at all. A digit would
+ * collide with other bands' Buttons and with the pane's own link-list hotkeys, so the
+ * keystroke is written down rather than changed (opum-doc seq 212, ODOC-OP-2026-10-03-43).
  */
 const BAND_TEXT = "Lore pane ready";
+
+/** The focus step, as the band prints it after the Button -- see `BAND_TEXT`. */
+const BAND_HINT = "(ctrl+x tab, o)";
 
 /** One line of the bundle list: a type's heading, or a concept that opens. */
 type BrowseRow =
@@ -1884,10 +1893,13 @@ export const register: Register = (on, _options) => {
     };
     const { Box, Button, Text } = $.ui.resolve(e);
 
+    // Rendered: `Lore pane ready · [Open] (ctrl+x tab, o)` -- the same shape quest-cli's
+    // board band carries, so the two bands read alike.
     return (
       <Box>
-        <Text dimColor>{BAND_TEXT} </Text>
+        <Text dimColor>{BAND_TEXT} · </Text>
         <Button key="open" label="Open" hotkey="o" onPress={open} />
+        <Text dimColor> {BAND_HINT}</Text>
       </Box>
     );
   });

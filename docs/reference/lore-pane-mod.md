@@ -114,9 +114,11 @@ columns" }` and drew nothing, while a band Button press at the same width answer
   waits, so a `doc` is read and a `query` run before the answer says the pane is not up.
   This is opum-doc seq 182 item 3 (`ODOC-OP-2026-10-03-13`).
 - **The band is how a person seats it.** While the pane is open and undrawn, one line draws
-  above the prompt -- `Lore pane ready` -- with an `[Open]` Button on the `o` hotkey. The
-  press makes the open inside the press, which is what makes it asked, and the pane then
-  seats at any width; the band is gone on its next draw. It yields to a survey
+  above the prompt -- `Lore pane ready · [Open] (ctrl+x tab, o)` -- with an `[Open]` Button
+  on the `o` hotkey. The line carries the focus step that hotkey needs (below), so the
+  affordance names its own keystroke rather than leaving it to be discovered; a click needs
+  none of it. The press makes the open inside the press, which is what makes it asked, and
+  the pane then seats at any width; the band is gone on its next draw. It yields to a survey
   (`e.props.hasSurvey`), and it reads `$.ui.panes()` on every draw rather than remembering,
   so a widened terminal seats the pane and takes the band away with nothing to expire.
 - **The engine is read, not assumed, and the reading is two-stage.** `$.ui.panes` is the
@@ -126,11 +128,15 @@ columns" }` and drew nothing, while a band Button press at the same width answer
   last open answered. That is also the arm every mod test runs, because the kit has nothing
   beneath the plugins for a band to yield to; the behind-a-tab arm needs the listing and is
   covered by the live measurement above rather than by a unit test.
-- **The hotkey needs the band focused.** Measured in the same session: a bare `o` typed
-  into an empty composer does nothing (it lands in the composer), a bare digit presses a
-  band Button from an empty composer, and `o` presses this one once ctrl+x tab has given the
-  band the keys. The design names `o`; a person reaching for it focuses the band first, or
-  clicks the Button.
+- **The hotkey needs the band focused, and the band's line says so.** Measured in the same
+  session: a bare `o` typed into an empty composer does nothing (it lands in the composer), a
+  bare digit presses a band Button from an empty composer, and `o` presses this one once
+  ctrl+x tab has given the band the keys. The design names `o` -- a digit would collide with
+  other bands' Buttons and with this pane's own link-list hotkeys -- so the step is written
+  into the line the band draws (`(ctrl+x tab, o)`, above) rather than designed away: a person
+  reaching for the keystroke reads it where the Button is, or clicks the Button, which needs
+  no focus at all. Ruled by opum-doc as seq 212 (`ODOC-OP-2026-10-03-43`), keeping the two
+  bands -- this one and quest-cli's Quest board -- worded alike.
 
 ### Full screen
 
