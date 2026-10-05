@@ -296,6 +296,7 @@
 - 2026-09-30T23:17:48-05:00 0d568f0f0d353511435107a7c1ea57018682fd2d fix(LCLI-662): reserve the query section's worst case in the capacity measurement (DEC-98 B) (#460)
 - 2026-10-02T12:07:00-05:00 38f2affd4df8470019293189c09ddbaa0b28ecd4 docs(LCLI-664): describe the Lore pane mod
 - 2026-10-02T13:38:00-05:00 1f9d70e383ee576c108ccc626a691be2e9e48a6a docs(LCLI-664): record the operator's design answers as ADRs, verbatim
+- 2026-10-02T17:16:30-05:00 dab213522174e11b98029ad72b008925be9dd4e5 feat(LCLI-664): ship the Lore pane mod in the opum-lore plugin (#466)
 
 ## docs/adr
 
@@ -398,6 +399,11 @@
 - 2026-10-02T12:38:10-05:00 07dbc136fd2e949fc9bb463caff18ee193557866 fix(LCLI-664): address the pre-landing review findings in the Lore pane mod
 - 2026-10-02T13:51:43-05:00 632b95530a93da200d6c281a0814eb904edf6260 feat(LCLI-664): the inline body editor, under the library pick the operator's instruction required
 - 2026-10-02T15:23:18-05:00 ebfbcced850ed759c4440c7bbce1edb16aa854e3 fix(LCLI-664): address the editor-arm review findings in the Lore pane mod
+- 2026-10-03T04:01:13-05:00 7f89b7b4d1a0f7eeb06bee73c4fbb174b221e8a1 feat(LCLI-666): the Lore pane's full-screen toggle, the /lore rename, and the dashboard tool (#476)
+- 2026-10-03T05:57:07-05:00 6fdd1612946253be70730dc7be87a8c2c178d62c feat(LCLI-672): the dashboard tool's honest result, and the band that seats an unasked pane (#479)
+- 2026-10-03T07:32:30-05:00 977aeaef13f894a473ca1bbfbd02deb93d2e3473 feat(LCLI-673): the band's line names the focus step its hotkey needs (#482)
+- 2026-10-03T11:22:25-05:00 ba0640247ed3695862e1fc79f0eb05a3b49a7047 fix(LCLI-675): the Lore pane's full mode follows the engine's sizing (DEC-154) (#486)
+- 2026-10-03T17:09:51-05:00 1273d9b4881399cd81a0eaac0df126ad6bf32418 fix(LCLI-676): a kept dock width reads as held on every short draw, in the pane and in the tool's answer (#488)
 
 ## docs/runbooks
 
@@ -444,6 +450,7 @@
 - 2026-09-28T19:06:22-05:00 dadd8ed9da0a3fbf0dbad13906cfbe1eaca95f36 fix(LCLI-635): provenance-post leads its not-published warning with the cause the publish job allows (#387)
 - 2026-09-28T21:14:53-05:00 f3305628b2e21aed7e02236cee98dfd9a7f081c7 fix(LCLI-638): a RESUMED promote-latest refuses when any current latest is newer than --version (#392)
 - 2026-09-28T23:33:30-05:00 ffc3ab3b66a866d4b00729d19066186990f1e475 fix(LCLI-639): read the release notes at the tagged commit, not the working tree (paired with quest-cli QCLI-407) (#398)
+- 2026-10-02T18:29:42-05:00 8702c08f3d28082ee40c5e580d8eeb45cffa0e4c chore(LCLI-665): apply ruling A, and file the full-screen toggle task (#475)
 
 ## docs/specs
 
