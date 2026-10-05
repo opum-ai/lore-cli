@@ -49,7 +49,10 @@ function registryCommandKinds(doc: string): string[] {
     const line = (lines[i] ?? "").trim();
     if (!line.startsWith("|")) break;
     if (/^\|[\s:|-]+\|$/.test(line)) continue; // the `|---|---|---|` separator
-    const cells = line.slice(1, -1).split("|").map((c) => c.trim());
+    const cells = line
+      .slice(1, -1)
+      .split("|")
+      .map((c) => c.trim());
     const kindCell = cells[0] ?? "";
     const emittedBy = cells[1] ?? "";
     if (emittedBy.includes("global flags")) continue; // meta envelope, not a command
