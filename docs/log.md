@@ -297,6 +297,7 @@
 - 2026-10-02T12:07:00-05:00 38f2affd4df8470019293189c09ddbaa0b28ecd4 docs(LCLI-664): describe the Lore pane mod
 - 2026-10-02T13:38:00-05:00 1f9d70e383ee576c108ccc626a691be2e9e48a6a docs(LCLI-664): record the operator's design answers as ADRs, verbatim
 - 2026-10-02T17:16:30-05:00 dab213522174e11b98029ad72b008925be9dd4e5 feat(LCLI-664): ship the Lore pane mod in the opum-lore plugin (#466)
+- 2026-10-05T16:31:14-05:00 94044556320ca4d8458ccf08f942ad2640319a0e docs(LCLI-518): add --preserve-source-ids and --source-family to the init Key flags row (#490)
 
 ## docs/adr
 
