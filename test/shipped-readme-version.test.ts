@@ -19,7 +19,7 @@
  *
  * And the acceptance half is tested as deliberately as the rejection half, because a gate that is
  * always red is indistinguishable from a working one when you only ever run it on a violation:
- * the legitimate non-package tokens this README carries (`>=1.49.0`, `1.4.2`, and the historical
+ * the legitimate non-package tokens this README carries (`>=1.49.0`, `1.3.14`, and the historical
  * `0.2.0`/`0.6.x` citations) must stay green, and so must the real repository README.
  */
 
@@ -75,7 +75,7 @@ function fixtureReadme(): string {
     "> `0.6.2` and `0.6.1` but unlike `0.6.0`, **carries no provenance attestation**.",
     "",
     "Requires a `--json`-capable Backlog.md (>=1.49.0) on `PATH`. The composite",
-    "action installs Bun 1.4.2. Starting with `0.2.0`, the launcher installs only",
+    "action installs Bun 1.3.14. Starting with `0.2.0`, the launcher installs only",
     "the matching script-free platform package.",
     "",
   ].join("\n");
@@ -110,7 +110,7 @@ function checkFixture(readme: string, pkg: object = PKG) {
 }
 
 describe("acceptance — the gate must be green on things that are correct", () => {
-  test("the fixture README, whose legitimate tokens include >=1.49.0, 1.4.2 and historical 0.6.x, passes", () => {
+  test("the fixture README, whose legitimate tokens include >=1.49.0, 1.3.14 and historical 0.6.x, passes", () => {
     const run = checkFixture(fixtureReadme());
     expect(run.stderr).toBe("");
     expect(run.status).toBe(0);

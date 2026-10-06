@@ -735,11 +735,11 @@ function copyOverrideMap(value: Record<string, string> | undefined): Record<stri
  * invalid id. The sign is checked before magnitude so a negative id reports "must
  * be positive", not "too large".
  *
- * `!Number.isSafeInteger(value)` below is reachable only on a Bun whose native TOML
- * parser silently rounds an imprecise bare integer literal to the nearest representable
- * `double` rather than rejecting it outright (true on 1.3.14, the floor before LCLI-648
- * moved `engines.bun` to `>=1.4.2` — still installable and still seen in the wild
- * even though it is no longer the declared floor). On Bun 1.4.x, `Bun.TOML.parse` itself now throws for exactly that literal
+ * `!Number.isSafeInteger(value)` below is reachable on a Bun whose native TOML parser
+ * silently rounds an imprecise bare integer literal to the nearest representable `double`
+ * rather than rejecting it outright. That is 1.3.14's behaviour, and 1.3.14 is the DECLARED
+ * floor again after DEC-163 (8) pinned back to it (LCLI-648 had moved the floor to 1.4.2),
+ * so this branch is reachable ON the declared floor rather than only below it. On Bun 1.4.x, `Bun.TOML.parse` itself now throws for exactly that literal
  * ("Integer cannot be losslessly represented...") before this function ever runs
  * (LCLI-436) — a real, observed cross-runtime divergence, not a lore defect: both
  * outcomes are stable, actionable `validation` errors naming the config file, just

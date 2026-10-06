@@ -337,7 +337,7 @@ parser, agent SDK, tokenizer, embedding, or model dependency.
 |---|---|
 | **Package** | Exact-pinned `@ladybugdb/core@0.19.0` |
 | **Status** | **Shipping dependency; deterministic projection lifecycle and indexed command routing complete.** |
-| **Runtime/storage** | Ladybug `0.19.0` / storage version `43` under pinned Bun 1.4.2 |
+| **Runtime/storage** | Ladybug `0.19.0` / storage version `43` under pinned Bun 1.3.14 |
 | **Role** | Rebuildable persistent local property-graph and lexical projection for `graph`, `query`, and `context` |
 
 **Rationale.** Repeated retrieval, future interactive exploration, and larger

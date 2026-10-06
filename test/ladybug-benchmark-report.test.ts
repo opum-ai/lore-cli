@@ -63,10 +63,10 @@ describe("Ladybug benchmark report contract", () => {
     const orders = randomizedPolicyOrders(28310401, 5);
     expect(orders).toEqual(randomizedPolicyOrders(28310401, 5));
     expect(new Set(orders.map((order) => order[0]))).toEqual(new Set(["indexed", "reference"]));
-    expect(() => assertLadybugBenchmarkRuntime("qualification", "1.4.2")).not.toThrow();
-    expect(() => assertLadybugBenchmarkRuntime("qualification", "1.2.23")).toThrow("requires Bun 1.4.2");
-    expect(() => assertLadybugBenchmarkRuntime("smoke", "1.4.2")).not.toThrow();
-    expect(() => assertLadybugBenchmarkRuntime("observation", "1.2.23")).toThrow("requires Bun 1.4.2");
+    expect(() => assertLadybugBenchmarkRuntime("qualification", "1.3.14")).not.toThrow();
+    expect(() => assertLadybugBenchmarkRuntime("qualification", "1.2.23")).toThrow("requires Bun 1.3.14");
+    expect(() => assertLadybugBenchmarkRuntime("smoke", "1.3.14")).not.toThrow();
+    expect(() => assertLadybugBenchmarkRuntime("observation", "1.2.23")).toThrow("requires Bun 1.3.14");
   });
 
   test("parses repeatable fixtures, required output, runner identity, and smoke mode", () => {

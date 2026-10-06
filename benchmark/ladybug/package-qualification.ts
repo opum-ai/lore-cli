@@ -229,7 +229,7 @@ export function assertPackageQualificationReport(value: unknown): asserts value 
   if (report.mode !== "qualification" && report.mode !== "smoke") {
     throw new Error("package qualification report runtime mode is unsupported");
   }
-  if (report.mode === "qualification" && report.platform?.bun !== "1.4.2") {
+  if (report.mode === "qualification" && report.platform?.bun !== "1.3.14") {
     throw new Error("package qualification report does not use the pinned Bun runtime");
   }
   if (!/^[0-9a-f]{40}$/.test(report.repository?.commit ?? "")) {
@@ -517,8 +517,8 @@ function assertHost(input: PackageQualificationInput): void {
       `matching-host qualification expected ${input.os}-${input.cpu}, observed ${process.platform}-${process.arch}`,
     );
   }
-  if (input.mode === "qualification" && Bun.version !== "1.4.2") {
-    throw new Error(`matching-host qualification requires Bun 1.4.2, observed ${Bun.version}`);
+  if (input.mode === "qualification" && Bun.version !== "1.3.14") {
+    throw new Error(`matching-host qualification requires Bun 1.3.14, observed ${Bun.version}`);
   }
   if (input.name !== `${input.os}-${input.cpu}`) {
     throw new Error(`distribution ${input.name} does not match host ${input.os}-${input.cpu}`);
