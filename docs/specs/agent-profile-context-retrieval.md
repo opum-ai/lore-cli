@@ -168,7 +168,7 @@ step 4), a meaning change to existing fields; the same change bumps
 selection code. All are per-`kind` bumps
 ([CLI contract](../reference/cli-contract.md) §5.6, §7.1). Contract mode
 (`--contract`) is unchanged and still fails closed: no binding at all (empty
-or unreadable stdin) yields `OPUM_WORKFLOW_LORE_BINDING_ABSENT`, while a
+or absent stdin) yields `OPUM_WORKFLOW_LORE_BINDING_ABSENT`, while a
 binding that names a missing profile yields `OPUM_WORKFLOW_LORE_ABSENT`
 (LCLI-679). Invalid arguments are usage exit
 `2`; output permission failures are `4`; a differing output collision is `5`;

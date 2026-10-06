@@ -139,7 +139,7 @@ export interface AgentWorkflowProjection {
 /**
  * The stable public failure markers served by the workflow binding seam.
  * `BINDING_ABSENT` and `ABSENT` are deliberately distinct (LCLI-679): the first
- * means no binding was supplied at all (empty or unreadable stdin), the second
+ * means no binding was supplied at all (empty or absent stdin), the second
  * means a binding WAS supplied but names a lore entity (profile) that does not
  * exist — a `not_found` — so a caller can tell "you forgot the binding" from
  * "the binding points at nothing" without reading prose.
