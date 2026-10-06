@@ -76,6 +76,16 @@ export const CONSTITUTION_TYPE = "Constitution";
  */
 export const CONSTANTS_TYPE = "Constants";
 
+/**
+ * An Opum engineering standard — a project's MUST/SHOULD rules for one topic, each naming the check
+ * that enforces it (DEC-167 (3), LCLI-687). A lore-only built-in like {@link CONSTITUTION_TYPE}, so
+ * it is declared on every OKF version rather than gated to 0.2, and its six required sections
+ * (Purpose, Scope, Rules, Enforcement, Exceptions, Related) are the standard format DEC-167 (2)
+ * fixes. The order here drives the `lore new` template and the documented convention; validation
+ * matches required sections by presence, not order.
+ */
+export const STANDARD_TYPE = "Standard";
+
 /** Where the declarative profile lives, relative to the repo root (ADR-0013). `.toml` wins over `.json`. */
 export const PROFILE_REL_PATH = ".lore/profile.toml";
 
@@ -1141,6 +1151,14 @@ function storyConventionProfile(okfVersion: OkfVersion = CURRENT_OKF_VERSION): P
           owner: requiredString,
         },
         sections: [],
+      },
+      // Standard (DEC-167 (3), LCLI-687): a lore-only producer type like Constitution/Constants, so
+      // declared on every OKF version. Its six sections are the engineering-standard format, in the
+      // order DEC-167 (2) fixes; no fields beyond the base set.
+      {
+        name: STANDARD_TYPE,
+        fields: {},
+        sections: ["Purpose", "Scope", "Rules", "Enforcement", "Exceptions", "Related"],
       },
       ...(okfVersion === "0.2" ? [{ name: ATTESTED_COMPUTATION_TYPE, fields: {}, sections: [] }] : []),
     ],

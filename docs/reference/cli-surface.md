@@ -277,9 +277,9 @@ lore new adr   "Use soft deletes" --tags retention,orders
 lore new reference "Orders table" --template reference --var owner=payments
 ```
 
-`<type>` is one of the story-convention types (`Reference`, `Spec`, `ADR`,
-`Runbook`, `Epic`, `Story`) or any user-defined type — unknown types are
-accepted (OKF tolerance) and scaffolded with the lenient `type`-only shape,
+`<type>` is a built-in type (`Reference`, `Spec`, `ADR`, `Runbook`, `Epic`,
+`Story`, the lore-only `Constitution`, `Constants`, `Standard`) or an unknown
+one, accepted (OKF tolerance) and scaffolded with the lenient `type`-only shape,
 **unless** the active profile sets `[profile] strict_types = true`
 (`.lore/profile.toml`, LCLI-538), in which case an unrecognized `<type>` is
 refused outright — see [ADR-0007's amendment](../adr/0007-validation-and-coherence.md).

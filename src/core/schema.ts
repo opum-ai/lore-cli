@@ -346,6 +346,10 @@ const TYPE_DIRECTORIES: Readonly<Record<string, string>> = Object.freeze({
   ADR: "adr",
   Runbook: "runbooks",
   Reference: "reference",
+  // Standard (DEC-167 (3), LCLI-687): standards live in docs/standards/ (DEC-167 (2)), and a Standard
+  // is a many-instance type like Epic/Arc/Spec/Runbook, so it takes the plural directory rather than
+  // the single-doc slug fallback Constitution/Constants use.
+  Standard: "standards",
 });
 
 /**

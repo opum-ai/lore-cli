@@ -79,9 +79,9 @@ describe("lore schema export — default (story-convention) profile", () => {
     const { code, result } = exportSchemas(["export"]);
     expect(code).toBe(0);
     expect(result.out).toBe(".lore/schemas");
-    // 10, not 9, for 9 types: Arc's deprecated `Story` alias owns a schema file of its own
+    // 11, not 10, for 10 types: Arc's deprecated `Story` alias owns a schema file of its own
     // (LCLI-553 ruling (c)) so a consumer referencing the old path keeps resolving.
-    expect(result.count).toBe(10);
+    expect(result.count).toBe(11);
     expect(result.files.map((f) => f.path)).toEqual([
       ".lore/schemas/epic.schema.json",
       ".lore/schemas/arc.schema.json",
@@ -92,6 +92,7 @@ describe("lore schema export — default (story-convention) profile", () => {
       ".lore/schemas/reference.schema.json",
       ".lore/schemas/constitution.schema.json",
       ".lore/schemas/constants.schema.json",
+      ".lore/schemas/standard.schema.json",
       ".lore/schemas/attested-computation.schema.json",
     ]);
     for (const file of result.files) {
@@ -232,7 +233,7 @@ describe("lore schema export — --out", () => {
   test("a trailing `--` end-of-options marker is a no-op", () => {
     const { code, result } = exportSchemas(["export", "--"]);
     expect(code).toBe(0);
-    expect(result.count).toBe(10);
+    expect(result.count).toBe(11);
   });
 });
 
