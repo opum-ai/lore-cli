@@ -188,7 +188,7 @@ Every `--json` success response on stdout is a single JSON object:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `schemaVersion` | integer | Version of the envelope contract (§7) for this envelope's `kind`. Bumped only on a breaking change, and scoped to the `kind` it breaks: `1` for every `kind` except those the `lore help --json` manifest lists under `kindSchemaVersions` — today only `agent.context.export`, at `2` (§5.6). |
+| `schemaVersion` | integer | Version of the envelope contract (§7) for this envelope's `kind`. Bumped only on a breaking change, and scoped to the `kind` it breaks: `1` for every `kind` except those the `lore help --json` manifest lists under `kindSchemaVersions` — today `agent.context.export` at `3` and `agent.workflow.projection` at `2` (§5.6). |
 | `kind` | string | Names the payload shape so a caller can switch on it without inferring structure. Dotted `command.payload` form. |
 | `data` | object \| array | The typed body for that `kind`. Its internal shape is governed per-`kind`. |
 | `principal` | `null` | Reserved for a future ratified principal reference. Always `null` today — no command sets it to anything else. It is present on every envelope so its position is stable once it is ratified, but it is **not yet part of the stable contract**: consumers must not depend on its value, and must not treat its mere presence as meaningful beyond "reserved, unset." |
@@ -242,8 +242,8 @@ the [CLI surface](cli-surface.md):
 | `instructions.text` | `lore instructions` | guidance body + the full topic index |
 | `agents.result` | `lore agents` | bridge files written/updated; `target` whenever `--target <runtime>` is named (LCLI-593); under `--check` or `--force` only, the `opum-lore` marketplace plugin state as `plugin` when a target is named, or as `plugins.<runtime>`, one per covered runtime, when none is (LCLI-592) — never both, ADR Amendment 5 ruling 27; on a `--force` run (not `--check`) each plugin entry also carries `update` (`ran`\|`not-run`), `updateOk` when it ran, and `updateDetail` |
 | `agent.profiles` / `agent.profile` | `lore agent list` / `show` | profile summaries / one normalized profile |
-| `agent.context.export` | `lore agent context` | a profile-bounded evidence pack (pins, ranked sections, catalog, budget accounting) plus `queryHits` — up to three bundle-wide `lore query` hits not already in the pack, as `id`/`title`/`snippet`/`score` (added LCLI-575, additive under §7.1); `queryHitsOmitted`, the count of those hits the token budget cut (always present, `0` when none; §3); `queryHitsSectionOmitted: true` when the budget left no room for the section at all; and `profileMissing: true` when the named profile did not exist and the pack degraded to those hits. Envelope `schemaVersion` `2` since LCLI-575, for that exit-code remap alone (§5.6) |
-| `agent.workflow.projection` | `lore agent project`, `lore agent context --contract` | the read-only opum-agent-workflow/v1 projection wrapping the same evidence pack **without** the query-hit fields — no `queryHits`, `queryHitsOmitted` or `queryHitsSectionOmitted` and no query section in its Markdown, so its bytes, `packDigest` and `inputRevisions` are exactly the pre-LCLI-575 ones (§5.6). `schemaVersion` `1` |
+| `agent.context.export` | `lore agent context` | a profile-bounded evidence pack (pins, ranked sections, catalog, budget accounting) plus `queryHits` — up to three bundle-wide `lore query` hits not already in the pack, as `id`/`title`/`snippet`/`score` (added LCLI-575, additive under §7.1); `queryHitsOmitted`, the count of those hits the token budget cut (always present, `0` when none; §3); `queryHitsSectionOmitted: true` when the budget left no room for the section at all; and `profileMissing: true` when the named profile did not exist and the pack degraded to those hits. Envelope `schemaVersion` `3`: `2` since LCLI-575 for that exit-code remap, raised to `3` by LCLI-680 because `total`/`shown`/`truncated` now count the eligible deck (§5.6) |
+| `agent.workflow.projection` | `lore agent project`, `lore agent context --contract` | the read-only opum-agent-workflow/v1 projection wrapping the same evidence pack **without** the query-hit fields — no `queryHits`, `queryHitsOmitted` or `queryHitsSectionOmitted` and no query section in its Markdown, so no document outside the profile's catalog can move a pinned `packDigest`. The embedded pack is compiled by the *same* selection code, so it carries LCLI-680's eligible-deck `total`/`shown`/`truncated` change and its bytes are no longer the pre-LCLI-575 ones. `schemaVersion` `2` (LCLI-680) |
 | `help.manifest` | `lore help` | the capability manifest — every command's flags, `kind`, exit codes, plus `kindSchemaVersions`, the per-`kind` `schemaVersion` overrides (§7.1) |
 | `scaffold.result` | `lore scaffold` | files written (`mkdocs`, `docusaurus`, `obsidian` all shipped — see [CLI surface](cli-surface.md)) |
 
@@ -514,21 +514,49 @@ The ADR's decision 4 called the whole change additive and reversible; its
 `3` → `0` remap is contract-level under §7.2, the §7.1 bump rule applies, and
 the bump is for the `agent.context` kind. `queryHits`, `queryHitsOmitted` and
 `queryHitsSectionOmitted` stay additive and would not have bumped it on their
-own. The bump is scoped to that one `kind` (§7.1): every other envelope,
-`agent.workflow.projection` included, stays `schemaVersion` `1`, and `lore help
---json` advertises the override as `kindSchemaVersions: {"agent.context.export":
-2}`. A caller pinned to `schemaVersion` `1` for `agent.context.export` should
+own. The bump is scoped to that one `kind` (§7.1): at the time every other
+envelope stayed `schemaVersion` `1`, and `lore help --json` advertised the
+override as `kindSchemaVersions: {"agent.context.export": 2}` (LCLI-680 has since
+raised that value to `3` and put `agent.workflow.projection` at `2` — both
+below). A caller pinned to `schemaVersion` `1` for `agent.context.export` should
 read `profileMissing` where it treated exit `3` as "no such profile", then
 accept `2`.
+
+**LCLI-680 raises it again, to `3`.** The pack footer's `total`, `shown` and
+`truncated` now count the **eligible deck** — the candidates that remain after
+the zero-score exclusion of selection step 4 in opum-doc's task-context
+contract — rather than the full declared deck. Their values therefore move for
+identical inputs, which §7.1 counts (repurposing an existing field) as
+requiring a bump. This is a second, independent bump on the same `kind`, not a
+correction of LCLI-575's: the scope is `agent.context.export` alone here, and
+the new `omitted-by-relevance` catalog reason stays additive. `lore help --json`
+now advertises `kindSchemaVersions: {"agent.context.export": 3}`. A consumer
+pinned to `schemaVersion` `2` should read the footer as "of the eligible
+candidates" before accepting `3`.
+
+**LCLI-680 also bumps `agent.workflow.projection` to `2`.** The projection
+embeds an evidence pack compiled by the *same* selection code, so `total`,
+`shown`, `selectedCount`, `topScore` and `reason` move inside that embedded pack
+for identical inputs — the same §7.1 meaning change as the context kind, in a
+second `kind` that carries its own copy of the moved fields. opum-doc DEC-163
+amendment (4) (opum-ai/opum-doc#750) ruled that the projection is a consumer
+contract and **rejected** exempting it, so it is bumped rather than left at `1`.
+`lore help --json` now advertises
+`kindSchemaVersions: {"agent.context.export": 3, "agent.workflow.projection": 2}`.
+This is the *envelope* version: the embedded pack stays hit-free, so it still
+lists every input that can move a pinned `packDigest`.
 
 The same amendment narrows where the query section appears: **only the plain
 `lore agent context` pack carries it.** The opum-agent-workflow/v1 projection
 (`agent project`, `agent context --contract`) stays hit-free, because its
 `inputRevisions` lists only the profile's catalog sources while the section
 ranks the whole bundle — so a hit would let a document `inputRevisions` never
-names change a pinned `packDigest`. Its pack, `packDigest` and `inputRevisions`
-are therefore byte-identical to the pre-LCLI-575 ones. Extending hits to
-workflow packs is a separate, undecided design question.
+names change a pinned `packDigest`. Every input that can move its `packDigest`
+therefore remains listed; but it is **not** byte-identical to the pre-LCLI-575
+pack — the same selection code applies LCLI-680's eligible-deck change inside it
+(the reason for the bump to `2` above), where the query-hit narrowing alone
+would have left it byte-equal. Extending hits to workflow packs is a separate,
+undecided design question.
 
 ---
 
@@ -561,9 +589,10 @@ The `--json` envelope is a **public, additive-only versioned contract**:
 - **A bump is scoped to the `kind` it breaks.** The envelope carries its own
   kind's version; a `kind` with no override carries the base version (`1`).
   The overrides are listed in the `lore help --json` manifest as
-  `kindSchemaVersions`. The first is `agent.context.export` → `2` (LCLI-575,
-  §5.6), so a consumer of every other `kind` is untouched by a break it never
-  reads.
+  `kindSchemaVersions`: `agent.context.export` at `3` (LCLI-575 set `2`;
+  LCLI-680 raised it to `3`, §5.6) and `agent.workflow.projection` at `2`
+  (LCLI-680, §5.6), so a consumer of every other `kind` is untouched by a break
+  it never reads.
 
 This lets downstream consumers pin a `schemaVersion` and rely on stability
 while lore evolves payloads safely.

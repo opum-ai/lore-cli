@@ -132,15 +132,20 @@ at a range of budgets, varying only the budget:
 for budget in 12000 16000 20000 24000; do
   lore agent context frontend-dev --task "$TASK" --max-tokens "$budget" --json |
     jq -r --arg b "$budget" '.data.catalog[]
-      | select(.reason == "omitted-by-budget")
-      | "\($b)\t\(.reference)\t\(.topScore)"'
+      | select(.reason == "omitted-by-budget" or .reason == "omitted-by-relevance")
+      | "\($b)\t\(.reason)\t\(.reference)\t\(.topScore)"'
 done
 ```
 
 The pack's `Allowed source catalog` section carries the same information in
 prose: one line per declared source with its selected count and its top
-relevance score. `omitted-by-budget` means the source was dropped whole, and
-`partially-included` means the pack holds some of its blocks.
+relevance score. A source dropped whole carries one of two reasons:
+`omitted-by-budget` when the token budget left no room for it, or
+`omitted-by-relevance` when the task's own terms scored every one of its
+candidates zero and it was filtered out before any budget was spent — so a
+relevance omission repeats at every budget in the sweep, while a budget omission
+varies with it. `partially-included` means the pack holds some of the source's
+blocks.
 
 **Read the result as a table, not as a curve that converges.** Omission is not
 monotone in the budget, so a larger budget can yield a strictly worse pack.

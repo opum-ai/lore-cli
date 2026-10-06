@@ -8,9 +8,12 @@
  *   AC1 — every profile's pack carries it as its FIRST pinned source, with catalog reason
  *         `constitution`; the degraded unknown-profile pack, the workflow projection and the
  *         `--contract` binding seam too (a `--workspace` pack is deliberately untouched). With no
- *         Constitution every pack is byte-identical to the pre-LCLI-609 compiler, pinned as LITERAL
- *         digests measured on origin/dev e67b07af, never derived from the code under test. The
- *         positive control is the same fixture WITH a Constitution, which moves every digest.
+ *         Constitution every pack is byte-identical to the compiler at the measurement commit, pinned
+ *         as LITERAL digests, never derived from the code under test. Its output for this fixture
+ *         differs from the pre-LCLI-609 compiler (origin/dev e67b07af) only by LCLI-680's two
+ *         per-kind bumps — `agent.context.export` schemaVersion 2 -> 3 (the four JSON stdouts) and
+ *         `agent.workflow.projection` schemaVersion 1 -> 2 (the project stdout). The positive control
+ *         is the same fixture WITH a Constitution, which moves every digest.
  *   AC2 — R12: a profile-declared `Constitution` is not auto-pinned (positive control: the same
  *         document without the declaration is). Dedupe: a profile that references the Constitution
  *         itself — whole pin, heading pin, or ranked source — gets its own reference and no
@@ -196,9 +199,15 @@ async function allOutputs(): Promise<Record<string, string>> {
 }
 
 /**
- * {@link allOutputs} for {@link fixture}, MEASURED with the pre-LCLI-609 compiler (lore-cli origin/dev
- * e67b07af, its `src/` extracted and run against this same fixture). Literals, so a change that moved
- * a byte of a Constitution-free pack cannot also move the expectation.
+ * {@link allOutputs} for {@link fixture}, as LITERAL digests. The four context JSON stdouts were
+ * MEASURED at lore-cli 29a0b0d5 (its `src/` run against this same fixture), the tree that carries
+ * LCLI-680's per-kind `agent.context.export` schemaVersion 2 -> 3 bump; `project stdout` was
+ * re-measured at this branch's tip for LCLI-680 round 4, the per-kind `agent.workflow.projection`
+ * schemaVersion 1 -> 2 bump (its envelope's one moving byte — verified by diffing the raw output
+ * before and after: only `schemaVersion` changed). Their output differs from the pre-LCLI-609
+ * compiler (origin/dev e67b07af) only by those two bumps, which moved the four context JSON stdouts
+ * and the project stdout alone. Literals, so a change that moved a byte of a Constitution-free pack
+ * cannot also move the expectation.
  */
 const EMPTY = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const MISSING_PROFILE_WARNING = "45636b0bf0d0db5ab34cf781c2779386b26975c55ccf01859d55ca8d94e0d34e";
@@ -207,28 +216,28 @@ const PRE_LCLI_609_OUTPUTS: Record<string, string> = {
   "alpha plain stdout": "f8cc843fa78b10f8173620c2ff8ae99cba99639d23d96f25f0db821b98670a97",
   "alpha plain stderr": EMPTY,
   "alpha json exit": "0",
-  "alpha json stdout": "4d40cd60e8c26f63845a02d7ae766fae284ec7d22e8af3e89e56501ef73dc432",
+  "alpha json stdout": "d7681f891deba061b334e3629164e8607b4c74daaa5fb5c52e4243d73529e939",
   "alpha json stderr": EMPTY,
   "beta plain exit": "0",
   "beta plain stdout": "1690df8403428845cdd747de34d7836cd74f8597325de4fbe58f5f76024ee500",
   "beta plain stderr": EMPTY,
   "beta json exit": "0",
-  "beta json stdout": "19bce3f4102676d90ddbc66f59c83ee08c10e412a64435a2d6460c595d617c85",
+  "beta json stdout": "3c1c4bb6a0cf2e8e6d8747c9cf444ce78fca39c378a90057ae431301fa6dfd64",
   "beta json stderr": EMPTY,
   "lead plain exit": "0",
   "lead plain stdout": "f1e03cfb5ac4155bdca1cc1da9b2f63c04c8e84f380507bd1ef3ef649409c3ed",
   "lead plain stderr": EMPTY,
   "lead json exit": "0",
-  "lead json stdout": "d77686160afa4b83c968447569160788b51a6fa27b9487c251398363e75501c1",
+  "lead json stdout": "9e9cf650b9c0cc1a76c39b8e3e837389fade1bc87c37f3180e9b864fe8193da9",
   "lead json stderr": EMPTY,
   "no-such-profile plain exit": "0",
   "no-such-profile plain stdout": "0bde2fba63ff97248719098aec1766df3f5b0945eae15d68ad8f97066bb1710a",
   "no-such-profile plain stderr": MISSING_PROFILE_WARNING,
   "no-such-profile json exit": "0",
-  "no-such-profile json stdout": "eb0141a791d73f736a1e7660af6edc59c61d4cbf45f481ae9a08e8d51acd7b0f",
+  "no-such-profile json stdout": "edca1571d689ff63ff37a344dead8f41be2782af73529bb280deb133983f22b0",
   "no-such-profile json stderr": MISSING_PROFILE_WARNING,
   "project exit": "0",
-  "project stdout": "2277f852f6dcf88a652592b0e3fbfeffc8320c19189533c1274744a2f5ca73b2",
+  "project stdout": "528dac81bac8aa2bf21740c52f6a8da5c6e4d76619982ccda262cfd6c9ece090",
 };
 
 describe("AC1 — every profile's pack carries the built-in Constitution as a pinned source", () => {
@@ -334,8 +343,8 @@ describe("AC1 — every profile's pack carries the built-in Constitution as a pi
   });
 });
 
-describe("AC1 — with no Constitution, every pack is byte-identical to the pre-LCLI-609 compiler", () => {
-  test("byte-identical: every output matches the digests measured on origin/dev e67b07af", async () => {
+describe("AC1 — with no Constitution, every pack is byte-identical to the measurement compiler (29a0b0d5)", () => {
+  test("byte-identical: every output matches the digests measured at 29a0b0d5", async () => {
     fixture();
     const outputs = await allOutputs();
     expect(Object.keys(outputs)).toHaveLength(Object.keys(PRE_LCLI_609_OUTPUTS).length);
