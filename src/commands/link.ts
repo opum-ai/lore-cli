@@ -481,7 +481,7 @@ async function removeBackRefs(
       const remainingDocs = removeDoc(detail.documentation, docPath);
       // With no label to remove, an edit whose remaining `--doc` list is empty would carry no field
       // flag at all (`--doc` cannot clear, contract §2.4): it could not remove the doc entry, yet it
-      // would still be a write -- bumping Quest's workspace-wide revision -- and report `removed`
+      // would still be a write -- bumping that record's revision -- and report `removed`
       // for a back-reference it never touched (LCLI-614 N1). The queryable back-reference is the
       // label, and it is already gone; the doc entry lingers exactly as it does after an unlink
       // that removes the label (the accepted ADR-0009 tradeoff). So this is `already-absent`, with
@@ -580,8 +580,8 @@ const CONFLICT_RETRY_BASE_MS = 10;
 
 /**
  * The pause before retry `attempt` (0-based): 10–20ms, 20–30ms, 40–50ms, so the whole bounded
- * retry waits at most ~100ms. Jittered so two lore processes contending on one Quest workspace (whose
- * revision is workspace-wide) do not retry in lockstep and collide again (LCLI-614 N2).
+ * retry waits at most ~100ms. Jittered so two lore processes contending on the same Quest record do
+ * not retry in lockstep and collide again (LCLI-614 N2).
  */
 function conflictRetryDelayMs(attempt: number): number {
   return CONFLICT_RETRY_BASE_MS * 2 ** attempt + Math.floor(conflictRetryBackoff.random() * CONFLICT_RETRY_BASE_MS);
@@ -607,12 +607,15 @@ export const conflictRetryBackoff: { sleep: (ms: number) => Promise<void>; rando
  * tracker's own error kept as `cause` and quoted in the message) and the caller's bounded retry
  * re-reads and re-decides — an unlink then finds the label gone and reports `already-absent`.
  *
- * NOT decided by the revision: Quest's `revision` is WORKSPACE-WIDE (measured on 0.10.0 and 0.11.0
- * — editing T-1 changes T-2's viewed revision), so "the revision moved" is true after any write
- * anywhere and would turn a genuine refusal into a retry and then a misleading `drift` (LCLI-614
- * SF1). Never by message text either. A Quest actor-context failure is never converted, whatever
- * moved. Every other outcome rethrows the ORIGINAL error object: a non-`validation` error, an
- * unguarded edit, unchanged content, a record that is gone, or a re-read that itself fails.
+ * NOT decided by the revision. Quest scoped `revision` to a single RECORD in 0.12.0
+ * (opum-ai/quest-cli#415, QCLI-310), narrowing the WORKSPACE-WIDE hash that 0.10.0 and 0.11.0
+ * returned; measured here on the released 0.12.0, a write to T-1 leaves T-2's viewed revision
+ * UNMOVED (LCLI-645 AC1). It was never a safe signal either way — a same-record competing write and
+ * an unrelated write are indistinguishable from the hash alone — so keying a retry on "the revision
+ * moved" turned a genuine refusal into a retry and then a misleading `drift` (LCLI-614 SF1). Never
+ * by message text either. A Quest actor-context failure is never converted, whatever moved. Every
+ * other outcome rethrows the ORIGINAL error object: a non-`validation` error, an unguarded edit,
+ * unchanged content, a record that is gone, or a re-read that itself fails.
  *
  * "Guarded" means the precondition was actually SENT: `detail.revision` is defined only when the
  * adapter will pass it on (the Quest adapter reports a revision only when its manifest advertises

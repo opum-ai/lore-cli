@@ -177,12 +177,13 @@ describe("lore unlink vs a same-value competing removal, real quest (LCLI-614)",
   );
 
   test.skipIf(questBinary === null)(
-    "an unrelated write to ANOTHER task does not turn a missing-actor refusal into a retry (SF1: revision is workspace-wide)",
+    "an unrelated write to ANOTHER task does not turn a missing-actor refusal into a retry (SF1: revision does not move under an unrelated write)",
     async () => {
       // The review's reproduction: `lore unlink <gone> T-1 --allow-missing` with no actor, while
-      // something edits only T-2. Quest's revision is workspace-wide, so T-1's viewed revision moves;
-      // converting on that alone reported "task T-1 changed ..." as drift instead of the LCLI-459
-      // actor-context validation error.
+      // something edits only T-2. Since Quest 0.12.0 the revision is per-record (QCLI-310, LCLI-645),
+      // so T-1's viewed revision does NOT move under a T-2 write; on the 0.10.0/0.11.0 workspace-wide
+      // hash it did, and converting on that movement reported "task T-1 changed ..." as drift instead
+      // of the LCLI-459 actor-context validation error.
       expect(run(["git", "init", "-q", "."]).exitCode).toBe(0);
       expect(quest(["init", "--json"]).exitCode).toBe(0);
       const t1 = quest(["task", "create", "Target", "--label", "doc:stories/gone", ...HUMAN, "--json"]);
@@ -225,10 +226,19 @@ describe("lore unlink vs a same-value competing removal, real quest (LCLI-614)",
         expect((err as LoreError).type).toBe("validation");
         expect((err as LoreError).message).toContain("explicit actor declaration");
         expect(revisions).toHaveLength(1); // one attempt: not retried
-        // Positive control: T-1's viewed revision really did move under the T-2 write.
-        const after = (JSON.parse(quest(["task", "view", t1Id, "--json"]).stdout) as { data: { revision: string } })
+        // Positive control, retargeted for Quest 0.12.0's per-record revisions (QCLI-310, LCLI-645).
+        // The edit was GUARDED — the adapter actually sent T-1's `ifRevision` — so this is a real
+        // guarded edit, not an unguarded one that never carried a precondition.
+        const sent = revisions[0] ?? "";
+        expect(sent).not.toBe("");
+        // The competing T-2 write left T-1's viewed revision UNMOVED — the per-record property that
+        // makes a revision-movement retry unsafe (LCLI-614 SF1) — while T-2's own write did land.
+        const t1After = (JSON.parse(quest(["task", "view", t1Id, "--json"]).stdout) as { data: { revision: string } })
           .data.revision;
-        expect(after).not.toBe(revisions[0]);
+        expect(t1After).toBe(sent);
+        const t2Labels = (JSON.parse(quest(["task", "view", t2Id, "--json"]).stdout) as { data: { labels: string[] } })
+          .data.labels;
+        expect(t2Labels).toContain("bump-1");
       } finally {
         process.env = saved;
       }
