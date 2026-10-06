@@ -1117,8 +1117,13 @@ function contractLinkReference(link: TaskContractDocumentationLink): AgentProfil
  * {@link regionForReference} answers the same question by THROWING, which is the right shape for a
  * profile pin (a missing anchor there is a hard error) but the wrong one for a task-contract link,
  * where a missing OPTIONAL reference must become an omission instead (LCLI-681 AC3).
+ *
+ * Exported (LCLI-681 PR 2) so `lore read <id>#<slug>` reuses this one predicate rather than
+ * re-deriving "does this slug name a heading" a second time; a caller that needs the SECTION bytes
+ * alongside the answer pairs it with {@link regionForReference}, the same enumeration
+ * ({@link anchoredHeadings}) that backs both.
  */
-function anchorResolves(concept: Concept, anchor: string): boolean {
+export function anchorResolves(concept: Concept, anchor: string): boolean {
   return anchoredHeadings(concept.body).some((entry) => entry.slug === anchor);
 }
 
@@ -1312,8 +1317,13 @@ interface MarkdownRegion {
  * top-level headings and threw a PLAIN `Error` when the search missed, which the CLI reported as an
  * uncaught exit 1 with zero bytes of stdout for a profile the validator had accepted (LCLI-642
  * review F1).
+ *
+ * Exported (LCLI-681 PR 2) as the one section-slicing implementation: `lore read <id>#<slug>` takes
+ * the returned `body` and must not grow a second copy of this slicing. Its throw keeps its
+ * profile-pin wording for pin callers; `read` answers a missing anchor with its own diagnostic and
+ * calls {@link anchorResolves}, the same predicate, rather than relying on that throw.
  */
-function regionForReference(body: string, anchor?: string): MarkdownRegion {
+export function regionForReference(body: string, anchor?: string): MarkdownRegion {
   if (anchor === undefined) return { body };
   const headings = anchoredHeadings(body);
   const match = headings.find((entry) => entry.slug === anchor);

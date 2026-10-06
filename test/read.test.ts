@@ -145,6 +145,93 @@ describe("lore read — the exact, unbudgeted read (AC#3)", () => {
 });
 
 /**
+ * LCLI-681 AC2 (DEC-163 (5c)): `lore read <id>#<slug>` returns exactly the named section, reusing
+ * the `lore agent context` anchor resolution and section slicer, and leaves the whole-concept read
+ * untouched.
+ */
+describe("lore read — one section, addressed by anchor (LCLI-681 AC2)", () => {
+  /** A sectioned body: the first section is closed by the next heading, the second runs to the end. */
+  const SECTIONED_BODY = [
+    "# Evidence",
+    "",
+    "Intro paragraph.",
+    "",
+    "## First section",
+    "",
+    "First section body.",
+    "",
+    "## Second section",
+    "",
+    "Second section body.",
+    "",
+  ].join("\n");
+
+  beforeEach(() => {
+    mkdirSync(join(root, "docs/specs"), { recursive: true });
+    writeFileSync(
+      join(root, "docs/specs/sectioned.md"),
+      `---\ntype: Reference\ntitle: Sectioned\nsummary: sections to address\n---\n${SECTIONED_BODY}`,
+    );
+  });
+
+  test("returns exactly the named section, under the conceptId#anchor id the pack links emit", () => {
+    const data = JSON.parse(read(["specs/sectioned#first-section"])).data as {
+      id: string;
+      path: string;
+      type: string;
+      frontmatter: Record<string, unknown>;
+      body: string;
+      tokenEstimate: number;
+    };
+    expect(data.id).toBe("specs/sectioned#first-section");
+    expect(data.path).toBe("specs/sectioned.md");
+    expect(data.type).toBe("Reference");
+    expect(data.frontmatter.title).toBe("Sectioned");
+    // The section — its heading through the next heading that closes it — and nothing past it.
+    expect(data.body).toBe("## First section\n\nFirst section body.\n\n");
+    expect(data.body).not.toContain("Second section");
+    expect(data.tokenEstimate).toBeGreaterThan(0);
+  });
+
+  test("the last section runs to the end of the document", () => {
+    const data = JSON.parse(read(["specs/sectioned#second-section"])).data as { body: string };
+    expect(data.body).toBe("## Second section\n\nSecond section body.\n");
+  });
+
+  test("the whole-concept read is unchanged when no anchor is given", () => {
+    const data = JSON.parse(read(["specs/sectioned"])).data as { id: string; body: string };
+    expect(data.id).toBe("specs/sectioned");
+    expect(data.body).toBe(SECTIONED_BODY);
+  });
+
+  test("accepts the pack link's normalized spelling straight through", () => {
+    // `lore agent context`'s item reference is `conceptId#anchor`; that same string is the read arg.
+    const data = JSON.parse(read(["specs/sectioned#first-section"])).data as { id: string };
+    expect(data.id).toBe("specs/sectioned#first-section");
+  });
+
+  test("a slug naming no heading is a validation error that names the repair", () => {
+    const error = expectError("validation", () =>
+      runRead({
+        root,
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        args: ["specs/sectioned#no-such-section"],
+      }),
+    );
+    expect(error.message).toContain("no-such-section");
+    expect(error.hint).toContain("drop the #no-such-section");
+  });
+
+  test("a bare trailing # names no section and is reported, not silently read whole", () => {
+    expectError("validation", () =>
+      runRead({ root, output: JSON_CTX, stdout: capture(), stderr: capture(), args: ["specs/sectioned#"] }),
+    );
+  });
+});
+
+/**
  * LCLI-615: pretty renders the markdown; plain (flag or non-TTY) and --json stay byte-for-byte.
  *
  * Driven through `run()` with an injected `isTTY`, so the mode is chosen by the real resolver

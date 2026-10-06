@@ -891,48 +891,47 @@ When you need a concept's text rather than a budgeted pack, use
 
 Read **one concept exactly as authored** — its frontmatter mapping and its full
 body, verbatim. No assembly, no neighborhood, no ranking, and **no budget flag at
-all**: there is no configuration under which this command returns less than the
-whole concept.
+all**: it returns the whole concept unless the caller names one section by anchor,
+and no budget flag and no configuration ever returns less than what was named.
+`<id>#<slug>` returns exactly the section that heading slug bounds, spelled the way
+a `lore agent context` startup pack's link already emits it, so a pack link passes
+straight through.
 
 ```
 lore read adr/0021-typed-authored-relationships-and-claim-state
+lore read adr/0021-typed-authored-relationships-and-claim-state#decision
 ```
 
 | | |
 |---|---|
-| **Args** | `<id>` (normalized like [`rename`](#rename), so path/`.md`/`./` forms resolve) |
+| **Args** | `<id>[#<slug>]` (the id normalized like [`rename`](#rename), so path/`.md`/`./` forms resolve; `#<slug>` names a section) |
 | **Key flags** | none |
-| **Output** | `kind: read.concept` — `id`, `path`, `type`, `frontmatter`, `body`, `tokenEstimate`. **`--json` and plain** (`--plain`, or any non-TTY stdout) carry the body **verbatim**: plain is one header line, a blank line, then the body, so `lore read <id> \| tail -n +3` recovers it byte-for-byte. **Pretty** (a TTY with neither flag) prints the same header line and a blank line, then the body **rendered** for the terminal; the frontmatter is never rendered |
-| **Exit** | `0` ok · `2` bad usage (missing/extra `<id>`, unknown flag) · `3` `<id>` not found |
+| **Output** | `kind: read.concept` — `id` (`conceptId#anchor` when a section was named), `path`, `type`, `frontmatter`, `body`, `tokenEstimate`. **`--json` and plain** (`--plain`, or any non-TTY stdout) carry the body **verbatim**: plain is one header line, a blank line, then the body, so `lore read <id> \| tail -n +3` recovers it byte-for-byte. **Pretty** (a TTY with neither flag) prints the same header and a blank line, then the body **rendered** for the terminal; the frontmatter is never rendered |
+| **Exit** | `0` ok · `2` bad usage (missing/extra `<id>`, unknown flag) · `3` `<id>` not found · `6` `#<slug>` names no heading |
 
 Pretty rendering (LCLI-615) covers headings, emphasis, lists and task lists,
 block quotes, fenced code, links and GFM tables, word-wrapped to the terminal's
-width (80 columns when it reports none). Code blocks are never reflowed; an
-over-wide code line is cut and ends in `…`. Links print as `text (url)`, never as
-terminal hyperlinks. Every escape sequence, control byte and bidi or invisible
-format character in the body is removed before rendering, including ones that
-only appear once a character reference such as `&#x202E;` is decoded, so a
-document cannot drive the terminal it is read in. `NO_COLOR` removes all ANSI
-styling and keeps the layout. There is no flag for this: `--plain` is the opt-out,
-and pretty output is not a parsing target
+width (80 columns when it reports none). Code blocks never reflow; an over-wide
+line is cut and ends in `…`. Links print as `text (url)`. Every escape sequence,
+control byte and bidi or invisible format character in the body is removed before
+rendering, including ones decoded from a character reference such as `&#x202E;`, so
+a document cannot drive the terminal it is read in. `NO_COLOR` removes all ANSI
+styling and keeps the layout; there is no flag because `--plain` already is the
+opt-out, and pretty output is not a parsing target
 ([CLI contract §1.2](cli-contract.md#12-pretty)).
 
 **`--plain` is verbatim everywhere, terminal control sequences included.** It adds
 no styling of its own, but a document's own escape sequences, control bytes and
 bidi characters reach the terminal unchanged, exactly as `cat` would print them.
 Only pretty mode neutralises them. This holds even when stdout is a TTY, because
-agents also run under ptys and rely on `--plain` for exact reads, so its bytes do
-not depend on where they are sent (opum-agent ruling, 2026-09-28).
+agents also run under ptys and rely on `--plain` for exact reads (opum-agent
+ruling, 2026-09-28).
 
-It is a **separate operation** from [`context`](#context) rather than a flag on
-it, deliberately. `context` assembles and is lossy by design — it selects,
-orders, and enforces a ceiling. That is right for a caller feeding a model a
-budget it must not exceed and wrong for a caller who needs to quote a document;
-collapsing the two into one operation makes the caller who needs fidelity and the
-caller who needs cheapness share a code path, and one of them loses.
+It is a **separate operation** from [`context`](#context), deliberately: collapsing
+fidelity and cheapness onto one code path means one of them loses.
 
-`read` reports no `backend`, and that absence is deliberate: an exact read is
-always a direct filesystem load, so there is no backend choice to report.
+`read` reports no `backend`: an exact read is always a direct filesystem load, so
+there is no backend choice to report.
 
 ### `agent`
 
