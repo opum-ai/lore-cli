@@ -45,6 +45,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rename/`lore sync` argv. Not covered, and so not claimed: supersede, link, unlink, Ask
   Claude…, Open in editor, and the uncommitted-changes landing strip.
 
+### Changed
+
+- **The `lore agent context` pack footer now counts the eligible deck, and a
+  zero-score omission carries its own reason** (LCLI-680; ODOC-437 slice 1, AC1).
+  `total`, `shown` and `truncated` are computed over the candidates that remain
+  after the zero-score exclusion — selection step 4 of the opum-doc task-context
+  contract, `docs/specs/opum-task-context-and-evidence-contract.md`, which drops a
+  candidate scoring zero once the task's own terms rank the deck. Such an exclusion
+  happens before any budget is spent, so it is not a budget cut and no longer sets
+  `truncated`: a pack that holds every eligible candidate reports `truncated:
+  false` however many zero-score candidates it excluded (measured on this
+  repository's own `implementation` profile: the LCLI-289 pack now reads
+  `197 of 197; truncated: no` where it previously counted the full declared deck).
+  The exclusion stays visible — the catalog reports a source all of whose
+  candidates were excluded this way with the new reason `omitted-by-relevance`,
+  distinct from `omitted-by-budget`, so a zero-relevance exclusion is never
+  reported as a budget cut. Contract-visible for consumers of
+  `agent.context.export`: the meaning of the footer's `total`/`truncated` changes
+  as described, and a source dropped whole by relevance now reads a different
+  `reason` than one dropped by budget. The new `reason` value is additive under
+  cli-contract §7.1, as the workspace-only reasons were.
+
 ### Fixed
 
 - **The capacity measurement now stands for the largest pack a real task can compile** (LCLI-662;

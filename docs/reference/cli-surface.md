@@ -1017,6 +1017,24 @@ control. With no built-in Constitution, every pack, projection and exit code is
 byte-identical to what it was before. The new `reason` value is additive under
 cli-contract §7.1, as the workspace-only reasons were.
 
+**The pack footer counts the eligible deck, and a zero-score exclusion has its
+own reason (LCLI-680).** `total`, `shown` and `truncated` are computed over the
+candidates remaining after selection step 4 of the opum-doc task-context contract
+(`docs/specs/opum-task-context-and-evidence-contract.md` in opum-doc) — "Exclude
+zero-score search candidates unless a mandatory policy or task/graph relation
+independently requires them". Once the task's own terms rank the deck, a candidate
+that scored zero is excluded from the eligible deck rather than left to soak up
+unused capacity; that exclusion happens before any budget is spent, so it is not a
+budget cut and never sets `truncated` — a pack that holds every eligible candidate
+reports `truncated: false` however many zero-score candidates it excluded. The
+exclusion stays visible: the catalog reports a source all of whose candidates were
+excluded this way with the reason `omitted-by-relevance`, deliberately distinct
+from `omitted-by-budget`, so a zero-relevance exclusion is never reported as a
+budget cut. Mandatory anchors are never dropped for scoring zero — a profile's
+`pinned` reference is a separate, unranked tier, and the Constitution a profile
+ranks in `sources` is kept by the exclusion's own exception. The new `reason`
+value is additive under cli-contract §7.1, as the workspace-only reasons were.
+
 **`context --workspace <manifest> --repository <member-id>` (repeatable; LCLI-432) compiles the
 same profile-bounded pack across an explicit workspace manifest instead of this repository alone**
 — PLAN.md §4.6's cross-repository grounding. A profile's `sources`/`pinned` entries stay

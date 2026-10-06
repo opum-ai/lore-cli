@@ -186,7 +186,10 @@ The structured `AgentContextExport` contains:
 - `sections`: ranked selected items in emission order;
 - `catalog`: every allowed source with resolved id/path/title, candidate and
   selected counts, top score, token estimates, and included/omitted reason —
-  `constitution` for the auto-pin (LCLI-609), `pinned` for a profile's own pin;
+  `constitution` for the auto-pin (LCLI-609), `pinned` for a profile's own pin,
+  and for a source selection did not take, `omitted-by-relevance` when the
+  zero-score exclusion emptied it whole (LCLI-680) or `omitted-by-budget` when
+  the budget dropped it;
 - `queryHits`: up to three bundle-wide `lore query` hits for the task whose
   concept is not already pinned or selected in the pack, best first, each as
   `id`, optional `title` and `snippet`, `score`, and workspace `provenance`
@@ -200,7 +203,9 @@ The structured `AgentContextExport` contains:
   even the section's heading and omission line, so the pack has no section;
 - optional `profileMissing: true` when the named profile did not exist;
 - optional `delegates`: direct name, kind, and description entries;
-- `total`, `shown`, and `truncated` over ranked candidates; and
+- `total`, `shown`, and `truncated` computed over the eligible deck — the ranked
+  candidates remaining after the zero-score exclusion (LCLI-680; see
+  "Deterministic compilation" below); and
 - optional `write`: repo-relative path plus `created`, `updated`, or
   `unchanged`.
 
@@ -279,8 +284,39 @@ detail enters the pack.
    rendered with its own deduplicated query section, so a selection that swaps
    a longer hit into the section is admitted only if the whole pack still fits.
 10. Render canonical Markdown, compute the chars-per-four estimate, and hash the
-   exact bytes. Every successful pack is at or below `maxTokens`; `truncated` is
-   true whenever any ranked candidate was omitted.
+    exact bytes. Every successful pack is at or below `maxTokens`; `truncated` is
+    true whenever any **eligible** candidate was omitted.
+
+The zero-score exclusion (LCLI-680) is selection step 4 of the opum-doc
+task-context contract — `docs/specs/opum-task-context-and-evidence-contract.md`
+in opum-doc, "Exclude zero-score search candidates unless a mandatory policy or
+task/graph relation independently requires them" — applied between ranking (step
+6 above) and budget fill (step 9 above). Once the task's own terms actually rank
+the deck — at least one candidate scores above zero — a candidate that scored
+zero carries no relevance to this task and is excluded from the **eligible deck**,
+rather than left to soak up leftover capacity, which is what that contract's step
+6 forbids ("Never fill unused capacity with low-value sections"). A task that
+tokenizes to no term, or that no candidate matches, leaves the whole deck at zero
+— scoring produced no signal to separate candidates — so every candidate stays
+eligible in declaration and section order; there, zero is "unrankable", not
+"low value".
+
+`total`, `shown`, and `truncated` are computed over that eligible deck, not over
+every declared candidate. A zero-score exclusion removes a candidate from the
+deck before any budget is spent, so it is not a budget cut and never sets
+`truncated`: a pack that holds every candidate it was allowed to consider reports
+`truncated: false` however many zero-score candidates it excluded. **Mandatory
+anchors are never dropped for scoring zero.** The bundle's built-in Constitution
+that a profile ranks in `sources` (the LCLI-609 dedupe case) is mandatory policy,
+so it is kept even at zero score, and a profile's `pinned` evidence is a separate,
+unranked tier that never enters this filter at all.
+
+A zero-score exclusion stays **visible**: it is an omission carrying its own
+truthful reason, never a silent disappearance. The catalog reports a source all
+of whose candidates the exclusion emptied with the reason `omitted-by-relevance` —
+a relevance omission, deliberately distinct from `omitted-by-budget` — so a
+zero-relevance exclusion is never reported as a budget cut. Both reasons are
+additive under the CLI contract's §7.1.
 
 Repeated compilation over byte-identical profile, task, budget, bundle, and
 retrieval inputs is byte-identical across indexed and reference paths. An agent

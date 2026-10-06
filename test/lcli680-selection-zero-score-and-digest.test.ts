@@ -28,10 +28,21 @@
  * pack is `truncated` (the profile's 108000-token budget holds every eligible candidate), so a
  * section present in one and absent from the other is absent because it scored zero for that task,
  * not because the budget cut it.
+ *
+ * The selection-ACCOUNTING half of the slice is measured on a small controlled bundle rather than
+ * this repository's own: two facts it pins cannot be produced from the repo's current bundle. A
+ * source the zero-score filter empties WHOLE reads `omitted-by-relevance`, and that does not occur
+ * for the two real tasks above (every declared source keeps at least one matching section), so a
+ * controlled synthetic bundle is needed to reach it; and a Constitution RANKED in `sources` surviving
+ * a zero score needs a built-in Constitution, which this bundle has none of. The synthetic fixture
+ * compiles the same `compileAgentContext` code path the real packs do, so it measures the same
+ * behaviour, and the real-bundle cases below still assert the budget-omission reason is ABSENT
+ * whenever the budget was ample.
  */
 import { beforeAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { constitutionPathFor } from "../src/commands/agent-governance";
 import {
@@ -97,6 +108,49 @@ beforeAll(() => {
 
 function compile(task: string): AgentContextExport {
   return compileAgentContext(snapshot, graph, "implementation", task, undefined, constitutionPath);
+}
+
+/**
+ * A minimal controlled bundle for the selection-accounting cases: a built-in Constitution, one
+ * on-task source, and one wholly off-task source, with a profile that RANKS the Constitution in
+ * `sources` (LCLI-609's dedupe case, so no auto-pin). `compileSynthetic` returns the pack its own
+ * `compileAgentContext` call produces, exactly as the real packs are compiled.
+ */
+function compileSynthetic(): AgentContextExport {
+  const root = mkdtempSync(join(tmpdir(), "lore-lcli680-"));
+  try {
+    mkdirSync(join(root, "docs", "reference"), { recursive: true });
+    mkdirSync(join(root, "docs", "guides"), { recursive: true });
+    mkdirSync(join(root, ".lore", "agents"), { recursive: true });
+    writeFileSync(
+      join(root, "docs", "constitution.md"),
+      '---\ntype: Constitution\ntitle: Project constitution\nsummary: The principles this project holds.\nversion: 1.0.0\nratified: "2026-01-01"\nlast_amended: "2026-01-01"\namendment_authority: project maintainers\n---\n\n# Project constitution\n\n## Principles\n\nGovernance text with no task term.\n',
+    );
+    writeFileSync(
+      join(root, "docs", "reference", "rules.md"),
+      "---\ntype: Reference\ntitle: Checkout validation rules\nsummary: Rules for checkout validation.\n---\n\n# Rules\n\nCheckout validation checkout validation.\n",
+    );
+    writeFileSync(
+      join(root, "docs", "guides", "unrelated.md"),
+      "---\ntype: Reference\ntitle: Unrelated guide\nsummary: Storage engines.\n---\n\n# Unrelated\n\nStorage engines and caching.\n",
+    );
+    writeFileSync(
+      join(root, ".lore", "agents", "synthetic.toml"),
+      'schema_version = 1\nname = "synthetic"\ndescription = "Synthetic profile."\nkind = "specialist"\nmax_tokens = 4000\nsources = ["reference/rules", "guides/unrelated", "constitution"]\n',
+    );
+    const syntheticSnapshot = loadAgentProfiles(root);
+    const syntheticGraph = loadBundle(join(root, "docs"), { profile: loadProfile({ root }) });
+    return compileAgentContext(
+      syntheticSnapshot,
+      syntheticGraph,
+      "synthetic",
+      "checkout validation",
+      undefined,
+      constitutionPathFor(root),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 describe("LCLI-680 — zero-score filler is excluded from optional-evidence selection (CTX-01)", () => {
@@ -217,5 +271,59 @@ describe("LCLI-680 — changed inputs invalidate the pack digest (CTX-05)", () =
     // The profile is one of the inputs the spec names, and the profile revision is exactly what the
     // opum-agent-workflow/v1 projection pins. A changed profile is a changed pack.
     expect(asDocumentation.packDigest).not.toBe(asImplementation.packDigest);
+  });
+});
+
+describe("LCLI-680 — a zero-score exclusion carries its own reason, and a mandatory anchor survives", () => {
+  test("a source the zero-score filter empties whole reads `omitted-by-relevance`, never `omitted-by-budget`", () => {
+    const pack = compileSynthetic();
+    // The budget is ample (nothing is `truncated`), so a fully-omitted source cannot have been a
+    // budget cut: it is a relevance omission and must say so.
+    expect(pack.truncated).toBe(false);
+
+    const unrelated = pack.catalog.find((entry) => entry.reference === "guides/unrelated");
+    expect(unrelated).toBeDefined();
+    expect(unrelated?.selectedCount).toBe(0);
+    expect(unrelated?.reason).toBe("omitted-by-relevance");
+
+    // The reason is truthful: NO catalog entry claims a budget omission when the budget cut nothing.
+    expect(pack.catalog.some((entry) => entry.reason === "omitted-by-budget")).toBe(false);
+    // ...and the omission stays VISIBLE, on the rendered catalog line, not a silent disappearance.
+    expect(renderAgentContextMarkdown(pack)).toContain("- guides/unrelated (docs/guides/unrelated.md");
+    expect(renderAgentContextMarkdown(pack)).toContain("omitted-by-relevance");
+  });
+
+  test("a Constitution ranked in `sources` is kept even at zero score, while the task ranks the deck", () => {
+    const pack = compileSynthetic();
+
+    // The deck IS ranked — the on-task source scored above zero — so the zero-score filter is active.
+    const rules = pack.sections.find((item) => item.conceptId === "reference/rules");
+    expect(rules?.score ?? 0).toBeGreaterThan(0);
+
+    // The Constitution, ranked in `sources` (no auto-pin), scores zero and is kept anyway: it is
+    // mandatory policy, so the zero-score exclusion's exception retains it rather than dropping it.
+    const constitution = pack.sections.find((item) => item.conceptId === "constitution");
+    expect(constitution).toBeDefined();
+    expect(constitution?.score ?? 0).toBe(0);
+    expect(pack.catalog.find((entry) => entry.reference === "constitution")?.reason).toBe("included");
+  });
+
+  test("the real tasks drop zero-score candidates without reporting any budget omission", () => {
+    for (const task of [realTaskTitle(TASK_A_ID), realTaskTitle(TASK_B_ID)]) {
+      const pack = compile(task);
+      // Neither real pack is truncated, so every omission in it is a relevance omission; nothing may
+      // read `omitted-by-budget`.
+      expect(pack.truncated).toBe(false);
+      expect(pack.catalog.some((entry) => entry.reason === "omitted-by-budget")).toBe(false);
+    }
+  });
+
+  test("the profile's pinned mandatory reference is present however unrelated the task", () => {
+    // A task sharing no term with the pinned contract: the mandatory tier is not ranked, so its
+    // presence never depended on the task. This is the "mandatory anchor survives zero score" half
+    // for the pin tier, alongside the Constitution case above for the ranked tier.
+    const pack = compile("zebra quokka narwhal");
+    expect(pack.pinned.map((item) => item.conceptId)).toContain("reference/cli-contract");
+    expect(pack.sections.map((item) => item.conceptId)).not.toContain("reference/cli-contract");
   });
 });

@@ -53,7 +53,13 @@ export interface AgentContextCatalogEntry {
     | "constitution"
     | "included"
     | "partially-included"
+    // `omitted-by-budget` names a source the token budget dropped; `omitted-by-relevance` names one
+    // the zero-score exclusion emptied whole, before any budget was spent (LCLI-680). Two reasons,
+    // deliberately not folded into one: a consumer must be able to tell "the pack was too small"
+    // from "the source had nothing for this task", exactly as it tells the two workspace-only
+    // reasons apart. Additive under cli-contract §7.1.
     | "omitted-by-budget"
+    | "omitted-by-relevance"
     | "no-candidates"
     // The two workspace-only reasons (LCLI-432) name a DIFFERENT fact each, deliberately not
     // folded into one: "missing-in-member" is a doc gap in a member that loaded fine;
@@ -364,21 +370,27 @@ function compilePack(
     items: source.items.map((item) => scoredByKey.get(item.key) as RankedCandidate),
   }));
   const anyPositive = scored.some((candidate) => (candidate.score ?? 0) > 0);
-  // LCLI-680 (ODOC-437 slice 1), selection step 4: once the task's own terms actually rank the deck
-  // — at least one candidate scores above zero — a zero-score candidate carries no relevance to
-  // THIS task and is not optional evidence for it, so it is EXCLUDED from selection rather than left
-  // to soak up leftover budget, which is what step 6 forbids ("Never fill unused capacity with
-  // low-value sections"). `total` still counts every declared candidate, so the pack footer keeps
-  // saying how many of them it holds instead of quietly shrinking the deck.
+  // LCLI-680 (ODOC-437 slice 1). This filter is step 4 of the opum-doc task-context contract
+  // (`docs/specs/opum-task-context-and-evidence-contract.md` in opum-doc): "Exclude zero-score search
+  // candidates unless a mandatory policy or task/graph relation independently requires them". Once
+  // the task's own terms actually rank the deck — at least one candidate scores above zero — a
+  // zero-score candidate carries no relevance to THIS task and is not optional evidence for it, so
+  // it is EXCLUDED from the eligible deck rather than left to soak up leftover budget, which is what
+  // the same contract's step 6 forbids ("Never fill unused capacity with low-value sections").
+  // `total`/`shown`/`truncated` therefore count that ELIGIBLE deck, not every declared candidate: an
+  // excluded zero-score candidate was never this task's ranked evidence, so a pack that holds every
+  // eligible candidate is not "truncated", and the exclusion — which happens before any budget is
+  // spent — is never reported as a budget cut.
   //
-  // The exception is the fallback selection step 7 already names: a task that tokenizes to no term,
-  // or one no candidate matches, leaves the WHOLE deck at zero — scoring produced no signal to
-  // separate candidates — so every candidate stays eligible, in declaration and section order.
-  // There, zero is not "low value" but "unrankable", and dropping the deck on it would empty a pack
-  // the profile deliberately declared. An independently-required candidate is exempt too, in one
-  // shape: the bundle's built-in Constitution that a profile ranked in `sources` (LCLI-609's dedupe
-  // case) is mandatory policy, so it is kept even at zero score. Ordinary profile pins never reach
-  // this filter at all — they are `pinned`, a separate tier.
+  // The exception is the fallback selection step this compiler's spec already names (the in-repo
+  // spec's step 7): a task that tokenizes to no term, or one no candidate matches, leaves the WHOLE
+  // deck at zero — scoring produced no signal to separate candidates — so every candidate stays
+  // eligible, in declaration and section order. There, zero is not "low value" but "unrankable", and
+  // dropping the deck on it would empty a pack the profile deliberately declared. An
+  // independently-required candidate is exempt too, in one shape: the bundle's built-in Constitution
+  // that a profile ranked in `sources` (LCLI-609's dedupe case) is mandatory policy, so it is kept
+  // even at zero score. Ordinary profile pins never reach this filter at all — they are `pinned`, a
+  // separate tier.
   const ordered = [...scored]
     .filter((candidate) => !anyPositive || (candidate.score ?? 0) > 0 || candidate.conceptId === constitutionId)
     .sort((a, b) => {
@@ -390,6 +402,13 @@ function compilePack(
         compareCodeUnits(a.reference, b.reference)
       );
     });
+  // Every candidate the filter above removed for scoring zero — never a budget cut. A source all of
+  // whose candidates land in this set was dropped for zero relevance, not for want of room, so
+  // `assemble` reports it with the `omitted-by-relevance` reason rather than `omitted-by-budget`.
+  const eligibleKeys = new Set(ordered.map((candidate) => candidate.key));
+  const excludedByRelevance = new Set(
+    scored.filter((candidate) => !eligibleKeys.has(candidate.key)).map((candidate) => candidate.key),
+  );
   const delegates = delegateSummaries(profile, snapshot);
   const rankedQueryHits = withQueryHits ? bundleQueryHits(workspace?.queryGraph ?? graph, task, provenanceById) : [];
   const build = (selection: readonly RankedCandidate[], queryHitLimit: number, querySection = withQueryHits) =>
@@ -401,12 +420,13 @@ function compilePack(
       pinned,
       selection,
       scoredSources,
+      excludedByRelevance,
       // `total`/`truncated` count the ELIGIBLE deck, not every declared candidate (LCLI-680): a
-      // candidate excluded by step 4 is not part of this task's ranked evidence, so a pack that
-      // holds every candidate it was allowed to consider is not "truncated" merely because the deck
-      // also carried unrelated zero-score filler. The catalog still reports each source's full
-      // declared candidate count, and an excluded one reads `omitted-by-budget` — the same omission
-      // vocabulary as before this change, not a new reason.
+      // candidate excluded by the zero-score filter is not part of this task's ranked evidence, so a
+      // pack that holds every candidate it was allowed to consider is not "truncated" merely because
+      // the deck also carried unrelated zero-score filler. The catalog still reports each source's
+      // full declared candidate count, and a source the filter emptied whole reads
+      // `omitted-by-relevance` — its own reason, never a budget cut.
       ordered.length,
       delegates,
       workspace,
@@ -666,6 +686,9 @@ export function measureAgentProfileCapacity(
       pinned,
       selected,
       sources,
+      // The capacity measurement never runs the zero-score filter (every candidate carries a fixed
+      // positive score), so nothing is excluded by relevance and every omission is a budget one.
+      new Set<string>(),
       candidates.length,
       delegates,
       undefined,
@@ -828,6 +851,7 @@ function assemble(
   pinned: readonly AgentContextItem[],
   selected: readonly RankedCandidate[],
   sources: readonly SourceCandidates[],
+  excludedByRelevance: ReadonlySet<string>,
   total: number,
   delegates: readonly AgentDelegateSummary[] | undefined,
   workspace: WorkspaceCompileExtras | undefined,
@@ -870,7 +894,9 @@ function assemble(
       source.items.length === 0
         ? "no-candidates"
         : count === 0
-          ? "omitted-by-budget"
+          ? source.items.every((item) => excludedByRelevance.has(item.key))
+            ? "omitted-by-relevance"
+            : "omitted-by-budget"
           : count === source.items.length
             ? "included"
             : "partially-included";
