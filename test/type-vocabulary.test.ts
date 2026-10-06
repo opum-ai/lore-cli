@@ -21,6 +21,7 @@ describe("buildTypeVocabulary — the default (story-convention) profile", () =>
       "Reference",
       "Constitution",
       "Constants",
+      "Standard",
       "Attested Computation",
     ]);
   });

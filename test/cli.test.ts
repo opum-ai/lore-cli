@@ -662,8 +662,8 @@ describe("cli — schema dispatch", () => {
     expect(run(argv("schema", "export", "--json"), c)).toBe(0);
     const envelope = JSON.parse(c.stdout.text()) as { kind: string; data: { count: number } };
     expect(envelope.kind).toBe("schema.result");
-    // 10 files for 9 types: Arc's deprecated `Story` alias owns one of its own (LCLI-553).
-    expect(envelope.data.count).toBe(10);
+    // 11 files for 10 types: Arc's deprecated `Story` alias owns one of its own (LCLI-553).
+    expect(envelope.data.count).toBe(11);
     expect(existsSync(join(cwd, ".lore/schemas/reference.schema.json"))).toBe(true);
   });
 

@@ -299,6 +299,13 @@ an anchor that does not exist is already `broken-anchor`. `lore check` reports
 what it read as `readCounts` (entries, comparable and not-comparable sources,
 references) beside its findings.
 
+The lore-only `Standard` type (DEC-167 (3), LCLI-687) is declared on every OKF
+version for the same reason as Constitution and Constants. It adds no rule of its
+own beyond six required sections — Purpose, Scope, Rules, Enforcement, Exceptions
+and Related — which `lore validate`'s `required-section` rule enforces by
+PRESENCE, not order. No field beyond the shared base set is required, and
+`status` keeps the base `draft | stable | deprecated` enum.
+
 `relation-version-drift` stays a warning on principle rather than convenience.
 Lore can see that a cited version moved; it cannot see whether the citing
 argument still holds, so it reports possible impact and never a correctness

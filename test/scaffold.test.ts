@@ -44,6 +44,7 @@ describe("scaffold — the empty-bundle plan", () => {
       ".lore/schemas/reference.schema.json",
       ".lore/schemas/constitution.schema.json",
       ".lore/schemas/constants.schema.json",
+      ".lore/schemas/standard.schema.json",
       ".lore/schemas/attested-computation.schema.json",
       ".lore/templates/.gitkeep",
       "docs/index.md",
@@ -104,6 +105,12 @@ describe("scaffold — exported JSON Schemas", () => {
       type: "Constants",
       spellings: ["Constants"],
       required: ["type", "version", "last_reviewed", "owner"],
+    },
+    {
+      path: ".lore/schemas/standard.schema.json",
+      type: "Standard",
+      spellings: ["Standard"],
+      required: ["type"],
     },
     {
       path: ".lore/schemas/attested-computation.schema.json",

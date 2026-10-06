@@ -47,7 +47,7 @@ describe("slugForTypeName — LOWER-KEBAB slug (AC#7)", () => {
 });
 
 describe("defaultProfile — the built-in story convention (AC#3)", () => {
-  test("compiles the story types, then Constitution and Constants, then OKF 0.2 Attested Computation", () => {
+  test("compiles the story types, then Constitution, Constants and Standard, then OKF 0.2 Attested Computation", () => {
     expect([...defaultProfile().types.keys()]).toEqual([
       "Epic",
       "Arc",
@@ -57,14 +57,16 @@ describe("defaultProfile — the built-in story convention (AC#3)", () => {
       "Reference",
       "Constitution",
       "Constants",
+      "Standard",
       "Attested Computation",
     ]);
   });
 
-  test("the built-in OKF 0.1 consumer profile omits the OKF 0.2 spec type but keeps lore-only Constitution and Constants", () => {
+  test("the built-in OKF 0.1 consumer profile omits the OKF 0.2 spec type but keeps the lore-only types", () => {
     // The 0.1 exclusion is for OKF SPEC families (Attested Computation is OKF 0.2 section 10).
     // Constitution is a lore producer type in no OKF spec, declared on every version (OPAG-425 R1,
     // LCLI-595) -- otherwise every 0.1 or legacy-missing bundle would leave its shape unenforced.
+    // Standard joins it there (DEC-167 (3), LCLI-687) for the same reason.
     const legacy = profileForBundle(defaultProfile(), { okfVersion: "0.1", source: "declared" });
     expect([...legacy.types.keys()]).toEqual([
       "Epic",
@@ -75,6 +77,7 @@ describe("defaultProfile — the built-in story convention (AC#3)", () => {
       "Reference",
       "Constitution",
       "Constants",
+      "Standard",
     ]);
     expect(legacy.okfVersion).toBe("0.1");
   });

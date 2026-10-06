@@ -7,7 +7,7 @@
   "properties": {
     "type": {
       "type": "string",
-      "const": "Attested Computation"
+      "const": "Standard"
     },
     "title": {
       "anyOf": [
@@ -432,112 +432,10 @@
         "in-progress",
         "done"
       ]
-    },
-    "runtime": {
-      "type": "string",
-      "minLength": 1
-    },
-    "parameters": {
-      "anyOf": [
-        {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "name": {
-                "type": "string",
-                "minLength": 1
-              },
-              "type": {
-                "type": "string",
-                "minLength": 1
-              },
-              "required": {
-                "type": "boolean"
-              }
-            },
-            "required": [
-              "name",
-              "type",
-              "required"
-            ],
-            "additionalProperties": {}
-          }
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "computation": {
-      "anyOf": [
-        {
-          "type": "string",
-          "minLength": 1
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "executor": {
-      "anyOf": [
-        {
-          "type": "object",
-          "properties": {
-            "resource": {
-              "type": "string",
-              "minLength": 1
-            },
-            "receipt": {
-              "anyOf": [
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          },
-          "required": [
-            "resource"
-          ],
-          "additionalProperties": {}
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "attester": {
-      "anyOf": [
-        {
-          "type": "object",
-          "properties": {
-            "resource": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "required": [
-            "resource"
-          ],
-          "additionalProperties": {}
-        },
-        {
-          "type": "null"
-        }
-      ]
     }
   },
   "required": [
-    "type",
-    "runtime"
+    "type"
   ],
   "additionalProperties": {}
 }

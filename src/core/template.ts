@@ -52,6 +52,7 @@ import {
   defaultProfile,
   type Profile,
   profileForBundle,
+  STANDARD_TYPE,
   slugForTypeName,
 } from "./profile";
 import { canonicalType, validateFrontmatter } from "./schema";
@@ -624,6 +625,32 @@ Bump version for every change: MAJOR removes an entry or changes a value, MINOR 
 `;
 
 /**
+ * The Standard body template (DEC-167 (3), LCLI-687): the six sections an Opum engineering standard
+ * carries, in the order the profile requires them. The comment states the format's conventions —
+ * numbered MUST/SHOULD rules, each naming the check that enforces it — which DEC-167 (2) fixes.
+ */
+const STANDARD_TEMPLATE = `
+# {{title}}
+
+<!--
+Each rule is a numbered line stating MUST or SHOULD, and names the check that enforces it (or
+"unenforced", so the gap is visible). Link fleet policy rather than restating it.
+-->
+
+## Purpose
+
+## Scope
+
+## Rules
+
+## Enforcement
+
+## Exceptions
+
+## Related
+`;
+
+/**
  * The built-in body template content lore ships for its story-convention and OKF types — the
  * zero-config fallback when no `.lore/templates/<type>.md` is present. Keyed by canonical type
  * name (a plain string map, **independent of the active profile**): a custom-profile type lore
@@ -640,6 +667,7 @@ const BUILTIN_TEMPLATES: Readonly<Record<string, string>> = Object.freeze({
   Arc: ARC_TEMPLATE,
   [CONSTITUTION_TYPE]: CONSTITUTION_TEMPLATE,
   [CONSTANTS_TYPE]: CONSTANTS_TEMPLATE,
+  [STANDARD_TYPE]: STANDARD_TEMPLATE,
   [ATTESTED_COMPUTATION_TYPE]: ATTESTED_COMPUTATION_TEMPLATE,
 });
 
