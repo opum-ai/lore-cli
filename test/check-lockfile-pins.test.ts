@@ -52,7 +52,7 @@ const RELEASE_WORKFLOW = join(REPO_ROOT, ".github", "workflows", "release.yml");
 const PLATFORMS = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"];
 const MANIFEST_VERSION = "0.12.0";
 const LOCKED_VERSION = "0.11.0";
-const PINNED_BUN = "1.4.2";
+const PINNED_BUN = "1.3.14";
 
 interface FixtureOptions {
   /** Platforms to declare in root optionalDependencies. */

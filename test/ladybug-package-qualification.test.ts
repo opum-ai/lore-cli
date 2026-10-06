@@ -498,7 +498,7 @@ describe("matching-host Ladybug package qualification", () => {
     const report = {
       schema: LADYBUG_PACKAGE_QUALIFICATION_SCHEMA,
       mode: "qualification",
-      platform: { bun: "1.4.2", os: "linux", cpu: "x64" },
+      platform: { bun: "1.3.14", os: "linux", cpu: "x64" },
       repository: { commit: "a".repeat(40) },
       ladybug: {
         core: "0.19.0",
@@ -540,7 +540,7 @@ describe("matching-host Ladybug package qualification", () => {
 
     const windowsFallback = {
       ...report,
-      platform: { bun: "1.4.2", os: "win32", cpu: "x64" },
+      platform: { bun: "1.3.14", os: "win32", cpu: "x64" },
       ladybug: { ...report.ladybug, embeddedNativeIndexVerified: false },
       native: {
         ...report.native,
@@ -554,7 +554,7 @@ describe("matching-host Ladybug package qualification", () => {
     expect(() => assertPackageQualificationReport(windowsFallback)).not.toThrow();
     const windowsArmFallback = {
       ...windowsFallback,
-      platform: { bun: "1.4.2", os: "win32", cpu: "arm64" },
+      platform: { bun: "1.3.14", os: "win32", cpu: "arm64" },
       ladybug: {
         core: "0.19.0",
         optionalPackage: null,
@@ -600,7 +600,7 @@ describe("matching-host Ladybug package qualification", () => {
     expect(() =>
       assertPackageQualificationReport({
         ...windowsLoadFailure,
-        platform: { bun: "1.4.2", os: "win32", cpu: "arm64" },
+        platform: { bun: "1.3.14", os: "win32", cpu: "arm64" },
       }),
     ).toThrow("approved native platform verdict"); // the same shape on another platform
 
