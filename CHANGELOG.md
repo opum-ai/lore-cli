@@ -57,7 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `truncated`: a pack that holds every eligible candidate reports `truncated:
   false` however many zero-score candidates it excluded (measured on this
   repository's own `implementation` profile: the LCLI-289 pack now reads
-  `197 of 197; truncated: no` where it previously counted the full declared deck).
+  `198 of 198; truncated: no` where it previously counted the full declared deck;
+  the count moved from 197 to 198 because this change's own documentation edits
+  grew the declared deck).
   The exclusion stays visible — the catalog reports a source all of whose
   candidates were excluded this way with the new reason `omitted-by-relevance`,
   distinct from `omitted-by-budget`, so a zero-relevance exclusion is never

@@ -983,8 +983,9 @@ With `--workspace --repository`, hits come from the selected members only, as
 `lore query --workspace` narrows. A `context` call naming a profile that
 does not exist no longer exits `3`: it degrades to that section plus a warning
 (in the pack and on stderr) and `profileMissing: true`, exit `0`; because that
-remaps an exit code, the `agent.context.export` envelope carries
-`schemaVersion` `2` (cli-contract §5.6, §7.1). The section is for the plain pack
+remaps an exit code, the `agent.context.export` envelope carried
+`schemaVersion` `2` (cli-contract §5.6, §7.1); LCLI-680 raised that value to
+`3` for the eligible-deck change below, superseding the `2` here. The section is for the plain pack
 only: `project` and `context --contract` embed a hit-free pack whose bytes,
 `packDigest` and `inputRevisions` are the pre-LCLI-575 ones, so no document
 outside the profile's catalog can move a pinned digest. The decision record is
