@@ -884,12 +884,16 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
   {
     name: "read",
     summary: "Read one concept exactly as authored, with no budget and no assembly",
-    args: "<id>",
+    // `<id>[#<slug>]` is ONE positional (LCLI-681 AC2): an optional `#<slug>` names a section.
+    args: "<id>[#<slug>]",
     flags: [],
     json: true,
     kind: "read.concept",
     exitCodes: exitCodesFor(["bundle"]),
-    examples: ["lore read adr/0021-typed-authored-relationships-and-claim-state"],
+    examples: [
+      "lore read adr/0021-typed-authored-relationships-and-claim-state",
+      "lore read adr/0021-typed-authored-relationships-and-claim-state#decision",
+    ],
   },
   {
     name: "agent",

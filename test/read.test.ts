@@ -145,6 +145,161 @@ describe("lore read — the exact, unbudgeted read (AC#3)", () => {
 });
 
 /**
+ * LCLI-681 AC2 (DEC-163 (5c)): `lore read <id>#<slug>` returns exactly the named section, reusing
+ * the `lore agent context` anchor resolution and section slicer, and leaves the whole-concept read
+ * untouched.
+ */
+describe("lore read — one section, addressed by anchor (LCLI-681 AC2)", () => {
+  /** A sectioned body: the first section is closed by the next heading, the second runs to the end. */
+  const SECTIONED_BODY = [
+    "# Evidence",
+    "",
+    "Intro paragraph.",
+    "",
+    "## First section",
+    "",
+    "First section body.",
+    "",
+    "## Second section",
+    "",
+    "Second section body.",
+    "",
+  ].join("\n");
+
+  /** A body whose second-level heading sits INSIDE a blockquote — the LCLI-647 nested-anchor case. */
+  const NESTED_BODY = [
+    "# Nested",
+    "",
+    "Intro.",
+    "",
+    "> ## Quoted section",
+    ">",
+    "> Quoted body text.",
+    "",
+    "## Plain section",
+    "",
+    "Plain body.",
+    "",
+  ].join("\n");
+
+  beforeEach(() => {
+    mkdirSync(join(root, "docs/specs"), { recursive: true });
+    writeFileSync(
+      join(root, "docs/specs/sectioned.md"),
+      `---\ntype: Reference\ntitle: Sectioned\nsummary: sections to address\n---\n${SECTIONED_BODY}`,
+    );
+    writeFileSync(
+      join(root, "docs/specs/nested.md"),
+      `---\ntype: Reference\ntitle: Nested\nsummary: a heading inside a blockquote\n---\n${NESTED_BODY}`,
+    );
+    mkdirSync(join(root, ".lore/agents"), { recursive: true });
+  });
+
+  test("returns exactly the named section, under the conceptId#anchor id the pack links emit", () => {
+    const data = JSON.parse(read(["specs/sectioned#first-section"])).data as {
+      id: string;
+      path: string;
+      type: string;
+      frontmatter: Record<string, unknown>;
+      body: string;
+      tokenEstimate: number;
+    };
+    expect(data.id).toBe("specs/sectioned#first-section");
+    expect(data.path).toBe("specs/sectioned.md");
+    expect(data.type).toBe("Reference");
+    expect(data.frontmatter.title).toBe("Sectioned");
+    // The section — its heading through the next heading that closes it — and nothing past it.
+    expect(data.body).toBe("## First section\n\nFirst section body.\n\n");
+    expect(data.body).not.toContain("Second section");
+    expect(data.tokenEstimate).toBeGreaterThan(0);
+  });
+
+  test("the last section runs to the end of the document", () => {
+    const data = JSON.parse(read(["specs/sectioned#second-section"])).data as { body: string };
+    expect(data.body).toBe("## Second section\n\nSecond section body.\n");
+  });
+
+  test("the whole-concept read is unchanged when no anchor is given", () => {
+    const data = JSON.parse(read(["specs/sectioned"])).data as { id: string; body: string };
+    expect(data.id).toBe("specs/sectioned");
+    expect(data.body).toBe(SECTIONED_BODY);
+  });
+
+  test("normalizes the id the same way with an anchor as without (path/`.md`/`./`)", () => {
+    // The `#` must be split off BEFORE id normalization, and the id part must still normalize, or
+    // `lore read ./x.md#slug` silently misses (read.ts's own comment warns of exactly this).
+    const data = JSON.parse(read(["./specs/sectioned.md#first-section"])).data as { id: string; body: string };
+    expect(data.id).toBe("specs/sectioned#first-section");
+    expect(data.body).toBe("## First section\n\nFirst section body.\n\n");
+  });
+
+  test("resolves a heading nested in a blockquote through the shared slicer", () => {
+    // The reason read reuses `regionForReference` (LCLI-647): a heading inside a container resolves,
+    // is scoped to that container, and does not run past it into the sibling `## Plain section`.
+    const data = JSON.parse(read(["specs/nested#quoted-section"])).data as { id: string; body: string };
+    expect(data.id).toBe("specs/nested#quoted-section");
+    expect(data.body).toContain("Quoted body text.");
+    expect(data.body).not.toContain("Plain body.");
+  });
+
+  test("a `lore agent context` pack link passes straight through — pack and read return the same bytes", async () => {
+    // The ruling's actual claim: the `<id>#<slug>` spelling is the one the pack's link already emits,
+    // so a pack link passes straight through. Build a real pack, take a pinned item's `reference`,
+    // feed that exact string to read, and require the two to return the SAME section body.
+    writeFileSync(
+      join(root, ".lore/agents", "roundtrip.toml"),
+      [
+        "schema_version = 1",
+        'name = "roundtrip"',
+        'description = "Round-trip a pack section link into a read."',
+        'kind = "specialist"',
+        "max_tokens = 3000",
+        'pinned = ["specs/sectioned#first-section"]',
+        "sources = []",
+        "",
+      ].join("\n"),
+    );
+    const stdout = capture();
+    const code = await run(["bun", "lore", "agent", "context", "roundtrip", "--task", "first section body", "--json"], {
+      cwd: root,
+      stdout,
+      stderr: capture(),
+      isTTY: false,
+    });
+    expect(code).toBe(0);
+    const pack = JSON.parse(stdout.text()) as {
+      data: { pinned: { reference: string; body: string }[] };
+    };
+    const pin = pack.data.pinned[0];
+    if (pin === undefined) throw new Error("the pack carried no pinned item");
+    expect(pin.reference).toBe("specs/sectioned#first-section");
+    const data = JSON.parse(read([pin.reference])).data as { id: string; body: string };
+    expect(data.id).toBe("specs/sectioned#first-section");
+    expect(data.body).toBe(pin.body);
+  });
+
+  test("a slug naming no heading is a validation error that names the repair", () => {
+    const error = expectError("validation", () =>
+      runRead({
+        root,
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        args: ["specs/sectioned#no-such-section"],
+      }),
+    );
+    expect(error.message).toContain("no-such-section");
+    expect(error.hint).toContain("drop the #no-such-section");
+  });
+
+  test("a bare trailing # names no section and is reported, not silently read whole", () => {
+    expectError("validation", () =>
+      runRead({ root, output: JSON_CTX, stdout: capture(), stderr: capture(), args: ["specs/sectioned#"] }),
+    );
+  });
+});
+
+/**
  * LCLI-615: pretty renders the markdown; plain (flag or non-TTY) and --json stay byte-for-byte.
  *
  * Driven through `run()` with an injected `isTTY`, so the mode is chosen by the real resolver
