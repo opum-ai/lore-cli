@@ -5,10 +5,10 @@
  * spec criteria the slice advances:
  *
  *   CTX-01 — two UNRELATED REAL lore-cli tasks that share required policy select DIFFERENT optional
- *            evidence, and unrelated zero-score sections are ABSENT from both packs. Selection step 4
- *            ("Exclude zero-score search candidates unless a mandatory policy or task/graph relation
- *            independently requires them"); step 6 ("Never fill unused capacity with low-value
- *            sections").
+ *            evidence, and unrelated zero-score sections are ABSENT from both packs. The opum-doc
+ *            contract's selection step 4 ("Exclude zero-score search candidates unless a mandatory
+ *            policy or task/graph relation independently requires them"); its step 6 ("Never fill
+ *            unused capacity with low-value sections").
  *   CTX-06 — repeated identical compilation yields an identical content digest and an identical
  *            selection, with wall-clock timestamps excluded from the reusable content prefix.
  *   CTX-05 — the other half of that identity: CHANGED inputs give a DIFFERENT digest, so a cache
