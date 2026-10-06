@@ -11,6 +11,9 @@
  *            sections").
  *   CTX-06 — repeated identical compilation yields an identical content digest and an identical
  *            selection, with wall-clock timestamps excluded from the reusable content prefix.
+ *   CTX-05 — the other half of that identity: CHANGED inputs give a DIFFERENT digest, so a cache
+ *            keyed on it cannot serve a stale pack. Measured here on a changed task input and on a
+ *            changed profile input (the spec names both among the invalidating inputs).
  *
  * It measures the repository's OWN tasks and bundle, never a synthetic fixture: both task texts are
  * read verbatim from the committed tracker (LCLI-289 and LCLI-380), and both packs compile the real
@@ -191,5 +194,28 @@ describe("LCLI-680 — repeated identical compilation is byte-identical (CTX-06)
     for (const keyName of Object.keys(first)) {
       expect(keyName).not.toMatch(/time|date|stamp|instant|clock/i);
     }
+  });
+});
+
+describe("LCLI-680 — changed inputs invalidate the pack digest (CTX-05)", () => {
+  test("a different task input yields a different content digest, not a reused one", () => {
+    const packA = compile(realTaskTitle(TASK_A_ID));
+    const packB = compile(realTaskTitle(TASK_B_ID));
+
+    // CTX-05's other half: an identity that survives an unchanged input is worthless unless a
+    // CHANGED input moves it. Different task text, different rendered pack, different digest — so a
+    // pack cached against this digest cannot be served for a task whose text has moved.
+    expect(packB.packDigest).not.toBe(packA.packDigest);
+    expect(renderAgentContextMarkdown(packB)).not.toBe(renderAgentContextMarkdown(packA));
+  });
+
+  test("a different role profile input yields a different content digest", () => {
+    const task = realTaskTitle(TASK_A_ID);
+    const asImplementation = compileAgentContext(snapshot, graph, "implementation", task, undefined, constitutionPath);
+    const asDocumentation = compileAgentContext(snapshot, graph, "documentation", task, undefined, constitutionPath);
+
+    // The profile is one of the inputs the spec names, and the profile revision is exactly what the
+    // opum-agent-workflow/v1 projection pins. A changed profile is a changed pack.
+    expect(asDocumentation.packDigest).not.toBe(asImplementation.packDigest);
   });
 });
