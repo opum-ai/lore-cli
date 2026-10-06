@@ -36,7 +36,7 @@ describe("core/manifest — shape and invariants", () => {
     const m = buildManifest();
     expect(m.schemaVersion).toBe(1);
     // A breaking change scoped to one kind is advertised here, not by bumping every kind (LCLI-575, LCLI-680).
-    expect(m.kindSchemaVersions).toEqual({ "agent.context.export": 3 });
+    expect(m.kindSchemaVersions).toEqual({ "agent.context.export": 3, "agent.workflow.projection": 2 });
     expect(Object.isFrozen(m.kindSchemaVersions)).toBe(true);
     // Every override must name a kind some command emits: a typo would advertise a bump that the
     // intended envelope never carries.

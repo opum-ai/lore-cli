@@ -50,6 +50,17 @@ LCLI-575 was correct when it was written and is left as the historical record; `
 now advertises `kindSchemaVersions: {"agent.context.export": 3}`. The per-kind scope and the
 per-kind read discipline described above are unchanged.
 
+Amended — 2026-10-05 (LCLI-680, round 4): **`agent.workflow.projection` becomes a second
+exception, at `2`.** The opum-agent-workflow/v1 projection embeds an evidence pack compiled by the
+*same* selection code as `lore agent context`, so the eligible-deck change above moves `total`,
+`shown`, `selectedCount`, `topScore` and `reason` inside that embedded pack for identical inputs — a
+§7.1 meaning change, in a second kind that carries its own copy of the moved fields. opum-doc
+DEC-163 amendment (4) (opum-ai/opum-doc#750) ruled the projection a consumer contract and
+**rejected** exempting it from the bump. `lore help --json` now advertises
+`kindSchemaVersions: {"agent.context.export": 3, "agent.workflow.projection": 2}`. The projection's
+embedded pack stays hit-free; the bump is for the fields that move inside it, not for any hit
+addition.
+
 ## Context
 
 lore is **CLI-primary** (see [ADR-0009: CLI-primary, MCP deferred](0004-cli-first-skill-bridge-mcp-deferred.md)): the same command surface serves humans at a terminal, Claude Code via the generated agent bridge, and CI gates. These three audiences have incompatible default expectations, and the CLI must satisfy all of them from one binary without per-caller configuration.

@@ -118,7 +118,7 @@ describe("agent workflow projection (opum-agent-workflow/v1)", () => {
       data: Record<string, unknown>;
     };
     expect(envelope.kind).toBe("agent.workflow.projection");
-    expect(envelope.schemaVersion).toBe(1);
+    expect(envelope.schemaVersion).toBe(2);
     const data = envelope.data as {
       contract: string;
       version: string;
@@ -311,7 +311,7 @@ describe("agent workflow projection — hit-free pack (LCLI-575, ADR Amendment 1
     );
   });
 
-  test("cli: `agent project` stays schemaVersion 1 with a hit-free context", async () => {
+  test("cli: `agent project` carries schemaVersion 2 with a hit-free context (LCLI-680)", async () => {
     fixture();
     specialist();
     unlistedDoc();
@@ -320,7 +320,7 @@ describe("agent workflow projection — hit-free pack (LCLI-575, ADR Amendment 1
     const args = ["project", "frontend-dev", "--request", "request.json"];
     expect(await runAgent({ root, output: JSON_OUTPUT, args, stdout, retrieval: retrieval() })).toBe(0);
     const envelope = JSON.parse(stdout.text()) as { schemaVersion: number; data: { context: object } };
-    expect(envelope.schemaVersion).toBe(1);
+    expect(envelope.schemaVersion).toBe(2);
     expect(Object.hasOwn(envelope.data.context, "queryHits")).toBe(false);
   });
 });

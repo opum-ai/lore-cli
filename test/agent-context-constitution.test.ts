@@ -9,11 +9,11 @@
  *         `constitution`; the degraded unknown-profile pack, the workflow projection and the
  *         `--contract` binding seam too (a `--workspace` pack is deliberately untouched). With no
  *         Constitution every pack is byte-identical to the compiler at the measurement commit, pinned
- *         as LITERAL digests measured at 29a0b0d5, never derived from the code under test. Its output
- *         for this fixture differs from the pre-LCLI-609 compiler (origin/dev e67b07af) only by
- *         LCLI-680's per-kind `agent.context.export` schemaVersion 2 -> 3 bump, which moved the four
- *         JSON stdouts alone. The positive control is the same fixture WITH a Constitution, which
- *         moves every digest.
+ *         as LITERAL digests, never derived from the code under test. Its output for this fixture
+ *         differs from the pre-LCLI-609 compiler (origin/dev e67b07af) only by LCLI-680's two
+ *         per-kind bumps — `agent.context.export` schemaVersion 2 -> 3 (the four JSON stdouts) and
+ *         `agent.workflow.projection` schemaVersion 1 -> 2 (the project stdout). The positive control
+ *         is the same fixture WITH a Constitution, which moves every digest.
  *   AC2 — R12: a profile-declared `Constitution` is not auto-pinned (positive control: the same
  *         document without the declaration is). Dedupe: a profile that references the Constitution
  *         itself — whole pin, heading pin, or ranked source — gets its own reference and no
@@ -199,11 +199,15 @@ async function allOutputs(): Promise<Record<string, string>> {
 }
 
 /**
- * {@link allOutputs} for {@link fixture}, MEASURED at lore-cli 29a0b0d5 (its `src/` run against this
- * same fixture), the tree that carries LCLI-680's per-kind `agent.context.export` schemaVersion 2 -> 3
- * bump. Its output differs from the pre-LCLI-609 compiler (origin/dev e67b07af) only by that bump,
- * which moved the four JSON stdouts alone. Literals, so a change that moved a byte of a
- * Constitution-free pack cannot also move the expectation.
+ * {@link allOutputs} for {@link fixture}, as LITERAL digests. The four context JSON stdouts were
+ * MEASURED at lore-cli 29a0b0d5 (its `src/` run against this same fixture), the tree that carries
+ * LCLI-680's per-kind `agent.context.export` schemaVersion 2 -> 3 bump; `project stdout` was
+ * re-measured at this branch's tip for LCLI-680 round 4, the per-kind `agent.workflow.projection`
+ * schemaVersion 1 -> 2 bump (its envelope's one moving byte — verified by diffing the raw output
+ * before and after: only `schemaVersion` changed). Their output differs from the pre-LCLI-609
+ * compiler (origin/dev e67b07af) only by those two bumps, which moved the four context JSON stdouts
+ * and the project stdout alone. Literals, so a change that moved a byte of a Constitution-free pack
+ * cannot also move the expectation.
  */
 const EMPTY = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const MISSING_PROFILE_WARNING = "45636b0bf0d0db5ab34cf781c2779386b26975c55ccf01859d55ca8d94e0d34e";
@@ -233,7 +237,7 @@ const PRE_LCLI_609_OUTPUTS: Record<string, string> = {
   "no-such-profile json stdout": "edca1571d689ff63ff37a344dead8f41be2782af73529bb280deb133983f22b0",
   "no-such-profile json stderr": MISSING_PROFILE_WARNING,
   "project exit": "0",
-  "project stdout": "2277f852f6dcf88a652592b0e3fbfeffc8320c19189533c1274744a2f5ca73b2",
+  "project stdout": "528dac81bac8aa2bf21740c52f6a8da5c6e4d76619982ccda262cfd6c9ece090",
 };
 
 describe("AC1 — every profile's pack carries the built-in Constitution as a pinned source", () => {

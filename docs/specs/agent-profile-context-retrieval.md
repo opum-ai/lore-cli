@@ -163,9 +163,10 @@ That exit-code remap bumps the `agent.context.export` envelope to
 `schemaVersion` `2` (the ADR's Amendment 1, opum-doc `main` a8bb596). LCLI-680
 raises it to `3`: the pack footer's `total`/`shown`/`truncated` now count the
 eligible deck (the candidates left after the zero-score exclusion of selection
-step 4), a meaning change to existing fields. Both are per-`kind` bumps, scoped
-to `agent.context.export` alone ([CLI contract](../reference/cli-contract.md)
-§5.6, §7.1). Contract mode
+step 4), a meaning change to existing fields; the same change bumps
+`agent.workflow.projection` to `2` too, since it embeds a pack from the same
+selection code. All are per-`kind` bumps
+([CLI contract](../reference/cli-contract.md) §5.6, §7.1). Contract mode
 (`--contract`) is unchanged and still fails closed with
 `OPUM_WORKFLOW_LORE_ABSENT`. Invalid arguments are usage exit
 `2`; output permission failures are `4`; a differing output collision is `5`;
@@ -266,8 +267,10 @@ detail enters the pack.
    step entirely and carries no query-hit field (the ADR's Amendment 1, opum-doc
    `main` a8bb596): its `inputRevisions` lists only the catalog's sources, so a
    whole-bundle hit would let an unlisted document change a pinned
-   `packDigest`. That pack is byte-identical to the pre-LCLI-575 one. For the
-   plain pack, run the task through the
+   `packDigest`. That pack stays hit-free, but the same selection code applies
+   LCLI-680's eligible-deck change inside it, so it is no longer byte-identical
+   to the pre-LCLI-575 one (hence the envelope's `schemaVersion` `2`,
+   cli-contract §5.6). For the plain pack, run the task through the
    exact `lore query` ranking over the whole bundle, not just the profile, and
    keep hits whose concept is not already pinned or selected, up to three. The
    section is body-free (id, title, snippet), so the profile allowlist still

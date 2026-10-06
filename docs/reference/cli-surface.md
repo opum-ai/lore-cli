@@ -985,13 +985,16 @@ does not exist no longer exits `3`: it degrades to that section plus a warning
 (in the pack and on stderr) and `profileMissing: true`, exit `0`; because that
 remaps an exit code, the `agent.context.export` envelope carried
 `schemaVersion` `2` (cli-contract §5.6, §7.1); LCLI-680 raised that value to
-`3` for the eligible-deck change below, superseding the `2` here. The section is for the plain pack
-only: `project` and `context --contract` embed a hit-free pack whose bytes,
-`packDigest` and `inputRevisions` are the pre-LCLI-575 ones, so no document
-outside the profile's catalog can move a pinned digest. The decision record is
-opum-doc's ADR "Make lore agent context always query-augmented" (ODOC-265) and
-its Amendment 1 (opum-doc `main` a8bb596), grounded in LCLI-573's measurement
-that the profile pack alone selected the answer for 8 of 69 real questions.
+`3` for the eligible-deck change below, and bumped `agent.workflow.projection`
+to `2` too, superseding the `2` and `1` here. The section is for the plain pack
+only: `project` and `context --contract` embed a hit-free pack, so no document
+outside the profile's catalog can move a pinned digest — but that pack is
+compiled by the same selection code, so it carries LCLI-680's eligible-deck
+change and is no longer byte-identical to the pre-LCLI-575 ones. The decision
+record is opum-doc's ADR "Make lore agent context always query-augmented"
+(ODOC-265) and its Amendment 1 (opum-doc `main` a8bb596), grounded in LCLI-573's
+measurement that the profile pack alone selected the answer for 8 of 69 real
+questions.
 
 **Every pack pins the bundle's built-in Constitution first (LCLI-609).** This
 implements opum-doc's ADR "Add Constitution and Constants document types to

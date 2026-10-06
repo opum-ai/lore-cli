@@ -244,8 +244,11 @@ export function parseWorkflowBinding(raw: string): WorkflowBinding {
  * query section `lore agent context` carries since LCLI-575 ranks the whole
  * bundle, while `inputRevisions` below lists only the catalog's source files —
  * so a hit would let a document `inputRevisions` never names change a pinned
- * `packDigest`. Without it, the pack's bytes and digest are exactly the
- * pre-LCLI-575 ones, and every input that can move the digest is listed.
+ * `packDigest`. Every input that can move the digest is listed. The pack is NOT
+ * byte-identical to the pre-LCLI-575 one, though: it is compiled by the same
+ * selection code, so LCLI-680's eligible-deck change to `total`/`shown`/
+ * `truncated` moves inside it too — which is why the `agent.workflow.projection`
+ * envelope carries `schemaVersion` `2` (LCLI-680; cli-contract §5.6).
  *
  * The bundle's built-in Constitution, when `options.constitutionPath` names one,
  * IS auto-pinned here, as in every other pack (LCLI-609, OPAG-425 R8 as

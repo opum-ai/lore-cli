@@ -255,11 +255,15 @@ describe("success envelope (cli-contract §2)", () => {
   });
 
   test("a per-kind override bumps only its own kind (cli-contract §7.1, LCLI-575, LCLI-680)", () => {
-    expect(KIND_SCHEMA_VERSIONS).toEqual({ "agent.context.export": 3 });
+    expect(KIND_SCHEMA_VERSIONS).toEqual({ "agent.context.export": 3, "agent.workflow.projection": 2 });
     expect(schemaVersionFor("agent.context.export")).toBe(3);
     expect(successEnvelope("agent.context.export", {}).schemaVersion).toBe(3);
-    // Every other kind, including the workflow projection that embeds a (hit-free) pack, stays 1.
-    for (const kind of ["agent.workflow.projection", "agent.profile", "query.results", "toString", "unknown.kind"]) {
+    // The projection embeds a pack compiled by the same selection code, so LCLI-680's eligible-deck
+    // change moves fields inside it too — it carries its own override (§7.1).
+    expect(schemaVersionFor("agent.workflow.projection")).toBe(2);
+    expect(successEnvelope("agent.workflow.projection", {}).schemaVersion).toBe(2);
+    // Every other kind stays 1 — a change to the two kinds above breaks no consumer of these.
+    for (const kind of ["agent.profile", "query.results", "toString", "unknown.kind"]) {
       expect(schemaVersionFor(kind)).toBe(SCHEMA_VERSION);
     }
   });

@@ -87,9 +87,18 @@ export const SCHEMA_VERSION = 1;
  *   (LCLI-680; ODOC-437 slice 1) is a second, independent §7.1 bump: `total`, `shown` and
  *   `truncated` now count the ELIGIBLE deck — the candidates left after the zero-score exclusion —
  *   so their values move for identical inputs, a meaning change to existing fields.
+ * - `agent.workflow.projection` → `2`: raised from the base `1` by LCLI-680 (ODOC-437 slice 1), on
+ *   the same eligible-deck change and by the same §7.1 rule. The projection EMBEDS an evidence pack
+ *   compiled by the one shared selection code, so `total`, `shown`, `selectedCount`, `topScore` and
+ *   `reason` move inside that embedded pack for identical inputs — the meaning change above, in a
+ *   second `kind` that carries its own copy of the moved fields. opum-doc DEC-163 amendment (4)
+ *   (opum-ai/opum-doc#750) ruled that this `kind` is a consumer contract and REJECTED exempting it,
+ *   so it is bumped rather than left at `1`. The embedded pack stays hit-free; the bump is for the
+ *   fields that move inside it, not for any query-hit addition.
  */
 export const KIND_SCHEMA_VERSIONS: Readonly<Record<string, number>> = Object.freeze({
   "agent.context.export": 3,
+  "agent.workflow.projection": 2,
 });
 
 /** The `schemaVersion` a success envelope of `kind` carries. */
