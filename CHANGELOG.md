@@ -47,6 +47,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The pinned Bun moves back to `1.3.14`, and `engines.bun` narrows to `>=1.3.14`** (LCLI-686;
+  DEC-163 (8), opum-doc, 2026-10-06). The LCLI-660 two-window measurement found the Linux epoll
+  runtime race on the `1.4.2` pin (10/20 and 17/20 CI runs) and never on `1.3.14` (0/20 in both
+  windows), and that race is what failed the required ubuntu `lint · typecheck · test` leg even on
+  diffs that cannot reach a test. The `1.4.2` floor existed for the LCLI-648 parser panic, which
+  DEC-163 (8) works around by avoiding the construct — lore's source carries no `Bun.Transpiler`
+  and no top-level `declare` binding, so the panic cannot reach shipped code. The floor test that
+  exercises the repro now skips itself on `1.3.14` and names LCLI-648, re-arming if the pin moves
+  forward again. Breaking for consumers who read `engines.bun`, as LCLI-648's move was.
+
 - **The `lore agent context` pack footer now counts the eligible deck, and a
   zero-score omission carries its own reason** (LCLI-680; ODOC-437 slice 1, AC1).
   `total`, `shown` and `truncated` are computed over the candidates that remain
