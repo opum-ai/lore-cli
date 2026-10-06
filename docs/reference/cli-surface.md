@@ -946,7 +946,7 @@ lore agent list
 lore agent show frontend-dev
 lore agent context frontend-dev --task "Add accessible dialog focus management"
 lore agent context frontend-dev --task-file task.txt --max-tokens 6000
-lore agent context frontend-dev --contract opum-agent-workflow/v1 --request binding.json --json
+echo '{"contract":"opum-agent-workflow","supportedVersions":[1],"requestId":"<32hex>","taskId":"T-1","profileId":"frontend-dev"}' | lore agent context frontend-dev --task T-1 --contract opum-agent-workflow/v1 --json
 echo '{"contract":"opum-agent-workflow","supportedVersions":[1],"requestId":"<32hex>","taskId":"T-1","profileId":"frontend-dev"}' | lore agent context frontend-dev --contract opum-agent-workflow/v1 --json
 lore agent context orchestration --task "audit the release pipeline" --workspace .lore/workspaces/opum-family.json --repository opum-agent --repository lore-cli
 ```
