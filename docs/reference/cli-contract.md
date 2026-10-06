@@ -501,7 +501,10 @@ context <name>` naming a profile with no `.lore/agents/<name>.toml` was
 query section only, `profileMissing: true` in `--json`, a `> Warning:` line in
 the pack, and the same warning on stderr. Nothing else moves: `agent show` and
 `agent project` on an unknown profile still exit `3`, and `agent context
---contract` still fails closed with `OPUM_WORKFLOW_LORE_ABSENT`.
+--contract` still fails closed — a missing profile named by the binding yields
+`OPUM_WORKFLOW_LORE_ABSENT`, while no binding at all (empty or unreadable
+stdin) yields `OPUM_WORKFLOW_LORE_BINDING_ABSENT` (the split is LCLI-679,
+documenting the two markers a bindingless or not-found call emits).
 
 The binding decision is opum-doc's
 `docs/adr/make-lore-agent-context-always-query-augmented.md` (ODOC-265, at

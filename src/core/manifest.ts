@@ -935,7 +935,7 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
       "lore agent show frontend-dev",
       'lore agent context frontend-dev --task "implement the checkout form"',
       "lore agent project frontend-dev --request request.json",
-      "lore agent context frontend-dev --task LCLI-348 --contract opum-agent-workflow/v1 --json",
+      'echo \'{"contract":"opum-agent-workflow","supportedVersions":[1],"requestId":"<32hex>","taskId":"T-1","profileId":"frontend-dev"}\' | lore agent context frontend-dev --contract opum-agent-workflow/v1 --json',
     ],
   },
   {
