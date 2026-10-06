@@ -898,6 +898,12 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     flags: [
       { name: "task", takesValue: true, summary: "Assigned task text for context compilation" },
       { name: "task-file", takesValue: true, summary: "Read task text from a repo-relative path or stdin (-)" },
+      {
+        name: "task-contract",
+        takesValue: true,
+        summary:
+          "Compile the lean task-startup pack from a TaskContract/v1 JSON document at a repo-relative path or stdin (-)",
+      },
       { name: "max-tokens", takesValue: true, summary: "Override the profile's chars/4 token budget" },
       { name: "out", takesValue: true, summary: "Atomically save canonical Markdown to a repo-relative path" },
       { name: "force", takesValue: false, summary: "Replace a differing regular --out file" },
