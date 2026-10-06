@@ -35,6 +35,7 @@ import {
 } from "../core/agent-workspace-context";
 import { compareCodeUnits } from "../core/order";
 import { loadReferenceRetrievalGraph, type RetrievalGraphLoader } from "../core/retrieval";
+import { parseTaskContract } from "../core/task-contract";
 import type { WorkspaceRetrievalSelection } from "../core/workspace-retrieval";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
@@ -90,6 +91,12 @@ type AgentAction =
       readonly out?: string;
       readonly force: boolean;
       readonly contract?: string;
+      /**
+       * `--task-contract <file|->` (LCLI-681): a controller-composed `TaskContract/v1` document
+       * whose `documentation` links seed the lean startup pack. Exclusive with `--contract` and
+       * with `--task`/`--task-file`, since the contract supplies the task itself.
+       */
+      readonly taskContract?: string;
       /** `--workspace`/`--repository` (LCLI-432): compile across an explicit workspace manifest. */
       readonly workspace?: WorkspaceRetrievalSelection;
     }
@@ -145,7 +152,12 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
       return runContextContract({ ...action, contract: action.contract }, options);
     }
 
-    const task = resolveTask(action, options);
+    // LCLI-681: a task contract is a THIRD input. It supplies the task itself — its `purpose` is
+    // the ranking signal `--task` text would otherwise be — and its `documentation` links seed the
+    // pack. Parsed here, once, so a malformed contract fails before any compilation work.
+    const taskContract =
+      action.taskContract === undefined ? undefined : parseTaskContract(readTaskContract(action, options));
+    const task = taskContract === undefined ? resolveTask(action, options) : taskContract.purpose;
     // The bundle's built-in Constitution is auto-pinned into every bare pack, first among pinned
     // sources (LCLI-609; opum-doc ADR "Add Constitution and Constants document types to lore", R8
     // as clarified by Amendment 4). Discovered exactly as `lore agents` discovers it, so a
@@ -171,7 +183,15 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
     const profile = findAgentProfile(compileSnapshot, action.name);
     let data =
       action.workspace === undefined
-        ? compileAgentContext(compileSnapshot, retrieval.graph, profile.name, task, action.maxTokens, constitutionPath)
+        ? compileAgentContext(
+            compileSnapshot,
+            retrieval.graph,
+            profile.name,
+            task,
+            action.maxTokens,
+            constitutionPath,
+            taskContract,
+          )
         : await compileWorkspaceAgentContext(options.root, compileSnapshot, profile.name, task, action.maxTokens, {
             manifestPath: action.workspace.manifestPath,
             memberIds: action.workspace.memberIds,
@@ -404,7 +424,7 @@ async function runAgentProject(action: Extract<AgentAction, { kind: "project" }>
 
 function parseAgentArgs(args: readonly string[]): AgentAction {
   const parsed = parseCommandArgs(args, "agent");
-  for (const flag of ["task", "task-file", "max-tokens", "out", "force", "request", "contract"]) {
+  for (const flag of ["task", "task-file", "task-contract", "max-tokens", "out", "force", "request", "contract"]) {
     assertFlagAtMostOnce(parsed, flag);
   }
   const action = parsed.positionals[0];
@@ -434,7 +454,16 @@ function parseAgentArgs(args: readonly string[]): AgentAction {
         "run `lore agent project <name> --request <file>` (use --request - for stdin)",
       );
     }
-    for (const flag of ["task", "task-file", "max-tokens", "out", "force", "workspace", "repository"]) {
+    for (const flag of [
+      "task",
+      "task-file",
+      "task-contract",
+      "max-tokens",
+      "out",
+      "force",
+      "workspace",
+      "repository",
+    ]) {
       if (parsed.flags.has(flag)) {
         throw usage(`--${flag} is not a \`lore agent project\` flag`, "`lore agent project` takes only --request");
       }
@@ -454,6 +483,7 @@ function parseAgentArgs(args: readonly string[]): AgentAction {
   }
   const task = nonEmptyOption(parsed, "task");
   const taskFile = nonEmptyOption(parsed, "task-file");
+  const taskContract = nonEmptyOption(parsed, "task-contract");
   const contract = nonEmptyOption(parsed, "contract");
   const request = nonEmptyOption(parsed, "request");
   const requestFile = nonEmptyOption(parsed, "request-file");
@@ -465,8 +495,26 @@ function parseAgentArgs(args: readonly string[]): AgentAction {
     );
   }
   // Contract mode consumes the binding from stdin or --request; --task is an
-  // optional exact consistency flag. Non-contract mode still needs task text.
-  if (contract === WORKFLOW_CONTRACT_SELECTOR) {
+  // optional exact consistency flag. --task-contract (LCLI-681) is a THIRD input: a
+  // controller-composed TaskContract that supplies the task itself, so it is exclusive with the
+  // binding seam, the request envelope, and the free-text task. Everything else still needs text.
+  if (taskContract !== undefined) {
+    if (contract !== undefined || request !== undefined || requestFile !== undefined) {
+      throw usage(
+        "--task-contract is not available with --contract/--request",
+        "pass either the binding seam or a task contract, not both",
+      );
+    }
+    if (task !== undefined || taskFile !== undefined) {
+      throw usage("--task-contract supplies the task itself", "drop --task/--task-file, or drop --task-contract");
+    }
+    if (workspace !== undefined) {
+      throw usage(
+        "--task-contract is not available with --workspace",
+        "compile the task contract against the local bundle, or drop --task-contract",
+      );
+    }
+  } else if (contract === WORKFLOW_CONTRACT_SELECTOR) {
     if (taskFile !== undefined) {
       throw usage("--task-file is not available with --contract", "pass the binding on stdin or via --request");
     }
@@ -494,6 +542,7 @@ function parseAgentArgs(args: readonly string[]): AgentAction {
     name: parsed.positionals[1] as string,
     ...(task === undefined ? {} : { task }),
     ...(taskFile === undefined ? {} : { taskFile }),
+    ...(taskContract === undefined ? {} : { taskContract }),
     ...(request === undefined ? {} : { request }),
     ...(requestFile === undefined ? {} : { requestFile }),
     ...(maxTokens === undefined ? {} : { maxTokens }),
@@ -526,6 +575,29 @@ function parsePositiveInteger(flag: string, value: string): number {
   if (!Number.isSafeInteger(parsed)) throw usage(`${flag} "${value}" is too large`, "pass a smaller integer");
   if (parsed < 1) throw usage(`invalid ${flag} "${value}"`, `pass a positive integer, e.g. ${flag} 8000`);
   return parsed;
+}
+
+/**
+ * Read the `--task-contract` document (LCLI-681). `-` reads stdin, exactly like `--task-file`; a
+ * path is repo-confined, exactly like `--request`, so a contract cannot escape the bundle root.
+ */
+function readTaskContract(action: Extract<AgentAction, { kind: "context" }>, options: AgentCommandOptions): string {
+  const path = action.taskContract as string;
+  if (path === "-") {
+    try {
+      return readFileSync(0, "utf8");
+    } catch (cause) {
+      throw new LoreError(
+        "denied",
+        "cannot read the task contract from stdin",
+        "pipe a TaskContract/v1 JSON object to stdin",
+        { path: "-", cause: cause instanceof Error ? cause.message : String(cause) },
+      );
+    }
+  }
+  const target = confineRepoFile(path, options.root, "--task-contract");
+  assertNoSymlinkInPath(options.root, target.relPath);
+  return readSource(target.absPath, target.relPath);
 }
 
 function resolveTask(action: Extract<AgentAction, { kind: "context" }>, options: AgentCommandOptions): string {
@@ -577,7 +649,7 @@ function confineOutFile(out: string, root: string): { absPath: string; relPath: 
 function confineRepoFile(
   path: string,
   root: string,
-  flag: "--out" | "--task-file" | "--request",
+  flag: "--out" | "--task-file" | "--task-contract" | "--request",
 ): { absPath: string; relPath: string } {
   const absPath = resolve(root, path);
   const rel = relative(root, absPath);

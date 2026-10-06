@@ -18,6 +18,12 @@ import { type BundleGraph, estimateTokens, frontmatterScalar, nodeText } from ".
 import type { Concept } from "./concept";
 import { compareCodeUnits } from "./order";
 import { query, scoreBm25Records } from "./query";
+import {
+  CONTEXT_REQUIRED_SOURCE_MISSING,
+  isMandatoryLink,
+  type ParsedTaskContract,
+  type TaskContractDocumentationLink,
+} from "./task-contract";
 import type { WorkspaceRecordProvenance } from "./workspace-contract";
 
 export interface AgentContextItem {
@@ -198,6 +204,26 @@ export interface AgentContextExport {
    */
   readonly skippedWorkspaceMembers?: readonly { readonly memberId: string; readonly reason: string }[];
   readonly delegates?: readonly AgentDelegateSummary[];
+  /**
+   * Present only when compiled with `--task-contract` (LCLI-681; ODOC-437 slice 2): the lean
+   * task-startup fields the controller's `TaskContract` carries — purpose, acceptance criteria and
+   * dependencies — so a worker starts from the task itself rather than from full task notes, a
+   * fleet backlog, or a parent transcript. Its `documentation` links are seeded as pins (the
+   * mandatory ones) and its missing OPTIONAL ones are recorded in {@link omissions}.
+   */
+  readonly contract?: {
+    readonly task: ParsedTaskContract["task"];
+    readonly purpose: string;
+    readonly phase: string;
+    readonly acceptance: ParsedTaskContract["acceptance"];
+    readonly dependencies: ParsedTaskContract["dependencies"];
+  };
+  /**
+   * Present only with `--task-contract`: the contract's OPTIONAL documentation links that resolved
+   * to no concept, each carrying its reason. A missing MANDATORY link is never an omission — it
+   * fails the whole compile with `CONTEXT_REQUIRED_SOURCE_MISSING` (AC3).
+   */
+  readonly omissions?: readonly { readonly source: string; readonly reason: string }[];
   readonly total: number;
   readonly shown: number;
   readonly truncated: boolean;
@@ -243,10 +269,20 @@ export function compileAgentContext(
   task: string,
   maxTokens?: number,
   constitutionPath?: string,
+  contract?: ParsedTaskContract,
 ): AgentContextExport {
   validateAgentProfileReferences(snapshot, graph);
   const profile = findAgentProfile(snapshot, profileName);
-  return compileAgentContextForProfile(profile, graph, task, maxTokens, snapshot, undefined, constitutionPath);
+  return compileAgentContextForProfile(
+    profile,
+    graph,
+    task,
+    maxTokens,
+    snapshot,
+    undefined,
+    constitutionPath,
+    contract,
+  );
 }
 
 /**
@@ -297,6 +333,7 @@ export function compileAgentContextForProfile(
   snapshot: AgentProfileSnapshot,
   workspace?: WorkspaceCompileExtras,
   constitutionPath?: string,
+  contract?: ParsedTaskContract,
 ): AgentContextExport {
   return compilePack(
     profile,
@@ -307,6 +344,7 @@ export function compileAgentContextForProfile(
     workspace,
     true,
     constitutionPath,
+    contract,
   ) as AgentContextExport;
 }
 
@@ -328,6 +366,7 @@ function compilePack(
   workspace: WorkspaceCompileExtras | undefined,
   withQueryHits: boolean,
   constitutionPath?: string,
+  contract?: ParsedTaskContract,
 ): AgentContextPack {
   const effectiveBudget = maxTokens ?? profile.maxTokens;
   if (!Number.isSafeInteger(effectiveBudget) || effectiveBudget < 1) {
@@ -350,6 +389,40 @@ function compilePack(
     ...(autoPin === undefined ? [] : [itemForReference(autoPin, graph, undefined, provenanceById)]),
     ...profile.pinned.map((reference) => itemForReference(reference, graph, undefined, provenanceById)),
   ];
+  // LCLI-681 (ODOC-437 slice 2). Selection step 2 of the task-context contract: "Seed from task
+  // links. Read mandatory anchors first. Prefer a stable section reference to a whole long spec."
+  // A MANDATORY link that resolves to no concept fails the whole compile with the stable marker; a
+  // missing OPTIONAL one is dropped into `omissions` with its reason instead of failing (AC3).
+  const contractOmissions: { source: string; reason: string }[] = [];
+  if (contract !== undefined) {
+    for (const link of contract.documentation) {
+      const reference = contractLinkReference(link);
+      const concept = findConcept(graph, reference);
+      // BOTH halves must resolve. `findConcept` tests the concept alone, so a link whose concept
+      // exists but whose ANCHOR does not would otherwise be treated as present and then thrown out
+      // of `regionForReference` — hard-failing an OPTIONAL link instead of omitting it (review F1),
+      // and failing a mandatory one without the stable marker (F2).
+      const anchorOk =
+        concept !== undefined && (reference.anchor === undefined || anchorResolves(concept, reference.anchor));
+      if (!anchorOk) {
+        const why =
+          concept === undefined
+            ? "resolves to no concept"
+            : `resolves to a concept whose heading anchor #${reference.anchor} does not exist`;
+        if (isMandatoryLink(link)) {
+          throw new LoreError(
+            "validation",
+            `${CONTEXT_REQUIRED_SOURCE_MISSING}: mandatory documentation link "${reference.normalized}" ${why}`,
+            "fix the task contract's documentation link, add the concept to the active bundle, correct the anchor, or set the link's relation to explains or verifies if it is optional",
+            { link: reference.normalized, relation: link.relation },
+          );
+        }
+        contractOmissions.push({ source: reference.normalized, reason: `optional ${link.relation} link ${why}` });
+        continue;
+      }
+      pinned.push(itemForReference(reference, graph, undefined, provenanceById));
+    }
+  }
   const sources = profile.sources.map((reference, sourceIndex) =>
     buildSourceCandidates(reference, graph, sourceIndex, effectiveBudget, provenanceById),
   );
@@ -434,6 +507,8 @@ function compilePack(
       queryHitLimit,
       querySection,
       withQueryHits,
+      contract,
+      contractOmissions,
     );
 
   // The mandatory-budget failure is judged on pins alone, exactly as before LCLI-575: the query
@@ -780,6 +855,33 @@ export function renderAgentContextMarkdown(data: AgentContextPack): string {
       lines.push(`- ${skipped.memberId}: ${oneLine(skipped.reason)}`);
     }
   }
+  // LCLI-681: the lean task-startup fields, rendered before the catalog so a worker meets the task
+  // itself (purpose, acceptance, dependencies) before any evidence — and so they are covered by the
+  // pack digest, which is computed over this markdown.
+  if (data.contract !== undefined) {
+    lines.push("", "## Task startup", "");
+    lines.push(`Task: ${data.contract.task.id} (${data.contract.task.repositoryId}@${data.contract.task.revision})`);
+    lines.push(`Purpose: ${oneLine(data.contract.purpose)}`);
+    lines.push(`Phase: ${data.contract.phase}`);
+    lines.push("", "### Acceptance criteria", "");
+    if (data.contract.acceptance.length === 0) lines.push("_None._");
+    for (const criterion of data.contract.acceptance) {
+      lines.push(`- ${criterion.id}: ${oneLine(criterion.text)} (evidence: ${oneLine(criterion.evidenceRule)})`);
+    }
+    lines.push("", "### Dependencies", "");
+    if (data.contract.dependencies.length === 0) lines.push("_None._");
+    for (const dependency of data.contract.dependencies) {
+      lines.push(
+        `- ${dependency.taskId}@${dependency.revision}: ${dependency.satisfied ? "satisfied" : "unsatisfied"}`,
+      );
+    }
+    if (data.omissions !== undefined && data.omissions.length > 0) {
+      lines.push("", "### Omitted documentation links", "");
+      for (const omission of data.omissions) {
+        lines.push(`- ${omission.source}: ${oneLine(omission.reason)}`);
+      }
+    }
+  }
   lines.push("", "## Allowed source catalog", "");
   // Only a hit-bearing pack can have an empty catalog worth naming (a degraded, profile-less one);
   // the hit-free pack keeps the pre-LCLI-575 bytes exactly (Amendment 1).
@@ -859,6 +961,8 @@ function assemble(
   queryHitLimit: number,
   querySection: boolean,
   withQueryHits: boolean,
+  contract?: ParsedTaskContract,
+  contractOmissions?: readonly { readonly source: string; readonly reason: string }[],
 ): AgentContextPack {
   const selectedKeys = new Set(selected.map((item) => item.key));
   // "Not already selected" is by concept: a document the pack already quotes any part of is not
@@ -938,6 +1042,20 @@ function assemble(
       ? {}
       : { skippedWorkspaceMembers: workspace.skippedWorkspaceMembers }),
     ...(delegates === undefined ? {} : { delegates }),
+    ...(contract === undefined
+      ? {}
+      : {
+          contract: {
+            task: contract.task,
+            purpose: contract.purpose,
+            phase: contract.phase,
+            acceptance: contract.acceptance,
+            dependencies: contract.dependencies,
+          },
+          ...(contractOmissions === undefined || contractOmissions.length === 0
+            ? {}
+            : { omissions: contractOmissions }),
+        }),
     total,
     shown: selected.length,
     truncated: selected.length < total,
@@ -976,6 +1094,32 @@ function findConcept(graph: BundleGraph, reference: AgentProfileReference): Conc
   if (direct !== undefined) return direct;
   const separator = reference.conceptId.indexOf("::");
   return separator > 0 ? graph.concepts.get(reference.conceptId.slice(separator + 2)) : undefined;
+}
+
+/**
+ * The pin reference a task contract's documentation link names (LCLI-681). `normalized` mirrors the
+ * profile-reference form — `conceptId`, or `conceptId#anchor` when the link prefers a stable
+ * section over the whole concept — so a diagnostic or an omission names the link exactly the way a
+ * profile pin would be named.
+ */
+function contractLinkReference(link: TaskContractDocumentationLink): AgentProfileReference {
+  const normalized = link.anchor === undefined ? link.conceptId : `${link.conceptId}#${link.anchor}`;
+  return {
+    raw: normalized,
+    conceptId: link.conceptId,
+    ...(link.anchor === undefined ? {} : { anchor: link.anchor }),
+    normalized,
+  };
+}
+
+/**
+ * Whether a link's anchor actually names a heading in the concept, as a predicate.
+ * {@link regionForReference} answers the same question by THROWING, which is the right shape for a
+ * profile pin (a missing anchor there is a hard error) but the wrong one for a task-contract link,
+ * where a missing OPTIONAL reference must become an omission instead (LCLI-681 AC3).
+ */
+function anchorResolves(concept: Concept, anchor: string): boolean {
+  return anchoredHeadings(concept.body).some((entry) => entry.slug === anchor);
 }
 
 /**
