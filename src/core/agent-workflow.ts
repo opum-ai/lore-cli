@@ -136,8 +136,16 @@ export interface AgentWorkflowProjection {
   readonly context: AgentContextPack;
 }
 
-/** The stable public failure markers served by the workflow binding seam. */
+/**
+ * The stable public failure markers served by the workflow binding seam.
+ * `BINDING_ABSENT` and `ABSENT` are deliberately distinct (LCLI-679): the first
+ * means no binding was supplied at all (empty or absent stdin), the second
+ * means a binding WAS supplied but names a lore entity (profile) that does not
+ * exist — a `not_found` — so a caller can tell "you forgot the binding" from
+ * "the binding points at nothing" without reading prose.
+ */
 export type WorkflowBindingFailureCode =
+  | "OPUM_WORKFLOW_LORE_BINDING_ABSENT"
   | "OPUM_WORKFLOW_LORE_ABSENT"
   | "OPUM_WORKFLOW_LORE_STALE"
   | "OPUM_WORKFLOW_LORE_INCOMPATIBLE"

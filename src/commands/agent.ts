@@ -231,7 +231,7 @@ async function runWorkflowBinding(action: ContractContextAction, options: AgentC
         ? readFileSync(0, "utf8")
         : resolveBindingFile(action, options);
     if (raw.trim() === "") {
-      throw new WorkflowBindingError("OPUM_WORKFLOW_LORE_ABSENT", "binding is empty");
+      throw new WorkflowBindingError("OPUM_WORKFLOW_LORE_BINDING_ABSENT", "binding is empty");
     }
     binding = parseWorkflowBinding(raw);
   } catch (error) {
@@ -308,7 +308,7 @@ function resolveBindingFile(action: ContractContextAction, options: AgentCommand
     try {
       return readFileSync(0, "utf8");
     } catch (cause) {
-      throw new WorkflowBindingError("OPUM_WORKFLOW_LORE_ABSENT", "cannot read the binding from stdin", {
+      throw new WorkflowBindingError("OPUM_WORKFLOW_LORE_BINDING_ABSENT", "cannot read the binding from stdin", {
         cause: cause instanceof Error ? cause.message : String(cause),
       });
     }
@@ -335,9 +335,12 @@ function emitBindingFailure(error: unknown, options: AgentCommandOptions): numbe
   return 1;
 }
 /**
- * Facade: `lore agent context <profile> --task <taskId> --contract
- * opum-agent-workflow/v1 --json`. Additive adapter over the same projection
- * engine as `agent project`; the default context path is untouched.
+ * `--contract` entry point: `lore agent context <profile> --contract
+ * opum-agent-workflow/v1 --json`, with the request binding supplied on stdin
+ * (or via `--request <repo-relative-path|->`). EVERY `--contract` invocation
+ * goes through the binding seam; an optional `--task <taskId>` is only an exact
+ * consistency check against the binding's `taskId`, never a standalone
+ * request. The record shape and failure contract live on `runWorkflowBinding`.
  */
 type ContractContextAction = AgentAction & { kind: "context"; contract: string };
 
