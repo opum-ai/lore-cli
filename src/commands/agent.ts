@@ -156,7 +156,9 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
     // `not_found` exit 3 it used to be (LCLI-575; opum-doc ADR ODOC-265, decision 2). The
     // placeholder is injected into the snapshot so the bare and `--workspace` compilers take it
     // through the same path as a real profile. Contract mode is untouched: it returned above and
-    // still fails closed with OPUM_WORKFLOW_LORE_ABSENT.
+    // still fails closed with its own markers — OPUM_WORKFLOW_LORE_ABSENT for a binding that names
+    // an unknown profile (a `not_found`), and OPUM_WORKFLOW_LORE_BINDING_ABSENT when no binding was
+    // supplied at all (LCLI-679, LCLI-685).
     const profileMissing = !snapshot.profiles.has(action.name);
     const compileSnapshot = profileMissing
       ? {
@@ -228,7 +230,7 @@ async function runWorkflowBinding(action: ContractContextAction, options: AgentC
   try {
     const raw =
       action.requestFile === undefined && action.request === undefined
-        ? readFileSync(0, "utf8")
+        ? readBindingFromStdin()
         : resolveBindingFile(action, options);
     if (raw.trim() === "") {
       throw new WorkflowBindingError("OPUM_WORKFLOW_LORE_BINDING_ABSENT", "binding is empty");
@@ -301,17 +303,30 @@ async function runWorkflowBinding(action: ContractContextAction, options: AgentC
   }
 }
 
+/**
+ * Read the binding envelope from stdin for the contract seam. An unreadable
+ * stdin — a directory bound to fd 0 (EISDIR), or a descriptor closed after open
+ * — supplied no binding from the adapter's side, so it is attributed to
+ * BINDING_ABSENT rather than left to fall through `emitBindingFailure` as a
+ * generic INCOMPATIBLE. Both the default path in `runWorkflowBinding` and the
+ * stdin branch of `resolveBindingFile` route through here so the marker does
+ * not depend on which flag path the caller took (LCLI-685).
+ */
+function readBindingFromStdin(): string {
+  try {
+    return readFileSync(0, "utf8");
+  } catch (cause) {
+    throw new WorkflowBindingError("OPUM_WORKFLOW_LORE_BINDING_ABSENT", "cannot read the binding from stdin", {
+      cause: cause instanceof Error ? cause.message : String(cause),
+    });
+  }
+}
+
 /** Read the binding envelope from a repo-confined --request file ("-" means stdin). */
 function resolveBindingFile(action: ContractContextAction, options: AgentCommandOptions): string {
   const path = action.requestFile ?? action.request;
   if (path === undefined || path === "-") {
-    try {
-      return readFileSync(0, "utf8");
-    } catch (cause) {
-      throw new WorkflowBindingError("OPUM_WORKFLOW_LORE_BINDING_ABSENT", "cannot read the binding from stdin", {
-        cause: cause instanceof Error ? cause.message : String(cause),
-      });
-    }
+    return readBindingFromStdin();
   }
   const target = confineRepoFile(path, options.root, "--request");
   assertNoSymlinkInPath(options.root, target.relPath);
