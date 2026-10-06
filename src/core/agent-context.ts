@@ -333,6 +333,11 @@ function compilePack(
 
   const provenanceById = workspace?.provenanceById;
   const autoPin = constitutionAutoPin(profile, graph, constitutionPath);
+  // The built-in Constitution's concept id, independent of whether it is auto-pinned (LCLI-680): a
+  // profile that ranks the Constitution in `sources` suppresses the auto-pin, and that is exactly
+  // when this is needed below — the step-4 exception keeps it, because a Constitution is mandatory
+  // policy rather than optional evidence a task must out-score.
+  const constitutionId = constitutionConceptId(graph, constitutionPath);
   // The Constitution goes FIRST among pinned sources: it governs everything the rest of the pack
   // says, so an agent reading top-down meets it before any evidence it constrains.
   const pinned = [
@@ -359,15 +364,32 @@ function compilePack(
     items: source.items.map((item) => scoredByKey.get(item.key) as RankedCandidate),
   }));
   const anyPositive = scored.some((candidate) => (candidate.score ?? 0) > 0);
-  const ordered = [...scored].sort((a, b) => {
-    const scoreOrder = anyPositive ? (b.score ?? 0) - (a.score ?? 0) : 0;
-    return (
-      scoreOrder ||
-      a.sourceIndex - b.sourceIndex ||
-      a.sectionIndex - b.sectionIndex ||
-      compareCodeUnits(a.reference, b.reference)
-    );
-  });
+  // LCLI-680 (ODOC-437 slice 1), selection step 4: once the task's own terms actually rank the deck
+  // — at least one candidate scores above zero — a zero-score candidate carries no relevance to
+  // THIS task and is not optional evidence for it, so it is EXCLUDED from selection rather than left
+  // to soak up leftover budget, which is what step 6 forbids ("Never fill unused capacity with
+  // low-value sections"). `total` still counts every declared candidate, so the pack footer keeps
+  // saying how many of them it holds instead of quietly shrinking the deck.
+  //
+  // The exception is the fallback selection step 7 already names: a task that tokenizes to no term,
+  // or one no candidate matches, leaves the WHOLE deck at zero — scoring produced no signal to
+  // separate candidates — so every candidate stays eligible, in declaration and section order.
+  // There, zero is not "low value" but "unrankable", and dropping the deck on it would empty a pack
+  // the profile deliberately declared. An independently-required candidate is exempt too, in one
+  // shape: the bundle's built-in Constitution that a profile ranked in `sources` (LCLI-609's dedupe
+  // case) is mandatory policy, so it is kept even at zero score. Ordinary profile pins never reach
+  // this filter at all — they are `pinned`, a separate tier.
+  const ordered = [...scored]
+    .filter((candidate) => !anyPositive || (candidate.score ?? 0) > 0 || candidate.conceptId === constitutionId)
+    .sort((a, b) => {
+      const scoreOrder = anyPositive ? (b.score ?? 0) - (a.score ?? 0) : 0;
+      return (
+        scoreOrder ||
+        a.sourceIndex - b.sourceIndex ||
+        a.sectionIndex - b.sectionIndex ||
+        compareCodeUnits(a.reference, b.reference)
+      );
+    });
   const delegates = delegateSummaries(profile, snapshot);
   const rankedQueryHits = withQueryHits ? bundleQueryHits(workspace?.queryGraph ?? graph, task, provenanceById) : [];
   const build = (selection: readonly RankedCandidate[], queryHitLimit: number, querySection = withQueryHits) =>
@@ -379,7 +401,13 @@ function compilePack(
       pinned,
       selection,
       scoredSources,
-      candidates.length,
+      // `total`/`truncated` count the ELIGIBLE deck, not every declared candidate (LCLI-680): a
+      // candidate excluded by step 4 is not part of this task's ranked evidence, so a pack that
+      // holds every candidate it was allowed to consider is not "truncated" merely because the deck
+      // also carried unrelated zero-score filler. The catalog still reports each source's full
+      // declared candidate count, and an excluded one reads `omitted-by-budget` — the same omission
+      // vocabulary as before this change, not a new reason.
+      ordered.length,
       delegates,
       workspace,
       rankedQueryHits,
@@ -925,6 +953,18 @@ function findConcept(graph: BundleGraph, reference: AgentProfileReference): Conc
 }
 
 /**
+ * The concept id the bundle's built-in Constitution resolves to, or `undefined` when the bundle has
+ * none (LCLI-680). Shared by {@link constitutionAutoPin} and `compilePack`'s step-4 zero-score
+ * filter: the Constitution is mandatory policy, so a profile that RANKS it in `sources` (which
+ * suppresses the auto-pin, LCLI-609's dedupe case) still never has it dropped merely for scoring
+ * zero against a task.
+ */
+function constitutionConceptId(graph: BundleGraph, constitutionPath: string | undefined): string | undefined {
+  if (constitutionPath === undefined) return undefined;
+  return [...graph.concepts.values()].find((candidate) => `docs/${candidate.path}` === constitutionPath)?.id;
+}
+
+/**
  * The whole-document pin `lore agent context` adds for the bundle's built-in Constitution (LCLI-609;
  * opum-doc ADR "Add Constitution and Constants document types to lore", R8 as clarified by
  * Amendment 4: "`lore agent context` auto-pins the bundle's Constitution into every profile's pack
@@ -945,8 +985,8 @@ function constitutionAutoPin(
   constitutionPath: string | undefined,
 ): AgentProfileReference | undefined {
   if (constitutionPath === undefined) return undefined;
-  const concept = [...graph.concepts.values()].find((candidate) => `docs/${candidate.path}` === constitutionPath);
-  if (concept === undefined) {
+  const conceptId = constitutionConceptId(graph, constitutionPath);
+  if (conceptId === undefined) {
     // Discovery found it on disk but the bundle did not load it: fail loud rather than compile a
     // pack that silently lacks the document governing it.
     throw new LoreError(
@@ -957,10 +997,10 @@ function constitutionAutoPin(
     );
   }
   const referenced = [...profile.pinned, ...profile.sources].some(
-    (reference) => findConcept(graph, reference)?.id === concept.id,
+    (reference) => findConcept(graph, reference)?.id === conceptId,
   );
   if (referenced) return undefined;
-  return { raw: concept.id, conceptId: concept.id, normalized: concept.id };
+  return { raw: conceptId, conceptId, normalized: conceptId };
 }
 
 function buildSourceCandidates(
