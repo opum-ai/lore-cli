@@ -160,8 +160,12 @@ query-augmented", ODOC-265): the pack degrades to the bundle-wide query hits
 alone, carries `profileMissing: true` and a `> Warning:` line naming the absent
 `.lore/agents/<name>.toml`, writes the same warning to stderr, and exits `0`.
 That exit-code remap bumps the `agent.context.export` envelope to
-`schemaVersion` `2` (the ADR's Amendment 1, opum-doc `main` a8bb596;
-[CLI contract](../reference/cli-contract.md) §5.6). Contract mode
+`schemaVersion` `2` (the ADR's Amendment 1, opum-doc `main` a8bb596). LCLI-680
+raises it to `3`: the pack footer's `total`/`shown`/`truncated` now count the
+eligible deck (the candidates left after the zero-score exclusion of selection
+step 4), a meaning change to existing fields. Both are per-`kind` bumps, scoped
+to `agent.context.export` alone ([CLI contract](../reference/cli-contract.md)
+§5.6, §7.1). Contract mode
 (`--contract`) is unchanged and still fails closed with
 `OPUM_WORKFLOW_LORE_ABSENT`. Invalid arguments are usage exit
 `2`; output permission failures are `4`; a differing output collision is `5`;

@@ -188,9 +188,10 @@ describe("lore agent context — output modes (LCLI-575)", () => {
     expect(code).toBe(0);
     const envelope = JSON.parse(stdout.text());
     expect(envelope.kind).toBe("agent.context.export");
-    // The kind's schemaVersion is 2 for the unknown-profile exit 3 -> 0 remap (ADR Amendment 1);
-    // queryHits itself is additive and would not have bumped it.
-    expect(envelope.schemaVersion).toBe(2);
+    // The kind's schemaVersion is 3: the unknown-profile exit 3 -> 0 remap set it to 2 (ADR
+    // Amendment 1, LCLI-575); the eligible-deck meaning change to total/shown/truncated (LCLI-680)
+    // carries it to 3. queryHits itself is additive and bumps nothing.
+    expect(envelope.schemaVersion).toBe(3);
     expect(envelope.data.queryHits.map((hit: { id: string }) => hit.id)).toEqual([
       "guides/alpha",
       "guides/bravo",
@@ -235,8 +236,9 @@ describe("lore agent context — a missing profile degrades (LCLI-575, AC3)", ()
     });
     expect(code).toBe(0);
     const envelope = JSON.parse(stdout.text());
-    // cli-contract §5.6/§7.1: remapping this exit code is what bumps agent.context.export to 2.
-    expect(envelope.schemaVersion).toBe(2);
+    // cli-contract §5.6/§7.1: remapping this exit code set agent.context.export to 2 (LCLI-575);
+    // the eligible-deck meaning change to total/shown/truncated (LCLI-680) carries it to 3.
+    expect(envelope.schemaVersion).toBe(3);
     const data = envelope.data;
     expect(data.profileMissing).toBe(true);
     expect(data.pinned).toEqual([]);

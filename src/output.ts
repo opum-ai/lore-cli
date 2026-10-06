@@ -79,14 +79,17 @@ export const SCHEMA_VERSION = 1;
  * bumps that kind alone, so a consumer pinned to `schemaVersion: 1` for every other kind is
  * not broken by a change it never reads. Kinds absent here carry {@link SCHEMA_VERSION}.
  *
- * - `agent.context.export` → `2` (LCLI-575): `lore agent context <unknown profile>` exits `0`
- *   with a degraded pack instead of `not_found` exit `3` — remapping an existing exit code, which
- *   §7.1 lists as requiring a bump. Ruled by opum-doc ADR "Make lore agent context always
- *   query-augmented", Amendment 1 (opum-doc `main` a8bb596). `queryHits`, `queryHitsOmitted` and
- *   `queryHitsSectionOmitted` are additive and would not have needed a bump on their own.
+ * - `agent.context.export` → `3`: raised from `2`, which was itself (LCLI-575) the `lore agent
+ *   context <unknown profile>` exit `3` → `0` remap with a degraded pack — remapping an existing
+ *   exit code, which §7.1 lists as requiring a bump (ruled by opum-doc ADR "Make lore agent context
+ *   always query-augmented", Amendment 1, opum-doc `main` a8bb596; `queryHits`, `queryHitsOmitted`
+ *   and `queryHitsSectionOmitted` are additive and would not have needed a bump on their own). `3`
+ *   (LCLI-680; ODOC-437 slice 1) is a second, independent §7.1 bump: `total`, `shown` and
+ *   `truncated` now count the ELIGIBLE deck — the candidates left after the zero-score exclusion —
+ *   so their values move for identical inputs, a meaning change to existing fields.
  */
 export const KIND_SCHEMA_VERSIONS: Readonly<Record<string, number>> = Object.freeze({
-  "agent.context.export": 2,
+  "agent.context.export": 3,
 });
 
 /** The `schemaVersion` a success envelope of `kind` carries. */

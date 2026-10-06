@@ -42,6 +42,14 @@ It avoids breaking every consumer of every kind to signal a change in one. A con
 pins `schemaVersion` must read it per kind, from the envelope it received or from
 `kindSchemaVersions`, not from the manifest's top-level value.
 
+Amended — 2026-10-05 (LCLI-680): **the first exception is now `3`, superseding the `2` above.**
+`lore agent context`'s pack footer now counts the *eligible deck* — the candidates left after the
+zero-score exclusion — so the meaning of the existing `total`/`shown`/`truncated` fields changed
+for identical inputs. That is a §7.1 bump, on the same single kind. The `2` this entry records for
+LCLI-575 was correct when it was written and is left as the historical record; `lore help --json`
+now advertises `kindSchemaVersions: {"agent.context.export": 3}`. The per-kind scope and the
+per-kind read discipline described above are unchanged.
+
 ## Context
 
 lore is **CLI-primary** (see [ADR-0009: CLI-primary, MCP deferred](0004-cli-first-skill-bridge-mcp-deferred.md)): the same command surface serves humans at a terminal, Claude Code via the generated agent bridge, and CI gates. These three audiences have incompatible default expectations, and the CLI must satisfy all of them from one binary without per-caller configuration.

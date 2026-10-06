@@ -63,9 +63,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   distinct from `omitted-by-budget`, so a zero-relevance exclusion is never
   reported as a budget cut. Contract-visible for consumers of
   `agent.context.export`: the meaning of the footer's `total`/`truncated` changes
-  as described, and a source dropped whole by relevance now reads a different
-  `reason` than one dropped by budget. The new `reason` value is additive under
-  cli-contract §7.1, as the workspace-only reasons were.
+  as described, so that envelope's `schemaVersion` is bumped `2` → `3` under
+  cli-contract §7.1 — a meaning change to existing fields, scoped to this one
+  `kind` (`lore help --json` now reports `kindSchemaVersions:
+  {"agent.context.export": 3}`). A source dropped whole by relevance now reads a
+  different `reason` than one dropped by budget; the new `reason` value is
+  additive under §7.1, as the workspace-only reasons were.
 
 ### Fixed
 
