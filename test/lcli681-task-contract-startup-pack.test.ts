@@ -144,4 +144,53 @@ describe("LCLI-681: the lean task-startup pack from --task-contract", () => {
     expect(exit).not.toBe(0);
     expect(stderr).toContain("purpose");
   });
+
+  // The anchor dimension (review F1/F2). A link's concept can resolve while its ANCHOR does not,
+  // and that must be classified exactly like a missing concept: an omission for an optional link,
+  // the stable marker for a mandatory one. Before this, the anchor was only checked one call
+  // later, where it throws unconditionally for both relations.
+  test("AC3: an OPTIONAL link whose ANCHOR is stale is an omission, not a failure", () => {
+    const { exit, stdout, stderr } = run(
+      `${JSON.stringify(
+        contract({
+          documentation: [
+            { repositoryId: "lore-cli", conceptId: "index", anchor: "no-such-anchor", relation: "explains" },
+          ],
+        }),
+      )}\n`,
+    );
+    expect(stderr).not.toContain(MARKER);
+    expect(exit).toBe(0);
+    const pack = JSON.parse(stdout.trim()).data as { omissions?: { reason: string }[] };
+    expect(pack.omissions?.[0]?.reason).toContain("no-such-anchor");
+  });
+
+  test("AC3: a MANDATORY link whose ANCHOR is stale still carries the marker", () => {
+    const { exit, stderr } = run(
+      `${JSON.stringify(
+        contract({
+          documentation: [
+            { repositoryId: "lore-cli", conceptId: "index", anchor: "no-such-anchor", relation: "requires" },
+          ],
+        }),
+      )}\n`,
+    );
+    expect(exit).not.toBe(0);
+    expect(stderr).toContain(MARKER);
+  });
+
+  test("AC1: a resolvable ANCHOR pins exactly that section", () => {
+    const { exit, stdout } = run(
+      `${JSON.stringify(
+        contract({
+          documentation: [
+            { repositoryId: "lore-cli", conceptId: "index", anchor: "test-bundle", relation: "requires" },
+          ],
+        }),
+      )}\n`,
+    );
+    expect(exit).toBe(0);
+    const pack = JSON.parse(stdout.trim()).data as { pinned: { conceptId: string; anchor?: string }[] };
+    expect(pack.pinned.some((item) => item.conceptId === "index" && item.anchor === "test-bundle")).toBe(true);
+  });
 });

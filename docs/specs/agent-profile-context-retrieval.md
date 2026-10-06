@@ -142,6 +142,8 @@ A profile command fails before output when its snapshot is invalid.
   `--task-file <repo-relative-path|->`; task files cannot escape the repository
   or traverse a symlink;
 - `--max-tokens <n>` to override the profile default;
+- `--task-contract <repo-relative-path|->` (LCLI-681) to compile the lean
+  task-startup pack from a `TaskContract`;
 - `--out <repo-relative-path>` to atomically write the same canonical Markdown
   bytes emitted by the plain renderer; and
 - `--force` only with `--out`, to replace a differing regular file.

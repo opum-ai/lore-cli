@@ -397,19 +397,27 @@ function compilePack(
   if (contract !== undefined) {
     for (const link of contract.documentation) {
       const reference = contractLinkReference(link);
-      if (findConcept(graph, reference) === undefined) {
+      const concept = findConcept(graph, reference);
+      // BOTH halves must resolve. `findConcept` tests the concept alone, so a link whose concept
+      // exists but whose ANCHOR does not would otherwise be treated as present and then thrown out
+      // of `regionForReference` — hard-failing an OPTIONAL link instead of omitting it (review F1),
+      // and failing a mandatory one without the stable marker (F2).
+      const anchorOk =
+        concept !== undefined && (reference.anchor === undefined || anchorResolves(concept, reference.anchor));
+      if (!anchorOk) {
+        const why =
+          concept === undefined
+            ? "resolves to no concept"
+            : `resolves to a concept whose heading anchor #${reference.anchor} does not exist`;
         if (isMandatoryLink(link)) {
           throw new LoreError(
             "validation",
-            `${CONTEXT_REQUIRED_SOURCE_MISSING}: mandatory documentation link "${reference.normalized}" resolves to no concept`,
-            "fix the task contract's documentation link, add the concept to the active bundle, or set the link's relation to explains or verifies if it is optional",
+            `${CONTEXT_REQUIRED_SOURCE_MISSING}: mandatory documentation link "${reference.normalized}" ${why}`,
+            "fix the task contract's documentation link, add the concept to the active bundle, correct the anchor, or set the link's relation to explains or verifies if it is optional",
             { link: reference.normalized, relation: link.relation },
           );
         }
-        contractOmissions.push({
-          source: reference.normalized,
-          reason: `optional ${link.relation} link resolves to no concept in the active bundle`,
-        });
+        contractOmissions.push({ source: reference.normalized, reason: `optional ${link.relation} link ${why}` });
         continue;
       }
       pinned.push(itemForReference(reference, graph, undefined, provenanceById));
@@ -1102,6 +1110,16 @@ function contractLinkReference(link: TaskContractDocumentationLink): AgentProfil
     ...(link.anchor === undefined ? {} : { anchor: link.anchor }),
     normalized,
   };
+}
+
+/**
+ * Whether a link's anchor actually names a heading in the concept, as a predicate.
+ * {@link regionForReference} answers the same question by THROWING, which is the right shape for a
+ * profile pin (a missing anchor there is a hard error) but the wrong one for a task-contract link,
+ * where a missing OPTIONAL reference must become an omission instead (LCLI-681 AC3).
+ */
+function anchorResolves(concept: Concept, anchor: string): boolean {
+  return anchoredHeadings(concept.body).some((entry) => entry.slug === anchor);
 }
 
 /**
