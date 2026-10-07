@@ -10,7 +10,7 @@ kind = "specialist"
 # annotations at full width, so the query section is inside it. No number is
 # written here on purpose: it moves with every edit to a declared source, and `lore check` prints
 # the current requirement when it is exceeded.
-max_tokens = 94000
+max_tokens = 96000
 pinned = ["reference/okf-conformance"]
 sources = [
   "reference/consumer-compatibility",

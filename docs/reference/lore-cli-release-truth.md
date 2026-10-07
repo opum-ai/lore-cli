@@ -21,7 +21,74 @@ availability claim.
 
 ### Current state
 
-`0.12.0` is **RELEASED**. It is a minor release, paired with `quest` `0.12.0` under the Opum
+`0.13.0` is **RELEASED**. It is a minor release, paired with `quest` `0.13.0` under the Opum
+project constitution's Article 3. It carries the **Lore pane** in the `opum-lore` plugin — a
+Claude Code hooks module that browses, reads, searches, creates and edits the repository's
+documentation bundle through the `lore` CLI, with an inline body editor, a full-screen toggle and
+its own entry point (LCLI-664, LCLI-666, LCLI-667, LCLI-668); the `lore agent context` pack
+footer now counting the eligible deck with a zero-score omission carrying its own reason, which
+changes that envelope's meaning and bumps `agent.context.export` 2 -> 3 and
+`agent.workflow.projection` 1 -> 2 under cli-contract §7.1 (LCLI-680, ODOC-437 slice 1); the
+capacity measurement reserving the bundle-wide query section's worst case (LCLI-662, ADR-0025),
+shipped as a **warning** for one release before LCLI-646 flips it to an error (DEC-11); and the
+pinned Bun moving back to `1.3.14` with `engines.bun` narrowing to `>=1.3.14` (LCLI-686,
+DEC-163 (8)). The full entry list is `CHANGELOG.md`'s `[0.13.0]` section, which the GitHub
+Release is cut from.
+
+It was cut from tag `v0.13.0` (annotated tag object
+`7b6e2f91e716e6d26622d1f2e96a1876686dc4cd`, peeling to
+`838ba150fbeeb608266fa801dd533a05ad34a3b6`, which `origin/main` named when read after the
+promotion on 2026-10-07, and `git merge-base --is-ancestor` confirms is a descendant of
+`0.12.0`'s `739f2b48`).
+
+**Staged, then promoted.**
+- **Staged.** `scripts/publish-release.sh 0.13.0 37568141200` ran on the operator's own
+  first-party authorisation, given in this repository's session as a question naming the npm
+  destination — not on a relayed approval. Its gates, in order: version parity (lore `0.13.0`
+  equals quest `0.13.0` on quest-cli `main`); all six platform tarballs matching their
+  CI-recorded digests on `838ba150`; and opum-cli-e2e's `receipts/lore/0.13.0.json` on `main`
+  QUALIFIED, binding that run with `launcherSubstitution MATCH`. Every package was published
+  under `--tag release-candidate` only. The launcher was published last, after the script waited
+  for the six platforms to become registry-visible (the last after 324s) plus a 20s propagation
+  cushion. Auth: `keychain:npm-opum-ai-publish`. A clean-registry install smoke in a fresh temp
+  dir ran `npx lore --version` and printed `0.13.0`.
+- **Pair-qualified.** opum-cli-e2e's `receipts/pair/0.13.0.json` (main `c5bdc0f3`) is QUALIFIED,
+  **499 pass / 0 fail / 2 blocked**, every tarball sha256 re-derived from the live registry.
+- **Promoted.** quest moved first (Article 3 clause 5): `@opum-ai/quest`'s `latest` read `0.13.0`
+  before lore's moved. Then `scripts/promote-latest.mjs --record
+  scripts/release-0.13.0/latest-rollback.json --version 0.13.0 --release-run 37568141200
+  --promote`. It re-verified its gates, **wrote every prior `latest` (`0.12.0` on all seven) to
+  the rollback record BEFORE moving anything**, then moved `latest`: the six platforms by
+  dist-tag, then `@opum-ai/lore@0.13.0` published onto `latest` from the carried
+  `opum-ai-lore-0.13.0.tgz`, last. **It exited 1**, on registry read lag after every write had
+  succeeded — the launcher's `latest` still read `0.12.0` after 10 reads. That is LCLI-689, the
+  twin of quest-cli's QCLI-465: the post-write read-back fails the run and skips the steps after
+  it. Nothing was restored and no `latest` moved back; a registry read minutes later showed
+  `latest` = `0.13.0` on all seven.
+
+Read afterwards, all seven packages report `latest` = `0.13.0` (the wrapper's `release-candidate`
+remains `0.13.0-rc.1`; the platforms' remains `0.13.0`).
+
+**The GitHub Release needed an out-of-band repair (LCLI-689).** Because the promotion exited
+before its release step, `v0.13.0` was not cut by it. A repair attempt then hit GitHub's
+2026-10-07 incident — HTTP 500 on `POST /releases` — twice, creating nothing, and succeeded once
+the incident resolved: `node scripts/github-release.mjs --version 0.13.0 --create` created "Lore
+CLI 0.13.0", non-draft, non-prerelease, marked latest at 2026-10-07T16:29:41Z.
+
+**README read-back: PASSED (OPAG-474 AC3).** The promotion did not reach its own read-back step,
+so it was run by hand from the shipped tarball's own `package.json` and `README.md`: the readme
+npm serves for `@opum-ai/lore` is byte-equal to `0.13.0`'s packed `README.md`, read
+2026-10-07T16:46:04Z after one attempt. Its subject is recorded honestly as the package-level
+`readme` field, which is not per-version.
+
+**`0.13.0` carries NO provenance attestation (LCLI-482, open).** It was staged by
+`scripts/publish-release.sh` as a tarball-file publish, which carries none — so a reader must not
+infer one from the trusted-publishing machinery in `release.yml`, which this path does not use.
+`0.12.0` and `0.11.0` were the same, for the same reason.
+
+### Previous state
+
+`0.12.0` was **RELEASED**. It is a minor release, paired with `quest` `0.12.0` under the Opum
 project constitution's Article 3 (one version number across lore and quest, and every release a
 pair). It carries `lore query --across-refs` (LCLI-652, a read-only read across refs with a
 coverage envelope agreed byte-for-byte with quest-cli); three changes marked breaking — the
@@ -107,8 +174,6 @@ theirs (TASK-149).
 `scripts/publish-release.sh` as a tarball-file publish, which carries none — so a reader must not
 infer one from the trusted-publishing machinery in `release.yml`, which this path does not use.
 `0.11.0` was the same, for the same reason.
-
-### Previous state
 
 `0.11.0` was **RELEASED**. It is a minor release, paired with `quest` `0.11.0` under
 the Opum project constitution's Article 3 (opum-ai/opum-agent#988): one version number
