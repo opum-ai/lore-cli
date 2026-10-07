@@ -128,13 +128,16 @@ env:
   # carried 0.12.0 in package.json, src/application/version.ts and
   # src/contract/tracker/index.ts.
   #
-  # MOVED FOR THE 0.13.0 PAIR RELEASE (DEC-169 step 1, opum-doc, 2026-10-07).
-  # quest 0.13.0 is not on npm and quest-cli's main does not read 0.13.0 until
-  # its own bump (opum-ai/quest-cli#486) merges, so this ref now names that
-  # branch's head commit, which carries 0.13.0. It is the only way lore's docs
-  # gate and compile smoke can build the peer this bump's pair lock requires;
-  # DEC-169 step 5 returns this to quest-cli's dev tip once 0.13.0 publishes.
-  QUEST_SOURCE_REF: e49b62ce889708987a6cc0937af9cf0aeb6262a8
+  # MOVED FOR THE 0.13.0 PAIR RELEASE (DEC-169 step 1, opum-doc, 2026-10-07) AND
+  # RETURNED BY ITS STEP 5. During that release's window quest 0.13.0 was not on
+  # npm and quest-cli's main did not read 0.13.0 until its own bump
+  # (opum-ai/quest-cli#486) merged, so this ref named that branch's head commit
+  # (e49b62ce), which carried 0.13.0 — the only way lore's docs gate and compile
+  # smoke could build the peer the pair lock required. With 0.13.0 published and
+  # quest-cli's main promoted, this is quest-cli's dev tip again, carrying
+  # 0.13.0 in package.json. The fallback fires only when the version CLAUDE.md
+  # declares is absent from npm, so the npm path is what runs today.
+  QUEST_SOURCE_REF: b1011e405b3b8a34bb94046ef85e932e1c1d4fd1
 
 jobs:
   check:
