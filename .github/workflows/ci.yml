@@ -124,10 +124,17 @@ env:
   # right and the remaining thirty-two invented — it was a composed id, not a
   # squash-merge artifact as an earlier revision of this comment claimed;
   # GitHub retains a pull request's head ref, so even a deleted head branch's
-  # tip still resolves (both checked). ec79b543 is quest-cli's dev tip, which
-  # carries 0.12.0 in package.json, src/application/version.ts and
+  # tip still resolves (both checked). ec79b543 was quest-cli's dev tip, which
+  # carried 0.12.0 in package.json, src/application/version.ts and
   # src/contract/tracker/index.ts.
-  QUEST_SOURCE_REF: ec79b543f4575374e4ece5f73e123fbacdab6f64
+  #
+  # MOVED FOR THE 0.13.0 PAIR RELEASE (DEC-169 step 1, opum-doc, 2026-10-07).
+  # quest 0.13.0 is not on npm and quest-cli's main does not read 0.13.0 until
+  # its own bump (opum-ai/quest-cli#486) merges, so this ref now names that
+  # branch's head commit, which carries 0.13.0. It is the only way lore's docs
+  # gate and compile smoke can build the peer this bump's pair lock requires;
+  # DEC-169 step 5 returns this to quest-cli's dev tip once 0.13.0 publishes.
+  QUEST_SOURCE_REF: e49b62ce889708987a6cc0937af9cf0aeb6262a8
 
 jobs:
   check:

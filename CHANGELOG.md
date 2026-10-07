@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-07
+
 ### Added
 
 - **The `opum-lore` plugin now ships the Lore pane** (LCLI-664; OPAG-1075) — a Claude Code
@@ -24,7 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fields form, a **lightweight inline editor** for the body (text, cursor, insert/delete and
   undo/redo in a `Client` region, drawn with the engine's own elements and saving through the
   same `lore validate` path), an **Open in editor** action that hands the file to the person's
-  own `$EDITOR` through the session's shell escape, and an **Ask Claude…** button that fills
+  own `$EDITOR` through the session's shell escape (the inline editor is offered only on the
+  terminal and desktop surfaces, and the pane points at this action instead wherever the surface
+  has no editor region — the VS Code surface has none, and the mobile surface is told the pane
+  needs the terminal or desktop), and an **Ask Claude…** button that fills
   the prompt box and sends nothing itself, so Claude's normal permissions and this
   repository's documentation rules apply; Markdown, diff and syntax highlighting use the
   engine's own `Markdown` and `Code` elements rather than a bundled renderer, and the editing
@@ -44,6 +49,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the cursor cell, undo, Save through `lore validate`, and the rejected-save restore), and the
   rename/`lore sync` argv. Not covered, and so not claimed: supersede, link, unlink, Ask
   Claude…, Open in editor, and the uncommitted-changes landing strip.
+
+- **The Lore pane gains a full-screen toggle and an entry point of its own** (LCLI-666, LCLI-667,
+  LCLI-668) — opum-doc's "add full screen mode and a toggle for it" and "'lore-pane' to just
+  'lore'". `z` inside the pane flips it between its normal size and the largest the surface
+  allows, and the dashboard tool's `full` argument opens it full screen directly; a second press,
+  or `full` again, returns it to normal, and the choice is remembered across sessions. In full
+  mode the pane draws the outline, or the search results, beside the open document once it has at
+  least 120 body columns, and keeps its stacked layout below that. The pane's command name moved
+  `/lore-pane` → `/lore` in the design and then off the slash surface entirely: the engine refuses
+  a mod command named `lore`, which the plugin's own `lore` skill owns, and registering one skips
+  the whole `session.start` hook — so the pane ships **no slash command of its own**, and its only
+  entry point is the module's `mcp__opum-lore__dashboard` tool, which the `lore` skill routes to.
+  `/lore dashboard` (and the plain words "lore dashboard") opens the pane as it stands;
+  `dashboard full`, `dashboard <doc-id>` and `dashboard search <text>` map to the tool's `full`,
+  `doc` and `query` inputs, and every argument that does not start with `dashboard` goes to the
+  CLI as before. The tool never takes the keyboard — a Tab or a click gives the pane the keys.
 
 ### Changed
 
