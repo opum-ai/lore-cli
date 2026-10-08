@@ -142,6 +142,7 @@ export function runQuery(options: QueryCommandOptions): number | Promise<number>
     return retrieval({
       root: options.root,
       warnings: advisories,
+      frontmatterLint: false,
       adapter: options.adapter,
       ...(parsed.workspace !== undefined ? { workspace: parsed.workspace } : {}),
     }).then(async (loaded) => {
@@ -170,7 +171,7 @@ export function runQuery(options: QueryCommandOptions): number | Promise<number>
       }
     });
   }
-  const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, profile });
+  const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, frontmatterLint: false, profile });
   return finishQuery(options, parsed, graph, advisories, "reference", undefined, undefined, profile);
 }
 

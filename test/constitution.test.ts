@@ -461,7 +461,7 @@ describe("Constitution — the Principles line budget (AC#1)", () => {
 });
 
 describe("Constitution — rules attach only to lore's BUILT-IN declaration (review finding 2, ruling A)", () => {
-  /** A custom profile that declares its OWN Constitution: alias Charter, one section, no fields. */
+  /** A custom profile that declares its OWN Constitution: alias Charter, one section, and only the extra fields its fixture carries (declared so LCLI-691's unknown-key lint stays off). */
   function customCharterProfile(): void {
     mkdirSync(join(root, ".lore"), { recursive: true });
     writeFileSync(
@@ -483,6 +483,7 @@ describe("Constitution — rules attach only to lore's BUILT-IN declaration (rev
         'name = "Constitution"',
         'aliases = ["Charter"]',
         'sections = ["Articles"]',
+        "fields = { version = {}, ratified = {} }",
         "",
       ].join("\n"),
     );

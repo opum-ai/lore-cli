@@ -238,6 +238,16 @@ portability findings are warnings and do not, on their own, fail the gate
 (unless explicitly promoted via config). The full command surface is documented
 in [cli-surface](../reference/cli-surface.md).
 
+**Frontmatter-lint placement (LCLI-691).** The Tier-3 frontmatter findings — an unknown `type`, an
+extra/unknown key, a legacy `timestamp`, and a missing or over-long `summary` — are reported by
+`lore check`, counted per file in its summary line as **warnings** (gated only under `--strict`),
+beside the error-tier drift findings it already carries. They are deliberately **not** emitted by
+the retrieval commands (`query`, `read`, `graph`, `context`, …): a retrieval command loads the whole
+bundle to answer a question, so it must announce nothing about any document's frontmatter — returned
+or not. `lore validate` remains the per-file surface for the same findings. Before this, the lint
+reached only retrieval, loudly and for documents a query did not return, while `check` counted none
+of it.
+
 ### What lore deliberately does *not* run in the default path
 
 - **No lychee / lychee-action** (Rust) for links — replaced by pure-JS

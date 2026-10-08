@@ -515,3 +515,32 @@ describe("cli — query dispatch", () => {
     expect(code).toBe(2);
   });
 });
+
+// ── LCLI-691: retrieval emits no frontmatter lint ────────────────────────────────
+
+/**
+ * A bundle carrying one finding of EACH Tier-3 frontmatter-lint kind (a) — an unknown type, an
+ * extra key, a missing `summary`, an over-long `summary` — plus one clean document to return. That
+ * lint is exactly what `lore check` reports bundle-wide (LCLI-691); a retrieval command must emit
+ * none of it, for a returned document or any other.
+ */
+describe("query — no frontmatter lint on stderr (LCLI-691)", () => {
+  test("emits none of (a) for any document, returned or not", () => {
+    writeDoc("reference/clean.md", "---\ntype: Reference\ntitle: Clean\nsummary: A clean zephyr reference.\ntimestamp: 2026-06-21T00:00:00Z\n---\n\n# Clean\n\nA zephyr reference body.\n");
+    writeDoc("badtype/x.md", "---\ntype: Widget\ntitle: W\nsummary: A widget.\n---\n\n# W\n\nA widget note.\n");
+    writeDoc("reference/extra.md", "---\ntype: Reference\ntitle: Extra\nsummary: A ref.\ntimestamp: 2026-06-21T00:00:00Z\nbogus: 1\n---\n\n# Extra\n\nBody.\n");
+    writeDoc("reference/nosummary.md", "---\ntype: Reference\ntitle: NoSummary\ntimestamp: 2026-06-21T00:00:00Z\n---\n\n# NoSummary\n\nBody.\n");
+    writeDoc("reference/long.md", `---\ntype: Reference\ntitle: Long\nsummary: ${"x".repeat(250)}\ntimestamp: 2026-06-21T00:00:00Z\n---\n\n# Long\n\nBody.\n`);
+
+    const stdout = capture();
+    const stderr = capture();
+    const code = runQuery({ root, output: JSON_CTX, stdout, stderr, args: ["zephyr"] });
+    expect(code).toBe(0);
+    // The query returns the one clean document...
+    expect((JSON.parse(stdout.text()) as { data: QueryResult }).data.hits.map((h) => h.id)).toEqual(["reference/clean"]);
+    // ...and says nothing about any document's frontmatter. The fixture carries no (b) load or (c)
+    // version advisories, so a retrieval command's stderr is empty -- the positive control that the
+    // four lint kinds above are what a reader would otherwise have printed.
+    expect(stderr.text()).toBe("");
+  });
+});

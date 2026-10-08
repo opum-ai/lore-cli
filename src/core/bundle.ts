@@ -217,6 +217,19 @@ export interface LoadBundleOptions {
   profile?: Profile;
   /** Internal large-snapshot mode that bounds transient parser allocations. */
   boundedMemory?: boolean;
+  /**
+   * Whether each parsed concept's per-document **frontmatter lint** is produced and routed to
+   * `warnings` (default `true`, the historical behaviour). Set `false` from a read-only command that
+   * is *retrieving*, not *linting*: those load the whole bundle to answer a query and must announce
+   * nothing about any document's frontmatter, returned or not (LCLI-691, opum-doc ruling). The
+   * suppressed set is exactly the frontmatter advisories {@link tryParseConcept} emits — an unknown
+   * `type`, an extra key, a legacy `timestamp`, a missing/over-long `summary`. It is suppressed at
+   * the SOURCE (this flag, threaded to the parse) rather than filtered from a collector, because
+   * several retrieval paths flatten warnings to plain strings and re-add them, losing any per-message
+   * tag. Every other advisory on this same collector — a skipped directory/symlink, a non-concept
+   * file, a bundle-version issue — stays. `lore check`/`lore validate` report the frontmatter lint.
+   */
+  frontmatterLint?: boolean;
 }
 
 /**
@@ -262,11 +275,16 @@ export function loadBundle(root: string, options: LoadBundleOptions = {}): Bundl
   const state = loadBundleState(root, options.warnings);
   const profile = profileForBundle(options.profile ?? defaultProfile(), state);
   const concepts: Concept[] = [];
+  // LCLI-691: a retrieval caller opts out of PRODUCING per-document frontmatter lint (it answers a
+  // query, it does not lint the bundle). `tryParseConcept`'s own warnings are exactly that lint, and
+  // nothing else on this collector is — the walk, the state load and the non-concept note below all
+  // keep writing to `options.warnings`.
+  const conceptWarnings = options.frontmatterLint === false ? undefined : options.warnings;
   for (const rel of walkMarkdown(root, options.warnings)) {
     // `rel` is bundle-root-relative, so tryParseConcept derives a bundle-relative id — and so is
     // the reserved root index it is judged against (LORE-192): see effectiveProfileFor.
     const concept = tryParseConcept(rel, readConcept(root, rel), {
-      warnings: options.warnings,
+      warnings: conceptWarnings,
       profile: effectiveProfileFor(rel, BUNDLE_ROOT_INDEX_PATH, profile),
       bundleState: state,
     });

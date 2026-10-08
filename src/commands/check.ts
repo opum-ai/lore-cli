@@ -724,12 +724,17 @@ function validateJudgeFor(root: string, profile: Profile): ValidateJudge {
  * enum value) and `required-section`, for EVERY type (LCLI-606, OPAG-425 R11); every error-tier
  * `quote-safety` finding (an unquoted YAML-1.1 boolean, a leading YAML indicator, a `: ` inside a
  * value — LCLI-612), so a file validate fails on quoting cannot pass check; and every `type-shape`
- * finding from a registered type's own content rules (LCLI-595, R3). Not kept: warning-tier
- * quote-safety (a bare `YYYY-MM-DD` date), resource drift, the unknown-type advisory (the per-file
- * peek reports that itself) and Tier-3 frontmatter warnings, which `check` does not report for any
- * type; and validate's copy of a second frontmatter fence, which `check` already reports under its
- * own `double-frontmatter` rule (LCLI-372) — one defect, one finding. No other `check` rule reads
- * frontmatter scalar quoting, so a kept quote-safety finding is never a second report of one defect.
+ * finding from a registered type's own content rules (LCLI-595, R3); and — since LCLI-691 — every
+ * **warning-tier `frontmatter`** finding, the Tier-3 extensions OKF §9 tolerates (an unknown key, a
+ * missing or over-long `summary`), so `check` reports them bundle-wide, counted once each in its
+ * summary line. That is where that lint belongs: the retrieval commands no longer emit it (see
+ * {@link import("../core/bundle").LoadBundleOptions.frontmatterLint}). Not kept: warning-tier
+ * quote-safety (a bare `YYYY-MM-DD` date), resource drift, and the unknown-type advisory — the
+ * per-file peek reports that itself, under rule `unknown-type`, so keeping validate's own
+ * `unknown-type` finding here would double-report it; and validate's copy of a second frontmatter
+ * fence, which `check` already reports under its own `double-frontmatter` rule (LCLI-372) — one
+ * defect, one finding. No other `check` rule reads frontmatter scalar quoting, so a kept
+ * quote-safety finding is never a second report of one defect.
  *
  * A file whose frontmatter is not valid YAML never reaches here: `check` cannot parse it, so the run
  * carries that YAML error (`complete: false`, exit `6`, as validate's exit) and no per-file rule runs
@@ -753,10 +758,14 @@ function validateRuleCheckFindings(
     const enforcedError =
       finding.severity === "error" &&
       (rule === "frontmatter" || rule === "required-section" || rule === "quote-safety");
+    // LCLI-691: keep the Tier-3 extension warnings too (unknown key, missing/over-long `summary`),
+    // so `check` is where this per-document lint is reported bundle-wide. The unknown-type advisory
+    // is NOT kept here (its rule is `unknown-type`, not `frontmatter`) — the peek above owns it.
+    const warningFrontmatter = rule === "frontmatter" && finding.severity === "warning";
     if (rule === "frontmatter" && finding.message === strayFence) {
       continue; // reported once, as `double-frontmatter`, by the link pass
     }
-    if (rule === TYPE_SHAPE_RULE || enforcedError) {
+    if (rule === TYPE_SHAPE_RULE || enforcedError || warningFrontmatter) {
       findings.push({ severity: finding.severity, rule, file: file.path, message: finding.message });
     }
   }

@@ -36,7 +36,9 @@ interface FindingJson {
 
 /** A Reference whose frontmatter carries one extra top-level `line` (an unquoted scalar under test). */
 function referenceWith(line: string): string {
-  return `---\ntype: Reference\ntitle: Orders table\n${line}\n---\n# Orders table\n\nBody.\n`;
+  // `summary` keeps the fixture free of the missing-`summary` lint LCLI-691 now surfaces; the
+  // injected `line` is still an unknown key, so each case carries that one warning too.
+  return `---\ntype: Reference\ntitle: Orders table\nsummary: Orders reference.\n${line}\n---\n# Orders table\n\nBody.\n`;
 }
 
 /** Only severity, rule and message: the parts both gates spell identically. */
@@ -94,13 +96,14 @@ describe("lore check enforces validate's error-tier quote-safety findings (LCLI-
    */
   function expectGatesAgree(name: string, args: readonly string[] = [], checkRel = `reference/${name}`): FindingJson[] {
     const v = validate(`docs/reference/${name}`);
-    const validateErrors = v.findings.filter((f) => f.severity === "error");
     // Positive control on the instrument: validate itself fails the file on quote-safety.
     expect(v.code).toBe(EXIT_CODES.validation);
-    expect(validateErrors.some((f) => f.rule === "quote-safety")).toBe(true);
+    expect(v.findings.some((f) => f.rule === "quote-safety" && f.severity === "error")).toBe(true);
     const c = check(checkRel, args);
     expect(c.code).toBe(EXIT_CODES.validation);
-    expect(strip(c.findings)).toEqual(strip(validateErrors));
+    // LCLI-691: check reports warning-tier frontmatter lint too, so the two gates now agree on the
+    // WHOLE per-file finding set, not only its error-tier slice.
+    expect(strip(c.findings)).toEqual(strip(v.findings));
     return c.findings;
   }
 
@@ -109,8 +112,10 @@ describe("lore check enforces validate's error-tier quote-safety findings (LCLI-
     (value) => {
       writeDoc("reference/orders.md", referenceWith(`archived: ${value}`));
       const mine = expectGatesAgree("orders.md");
-      // Exactly one finding: no other check rule reports the same quoting defect a second time.
-      expect(strip(mine)).toEqual([
+      // Exactly one quote-safety finding: no other check rule reports the same quoting defect a
+      // second time. (LCLI-691 adds the fixture's unknown-key warning to `mine`, so filter to the
+      // rule this file is about.)
+      expect(strip(mine.filter((f) => f.rule === "quote-safety"))).toEqual([
         {
           severity: "error",
           rule: "quote-safety",
@@ -129,9 +134,9 @@ describe("lore check enforces validate's error-tier quote-safety findings (LCLI-
     (line, indicator) => {
       writeDoc("reference/orders.md", referenceWith(line));
       const mine = expectGatesAgree("orders.md");
-      expect(mine).toHaveLength(1);
-      expect(mine[0]?.rule).toBe("quote-safety");
-      expect(mine[0]?.message).toContain(`starts with the YAML indicator "${indicator}"`);
+      const quoteSafety = mine.filter((f) => f.rule === "quote-safety");
+      expect(quoteSafety).toHaveLength(1);
+      expect(quoteSafety[0]?.message).toContain(`starts with the YAML indicator "${indicator}"`);
     },
     TIMEOUT_MS,
   );
@@ -151,7 +156,7 @@ describe("lore check enforces validate's error-tier quote-safety findings (LCLI-
     "[quote-safety] a scoped `lore check docs/reference` agrees with validate too",
     () => {
       writeDoc("reference/orders.md", referenceWith("archived: yes"));
-      expect(expectGatesAgree("orders.md", ["docs/reference"], "orders.md")).toHaveLength(1);
+      expect(expectGatesAgree("orders.md", ["docs/reference"], "orders.md").filter((f) => f.rule === "quote-safety")).toHaveLength(1);
     },
     TIMEOUT_MS,
   );
@@ -180,7 +185,10 @@ describe("lore check enforces validate's error-tier quote-safety findings (LCLI-
       expect(v.code).toBe(EXIT_OK);
       expect(v.findings.filter((f) => f.rule === "quote-safety")).toEqual([]);
       const c = check("reference/orders.md");
-      expect(c).toEqual({ code: EXIT_OK, findings: [] });
+      expect(c.code).toBe(EXIT_OK);
+      // LCLI-691: check now also reports the fixture's unknown-`archived`-key warning, so the
+      // control is "no quote-safety finding" (what this file tests), not an empty finding list.
+      expect(c.findings.filter((f) => f.rule === "quote-safety")).toEqual([]);
     },
     TIMEOUT_MS,
   );

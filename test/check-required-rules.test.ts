@@ -34,24 +34,24 @@ interface FindingJson {
 
 /** An ADR carrying every section the built-in profile requires. */
 const ADR_OK =
-  "---\ntype: ADR\ntitle: Use soft deletes\n---\n# Use soft deletes\n\n## Status\n\nAccepted.\n\n## Context\n\nWhy.\n\n## Decision\n\nWhat.\n\n## Consequences\n\nSo.\n";
+  "---\ntype: ADR\ntitle: Use soft deletes\nsummary: Use soft deletes.\n---\n# Use soft deletes\n\n## Status\n\nAccepted.\n\n## Context\n\nWhy.\n\n## Decision\n\nWhat.\n\n## Consequences\n\nSo.\n";
 /** The same ADR without `## Consequences`. */
 const ADR_NO_CONSEQUENCES = ADR_OK.replace("\n## Consequences\n\nSo.\n", "");
 
 /** A Story (the built-in Arc alias) carrying its required `## Acceptance criteria`, with no `tasks:`. */
 const STORY_OK =
-  "---\ntype: Story\ntitle: Archive orders\n---\n# Archive orders\n\n## Acceptance criteria\n\n- Done.\n";
-const STORY_NO_AC = "---\ntype: Story\ntitle: Archive orders\n---\n# Archive orders\n\nNo criteria here.\n";
+  "---\ntype: Story\ntitle: Archive orders\nsummary: Archive orders.\n---\n# Archive orders\n\n## Acceptance criteria\n\n- Done.\n";
+const STORY_NO_AC = "---\ntype: Story\ntitle: Archive orders\nsummary: Archive orders.\n---\n# Archive orders\n\nNo criteria here.\n";
 
-/** A profile whose Reference type requires an `owner` field. */
+/** A profile whose Reference type requires an `owner` field (title/summary declared so the fixture carries no unknown-key lint, LCLI-691). */
 const OWNER_PROFILE =
-  '[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "Reference"\nfields = { owner = { required = true } }\n';
-const REFERENCE_OK = "---\ntype: Reference\ntitle: Orders table\nowner: payments\n---\n# Orders table\n\nBody.\n";
-const REFERENCE_NO_OWNER = "---\ntype: Reference\ntitle: Orders table\n---\n# Orders table\n\nBody.\n";
+  '[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "Reference"\nfields = { owner = { required = true }, title = {}, summary = {} }\n';
+const REFERENCE_OK = "---\ntype: Reference\ntitle: Orders table\nsummary: Orders.\nowner: payments\n---\n# Orders table\n\nBody.\n";
+const REFERENCE_NO_OWNER = "---\ntype: Reference\ntitle: Orders table\nsummary: Orders.\n---\n# Orders table\n\nBody.\n";
 
 /** Frontmatter present, `type` absent: validate's OKF conformance-floor error. */
 const NO_TYPE = "---\ntitle: Untyped\n---\n# Untyped\n\nBody.\n";
-const NO_TYPE_FIXED = "---\ntype: Reference\ntitle: Untyped\n---\n# Untyped\n\nBody.\n";
+const NO_TYPE_FIXED = "---\ntype: Reference\ntitle: Untyped\nsummary: Untyped.\n---\n# Untyped\n\nBody.\n";
 
 /** No frontmatter at all: not a concept, so validate skips it. */
 const NO_FRONTMATTER = "# Just notes\n\nNo frontmatter, so not a concept.\n";
@@ -202,7 +202,7 @@ describe("lore check enforces validate's required sections and fields for every 
     // (LCLI-372, a released rule name), so check keeps its own and drops validate's copy.
     writeDoc(
       "reference/orders.md",
-      "---\ntype: Reference\ntitle: Orders table\n---\n---\ntype: Reference\ntitle: PLACEHOLDER\n---\n# Orders table\n\nbody\n",
+      "---\ntype: Reference\ntitle: Orders table\nsummary: Orders.\n---\n---\ntype: Reference\ntitle: PLACEHOLDER\nsummary: Placeholder.\n---\n# Orders table\n\nbody\n",
     );
     const validates = validateErrors("docs/reference/orders.md");
     expect(validates.map((f) => f.rule)).toEqual(["frontmatter"]); // the instrument sees it

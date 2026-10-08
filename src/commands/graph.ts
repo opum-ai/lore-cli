@@ -101,6 +101,7 @@ export function runGraph(options: GraphOptions): number | Promise<number> {
     return retrieval({
       root: options.root,
       warnings: advisories,
+      frontmatterLint: false,
       adapter: options.adapter,
       ...(parsed.workspace !== undefined ? { workspace: parsed.workspace } : {}),
     }).then(async (loaded) => {
@@ -112,7 +113,7 @@ export function runGraph(options: GraphOptions): number | Promise<number> {
     });
   }
   const profile = loadProfile({ root: options.root });
-  const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, profile });
+  const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, frontmatterLint: false, profile });
   // This path IS the reference backend -- an in-memory load of the bundle from disk -- so it reports
   // itself as one. Leaving it unreported because no retrieval loader was involved would make the
   // field absent exactly where a consumer cannot otherwise tell.

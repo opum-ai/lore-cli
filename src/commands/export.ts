@@ -36,7 +36,7 @@ export async function runExport(options: ExportOptions): Promise<number> {
   // version parsing above it makes unsupported breaking versions fail first.
   const profile = loadProfile({ root: options.root });
   const warnings = new WarningCollector();
-  const graph = loadBundle(join(options.root, DOCS_DIR), { warnings, profile });
+  const graph = loadBundle(join(options.root, DOCS_DIR), { warnings, frontmatterLint: false, profile });
   warnings.flush({ color: options.output.color, stderr: options.stderr });
   const listing = await listTasksWithSource(options.root, options.adapter);
   const gitCommit = (options.resolveGitCommit ?? resolveHeadSha)(options.root);
