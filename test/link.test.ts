@@ -731,6 +731,32 @@ describe("lore link/unlink — per-task back-ref resilience", () => {
     expect(occurrences).toBe(1);
   });
 
+  // DEC-171/LCLI-691: a writer prints the frontmatter lint for the document it WRITES and never
+  // bundle-wide. Both fixtures below carry the same missing-`summary` lint; only `stories/x.md` is
+  // written, so only its warning may appear.
+  test("DEC-171: link prints the frontmatter lint for the document it WRITES, and none for one it does not", async () => {
+    writeDoc("stories/x.md", "---\ntype: Story\ntitle: X\n---\nBody.\n");
+    writeDoc("reference/other.md", "---\ntype: Reference\ntitle: Other\n---\nBody.\n");
+    const adapter = fakeAdapter([makeTask("LORE-1")]);
+    const stderr = capture();
+
+    await runLink({
+      root,
+      output: JSON_CTX,
+      args: ["stories/x", "lore-1"],
+      stdout: capture(),
+      stderr,
+      adapter,
+      gitSpawn: cleanGitSpawn(),
+      backend: "backlog" as const,
+    });
+
+    const text = stderr.text();
+    expect(text.split("missing `summary`").length - 1).toBe(1);
+    expect(text).toContain("in stories/x.md");
+    expect(text).not.toContain("reference/other.md");
+  });
+
   test("a non-string legacy tasks entry on an unsupported type is refused without normalization", async () => {
     writeDoc("reference/x.md", "---\ntype: Reference\ntasks:\n  - 42\n  - task-2\n---\nBody.\n");
     const adapter = fakeAdapter([makeTask("LORE-3")]);

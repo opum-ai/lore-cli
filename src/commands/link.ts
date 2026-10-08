@@ -175,6 +175,28 @@ function commitFileFor(backend: TrackerBackend, file: string | null): string | n
 }
 
 /**
+ * Print the frontmatter lint for ONE document this run WRITES (DEC-171/LCLI-691). `lintByPath` is the
+ * per-path capture the bundle load filled; `concept` is the document `link`/`unlink` just wrote. A
+ * writer prints (a) for the files it touches and never bundle-wide, so a `lore sync` invoked from a
+ * hook after every Quest write does not repeat the whole bundle's lint.
+ */
+function flushWrittenConceptLint(
+  lintByPath: ReadonlyMap<string, readonly string[]>,
+  concept: Concept,
+  options: { readonly output: OutputContext; readonly stderr?: Writer },
+): void {
+  const messages = lintByPath.get(concept.path);
+  if (messages === undefined || messages.length === 0) {
+    return;
+  }
+  const warnings = new WarningCollector();
+  for (const message of messages) {
+    warnings.add(message);
+  }
+  warnings.flush({ color: options.output.color, stderr: options.stderr });
+}
+
+/**
  * Run `lore link`: add every `taskId` to the concept's `tasks:` frontmatter (case-insensitive
  * dedup, stored lowercase per ADR-0009 §1) and, unless `--no-back-ref`, record the back-reference
  * on each task — a `doc:<conceptId>` label plus the concept's repo-relative path via `--doc`
@@ -188,7 +210,7 @@ function commitFileFor(backend: TrackerBackend, file: string | null): string | n
  *   `drift` (exit 6) {@link LoreError} instead — see {@link backRefFailure}.
  */
 export async function runLink(options: LinkOptions): Promise<number> {
-  const { concept, id, taskIds, noBackRef, docsRoot, profile } = await prepare(options, "link");
+  const { concept, id, taskIds, noBackRef, docsRoot, profile, lintByPath } = await prepare(options, "link");
   if (concept === undefined) {
     // Unreachable: `--allow-missing` is `unlink`-only (see `parseLinkArgs`), so `prepare` always
     // resolves `id` to a live concept or throws `not_found` for `link`.
@@ -262,6 +284,10 @@ export async function runLink(options: LinkOptions): Promise<number> {
   }
 
   const changed = writeTasksIfChanged(docsRoot, concept, existingTasks, nextTasks, profile);
+  if (changed) {
+    // DEC-171: the write-time frontmatter lint for the document just written — and no other.
+    flushWrittenConceptLint(lintByPath, concept, options);
+  }
 
   let anyBackRefFailed = false;
   // Populated below when the per-task loop ran — kept outside its block so the throw site can
@@ -370,7 +396,7 @@ export async function runLink(options: LinkOptions): Promise<number> {
  *   `drift` (exit 6) {@link LoreError} instead — see {@link backRefFailure}.
  */
 export async function runUnlink(options: LinkOptions): Promise<number> {
-  const { concept, id, taskIds, noBackRef, docsRoot, profile } = await prepare(options, "unlink");
+  const { concept, id, taskIds, noBackRef, docsRoot, profile, lintByPath } = await prepare(options, "unlink");
   const adapter = options.adapter ?? defaultAdapter(options.root);
   const backend = resolveSelectedBackend(options.root, options.backend);
   const docPath = concept !== undefined ? repoRelativePath(concept.path) : `${DOCS_DIR}/${id}.md`;
@@ -397,6 +423,10 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
     // the per-task Backlog edits means a failure on the Backlog side can never strand it (the
     // reverse order would leave already-applied Backlog mutations unreported if this write failed).
     changed = writeTasksIfChanged(docsRoot, concept, existingTasks, nextTasks, profile);
+    if (changed) {
+      // DEC-171: the write-time frontmatter lint for the document just written — and no other.
+      flushWrittenConceptLint(lintByPath, concept, options);
+    }
   } else {
     // --allow-missing, id doesn't resolve: no concept file exists to carry a tasks: list at all.
     tasks = taskIds.map((taskId) => ({ task: taskId, status: "not-linked", backRef: "skipped" }));
@@ -846,6 +876,9 @@ interface Prepared {
   readonly noBackRef: boolean;
   readonly docsRoot: string;
   readonly profile: Profile;
+  /** DEC-171: the bundle load captures frontmatter lint per document here, so `link`/`unlink` print
+   * it for the concept they WRITE and for no other document. */
+  readonly lintByPath: ReadonlyMap<string, readonly string[]>;
 }
 
 /**
@@ -869,7 +902,12 @@ async function prepare(options: LinkOptions, command: "link" | "unlink"): Promis
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
   const producerProfile = loadProfile({ root: options.root });
-  const graph = loadBundle(docsRoot, { warnings: advisories, profile: producerProfile });
+  const lintByPath = new Map<string, readonly string[]>();
+  const graph = loadBundle(docsRoot, {
+    warnings: advisories,
+    frontmatterLintByPath: lintByPath,
+    profile: producerProfile,
+  });
   const profile = profileForBundle(producerProfile, graph.state);
   advisories.flush({ color: options.output.color, stderr: options.stderr });
 
@@ -889,6 +927,7 @@ async function prepare(options: LinkOptions, command: "link" | "unlink"): Promis
         noBackRef: parsed.noBackRef,
         docsRoot,
         profile,
+        lintByPath,
       };
     }
     throw conceptNotInBundle(id);
@@ -896,7 +935,15 @@ async function prepare(options: LinkOptions, command: "link" | "unlink"): Promis
   if (!parsed.noBackRef) {
     assertNoLabelCaseCollision(graph, concept.id, concept.id, command);
   }
-  return { concept, id, taskIds: dedupeTaskIds(parsed.taskIds), noBackRef: parsed.noBackRef, docsRoot, profile };
+  return {
+    concept,
+    id,
+    taskIds: dedupeTaskIds(parsed.taskIds),
+    noBackRef: parsed.noBackRef,
+    docsRoot,
+    profile,
+    lintByPath,
+  };
 }
 
 /**

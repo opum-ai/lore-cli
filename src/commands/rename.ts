@@ -169,7 +169,12 @@ export async function runRename(options: RenameOptions): Promise<number> {
   // profile-shaped frontmatter (e.g. a scalar `tasks:` field) is perfectly valid under the project's
   // own schema.
   const producerProfile = loadProfile({ root: options.root });
-  const graph = loadBundle(docsRoot, { warnings: advisories, profile: producerProfile });
+  const lintByPath = new Map<string, readonly string[]>();
+  const graph = loadBundle(docsRoot, {
+    warnings: advisories,
+    frontmatterLintByPath: lintByPath,
+    profile: producerProfile,
+  });
   const profile = profileForBundle(producerProfile, graph.state);
   // Flushed immediately (not at the end, as this command previously did) so a skipped-directory
   // warning naming the exact path/reason survives on the fail-loud path below it feeds (LORE-82),
@@ -229,6 +234,17 @@ export async function runRename(options: RenameOptions): Promise<number> {
 
   if (!parsed.dryRun) {
     commitWrites(writes, plan, docsRoot, options.root);
+    // DEC-171/LCLI-691: the frontmatter lint for the documents this run WRITES — the moved file
+    // (captured at its SOURCE path by the load) and every inbound rewrite — and for no other
+    // document, never bundle-wide.
+    const writtenRels = new Set<string>([...(plan.rename === null ? [] : [plan.rename.from]), ...writes.keys()]);
+    const writtenLint = new WarningCollector();
+    for (const rel of writtenRels) {
+      for (const message of lintByPath.get(rel) ?? []) {
+        writtenLint.add(message);
+      }
+    }
+    writtenLint.flush({ color: options.output.color, stderr: options.stderr });
   }
 
   // Move every linked task's Backlog back-reference LAST — mirrors link.ts's write-order fix: the
