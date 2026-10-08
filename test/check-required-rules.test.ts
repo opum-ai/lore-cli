@@ -41,13 +41,16 @@ const ADR_NO_CONSEQUENCES = ADR_OK.replace("\n## Consequences\n\nSo.\n", "");
 /** A Story (the built-in Arc alias) carrying its required `## Acceptance criteria`, with no `tasks:`. */
 const STORY_OK =
   "---\ntype: Story\ntitle: Archive orders\nsummary: Archive orders.\n---\n# Archive orders\n\n## Acceptance criteria\n\n- Done.\n";
-const STORY_NO_AC = "---\ntype: Story\ntitle: Archive orders\nsummary: Archive orders.\n---\n# Archive orders\n\nNo criteria here.\n";
+const STORY_NO_AC =
+  "---\ntype: Story\ntitle: Archive orders\nsummary: Archive orders.\n---\n# Archive orders\n\nNo criteria here.\n";
 
 /** A profile whose Reference type requires an `owner` field (title/summary declared so the fixture carries no unknown-key lint, LCLI-691). */
 const OWNER_PROFILE =
   '[profile]\nname = "custom"\nokf_version = "0.1"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "Reference"\nfields = { owner = { required = true }, title = {}, summary = {} }\n';
-const REFERENCE_OK = "---\ntype: Reference\ntitle: Orders table\nsummary: Orders.\nowner: payments\n---\n# Orders table\n\nBody.\n";
-const REFERENCE_NO_OWNER = "---\ntype: Reference\ntitle: Orders table\nsummary: Orders.\n---\n# Orders table\n\nBody.\n";
+const REFERENCE_OK =
+  "---\ntype: Reference\ntitle: Orders table\nsummary: Orders.\nowner: payments\n---\n# Orders table\n\nBody.\n";
+const REFERENCE_NO_OWNER =
+  "---\ntype: Reference\ntitle: Orders table\nsummary: Orders.\n---\n# Orders table\n\nBody.\n";
 
 /** Frontmatter present, `type` absent: validate's OKF conformance-floor error. */
 const NO_TYPE = "---\ntitle: Untyped\n---\n# Untyped\n\nBody.\n";

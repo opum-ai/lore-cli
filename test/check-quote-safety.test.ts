@@ -156,7 +156,9 @@ describe("lore check enforces validate's error-tier quote-safety findings (LCLI-
     "[quote-safety] a scoped `lore check docs/reference` agrees with validate too",
     () => {
       writeDoc("reference/orders.md", referenceWith("archived: yes"));
-      expect(expectGatesAgree("orders.md", ["docs/reference"], "orders.md").filter((f) => f.rule === "quote-safety")).toHaveLength(1);
+      expect(
+        expectGatesAgree("orders.md", ["docs/reference"], "orders.md").filter((f) => f.rule === "quote-safety"),
+      ).toHaveLength(1);
     },
     TIMEOUT_MS,
   );

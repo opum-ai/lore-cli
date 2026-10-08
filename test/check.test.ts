@@ -989,7 +989,10 @@ describe("runCheck — exit codes and discovery", () => {
   // counted in its summary line. The fixture carries one finding of each kind, plus a clean file.
   test("counts every frontmatter-lint kind as a warning (LCLI-691 AC a)", () => {
     mkdirSync(join(root, "docs", "badtype"), { recursive: true });
-    writeFileSync(join(root, "docs", "badtype", "x.md"), "---\ntype: Widget\ntitle: W\nsummary: A widget.\n---\n\n# W\n\nBody.\n");
+    writeFileSync(
+      join(root, "docs", "badtype", "x.md"),
+      "---\ntype: Widget\ntitle: W\nsummary: A widget.\n---\n\n# W\n\nBody.\n",
+    );
     writeFileSync(
       join(root, "docs", "reference", "extra.md"),
       "---\ntype: Reference\ntitle: Extra\nsummary: A ref.\nbogus: 1\n---\n\n# Extra\n\nBody.\n",
@@ -1010,13 +1013,28 @@ describe("runCheck — exit codes and discovery", () => {
       expect.objectContaining({ severity: "warning", rule: "unknown-type", file: "badtype/x.md" }),
     );
     expect(report.data.findings).toContainEqual(
-      expect.objectContaining({ severity: "warning", rule: "frontmatter", file: "reference/extra.md", message: expect.stringContaining("unknown key") }),
+      expect.objectContaining({
+        severity: "warning",
+        rule: "frontmatter",
+        file: "reference/extra.md",
+        message: expect.stringContaining("unknown key"),
+      }),
     );
     expect(report.data.findings).toContainEqual(
-      expect.objectContaining({ severity: "warning", rule: "frontmatter", file: "reference/nosummary.md", message: expect.stringContaining("missing `summary`") }),
+      expect.objectContaining({
+        severity: "warning",
+        rule: "frontmatter",
+        file: "reference/nosummary.md",
+        message: expect.stringContaining("missing `summary`"),
+      }),
     );
     expect(report.data.findings).toContainEqual(
-      expect.objectContaining({ severity: "warning", rule: "frontmatter", file: "reference/long.md", message: expect.stringContaining("250 chars") }),
+      expect.objectContaining({
+        severity: "warning",
+        rule: "frontmatter",
+        file: "reference/long.md",
+        message: expect.stringContaining("250 chars"),
+      }),
     );
     expect(report.data.warningCount).toBeGreaterThanOrEqual(4);
   });
@@ -1158,7 +1176,10 @@ describe("runCheck — exit codes and discovery", () => {
   });
 
   test("HEAD's commit date is the default evaluation date for stale_after", () => {
-    writeFileSync(join(root, "docs", "index.md"), '---\ntype: Reference\nokf_version: "0.2"\nsummary: The docs index.\n---\n# Docs\n');
+    writeFileSync(
+      join(root, "docs", "index.md"),
+      '---\ntype: Reference\nokf_version: "0.2"\nsummary: The docs index.\n---\n# Docs\n',
+    );
     writeFileSync(
       join(root, "docs", "reference", "lifecycle.md"),
       "---\ntype: Reference\nstatus: stable\nsummary: A lifecycle reference.\nstale_after: 2026-08-05\n---\n\n# Lifecycle\n",
@@ -1173,7 +1194,10 @@ describe("runCheck — exit codes and discovery", () => {
   });
 
   test("--as-of pins the negative control before stale_after and produces repeatable output", () => {
-    writeFileSync(join(root, "docs", "index.md"), '---\ntype: Reference\nokf_version: "0.2"\nsummary: The docs index.\n---\n# Docs\n');
+    writeFileSync(
+      join(root, "docs", "index.md"),
+      '---\ntype: Reference\nokf_version: "0.2"\nsummary: The docs index.\n---\n# Docs\n',
+    );
     writeFileSync(
       join(root, "docs", "reference", "lifecycle.md"),
       "---\ntype: Reference\nstatus: stable\nsummary: A lifecycle reference.\nstale_after: 2026-08-05\n---\n\n# Lifecycle\n",
@@ -1211,7 +1235,10 @@ describe("runCheck — exit codes and discovery", () => {
   });
 
   test("an unborn HEAD fails clearly without falling back to the wall clock", () => {
-    writeFileSync(join(root, "docs", "index.md"), '---\ntype: Reference\nokf_version: "0.2"\nsummary: The docs index.\n---\n# Docs\n');
+    writeFileSync(
+      join(root, "docs", "index.md"),
+      '---\ntype: Reference\nokf_version: "0.2"\nsummary: The docs index.\n---\n# Docs\n',
+    );
     writeFileSync(
       join(root, "docs", "reference", "lifecycle.md"),
       "---\ntype: Reference\nstatus: stable\nsummary: A lifecycle reference.\nstale_after: 2026-08-05\n---\n\n# Lifecycle\n",
@@ -1220,7 +1247,10 @@ describe("runCheck — exit codes and discovery", () => {
   });
 
   test("inventories a computation asset without reading or executing it", () => {
-    writeFileSync(join(root, "docs", "index.md"), '---\ntype: Reference\nokf_version: "0.2"\nsummary: The docs index.\n---\n# Docs\n');
+    writeFileSync(
+      join(root, "docs", "index.md"),
+      '---\ntype: Reference\nokf_version: "0.2"\nsummary: The docs index.\n---\n# Docs\n',
+    );
     mkdirSync(join(root, "docs", "attested-computation"), { recursive: true });
     const marker = join(root, "executed-marker");
     writeFileSync(
@@ -2065,7 +2095,10 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
   });
 
   test("OKF 0.2 checks task drift against lore_task_status while preserving lifecycle status", async () => {
-    writeFileSync(join(root, "docs", "index.md"), '---\ntype: Reference\nokf_version: "0.2"\nsummary: The docs index.\n---\n# Docs\n');
+    writeFileSync(
+      join(root, "docs", "index.md"),
+      '---\ntype: Reference\nokf_version: "0.2"\nsummary: The docs index.\n---\n# Docs\n',
+    );
     const raw =
       "---\ntype: Story\ntitle: X\nsummary: X.\nstatus: stable\nlore_task_status: done\ntasks:\n  - lore-1\n---\n# X\n\n## Acceptance criteria\n\n- It works.\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n";
     writeDoc("stories/x.md", regenerateTaskBlock(raw, [doneRow], { docPath: "docs/stories/x.md" }));
@@ -2078,7 +2111,10 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
   });
 
   test("OKF 0.2 reports lore_task_status drift without comparing lifecycle status", async () => {
-    writeFileSync(join(root, "docs", "index.md"), '---\ntype: Reference\nokf_version: "0.2"\nsummary: The docs index.\n---\n# Docs\n');
+    writeFileSync(
+      join(root, "docs", "index.md"),
+      '---\ntype: Reference\nokf_version: "0.2"\nsummary: The docs index.\n---\n# Docs\n',
+    );
     const raw =
       "---\ntype: Story\ntitle: X\nstatus: deprecated\nlore_task_status: todo\ntasks:\n  - lore-1\n---\n# X\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n";
     writeDoc("stories/x.md", regenerateTaskBlock(raw, [doneRow], { docPath: "docs/stories/x.md" }));
@@ -2276,7 +2312,10 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
   });
 
   test("an unsupported tasks field is an explicit gate finding without Backlog IO (LCLI-304)", () => {
-    writeDoc("runbooks/recovery.md", "---\ntype: Runbook\ntitle: Recovery\nsummary: A recovery runbook.\ntasks:\n  - lore-1\n---\n# Recovery\n");
+    writeDoc(
+      "runbooks/recovery.md",
+      "---\ntype: Runbook\ntitle: Recovery\nsummary: A recovery runbook.\ntasks:\n  - lore-1\n---\n# Recovery\n",
+    );
     const poison = new Proxy(
       {},
       {
