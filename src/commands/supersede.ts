@@ -129,7 +129,12 @@ export function runSupersede(options: SupersedeOptions): number {
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
   const producerProfile = loadProfile({ root: options.root });
-  const graph = loadBundle(docsRoot, { warnings: advisories, profile: producerProfile });
+  const lintByPath = new Map<string, readonly string[]>();
+  const graph = loadBundle(docsRoot, {
+    warnings: advisories,
+    frontmatterLintByPath: lintByPath,
+    profile: producerProfile,
+  });
   const profile = profileForBundle(producerProfile, graph.state);
   // Flushed immediately (not at the end, as this command previously did) so a skipped-directory
   // warning naming the exact path/reason survives on the fail-loud `--rewrite-links` path below it
@@ -210,6 +215,15 @@ export function runSupersede(options: SupersedeOptions): number {
     for (const [path, bytes] of sorted) {
       writeFileOverwriting(join(docsRoot, path), bytes, `${DOCS_DIR}/${path}`);
     }
+    // DEC-171/LCLI-691: print the frontmatter lint for the principals just WRITTEN, and no other
+    // document — the write-time signal an author wants, never the whole bundle's.
+    const writtenLint = new WarningCollector();
+    for (const path of sorted.keys()) {
+      for (const message of lintByPath.get(path) ?? []) {
+        writtenLint.add(message);
+      }
+    }
+    writtenLint.flush({ color: options.output.color, stderr: options.stderr });
   }
 
   const report = buildReport(oldConcept, newConcept, sorted, { rewroteLinks, dryRun: parsed.dryRun });

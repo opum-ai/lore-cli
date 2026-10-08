@@ -68,7 +68,7 @@ import { type Dirent, readdirSync, readFileSync } from "node:fs";
 import { posix } from "node:path";
 import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
-import { deriveMessage, errnoCode, ioError, LoreError, type WarningCollector } from "../errors";
+import { deriveMessage, errnoCode, ioError, LoreError, WarningCollector } from "../errors";
 import { type Concept, idFromPath, serializeConcept, tryParseConcept, tryReadFrontmatter } from "./concept";
 import { decodeTarget, isExternalTarget, pathPart } from "./links";
 import { type BundleState, type BundleStateResolution, CURRENT_OKF_VERSION, resolveBundleState } from "./okf-version";
@@ -217,6 +217,29 @@ export interface LoadBundleOptions {
   profile?: Profile;
   /** Internal large-snapshot mode that bounds transient parser allocations. */
   boundedMemory?: boolean;
+  /**
+   * Whether each parsed concept's per-document **frontmatter lint** is produced and routed to
+   * `warnings` (default `true`, the historical behaviour). Set `false` from a read-only command that
+   * is *retrieving*, not *linting*: those load the whole bundle to answer a query and must announce
+   * nothing about any document's frontmatter, returned or not (LCLI-691, opum-doc ruling). The
+   * suppressed set is exactly the frontmatter advisories {@link tryParseConcept} emits — an unknown
+   * `type`, an extra key, a legacy `timestamp`, a missing/over-long `summary`. It is suppressed at
+   * the SOURCE (this flag, threaded to the parse) rather than filtered from a collector, because
+   * several retrieval paths flatten warnings to plain strings and re-add them, losing any per-message
+   * tag. Every other advisory on this same collector — a skipped directory/symlink, a non-concept
+   * file, a bundle-version issue — stays. `lore check`/`lore validate` report the frontmatter lint.
+   */
+  frontmatterLint?: boolean;
+  /**
+   * Capture each concept's frontmatter lint into this map (bundle-root-relative path -> messages)
+   * instead of routing it to `warnings`. A mutation command (DEC-171: `link`, `sync`, `rename`,
+   * `supersede`, any writer) uses this so it can print the lint for the document(s) it WRITES and
+   * for no others: it loads with this map, then, once it knows what it wrote, flushes only those
+   * entries. That is the whole of "print (a) only for written documents" — the writer filters the
+   * capture by path rather than by matching message text, which carries no path. Takes precedence
+   * over {@link frontmatterLint}; unrelated advisories still go to `warnings` either way.
+   */
+  frontmatterLintByPath?: Map<string, readonly string[]>;
 }
 
 /**
@@ -262,11 +285,18 @@ export function loadBundle(root: string, options: LoadBundleOptions = {}): Bundl
   const state = loadBundleState(root, options.warnings);
   const profile = profileForBundle(options.profile ?? defaultProfile(), state);
   const concepts: Concept[] = [];
+  const lintByPath = options.frontmatterLintByPath;
   for (const rel of walkMarkdown(root, options.warnings)) {
+    // DEC-171/LCLI-691: frontmatter lint is produced per concept, but a caller may want it captured
+    // per PATH (a writer, so it can print only what it wrote) or suppressed outright (a reader,
+    // `frontmatterLint: false`). Everything else on this collector is unaffected.
+    const lint = lintByPath === undefined ? undefined : new WarningCollector();
+    const conceptWarnings =
+      lintByPath !== undefined ? lint : options.frontmatterLint === false ? undefined : options.warnings;
     // `rel` is bundle-root-relative, so tryParseConcept derives a bundle-relative id — and so is
     // the reserved root index it is judged against (LORE-192): see effectiveProfileFor.
     const concept = tryParseConcept(rel, readConcept(root, rel), {
-      warnings: options.warnings,
+      warnings: conceptWarnings,
       profile: effectiveProfileFor(rel, BUNDLE_ROOT_INDEX_PATH, profile),
       bundleState: state,
     });
@@ -276,6 +306,9 @@ export function loadBundle(root: string, options: LoadBundleOptions = {}): Bundl
         options.warnings?.add(`skipping ${rel}: no frontmatter mapping, treated as a non-concept file`);
       }
       continue;
+    }
+    if (lintByPath !== undefined && lint !== undefined && lint.count > 0) {
+      lintByPath.set(rel, lint.list());
     }
     concepts.push(concept);
     if (options.boundedMemory === true && concepts.length % BOUNDED_MEMORY_GC_CONCEPT_INTERVAL === 0) Bun.gc(true);

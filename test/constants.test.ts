@@ -768,12 +768,12 @@ describe("Constants — rules attach only to lore's BUILT-IN declaration (ruling
     mkdirSync(join(root, ".lore"), { recursive: true });
     writeFileSync(
       join(root, ".lore/profile.toml"),
-      '[profile]\nname = "custom"\nokf_version = "0.2"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "Constants"\n',
+      '[profile]\nname = "custom"\nokf_version = "0.2"\n\n[base.fields]\ntype = { required = true }\n\n[[types]]\nname = "Constants"\nfields = { summary = {} }\n',
     );
     rmSync(join(root, ".lore", "schemas"), { recursive: true, force: true });
     // No entries, no sources, and a second document: every built-in rule would fire.
-    writeDoc(DOC, "---\ntype: Constants\n---\n\n# Ours\n");
-    writeDoc("reference/two.md", "---\ntype: Constants\n---\n\n# Also ours\n");
+    writeDoc(DOC, "---\ntype: Constants\nsummary: Ours.\n---\n\n# Ours\n");
+    writeDoc("reference/two.md", "---\ntype: Constants\nsummary: Also ours.\n---\n\n# Also ours\n");
     const { code, findings, readCounts } = check(["--strict"]);
     expect(findings).toEqual([]);
     expect(readCounts).toBeUndefined();

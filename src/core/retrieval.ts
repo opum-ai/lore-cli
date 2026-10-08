@@ -126,6 +126,8 @@ export interface RetrievalGraph {
 export interface RetrievalGraphOptions {
   readonly root: string;
   readonly warnings?: WarningCollector;
+  /** Suppress per-document frontmatter lint at the parse, on BOTH backends (LCLI-691) — a reader answers a query, it does not lint the bundle. See {@link import("./bundle").LoadBundleOptions.frontmatterLint}. */
+  readonly frontmatterLint?: boolean;
   readonly adapter?: BacklogAdapter;
   readonly resolveGitCommit?: (root: string) => string | null;
   /** Internal test/conformance control; never exposed as a public CLI flag. */
@@ -264,6 +266,7 @@ async function loadReferenceGraph(options: RetrievalGraphOptions): Promise<Retri
   const graph = loadBundle(join(options.root, DOCS_DIR), {
     warnings: options.warnings,
     profile,
+    ...(options.frontmatterLint !== undefined ? { frontmatterLint: options.frontmatterLint } : {}),
   });
   const traversal = options.includeTraversal
     ? buildTraversalSnapshot(

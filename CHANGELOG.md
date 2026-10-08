@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`lore check` reports the per-document frontmatter lint, and the retrieval commands stop
+  emitting it** (LCLI-691). The Tier-3 extension findings — an unknown `type`, an extra/unknown
+  key, and a missing or over-long `summary` — were reaching only the retrieval commands (`query`,
+  `read`, `graph`, `context`, …): those load the whole bundle and printed every one to stderr,
+  including for documents they did not return, while `lore check` dropped all warning-tier
+  frontmatter findings and so reported `0 warnings` everywhere. Now `lore check` counts them,
+  named per file and rule, in its summary line — a warning never changes the exit code, and only
+  `--strict` promotes it — and the retrieval commands emit no bundle-wide frontmatter lint at all.
+  A repository that was clean and now shows a non-zero warning count is **expected, not a CI
+  break**: warnings alone still exit `0`. Per-file detail remains in `lore validate`.
+
 ## [0.13.0] - 2026-10-07
 
 ### Added

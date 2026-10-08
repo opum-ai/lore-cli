@@ -207,7 +207,12 @@ export async function runSync(options: SyncOptions): Promise<number> {
   // against this profile (LORE-84), and it runs regardless of reconciliation eligibility, so the
   // profile can no longer be deferred to the eligibility-gated block below.
   const profile = loadProfile({ root: options.root });
-  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
+  const lintByPath = new Map<string, readonly string[]>();
+  const graph = loadBundle(docsRoot, {
+    warnings: advisories,
+    frontmatterLintByPath: lintByPath,
+    profile,
+  });
   advisories.flush({ color: options.output.color, stderr: options.stderr });
 
   const scoped = scopeConcepts(graph, parsed.paths);
@@ -258,6 +263,17 @@ export async function runSync(options: SyncOptions): Promise<number> {
       writes.set(concept.path, { before: original, after: final });
     }
   }
+
+  // DEC-171/LCLI-691: `sync` runs from a hook after every Quest write, so it prints the frontmatter
+  // lint for the documents it actually WRITES and never the whole bundle's. This is the author's
+  // write-time signal on the files they touched; `lore check`/`validate` report everything.
+  const writtenLint = new WarningCollector();
+  for (const rel of writes.keys()) {
+    for (const message of lintByPath.get(rel) ?? []) {
+      writtenLint.add(message);
+    }
+  }
+  writtenLint.flush({ color: options.output.color, stderr: options.stderr });
 
   const regenerated = parsed.noIndex ? undefined : regenerateIndexAndLog(options, docsRoot, graph, writes);
   const orphanedIndexes = regenerated?.orphanedIndexes ?? [];

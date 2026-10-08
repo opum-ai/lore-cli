@@ -126,7 +126,7 @@ export function runRead(options: ReadOptions): number {
   }
   const advisories = new WarningCollector();
   const profile = loadProfile({ root: options.root });
-  const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, profile });
+  const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, frontmatterLint: false, profile });
   advisories.flush({ color: options.output.color, stderr: options.stderr });
 
   const concept = graph.concepts.get(id);

@@ -37,6 +37,7 @@ export async function runImpact(options: ImpactCommandOptions): Promise<number> 
   const loaded = await (options.retrieval ?? loadRetrievalGraph)({
     root: options.root,
     warnings: advisories,
+    frontmatterLint: false,
     adapter: options.adapter,
     includeTraversal: true,
     ...(workspace !== undefined ? { workspace } : {}),

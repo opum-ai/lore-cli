@@ -91,7 +91,7 @@ export async function runTasks(options: TasksOptions): Promise<number> {
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
   const profile = loadProfile({ root: options.root });
-  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
+  const graph = loadBundle(docsRoot, { warnings: advisories, frontmatterLint: false, profile });
   // Flush load warnings before the not_found throw below, so an advisory explaining *why* a
   // file is not a concept survives on exactly the path that most needs it (mirrors `lore context`).
   advisories.flush({ color: options.output.color, stderr: options.stderr });

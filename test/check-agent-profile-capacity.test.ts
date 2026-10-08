@@ -80,7 +80,8 @@ interface CheckJson {
 function referenceDoc(title: string, tokens: number): string {
   const body = `Sentence about ${title.toLowerCase()} evidence and its shape. `.repeat(1);
   const filler = `${body}`.padEnd(Math.max(1, tokens * 4), "x");
-  return `---\ntype: Reference\ntitle: ${title}\n---\n\n# ${title}\n\n${filler}\n`;
+  // `summary` keeps the fixture free of the missing-`summary` lint LCLI-691 now surfaces in `check`.
+  return `---\ntype: Reference\ntitle: ${title}\nsummary: ${title}.\n---\n\n# ${title}\n\n${filler}\n`;
 }
 
 function profileToml(name: string, maxTokens: number, sources: readonly string[]): string {
@@ -204,7 +205,7 @@ describe("lore check gates agent profile capacity (LCLI-642, DEC-11)", () => {
     // readers share one heading enumeration, the profile is measured like any other.
     writeDoc(
       "reference/nested.md",
-      "---\ntype: Reference\ntitle: Nested\n---\n\n# Nested\n\n> ## Quoted heading\n>\n> Body.\n",
+      "---\ntype: Reference\ntitle: Nested\nsummary: Nested.\n---\n\n# Nested\n\n> ## Quoted heading\n>\n> Body.\n",
     );
     writeProfile("nested", 4000, ["reference/nested#quoted-heading"]);
     const { code, report } = check();
@@ -239,7 +240,7 @@ describe("lore check gates agent profile capacity (LCLI-642, DEC-11)", () => {
     // real score rendered as `0` — one character, the same width as the old `1` placeholder — and a
     // placeholder that strips to one character passed this case while the measurement ran hundreds
     // of tokens small on any task that matched.
-    const sections = ["---\ntype: Reference\ntitle: Many\n---\n\n# Many\n"];
+    const sections = ["---\ntype: Reference\ntitle: Many\nsummary: Many.\n---\n\n# Many\n"];
     for (let index = 0; index < 40; index++) {
       sections.push(`\n## Section ${index}\n\nzephyr quirk evidence ${index}. ${"y".repeat(380)}\n`);
     }

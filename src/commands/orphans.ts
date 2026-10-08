@@ -194,7 +194,7 @@ export async function runOrphans(options: OrphansOptions): Promise<number> {
   const docsRoot = join(options.root, DOCS_DIR);
   const advisories = new WarningCollector();
   const profile = loadProfile({ root: options.root });
-  const graph = loadBundle(docsRoot, { warnings: advisories, profile });
+  const graph = loadBundle(docsRoot, { warnings: advisories, frontmatterLint: false, profile });
   // Flush load advisories (e.g. a file skipped for a malformed header) before any Backlog I/O, so a
   // "why isn't this a concept" note survives even if the snapshot read below throws (mirrors `lore tasks`).
   advisories.flush({ color: options.output.color, stderr: options.stderr });

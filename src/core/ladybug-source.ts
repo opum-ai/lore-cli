@@ -233,6 +233,12 @@ export async function loadLadybugProjectionSource(
       warnings: attemptWarnings,
       profile,
       boundedMemory: true,
+      // LCLI-691: a projection source is a RETRIEVAL index, not a lint surface. Frontmatter lint is
+      // suppressed at the parse so it never enters this source's stored `warnings` — which the
+      // indexed path replays verbatim (as plain strings, losing any per-message tag) and longer-lived
+      // generations keep in the cache, so a reader reusing one would otherwise re-emit lint that
+      // `lore check`/`lore validate` are the surfaces to report.
+      frontmatterLint: false,
     });
     const listing = await listTasksWithSource(options.root, options.adapter);
     const tasks = listing.tasks;

@@ -114,6 +114,7 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
   const retrieval = await (options.retrieval ?? loadReferenceRetrievalGraph)({
     root: options.root,
     warnings: advisories,
+    frontmatterLint: false,
     adapter: options.adapter,
   });
   try {
@@ -278,6 +279,7 @@ async function runWorkflowBinding(action: ContractContextAction, options: AgentC
     const retrieval = await (options.retrieval ?? loadReferenceRetrievalGraph)({
       root: options.root,
       warnings: advisories,
+      frontmatterLint: false,
       adapter: options.adapter,
     });
     try {
@@ -394,6 +396,7 @@ async function runAgentProject(action: Extract<AgentAction, { kind: "project" }>
   const retrieval = await (options.retrieval ?? loadReferenceRetrievalGraph)({
     root: options.root,
     warnings: advisories,
+    frontmatterLint: false,
     adapter: options.adapter,
   });
   try {

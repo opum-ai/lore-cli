@@ -92,6 +92,7 @@ export function runContext(options: ContextOptions): number | Promise<number> {
     return retrieval({
       root: options.root,
       warnings: advisories,
+      frontmatterLint: false,
       adapter: options.adapter,
       ...(parsed.workspace !== undefined ? { workspace: parsed.workspace } : {}),
     }).then(async (loaded) => {
@@ -107,7 +108,7 @@ export function runContext(options: ContextOptions): number | Promise<number> {
     });
   }
   const profile = loadProfile({ root: options.root });
-  const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, profile });
+  const graph = loadBundle(join(options.root, DOCS_DIR), { warnings: advisories, frontmatterLint: false, profile });
   return finishContext(options, parsed, graph, advisories, "reference");
 }
 
