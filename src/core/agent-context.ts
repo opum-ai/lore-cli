@@ -240,7 +240,9 @@ export interface AgentContextExport {
  * projection's `inputRevisions` list only the profile's catalog sources, so a bundle-wide hit —
  * drawn from documents that list never names — would let an unlisted document change a pinned
  * `packDigest` with nothing in `inputRevisions` to explain it. Its fields, bytes and digest are
- * exactly the pre-LCLI-575 pack's.
+ * NOT the pre-LCLI-575 pack's, though: the same selection code counts its
+ * `total`/`shown`/`truncated` over LCLI-680's eligible deck (cli-contract §5.6), which is why
+ * the `agent.workflow.projection` envelope carries `schemaVersion` `2`.
  */
 export type AgentContextPack = Omit<
   AgentContextExport,
@@ -351,11 +353,15 @@ export function compileAgentContextForProfile(
 /**
  * The shared compiler. `withQueryHits` false is the hit-free {@link AgentContextPack}: no query is
  * run, no section is reserved or rendered, and no hit field is emitted — so every budgeting and
- * rendering decision below reduces to the pre-LCLI-575 pins-then-ranked-evidence loop.
+ * rendering decision below reduces to the pre-LCLI-575 pins-then-ranked-evidence loop, EXCEPT that
+ * `total`/`shown`/`truncated` now count LCLI-680's eligible deck, so no pack rendered here is
+ * byte-identical to a pre-LCLI-575 one (cli-contract §5.6).
  *
  * `constitutionPath` is the repo-relative path (`docs/…`) of the bundle's built-in Constitution, as
  * `commands/agent-governance.ts`'s discovery found it, or `undefined` when there is none — and then
- * nothing below differs from the pre-LCLI-609 compiler by a byte. See {@link constitutionAutoPin}.
+ * the auto-pin below is a no-op, since there is no Constitution to pin. The pack is still not
+ * byte-identical to the pre-LCLI-609 compiler's, for the eligible-deck reason above. See
+ * {@link constitutionAutoPin}.
  */
 function compilePack(
   profile: AgentProfile,
@@ -513,8 +519,10 @@ function compilePack(
 
   // The mandatory-budget failure is judged on pins alone, exactly as before LCLI-575: the query
   // section is a supplement, so it must never turn a pack that used to compile into a failure. The
-  // floor is therefore rendered with NO query section — not even its heading — so it is the same
-  // bytes, and the same token estimate, a pre-LCLI-575 pack had.
+  // floor is therefore rendered with NO query section — not even its heading — so its selection
+  // reduces to the pre-LCLI-575 pins-then-ranked-evidence loop. It is NOT the same bytes a
+  // pre-LCLI-575 pack had, though: the same selection code counts total/shown/truncated over
+  // LCLI-680's eligible deck, so the footer — and the token estimate built from it — differs.
   const pinnedOnly = build([], 0, false);
   // The auto-pinned Constitution counts toward it like any pin — pins are never truncated — so a
   // Constitution too large for the budget fails the same way, and the hint says how to take control.
@@ -884,7 +892,8 @@ export function renderAgentContextMarkdown(data: AgentContextPack): string {
   }
   lines.push("", "## Allowed source catalog", "");
   // Only a hit-bearing pack can have an empty catalog worth naming (a degraded, profile-less one);
-  // the hit-free pack keeps the pre-LCLI-575 bytes exactly (Amendment 1).
+  // the hit-free pack is NOT byte-identical to the pre-LCLI-575 one — the same selection code
+  // counts its total/shown/truncated over LCLI-680's eligible deck (cli-contract §5.6).
   if (data.catalog.length === 0 && data.queryHits !== undefined) lines.push("_None._");
   for (const entry of data.catalog) {
     const title = entry.title === undefined ? "" : ` — ${oneLine(entry.title)}`;

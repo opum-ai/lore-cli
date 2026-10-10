@@ -47,7 +47,8 @@ Amended — 2026-10-05 (LCLI-680): **the first exception is now `3`, superseding
 zero-score exclusion — so the meaning of the existing `total`/`shown`/`truncated` fields changed
 for identical inputs. That is a §7.1 bump, on the same single kind. The `2` this entry records for
 LCLI-575 was correct when it was written and is left as the historical record; `lore help --json`
-now advertises `kindSchemaVersions: {"agent.context.export": 3}`. The per-kind scope and the
+now advertises the `agent.context.export` entry at `3` — the round-4 amendment below adds the
+second key, `agent.workflow.projection` at `2`. The per-kind scope and the
 per-kind read discipline described above are unchanged.
 
 Amended — 2026-10-05 (LCLI-680, round 4): **`agent.workflow.projection` becomes a second

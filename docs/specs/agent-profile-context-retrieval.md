@@ -248,8 +248,10 @@ detail enters the pack.
    itself in `pinned` or `sources`, whole or by heading (the overlap rule
    below, applied to the auto-pin); or the pack is a `--workspace` one. The
    workflow projection pack is auto-pinned too, and its catalog entry puts the
-   file in `inputRevisions`. With no auto-pin the pack is byte-identical to the
-   pre-LCLI-609 one.
+   file in `inputRevisions`. With no auto-pin the pack's selection reduces to the
+   pre-LCLI-609 one, but it is no longer byte-identical to it: the same selection
+   code counts its `total`/`shown`/`truncated` over LCLI-680's eligible deck
+   (step 8; cli-contract §5.6).
 4. Build candidates from `sources`. A source explicitly narrowed to a heading
    produces candidates only within that section. Lore never follows an
    unlisted graph neighbor.
@@ -281,8 +283,11 @@ detail enters the pack.
    governs every byte of quoted evidence. It is reserved before ranked
    evidence, and shrinks below three only when the pins leave no room. The
    mandatory-pin budget failure in step 3 is judged without it — not even its
-   heading — so the floor is byte-for-byte the pre-LCLI-575 one and the section
-   never turns a pack that compiles into one that fails. When the budget cuts
+   heading — so the floor's selection reduces to the pre-LCLI-575 loop and the
+   section never turns a pack that compiles into one that fails. The floor is no
+   longer byte-for-byte the pre-LCLI-575 one, though: the same selection code
+   counts its `total`/`shown`/`truncated` over LCLI-680's eligible deck
+   (cli-contract §5.6). When the budget cuts
    hits, the section says so (`showing N of M`, or an `_Omitted by budget_`
    line when it cuts all of them); when not even that line fits, the section is
    dropped and `queryHitsSectionOmitted` plus a stderr warning carry it. With

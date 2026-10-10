@@ -262,7 +262,9 @@ export function parseWorkflowBinding(raw: string): WorkflowBinding {
  * IS auto-pinned here, as in every other pack (LCLI-609, OPAG-425 R8 as
  * clarified by Amendment 4). That keeps the invariant above: the auto-pin is a
  * catalog entry, so its file is in `inputRevisions` and its reference in
- * `sources`. With no Constitution the projection is byte-identical to before.
+ * `sources`. With no Constitution the auto-pin is a no-op, but the projection is
+ * still not byte-identical to the pre-LCLI-609 one, for the eligible-deck reason
+ * above.
  */
 export function compileAgentWorkflowProjection(
   snapshot: AgentProfileSnapshot,
