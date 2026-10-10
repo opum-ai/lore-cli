@@ -533,9 +533,10 @@ identical inputs, which §7.1 counts (repurposing an existing field) as
 requiring a bump. This is a second, independent bump on the same `kind`, not a
 correction of LCLI-575's: the scope is `agent.context.export` alone here, and
 the new `omitted-by-relevance` catalog reason stays additive. `lore help --json`
-now advertises `kindSchemaVersions: {"agent.context.export": 3}`. A consumer
-pinned to `schemaVersion` `2` should read the footer as "of the eligible
-candidates" before accepting `3`.
+now advertises the `agent.context.export` entry at `3` — the
+`agent.workflow.projection` bump below makes the map two keys, not this one
+alone. A consumer pinned to `schemaVersion` `2` should read the footer as "of
+the eligible candidates" before accepting `3`.
 
 **LCLI-680 also bumps `agent.workflow.projection` to `2`.** The projection
 embeds an evidence pack compiled by the *same* selection code, so `total`,
