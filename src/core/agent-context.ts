@@ -359,7 +359,9 @@ export function compileAgentContextForProfile(
  *
  * `constitutionPath` is the repo-relative path (`docs/…`) of the bundle's built-in Constitution, as
  * `commands/agent-governance.ts`'s discovery found it, or `undefined` when there is none — and then
- * nothing below differs from the pre-LCLI-609 compiler by a byte. See {@link constitutionAutoPin}.
+ * the auto-pin below is a no-op, since there is no Constitution to pin. The pack is still not
+ * byte-identical to the pre-LCLI-609 compiler's, for the eligible-deck reason above. See
+ * {@link constitutionAutoPin}.
  */
 function compilePack(
   profile: AgentProfile,

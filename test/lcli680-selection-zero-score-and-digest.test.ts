@@ -22,12 +22,14 @@
  * subsystem — yet share that profile's required policy (`pinned = ["reference/cli-contract"]`), which
  * is exactly the CTX-01 shape: same mandatory policy, different task-shaped optional evidence.
  *
- * Measured at this revision: the LCLI-289 pack selects 198 of 198 eligible candidates (256 declared)
- * and the LCLI-380 pack 224 of 224 (256 declared), with 21 sections in only the first and 47 in only
+ * Measured at this revision: the LCLI-289 pack selects 203 of 203 eligible candidates (261 declared)
+ * and the LCLI-380 pack 229 of 229 (261 declared), with 21 sections in only the first and 47 in only
  * the second — non-empty in BOTH directions, so the two selections are genuinely different, not
- * nested. Neither pack is `truncated` (the profile's 108000-token budget holds every eligible
- * candidate), so a section present in one and absent from the other is absent because it scored zero
- * for that task, not because the budget cut it.
+ * nested. These counts are a SNAPSHOT, not an assertion: they move whenever the bundle's own docs
+ * change (a docs edit shifts a source's candidate count), and no test pins them. Neither pack is
+ * `truncated` (the profile's 108000-token budget holds every eligible candidate), so a section
+ * present in one and absent from the other is absent because it scored zero for that task, not
+ * because the budget cut it.
  *
  * The selection-ACCOUNTING half of the slice is measured on a small controlled bundle rather than
  * this repository's own: two facts it pins cannot be produced from the repo's current bundle. A
