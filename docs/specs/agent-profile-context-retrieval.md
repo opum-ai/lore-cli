@@ -248,8 +248,10 @@ detail enters the pack.
    itself in `pinned` or `sources`, whole or by heading (the overlap rule
    below, applied to the auto-pin); or the pack is a `--workspace` one. The
    workflow projection pack is auto-pinned too, and its catalog entry puts the
-   file in `inputRevisions`. With no auto-pin the pack is byte-identical to the
-   pre-LCLI-609 one.
+   file in `inputRevisions`. With no auto-pin the pack's selection reduces to the
+   pre-LCLI-609 one, but it is no longer byte-identical to it: the same selection
+   code counts its `total`/`shown`/`truncated` over LCLI-680's eligible deck
+   (step 8; cli-contract §5.6).
 4. Build candidates from `sources`. A source explicitly narrowed to a heading
    produces candidates only within that section. Lore never follows an
    unlisted graph neighbor.
