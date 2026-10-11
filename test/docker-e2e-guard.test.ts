@@ -7,7 +7,16 @@
 
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  appendFileSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -202,5 +211,58 @@ describe("docker E2E helper library is actually shipped into the image (LCLI-360
     // Ordering is deliberate: a broken assertion helper invalidates every case in the harness, and
     // the selftest costs seconds against the harness's minutes, so it must fail first and fast.
     expect(selftestAt).toBeLessThan(harnessAt);
+  });
+});
+
+// ── LCLI-688: the Phase-17 schema set is derived from the CLI, not a literal ──────────────
+
+describe("docker E2E derives its expected schema set from the CLI (LCLI-688)", () => {
+  test("no literal built-in slug list or full-profile count survives in the harness", () => {
+    // The defect: a literal slug list, a hard-coded count and a literal path list reddened the
+    // REQUIRED `docker e2e harness (real lore + backlog binaries)` context on every new built-in type
+    // until the harness was hand-edited -- LCLI-687's Standard type moved the count, the AC3 path
+    // list AND the four slug loops.
+    const script = readFileSync(SCRIPT, "utf8");
+    expect(script).not.toMatch(/for T in epic arc/);
+    expect(script).not.toContain(".data.count == 11");
+    // ...and what must be there instead. The non-vacuity guard matters as much as the derivation:
+    // a derivation that read nothing must FAIL, not let every loop below pass with zero iterations.
+    expect(script).toContain("SCHEMA_SLUGS=()");
+    expect(script).toContain('check "the schema set was derived from the CLI (non-empty)"');
+    expect(script).toContain('"$SCHEMA_COUNT"');
+    expect(script).toContain("LCLI299_EXPECTED_PATHS");
+  });
+
+  test("POSITIVE CONTROL: a profile with an ADDED type moves the set the harness reads, with no edit", () => {
+    // The harness derives from `.data.files[].path` of a real `lore schema export`. This control
+    // runs that export over a bundle whose profile declares one MORE type, and shows the extra
+    // type's schema appear in that data -- so a new built-in type moves the Phase-17 count/coverage
+    // assertions with no run-e2e.sh edit. `lore types` would NOT do the job: a deprecated alias
+    // owns a schema file it does not name (Story -> Arc, LCLI-553), which is why the export is read.
+    const dir = mkdtempSync(join(tmpdir(), "lcli-688-"));
+    try {
+      mkdirSync(join(dir, ".lore"), { recursive: true });
+      const profileText = (types: readonly string[]): string =>
+        `[profile]\nname = "custom"\nokf_version = "0.2"\n\n[base.fields]\ntype = { required = true }\n\n${types
+          .map((t) => `[[types]]\nname = "${t}"\nfields = { title = {} }\n`)
+          .join("\n")}`;
+      const exportedNames = (types: readonly string[]): string[] => {
+        writeFileSync(join(dir, ".lore", "profile.toml"), profileText(types));
+        rmSync(join(dir, ".lore", "derived-probe"), { recursive: true, force: true });
+        const run = spawnSync(
+          "bun",
+          ["run", join(ROOT, "src", "cli.ts"), "schema", "export", "--out", ".lore/derived-probe", "--json"],
+          { cwd: dir, encoding: "utf8" },
+        );
+        expect(run.status).toBe(0);
+        const envelope = JSON.parse(run.stdout) as { data: { files: Array<{ path: string }> } };
+        return envelope.data.files.map((f) => basename(f.path)).sort();
+      };
+      expect(exportedNames(["Reference"])).toEqual(["reference.schema.json"]);
+      // The added type IS in the data the harness reads, so no literal needed editing.
+      expect(exportedNames(["Reference", "QA Plan"])).toEqual(["qa-plan.schema.json", "reference.schema.json"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

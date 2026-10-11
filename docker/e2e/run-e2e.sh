@@ -1421,8 +1421,24 @@ step_json "lore sync: heal the ADR index left stale by Phase 16's unsynced `lore
   '.kind == "sync.result"' -- lore sync --json
 
 # ── Phase 17: schema export ─────────────────────────────────────────────────────
+# The expected committed-schema set is DERIVED FROM THE CLI, never a literal (LCLI-688). A hard-coded
+# slug list, an exact count and a literal path list reddened this REQUIRED context on every new
+# built-in type until the harness was hand-edited: LCLI-687's Standard type moved the count, the AC3
+# path list AND the four slug loops.
+#
+# `lore schema export` is the authority, NOT `lore types`: a deprecated alias owns a schema file of
+# its own (Story -> Arc, LCLI-553), so `lore types` alone would miss story.schema.json. The export's
+# own `.data.files[].path` is what was written, which is exactly what these probes assert.
+SCHEMA_JSON="$(lore schema export --json)"
+SCHEMA_SLUGS=()
+while IFS= read -r slug; do SCHEMA_SLUGS+=("$slug"); done < <(
+  printf '%s' "$SCHEMA_JSON" | jq -r '.data.files[].path | sub("^.*/"; "") | sub("\\.schema\\.json$"; "")'
+)
+SCHEMA_COUNT="${#SCHEMA_SLUGS[@]}"
+# A derivation that read nothing must FAIL here, or every loop below would pass vacuously.
+check "the schema set was derived from the CLI (non-empty)" "[ \"$SCHEMA_COUNT\" -gt 0 ]"
 step_json "lore schema export" '.kind == "schema.result"' -- lore schema export --json
-for T in epic arc story spec adr runbook reference constitution constants standard attested-computation; do
+for T in "${SCHEMA_SLUGS[@]}"; do
   check "schema export produced valid JSON for $T" "jq -e . .lore/schemas/${T}.schema.json >/dev/null 2>&1"
 done
 
@@ -1432,6 +1448,9 @@ done
 LCLI299_TYPE_OUT=".lore/lcli-299-type-schemas"
 check "LCLI-299 AC2: single-type schema probe starts from an absent directory" \
   '[ ! -e "$LCLI299_TYPE_OUT" ]'
+# Deliberately LITERAL, and not the defect LCLI-688 fixes: this probe's two files are the ALIAS PAIR
+# for ONE type (Arc's canonical slug plus Story's deprecated alias, LCLI-553), not the profile's
+# built-in set, so a new type does not move them. The full-profile AC3 probe below IS derived.
 step_json "LCLI-299 AC2: schema export --type writes exactly the Story schema" \
   '.kind == "schema.result"
    and .data.out == "'"$LCLI299_TYPE_OUT"'"
@@ -1455,34 +1474,27 @@ check "LCLI-299 AC2: single-type output contains exactly the Arc schema and its 
 LCLI299_CUSTOM_OUT=".lore/lcli-299-custom-schemas"
 check "LCLI-299 AC3: custom-output schema probe starts from an absent directory" \
   '[ ! -e "$LCLI299_CUSTOM_OUT" ]'
+# Both the count and every expected path come from the set derived above, not a literal (LCLI-688):
+# the same export scoped to a different --out writes the same files under a different prefix, so a
+# new built-in type moves this assertion with NO edit here.
+LCLI299_EXPECTED_PATHS="$(printf '%s' "$SCHEMA_JSON" | jq -c --arg out "$LCLI299_CUSTOM_OUT" \
+  '[.data.files[].path | sub("^.*/"; $out + "/")] | sort')"
 step_json "LCLI-299 AC3: schema export --out writes the full profile outside the default directory" \
   '.kind == "schema.result"
    and .data.out == "'"$LCLI299_CUSTOM_OUT"'"
-   and .data.count == 11
+   and .data.count == '"$SCHEMA_COUNT"'
    and (.data.removed | length) == 0
-   and (([.data.files[].path] | sort) == [
-     "'"$LCLI299_CUSTOM_OUT"'/adr.schema.json",
-     "'"$LCLI299_CUSTOM_OUT"'/arc.schema.json",
-     "'"$LCLI299_CUSTOM_OUT"'/attested-computation.schema.json",
-     "'"$LCLI299_CUSTOM_OUT"'/constants.schema.json",
-     "'"$LCLI299_CUSTOM_OUT"'/constitution.schema.json",
-     "'"$LCLI299_CUSTOM_OUT"'/epic.schema.json",
-     "'"$LCLI299_CUSTOM_OUT"'/reference.schema.json",
-     "'"$LCLI299_CUSTOM_OUT"'/runbook.schema.json",
-     "'"$LCLI299_CUSTOM_OUT"'/spec.schema.json",
-     "'"$LCLI299_CUSTOM_OUT"'/standard.schema.json",
-     "'"$LCLI299_CUSTOM_OUT"'/story.schema.json"
-   ])
+   and (([.data.files[].path] | sort) == '"$LCLI299_EXPECTED_PATHS"')
    and all(.data.files[]; (.path | startswith(".lore/schemas/") | not))' \
   -- lore schema export --out "$LCLI299_CUSTOM_OUT" --json
-for T in epic arc story spec adr runbook reference constitution constants standard attested-computation; do
+for T in "${SCHEMA_SLUGS[@]}"; do
   check "LCLI-299 AC3: custom output produced valid JSON for $T" \
     "jq -e . '$LCLI299_CUSTOM_OUT/${T}.schema.json' >/dev/null 2>&1"
 done
 
 rm -f "$LCLI299_TYPE_OUT/arc.schema.json" "$LCLI299_TYPE_OUT/story.schema.json"
 rmdir "$LCLI299_TYPE_OUT"
-for T in epic arc story spec adr runbook reference constitution constants standard attested-computation; do
+for T in "${SCHEMA_SLUGS[@]}"; do
   rm -f "$LCLI299_CUSTOM_OUT/${T}.schema.json"
 done
 rmdir "$LCLI299_CUSTOM_OUT"
@@ -1634,7 +1646,8 @@ step_json "profile restored: lore schema export succeeds again (loadProfile reco
   '.kind == "schema.result"' -- lore schema export --json
 
 # Leave no induced state behind (LORE-63's convention): a custom profile.toml REPLACES the
-# default nine-type vocabulary wholesale, and a full `lore schema export` prunes a
+# default type vocabulary wholesale -- named without a count, since the count is exactly the kind
+# of hard-coded quantity LCLI-688 removes elsewhere in this file -- and a full `lore schema export` prunes a
 # *.schema.json whose type the active profile no longer declares ONLY when its generator stamp
 # matches the active profile's digest (LCLI-565). So the two custom-profile exports above no
 # longer prune Phase 17's default schema files: those carry the DEFAULT profile's stamp, foreign
@@ -1657,7 +1670,7 @@ step "lore check exits 7 (indeterminate) on the kept foreign-stamped schema, nev
 rm -f .lore/schemas/e2e-custom-type.schema.json
 step "after the deliberate hand rm, lore check no longer exits 7" 0 \
   -- bash -c 'lore check --json >/dev/null 2>&1; [ $? -ne 7 ]'
-for T in epic arc story spec adr runbook reference constitution constants standard attested-computation; do
+for T in "${SCHEMA_SLUGS[@]}"; do
   check "default schema for $T restored after the profile subsystem probe" \
     "jq -e . .lore/schemas/${T}.schema.json >/dev/null 2>&1"
 done
