@@ -10,8 +10,14 @@
  * look intermittent).
  *
  * CI cannot catch this — a fresh clone has no worktrees — so the COMMITTED ignore rule is the whole
- * guard. These two tests pin the rule and the biome setting that makes it effective, so neither can
- * be dropped silently: remove either one and the defect returns.
+ * guard. These two tests pin the INPUTS the fix rests on: the committed rule, and the three biome
+ * VCS settings that make it effective. Drop any one of them and the defect returns.
+ *
+ * What they do NOT pin is the end-to-end measurement — a LIVE worktree under .claude/worktrees/
+ * with `npm run lint` red before the fix and green after, plus a genuine `src/` violation still
+ * red. That was measured by hand when the fix landed and cannot be re-run without creating a
+ * worktree, so this committed guard is deliberately the cheaper input-level check standing in for
+ * it, not a replacement.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -26,12 +32,19 @@ describe("LCLI-520: the committed .gitignore excludes agent worktrees", () => {
     expect(ignore).toMatch(/^\.claude\/worktrees\/$/m);
   });
 
-  test("biome honours the ignore file — the setting that makes the rule protect config discovery", () => {
-    // If `vcs.useIgnoreFile` were ever turned off, the .gitignore entry would stop protecting
-    // config discovery and the defect would return for a different reason.
+  test("biome honours the ignore file — the settings that make the rule protect config discovery", () => {
+    // All THREE, not just `useIgnoreFile`: biome consults .gitignore only when VCS integration is
+    // ENABLED, the client is git, AND the ignore file is in use. A round-1 review measured that
+    // `enabled: false` with `useIgnoreFile: true` brings the nested-root-config error BACK while a
+    // `useIgnoreFile`-only assertion stays green — a guard that can go green as the defect returns.
+    // (`enabled: false` also stops biome ignoring .gitignore everywhere, so `npm run lint` would go
+    // red loudly for a different reason — that mitigation is why the gap was minor, not a blocker —
+    // but pinning all three is nearly free.)
     const biome = JSON.parse(readFileSync(join(ROOT, "biome.json"), "utf8")) as {
-      vcs?: { useIgnoreFile?: boolean };
+      vcs?: { enabled?: boolean; clientKind?: string; useIgnoreFile?: boolean };
     };
+    expect(biome.vcs?.enabled).toBe(true);
+    expect(biome.vcs?.clientKind).toBe("git");
     expect(biome.vcs?.useIgnoreFile).toBe(true);
   });
 });
