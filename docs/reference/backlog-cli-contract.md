@@ -448,18 +448,20 @@ implementation-note line arrays fold into newline-delimited Lore fields.
 Legacy migration is explicit: initialize Quest, then run `lore init --tracker
 quest --migrate-backlog`; pin instead with `lore init --tracker backlog`. Lore
 consumes Quest's public `preview` / `apply` / `status` / `rollback` lifecycle.
-It records the reviewed digest, source fingerprint, and mappings in a
-Lore-owned pending receipt before actorful `apply`; an interrupted rerun — or a
-rerun after a refused `--remove-backlog` — runs ONE read-only `preview` to
-fingerprint the current source, then resumes with `status --digest` instead of
-creating a second preview, and re-`apply`s only when Quest holds no receipt for
-the recorded digest yet. A rerun whose source still matches the recorded
-migration is an idempotent success: it reports the existing receipt plus
-`alreadyApplied: true` and applies nothing, while one whose source has changed
-refuses with `backlog.diverged-from-migration` (LCLI-699). Lore persists
-Quest as the backend only after a schema-1 `migration.backlog.receipt` reports
-`state: "applied"` with the reviewed digest, fingerprint, and mappings, then
-clears the pending record. Quest assigns canonical `T-N` identities while
+On a successful migration it durably records the applied digest
+(`.lore/quest-backlog-migration.applied.json`), and keeps the reviewed digest,
+source fingerprint, and mappings in a crash-recovery pending receipt before
+actorful `apply`. A rerun asks Quest's `status --digest` about the recorded
+digest FIRST: a receipt Quest no longer holds (rolled back, or a crashed run
+that never applied) is a FRESH migration whatever the source; only a CONFIRMED
+receipt is compared, through ONE read-only `preview` that fingerprints the
+current source, yielding either the idempotent success — the existing receipt
+plus `alreadyApplied: true`, applying nothing — or, when the digest differs, the
+`backlog.diverged-from-migration` refusal (the digest is option-sensitive, so a
+changed source and changed migration flags both produce it — LCLI-700). Lore
+persists Quest as the backend only after a schema-1 `migration.backlog.receipt`
+reports `state: "applied"` with the reviewed digest, fingerprint, and mappings,
+then clears the pending record. Quest assigns canonical `T-N` identities while
 preserving ordinary `LCLI-*`, `TASK-*`, and dotted Backlog IDs as stable
 aliases, so existing Story coupling does not require a reference rewrite.
 `lore backlog adopt` migrates

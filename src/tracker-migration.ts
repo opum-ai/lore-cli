@@ -179,8 +179,24 @@ export async function migrateBacklogTasksToQuest(
   const pending = store.read(source);
   const recorded = hint ?? pending?.digest;
 
-  if (recorded === undefined) {
-    // FRESH — no earlier migration is recorded here, so preview, durably record, then apply.
+  // DEC-172 (4ap)(a): the fresh/divergence split is conditioned on Quest CONFIRMING the recorded
+  // migration, NOT on the digests alone — the divergence row is "differs from a CONFIRMED hint" and the
+  // fresh row is "no hint, OR an unconfirmed one", with no digest qualifier. So status(recorded) is
+  // asked FIRST: an unconfirmed record (a migration rolled back in Quest, or a crashed run that never
+  // reached an apply) is FRESH whatever the current digest, and only a confirmed one can diverge.
+  let confirmed: { receipt: QuestMigrationReceipt; digest: string } | undefined;
+  if (recorded !== undefined) {
+    try {
+      confirmed = { receipt: await migration.status(recorded), digest: recorded };
+    } catch (cause) {
+      if (!(cause instanceof LoreError) || cause.type !== "not_found") throw cause;
+      confirmed = undefined;
+    }
+  }
+
+  if (confirmed === undefined) {
+    // FRESH — nothing is recorded here, or the recorded migration is one Quest no longer holds.
+    // Preview, durably record, then apply.
     const preview = await migration.preview(source, migrationOptions);
     assertPreview(preview);
     // This must precede apply: a process crash cannot make Lore forget the approved digest.
@@ -191,43 +207,26 @@ export async function migrateBacklogTasksToQuest(
     return result(receipt, preview);
   }
 
-  // RESUME / RERUN — ONE read-only preview fingerprints the CURRENT source. Both the digest and the
-  // fingerprint are Quest's to compute and Lore has no local way to derive them, so one preview is the
-  // cost this path pays against the re-apply it avoids.
+  // CONFIRMED — Quest holds the recorded migration. ONE read-only preview fingerprints the CURRENT
+  // source; both the digest and the fingerprint are Quest's to compute and Lore has no local way to
+  // derive them, so one preview is the cost this path pays against the re-apply it avoids.
   const fresh = await migration.preview(source, migrationOptions);
   assertPreview(fresh);
-  if (fresh.digest !== recorded) {
-    throw divergenceError(recorded, fresh.digest);
+  if (fresh.digest !== confirmed.digest) {
+    throw divergenceError(confirmed.digest, fresh.digest);
   }
   // The recorded preview (the reviewed migration) is what supplies `excluded`; a rerun whose pending
   // cache was already cleared falls back to the fresh preview, which — because the digest matched —
   // carries the same exclusions.
   const recordedPreview = pending ?? fresh;
-  let receipt: QuestMigrationReceipt;
-  // `alreadyApplied` is true ONLY when `status` answered with an existing receipt. The `not_found`
-  // sub-branch below APPLIES — a crashed run being finished — so reporting the flag there would
-  // contradict the field's own contract.
-  let recognised = true;
-  try {
-    receipt = await migration.status(recorded);
-  } catch (cause) {
-    if (!(cause instanceof LoreError) || cause.type !== "not_found") throw cause;
-    // The process may have stopped (or an older artifact may have rejected the argv) after Lore
-    // durably recorded the preview but before Quest created its receipt. Reapply the SAME reviewed
-    // digest: Quest revalidates the current source fingerprint before its first write. Quest's own
-    // contract (LCLI-465) requires preserveSourceIds/sourceFamily to be re-supplied identically to
-    // apply as given to preview — Lore doesn't persist them (they're not part of the preview
-    // response, only its request), so a resumed `lore init` run supplies them fresh from its own
-    // CLI flags, the same way the operator would re-supply them to Quest's own CLI directly.
-    recognised = false;
-    receipt = await migration.apply(source, fresh.digest, migrationOptions);
-  }
-  assertReceipt(recordedPreview, receipt);
-  store.writeApplied(source, receipt.digest);
-  // The recorded preview's `excluded` is what reaches the result — it is the preview the migration
-  // was approved with. The fresh preview fetched above is used only for the digest comparison, so it
-  // is deliberately NOT re-read here on the recognised path.
-  return result(receipt, recordedPreview, recognised ? true : undefined);
+  // The receipt Quest returns for the recorded digest must be a valid, APPLIED receipt for the same
+  // digest/fingerprint/mappings — the same guard the fresh path applies. `assertReceipt` is what
+  // enforces `state === "applied"`, so a receipt still in `applying`/`failed`/`rolled-back` can
+  // never be reported as a recognised applied migration or authorise the removal.
+  assertReceipt(recordedPreview, confirmed.receipt);
+  // Re-record the receipt's digest so a crash-recovery resume that finished here leaves the hint.
+  store.writeApplied(source, confirmed.receipt.digest);
+  return result(confirmed.receipt, recordedPreview, true);
 }
 
 /**

@@ -513,6 +513,64 @@ describe("migrateBacklogTasksToQuest", () => {
     // The remedy names the option-cause explicitly, so a flags-only divergence is actionable.
     expect(error.hint).toContain("--preserve-source-ids");
   });
+
+  test("(4ap)(a) an UNCONFIRMED hint whose digest has ALSO diverged is FRESH, not a divergence", async () => {
+    const store = memoryStore();
+    // The recorded migration was rolled back in Quest (or a crashed run never applied), AND the
+    // backlog has since changed: BOTH the status and the digest are "off". (4ap)(a)'s fresh row is
+    // "no hint, or an unconfirmed one" with NO digest qualifier, and its divergence row requires a
+    // CONFIRMED hint — so status is asked FIRST and the diverged digest is never compared.
+    store.writeApplied("/source", "sha256:reviewed");
+    const calls: string[][] = [];
+    let applies = 0;
+    const resumed = await migrateBacklogTasksToQuest(
+      migration({
+        preview: async () => ({ ...preview, digest: "sha256:changed", sourceFingerprint: "sha256:changed" }),
+        status: async (digest) => {
+          calls.push(["status", digest]);
+          throw new LoreError("not_found", "migration receipt not found");
+        },
+        apply: async (source, digest) => {
+          applies += 1;
+          calls.push(["apply", source, digest]);
+          return { ...receipt, digest, sourceFingerprint: "sha256:changed" };
+        },
+      }),
+      "/source",
+      store,
+    );
+    // FRESH: status refused the hint, so the changed digest is applied fresh — no divergence refusal.
+    expect(calls).toEqual([
+      ["status", "sha256:reviewed"],
+      ["apply", "/source", "sha256:changed"],
+    ]);
+    expect(applies).toBe(1);
+    expect(Object.hasOwn(resumed, "alreadyApplied")).toBe(false);
+  });
+
+  test("(4ap) a CONFIRMED hint whose status returns a NON-APPLIED receipt is REFUSED, not reported as applied", async () => {
+    const store = memoryStore();
+    store.writeApplied("/source", "sha256:reviewed");
+    let applies = 0;
+    // Quest still holds the receipt but has NOT reached `applied` on it — e.g. a crash mid-apply.
+    // assertReceipt must refuse this rather than let result()'s hardcoded state:"applied" and
+    // alreadyApplied:true misreport it (and let --remove-backlog delete backlog/ off it).
+    const error = (await migrateBacklogTasksToQuest(
+      migration({
+        preview: async () => preview,
+        status: async () => ({ ...receipt, state: "applying" }),
+        apply: async () => {
+          applies += 1;
+          return receipt;
+        },
+      }),
+      "/source",
+      store,
+    ).catch((caught: unknown) => caught)) as LoreError;
+    expect(error).toBeInstanceOf(LoreError);
+    expect(error.type).toBe("conflict");
+    expect(applies).toBe(0);
+  });
 });
 
 /**
