@@ -466,7 +466,7 @@ export function checkBundle(
   // Pass 1 — index: parse each file's body once into an mdast tree, keyed by bundle-relative
   // id, and record its heading-slug set. The id key set is the membership; every file is
   // indexed before any link is checked, so a forward reference resolves.
-  const prepared: { file: CheckInputFile; tree: Nodes; id: string }[] = [];
+  const prepared: { file: CheckInputFile; tree: Nodes; source: string; id: string }[] = [];
   const slugsById = new Map<string, ReadonlySet<string>>();
   // Frontmatter is indexed by id in the same pass because the relation rules are the only ones that
   // are CROSS-FILE in both directions: a relation's drift state is a comparison between the citing
@@ -476,9 +476,10 @@ export function checkBundle(
   // treating it as absent would report a broken reference that is not broken.
   const frontmatterById = new Map<string, Record<string, unknown>>();
   for (const file of files) {
-    const tree = fromMarkdown(bodyText(file.raw));
+    const source = bodyText(file.raw);
+    const tree = fromMarkdown(source);
     const id = idFromPath(file.path);
-    prepared.push({ file, tree, id });
+    prepared.push({ file, tree, source, id });
     slugsById.set(id, extractHeadingSlugs(tree));
     frontmatterById.set(id, readFrontmatterOrEmpty(file.path, file.raw));
   }
@@ -487,7 +488,7 @@ export function checkBundle(
   // shared parse. Membership is `slugsById` itself — every file id is a key.
   const findings: CheckFinding[] = [];
   let skippedOutOfBundleLinkCount = 0;
-  for (const { file, tree, id } of prepared) {
+  for (const { file, tree, source, id } of prepared) {
     const dir = posix.dirname(file.path);
     const targets = extractLinkTargets(tree);
     for (const target of targets) {
@@ -518,7 +519,7 @@ export function checkBundle(
       }
     }
     findings.push(...relationFindings(file.path, dir, id, frontmatterById));
-    findings.push(...portabilityScan(tree, file.path));
+    findings.push(...portabilityScan(tree, file.path, source));
     if (hasStrayFrontmatterFence(bodyText(file.raw))) {
       findings.push({
         severity: "error",
@@ -1343,7 +1344,7 @@ const CALLOUT = /^\s*\[!([A-Za-z][\w-]*)\]/;
  * is correctly left alone — while the MDX scan also inspects raw-`html` nodes (the form
  * CommonMark pulls a `<tag>` out of the text as), skipping HTML comments.
  */
-function portabilityScan(tree: Nodes, file: string): CheckFinding[] {
+function portabilityScan(tree: Nodes, file: string, source: string): CheckFinding[] {
   const findings: CheckFinding[] = [];
   walkMdast(tree, (node) => {
     if (node.type === "text") {
@@ -1358,7 +1359,7 @@ function portabilityScan(tree: Nodes, file: string): CheckFinding[] {
     }
     findings.push(...blockReferenceFinding(node, file));
     findings.push(...calloutFinding(node, file));
-    findings.push(...mdxHazardFindings(node, file));
+    findings.push(...mdxHazardFindings(node, file, source));
   });
   return findings;
 }
@@ -1434,6 +1435,25 @@ function calloutFinding(node: Nodes, file: string): CheckFinding[] {
 }
 
 /**
+ * The **raw source text** a mdast node spans, or `null` when the parser recorded no offsets.
+ *
+ * `node.value` is DECODED — mdast resolves character references before a value reaches us, so a
+ * source `&#123;` arrives as `{` and `&lt;` as `<`. A finding that judges SOURCE-level syntax (the
+ * MDX raw-`<`/`{` hazard, LCLI-663) must therefore read the source span, never the value.
+ */
+function rawSourceOf(
+  node: { position?: { start: { offset?: number }; end: { offset?: number } } },
+  source: string,
+): string | null {
+  const start = node.position?.start.offset;
+  const end = node.position?.end.offset;
+  if (typeof start !== "number" || typeof end !== "number") {
+    return null;
+  }
+  return source.slice(start, end);
+}
+
+/**
  * MDX-safety warnings (portable-markdown.md §MDX): Docusaurus parses Markdown as **MDX**, where a
  * raw `<` starts a JSX element and a raw `{` a JSX expression — so un-escaped, non-code `<`/`{` in
  * prose make its build throw even though the same source renders fine on GitHub/Obsidian/MkDocs.
@@ -1447,13 +1467,20 @@ function calloutFinding(node: Nodes, file: string): CheckFinding[] {
  *
  * Code spans/blocks are `inlineCode`/`code` nodes, never `text`/`html`, so they never reach here.
  */
-function mdxHazardFindings(node: Nodes, file: string): CheckFinding[] {
+function mdxHazardFindings(node: Nodes, file: string, source: string): CheckFinding[] {
   const findings: CheckFinding[] = [];
   if (node.type === "text") {
-    if (node.value.includes("<")) {
+    // Scan the SOURCE the node covers, never its decoded `value` (LCLI-663): mdast resolves
+    // character references before the value reaches us, so a source `&#123;` arrives as a literal
+    // `{` and a source `&lt;` as `<`. Scanning `value` therefore flagged the very escape this
+    // finding's own message recommends. The MDX hazard is a SOURCE-level character, so the source
+    // slice is what decides it. `?? node.value` keeps the pre-LCLI-663 behaviour only on the
+    // degenerate case where the parser recorded no offsets at all.
+    const raw = rawSourceOf(node, source) ?? node.value;
+    if (raw.includes("<")) {
       findings.push(mdxHazard(file, "<"));
     }
-    if (node.value.includes("{")) {
+    if (raw.includes("{")) {
       findings.push(mdxHazard(file, "{"));
     }
   } else if (node.type === "html" && node.value.replace(HTML_COMMENT, "").trim() !== "") {
