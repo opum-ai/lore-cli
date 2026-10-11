@@ -1411,15 +1411,15 @@ export async function main(
       // A PRESENT-but-EMPTY record is a THIRD state and must not collapse into the ABSENT one
       // (LCLI-641). A zero-byte file reads as "", which is falsy, so the `if (existing)` guard below
       // treated it as a fresh run -- but the file DOES exist, so a --promote then reached the
-      // `flag: "wx"` write further down and died with an uncaught EEXIST (exit 2, raw stack, no
-      // remedy). An empty record is not "no prior values": it is a record whose bytes were lost,
+      // `flag: "wx"` write further down and died with an uncaught EEXIST (exit 2, a one-line
+      // message on stderr, no remedy). An empty record is not "no prior values": it is a record whose bytes were lost,
       // truncated or never flushed, and the priors it held cannot be recovered here. Refuse, naming
       // the file and its state, before anything is written -- this sits before the --dry-run branch
       // so it refuses on --dry-run and --promote alike. Deleting the file is the deliberate act that
       // means "start fresh"; an empty file is not.
       if (existing !== null && existing.trim() === "") {
         err(
-          `Refusing to promote ${version}: the promotion record ${args.recordPath} exists but is EMPTY -- it is a present file carrying no record (zero bytes, or only whitespace). An empty record is not the same as no record: it cannot name the prior ${PROMOTE_TAG} values a rollback would need, and treating it as fresh would overwrite them irrecoverably at the write below. If nothing has moved, delete ${args.recordPath} to start fresh; otherwise restore its bytes. Nothing has moved.`,
+          `Refusing to promote ${version}: the promotion record ${args.recordPath} exists but is EMPTY -- it is a present file carrying no record (zero bytes, or only whitespace). An empty record is not the same as no record: it names no prior ${PROMOTE_TAG} values a rollback could restore, and treating it as fresh would not reuse it -- the fresh path re-plans and then dies at the exclusive record write, which refuses to overwrite the existing file. If nothing has moved, delete ${args.recordPath} to start fresh; otherwise restore its bytes. Nothing has moved.`,
         );
         return 1;
       }
