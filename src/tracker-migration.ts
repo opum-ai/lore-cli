@@ -127,8 +127,8 @@ export async function migrateBacklogTasksToQuest(
     if (fresh.digest !== pending.digest) {
       throw new LoreError(
         "conflict",
-        "the backlog has changed since it was migrated, so this run cannot resume the recorded migration",
-        "restore backlog/ to the state that was migrated, then rerun; or, to migrate the CHANGED backlog instead, delete `.lore/quest-backlog-migration.pending.json` so the next run previews fresh",
+        "the backlog has diverged from the recorded migration, so this run cannot resume it",
+        `restore backlog/ to the state that was migrated, then rerun; or, to migrate the CHANGED backlog instead, delete \`.lore/quest-backlog-migration.pending.json\` and rerun — but if this migration was already applied in Quest, first roll it back (\`quest migration backlog rollback --digest ${pending.digest}\`), or the fresh run collides on the aliases the first one created`,
         { code: "backlog.diverged-from-migration", recorded: pending.digest, current: fresh.digest },
       );
     }
@@ -152,9 +152,9 @@ export async function migrateBacklogTasksToQuest(
       receipt = await migration.apply(source, pending.digest, migrationOptions);
     }
     assertReceipt(pending, receipt);
-    // `pending` is the preview this run (or an earlier crashed one) already reviewed and durably
-    // recorded, so it carries the same `excluded` a fresh preview would — it is that fresh preview,
-    // read back from disk rather than re-fetched, per this branch's own resume contract above.
+    // The recorded preview's `excluded` is what reaches the result — it is the preview this run (or
+    // an earlier crashed one) reviewed and durably recorded. The fresh preview fetched above is used
+    // only for the digest comparison, so it is deliberately NOT re-read here.
     return result(receipt, pending, recognised);
   }
   const preview = await migration.preview(source, migrationOptions);
@@ -260,7 +260,8 @@ function sameMappings(left: readonly QuestMigrationMapping[], right: readonly Qu
  *
  * The wizard's collision retry (LCLI-466) asked this before offering to re-run with different
  * migration options: once a preview has been approved and recorded, {@link
- * migrateBacklogTasksToQuest} resumes by re-applying THAT digest, and Quest re-derives its plan from
+ * migrateBacklogTasksToQuest} resumes by re-`status`ing THAT digest (re-`apply`ing only when Quest
+ * holds no receipt for it), and Quest re-derives its plan from
  * whatever options it is handed — so a retry that changes the options against an already-recorded
  * digest could only be refused a second time, for a different and more confusing reason. The retry
  * was therefore offered only when nothing had been approved yet, which is every refusal raised by
