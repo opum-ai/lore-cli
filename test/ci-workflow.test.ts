@@ -123,7 +123,11 @@ describe("ci.yml exact-host LadybugDB qualification", () => {
 
   test("platform-specific concurrency and timeouts stay explicitly bounded", () => {
     const testScript = loadWorkflow().jobs.check?.steps?.find((step) => step.name === "Test")?.run ?? "";
-    expect(testScript).toContain("bun test --isolate --max-concurrency=4 --timeout=60000");
+    // The windows leg's per-test budget is a single value used by the run AND by
+    // the LCLI-516 classifier (scripts/ci-flake-classify.sh), so the two cannot
+    // drift apart -- the same coupling LCLI-659 established for the ubuntu leg.
+    expect(testScript).toContain("lore_per_test_ms=60000");
+    expect(testScript).toContain('bun test --isolate --max-concurrency=4 --timeout="$' + '{lore_per_test_ms}"');
     expect(testScript).toContain('"macos-15-intel"');
     expect(testScript).toContain("bun test --isolate --timeout=40000");
     expect(testScript).toContain('== "ubuntu-latest"');
@@ -213,6 +217,93 @@ describe("ci.yml ubuntu Bun-epoll retry trigger (LCLI-507)", () => {
 
   test("does not retry a genuine product-test failure — neither signal present", () => {
     expect(retryFires("FAIL: expected 1 to equal 2\n", 1)).toBe(false);
+  });
+});
+
+describe("ci.yml windows per-test-hang retry (LCLI-516)", () => {
+  // The windows REQUIRED context (lint · typecheck · test (windows-latest)) had
+  // no retry at all until LCLI-516: a test killed by bun's own per-test budget
+  // (the process still completing normally) failed the job outright. The guard
+  // added there is the SAME classifier LCLI-659 gave the ubuntu leg --
+  // scripts/ci-flake-classify.sh, retry once only when EVERY failing test hung
+  // at the budget. These exercise the real extracted condition against the real
+  // script, so the evidence is behavioural rather than a string match.
+  const REPO_ROOT = join(import.meta.dir, "..");
+
+  function windowsRetryCondition(): string {
+    const testScript = loadWorkflow().jobs.check?.steps?.find((step) => step.name === "Test")?.run ?? "";
+    // Anchored to a line-leading `if`, so the ubuntu leg's `elif` classifier call
+    // (which redirects to the hung log) is never the one extracted.
+    const match = testScript.match(/^\s*if (bash scripts\/ci-flake-classify\.sh[^\n]*?); then\n/m);
+    const condition = match?.[1];
+    if (!condition) {
+      throw new Error("could not find the windows per-test-hang retry condition in ci.yml's Test step");
+    }
+    return condition;
+  }
+
+  // Runs the extracted condition in a real bash subshell against a fabricated
+  // bun log, using the REAL classifier script (ci.yml invokes it by relative
+  // path, so cwd is the repo root). Reports whether the retry branch fired.
+  function winRetryFires(logContents: string): boolean {
+    const dir = mkdtempSync(join(tmpdir(), "lcli-516-retry-"));
+    try {
+      const logPath = join(dir, "lore-bun-test.log");
+      writeFileSync(logPath, logContents);
+      const condition = windowsRetryCondition();
+      const script = `
+        lore_bun_log="${logPath}"
+        lore_per_test_ms=60000
+        if ${condition}; then
+          echo RETRY
+        else
+          echo NO_RETRY
+        fi
+      `;
+      const result = spawnSync("bash", ["-c", script], { encoding: "utf8", cwd: REPO_ROOT });
+      if (result.status !== 0) {
+        throw new Error(`windows retry-condition harness exited ${result.status}: ${result.stderr}`);
+      }
+      // The classifier PRINTS the hung test lines to stdout before returning a
+      // verdict (the ubuntu leg redirects that to its hung log; the windows leg
+      // lets it reach the console), so the verdict is the LAST line, not the
+      // whole capture.
+      return result.stdout.trim().split("\n").pop() === "RETRY";
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  test("the windows guard is a bounded single retry, not an unbounded loop", () => {
+    const testScript = loadWorkflow().jobs.check?.steps?.find((step) => step.name === "Test")?.run ?? "";
+    const winCmd = 'bun test --isolate --max-concurrency=4 --timeout="$' + '{lore_per_test_ms}"';
+    // Attempt 1 (piped to the log) and attempt 2 (the retry) -- exactly two.
+    expect(testScript.split(winCmd).length - 1).toBe(2);
+    // The `if ...; then` framing (no redirect) is specific to the windows leg:
+    // the ubuntu leg's identical classifier call is `elif ... > "${lore_hung_log}"`.
+    expect(testScript).toContain(
+      'if bash scripts/ci-flake-classify.sh "$' + '{lore_bun_log}" "$' + '{lore_per_test_ms}"; then',
+    );
+  });
+
+  test("retries when EVERY failing test hung at the 60000ms budget", () => {
+    expect(winRetryFires("(fail) a wizard test [60001.2ms]\n")).toBe(true);
+  });
+
+  test("retries a multi-test all-hang run, as the ubuntu arm does", () => {
+    expect(winRetryFires("(fail) wizard one [60000.5ms]\n(fail) wizard two [60002.0ms]\n")).toBe(true);
+  });
+
+  test("stays FATAL on a sub-budget assertion failure", () => {
+    expect(winRetryFires("(fail) a real assertion [12.3ms]\n")).toBe(false);
+  });
+
+  test("stays FATAL on a mix of a hang and an assertion failure", () => {
+    expect(winRetryFires("(fail) a hang [60000.9ms]\n(fail) an assertion [8.1ms]\n")).toBe(false);
+  });
+
+  test("stays FATAL on a log that records no failures at all", () => {
+    expect(winRetryFires("3056 pass, 0 fail\n")).toBe(false);
   });
 });
 
