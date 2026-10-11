@@ -24,6 +24,8 @@ import type { BacklogAdapter } from "../src/adapters/backlog";
 import { escalateToIndeterminate, runCheck } from "../src/commands/check";
 import { runInit } from "../src/commands/init";
 import { schemaDriftFindings } from "../src/core/check";
+import { INSTRUCTION_TOPICS } from "../src/core/instructions";
+import { findManifestCommand } from "../src/core/manifest";
 import { defaultProfile } from "../src/core/profile";
 import { profileDigest, readGeneratorStamp } from "../src/core/schema";
 import { EXIT_CODES, EXIT_OK, exitCodeFor, LoreError, toErrorEnvelope } from "../src/errors";
@@ -65,6 +67,9 @@ describe("schemaDriftFindings — the pure comparison (LCLI-539, LCLI-565)", () 
     expect(findings[0]?.schemaClass).toBe("stale");
     expect(findings[0]?.file).toBe(`${SCHEMAS}/story.schema.json`);
     expect(findings[0]?.message).toMatch(/no longer matches/);
+    // LCLI-545: the remedy is named IN FULL — regenerating is not enough, the result must be
+    // committed, and the failure output is where the reader is when it matters.
+    expect(findings[0]?.message).toContain("run `lore schema export` and commit `.lore/schemas/`");
   });
 
   test("a profile type with no committed schema at all is MISSING", () => {
@@ -75,6 +80,7 @@ describe("schemaDriftFindings — the pure comparison (LCLI-539, LCLI-565)", () 
     expect(findings[0]?.schemaClass).toBe("missing");
     expect(findings[0]?.file).toBe(`${SCHEMAS}/spec.schema.json`);
     expect(findings[0]?.message).toMatch(/no schema is committed/);
+    expect(findings[0]?.message).toContain("run `lore schema export` and commit `.lore/schemas/`");
   });
 
   test("an orphan whose stamp EQUALS this binary's digest is ORPHANED — drift, prune advised", () => {
@@ -86,6 +92,7 @@ describe("schemaDriftFindings — the pure comparison (LCLI-539, LCLI-565)", () 
     expect(findings[0]?.schemaClass).toBe("orphaned");
     expect(findings[0]?.file).toBe(`${SCHEMAS}/removed-type.schema.json`);
     expect(findings[0]?.message).toMatch(/no type in the active profile owns.*to prune it/);
+    expect(findings[0]?.message).toContain("then commit `.lore/schemas/`");
   });
 
   test("an orphan whose stamp DIFFERS is UNATTRIBUTABLE — indeterminate, never a prune", () => {
@@ -265,6 +272,8 @@ describe("runCheck — committed-schema drift gates the bundle (LCLI-539)", () =
     expect(findings).toHaveLength(1);
     expect(findings[0]?.file).toBe(`${SCHEMAS}/story.schema.json`);
     expect(findings[0]?.message).toMatch(/no longer matches what this profile generates/);
+    // LCLI-545: the remedy rides on the real `lore check` output, not only the pure pass's finding.
+    expect(findings[0]?.message).toContain("run `lore schema export` and commit `.lore/schemas/`");
   });
 
   test("deleting a committed schema fails the gate rather than passing for want of something to compare", async () => {
@@ -291,6 +300,7 @@ describe("runCheck — committed-schema drift gates the bundle (LCLI-539)", () =
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatchObject({ rule: "schema-drift", schemaClass: "orphaned" });
     expect(findings[0]?.message).toMatch(/run `lore schema export` to prune it/);
+    expect(findings[0]?.message).toContain("then commit `.lore/schemas/`");
   });
 
   test("an orphan with NO stamp is unattributable: exit 7, and no prune is advised", async () => {
@@ -484,5 +494,40 @@ describe("runCheck — a thrown 6-class failure cannot hide an unattributable sc
     }
     const crash = new Error("boom");
     expect(escalateToIndeterminate(crash, paths)).toBe(crash);
+  });
+});
+
+describe("the schema-drift remedy names the commit on every surface it appears (LCLI-545)", () => {
+  // The check FINDING is where a reader meets the drift, but the same remedy is stated on FOUR
+  // other surfaces: the agent instructions, `lore schema --help`, the spec's decision table, and
+  // docs/reference/cli-surface.md. One of them naming less than the others IS the divergence
+  // LCLI-545 exists to close -- and it is silent, because nothing compared them. So pin all five
+  // here. (Round 2 of this task's review caught cli-surface missing from an earlier version of this
+  // very test: a pin that enumerates its surfaces wrongly is still a silent gap.)
+  test("the agent-instructions surface names the commit", () => {
+    const topic = INSTRUCTION_TOPICS.find((t) => t.body.includes("Committed-schema drift"));
+    expect(topic).toBeDefined();
+    expect(topic?.body.replace(/\s+/g, " ")).toContain("then committing `.lore/schemas/`");
+  });
+
+  test("the `lore schema` command summary names the commit", () => {
+    expect(findManifestCommand("schema")?.summary).toContain("commit the result");
+  });
+
+  test("the spec decision table names the commit on all three drift rows", () => {
+    const spec = readFileSync(
+      join(import.meta.dir, "..", "docs", "specs", "committed-schema-generator-stamp.md"),
+      "utf8",
+    );
+    const rows = spec.split("\n").filter((line) => /^\|.*\*\*(missing|stale|orphaned)\*\*/.test(line));
+    expect(rows).toHaveLength(3);
+    for (const row of rows) expect(row).toContain("then commit `.lore/schemas/`");
+  });
+
+  test("docs/reference/cli-surface.md names the commit", () => {
+    const surface = readFileSync(join(import.meta.dir, "..", "docs", "reference", "cli-surface.md"), "utf8");
+    expect(surface.replace(/\s+/g, " ")).toContain(
+      "each remedied by `lore schema export` AND then committing `.lore/schemas/`",
+    );
   });
 });

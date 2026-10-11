@@ -83,7 +83,7 @@ detail with `lore instructions <topic>`:
 - `sync`          Reconcile status + managed task blocks, regen index/log; commits tracker files on the Backlog backend only
 - `tasks`         Show the live status rollup for a concept's linked tasks
 - `orphans`       Report tasks with no owning doc + docs whose linked task vanished
-- `schema`        Export the profile's editor JSON Schemas to .lore/schemas/ (the fix for `lore check`'s schema-drift)
+- `schema`        Export the profile's editor JSON Schemas to .lore/schemas/ (the fix for `lore check`'s schema-drift; commit the result)
 - `types`         Print the active profile's declared type vocabulary — fields, requiredness, sections
 - `scaffold`      Generate a downstream docs consumer's config additively, rewriting nothing
 - `graph`         Emit the bundle's cross-link graph as json or dot

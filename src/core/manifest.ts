@@ -567,7 +567,8 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
   },
   {
     name: "schema",
-    summary: "Export the profile's editor JSON Schemas to .lore/schemas/ (the fix for `lore check`'s schema-drift)",
+    summary:
+      "Export the profile's editor JSON Schemas to .lore/schemas/ (the fix for `lore check`'s schema-drift; commit the result)",
     args: "export",
     flags: [
       { name: "out", takesValue: true, summary: "Output directory (default .lore/schemas/)" },

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`lore check`'s committed-schema drift findings name the committing step** (LCLI-545). The
+  `missing` / `stale` / `orphaned` schema-drift findings named `lore schema export` but stopped
+  there, and regenerating *without committing* leaves the drift in place for the next reader — the
+  step an integrator whose first bump past the check fails on content they never touched
+  (opum-marketplace, 2026-09-19: 7 of 7 schemas, exit `6`, on a first bump) had to derive from a
+  changelog. Each finding now names the full remedy at the point of failure — "run `lore schema
+  export` and commit `.lore/schemas/`", and the prune-and-commit form for an orphaned schema. The
+  `unattributable` finding still advises no command.
+
 - **`lore check` reports the per-document frontmatter lint, and the retrieval commands stop
   emitting it** (LCLI-691). The Tier-3 extension findings — an unknown `type`, an extra/unknown
   key, and a missing or over-long `summary` — were reaching only the retrieval commands (`query`,

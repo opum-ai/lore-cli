@@ -84,7 +84,8 @@ export const LORE_COMMANDS: readonly CommandSummary[] = [
   { name: "orphans", summary: "Report tasks with no owning doc + docs whose linked task vanished" },
   {
     name: "schema",
-    summary: "Export the profile's editor JSON Schemas to .lore/schemas/ (the fix for `lore check`'s schema-drift)",
+    summary:
+      "Export the profile's editor JSON Schemas to .lore/schemas/ (the fix for `lore check`'s schema-drift; commit the result)",
   },
   {
     name: "types",
