@@ -29,6 +29,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A repository that was clean and now shows a non-zero warning count is **expected, not a CI
   break**: warnings alone still exit `0`. Per-file detail remains in `lore validate`.
 
+### Fixed
+
+- **The portability check no longer flags the character references its own message recommends**
+  (LCLI-663). `mdxHazardFindings` scanned each mdast text node's **decoded** value, and mdast
+  resolves character references before that value reaches the scan — so a source `&#123;` arrived
+  as a literal `{` and a source `&lt;` as `<`, and both were flagged. The finding's message names
+  escaping as one of its two remedies, so an author who followed it (`&#123;`, `&lt;`) stayed red,
+  contradicting the portable-markdown spec, which states that escaping **is** portable. The scan
+  now reads each text node's **source** span, so references pass and raw `<`/`{` in prose still
+  warn. Found in the field by opum-doc on lore 0.12.0, measured 2026-10-01.
+
 ## [0.13.0] - 2026-10-07
 
 ### Added

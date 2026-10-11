@@ -764,6 +764,39 @@ describe("checkBundle — MDX hazards (LORE-48)", () => {
     );
     expect(finding?.message).toContain("…");
   });
+
+  // LCLI-663: mdast DECODES character references before a text node's value reaches the scan, so
+  // the pre-fix check flagged `&#123;`/`&lt;` — the FIRST of the two remedies its own message
+  // names. The MDX hazard is a SOURCE-level character, so the fix reads the node's source span.
+  test("AC#1: character references are not flagged, while raw characters still are (both controls in this case)", () => {
+    // References only, in prose AND inside link text: no portability finding at all.
+    const references = checkBundle([
+      {
+        path: "x.md",
+        raw: ref(
+          "X",
+          "An escaped &#123; brace, an escaped &lt; angle, and [&#123;grep, ag&#125;](https://example.com/).",
+        ),
+      },
+    ]);
+    expect(references.findings.filter((f) => f.rule === "portability")).toEqual([]);
+    // The mutation control, in the SAME case: the same prose with RAW characters still warns, so a
+    // mutation that stops flagging raw characters is red rather than silently green.
+    const raw = checkBundle([{ path: "x.md", raw: ref("X", "A raw { brace and a raw < angle.") }]);
+    const messages = raw.findings.map((f) => f.message);
+    expect(messages.some((m) => m.includes('raw "{"'))).toBe(true);
+    expect(messages.some((m) => m.includes('raw "<"'))).toBe(true);
+  });
+
+  test("AC#2: both remedies the message names clear the warning, for each character", () => {
+    const count = (body: string) => checkBundle([{ path: "x.md", raw: ref("X", body) }]).warningCount;
+    // Escaping.
+    expect(count("An escaped &#123; brace.")).toBe(0);
+    expect(count("An escaped &lt; angle.")).toBe(0);
+    // Backticks.
+    expect(count("A backticked `{` brace.")).toBe(0);
+    expect(count("A backticked `<` angle.")).toBe(0);
+  });
 });
 
 // ── checkBundle: Obsidian block references (LORE-48) ──────────────────────────────
