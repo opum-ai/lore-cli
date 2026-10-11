@@ -31,6 +31,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A rerun after an applied Backlog-to-Quest migration is an idempotent success, not an exit-5 alias
+  collision** (LCLI-699). `lore init --tracker quest --migrate-backlog --remove-backlog` now clears
+  its pending migration record only *after* the removal resolves, so a refused `--remove-backlog` (a
+  `backlog/` git cannot prove recoverable) keeps the record and a rerun resumes it: one read-only
+  `preview` fingerprints the source, a match returns the existing receipt with an additive
+  `alreadyApplied: true` and applies nothing, and a changed source refuses with
+  `backlog.diverged-from-migration`. Previously the record was cleared first, so a rerun re-previewed
+  and died on the aliases the first run created; the refusal hint and the migration docs now name
+  that rerun as the recovery.
+
 - **The portability check no longer flags the character references its own message recommends**
   (LCLI-663). `mdxHazardFindings` scanned each mdast text node's **decoded** value, and mdast
   resolves character references before that value reaches the scan — so a source `&#123;` arrived

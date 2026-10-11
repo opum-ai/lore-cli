@@ -263,7 +263,18 @@ describe("migrateBacklogTasksToQuest", () => {
       store,
     );
     expect(resumePreviews).toBe(1);
-    expect(resumed).toMatchObject({ digest: "sha256:reviewed", state: "applied", alreadyApplied: true });
+    // LCLI-699 round 2: an EXACT match, not a subset. The recognised-receipt result carries
+    // `alreadyApplied` AND every other field, so a stray additive field cannot slip through unseen.
+    expect(resumed).toEqual({
+      digest: "sha256:reviewed",
+      sourceFingerprint: "sha256:source",
+      mappings: preview.mappings,
+      survivors: [],
+      excluded: [],
+      taskFingerprints: { "T-1": "sha256:task" },
+      state: "applied",
+      alreadyApplied: true,
+    });
   });
 
   test("reapplies the stored digest when interruption happened before Quest created a receipt", async () => {
@@ -288,7 +299,19 @@ describe("migrateBacklogTasksToQuest", () => {
       ["status", "sha256:reviewed"],
       ["apply", "/source", "sha256:reviewed"],
     ]);
-    expect(resumed).toMatchObject({ digest: "sha256:reviewed", state: "applied" });
+    // LCLI-699 round 2: the crash-resume sub-branch (status not_found -> apply) really APPLIES, so
+    // it must NOT report `alreadyApplied` -- that flag means "Quest already held this receipt", not
+    // "no write happened". The exact match pins the fields AND the flag's absence.
+    expect(resumed).toEqual({
+      digest: "sha256:reviewed",
+      sourceFingerprint: "sha256:source",
+      mappings: preview.mappings,
+      survivors: [],
+      excluded: [],
+      taskFingerprints: { "T-1": "sha256:task" },
+      state: "applied",
+    });
+    expect(Object.hasOwn(resumed, "alreadyApplied")).toBe(false);
   });
 
   // ── LCLI-699: the idempotent rerun (DEC-172 (4aj), arm A) ───────────────────────────────
@@ -314,7 +337,17 @@ describe("migrateBacklogTasksToQuest", () => {
     );
     expect(previews).toBe(1);
     expect(applies).toBe(0);
-    expect(resumed).toMatchObject({ digest: "sha256:reviewed", state: "applied", alreadyApplied: true });
+    // LCLI-699 round 2: exact match, not a subset -- `alreadyApplied` and every other field.
+    expect(resumed).toEqual({
+      digest: "sha256:reviewed",
+      sourceFingerprint: "sha256:source",
+      mappings: preview.mappings,
+      survivors: [],
+      excluded: [],
+      taskFingerprints: { "T-1": "sha256:task" },
+      state: "applied",
+      alreadyApplied: true,
+    });
   });
 
   test("AC (c): a rerun whose preview fingerprint DIFFERS refuses with the named divergence code, applying nothing", async () => {

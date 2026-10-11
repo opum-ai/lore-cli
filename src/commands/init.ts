@@ -1168,15 +1168,14 @@ function resolveScriptedBacklogRemoval(
     throw new LoreError(
       "denied",
       `refusing --remove-backlog: ${readiness.reason}`,
-      // LCLI-525 (opum-doc DEC-172 (4af), arm A; wording CORRECTED after round-1 review): a rerun is
-      // NOT a recovery, WITH OR WITHOUT --remove-backlog — init.ts:555-558 never forwards the removal
-      // flags to runBacklogMigration, and clearPendingQuestMigration (init.ts:563) runs before this
-      // refusal, so a rerun re-applies the migration and dies on the aliases the first run created
-      // (measured: type=conflict, exit 5, whether backlog/ is dirty OR clean; LCLI-699). So this names
-      // only recoveries that WORK — keep backlog/ (which the refusal already left), or delete it by
-      // hand — states that a verified removal is not available yet, and warns what a hand deletion
-      // forgoes. It deliberately does NOT promise a rerun.
-      "backlog/ is left in place: keep it, or delete it by hand — which skips the verified archive `.lore/archive/backlog-<digest>.zip`. A verified removal after an applied migration is not available yet.",
+      // LCLI-525 (opum-doc DEC-172 (4af), arm A), UPDATED by LCLI-699 (DEC-172 (4aj)): the refusal is
+      // of the DELETION alone. When LCLI-525 shipped, a rerun was NOT a recovery — the pending record
+      // was cleared before this refusal, so the rerun re-previewed and died on Quest's exit-5 alias
+      // collision — and the hint had to name only the recoveries that worked. LCLI-699 moved that
+      // clear AFTER the removal, so a refused removal now KEEPS its pending record and the rerun
+      // resumes it idempotently (alreadyApplied) before completing the removal. The rerun is a
+      // recovery again, so the hint names it.
+      "commit or clean backlog/ so `git checkout -- backlog/` can restore it, then rerun — the rerun recognises this migration and completes the removal; or delete backlog/ by hand, which skips the verified archive `.lore/archive/backlog-<digest>.zip`",
       // LCLI-525: the DELETION is what is refused — the migration already applied — so a `--json`
       // caller must still be able to read that migration's receipt. stdout is empty on exit 4 (§4),
       // so `input` is the only channel a machine caller has; these two are ADDITIVE under §7.1, and

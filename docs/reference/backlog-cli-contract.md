@@ -449,8 +449,14 @@ Legacy migration is explicit: initialize Quest, then run `lore init --tracker
 quest --migrate-backlog`; pin instead with `lore init --tracker backlog`. Lore
 consumes Quest's public `preview` / `apply` / `status` / `rollback` lifecycle.
 It records the reviewed digest, source fingerprint, and mappings in a
-Lore-owned pending receipt before actorful `apply`; an interrupted rerun resumes
-with `status --digest` instead of creating a second preview. Lore persists
+Lore-owned pending receipt before actorful `apply`; an interrupted rerun — or a
+rerun after a refused `--remove-backlog` — runs ONE read-only `preview` to
+fingerprint the current source, then resumes with `status --digest` instead of
+creating a second preview, and re-`apply`s only when Quest holds no receipt for
+the recorded digest yet. A rerun whose source still matches the recorded
+migration is an idempotent success: it reports the existing receipt plus
+`alreadyApplied: true` and applies nothing, while one whose source has changed
+refuses with `backlog.diverged-from-migration` (LCLI-699). Lore persists
 Quest as the backend only after a schema-1 `migration.backlog.receipt` reports
 `state: "applied"` with the reviewed digest, fingerprint, and mappings, then
 clears the pending record. Quest assigns canonical `T-N` identities while

@@ -128,11 +128,15 @@ export async function migrateBacklogTasksToQuest(
       throw new LoreError(
         "conflict",
         "the backlog has changed since it was migrated, so this run cannot resume the recorded migration",
-        "restore backlog/ to the state that was migrated, then rerun; or start a NEW migration for the changed backlog",
+        "restore backlog/ to the state that was migrated, then rerun; or, to migrate the CHANGED backlog instead, delete `.lore/quest-backlog-migration.pending.json` so the next run previews fresh",
         { code: "backlog.diverged-from-migration", recorded: pending.digest, current: fresh.digest },
       );
     }
     let receipt: QuestMigrationReceipt;
+    // LCLI-699 round 2: `alreadyApplied` is true ONLY when `status` answered with an existing
+    // receipt. The `not_found` sub-branch below APPLIES -- that is a crashed run being finished, not
+    // a recognised receipt -- so reporting the flag there would contradict the field's own contract.
+    let recognised = true;
     try {
       receipt = await migration.status(pending.digest);
     } catch (cause) {
@@ -144,13 +148,14 @@ export async function migrateBacklogTasksToQuest(
       // apply as given to preview — Lore doesn't persist them (they're not part of the preview
       // response, only its request), so a resumed `lore init` run supplies them fresh from its own
       // CLI flags, the same way the operator would re-supply them to Quest's own CLI directly.
+      recognised = false;
       receipt = await migration.apply(source, pending.digest, migrationOptions);
     }
     assertReceipt(pending, receipt);
     // `pending` is the preview this run (or an earlier crashed one) already reviewed and durably
     // recorded, so it carries the same `excluded` a fresh preview would — it is that fresh preview,
     // read back from disk rather than re-fetched, per this branch's own resume contract above.
-    return result(receipt, pending, true);
+    return result(receipt, pending, recognised);
   }
   const preview = await migration.preview(source, migrationOptions);
   assertPreview(preview);
