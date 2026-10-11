@@ -1161,7 +1161,12 @@ function resolveScriptedBacklogRemoval(
     throw new LoreError(
       "denied",
       `refusing --remove-backlog: ${readiness.reason}`,
-      "commit or clean backlog/ so `git checkout -- backlog/` can restore it, then rerun; or drop --remove-backlog",
+      // LCLI-525 (opum-doc DEC-172 (4af), arm A): the OLD hint said "… then rerun", and a rerun is
+      // NOT a recovery — it re-enters the migration and dies on the aliases the first run created
+      // (measured: type=conflict, exit 5, whether backlog/ is dirty OR clean). So this names the one
+      // recovery that works today, states that a verified removal is not available yet, and warns
+      // that a hand deletion forgoes the archive a verified removal would have written.
+      "there is no removal-only path after an applied migration: rerun WITHOUT --remove-backlog to keep backlog/ (a verified removal is not available yet), or delete backlog/ by hand — which skips the verified archive `.lore/archive/backlog-<digest>.zip`",
       // LCLI-525: the DELETION is what is refused — the migration already applied — so a `--json`
       // caller must still be able to read that migration's receipt. stdout is empty on exit 4 (§4),
       // so `input` is the only channel a machine caller has; these two are ADDITIVE under §7.1, and

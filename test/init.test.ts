@@ -3554,7 +3554,15 @@ describe("lore init — removing backlog/ after a plain --migrate-backlog (LCLI-
     expect(err?.type).toBe("denied");
     expect(exitCodeFor(err as LoreError)).toBe(EXIT_CODES.denied);
     expect(err?.message).toContain("uncommitted changes");
-    expect(err?.hint).toContain("git checkout -- backlog/");
+    // LCLI-525 (opum-doc DEC-172 (4af), arm A): the hint no longer offers a RERUN as the way to
+    // complete the REMOVAL — a rerun re-enters the migration and dies on the aliases the first run
+    // created (measured: type=conflict, exit 5, whether backlog/ is dirty or clean). It names the
+    // one recovery that works and warns that a hand deletion forgoes the verified archive.
+    expect(err?.hint).toContain("WITHOUT --remove-backlog");
+    expect(err?.hint).toContain("no removal-only path");
+    expect(err?.hint).toContain("skips the verified archive");
+    expect(err?.hint).not.toContain("then rerun");
+    expect(err?.hint).not.toContain("git checkout -- backlog/");
     // LCLI-525: the MIGRATION applied — only the deletion is refused — so the envelope still carries
     // its receipt. stdout is byte-empty on exit 4, so `input` is the only channel a --json caller
     // has; these two fields are additive under §7.1.
