@@ -218,9 +218,10 @@ describe("docker E2E helper library is actually shipped into the image (LCLI-360
 
 describe("docker E2E derives its expected schema set from the CLI (LCLI-688)", () => {
   test("no literal built-in slug list or full-profile count survives in the harness", () => {
-    // The defect: a literal slug list plus a hard-coded count reddened the REQUIRED
-    // `docker e2e harness (real lore + backlog binaries)` context on every new built-in type until
-    // the harness was hand-edited -- LCLI-687's Standard type broke it on the count assertion alone.
+    // The defect: a literal slug list, a hard-coded count and a literal path list reddened the
+    // REQUIRED `docker e2e harness (real lore + backlog binaries)` context on every new built-in type
+    // until the harness was hand-edited -- LCLI-687's Standard type moved the count, the AC3 path
+    // list AND the four slug loops.
     const script = readFileSync(SCRIPT, "utf8");
     expect(script).not.toMatch(/for T in epic arc/);
     expect(script).not.toContain(".data.count == 11");
