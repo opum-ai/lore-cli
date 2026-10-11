@@ -1665,6 +1665,9 @@ describe("scripts/promote-latest.mjs: the post-latest checklist (LCLI-618)", () 
       `         tag object     ${TAG_OBJECT}`,
       `         peeled commit  ${COMMIT}`,
       `         skills/ tree   ${SKILLS_TREE}`,
+      "     The pin bump must also regenerate the consumer's committed OKF schemas: run lore schema export under",
+      "     this lore version (for example, npx --yes @opum-ai/lore@1.2.3 schema export) and commit the result",
+      "     with the pin bump, or the consumer's lore check goes red with exit 6.",
       "  5. Update docs/reference/lore-cli-release-truth.md: REPLACE its current-state claim so it states",
       "     1.2.3 is released, and record Release run 777, the promotion record /tmp/rec.json, the",
       "     read-back verdict above, and HOW the release was staged. A staging by scripts/publish-release.sh",
@@ -1732,6 +1735,7 @@ describe("scripts/promote-latest.mjs: the post-latest checklist (LCLI-618)", () 
       "LCLI-469 marketplace handshake",
       "opum-marketplace",
       "skills/",
+      "lore schema export",
       "docs/reference/lore-cli-release-truth.md",
       "provenance",
     ]) {
