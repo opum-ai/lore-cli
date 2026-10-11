@@ -388,7 +388,9 @@ The **drift gate** — read-only, never writes. Aggregates:
   Every finding carries a `schemaClass`: `missing` or `stale` (`lore schema
   export` writes or rewrites it) and `orphaned` (no type owns it, but its
   `x-lore-generator.profileDigest` stamp is this binary's own, so export may
-  prune it) are rule `schema-drift`, exit `6`. An orphan whose stamp is absent
+  prune it), each remedied by `lore schema export` AND then committing
+  `.lore/schemas/` — the drift clears only once the regenerated files are
+  committed. All three are rule `schema-drift`, exit `6`. An orphan whose stamp is absent
   or is another profile's is `unattributable`, rule `schema-unattributable`,
   exit `7`: lore cannot tell a removed type from a binary older than the tree,
   so it never advises a prune and points at `git log` instead. See

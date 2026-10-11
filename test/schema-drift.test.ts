@@ -498,10 +498,12 @@ describe("runCheck — a thrown 6-class failure cannot hide an unattributable sc
 });
 
 describe("the schema-drift remedy names the commit on every surface it appears (LCLI-545)", () => {
-  // The check FINDING is where a reader meets the drift, but the same remedy is stated on three
-  // other surfaces: the agent instructions, `lore schema --help`, and the spec's decision table. One
-  // of them naming less than the others IS the divergence LCLI-545 exists to close -- and it is
-  // silent, because nothing compared the four. So pin all four here.
+  // The check FINDING is where a reader meets the drift, but the same remedy is stated on FOUR
+  // other surfaces: the agent instructions, `lore schema --help`, the spec's decision table, and
+  // docs/reference/cli-surface.md. One of them naming less than the others IS the divergence
+  // LCLI-545 exists to close -- and it is silent, because nothing compared them. So pin all five
+  // here. (Round 2 of this task's review caught cli-surface missing from an earlier version of this
+  // very test: a pin that enumerates its surfaces wrongly is still a silent gap.)
   test("the agent-instructions surface names the commit", () => {
     const topic = INSTRUCTION_TOPICS.find((t) => t.body.includes("Committed-schema drift"));
     expect(topic).toBeDefined();
@@ -520,5 +522,12 @@ describe("the schema-drift remedy names the commit on every surface it appears (
     const rows = spec.split("\n").filter((line) => /^\|.*\*\*(missing|stale|orphaned)\*\*/.test(line));
     expect(rows).toHaveLength(3);
     for (const row of rows) expect(row).toContain("then commit `.lore/schemas/`");
+  });
+
+  test("docs/reference/cli-surface.md names the commit", () => {
+    const surface = readFileSync(join(import.meta.dir, "..", "docs", "reference", "cli-surface.md"), "utf8");
+    expect(surface.replace(/\s+/g, " ")).toContain(
+      "each remedied by `lore schema export` AND then committing `.lore/schemas/`",
+    );
   });
 });
