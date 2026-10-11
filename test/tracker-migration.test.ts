@@ -35,6 +35,7 @@ function migration(overrides: Partial<QuestBacklogMigration> = {}): QuestBacklog
 
 function memoryStore(): PendingMigrationStore {
   let pending: QuestMigrationPreview | undefined;
+  let applied: string | undefined;
   return {
     read: () => pending,
     write: (_root, value) => {
@@ -42,6 +43,10 @@ function memoryStore(): PendingMigrationStore {
     },
     clear: () => {
       pending = undefined;
+    },
+    readApplied: () => applied,
+    writeApplied: (_root, digest) => {
+      applied = digest;
     },
   };
 }
@@ -227,6 +232,7 @@ describe("migrateBacklogTasksToQuest", () => {
   test("records the preview before apply and resumes through status after an interruption", async () => {
     const events: string[] = [];
     let pending: QuestMigrationPreview | undefined;
+    let applied: string | undefined;
     const store: PendingMigrationStore = {
       read: () => pending,
       write: (_root, value) => {
@@ -235,6 +241,10 @@ describe("migrateBacklogTasksToQuest", () => {
       },
       clear: () => {
         pending = undefined;
+      },
+      readApplied: () => applied,
+      writeApplied: (_root, digest) => {
+        applied = digest;
       },
     };
     await expect(
@@ -369,6 +379,139 @@ describe("migrateBacklogTasksToQuest", () => {
     expect(error.type).toBe("conflict");
     expect(error.input).toMatchObject({ code: "backlog.diverged-from-migration" });
     expect(applies).toBe(0);
+  });
+
+  // ── LCLI-700: idempotence keys on Quest's durable status, not the local record ───────────────
+
+  test("(4ap) a rerun after a COMPLETED migration whose pending record is cleared is idempotent via the durable hint", async () => {
+    const store = memoryStore();
+    // The earlier run finished with no removal: it cleared the pending record and left only the hint.
+    store.writeApplied("/source", "sha256:reviewed");
+    let previews = 0;
+    let applies = 0;
+    const statusSeen: string[] = [];
+    const resumed = await migrateBacklogTasksToQuest(
+      migration({
+        preview: async () => {
+          previews += 1;
+          return preview;
+        },
+        status: async (digest) => {
+          statusSeen.push(digest);
+          return receipt;
+        },
+        apply: async () => {
+          applies += 1;
+          return receipt;
+        },
+      }),
+      "/source",
+      store,
+    );
+    // ONE preview, NO apply, and Quest's own status is asked about the recorded digest.
+    expect(previews).toBe(1);
+    expect(statusSeen).toEqual(["sha256:reviewed"]);
+    expect(applies).toBe(0);
+    expect(resumed).toEqual({
+      digest: "sha256:reviewed",
+      sourceFingerprint: "sha256:source",
+      mappings: preview.mappings,
+      survivors: [],
+      excluded: [],
+      taskFingerprints: { "T-1": "sha256:task" },
+      state: "applied",
+      alreadyApplied: true,
+    });
+  });
+
+  test("(4ap) a hint Quest's status no longer confirms is treated as FRESH", async () => {
+    const store = memoryStore();
+    store.writeApplied("/source", "sha256:reviewed");
+    const calls: string[][] = [];
+    const resumed = await migrateBacklogTasksToQuest(
+      migration({
+        preview: async () => preview,
+        status: async (digest) => {
+          calls.push(["status", digest]);
+          throw new LoreError("not_found", "migration receipt not found");
+        },
+        apply: async (source, digest) => {
+          calls.push(["apply", source, digest]);
+          return receipt;
+        },
+      }),
+      "/source",
+      store,
+    );
+    expect(calls).toEqual([
+      ["status", "sha256:reviewed"],
+      ["apply", "/source", "sha256:reviewed"],
+    ]);
+    // A fresh APPLICATION must not wear the recognised-receipt flag.
+    expect(Object.hasOwn(resumed, "alreadyApplied")).toBe(false);
+  });
+
+  test("(4ap)(a) a rerun whose digest differs from a confirmed hint refuses via the hint, naming BOTH remedies", async () => {
+    const store = memoryStore();
+    store.writeApplied("/source", "sha256:reviewed");
+    let applies = 0;
+    const error = (await migrateBacklogTasksToQuest(
+      migration({
+        preview: async () => ({ ...preview, digest: "sha256:changed", sourceFingerprint: "sha256:changed" }),
+        apply: async () => {
+          applies += 1;
+          return receipt;
+        },
+      }),
+      "/source",
+      store,
+    ).catch((caught: unknown) => caught)) as LoreError;
+    expect(error).toBeInstanceOf(LoreError);
+    expect(error.type).toBe("conflict");
+    expect(error.input).toMatchObject({
+      code: "backlog.diverged-from-migration",
+      recorded: "sha256:reviewed",
+      current: "sha256:changed",
+    });
+    expect(applies).toBe(0);
+    // (4as): the remedy names BOTH causes ...
+    expect(error.hint).toContain("restore it");
+    expect(error.hint).toContain("--preserve-source-ids");
+    // ... and the rollback command carries the actor flags Quest requires (LCLI-700 #6).
+    expect(error.hint).toContain("--actor <name> --actor-kind human");
+  });
+
+  test("(4as) a rerun whose MIGRATION OPTIONS differ on UNCHANGED bytes refuses with the divergence code", async () => {
+    const store = memoryStore();
+    // The original run applied under one option set; the durable hint records its digest.
+    store.writeApplied("/source", "sha256:reviewed");
+    const optionCalls: unknown[] = [];
+    let applies = 0;
+    const error = (await migrateBacklogTasksToQuest(
+      migration({
+        // Quest's preview digest is OPTION-SENSITIVE (quest-cli backlog-public.ts): unchanged bytes
+        // with different flags yield a DIFFERENT digest. Simulate exactly that here — the source
+        // fingerprint is unchanged, only the digest moves.
+        preview: async (_source, options) => {
+          optionCalls.push(options);
+          return { ...preview, digest: "sha256:reviewed-with-flags" };
+        },
+        apply: async () => {
+          applies += 1;
+          return receipt;
+        },
+      }),
+      "/source",
+      store,
+      { preserveSourceIds: true, sourceFamily: "LCLI" },
+    ).catch((caught: unknown) => caught)) as LoreError;
+    expect(optionCalls).toEqual([{ preserveSourceIds: true, sourceFamily: "LCLI" }]);
+    expect(error).toBeInstanceOf(LoreError);
+    expect(error.type).toBe("conflict");
+    expect(error.input).toMatchObject({ code: "backlog.diverged-from-migration" });
+    expect(applies).toBe(0);
+    // The remedy names the option-cause explicitly, so a flags-only divergence is actionable.
+    expect(error.hint).toContain("--preserve-source-ids");
   });
 });
 

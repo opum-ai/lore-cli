@@ -1168,14 +1168,16 @@ function resolveScriptedBacklogRemoval(
     throw new LoreError(
       "denied",
       `refusing --remove-backlog: ${readiness.reason}`,
-      // LCLI-525 (opum-doc DEC-172 (4af), arm A), UPDATED by LCLI-699 (DEC-172 (4aj)) and (4ar): the
-      // refusal is of the DELETION alone. When LCLI-525 shipped, a rerun was NOT a recovery — the
-      // pending record was cleared before this refusal, so the rerun re-previewed and died on Quest's
-      // exit-5 alias collision — and the hint had to name only the recoveries that worked. LCLI-699
-      // moved that clear AFTER the removal, so a refused removal now KEEPS its pending record and the
-      // rerun resumes it idempotently (alreadyApplied) before completing the removal — but ONLY while
-      // backlog/'s BYTES are unchanged, because the resume now fingerprints the source and refuses a
-      // divergence (tracker-migration.ts:127-134) BEFORE the removal is reached. So the one recovery
+      // LCLI-525 (opum-doc DEC-172 (4af), arm A), UPDATED by LCLI-699 (DEC-172 (4aj)) and (4ar), and
+      // keyed on Quest's durable status by LCLI-700 (DEC-172 (4ap)): the refusal is of the DELETION
+      // alone. When LCLI-525 shipped, a rerun was NOT a recovery — the pending record was cleared
+      // before this refusal, so the rerun re-previewed and died on Quest's exit-5 alias collision —
+      // and the hint had to name only the recoveries that worked. LCLI-699 moved that clear AFTER the
+      // removal, and LCLI-700 records the applied digest as a durable hint, so a refused removal now
+      // has evidence to resume from and the rerun recognises the migration idempotently
+      // (alreadyApplied) before completing the removal — but ONLY while backlog/'s BYTES are
+      // unchanged, because the resume fingerprints the source and refuses a divergence
+      // (tracker-migration.ts's resume branch) BEFORE the removal is reached. So the one recovery
       // that keeps the rerun working is COMMIT, which preserves the bytes and so the digest;
       // discarding the changes does NOT, and (4ar) dropped that arm — the hint says only what the
       // code honours.

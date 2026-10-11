@@ -31,6 +31,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A rerun after a COMPLETED Backlog-to-Quest migration is an idempotent success, keyed on Quest's
+  durable status rather than Lore's local record** (LCLI-700). LCLI-699 made a rerun idempotent only
+  while its pending record survived, and a migration that completed with no removal requested cleared
+  that record — so a later `--remove-backlog` rerun re-entered the fresh path and could collide on the
+  aliases the first run created. Now a successful apply records the digest it applied as a durable
+  hint in Lore's own state, and a rerun runs ONE read-only `preview` to compute the current digest and
+  asks Quest's `migration backlog status`: an applied receipt returns the existing result with an
+  additive `alreadyApplied: true` and applies nothing, and the local pending record is a
+  crash-recovery cache only, never the gate. A current digest that differs from a hint Quest still
+  confirms applied refuses with `backlog.diverged-from-migration`, whose remedy now names BOTH causes
+  — `backlog/` changed (restore it), or this run's migration flags differ (the digest is
+  option-sensitive; rerun with the original flags) — and carries `--actor`/`--actor-kind` on the
+  printed rollback command so it runs as shown. The post-migration notice's `--remove-backlog` next
+  step is now truthful, and `docs/reference/cli-surface.md` no longer offers discarding `backlog/` as
+  a recovery a rerun can use.
+
 - **A rerun after an applied Backlog-to-Quest migration whose pending record survives is an
   idempotent success, not an exit-5 alias collision** (LCLI-699). `lore init --tracker quest
   --migrate-backlog --remove-backlog` now clears its pending migration record only *after* the
@@ -41,8 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Previously the record was cleared first, so a rerun re-previewed and died on the aliases the first
   run created; the refusal hint and the migration docs now name that rerun as the recovery. This
   covers the paths where the record survives; a migration that COMPLETED with no removal requested
-  clears its record on success, so that later `--remove-backlog` rerun still re-enters the fresh path
-  and can collide — tracked as LCLI-700.
+  clears its record on success, so a later `--remove-backlog` rerun re-enters the fresh path — fixed
+  by LCLI-700, which keys that rerun on Quest's durable status.
 
 - **The portability check no longer flags the character references its own message recommends**
   (LCLI-663). `mdxHazardFindings` scanned each mdast text node's **decoded** value, and mdast

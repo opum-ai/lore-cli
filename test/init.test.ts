@@ -16,6 +16,12 @@ import { PassThrough } from "node:stream";
 import { BACKLOG_VERSION_FLOOR_CODE, type BacklogAdapter } from "../src/adapters/backlog";
 import { bunGitPreflightSpawn, type GitPreflight, realGitPreflight } from "../src/adapters/git-preflight";
 import type { JiraOnboarding, JiraProfile, JiraProjectSummary } from "../src/adapters/jira-onboarding";
+import type {
+  QuestBacklogMigration,
+  QuestBacklogMigrationOptions,
+  QuestMigrationPreview,
+  QuestMigrationReceipt,
+} from "../src/adapters/quest";
 import { QUEST_VERSION_PAIR_MISMATCH_CODE, QUEST_WORKSPACE_NOT_INITIALIZED_CODE } from "../src/adapters/quest";
 import { atLeast } from "../src/adapters/semver";
 import { createTrackerAdapter } from "../src/adapters/tracker";
@@ -41,7 +47,11 @@ import { findInstructionTopic } from "../src/core/instructions";
 import { EXIT_CODES, exitCodeFor, LoreError, reportError, WarningCollector } from "../src/errors";
 import { VERSION } from "../src/meta";
 import type { OutputContext } from "../src/output";
-import { hasPendingQuestMigration, type TrackerMigrationResult } from "../src/tracker-migration";
+import {
+  hasPendingQuestMigration,
+  migrateBacklogTasksToQuest,
+  type TrackerMigrationResult,
+} from "../src/tracker-migration";
 import { capture, expectError, fakeAdapter, gitRun } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
@@ -3690,6 +3700,84 @@ describe("lore init — removing backlog/ after a plain --migrate-backlog (LCLI-
       migrateBacklog: async () => migrationResult,
     });
     expect(result.backlogRemoval?.removed).toBe(true);
+    expect(existsSync(join(root, "backlog"))).toBe(false);
+    expect(readdirSync(join(root, ".lore", "archive")).some((f) => f.endsWith(".zip"))).toBe(true);
+  });
+});
+
+/**
+ * LCLI-700 repro, end to end. The durable-status keying lives in {@link migrateBacklogTasksToQuest},
+ * not in `init.ts`, so these tests inject the REAL migration function bound to a stateful fake Quest
+ * adapter — that is the mechanism the `init()`-level stub cannot exercise. The migration operates on
+ * the real `.lore/` disk stores under `root`, so the pending cache and the durable hint are real files.
+ */
+describe("lore init — the LCLI-700 repro: a completed no-removal migration still resumes with --remove-backlog", () => {
+  const questPreview: QuestMigrationPreview = {
+    sourceFingerprint: "sha256:source",
+    digest: "sha256:reviewed",
+    requiresApproval: true,
+    mappings: [],
+  };
+
+  /**
+   * A stateful fake Quest migration: `apply` records the receipt applied, `status` answers it once it
+   * exists and `not_found` before. Mirrors Quest's own durable status, which the rerun now depends on.
+   */
+  function fakeQuestMigration(): QuestBacklogMigration {
+    const receipt: QuestMigrationReceipt = {
+      schemaVersion: 1,
+      kind: "migration.backlog.receipt",
+      ...questPreview,
+      survivors: [],
+      taskFingerprints: {},
+      state: "applied",
+    };
+    let applied: QuestMigrationReceipt | undefined;
+    return {
+      preview: async () => questPreview,
+      apply: async () => {
+        applied = receipt;
+        return receipt;
+      },
+      status: async () => {
+        if (applied === undefined) throw new LoreError("not_found", "no receipt yet");
+        return applied;
+      },
+      rollback: async () => ({ ...receipt, state: "rolled-back" }),
+    };
+  }
+
+  /** A legacy bundle whose `backlog/` is genuinely committed — the only state removal is offered in. */
+  function committedBacklog(): void {
+    legacyBundle();
+    writeFileSync(join(root, "backlog", "tasks", "task-1 - First.md"), "---\nid: task-1\n---\n\n# First\n");
+    gitRun(root, ["init"]);
+    gitRun(root, ["add", "backlog"]);
+    gitRun(root, ["-c", "user.email=t@example.test", "-c", "user.name=T", "commit", "-m", "backlog"]);
+  }
+
+  test("migrate with no removal clears the pending record but keeps the durable hint, then --remove-backlog resumes idempotently", async () => {
+    committedBacklog();
+    const quest = fakeQuestMigration();
+    const migrate = (options?: QuestBacklogMigrationOptions) =>
+      migrateBacklogTasksToQuest(quest, root, undefined, options);
+
+    // 1. A completed migration with NO removal: the pending cache is cleared, the durable hint stays,
+    // and the notice names --remove-backlog as the next step (AC8).
+    const first = await init({ args: ["--tracker", "quest", "--migrate-backlog"], migrateBacklog: migrate });
+    expect(first.result.migration?.alreadyApplied).toBeUndefined();
+    expect(hasPendingQuestMigration(root)).toBe(false);
+    expect(existsSync(join(root, ".lore", "quest-backlog-migration.applied.json"))).toBe(true);
+    expect(first.stderr).toContain("--remove-backlog");
+
+    // 2. The operator follows the notice. The rerun keys on Quest's status via the hint — NOT on the
+    // cleared pending record — so it reports alreadyApplied and then completes the verified removal.
+    const second = await init({
+      args: ["--tracker", "quest", "--migrate-backlog", "--remove-backlog"],
+      migrateBacklog: migrate,
+    });
+    expect(second.result.migration?.alreadyApplied).toBe(true);
+    expect(second.result.backlogRemoval?.removed).toBe(true);
     expect(existsSync(join(root, "backlog"))).toBe(false);
     expect(readdirSync(join(root, ".lore", "archive")).some((f) => f.endsWith(".zip"))).toBe(true);
   });
