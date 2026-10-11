@@ -25,10 +25,10 @@ the record into line with the code; the decision is unchanged. `serializeConcept
 first line *inside* the opening fence. It has to: `parseConcept` requires `---` at byte 0, so a
 comment above the fence gives the file no usable frontmatter. `parseConcept` rejects it as a
 validation error, and the bundle walk skips it as a non-concept. Every modeline-bearing doc in
-this bundle carries it inside (26 of 82 docs under `docs/`, none above, measured 2026-09-26).
-Since LCLI-601 (opum-ai/lore-cli#290), parsing captures the comment block that opens the fence
-(`Concept.leadingComments`) and serializing re-emits it, so the modeline survives every command
-that rewrites the file. §3 and that consequence are corrected in place and marked *Amended
+this bundle carries it inside. Since LCLI-601 (opum-ai/lore-cli#290), parsing captures the comment
+block that opens the fence (`Concept.leadingComments`) and serializing re-emits it, so the modeline
+survives every command that rewrites the file. §3 and that consequence are corrected in place and
+marked *Amended
 (LCLI-603)*. The example's schema filename is also corrected from `story.json` to the shipped
 `<slug>.schema.json`. The decision itself stands as accepted: export Draft-7 JSON Schema and
 point the editor at it with a `yaml-language-server` modeline.
