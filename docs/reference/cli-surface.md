@@ -213,9 +213,11 @@ recoverable is refused with `denied` (exit `4`); the migration itself still
 stands, because the refusal is of the deletion, not of the selection. The
 refusal's `input` still carries that migration's receipt — `migrationDigest` and
 `migrationApplied` (additive, §7.1) — since stdout is byte-empty on exit `4`; and
-there is no removal-only path yet, so the recovery is to rerun **WITHOUT**
-`--remove-backlog` and keep `backlog/`, or to delete it by hand, which forgoes
-the verified archive. Both flags
+no verified removal is available after an applied migration, so the only
+recoveries are to keep `backlog/` (which the refusal already left) or to delete
+it by hand, which forgoes the verified archive. **A rerun is not a recovery**:
+the removal flags never reach the migration, so a rerun re-applies it and
+collides on the aliases the first run created (see LCLI-699). Both flags
 are valid only with `--migrate-backlog` and never with `--adopt-manifest` (whose
 coordinated cutover already archives and deletes `backlog/` as a verified phase
 of its own).

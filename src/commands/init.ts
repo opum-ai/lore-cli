@@ -1161,17 +1161,25 @@ function resolveScriptedBacklogRemoval(
     throw new LoreError(
       "denied",
       `refusing --remove-backlog: ${readiness.reason}`,
-      // LCLI-525 (opum-doc DEC-172 (4af), arm A): the OLD hint said "… then rerun", and a rerun is
-      // NOT a recovery — it re-enters the migration and dies on the aliases the first run created
-      // (measured: type=conflict, exit 5, whether backlog/ is dirty OR clean). So this names the one
-      // recovery that works today, states that a verified removal is not available yet, and warns
-      // that a hand deletion forgoes the archive a verified removal would have written.
-      "there is no removal-only path after an applied migration: rerun WITHOUT --remove-backlog to keep backlog/ (a verified removal is not available yet), or delete backlog/ by hand — which skips the verified archive `.lore/archive/backlog-<digest>.zip`",
+      // LCLI-525 (opum-doc DEC-172 (4af), arm A; wording CORRECTED after round-1 review): a rerun is
+      // NOT a recovery, WITH OR WITHOUT --remove-backlog — init.ts:555-558 never forwards the removal
+      // flags to runBacklogMigration, and clearPendingQuestMigration (init.ts:563) runs before this
+      // refusal, so a rerun re-applies the migration and dies on the aliases the first run created
+      // (measured: type=conflict, exit 5, whether backlog/ is dirty OR clean; LCLI-699). So this names
+      // only recoveries that WORK — keep backlog/ (which the refusal already left), or delete it by
+      // hand — states that a verified removal is not available yet, and warns what a hand deletion
+      // forgoes. It deliberately does NOT promise a rerun.
+      "backlog/ is left in place: keep it, or delete it by hand — which skips the verified archive `.lore/archive/backlog-<digest>.zip`. A verified removal after an applied migration is not available yet.",
       // LCLI-525: the DELETION is what is refused — the migration already applied — so a `--json`
       // caller must still be able to read that migration's receipt. stdout is empty on exit 4 (§4),
       // so `input` is the only channel a machine caller has; these two are ADDITIVE under §7.1, and
       // the digest is the same one `.lore/archive/backlog-<digest>.zip` is named from, so the
       // evidence a removal would have written is still addressable from the envelope.
+      //
+      // `migrationApplied` is deliberately CONSTANT here — this line is reachable only after the
+      // migration resolved, and TrackerMigrationResult.state is the literal "applied" — but it is
+      // not noise: a caller cannot otherwise tell from the envelope that the migration side
+      // SUCCEEDED (the refusal is of the deletion alone), and the field states that explicitly.
       {
         reason: readiness.reason,
         migrationDigest: migration.digest,
