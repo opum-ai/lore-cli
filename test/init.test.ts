@@ -3555,6 +3555,13 @@ describe("lore init — removing backlog/ after a plain --migrate-backlog (LCLI-
     expect(exitCodeFor(err as LoreError)).toBe(EXIT_CODES.denied);
     expect(err?.message).toContain("uncommitted changes");
     expect(err?.hint).toContain("git checkout -- backlog/");
+    // LCLI-525: the MIGRATION applied — only the deletion is refused — so the envelope still carries
+    // its receipt. stdout is byte-empty on exit 4, so `input` is the only channel a --json caller
+    // has; these two fields are additive under §7.1.
+    expect(err?.input).toMatchObject({
+      migrationDigest: migrationResult.digest,
+      migrationApplied: true,
+    });
     // The refusal is of the DELETION only: the migration already applied, so the selection stands.
     expect(existsSync(join(root, "backlog", "config.yml"))).toBe(true);
     expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");

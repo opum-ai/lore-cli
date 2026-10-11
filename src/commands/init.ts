@@ -1162,7 +1162,16 @@ function resolveScriptedBacklogRemoval(
       "denied",
       `refusing --remove-backlog: ${readiness.reason}`,
       "commit or clean backlog/ so `git checkout -- backlog/` can restore it, then rerun; or drop --remove-backlog",
-      { reason: readiness.reason },
+      // LCLI-525: the DELETION is what is refused — the migration already applied — so a `--json`
+      // caller must still be able to read that migration's receipt. stdout is empty on exit 4 (§4),
+      // so `input` is the only channel a machine caller has; these two are ADDITIVE under §7.1, and
+      // the digest is the same one `.lore/archive/backlog-<digest>.zip` is named from, so the
+      // evidence a removal would have written is still addressable from the envelope.
+      {
+        reason: readiness.reason,
+        migrationDigest: migration.digest,
+        migrationApplied: migration.state === "applied",
+      },
     );
   }
   return removeBacklogDirectory(options, archiveId(migration));
