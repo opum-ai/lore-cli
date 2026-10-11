@@ -1901,6 +1901,47 @@ describe("scripts/promote-latest.mjs: the staging precondition, the record, and 
       h.cleanup();
     }
   });
+
+  // LCLI-641: a zero-byte record reads as "", which is falsy, so the record guard used to treat it
+  // as a fresh run and then died at the exclusive write with an uncaught EEXIST (exit 2). The two
+  // states have OPPOSITE remedies and this holds them apart: present-but-empty is refused, absent is
+  // the unchanged fresh path.
+  test("an empty record file is refused on both modes, while a missing record still takes the fresh path", async () => {
+    // Present but empty: exit 1, naming the path and the empty state, before anything is written.
+    // Zero-byte and whitespace-only are both "no record", and both refused on --promote and --dry-run.
+    for (const [bytes, mode] of [
+      ["", "--promote"],
+      ["", "--dry-run"],
+      ["\n", "--promote"],
+    ] as const) {
+      const h = harness();
+      const w = world();
+      try {
+        writeFileSync(h.record, bytes);
+        expect(await h.go(["--record", h.record, mode], w)).toBe(1);
+        expect(h.err.join("\n")).toContain(h.record);
+        expect(h.err.join("\n")).toContain("exists but is EMPTY");
+        expect(w.writes).toEqual([]);
+        // The refusal names a real on-disk state and leaves it in place: it neither deletes nor
+        // rewrites the empty file (deleting it is the deliberate act that means "start fresh").
+        expect(existsSync(h.record)).toBe(true);
+        expect(readFileSync(h.record, "utf8")).toBe(bytes);
+      } finally {
+        h.cleanup();
+      }
+    }
+    // Absent: the fresh path is unchanged -- with no file, the run records every prior and promotes.
+    const h = harness();
+    const w = world();
+    try {
+      expect(existsSync(h.record)).toBe(false);
+      expect(await h.go(["--record", h.record, "--promote"], w)).toBe(0);
+      expect(h.readRecord().version).toBe(V);
+      expect(h.text()).toContain(`Recorded every prior latest to ${h.record} before moving anything.`);
+    } finally {
+      h.cleanup();
+    }
+  });
 });
 
 describe("scripts/promote-latest.mjs: arguments and credentials", () => {
