@@ -1,17 +1,22 @@
 /**
- * lcli528-kind-registry-matches-manifest.test.ts — LCLI-528, per DEC-160 (opum-doc, accepted 2026-10-05).
+ * lcli528-kind-registry-matches-manifest.test.ts — LCLI-528 (DEC-160, opum-doc) and LCLI-677
+ * (DEC-160 amended again, option A).
  *
  * cli-contract §2.1 is the human-readable `kind` registry; the machine-readable one is the
  * capability manifest (`lore help --json`), built by `buildManifest()`. DEC-160 settled that the
  * CODE is right and the docs were wrong: the registry's own convention is `<command>.<noun>`, and
  * the manifest declares `init.result` and `new.result`, while §2.1 had drifted to bare `init`/`new`.
  *
- * This is the recurrence guard for that drift: every kind §2.1 attributes to a lore COMMAND must be
- * a kind the manifest actually declares. The manifest's declared set is the union the module
- * docstring names — `commands[].kind`, `commands[].resultKinds`, and `globalFlags[].kind`. The
- * `version`/`help` row is emitted by the global `--version`/`--help` flags, which the prose above
- * the table says "are not commands and so are not in the manifest"; the property is scoped to
- * command kinds, so that row is skipped — its kinds are not a claim about a command.
+ * LCLI-677 broadened the guard from one direction to SET EQUALITY, per DEC-160 amended: §2.1 is
+ * declared EXHAUSTIVE, so the two sets must be identical. The manifest's declared set is the union
+ * the module docstring names — `commands[].kind`, `commands[].resultKinds`, and
+ * `globalFlags[].kind`. The `version`/`help` meta envelopes ARE declared there (the `--version` AND
+ * `--help` flags each carry a `kind`), so §2.1's meta row is INCLUDED rather than skipped: the two
+ * sets are equal only when that row is counted.
+ *
+ * Why the one-direction check was not enough: it could not see a DELETED row — it stayed green when
+ * the table lost kinds (a review mutation proof: deleting 3 rows, 25 -> 22, kept it green), which
+ * is exactly the omission drift it existed to catch. Equality is what makes that direction fail.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -35,11 +40,12 @@ function declaredKinds(): Set<string> {
 }
 
 /**
- * Parse the §2.1 `| kind | Emitted by | data shape |` table and return each COMMAND row's kinds.
- * Compound kind cells (`a.result / b.result`) are split on `/`; backticks are stripped. Rows the
- * table marks as emitted by the global flags (the `--version`/`--help` meta envelopes) are skipped.
+ * Parse the §2.1 `| kind | Emitted by | data shape |` table and return EVERY row's kinds, the
+ * `--version`/`--help` meta row included. Compound kind cells (`a.result / b.result`) are split on
+ * `/`; backticks are stripped. Nothing is skipped: §2.1 is declared exhaustive (LCLI-677), so the
+ * meta row's `version`/`help` are part of the set the manifest must equal.
  */
-function registryCommandKinds(doc: string): string[] {
+function registryKinds(doc: string): string[] {
   const lines = doc.split("\n");
   const headerIdx = lines.findIndex((l) => l.trim().startsWith("|") && l.includes("| Emitted by |"));
   if (headerIdx === -1) throw new Error("cli-contract §2.1 kind registry table header not found");
@@ -53,10 +59,7 @@ function registryCommandKinds(doc: string): string[] {
       .slice(1, -1)
       .split("|")
       .map((c) => c.trim());
-    const kindCell = cells[0] ?? "";
-    const emittedBy = cells[1] ?? "";
-    if (emittedBy.includes("global flags")) continue; // meta envelope, not a command
-    for (const token of kindCell.split("/")) {
+    for (const token of (cells[0] ?? "").split("/")) {
       const kind = token.replace(/`/g, "").trim();
       if (kind) kinds.push(kind);
     }
@@ -64,23 +67,28 @@ function registryCommandKinds(doc: string): string[] {
   return kinds;
 }
 
-describe("LCLI-528: the cli-contract §2.1 kind registry tracks the command manifest", () => {
-  test("every command kind in the §2.1 registry is declared by the manifest", () => {
-    const doc = readFileSync(CONTRACT, "utf8");
-    const kinds = registryCommandKinds(doc);
+describe("LCLI-528 / LCLI-677: the cli-contract §2.1 kind registry EQUALS the command manifest", () => {
+  test("the §2.1 registry and the manifest declare exactly the same kinds", () => {
+    const kinds = registryKinds(readFileSync(CONTRACT, "utf8"));
     const declared = declaredKinds();
 
-    // Positive controls: a parse that read nothing (or a manifest that declared nothing) would let
-    // this pass vacuously — the exact "clean answer from zero inputs" trap.
+    // Positive controls: a parse that read nothing (or a manifest that declared nothing) would make
+    // equality hold vacuously — the exact "clean answer from zero inputs" trap.
     expect(kinds.length).toBeGreaterThan(0);
     expect(declared.size).toBeGreaterThan(0);
 
+    // Both directions, named separately so a failure says WHICH drift it is: a table row the
+    // manifest does not declare, or a manifest kind the table omits.
     const undeclared = kinds.filter((kind) => !declared.has(kind));
     expect(undeclared).toEqual([]);
+    const omitted = [...declared].filter((kind) => !kinds.includes(kind)).sort();
+    expect(omitted).toEqual([]);
+    // A DUPLICATED row satisfies both filters while the table is wrong; equality means once each.
+    expect(new Set(kinds).size).toBe(kinds.length);
   });
 
   test("the init and new rows carry the manifest's dotted kinds, not bare command names", () => {
-    const kinds = registryCommandKinds(readFileSync(CONTRACT, "utf8"));
+    const kinds = registryKinds(readFileSync(CONTRACT, "utf8"));
     expect(kinds).toContain("init.result");
     expect(kinds).toContain("new.result");
     expect(kinds).not.toContain("init");

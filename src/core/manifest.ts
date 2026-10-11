@@ -229,7 +229,10 @@ const GLOBAL_FLAGS: readonly ManifestFlag[] = deepFreeze([
       "Unstyled text output (auto-selected when stdout is piped); `read` prints the body verbatim, control sequences included",
   },
   { name: "version", alias: "v", takesValue: false, summary: "Print the version and exit", kind: "version" },
-  { name: "help", alias: "h", takesValue: false, summary: "Show help and exit" },
+  // LCLI-677: `help` carries a `kind` too, so the manifest's declared set (commands[].kind ∪
+  // commands[].resultKinds ∪ globalFlags[].kind) and the cli-contract §2.1 registry can be asserted
+  // EQUAL — both meta envelopes are declared here, and the guard no longer has to skip that row.
+  { name: "help", alias: "h", takesValue: false, summary: "Show help and exit", kind: "help" },
 ]);
 
 /**

@@ -214,12 +214,15 @@ envelope.
 
 `kind` is a stable, enumerated string. Each command that supports `--json`
 declares one or more `kind` values; the same logical payload always carries the
-same `kind`. The machine-readable registry of **command** `kind`s is `lore help
---json` — the capability manifest, which enumerates every shipped command's
-`kind`, flags, and exit codes from live source. This table mirrors it for
-reference (and adds the two **meta** envelopes emitted by the `--version` /
-`--help` flags, which are not commands and so are not in the manifest) and tracks
-the [CLI surface](cli-surface.md):
+same `kind`. The machine-readable registry is `lore help --json` — the capability
+manifest, which enumerates every shipped command's `kind`, flags, and exit codes
+from live source. This table mirrors it **exhaustively**: every kind the manifest
+declares appears here and every kind here is manifest-declared, with a test
+asserting the two sets are equal, so a kind added to one side alone fails the
+build. It also carries the two **meta** envelopes emitted by the `--version` /
+`--help` flags — not commands, but declared by the manifest's
+`globalFlags[].kind` like any other kind. It tracks the
+[CLI surface](cli-surface.md):
 
 | `kind` | Emitted by | `data` shape (summary) |
 |---|---|---|
@@ -234,11 +237,20 @@ the [CLI surface](cli-surface.md):
 | `sync.result` | `lore sync` | what changed (status rewrites, managed-block diffs, regen) + the `backlog/` commit |
 | `tasks.rollup` | `lore tasks` | a concept's linked tasks' live configured-tracker status — `{ concept, status?, tasks: [{id,title,status}] }` |
 | `orphans.report` | `lore orphans` | coupling gaps — `{ orphanTasks[], danglingLinks[] }` (either section omitted under `--tasks-only`/`--docs-only`) |
+| `backlog.adoption.preview` / `backlog.adoption.apply` / `backlog.adoption.status` / `backlog.adoption.rollback` | `lore backlog adopt <verb>` | the four Backlog-only adoption operations — `preview` a byte-stable plan with source provenance, proposed ids/handles, collisions, fidelity gaps and an approval receipt; `apply` only against that receipt's digest, returning every created id/path; `status` the migration identity, receipt/source evidence, owned artifacts and lifecycle state; `rollback` every removed id/path, or `blocked-incomplete` evidence (see the [adoption contract](../specs/backlog-knowledge-adoption-contract.md)) |
 | `schema.result` | `lore schema` | schema files written |
 | `types.report` | `lore types` | the active profile's declared type vocabulary — fields, requiredness, sections |
 | `graph.export` | `lore graph` | nodes, edges, per-doc/bundle token estimates |
+| `path.result` | `lore path` | normalized typed scope, selected edge kinds, effective limits, shortest exact edge chains, endpoint and edge provenance, `shown`, `edgeVisits`, `depthBoundReached`, `truncated`, `complete`, `backend` (schema `lore-path-result/1`) |
+| `impact.result` | `lore impact` | normalized typed root, selected edge kinds, effective limits, direct/transitive impacts, exact evidence chains and provenance, `shown`, `edgeVisits`, `depthBoundReached`, `truncated`, `complete`, `backend` (schema `lore-impact-result/1`) |
+| `snapshot.result` | `lore snapshot` | retained/unchanged/listed/deleted action, exact snapshot descriptors, count, maximum |
+| `changed.result` | `lore changed` | normalized filters/bounds, paired fact deltas, shown/total/scanned, truncation, completeness (schema `lore-changed-result/1`) |
+| `provenance.result` | `lore provenance` | snapshot descriptor, authored fact, complete locator-free provenance (schema `lore-provenance-result/1`) |
+| `explorer.artifact` | `lore explorer` | artifact/snapshot versions, snapshot key, path, create/update/unchanged action, byte length, SHA-256 digest, graph-health counts |
+| `projection.export` | `lore export` | the OKF projection records — manifest, concepts, concept edges, tasks, task edges, trailer (JSONL by default; `--json` wraps the same records) |
 | `query.results` | `lore query` | ranked hits with `total`/`shown`/`truncated` (§3) |
 | `context.export` | `lore context` | concept body + neighbor summaries; token budget accounting |
+| `read.concept` | `lore read` | `id` (`conceptId#anchor` when a section was named), `path`, `type`, `frontmatter`, `body`, `tokenEstimate` |
 | `instructions.text` | `lore instructions` | guidance body + the full topic index |
 | `agents.result` | `lore agents` | bridge files written/updated; `target` whenever `--target <runtime>` is named (LCLI-593); under `--check` or `--force` only, the `opum-lore` marketplace plugin state as `plugin` when a target is named, or as `plugins.<runtime>`, one per covered runtime, when none is (LCLI-592) — never both, ADR Amendment 5 ruling 27; on a `--force` run (not `--check`) each plugin entry also carries `update` (`ran`\|`not-run`), `updateOk` when it ran, and `updateDetail` |
 | `agent.profiles` / `agent.profile` | `lore agent list` / `show` | profile summaries / one normalized profile |
