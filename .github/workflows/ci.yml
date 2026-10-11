@@ -227,13 +227,75 @@ jobs:
       # "probably a fast compile failure at the exitCode assertion", and the
       # recovered log showed every assertion PASSING and the scratch-tree
       # `rmSync` in the `finally` throwing EBUSY instead.
+      #
+      # LCLI-516: the per-test-TIMEOUT shape, and its two arms. One failure
+      # shape this job shows is an INDIVIDUAL test killed by bun's own per-test
+      # --timeout while the process completes and reports a plain pass/fail
+      # count -- distinct from the whole-process hang LCLI-507's epoll guard
+      # caught. It has appeared on BOTH ubuntu and windows. On ubuntu it is the
+      # SAME LCLI-507 epoll/stdio race, just caught by the per-test timer before
+      # it can print EEXIST or wedge the run; LCLI-659's classifier branch in
+      # the ubuntu leg below retries it.
+      #
+      # On windows it CANNOT be that race: epoll is Linux-only and this leg
+      # never prints the EEXIST line. It is therefore a DISTINCT mechanism --
+      # but WHICH one is NOT measured: the support is that negative argument
+      # alone, plus the runner's pre-existing, separately-motivated note that
+      # windows hits FS/resource pressure under --max-concurrency=4. Record it
+      # as a standing hypothesis, not a finding, exactly as LCLI-516 asked. The
+      # guard does not need the mechanism either way -- it keys on the OBSERVED
+      # failure shape, which is the same on both arms -- and neither arm raises
+      # a timeout: the shape is a flake, and a longer wait models the wrong
+      # theory of the failure.
       - name: Test
         shell: bash
         run: |
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             # Windows runners hit FS/resource pressure under default parallelism, and
             # the pinned 700k-row Ladybug fixture can take nearly 50 seconds there.
-            bun test --isolate --max-concurrency=4 --timeout=60000
+            #
+            # LCLI-516: the per-test-timeout SHAPE. An individual test can be killed
+            # by bun's OWN per-test budget while the surrounding process finishes
+            # normally and reports a plain pass/fail count. This leg is a REQUIRED
+            # context (lint · typecheck · test (windows-latest)) and, until this
+            # change, had NO guard at all -- so that shape failed the job outright
+            # and a human re-run was the only way past it.
+            #
+            # The mechanism here is DISTINCT from the ubuntu arm's -- the LCLI-507
+            # Bun epoll/stdio race is Linux-only, so it cannot be what this leg
+            # hits -- but it is NOT measured: the support is that negative argument
+            # plus the windows runner's known FS/resource pressure under
+            # --max-concurrency=4, so treat it as a hypothesis rather than a
+            # finding. The guard does not depend on it: the OBSERVED failure shape
+            # is the same as the ubuntu arm's, so the same rule decides it -- the
+            # LCLI-659 classifier below, scripts/ci-flake-classify.sh, retries once
+            # ONLY when EVERY failing test hung at the per-test budget. One
+            # sub-budget failure is a product signal and stays fatal, and a test
+            # that hangs every time still fails here, because the retry count stays
+            # at one.
+            #
+            # No `timeout` wrapper on this leg: Windows ships a conflicting
+            # timeout.exe, and the classifier reads bun's own recorded per-test
+            # durations rather than an outer kill, so it does not need one.
+            lore_per_test_ms=60000
+            lore_bun_log="${RUNNER_TEMP}/lore-bun-test.log"
+            set +e
+            bun test --isolate --max-concurrency=4 --timeout="${lore_per_test_ms}" 2>&1 | tee "${lore_bun_log}"
+            lore_bun_status=${PIPESTATUS[0]}
+            set -e
+            if [[ "${lore_bun_status}" -eq 0 ]]; then
+              exit 0
+            fi
+            if bash scripts/ci-flake-classify.sh "${lore_bun_log}" "${lore_per_test_ms}"; then
+              echo "::warning::every failing test on attempt 1 hung at the ${lore_per_test_ms}ms per-test budget (exit ${lore_bun_status}); attempt 2 follows."
+              if ! bun test --isolate --max-concurrency=4 --timeout="${lore_per_test_ms}"; then
+                echo "::error::attempt 2 ALSO failed after the per-test-hang retry. The retry count stays at one by design -- a test that hangs every time must still fail this job -- so this run belongs to whoever can measure the hang."
+                exit 1
+              fi
+              echo "::warning::attempt 2 PASSED. This job's green is a RETRY-GREEN, not a clean run: attempt 1's failures were all per-test-budget hangs."
+            else
+              exit "${lore_bun_status}"
+            fi
           elif [[ "${{ matrix.os }}" == "macos-15-intel" ]]; then
             # The 700k-row orphan-render regression takes ~30s on the slower Intel
             # hosted runner. Keep its exact-host qualification bounded without
