@@ -1422,9 +1422,9 @@ step_json "lore sync: heal the ADR index left stale by Phase 16's unsynced `lore
 
 # ── Phase 17: schema export ─────────────────────────────────────────────────────
 # The expected committed-schema set is DERIVED FROM THE CLI, never a literal (LCLI-688). A hard-coded
-# slug list and count reddened this REQUIRED context on every new built-in type until the harness was
-# hand-edited: LCLI-687's Standard type broke it on the count assertion alone, and the fix was a hand
-# edit of the count, the path list and four loops.
+# slug list, an exact count and a literal path list reddened this REQUIRED context on every new
+# built-in type until the harness was hand-edited: LCLI-687's Standard type moved the count, the AC3
+# path list AND the four slug loops.
 #
 # `lore schema export` is the authority, NOT `lore types`: a deprecated alias owns a schema file of
 # its own (Story -> Arc, LCLI-553), so `lore types` alone would miss story.schema.json. The export's
@@ -1646,7 +1646,8 @@ step_json "profile restored: lore schema export succeeds again (loadProfile reco
   '.kind == "schema.result"' -- lore schema export --json
 
 # Leave no induced state behind (LORE-63's convention): a custom profile.toml REPLACES the
-# default nine-type vocabulary wholesale, and a full `lore schema export` prunes a
+# default type vocabulary wholesale -- named without a count, since the count is exactly the kind
+# of hard-coded quantity LCLI-688 removes elsewhere in this file -- and a full `lore schema export` prunes a
 # *.schema.json whose type the active profile no longer declares ONLY when its generator stamp
 # matches the active profile's digest (LCLI-565). So the two custom-profile exports above no
 # longer prune Phase 17's default schema files: those carry the DEFAULT profile's stamp, foreign
