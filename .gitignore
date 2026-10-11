@@ -74,6 +74,13 @@ docs/.obsidian/*
 .claude/handovers/
 .claude/sessions/
 .claude/.session-id
+# Agent worktrees (opum-workflow implementers). Committed here, not only in
+# .git/info/exclude, because biome.json sets `vcs.useIgnoreFile` and biome reads
+# .gitignore — a local exclude is invisible to it, so a live worktree's copy of
+# biome.json was discovered as a NESTED ROOT CONFIG and made `npm run lint` fail
+# in the main checkout, naming no file in the diff under review (LCLI-520). The
+# local exclude is untouched; this is the copy biome actually reads.
+.claude/worktrees/
 
 # .claude/settings.json used to be committed, carrying OPUM_HOOK_ACTOR/
 # OPUM_HOOK_ACCOUNTABLE_HUMAN — per-operator identity that shouldn't be public.
