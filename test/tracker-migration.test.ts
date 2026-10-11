@@ -107,7 +107,7 @@ describe("migrateBacklogTasksToQuest", () => {
     ]);
   });
 
-  test("a resumed migration's excluded records come back from the recorded pending preview, not re-fetched", async () => {
+  test("a resumed migration's excluded records come back from the recorded pending preview, not the fresh one", async () => {
     const excludingPreview: QuestMigrationPreview = {
       ...preview,
       excluded: [{ sourceIdentifier: "LORE-1", family: "LORE" }],
@@ -117,16 +117,20 @@ describe("migrateBacklogTasksToQuest", () => {
     let previewCalls = 0;
     const result = await migrateBacklogTasksToQuest(
       migration({
+        // LCLI-699: the resume DOES preview ONCE, to fingerprint the current source -- but its
+        // `excluded` are NOT what gets reported. A fresh preview computes exclusions from THIS
+        // run's flags; the recorded preview is the one the migration was approved with, so the
+        // test returns a DIFFERENT set here to prove which one reaches the result.
         preview: async () => {
           previewCalls += 1;
-          throw new Error("must not re-preview on resume");
+          return { ...preview, excluded: [{ sourceIdentifier: "LORE-9", family: "LORE" }] };
         },
         status: async () => receipt,
       }),
       "/source",
       store,
     );
-    expect(previewCalls).toBe(0);
+    expect(previewCalls).toBe(1);
     expect(result.excluded).toEqual([{ sourceIdentifier: "LORE-1", family: "LORE" }]);
   });
 
@@ -241,10 +245,14 @@ describe("migrateBacklogTasksToQuest", () => {
       ),
     ).rejects.toThrow("simulated crash");
     expect(events).toEqual(["write"]);
+    // LCLI-699 (DEC-172 (4aj), arm A): the resume DOES run ONE read-only preview -- that preview is
+    // how Lore learns the current source still matches the recorded digest -- and it applies nothing.
+    let resumePreviews = 0;
     const resumed = await migrateBacklogTasksToQuest(
       migration({
         preview: async () => {
-          throw new Error("must resume by digest, never allocate a new preview");
+          resumePreviews += 1;
+          return preview;
         },
         status: async (digest) => {
           expect(digest).toBe("sha256:reviewed");
@@ -254,7 +262,8 @@ describe("migrateBacklogTasksToQuest", () => {
       "/source",
       store,
     );
-    expect(resumed).toMatchObject({ digest: "sha256:reviewed", state: "applied" });
+    expect(resumePreviews).toBe(1);
+    expect(resumed).toMatchObject({ digest: "sha256:reviewed", state: "applied", alreadyApplied: true });
   });
 
   test("reapplies the stored digest when interruption happened before Quest created a receipt", async () => {
@@ -280,6 +289,53 @@ describe("migrateBacklogTasksToQuest", () => {
       ["apply", "/source", "sha256:reviewed"],
     ]);
     expect(resumed).toMatchObject({ digest: "sha256:reviewed", state: "applied" });
+  });
+
+  // ── LCLI-699: the idempotent rerun (DEC-172 (4aj), arm A) ───────────────────────────────
+
+  test("AC (a): a rerun holding a pending record previews ONCE, applies NOTHING, and reports alreadyApplied", async () => {
+    const store = memoryStore();
+    store.write("/source", preview);
+    let previews = 0;
+    let applies = 0;
+    const resumed = await migrateBacklogTasksToQuest(
+      migration({
+        preview: async () => {
+          previews += 1;
+          return preview;
+        },
+        apply: async () => {
+          applies += 1;
+          return receipt;
+        },
+      }),
+      "/source",
+      store,
+    );
+    expect(previews).toBe(1);
+    expect(applies).toBe(0);
+    expect(resumed).toMatchObject({ digest: "sha256:reviewed", state: "applied", alreadyApplied: true });
+  });
+
+  test("AC (c): a rerun whose preview fingerprint DIFFERS refuses with the named divergence code, applying nothing", async () => {
+    const store = memoryStore();
+    store.write("/source", preview);
+    let applies = 0;
+    const error = (await migrateBacklogTasksToQuest(
+      migration({
+        preview: async () => ({ ...preview, digest: "sha256:changed", sourceFingerprint: "sha256:changed" }),
+        apply: async () => {
+          applies += 1;
+          return receipt;
+        },
+      }),
+      "/source",
+      store,
+    ).catch((caught: unknown) => caught)) as LoreError;
+    expect(error).toBeInstanceOf(LoreError);
+    expect(error.type).toBe("conflict");
+    expect(error.input).toMatchObject({ code: "backlog.diverged-from-migration" });
+    expect(applies).toBe(0);
   });
 });
 
