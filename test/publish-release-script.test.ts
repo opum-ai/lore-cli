@@ -944,6 +944,124 @@ esac
       ws.cleanup();
     }
   }, 20_000);
+
+  // LCLI-517: the OTHER end of the SAME gate. LCLI-502 proves the gate WAITS for a platform package
+  // that eventually becomes visible; this proves that when one NEVER does, the poll EXPIRES, the
+  // root launcher is NEVER published, and the operator is told the documented, load-bearing thing --
+  // that this is not proof the publish failed, so nobody reaches for `npm unpublish`. Runs the REAL
+  // (non-dry-run) publish path: --dry-run stops before `npm publish` and before the registry gate,
+  // so "the root launcher was never published" would hold vacuously whether or not the gate worked.
+  test("times out and never publishes the root launcher when a platform package is never registry-visible (LCLI-517)", () => {
+    const ws = makeWorkspace();
+    try {
+      const log = resolve(ws.root, "npm-calls.log");
+      const state = resolve(ws.root, "npm-state");
+      writeFileSync(log, "");
+      // The package that NEVER becomes visible. Its `npm publish` succeeds like every other (so
+      // exhaustion here is purely a READ-API visibility failure, NOT a publish failure), but no
+      // visible-marker is ever recorded for it -- so every `npm view` keeps taking the not-found
+      // branch, however many times the bounded poll retries, and the poll can never resolve it.
+      const invisible = "@opum-ai/lore-linux-x64";
+
+      // Overwrite the shared npm stub for this one test only. Markers are the stub's own record of
+      // what the registry read WOULD show: a package reports visible only after its `publish` ran
+      // and wrote its marker, EXCEPT `invisible`, whose publish deliberately writes NO marker. Every
+      // view/publish call is appended to `log`, which is what the assertions below read.
+      writeFileSync(
+        resolve(ws.bin, "npm"),
+        `#!/usr/bin/env bash
+set -uo pipefail
+LOG="${log}"
+STATE="${state}"
+VERSION="${VERSION}"
+INVISIBLE="${invisible}"
+mkdir -p "$STATE"
+# Package names contain "/" (the @opum-ai/ scope), which cannot appear inside a single path
+# segment used as a marker filename -- sanitise before ever touching or testing a marker path.
+safe() { printf '%s' "\${1//\\//_}"; }
+case "\${1:-}" in
+  ping) exit 0 ;;
+  view)
+    spec="$2"
+    field="\${3:-}"
+    case "$field" in
+      dist-tags.*) name="$spec" ;;
+      *) name="\${spec%@*}" ;;
+    esac
+    if [ ! -f "$STATE/published-$(safe "$name")" ]; then
+      echo "VIEW-MISS $name (not yet published)" >> "$LOG"
+      ${NPM_404}
+    fi
+    echo "VIEW-HIT $name" >> "$LOG"
+    echo "$VERSION"
+    exit 0
+    ;;
+  publish)
+    tarball="$2"
+    base="$(basename "$tarball")"
+    stripped="\${base%-$VERSION.tgz}"; stripped="\${stripped%-$VERSION-rc.*}"
+    name="@opum-ai/\${stripped#opum-ai-}"
+    echo "PUBLISH $name" >> "$LOG"
+    # INVISIBLE's publish returns 0 (npm confirmed it) but records NO visible-marker, so the
+    # registry read never shows it -- the exact "publisher's PUT returned, the read never caught
+    # up, PERMANENTLY" case this gate must fail on rather than publish the root launcher anyway.
+    if [ "$name" != "$INVISIBLE" ]; then touch "$STATE/published-$(safe "$name")"; fi
+    echo "STUB PUBLISH $tarball"
+    exit 0
+    ;;
+  dist-tag) exit 0 ;;
+  *) exit 0 ;;
+esac
+`,
+      );
+      chmodSync(resolve(ws.bin, "npm"), 0o755);
+      // The install-smoke step shells out to the REAL npx if unstubbed; this test drives the
+      // non-dry-run path, so npx must be inert too -- nothing here may touch the network. It is
+      // never reached (the run dies before the root publish), which is the point, but stub it.
+      writeFileSync(resolve(ws.bin, "npx"), "#!/usr/bin/env bash\nexit 0\n");
+      chmodSync(resolve(ws.bin, "npx"), 0o755);
+
+      const result = Bun.spawnSync({
+        cmd: ["bash", SCRIPT, VERSION, RUN_ID],
+        cwd: ws.root,
+        env: {
+          ...process.env,
+          PATH: `${ws.bin}${delimiter}${process.env.PATH}`,
+          ARTIFACTS: ws.artifacts,
+          NPM_TOKEN: "",
+          // A SHORT window so the poll EXPIRES in about a second instead of waiting out the real
+          // 1800s. The cushion is zeroed -- the propagation wait is not under test and is never
+          // reached once the run dies at the gate.
+          PROPAGATION_CUSHION_SECONDS: "0",
+          REGISTRY_WINDOW_SECONDS: "1",
+        },
+      });
+      const out = result.stdout.toString() + result.stderr.toString();
+
+      // (1) Exhaustion is a FAILURE, not a silent success.
+      expect(result.exitCode).not.toBe(0);
+
+      const lines = readFileSync(log, "utf8").split("\n").filter(Boolean);
+      // (2) The root wrapper is NEVER published. Its `npm publish` never fires, so the registry can
+      // never hold a root launcher whose optionalDependencies point at a platform package that is
+      // not there. `lines` is for the stub's argv log, so this is exact-string element matching, not
+      // a substring: the platform lines ("PUBLISH @opum-ai/lore-linux-x64") do NOT satisfy it.
+      expect(lines).not.toContain("PUBLISH @opum-ai/lore");
+      // A NEGATIVE is only meaningful against a positive control in the SAME invocation: the
+      // platform packages WERE published (so the gate had something to wait for and did not exit
+      // early for an unrelated reason), and the poll genuinely MISSED the invisible package.
+      expect(lines.some((l) => l.startsWith("PUBLISH @opum-ai/lore-"))).toBe(true);
+      expect(lines.some((l) => l === `VIEW-MISS ${invisible} (not yet published)`)).toBe(true);
+
+      // (3) The operator is told the two documented, load-bearing things: the TIMEOUT block's
+      // "not proof the publish failed / do not unpublish" warning, and die()'s statement that the
+      // root launcher was not published.
+      expect(out).toContain("THIS IS NOT PROOF THE PUBLISH FAILED");
+      expect(out).toContain("the root launcher was NOT published");
+    } finally {
+      ws.cleanup();
+    }
+  }, 20_000);
 });
 
 // ── Qualification receipt gate (LCLI-578) and the report-download retry (LCLI-572) ────────────
