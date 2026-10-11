@@ -235,11 +235,18 @@ jobs:
       # caught. It has appeared on BOTH ubuntu and windows. On ubuntu it is the
       # SAME LCLI-507 epoll/stdio race, just caught by the per-test timer before
       # it can print EEXIST or wedge the run; LCLI-659's classifier branch in
-      # the ubuntu leg below retries it. On windows it is a DISTINCT mechanism
-      # (FS/resource pressure under --max-concurrency=4; there is no epoll on
-      # Windows) that produces the same shape, which is why the windows leg now
-      # runs the SAME classifier. Neither arm raises a timeout: the shape is a
-      # flake, and a longer wait models the wrong theory of the failure.
+      # the ubuntu leg below retries it.
+      #
+      # On windows it CANNOT be that race: epoll is Linux-only and this leg
+      # never prints the EEXIST line. It is therefore a DISTINCT mechanism --
+      # but WHICH one is NOT measured: the support is that negative argument
+      # alone, plus the runner's pre-existing, separately-motivated note that
+      # windows hits FS/resource pressure under --max-concurrency=4. Record it
+      # as a standing hypothesis, not a finding, exactly as LCLI-516 asked. The
+      # guard does not need the mechanism either way -- it keys on the OBSERVED
+      # failure shape, which is the same on both arms -- and neither arm raises
+      # a timeout: the shape is a flake, and a longer wait models the wrong
+      # theory of the failure.
       - name: Test
         shell: bash
         run: |
@@ -254,14 +261,18 @@ jobs:
             # change, had NO guard at all -- so that shape failed the job outright
             # and a human re-run was the only way past it.
             #
-            # The mechanism here is DISTINCT from the ubuntu arm's: the LCLI-507
-            # Bun epoll/stdio race is Linux-only, and this is FS/resource pressure
-            # under --max-concurrency=4. But the OBSERVED failure shape is the same,
-            # so the same rule decides it -- the LCLI-659 classifier below,
-            # scripts/ci-flake-classify.sh, retries once ONLY when EVERY failing test
-            # hung at the per-test budget. One sub-budget failure is a product
-            # signal and stays fatal, and a test that hangs every time still fails
-            # here, because the retry count stays at one.
+            # The mechanism here is DISTINCT from the ubuntu arm's -- the LCLI-507
+            # Bun epoll/stdio race is Linux-only, so it cannot be what this leg
+            # hits -- but it is NOT measured: the support is that negative argument
+            # plus the windows runner's known FS/resource pressure under
+            # --max-concurrency=4, so treat it as a hypothesis rather than a
+            # finding. The guard does not depend on it: the OBSERVED failure shape
+            # is the same as the ubuntu arm's, so the same rule decides it -- the
+            # LCLI-659 classifier below, scripts/ci-flake-classify.sh, retries once
+            # ONLY when EVERY failing test hung at the per-test budget. One
+            # sub-budget failure is a product signal and stays fatal, and a test
+            # that hangs every time still fails here, because the retry count stays
+            # at one.
             #
             # No `timeout` wrapper on this leg: Windows ships a conflicting
             # timeout.exe, and the classifier reads bun's own recorded per-test

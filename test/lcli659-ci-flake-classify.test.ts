@@ -153,7 +153,13 @@ describe("LCLI-659 CI flake classifier", () => {
     const testScript = readFileSync(CI_PATH, "utf8");
     // Assembled rather than written as one literal, the idiom this repository already uses for
     // shell substitutions in assertions (see ci-workflow.test.ts's retry-condition checks).
-    expect(testScript).toContain('bash scripts/ci-flake-classify.sh "$' + '{lore_bun_log}" "$' + '{lore_per_test_ms}"');
+    // The trailing redirect is what makes this the UBUNTU leg's call and not the
+    // windows leg's: LCLI-516 added an identical classifier call with no redirect,
+    // so the redirect is what keeps this assertion failing if the ubuntu call is
+    // removed while the windows one stays.
+    expect(testScript).toContain(
+      'bash scripts/ci-flake-classify.sh "$' + '{lore_bun_log}" "$' + '{lore_per_test_ms}" > "$' + '{lore_hung_log}"',
+    );
     expect(testScript).toContain("lore_per_test_ms=10000");
     // The retry count stays at ONE: a test that hangs every time must still fail the job.
     expect(testScript.match(/timeout --kill-after=10s 6m bun test --isolate/g)?.length).toBe(2);
