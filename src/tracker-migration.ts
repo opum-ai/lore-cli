@@ -29,6 +29,13 @@ export interface TrackerMigrationResult {
   readonly excluded: readonly QuestMigrationExcludedRecord[];
   readonly taskFingerprints: Readonly<Record<string, string>>;
   readonly state: "applied";
+  /**
+   * LCLI-699: present as `true` ONLY when this run RECOGNISED an earlier migration's receipt and so
+   * applied nothing -- the idempotent-rerun path. Absent when this run performed the migration, so
+   * the field is ADDITIVE (an existing consumer is unaffected) and a new one reads
+   * `alreadyApplied === true` without having to tell "absent" from "false".
+   */
+  readonly alreadyApplied?: boolean;
 }
 
 export interface QuestMigrationMapping {
@@ -110,6 +117,21 @@ export async function migrateBacklogTasksToQuest(
 ): Promise<TrackerMigrationResult> {
   const pending = store.read(source);
   if (pending !== undefined) {
+    // LCLI-699: a rerun whose SOURCE is unchanged is an IDEMPOTENT SUCCESS -- the receipt already on
+    // record is returned and NOTHING is applied, so it can no longer die on Quest's exit-5 alias
+    // collision. The source is compared through a read-only PREVIEW, because both the digest and the
+    // source fingerprint are Quest's to compute and Lore has no local way to derive them: one
+    // preview is the cost this path pays, against the re-apply it no longer performs.
+    const fresh = await migration.preview(source, migrationOptions);
+    assertPreview(fresh);
+    if (fresh.digest !== pending.digest) {
+      throw new LoreError(
+        "conflict",
+        "the backlog has changed since it was migrated, so this run cannot resume the recorded migration",
+        "restore backlog/ to the state that was migrated, then rerun; or start a NEW migration for the changed backlog",
+        { code: "backlog.diverged-from-migration", recorded: pending.digest, current: fresh.digest },
+      );
+    }
     let receipt: QuestMigrationReceipt;
     try {
       receipt = await migration.status(pending.digest);
@@ -128,7 +150,7 @@ export async function migrateBacklogTasksToQuest(
     // `pending` is the preview this run (or an earlier crashed one) already reviewed and durably
     // recorded, so it carries the same `excluded` a fresh preview would — it is that fresh preview,
     // read back from disk rather than re-fetched, per this branch's own resume contract above.
-    return result(receipt, pending);
+    return result(receipt, pending, true);
   }
   const preview = await migration.preview(source, migrationOptions);
   assertPreview(preview);
@@ -139,7 +161,11 @@ export async function migrateBacklogTasksToQuest(
   return result(receipt, preview);
 }
 
-function result(receipt: QuestMigrationReceipt, preview: QuestMigrationPreview): TrackerMigrationResult {
+function result(
+  receipt: QuestMigrationReceipt,
+  preview: QuestMigrationPreview,
+  alreadyApplied?: boolean,
+): TrackerMigrationResult {
   return {
     digest: receipt.digest,
     sourceFingerprint: receipt.sourceFingerprint,
@@ -149,6 +175,9 @@ function result(receipt: QuestMigrationReceipt, preview: QuestMigrationPreview):
     excluded: preview.excluded ?? [],
     taskFingerprints: receipt.taskFingerprints,
     state: "applied",
+    // Additive (LCLI-699): set only on the recognised-receipt path, so a fresh migration's shape is
+    // byte-unchanged.
+    ...(alreadyApplied === true ? { alreadyApplied: true } : {}),
   };
 }
 

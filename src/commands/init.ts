@@ -560,11 +560,18 @@ export function runInit(options: InitOptions): number | Promise<number> {
       // the operator already chose --preserve-source-ids and the family explicitly.
       warnExcludedFamilies(options, migration, parsed.sourceFamily);
       persistTrackerBackend(options.root, "quest");
-      clearPendingQuestMigration(options.root);
       // Only AFTER the selection is persisted (LCLI-467): the migration succeeded, so Quest is the
       // tracker whatever the operator decided about the old files, and a refused removal must not
       // leave a repository whose tasks moved but whose config did not.
+      //
+      // ...and only AFTER the removal is resolved (LCLI-699): a REFUSED `--remove-backlog` THROWS
+      // from inside `resolveScriptedBacklogRemoval`, and clearing the pending record first forgot
+      // the reviewed digest -- so the next run re-previewed from scratch and died on Quest's alias
+      // collision instead of recognising the receipt it already had. Resolving the removal first
+      // means a refusal leaves the pending record behind, which is exactly what lets a rerun
+      // resume it idempotently.
       const backlogRemoval = resolveScriptedBacklogRemoval(options, parsed, migration);
+      clearPendingQuestMigration(options.root);
       return finishNonInteractive(options, parsed, base, clock, priorSelection, migration, undefined, backlogRemoval);
     });
   }
@@ -1179,7 +1186,10 @@ function resolveScriptedBacklogRemoval(
       // `migrationApplied` is deliberately CONSTANT here — this line is reachable only after the
       // migration resolved, and TrackerMigrationResult.state is the literal "applied" — but it is
       // not noise: a caller cannot otherwise tell from the envelope that the migration side
-      // SUCCEEDED (the refusal is of the deletion alone), and the field states that explicitly.
+      // SUCCEEDED (the refusal is of the deletion alone), and the field states that explicitly. It
+      // is also the STABLE name for that fact on the paths where it is NOT constant (LCLI-699): an
+      // idempotent rerun reports `alreadyApplied: true` beside it, so a caller reads one field for
+      // "Quest is holding this migration" however that state was reached.
       {
         reason: readiness.reason,
         migrationDigest: migration.digest,
