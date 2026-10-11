@@ -210,7 +210,14 @@ default — and says so on stderr naming both flags, so the outcome is never
 silent. `--no-remove-backlog` keeps it without that notice: the choice was
 already explicit. `--remove-backlog` over a `backlog/` git cannot prove
 recoverable is refused with `denied` (exit `4`); the migration itself still
-stands, because the refusal is of the deletion, not of the selection. Both flags
+stands, because the refusal is of the deletion, not of the selection. The
+refusal's `input` still carries that migration's receipt — `migrationDigest` and
+`migrationApplied` (additive, §7.1) — since stdout is byte-empty on exit `4`; and
+no verified removal is available after an applied migration, so the only
+recoveries are to keep `backlog/` (which the refusal already left) or to delete
+it by hand, which forgoes the verified archive. **A rerun is not a recovery**:
+the removal flags never reach the migration, so a rerun re-applies it and
+collides on the aliases the first run created (see LCLI-699). Both flags
 are valid only with `--migrate-backlog` and never with `--adopt-manifest` (whose
 coordinated cutover already archives and deletes `backlog/` as a verified phase
 of its own).

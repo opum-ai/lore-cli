@@ -3554,7 +3554,23 @@ describe("lore init — removing backlog/ after a plain --migrate-backlog (LCLI-
     expect(err?.type).toBe("denied");
     expect(exitCodeFor(err as LoreError)).toBe(EXIT_CODES.denied);
     expect(err?.message).toContain("uncommitted changes");
-    expect(err?.hint).toContain("git checkout -- backlog/");
+    // LCLI-525 (opum-doc DEC-172 (4af), arm A; wording corrected after round-1 review): the hint
+    // names only recoveries that WORK. It does NOT name a rerun at all — init.ts:555-558 never
+    // forwards the removal flags to runBacklogMigration, so a rerun re-applies the migration and
+    // dies on the aliases the first run created (measured: type=conflict, exit 5, whether backlog/
+    // is dirty or clean; LCLI-699).
+    expect(err?.hint).toContain("keep it, or delete it by hand");
+    expect(err?.hint).toContain("skips the verified archive");
+    expect(err?.hint).toContain("not available yet");
+    expect(err?.hint).not.toContain("rerun");
+    expect(err?.hint).not.toContain("git checkout -- backlog/");
+    // LCLI-525: the MIGRATION applied — only the deletion is refused — so the envelope still carries
+    // its receipt. stdout is byte-empty on exit 4, so `input` is the only channel a --json caller
+    // has; these two fields are additive under §7.1.
+    expect(err?.input).toMatchObject({
+      migrationDigest: migrationResult.digest,
+      migrationApplied: true,
+    });
     // The refusal is of the DELETION only: the migration already applied, so the selection stands.
     expect(existsSync(join(root, "backlog", "config.yml"))).toBe(true);
     expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
