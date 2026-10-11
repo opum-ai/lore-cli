@@ -797,7 +797,12 @@ the promotion half, item 7. It is not part of staging.
    no-op. Send the values anyway; letting them confirm a no-op costs one message
    and is how the offer was framed. What must not happen is the other case going
    unsent: when `skills/` **has** moved, their pin bump has to carry the
-   re-resolved baseline in the **same** change, or their check goes red.
+   re-resolved baseline in the **same** change, or their check goes red. The
+   bump is not baseline-only: the same change must also regenerate the
+   consumer's committed OKF schemas, with `lore schema export` run under the
+   new lore version (for example,
+   `npx --yes @opum-ai/lore@<version> schema export`), or their `lore check`
+   goes red with exit 6.
 
    Compare against the previous tag before sending, so you know which case you
    are in and can say so:
@@ -1357,7 +1362,11 @@ the promotion half, item 7. It is not part of staging.
       promotion peeled, and the `skills/` tree read through the same `gh api`
       chain (the commit, its root tree, the tree's `skills` entry). If that
       read fails it says NOT RESOLVED and gives the command to resolve it by
-      hand.
+      hand. And the pin bump is not baseline-only: the same change must also
+      regenerate `opum-marketplace`'s committed OKF schemas, with
+      `lore schema export` run under the new lore version (for example,
+      `npx --yes @opum-ai/lore@<version> schema export`), or its `lore check`
+      goes red with exit 6.
    5. **The release-truth record.** Update
       `docs/reference/lore-cli-release-truth.md`: replace its current-state
       claim so it says `<version>` is released. Record the Release run, the
