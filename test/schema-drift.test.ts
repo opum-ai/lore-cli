@@ -65,6 +65,9 @@ describe("schemaDriftFindings — the pure comparison (LCLI-539, LCLI-565)", () 
     expect(findings[0]?.schemaClass).toBe("stale");
     expect(findings[0]?.file).toBe(`${SCHEMAS}/story.schema.json`);
     expect(findings[0]?.message).toMatch(/no longer matches/);
+    // LCLI-545: the remedy is named IN FULL — regenerating is not enough, the result must be
+    // committed, and the failure output is where the reader is when it matters.
+    expect(findings[0]?.message).toContain("run `lore schema export` and commit `.lore/schemas/`");
   });
 
   test("a profile type with no committed schema at all is MISSING", () => {
@@ -75,6 +78,7 @@ describe("schemaDriftFindings — the pure comparison (LCLI-539, LCLI-565)", () 
     expect(findings[0]?.schemaClass).toBe("missing");
     expect(findings[0]?.file).toBe(`${SCHEMAS}/spec.schema.json`);
     expect(findings[0]?.message).toMatch(/no schema is committed/);
+    expect(findings[0]?.message).toContain("run `lore schema export` and commit `.lore/schemas/`");
   });
 
   test("an orphan whose stamp EQUALS this binary's digest is ORPHANED — drift, prune advised", () => {
@@ -86,6 +90,7 @@ describe("schemaDriftFindings — the pure comparison (LCLI-539, LCLI-565)", () 
     expect(findings[0]?.schemaClass).toBe("orphaned");
     expect(findings[0]?.file).toBe(`${SCHEMAS}/removed-type.schema.json`);
     expect(findings[0]?.message).toMatch(/no type in the active profile owns.*to prune it/);
+    expect(findings[0]?.message).toContain("then commit `.lore/schemas/`");
   });
 
   test("an orphan whose stamp DIFFERS is UNATTRIBUTABLE — indeterminate, never a prune", () => {
@@ -265,6 +270,8 @@ describe("runCheck — committed-schema drift gates the bundle (LCLI-539)", () =
     expect(findings).toHaveLength(1);
     expect(findings[0]?.file).toBe(`${SCHEMAS}/story.schema.json`);
     expect(findings[0]?.message).toMatch(/no longer matches what this profile generates/);
+    // LCLI-545: the remedy rides on the real `lore check` output, not only the pure pass's finding.
+    expect(findings[0]?.message).toContain("run `lore schema export` and commit `.lore/schemas/`");
   });
 
   test("deleting a committed schema fails the gate rather than passing for want of something to compare", async () => {
@@ -291,6 +298,7 @@ describe("runCheck — committed-schema drift gates the bundle (LCLI-539)", () =
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatchObject({ rule: "schema-drift", schemaClass: "orphaned" });
     expect(findings[0]?.message).toMatch(/run `lore schema export` to prune it/);
+    expect(findings[0]?.message).toContain("then commit `.lore/schemas/`");
   });
 
   test("an orphan with NO stamp is unattributable: exit 7, and no prune is advised", async () => {

@@ -902,6 +902,13 @@ export function schemaDriftFindings(input: SchemaDriftInput): CheckFinding[] {
   }
   const findings: CheckFinding[] = [];
   const committed = input.committed;
+  // LCLI-545: the remedy, named IN FULL at the point of failure. `lore schema export` writes the
+  // files, but a regenerated schema left UNCOMMITTED leaves the drift in place for the next reader,
+  // so the hint names the commit too. Without it, an integrator's first bump past this check has to
+  // derive that step (opum-marketplace, 2026-09-19: 7/7 schemas, exit 6, and the changelog named
+  // neither the command nor the commit). Same inline-hint idiom the status-drift and
+  // managed-block-drift findings above already use.
+  const hint = "run `lore schema export` and commit `.lore/schemas/`";
   // A committed name that differs from an owned one only in letter case may BE that file on a
   // case-insensitive filesystem (LCLI-565 review). It stands in for the owned schema ONLY when the
   // exact owned name is absent AND the variant carries this binary's own stamp — the APFS state an
@@ -935,7 +942,7 @@ export function schemaDriftFindings(input: SchemaDriftInput): CheckFinding[] {
         rule: "schema-drift",
         schemaClass: "missing",
         file: path,
-        message: "the active profile declares this type but no schema is committed for it — run `lore schema export`",
+        message: `the active profile declares this type but no schema is committed for it — ${hint}`,
       });
     } else if (current !== regenerated) {
       findings.push({
@@ -943,7 +950,7 @@ export function schemaDriftFindings(input: SchemaDriftInput): CheckFinding[] {
         rule: "schema-drift",
         schemaClass: "stale",
         file: path,
-        message: "the committed schema no longer matches what this profile generates — run `lore schema export`",
+        message: `the committed schema no longer matches what this profile generates — ${hint}`,
       });
     }
   }
@@ -969,7 +976,8 @@ export function schemaDriftFindings(input: SchemaDriftInput): CheckFinding[] {
         rule: "schema-drift",
         schemaClass: "orphaned",
         file: path,
-        message: "no type in the active profile owns this schema — run `lore schema export` to prune it",
+        message:
+          "no type in the active profile owns this schema — run `lore schema export` to prune it, then commit `.lore/schemas/`",
       });
     } else {
       findings.push({
