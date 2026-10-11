@@ -161,8 +161,9 @@ export type CheckFinding = Finding<CheckRule> & {
 
 /**
  * The committed-schema conditions (docs/specs/committed-schema-generator-stamp.md, decision table).
- * `missing`/`stale`/`orphaned` are drift (exit `6`) with a remedy `lore schema export` applies;
- * `unattributable` is indeterminate (exit `7`) and has no automatic remedy by design.
+ * `missing`/`stale`/`orphaned` are drift (exit `6`) with a remedy whose `lore schema export` step
+ * must then be COMMITTED for the drift to clear (LCLI-545); `unattributable` is indeterminate
+ * (exit `7`) and has no automatic remedy by design.
  */
 export type SchemaDriftClass = "missing" | "stale" | "orphaned" | "unattributable";
 
@@ -902,13 +903,16 @@ export function schemaDriftFindings(input: SchemaDriftInput): CheckFinding[] {
   }
   const findings: CheckFinding[] = [];
   const committed = input.committed;
-  // LCLI-545: the remedy, named IN FULL at the point of failure. `lore schema export` writes the
-  // files, but a regenerated schema left UNCOMMITTED leaves the drift in place for the next reader,
-  // so the hint names the commit too. Without it, an integrator's first bump past this check has to
-  // derive that step (opum-marketplace, 2026-09-19: 7/7 schemas, exit 6, and the changelog named
-  // neither the command nor the commit). Same inline-hint idiom the status-drift and
-  // managed-block-drift findings above already use.
+  // LCLI-545: the remedy, named IN FULL at the point of failure. `lore schema export` writes (or
+  // prunes) the file, but a regenerated schema left UNCOMMITTED leaves the drift in place for the
+  // next reader, so each hint names the commit too. Without it, an integrator's first bump past this
+  // check has to derive that step (opum-marketplace, 2026-09-19: 7/7 schemas, exit 6, and the
+  // changelog named neither the command nor the commit). Same inline-hint idiom the status-drift and
+  // managed-block-drift findings above already use: a local const interpolated into the message.
   const hint = "run `lore schema export` and commit `.lore/schemas/`";
+  // Orphaned prunes rather than writes, so it gets its own wording -- for the same reason, and in the
+  // same idiom.
+  const pruneHint = "run `lore schema export` to prune it, then commit `.lore/schemas/`";
   // A committed name that differs from an owned one only in letter case may BE that file on a
   // case-insensitive filesystem (LCLI-565 review). It stands in for the owned schema ONLY when the
   // exact owned name is absent AND the variant carries this binary's own stamp — the APFS state an
@@ -976,8 +980,7 @@ export function schemaDriftFindings(input: SchemaDriftInput): CheckFinding[] {
         rule: "schema-drift",
         schemaClass: "orphaned",
         file: path,
-        message:
-          "no type in the active profile owns this schema — run `lore schema export` to prune it, then commit `.lore/schemas/`",
+        message: `no type in the active profile owns this schema — ${pruneHint}`,
       });
     } else {
       findings.push({

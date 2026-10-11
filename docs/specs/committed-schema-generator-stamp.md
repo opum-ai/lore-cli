@@ -135,9 +135,9 @@ is on disk. The first three rows are unchanged from today.
 |---|---|---|---|
 | committed directory absent | clean | 0 | none — a bundle with no schemas is not drifted |
 | bytes match | clean | 0 | none |
-| profile declares the type, no file committed | **missing** | 6 | `lore schema export` writes it |
-| file committed, bytes differ | **stale** | 6 | `lore schema export` overwrites it — *recoverable from git* |
-| **orphan, stamp digest == this binary's** | **orphaned** | 6 | `lore schema export` prunes it — *destructive, and affirmed* |
+| profile declares the type, no file committed | **missing** | 6 | `lore schema export` writes it, then commit `.lore/schemas/` |
+| file committed, bytes differ | **stale** | 6 | `lore schema export` overwrites it, then commit `.lore/schemas/` — *recoverable from git* |
+| **orphan, stamp digest == this binary's** | **orphaned** | 6 | `lore schema export` prunes it, then commit `.lore/schemas/` — *destructive, and affirmed* |
 | **orphan, stamp digest differs** | **unattributable** | new | **never prune.** Read `git log` on the file and on the profile |
 | **orphan, no stamp at all** | **unattributable** | new | **never prune.** The file predates this mechanism |
 

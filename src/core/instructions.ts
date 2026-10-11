@@ -167,7 +167,8 @@ is regenerated in memory from the active profile and compared byte-for-byte
 against what is committed. Three conditions fail the gate -- a committed schema
 whose bytes no longer match the generator, a profile type with no committed
 schema at all, and a committed schema no profile type owns (the file a full
-export would prune). **The fix for all three is \`lore schema export\`.**
+export would prune). **The fix for all three is \`lore schema export\`, then committing
+\`.lore/schemas/\`** -- regenerating without committing leaves the drift in place.
 It is asserted as a property -- regenerate and compare against the live
 generator -- never as a pinned hash of expected bytes, because a hash records
 which bytes were current when someone wrote it down and can say nothing about

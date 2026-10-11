@@ -24,6 +24,8 @@ import type { BacklogAdapter } from "../src/adapters/backlog";
 import { escalateToIndeterminate, runCheck } from "../src/commands/check";
 import { runInit } from "../src/commands/init";
 import { schemaDriftFindings } from "../src/core/check";
+import { INSTRUCTION_TOPICS } from "../src/core/instructions";
+import { findManifestCommand } from "../src/core/manifest";
 import { defaultProfile } from "../src/core/profile";
 import { profileDigest, readGeneratorStamp } from "../src/core/schema";
 import { EXIT_CODES, EXIT_OK, exitCodeFor, LoreError, toErrorEnvelope } from "../src/errors";
@@ -492,5 +494,31 @@ describe("runCheck — a thrown 6-class failure cannot hide an unattributable sc
     }
     const crash = new Error("boom");
     expect(escalateToIndeterminate(crash, paths)).toBe(crash);
+  });
+});
+
+describe("the schema-drift remedy names the commit on every surface it appears (LCLI-545)", () => {
+  // The check FINDING is where a reader meets the drift, but the same remedy is stated on three
+  // other surfaces: the agent instructions, `lore schema --help`, and the spec's decision table. One
+  // of them naming less than the others IS the divergence LCLI-545 exists to close -- and it is
+  // silent, because nothing compared the four. So pin all four here.
+  test("the agent-instructions surface names the commit", () => {
+    const topic = INSTRUCTION_TOPICS.find((t) => t.body.includes("Committed-schema drift"));
+    expect(topic).toBeDefined();
+    expect(topic?.body.replace(/\s+/g, " ")).toContain("then committing `.lore/schemas/`");
+  });
+
+  test("the `lore schema` command summary names the commit", () => {
+    expect(findManifestCommand("schema")?.summary).toContain("commit the result");
+  });
+
+  test("the spec decision table names the commit on all three drift rows", () => {
+    const spec = readFileSync(
+      join(import.meta.dir, "..", "docs", "specs", "committed-schema-generator-stamp.md"),
+      "utf8",
+    );
+    const rows = spec.split("\n").filter((line) => /^\|.*\*\*(missing|stale|orphaned)\*\*/.test(line));
+    expect(rows).toHaveLength(3);
+    for (const row of rows) expect(row).toContain("then commit `.lore/schemas/`");
   });
 });
