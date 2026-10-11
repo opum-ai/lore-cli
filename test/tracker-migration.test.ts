@@ -35,6 +35,7 @@ function migration(overrides: Partial<QuestBacklogMigration> = {}): QuestBacklog
 
 function memoryStore(): PendingMigrationStore {
   let pending: QuestMigrationPreview | undefined;
+  let applied: string | undefined;
   return {
     read: () => pending,
     write: (_root, value) => {
@@ -42,6 +43,10 @@ function memoryStore(): PendingMigrationStore {
     },
     clear: () => {
       pending = undefined;
+    },
+    readApplied: () => applied,
+    writeApplied: (_root, digest) => {
+      applied = digest;
     },
   };
 }
@@ -107,7 +112,7 @@ describe("migrateBacklogTasksToQuest", () => {
     ]);
   });
 
-  test("a resumed migration's excluded records come back from the recorded pending preview, not re-fetched", async () => {
+  test("a resumed migration's excluded records come back from the recorded pending preview, not the fresh one", async () => {
     const excludingPreview: QuestMigrationPreview = {
       ...preview,
       excluded: [{ sourceIdentifier: "LORE-1", family: "LORE" }],
@@ -117,16 +122,20 @@ describe("migrateBacklogTasksToQuest", () => {
     let previewCalls = 0;
     const result = await migrateBacklogTasksToQuest(
       migration({
+        // LCLI-699: the resume DOES preview ONCE, to fingerprint the current source -- but its
+        // `excluded` are NOT what gets reported. A fresh preview computes exclusions from THIS
+        // run's flags; the recorded preview is the one the migration was approved with, so the
+        // test returns a DIFFERENT set here to prove which one reaches the result.
         preview: async () => {
           previewCalls += 1;
-          throw new Error("must not re-preview on resume");
+          return { ...preview, excluded: [{ sourceIdentifier: "LORE-9", family: "LORE" }] };
         },
         status: async () => receipt,
       }),
       "/source",
       store,
     );
-    expect(previewCalls).toBe(0);
+    expect(previewCalls).toBe(1);
     expect(result.excluded).toEqual([{ sourceIdentifier: "LORE-1", family: "LORE" }]);
   });
 
@@ -223,6 +232,7 @@ describe("migrateBacklogTasksToQuest", () => {
   test("records the preview before apply and resumes through status after an interruption", async () => {
     const events: string[] = [];
     let pending: QuestMigrationPreview | undefined;
+    let applied: string | undefined;
     const store: PendingMigrationStore = {
       read: () => pending,
       write: (_root, value) => {
@@ -231,6 +241,10 @@ describe("migrateBacklogTasksToQuest", () => {
       },
       clear: () => {
         pending = undefined;
+      },
+      readApplied: () => applied,
+      writeApplied: (_root, digest) => {
+        applied = digest;
       },
     };
     await expect(
@@ -241,10 +255,14 @@ describe("migrateBacklogTasksToQuest", () => {
       ),
     ).rejects.toThrow("simulated crash");
     expect(events).toEqual(["write"]);
+    // LCLI-699 (DEC-172 (4aj), arm A): the resume DOES run ONE read-only preview -- that preview is
+    // how Lore learns the current source still matches the recorded digest -- and it applies nothing.
+    let resumePreviews = 0;
     const resumed = await migrateBacklogTasksToQuest(
       migration({
         preview: async () => {
-          throw new Error("must resume by digest, never allocate a new preview");
+          resumePreviews += 1;
+          return preview;
         },
         status: async (digest) => {
           expect(digest).toBe("sha256:reviewed");
@@ -254,7 +272,19 @@ describe("migrateBacklogTasksToQuest", () => {
       "/source",
       store,
     );
-    expect(resumed).toMatchObject({ digest: "sha256:reviewed", state: "applied" });
+    expect(resumePreviews).toBe(1);
+    // LCLI-699 round 2: an EXACT match, not a subset. The recognised-receipt result carries
+    // `alreadyApplied` AND every other field, so a stray additive field cannot slip through unseen.
+    expect(resumed).toEqual({
+      digest: "sha256:reviewed",
+      sourceFingerprint: "sha256:source",
+      mappings: preview.mappings,
+      survivors: [],
+      excluded: [],
+      taskFingerprints: { "T-1": "sha256:task" },
+      state: "applied",
+      alreadyApplied: true,
+    });
   });
 
   test("reapplies the stored digest when interruption happened before Quest created a receipt", async () => {
@@ -279,7 +309,267 @@ describe("migrateBacklogTasksToQuest", () => {
       ["status", "sha256:reviewed"],
       ["apply", "/source", "sha256:reviewed"],
     ]);
-    expect(resumed).toMatchObject({ digest: "sha256:reviewed", state: "applied" });
+    // LCLI-699 round 2: the crash-resume sub-branch (status not_found -> apply) really APPLIES, so
+    // it must NOT report `alreadyApplied` -- that flag means "Quest already held this receipt", not
+    // "no write happened". The exact match pins the fields AND the flag's absence.
+    expect(resumed).toEqual({
+      digest: "sha256:reviewed",
+      sourceFingerprint: "sha256:source",
+      mappings: preview.mappings,
+      survivors: [],
+      excluded: [],
+      taskFingerprints: { "T-1": "sha256:task" },
+      state: "applied",
+    });
+    expect(Object.hasOwn(resumed, "alreadyApplied")).toBe(false);
+  });
+
+  // ── LCLI-699: the idempotent rerun (DEC-172 (4aj), arm A) ───────────────────────────────
+
+  test("AC (a): a rerun holding a pending record previews ONCE, applies NOTHING, and reports alreadyApplied", async () => {
+    const store = memoryStore();
+    store.write("/source", preview);
+    let previews = 0;
+    let applies = 0;
+    const resumed = await migrateBacklogTasksToQuest(
+      migration({
+        preview: async () => {
+          previews += 1;
+          return preview;
+        },
+        apply: async () => {
+          applies += 1;
+          return receipt;
+        },
+      }),
+      "/source",
+      store,
+    );
+    expect(previews).toBe(1);
+    expect(applies).toBe(0);
+    // LCLI-699 round 2: exact match, not a subset -- `alreadyApplied` and every other field.
+    expect(resumed).toEqual({
+      digest: "sha256:reviewed",
+      sourceFingerprint: "sha256:source",
+      mappings: preview.mappings,
+      survivors: [],
+      excluded: [],
+      taskFingerprints: { "T-1": "sha256:task" },
+      state: "applied",
+      alreadyApplied: true,
+    });
+  });
+
+  test("AC (c): a rerun whose preview fingerprint DIFFERS refuses with the named divergence code, applying nothing", async () => {
+    const store = memoryStore();
+    store.write("/source", preview);
+    let applies = 0;
+    const error = (await migrateBacklogTasksToQuest(
+      migration({
+        preview: async () => ({ ...preview, digest: "sha256:changed", sourceFingerprint: "sha256:changed" }),
+        apply: async () => {
+          applies += 1;
+          return receipt;
+        },
+      }),
+      "/source",
+      store,
+    ).catch((caught: unknown) => caught)) as LoreError;
+    expect(error).toBeInstanceOf(LoreError);
+    expect(error.type).toBe("conflict");
+    expect(error.input).toMatchObject({ code: "backlog.diverged-from-migration" });
+    expect(applies).toBe(0);
+  });
+
+  // ── LCLI-700: idempotence keys on Quest's durable status, not the local record ───────────────
+
+  test("(4ap) a rerun after a COMPLETED migration whose pending record is cleared is idempotent via the durable hint", async () => {
+    const store = memoryStore();
+    // The earlier run finished with no removal: it cleared the pending record and left only the hint.
+    store.writeApplied("/source", "sha256:reviewed");
+    let previews = 0;
+    let applies = 0;
+    const statusSeen: string[] = [];
+    const resumed = await migrateBacklogTasksToQuest(
+      migration({
+        preview: async () => {
+          previews += 1;
+          return preview;
+        },
+        status: async (digest) => {
+          statusSeen.push(digest);
+          return receipt;
+        },
+        apply: async () => {
+          applies += 1;
+          return receipt;
+        },
+      }),
+      "/source",
+      store,
+    );
+    // ONE preview, NO apply, and Quest's own status is asked about the recorded digest.
+    expect(previews).toBe(1);
+    expect(statusSeen).toEqual(["sha256:reviewed"]);
+    expect(applies).toBe(0);
+    expect(resumed).toEqual({
+      digest: "sha256:reviewed",
+      sourceFingerprint: "sha256:source",
+      mappings: preview.mappings,
+      survivors: [],
+      excluded: [],
+      taskFingerprints: { "T-1": "sha256:task" },
+      state: "applied",
+      alreadyApplied: true,
+    });
+  });
+
+  test("(4ap) a hint Quest's status no longer confirms is treated as FRESH", async () => {
+    const store = memoryStore();
+    store.writeApplied("/source", "sha256:reviewed");
+    const calls: string[][] = [];
+    const resumed = await migrateBacklogTasksToQuest(
+      migration({
+        preview: async () => preview,
+        status: async (digest) => {
+          calls.push(["status", digest]);
+          throw new LoreError("not_found", "migration receipt not found");
+        },
+        apply: async (source, digest) => {
+          calls.push(["apply", source, digest]);
+          return receipt;
+        },
+      }),
+      "/source",
+      store,
+    );
+    expect(calls).toEqual([
+      ["status", "sha256:reviewed"],
+      ["apply", "/source", "sha256:reviewed"],
+    ]);
+    // A fresh APPLICATION must not wear the recognised-receipt flag.
+    expect(Object.hasOwn(resumed, "alreadyApplied")).toBe(false);
+  });
+
+  test("(4ap)(a) a rerun whose digest differs from a confirmed hint refuses via the hint, naming BOTH remedies", async () => {
+    const store = memoryStore();
+    store.writeApplied("/source", "sha256:reviewed");
+    let applies = 0;
+    const error = (await migrateBacklogTasksToQuest(
+      migration({
+        preview: async () => ({ ...preview, digest: "sha256:changed", sourceFingerprint: "sha256:changed" }),
+        apply: async () => {
+          applies += 1;
+          return receipt;
+        },
+      }),
+      "/source",
+      store,
+    ).catch((caught: unknown) => caught)) as LoreError;
+    expect(error).toBeInstanceOf(LoreError);
+    expect(error.type).toBe("conflict");
+    expect(error.input).toMatchObject({
+      code: "backlog.diverged-from-migration",
+      recorded: "sha256:reviewed",
+      current: "sha256:changed",
+    });
+    expect(applies).toBe(0);
+    // (4as): the remedy names BOTH causes ...
+    expect(error.hint).toContain("restore it");
+    expect(error.hint).toContain("--preserve-source-ids");
+    // ... and the rollback command carries the actor flags Quest requires (LCLI-700 #6).
+    expect(error.hint).toContain("--actor <name> --actor-kind human");
+  });
+
+  test("(4as) a rerun whose MIGRATION OPTIONS differ on UNCHANGED bytes refuses with the divergence code", async () => {
+    const store = memoryStore();
+    // The original run applied under one option set; the durable hint records its digest.
+    store.writeApplied("/source", "sha256:reviewed");
+    const optionCalls: unknown[] = [];
+    let applies = 0;
+    const error = (await migrateBacklogTasksToQuest(
+      migration({
+        // Quest's preview digest is OPTION-SENSITIVE (quest-cli backlog-public.ts): unchanged bytes
+        // with different flags yield a DIFFERENT digest. Simulate exactly that here — the source
+        // fingerprint is unchanged, only the digest moves.
+        preview: async (_source, options) => {
+          optionCalls.push(options);
+          return { ...preview, digest: "sha256:reviewed-with-flags" };
+        },
+        apply: async () => {
+          applies += 1;
+          return receipt;
+        },
+      }),
+      "/source",
+      store,
+      { preserveSourceIds: true, sourceFamily: "LCLI" },
+    ).catch((caught: unknown) => caught)) as LoreError;
+    expect(optionCalls).toEqual([{ preserveSourceIds: true, sourceFamily: "LCLI" }]);
+    expect(error).toBeInstanceOf(LoreError);
+    expect(error.type).toBe("conflict");
+    expect(error.input).toMatchObject({ code: "backlog.diverged-from-migration" });
+    expect(applies).toBe(0);
+    // The remedy names the option-cause explicitly, so a flags-only divergence is actionable.
+    expect(error.hint).toContain("--preserve-source-ids");
+  });
+
+  test("(4ap)(a) an UNCONFIRMED hint whose digest has ALSO diverged is FRESH, not a divergence", async () => {
+    const store = memoryStore();
+    // The recorded migration was rolled back in Quest (or a crashed run never applied), AND the
+    // backlog has since changed: BOTH the status and the digest are "off". (4ap)(a)'s fresh row is
+    // "no hint, or an unconfirmed one" with NO digest qualifier, and its divergence row requires a
+    // CONFIRMED hint — so status is asked FIRST and the diverged digest is never compared.
+    store.writeApplied("/source", "sha256:reviewed");
+    const calls: string[][] = [];
+    let applies = 0;
+    const resumed = await migrateBacklogTasksToQuest(
+      migration({
+        preview: async () => ({ ...preview, digest: "sha256:changed", sourceFingerprint: "sha256:changed" }),
+        status: async (digest) => {
+          calls.push(["status", digest]);
+          throw new LoreError("not_found", "migration receipt not found");
+        },
+        apply: async (source, digest) => {
+          applies += 1;
+          calls.push(["apply", source, digest]);
+          return { ...receipt, digest, sourceFingerprint: "sha256:changed" };
+        },
+      }),
+      "/source",
+      store,
+    );
+    // FRESH: status refused the hint, so the changed digest is applied fresh — no divergence refusal.
+    expect(calls).toEqual([
+      ["status", "sha256:reviewed"],
+      ["apply", "/source", "sha256:changed"],
+    ]);
+    expect(applies).toBe(1);
+    expect(Object.hasOwn(resumed, "alreadyApplied")).toBe(false);
+  });
+
+  test("(4ap) a CONFIRMED hint whose status returns a NON-APPLIED receipt is REFUSED, not reported as applied", async () => {
+    const store = memoryStore();
+    store.writeApplied("/source", "sha256:reviewed");
+    let applies = 0;
+    // Quest still holds the receipt but has NOT reached `applied` on it — e.g. a crash mid-apply.
+    // assertReceipt must refuse this rather than let result()'s hardcoded state:"applied" and
+    // alreadyApplied:true misreport it (and let --remove-backlog delete backlog/ off it).
+    const error = (await migrateBacklogTasksToQuest(
+      migration({
+        preview: async () => preview,
+        status: async () => ({ ...receipt, state: "applying" }),
+        apply: async () => {
+          applies += 1;
+          return receipt;
+        },
+      }),
+      "/source",
+      store,
+    ).catch((caught: unknown) => caught)) as LoreError;
+    expect(error).toBeInstanceOf(LoreError);
+    expect(error.type).toBe("conflict");
+    expect(applies).toBe(0);
   });
 });
 

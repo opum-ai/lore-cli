@@ -49,6 +49,10 @@ docker/e2e/.npm-cache/*
 # lore CLI state (config.toml and sync-state.json ARE committed; generated state is not)
 .lore/cache/
 .lore/explorer/
+# The Backlog-to-Quest migration records: the pending receipt is cleared at run end, and the durable
+# applied-digest hint (LCLI-700's idempotence gate) persists per repository — both are local state.
+.lore/quest-backlog-migration.pending.json
+.lore/quest-backlog-migration.applied.json
 
 # Rendered-docs build output (configs are committed; build artifacts are not)
 site/

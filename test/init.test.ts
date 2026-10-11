@@ -16,6 +16,12 @@ import { PassThrough } from "node:stream";
 import { BACKLOG_VERSION_FLOOR_CODE, type BacklogAdapter } from "../src/adapters/backlog";
 import { bunGitPreflightSpawn, type GitPreflight, realGitPreflight } from "../src/adapters/git-preflight";
 import type { JiraOnboarding, JiraProfile, JiraProjectSummary } from "../src/adapters/jira-onboarding";
+import type {
+  QuestBacklogMigration,
+  QuestBacklogMigrationOptions,
+  QuestMigrationPreview,
+  QuestMigrationReceipt,
+} from "../src/adapters/quest";
 import { QUEST_VERSION_PAIR_MISMATCH_CODE, QUEST_WORKSPACE_NOT_INITIALIZED_CODE } from "../src/adapters/quest";
 import { atLeast } from "../src/adapters/semver";
 import { createTrackerAdapter } from "../src/adapters/tracker";
@@ -41,7 +47,11 @@ import { findInstructionTopic } from "../src/core/instructions";
 import { EXIT_CODES, exitCodeFor, LoreError, reportError, WarningCollector } from "../src/errors";
 import { VERSION } from "../src/meta";
 import type { OutputContext } from "../src/output";
-import type { TrackerMigrationResult } from "../src/tracker-migration";
+import {
+  hasPendingQuestMigration,
+  migrateBacklogTasksToQuest,
+  type TrackerMigrationResult,
+} from "../src/tracker-migration";
 import { capture, expectError, fakeAdapter, gitRun } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
@@ -3554,16 +3564,19 @@ describe("lore init — removing backlog/ after a plain --migrate-backlog (LCLI-
     expect(err?.type).toBe("denied");
     expect(exitCodeFor(err as LoreError)).toBe(EXIT_CODES.denied);
     expect(err?.message).toContain("uncommitted changes");
-    // LCLI-525 (opum-doc DEC-172 (4af), arm A; wording corrected after round-1 review): the hint
-    // names only recoveries that WORK. It does NOT name a rerun at all — init.ts:555-558 never
-    // forwards the removal flags to runBacklogMigration, so a rerun re-applies the migration and
-    // dies on the aliases the first run created (measured: type=conflict, exit 5, whether backlog/
-    // is dirty or clean; LCLI-699).
-    expect(err?.hint).toContain("keep it, or delete it by hand");
+    // LCLI-525 (opum-doc DEC-172 (4af), arm A), UPDATED by LCLI-699 (DEC-172 (4aj)) and (4ar): the
+    // refusal is of the DELETION alone, so it KEEPS the pending record and a rerun IS a recovery —
+    // but ONLY while backlog/'s BYTES are unchanged, because the resume fingerprints the source and
+    // refuses a divergence (tracker-migration.ts:127-134) before the removal is reached. So the one
+    // recovery the hint may name is COMMIT, which preserves the bytes and the digest; (4ar) dropped
+    // the discarded "clean ... `git checkout --`" arm, which changed them. The by-hand deletion that
+    // forgoes the verified archive stays as the alternative.
+    expect(err?.hint).toContain("commit backlog/");
+    expect(err?.hint).toContain("rerun");
+    expect(err?.hint).toContain("completes the removal");
     expect(err?.hint).toContain("skips the verified archive");
-    expect(err?.hint).toContain("not available yet");
-    expect(err?.hint).not.toContain("rerun");
     expect(err?.hint).not.toContain("git checkout -- backlog/");
+    expect(err?.hint).not.toContain("not available yet");
     // LCLI-525: the MIGRATION applied — only the deletion is refused — so the envelope still carries
     // its receipt. stdout is byte-empty on exit 4, so `input` is the only channel a --json caller
     // has; these two fields are additive under §7.1.
@@ -3599,5 +3612,173 @@ describe("lore init — removing backlog/ after a plain --migrate-backlog (LCLI-
       runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), args: [...args] }),
     );
     expect(err.message).toContain(expected);
+  });
+
+  // ── LCLI-699: the pending record survives a refusal; AC (b) and the (d) sequence ─────────────
+
+  /** Seed the pending migration record a real completed migration leaves on disk. */
+  function seedPendingMigration(): void {
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(
+      join(root, ".lore", "quest-backlog-migration.pending.json"),
+      JSON.stringify({
+        sourceFingerprint: migrationResult.sourceFingerprint,
+        digest: migrationResult.digest,
+        requiresApproval: true,
+        mappings: [],
+      }),
+    );
+  }
+
+  test("LCLI-699: a REFUSED --remove-backlog KEEPS the pending migration record, so a rerun can resume", async () => {
+    committedBacklog();
+    writeFileSync(join(root, "backlog", "config.yml"), "statuses:\n  - Done\n"); // unrecoverable
+    seedPendingMigration();
+    const err = await Promise.resolve(
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        clock: FIXED_CLOCK,
+        args: ["--tracker", "quest", "--migrate-backlog", "--remove-backlog"],
+        migrateBacklog: async () => migrationResult,
+      }),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught as LoreError,
+    );
+    expect(err?.type).toBe("denied");
+    // The refusal is of the DELETION only, so the reviewed digest must outlive it: clearing here
+    // is precisely what made the LCLI-525 rerun re-preview from scratch and collide.
+    expect(hasPendingQuestMigration(root)).toBe(true);
+  });
+
+  test("AC (b): a resumed run WITH --remove-backlog archives, then verifies, then removes backlog/", async () => {
+    committedBacklog();
+    seedPendingMigration();
+    const { result } = await init({
+      args: ["--tracker", "quest", "--migrate-backlog", "--remove-backlog"],
+      migrateBacklog: async () => migrationResult,
+    });
+    expect(result.backlogRemoval?.removed).toBe(true);
+    expect(existsSync(join(root, "backlog"))).toBe(false);
+    // The verified archive is what the archive -> verify -> remove order leaves behind...
+    expect(readdirSync(join(root, ".lore", "archive")).some((f) => f.endsWith(".zip"))).toBe(true);
+    // ...and only a COMPLETED removal clears the record.
+    expect(hasPendingQuestMigration(root)).toBe(false);
+  });
+
+  test("AC (d): the LCLI-525 sequence -- refuse, rerun, then a verified removal", async () => {
+    committedBacklog();
+    // 1. A dirty backlog/ is unrecoverable: the run REFUSES and keeps its pending record.
+    writeFileSync(join(root, "backlog", "config.yml"), "statuses:\n  - Done\n");
+    seedPendingMigration();
+    const refused = await Promise.resolve(
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        clock: FIXED_CLOCK,
+        args: ["--tracker", "quest", "--migrate-backlog", "--remove-backlog"],
+        migrateBacklog: async () => migrationResult,
+      }),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught as LoreError,
+    );
+    expect(refused?.type).toBe("denied");
+    expect(hasPendingQuestMigration(root)).toBe(true);
+    // 2. The operator restores recoverability and RERUNS; the removal now completes.
+    gitRun(root, ["add", "backlog"]);
+    gitRun(root, ["-c", "user.email=t@example.test", "-c", "user.name=T", "commit", "-m", "clean backlog"]);
+    const { result } = await init({
+      args: ["--tracker", "quest", "--migrate-backlog", "--remove-backlog"],
+      migrateBacklog: async () => migrationResult,
+    });
+    expect(result.backlogRemoval?.removed).toBe(true);
+    expect(existsSync(join(root, "backlog"))).toBe(false);
+    expect(readdirSync(join(root, ".lore", "archive")).some((f) => f.endsWith(".zip"))).toBe(true);
+  });
+});
+
+/**
+ * LCLI-700 repro, end to end. The durable-status keying lives in {@link migrateBacklogTasksToQuest},
+ * not in `init.ts`, so these tests inject the REAL migration function bound to a stateful fake Quest
+ * adapter — that is the mechanism the `init()`-level stub cannot exercise. The migration operates on
+ * the real `.lore/` disk stores under `root`, so the pending cache and the durable hint are real files.
+ */
+describe("lore init — the LCLI-700 repro: a completed no-removal migration still resumes with --remove-backlog", () => {
+  const questPreview: QuestMigrationPreview = {
+    sourceFingerprint: "sha256:source",
+    digest: "sha256:reviewed",
+    requiresApproval: true,
+    mappings: [],
+  };
+
+  /**
+   * A stateful fake Quest migration: `apply` records the receipt applied, `status` answers it once it
+   * exists and `not_found` before. Mirrors Quest's own durable status, which the rerun now depends on.
+   */
+  function fakeQuestMigration(): QuestBacklogMigration {
+    const receipt: QuestMigrationReceipt = {
+      schemaVersion: 1,
+      kind: "migration.backlog.receipt",
+      ...questPreview,
+      survivors: [],
+      taskFingerprints: {},
+      state: "applied",
+    };
+    let applied: QuestMigrationReceipt | undefined;
+    return {
+      preview: async () => questPreview,
+      apply: async () => {
+        applied = receipt;
+        return receipt;
+      },
+      status: async () => {
+        if (applied === undefined) throw new LoreError("not_found", "no receipt yet");
+        return applied;
+      },
+      rollback: async () => ({ ...receipt, state: "rolled-back" }),
+    };
+  }
+
+  /** A legacy bundle whose `backlog/` is genuinely committed — the only state removal is offered in. */
+  function committedBacklog(): void {
+    legacyBundle();
+    writeFileSync(join(root, "backlog", "tasks", "task-1 - First.md"), "---\nid: task-1\n---\n\n# First\n");
+    gitRun(root, ["init"]);
+    gitRun(root, ["add", "backlog"]);
+    gitRun(root, ["-c", "user.email=t@example.test", "-c", "user.name=T", "commit", "-m", "backlog"]);
+  }
+
+  test("migrate with no removal clears the pending record but keeps the durable hint, then --remove-backlog resumes idempotently", async () => {
+    committedBacklog();
+    const quest = fakeQuestMigration();
+    const migrate = (options?: QuestBacklogMigrationOptions) =>
+      migrateBacklogTasksToQuest(quest, root, undefined, options);
+
+    // 1. A completed migration with NO removal: the pending cache is cleared, the durable hint stays,
+    // and the notice names --remove-backlog as the next step (AC8).
+    const first = await init({ args: ["--tracker", "quest", "--migrate-backlog"], migrateBacklog: migrate });
+    expect(first.result.migration?.alreadyApplied).toBeUndefined();
+    expect(hasPendingQuestMigration(root)).toBe(false);
+    expect(existsSync(join(root, ".lore", "quest-backlog-migration.applied.json"))).toBe(true);
+    expect(first.stderr).toContain("--remove-backlog");
+
+    // 2. The operator follows the notice. The rerun keys on Quest's status via the hint — NOT on the
+    // cleared pending record — so it reports alreadyApplied and then completes the verified removal.
+    const second = await init({
+      args: ["--tracker", "quest", "--migrate-backlog", "--remove-backlog"],
+      migrateBacklog: migrate,
+    });
+    expect(second.result.migration?.alreadyApplied).toBe(true);
+    expect(second.result.backlogRemoval?.removed).toBe(true);
+    expect(existsSync(join(root, "backlog"))).toBe(false);
+    expect(readdirSync(join(root, ".lore", "archive")).some((f) => f.endsWith(".zip"))).toBe(true);
   });
 });

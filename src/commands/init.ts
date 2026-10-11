@@ -560,11 +560,18 @@ export function runInit(options: InitOptions): number | Promise<number> {
       // the operator already chose --preserve-source-ids and the family explicitly.
       warnExcludedFamilies(options, migration, parsed.sourceFamily);
       persistTrackerBackend(options.root, "quest");
-      clearPendingQuestMigration(options.root);
       // Only AFTER the selection is persisted (LCLI-467): the migration succeeded, so Quest is the
       // tracker whatever the operator decided about the old files, and a refused removal must not
       // leave a repository whose tasks moved but whose config did not.
+      //
+      // ...and only AFTER the removal is resolved (LCLI-699): a REFUSED `--remove-backlog` THROWS
+      // from inside `resolveScriptedBacklogRemoval`, and clearing the pending record first forgot
+      // the reviewed digest -- so the next run re-previewed from scratch and died on Quest's alias
+      // collision instead of recognising the receipt it already had. Resolving the removal first
+      // means a refusal leaves the pending record behind, which is exactly what lets a rerun
+      // resume it idempotently.
       const backlogRemoval = resolveScriptedBacklogRemoval(options, parsed, migration);
+      clearPendingQuestMigration(options.root);
       return finishNonInteractive(options, parsed, base, clock, priorSelection, migration, undefined, backlogRemoval);
     });
   }
@@ -1161,15 +1168,20 @@ function resolveScriptedBacklogRemoval(
     throw new LoreError(
       "denied",
       `refusing --remove-backlog: ${readiness.reason}`,
-      // LCLI-525 (opum-doc DEC-172 (4af), arm A; wording CORRECTED after round-1 review): a rerun is
-      // NOT a recovery, WITH OR WITHOUT --remove-backlog — init.ts:555-558 never forwards the removal
-      // flags to runBacklogMigration, and clearPendingQuestMigration (init.ts:563) runs before this
-      // refusal, so a rerun re-applies the migration and dies on the aliases the first run created
-      // (measured: type=conflict, exit 5, whether backlog/ is dirty OR clean; LCLI-699). So this names
-      // only recoveries that WORK — keep backlog/ (which the refusal already left), or delete it by
-      // hand — states that a verified removal is not available yet, and warns what a hand deletion
-      // forgoes. It deliberately does NOT promise a rerun.
-      "backlog/ is left in place: keep it, or delete it by hand — which skips the verified archive `.lore/archive/backlog-<digest>.zip`. A verified removal after an applied migration is not available yet.",
+      // LCLI-525 (opum-doc DEC-172 (4af), arm A), UPDATED by LCLI-699 (DEC-172 (4aj)) and (4ar), and
+      // keyed on Quest's durable status by LCLI-700 (DEC-172 (4ap)): the refusal is of the DELETION
+      // alone. When LCLI-525 shipped, a rerun was NOT a recovery — the pending record was cleared
+      // before this refusal, so the rerun re-previewed and died on Quest's exit-5 alias collision —
+      // and the hint had to name only the recoveries that worked. LCLI-699 moved that clear AFTER the
+      // removal, and LCLI-700 records the applied digest as a durable hint, so a refused removal now
+      // has evidence to resume from and the rerun recognises the migration idempotently
+      // (alreadyApplied) before completing the removal — but ONLY while backlog/'s BYTES are
+      // unchanged, because the resume fingerprints the source and refuses a divergence
+      // (tracker-migration.ts's resume branch) BEFORE the removal is reached. So the one recovery
+      // that keeps the rerun working is COMMIT, which preserves the bytes and so the digest;
+      // discarding the changes does NOT, and (4ar) dropped that arm — the hint says only what the
+      // code honours.
+      "commit backlog/ — committing preserves its bytes, so the rerun's digest still matches — then rerun: the rerun recognises this migration and completes the removal; or delete backlog/ by hand, which skips the verified archive `.lore/archive/backlog-<digest>.zip`",
       // LCLI-525: the DELETION is what is refused — the migration already applied — so a `--json`
       // caller must still be able to read that migration's receipt. stdout is empty on exit 4 (§4),
       // so `input` is the only channel a machine caller has; these two are ADDITIVE under §7.1, and
@@ -1179,7 +1191,10 @@ function resolveScriptedBacklogRemoval(
       // `migrationApplied` is deliberately CONSTANT here — this line is reachable only after the
       // migration resolved, and TrackerMigrationResult.state is the literal "applied" — but it is
       // not noise: a caller cannot otherwise tell from the envelope that the migration side
-      // SUCCEEDED (the refusal is of the deletion alone), and the field states that explicitly.
+      // SUCCEEDED (the refusal is of the deletion alone), and the field states that explicitly. It
+      // is also the STABLE name for that fact on the paths where it is NOT constant (LCLI-699): an
+      // idempotent rerun reports `alreadyApplied: true` beside it, so a caller reads one field for
+      // "Quest is holding this migration" however that state was reached.
       {
         reason: readiness.reason,
         migrationDigest: migration.digest,

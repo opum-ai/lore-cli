@@ -14,6 +14,15 @@ import { VERSION } from "./meta";
 
 const PENDING_MIGRATION_REL_PATH = ".lore/quest-backlog-migration.pending.json";
 
+/**
+ * The digest of the LAST migration this repository applied (LCLI-700). Recorded on every successful
+ * apply and deliberately NOT cleared by a completed run — unlike {@link PENDING_MIGRATION_REL_PATH},
+ * which a run that finishes (with or without `--remove-backlog`) clears. It is the durable HINT a
+ * later rerun uses to ask Quest's own `migration backlog status` whether that migration is still
+ * applied, so idempotence no longer depends on the local pending cache surviving.
+ */
+const APPLIED_MIGRATION_REL_PATH = ".lore/quest-backlog-migration.applied.json";
+
 export interface TrackerMigrationResult {
   readonly digest: string;
   readonly sourceFingerprint: string;
@@ -29,6 +38,13 @@ export interface TrackerMigrationResult {
   readonly excluded: readonly QuestMigrationExcludedRecord[];
   readonly taskFingerprints: Readonly<Record<string, string>>;
   readonly state: "applied";
+  /**
+   * LCLI-699: present as `true` ONLY when this run RECOGNISED an earlier migration's receipt and so
+   * applied nothing -- the idempotent-rerun path. Absent when this run performed the migration, so
+   * the field is ADDITIVE (an existing consumer is unaffected) and a new one reads
+   * `alreadyApplied === true` without having to tell "absent" from "false".
+   */
+  readonly alreadyApplied?: boolean;
 }
 
 export interface QuestMigrationMapping {
@@ -44,11 +60,23 @@ export interface QuestMigrationExcludedRecord {
   readonly family: string;
 }
 
-/** Lore-owned crash-recovery record. It deliberately contains only public Quest receipt data. */
+/**
+ * Lore-owned migration state. The pending half is a crash-recovery CACHE — the reviewed preview,
+ * written before apply and cleared once a run completes. The applied half is a durable HINT — the
+ * digest of the last migration this repository applied (LCLI-700). Both hold only public Quest data.
+ */
 export interface PendingMigrationStore {
   read(root: string): QuestMigrationPreview | undefined;
   write(root: string, preview: QuestMigrationPreview): void;
   clear(root: string): void;
+  /**
+   * The last-applied migration digest (LCLI-700), or `undefined` when this repository records none.
+   * It survives a completed run, which is the whole point: a rerun uses it to ask Quest whether the
+   * recorded migration is still applied even after {@link clear} removed the pending cache.
+   */
+  readApplied(root: string): string | undefined;
+  /** Record `digest` as the last-applied migration hint (LCLI-700). */
+  writeApplied(root: string, digest: string): void;
 }
 
 const diskPendingMigrationStore: PendingMigrationStore = {
@@ -88,6 +116,37 @@ const diskPendingMigrationStore: PendingMigrationStore = {
       if (!(typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOENT")) throw cause;
     }
   },
+  readApplied(root) {
+    const path = join(root, APPLIED_MIGRATION_REL_PATH);
+    assertNoSymlinkInPath(root, APPLIED_MIGRATION_REL_PATH);
+    let raw: string;
+    try {
+      raw = readFileSync(path, "utf8");
+    } catch (cause) {
+      if (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOENT") return undefined;
+      throw cause;
+    }
+    let value: unknown;
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      throw new LoreError(
+        "drift",
+        "Lore's applied Quest migration hint record is malformed",
+        "remove or repair the Lore-owned applied migration hint record",
+      );
+    }
+    return appliedHint(value);
+  },
+  writeApplied(root, digest) {
+    ensureDir(root, ".lore");
+    assertNoSymlinkInPath(root, APPLIED_MIGRATION_REL_PATH);
+    writeFileAtomic(
+      join(root, APPLIED_MIGRATION_REL_PATH),
+      `${JSON.stringify({ digest })}\n`,
+      APPLIED_MIGRATION_REL_PATH,
+    );
+  },
 };
 
 /** Clear the recovery record only after the caller has persisted the Quest backend selection. */
@@ -101,6 +160,12 @@ export function clearPendingQuestMigration(
 /**
  * Preview, approve, then verify Quest's own migration receipt. Lore never copies tasks,
  * assigns ids, or reads Quest storage; it only consumes versioned CLI envelopes.
+ *
+ * **Idempotence keys on Quest's DURABLE STATUS, not on Lore's local record (LCLI-700).** A completed
+ * migration writes a durable HINT — the digest it applied, in `store.readApplied` — and a later rerun
+ * uses that hint to ask Quest `migration backlog status` whether the migration is still applied, even
+ * when the pending cache was cleared by the earlier run finishing. The pending record survives only
+ * as a CRASH-recovery cache, read when no hint exists; it is never the idempotence gate.
  */
 export async function migrateBacklogTasksToQuest(
   migration: QuestBacklogMigration,
@@ -108,38 +173,89 @@ export async function migrateBacklogTasksToQuest(
   store: PendingMigrationStore = diskPendingMigrationStore,
   migrationOptions?: QuestBacklogMigrationOptions,
 ): Promise<TrackerMigrationResult> {
+  // LCLI-700: the durable hint (last applied digest) is preferred; the pending preview is the
+  // crash-recovery fallback for a run that recorded a review but never reached a completed apply.
+  const hint = store.readApplied(source);
   const pending = store.read(source);
-  if (pending !== undefined) {
-    let receipt: QuestMigrationReceipt;
+  const recorded = hint ?? pending?.digest;
+
+  // DEC-172 (4ap)(a): the fresh/divergence split is conditioned on Quest CONFIRMING the recorded
+  // migration, NOT on the digests alone — the divergence row is "differs from a CONFIRMED hint" and the
+  // fresh row is "no hint, OR an unconfirmed one", with no digest qualifier. So status(recorded) is
+  // asked FIRST: an unconfirmed record (a migration rolled back in Quest, or a crashed run that never
+  // reached an apply) is FRESH whatever the current digest, and only a confirmed one can diverge.
+  let confirmed: { receipt: QuestMigrationReceipt; digest: string } | undefined;
+  if (recorded !== undefined) {
     try {
-      receipt = await migration.status(pending.digest);
+      confirmed = { receipt: await migration.status(recorded), digest: recorded };
     } catch (cause) {
       if (!(cause instanceof LoreError) || cause.type !== "not_found") throw cause;
-      // The process may have stopped (or an older artifact may have rejected the argv) after Lore
-      // durably recorded the preview but before Quest created its receipt. Reapply the SAME reviewed
-      // digest: Quest revalidates the current source fingerprint before its first write. Quest's own
-      // contract (LCLI-465) requires preserveSourceIds/sourceFamily to be re-supplied identically to
-      // apply as given to preview — Lore doesn't persist them (they're not part of the preview
-      // response, only its request), so a resumed `lore init` run supplies them fresh from its own
-      // CLI flags, the same way the operator would re-supply them to Quest's own CLI directly.
-      receipt = await migration.apply(source, pending.digest, migrationOptions);
+      confirmed = undefined;
     }
-    assertReceipt(pending, receipt);
-    // `pending` is the preview this run (or an earlier crashed one) already reviewed and durably
-    // recorded, so it carries the same `excluded` a fresh preview would — it is that fresh preview,
-    // read back from disk rather than re-fetched, per this branch's own resume contract above.
-    return result(receipt, pending);
   }
-  const preview = await migration.preview(source, migrationOptions);
-  assertPreview(preview);
-  // This must precede apply: a process crash cannot make Lore forget the approved digest.
-  store.write(source, preview);
-  const receipt = await migration.apply(source, preview.digest, migrationOptions);
-  assertReceipt(preview, receipt);
-  return result(receipt, preview);
+
+  if (confirmed === undefined) {
+    // FRESH — nothing is recorded here, or the recorded migration is one Quest no longer holds.
+    // Preview, durably record, then apply.
+    const preview = await migration.preview(source, migrationOptions);
+    assertPreview(preview);
+    // This must precede apply: a process crash cannot make Lore forget the approved digest.
+    store.write(source, preview);
+    const receipt = await migration.apply(source, preview.digest, migrationOptions);
+    assertReceipt(preview, receipt);
+    store.writeApplied(source, receipt.digest);
+    return result(receipt, preview);
+  }
+
+  // CONFIRMED — Quest holds the recorded migration. ONE read-only preview fingerprints the CURRENT
+  // source; both the digest and the fingerprint are Quest's to compute and Lore has no local way to
+  // derive them, so one preview is the cost this path pays against the re-apply it avoids.
+  const fresh = await migration.preview(source, migrationOptions);
+  assertPreview(fresh);
+  if (fresh.digest !== confirmed.digest) {
+    throw divergenceError(confirmed.digest, fresh.digest);
+  }
+  // The recorded preview (the reviewed migration) is what supplies `excluded`; a rerun whose pending
+  // cache was already cleared falls back to the fresh preview, which — because the digest matched —
+  // carries the same exclusions.
+  const recordedPreview = pending ?? fresh;
+  // The receipt Quest returns for the recorded digest must be a valid, APPLIED receipt for the same
+  // digest/fingerprint/mappings — the same guard the fresh path applies. `assertReceipt` is what
+  // enforces `state === "applied"`, so a receipt still in `applying`/`failed`/`rolled-back` can
+  // never be reported as a recognised applied migration or authorise the removal.
+  assertReceipt(recordedPreview, confirmed.receipt);
+  // Re-record the receipt's digest so a crash-recovery resume that finished here leaves the hint.
+  store.writeApplied(source, confirmed.receipt.digest);
+  return result(confirmed.receipt, recordedPreview, true);
 }
 
-function result(receipt: QuestMigrationReceipt, preview: QuestMigrationPreview): TrackerMigrationResult {
+/**
+ * The named divergence refusal (LCLI-699; remedy widened under DEC-172 (4as), LCLI-700). Quest's
+ * preview digest is OPTION-SENSITIVE — unchanged `backlog/` bytes migrated with different flags yield
+ * a different digest — so a mismatch does not by itself mean the source changed. The remedy names BOTH
+ * causes, and the rollback command carries `--actor`/`--actor-kind`, because Quest refuses an actorful
+ * write without them.
+ */
+function divergenceError(recorded: string, current: string): LoreError {
+  return new LoreError(
+    "conflict",
+    "the backlog has diverged from the recorded migration, so this run cannot resume it",
+    "Quest's preview digest is option-sensitive, so a different digest does not by itself mean the " +
+      "backlog changed: (a) if backlog/ changed since the recorded migration, restore it " +
+      "(`git checkout -- backlog/`) and rerun; or (b) if THIS run's migration options differ from the " +
+      "original run's, rerun with the original flags, e.g. `--preserve-source-ids --source-family " +
+      "<PREFIX>`. To migrate the CHANGED backlog instead, first roll the recorded migration back in " +
+      `Quest (\`quest migration backlog rollback --digest ${recorded} --actor <name> --actor-kind ` +
+      "human`, or `--actor-kind delegated-agent --accountable-human <human-id>`), then rerun",
+    { code: "backlog.diverged-from-migration", recorded, current },
+  );
+}
+
+function result(
+  receipt: QuestMigrationReceipt,
+  preview: QuestMigrationPreview,
+  alreadyApplied?: boolean,
+): TrackerMigrationResult {
   return {
     digest: receipt.digest,
     sourceFingerprint: receipt.sourceFingerprint,
@@ -149,6 +265,9 @@ function result(receipt: QuestMigrationReceipt, preview: QuestMigrationPreview):
     excluded: preview.excluded ?? [],
     taskFingerprints: receipt.taskFingerprints,
     state: "applied",
+    // Additive (LCLI-699): set only on the recognised-receipt path, so a fresh migration's shape is
+    // byte-unchanged.
+    ...(alreadyApplied === true ? { alreadyApplied: true } : {}),
   };
 }
 
@@ -166,6 +285,16 @@ function pendingPreview(value: unknown): QuestMigrationPreview {
   )
     throw new LoreError("drift", "Lore's pending Quest migration record is invalid");
   return preview as QuestMigrationPreview;
+}
+
+/** Validate the durable applied-digest hint record (LCLI-700): a `{ digest }` object with a non-empty string. */
+function appliedHint(value: unknown): string {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new LoreError("drift", "Lore's applied Quest migration hint record is invalid");
+  const digest = (value as { digest?: unknown }).digest;
+  if (typeof digest !== "string" || digest.length === 0)
+    throw new LoreError("drift", "Lore's applied Quest migration hint record is invalid");
+  return digest;
 }
 
 function assertPreview(preview: QuestMigrationPreview): void {
@@ -226,7 +355,8 @@ function sameMappings(left: readonly QuestMigrationMapping[], right: readonly Qu
  *
  * The wizard's collision retry (LCLI-466) asked this before offering to re-run with different
  * migration options: once a preview has been approved and recorded, {@link
- * migrateBacklogTasksToQuest} resumes by re-applying THAT digest, and Quest re-derives its plan from
+ * migrateBacklogTasksToQuest} resumes by re-`status`ing THAT digest (re-`apply`ing only when Quest
+ * holds no receipt for it), and Quest re-derives its plan from
  * whatever options it is handed — so a retry that changes the options against an already-recorded
  * digest could only be refused a second time, for a different and more confusing reason. The retry
  * was therefore offered only when nothing had been approved yet, which is every refusal raised by
