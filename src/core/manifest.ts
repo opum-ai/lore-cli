@@ -96,8 +96,10 @@ export interface ManifestFlag {
   readonly summary: string;
   /**
    * The `--json` envelope `kind` this flag produces, when the flag itself terminates the run with
-   * an envelope rather than modifying a command's behaviour (LCLI-366). Only `--version` does this
-   * today: `lore --version --json` emits `{kind: "version"}`.
+   * an envelope rather than modifying a command's behaviour (LCLI-366). BOTH meta flags do this:
+   * `lore --version --json` emits `{kind: "version"}` and `lore --help --json` emits
+   * `{kind: "help"}`. (`cli.ts` emitted both from the start; the second was undeclared here until
+   * LCLI-677, which needed `globalFlags[].kind` to be complete for the §2.1 registry to equal it.)
    *
    * Optional and absent on every ordinary flag, which is what keeps this additive — a consumer that
    * does not know the field is unaffected. It exists because the alternative models are both worse.
@@ -229,7 +231,10 @@ const GLOBAL_FLAGS: readonly ManifestFlag[] = deepFreeze([
       "Unstyled text output (auto-selected when stdout is piped); `read` prints the body verbatim, control sequences included",
   },
   { name: "version", alias: "v", takesValue: false, summary: "Print the version and exit", kind: "version" },
-  { name: "help", alias: "h", takesValue: false, summary: "Show help and exit" },
+  // LCLI-677: `help` carries a `kind` too, so the manifest's declared set (commands[].kind ∪
+  // commands[].resultKinds ∪ globalFlags[].kind) and the cli-contract §2.1 registry can be asserted
+  // EQUAL — both meta envelopes are declared here, and the guard no longer has to skip that row.
+  { name: "help", alias: "h", takesValue: false, summary: "Show help and exit", kind: "help" },
 ]);
 
 /**
