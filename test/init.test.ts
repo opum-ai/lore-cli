@@ -3554,16 +3554,18 @@ describe("lore init — removing backlog/ after a plain --migrate-backlog (LCLI-
     expect(err?.type).toBe("denied");
     expect(exitCodeFor(err as LoreError)).toBe(EXIT_CODES.denied);
     expect(err?.message).toContain("uncommitted changes");
-    // LCLI-525 (opum-doc DEC-172 (4af), arm A), UPDATED by LCLI-699 (DEC-172 (4aj)): the refusal
-    // is of the DELETION alone, so it now KEEPS the pending record (init.ts clears it only after
-    // the removal resolves) and a rerun IS a recovery — the rerun recognises the recorded migration
-    // (`alreadyApplied`), reapplies nothing, and completes the removal. The hint names that real
-    // retry, plus the by-hand deletion that forgoes the verified archive. This asserts the
-    // LCLI-699 wording; the LCLI-525 form ("not available yet", no rerun named) is what it replaced.
-    expect(err?.hint).toContain("git checkout -- backlog/");
+    // LCLI-525 (opum-doc DEC-172 (4af), arm A), UPDATED by LCLI-699 (DEC-172 (4aj)) and (4ar): the
+    // refusal is of the DELETION alone, so it KEEPS the pending record and a rerun IS a recovery —
+    // but ONLY while backlog/'s BYTES are unchanged, because the resume fingerprints the source and
+    // refuses a divergence (tracker-migration.ts:127-134) before the removal is reached. So the one
+    // recovery the hint may name is COMMIT, which preserves the bytes and the digest; (4ar) dropped
+    // the discarded "clean ... `git checkout --`" arm, which changed them. The by-hand deletion that
+    // forgoes the verified archive stays as the alternative.
+    expect(err?.hint).toContain("commit backlog/");
     expect(err?.hint).toContain("rerun");
     expect(err?.hint).toContain("completes the removal");
     expect(err?.hint).toContain("skips the verified archive");
+    expect(err?.hint).not.toContain("git checkout -- backlog/");
     expect(err?.hint).not.toContain("not available yet");
     // LCLI-525: the MIGRATION applied — only the deletion is refused — so the envelope still carries
     // its receipt. stdout is byte-empty on exit 4, so `input` is the only channel a --json caller

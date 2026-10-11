@@ -1168,14 +1168,18 @@ function resolveScriptedBacklogRemoval(
     throw new LoreError(
       "denied",
       `refusing --remove-backlog: ${readiness.reason}`,
-      // LCLI-525 (opum-doc DEC-172 (4af), arm A), UPDATED by LCLI-699 (DEC-172 (4aj)): the refusal is
-      // of the DELETION alone. When LCLI-525 shipped, a rerun was NOT a recovery — the pending record
-      // was cleared before this refusal, so the rerun re-previewed and died on Quest's exit-5 alias
-      // collision — and the hint had to name only the recoveries that worked. LCLI-699 moved that
-      // clear AFTER the removal, so a refused removal now KEEPS its pending record and the rerun
-      // resumes it idempotently (alreadyApplied) before completing the removal. The rerun is a
-      // recovery again, so the hint names it.
-      "commit or clean backlog/ so `git checkout -- backlog/` can restore it, then rerun — the rerun recognises this migration and completes the removal; or delete backlog/ by hand, which skips the verified archive `.lore/archive/backlog-<digest>.zip`",
+      // LCLI-525 (opum-doc DEC-172 (4af), arm A), UPDATED by LCLI-699 (DEC-172 (4aj)) and (4ar): the
+      // refusal is of the DELETION alone. When LCLI-525 shipped, a rerun was NOT a recovery — the
+      // pending record was cleared before this refusal, so the rerun re-previewed and died on Quest's
+      // exit-5 alias collision — and the hint had to name only the recoveries that worked. LCLI-699
+      // moved that clear AFTER the removal, so a refused removal now KEEPS its pending record and the
+      // rerun resumes it idempotently (alreadyApplied) before completing the removal — but ONLY while
+      // backlog/'s BYTES are unchanged, because the resume now fingerprints the source and refuses a
+      // divergence (tracker-migration.ts:127-134) BEFORE the removal is reached. So the one recovery
+      // that keeps the rerun working is COMMIT, which preserves the bytes and so the digest;
+      // discarding the changes does NOT, and (4ar) dropped that arm — the hint says only what the
+      // code honours.
+      "commit backlog/ — committing preserves its bytes, so the rerun's digest still matches — then rerun: the rerun recognises this migration and completes the removal; or delete backlog/ by hand, which skips the verified archive `.lore/archive/backlog-<digest>.zip`",
       // LCLI-525: the DELETION is what is refused — the migration already applied — so a `--json`
       // caller must still be able to read that migration's receipt. stdout is empty on exit 4 (§4),
       // so `input` is the only channel a machine caller has; these two are ADDITIVE under §7.1, and
