@@ -41,7 +41,7 @@ import { findInstructionTopic } from "../src/core/instructions";
 import { EXIT_CODES, exitCodeFor, LoreError, reportError, WarningCollector } from "../src/errors";
 import { VERSION } from "../src/meta";
 import type { OutputContext } from "../src/output";
-import type { TrackerMigrationResult } from "../src/tracker-migration";
+import { hasPendingQuestMigration, type TrackerMigrationResult } from "../src/tracker-migration";
 import { capture, expectError, fakeAdapter, gitRun } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
@@ -3599,5 +3599,95 @@ describe("lore init — removing backlog/ after a plain --migrate-backlog (LCLI-
       runInit({ root, git: gitStub(), output: JSON_CTX, stdout: capture(), args: [...args] }),
     );
     expect(err.message).toContain(expected);
+  });
+
+  // ── LCLI-699: the pending record survives a refusal; AC (b) and the (d) sequence ─────────────
+
+  /** Seed the pending migration record a real completed migration leaves on disk. */
+  function seedPendingMigration(): void {
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(
+      join(root, ".lore", "quest-backlog-migration.pending.json"),
+      JSON.stringify({
+        sourceFingerprint: migrationResult.sourceFingerprint,
+        digest: migrationResult.digest,
+        requiresApproval: true,
+        mappings: [],
+      }),
+    );
+  }
+
+  test("LCLI-699: a REFUSED --remove-backlog KEEPS the pending migration record, so a rerun can resume", async () => {
+    committedBacklog();
+    writeFileSync(join(root, "backlog", "config.yml"), "statuses:\n  - Done\n"); // unrecoverable
+    seedPendingMigration();
+    const err = await Promise.resolve(
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        clock: FIXED_CLOCK,
+        args: ["--tracker", "quest", "--migrate-backlog", "--remove-backlog"],
+        migrateBacklog: async () => migrationResult,
+      }),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught as LoreError,
+    );
+    expect(err?.type).toBe("denied");
+    // The refusal is of the DELETION only, so the reviewed digest must outlive it: clearing here
+    // is precisely what made the LCLI-525 rerun re-preview from scratch and collide.
+    expect(hasPendingQuestMigration(root)).toBe(true);
+  });
+
+  test("AC (b): a resumed run WITH --remove-backlog archives, then verifies, then removes backlog/", async () => {
+    committedBacklog();
+    seedPendingMigration();
+    const { result } = await init({
+      args: ["--tracker", "quest", "--migrate-backlog", "--remove-backlog"],
+      migrateBacklog: async () => migrationResult,
+    });
+    expect(result.backlogRemoval?.removed).toBe(true);
+    expect(existsSync(join(root, "backlog"))).toBe(false);
+    // The verified archive is what the archive -> verify -> remove order leaves behind...
+    expect(readdirSync(join(root, ".lore", "archive")).some((f) => f.endsWith(".zip"))).toBe(true);
+    // ...and only a COMPLETED removal clears the record.
+    expect(hasPendingQuestMigration(root)).toBe(false);
+  });
+
+  test("AC (d): the LCLI-525 sequence -- refuse, rerun, then a verified removal", async () => {
+    committedBacklog();
+    // 1. A dirty backlog/ is unrecoverable: the run REFUSES and keeps its pending record.
+    writeFileSync(join(root, "backlog", "config.yml"), "statuses:\n  - Done\n");
+    seedPendingMigration();
+    const refused = await Promise.resolve(
+      runInit({
+        root,
+        git: gitStub(),
+        output: JSON_CTX,
+        stdout: capture(),
+        stderr: capture(),
+        clock: FIXED_CLOCK,
+        args: ["--tracker", "quest", "--migrate-backlog", "--remove-backlog"],
+        migrateBacklog: async () => migrationResult,
+      }),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught as LoreError,
+    );
+    expect(refused?.type).toBe("denied");
+    expect(hasPendingQuestMigration(root)).toBe(true);
+    // 2. The operator restores recoverability and RERUNS; the removal now completes.
+    gitRun(root, ["add", "backlog"]);
+    gitRun(root, ["-c", "user.email=t@example.test", "-c", "user.name=T", "commit", "-m", "clean backlog"]);
+    const { result } = await init({
+      args: ["--tracker", "quest", "--migrate-backlog", "--remove-backlog"],
+      migrateBacklog: async () => migrationResult,
+    });
+    expect(result.backlogRemoval?.removed).toBe(true);
+    expect(existsSync(join(root, "backlog"))).toBe(false);
+    expect(readdirSync(join(root, ".lore", "archive")).some((f) => f.endsWith(".zip"))).toBe(true);
   });
 });
