@@ -1457,15 +1457,19 @@ function rawSourceOf(
  * MDX-safety warnings (portable-markdown.md §MDX): Docusaurus parses Markdown as **MDX**, where a
  * raw `<` starts a JSX element and a raw `{` a JSX expression — so un-escaped, non-code `<`/`{` in
  * prose make its build throw even though the same source renders fine on GitHub/Obsidian/MkDocs.
- * lore detects (never escapes) two shapes, one finding apiece to keep the report readable:
+ * lore detects (never escapes) three shapes, one finding apiece to keep the report readable:
  *
  * - a `<` or `{` CommonMark left literal in a **text** node (`temperature < 0`, `{ "k": 1 }`);
+ * - a **link** node whose SOURCE begins with `<` — an angle-bracket autolink (`<https://x/>`,
+ *   `<a@b.com>`) — whose `<` and `>` are link syntax and so never reach a `text` node (LCLI-701).
+ *   A `[text](url)` link's source begins with `[`, and a bare URL stays a `text` node under the
+ *   CommonMark parser this scan uses, so neither is flagged;
  * - a raw-`html` node that carries any non-comment markup (`<T>`, `<div>`, `<Component>` — what
  *   CommonMark pulled out of the text as inline/block HTML). HTML **comments** (`<!-- … -->`) are
  *   portable and are what lore writes for its managed regions, so they are stripped first; a node
  *   that is *only* comments is left alone, but `<!-- … --><div>` still flags the `<div>`.
  *
- * Code spans/blocks are `inlineCode`/`code` nodes, never `text`/`html`, so they never reach here.
+ * Code spans/blocks are `inlineCode`/`code` nodes, never `text`/`link`/`html`, so they never reach here.
  */
 function mdxHazardFindings(node: Nodes, file: string, source: string): CheckFinding[] {
   const findings: CheckFinding[] = [];
@@ -1482,6 +1486,16 @@ function mdxHazardFindings(node: Nodes, file: string, source: string): CheckFind
     }
     if (raw.includes("{")) {
       findings.push(mdxHazard(file, "{"));
+    }
+  } else if (node.type === "link") {
+    // An angle-bracket autolink (`<https://x/>`, `<a@b.com>`) is a `link` node whose SOURCE begins
+    // with `<`: the `<` and `>` are link syntax, so neither reaches a text node and the raw-`<` arm
+    // above never sees them (LCLI-701). A `[text](url)` link's source begins with `[`, and a bare
+    // URL stays a plain `text` node under the CommonMark parser this scan uses, so both are left
+    // alone. The remedy is a rewrite rather than an escape — the source already means a link.
+    const raw = rawSourceOf(node, source);
+    if (raw !== null && raw.startsWith("<")) {
+      findings.push(autolinkHazard(file, raw));
     }
   } else if (node.type === "html" && node.value.replace(HTML_COMMENT, "").trim() !== "") {
     findings.push({
@@ -1506,6 +1520,20 @@ function mdxHazard(file: string, ch: "<" | "{"): CheckFinding {
     rule: "portability",
     file,
     message: `non-portable raw "${ch}" in prose; MDX (Docusaurus) reads it as the start of ${role} — escape it (${entity}) or wrap the text in backticks`,
+  };
+}
+
+/**
+ * One MDX angle-bracket autolink warning (LCLI-701), naming the hazard and the portable rewrite. A
+ * distinct message from {@link mdxHazard}'s, because the repair differs: escaping the `<` (that
+ * function's first remedy) would break the link, where dropping the angle brackets keeps it.
+ */
+function autolinkHazard(file: string, raw: string): CheckFinding {
+  return {
+    severity: "warning",
+    rule: "portability",
+    file,
+    message: `non-portable angle-bracket autolink "${clip(raw)}"; MDX (Docusaurus) reads "<" as the start of a JSX element — use [text](url) or a bare URL`,
   };
 }
 

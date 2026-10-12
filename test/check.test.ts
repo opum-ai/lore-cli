@@ -797,6 +797,32 @@ describe("checkBundle — MDX hazards (LORE-48)", () => {
     expect(count("A backticked `{` brace.")).toBe(0);
     expect(count("A backticked `<` angle.")).toBe(0);
   });
+
+  // LCLI-701: an angle-bracket autolink (`<https://x/>`) is a `link` node whose source begins
+  // with `<`; the `<` and `>` are link syntax and never reach a text node, so the raw-`<` arm
+  // above missed it. The CommonMark parser leaves a bare URL a plain `text` node and a
+  // `[text](url)` link a `link` whose source begins with `[`, so both stay untouched — the
+  // positive control that the new arm cannot over-trigger.
+  test("AC#1: an angle-bracket autolink is flagged, and the remedy names the portable forms", () => {
+    const finding = checkBundle([{ path: "x.md", raw: ref("X", "See <https://x.example/> now.") }]).findings.find((f) =>
+      f.message.includes("autolink"),
+    );
+    expect(finding?.severity).toBe("warning");
+    expect(finding?.rule).toBe("portability");
+    expect(finding?.message).toContain("use [text](url) or a bare URL");
+  });
+
+  test("AC#2/#3: a bare URL and a [text](url) link are NOT flagged (positive control)", () => {
+    expect(checkBundle([{ path: "x.md", raw: ref("X", "See https://x.example/ now.") }]).warningCount).toBe(0);
+    expect(checkBundle([{ path: "x.md", raw: ref("X", "See [text](https://x.example/) now.") }]).warningCount).toBe(0);
+  });
+
+  test("an email autolink is the same hazard and is flagged too", () => {
+    const finding = checkBundle([{ path: "x.md", raw: ref("X", "Mail <a@b.com> now.") }]).findings.find((f) =>
+      f.message.includes("autolink"),
+    );
+    expect(finding?.severity).toBe("warning");
+  });
 });
 
 // ── checkBundle: Obsidian block references (LORE-48) ──────────────────────────────

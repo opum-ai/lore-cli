@@ -196,8 +196,8 @@ of [`lore check`](cli-contract.md) over the whole bundle and reports:
   `scheme:` URL), trailing-slash directory links (`../reference/`);
 - **Obsidian-isms** — `==highlight==`, `%% comment %%`, `^block-id`,
   `> [!callout]`;
-- **MDX hazards** — un-escaped raw `<` / `{` in prose, raw HTML tags,
-  `_`-prefixed file names, `.mdx` files.
+- **MDX hazards** — un-escaped raw `<` / `{` in prose, angle-bracket autolinks
+  (`<https://x.example/>`), raw HTML tags, `_`-prefixed file names, `.mdx` files.
 
 Every finding is a **warning** (output mode follows the global
 `--json` / `--plain` / pretty precedence; warnings go to stderr, data to
