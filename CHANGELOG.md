@@ -49,9 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (escaping the `<` breaks the link) and not a bare URL, which is plain text where GFM autolink
   literals do not render (DEC-172 (4bi) narrowed the remedy to `[text](url)` alone). A bare URL and
   a `[text](url)` link are **not** flagged, and a `<`/`{` inside an autolink's own URL is reported
-  with the autolink rather than a second time. Decided by opum-doc DEC-172 (4at); a repository that
-  now shows a non-zero portability warning count is **expected, not a CI break** — warnings alone
-  still exit `0`.
+  with the autolink rather than a second time. Decided by opum-doc DEC-172 (4at) and narrowed by
+  DEC-172 (4bi); a repository that now shows a non-zero portability warning count is **expected, not
+  a CI break** — warnings alone still exit `0`.
 
 ### Fixed
 
@@ -62,8 +62,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prompt (`isInteractive`) and the process is not a teammate (`CLAUDECODE !== "1"`); an explicit
   open — the dashboard tool, or the band's button — still works and starts the clock then. The
   clock is registered once per process, its whole callback is guarded in flight so a slow period
-  skips its tick rather than stacking, `refresh` is single-flight as well, and the timer is
-  cancelled at `session.end`. No subprocess spawns without its own timeout.
+  skips its tick rather than stacking, and the timer is cancelled at `session.end` (which clears both
+  in-flight guards). A refresh already in flight **coalesces** a second request rather than dropping
+  it — exactly one more refresh runs after the current one finishes, so a person's press is never a
+  silent no-op — while only clock ticks are skipped in flight (LCLI-705, LCLI-707). No subprocess
+  spawns without its own timeout.
 
 - **A rerun after a COMPLETED Backlog-to-Quest migration is an idempotent success, keyed on Quest's
   durable status rather than Lore's local record** (LCLI-700). LCLI-699 made a rerun idempotent only

@@ -576,20 +576,31 @@ async function seedDraftType($: EngineInterface, types: readonly { name: string 
 }
 
 /**
- * The refresh, single-flight (LCLI-705). `refresh` is called from the clock, the dashboard
- * tool, every tab switch and every press; without a guard a slow read-back could run on top of
- * another -- the shape of the 2026-10-12 host-load incident, where every process's refresh
- * stacked. A call that finds one already in flight returns without starting a second run.
+ * The refresh, COALESCED rather than merely single-flight (LCLI-705, LCLI-707; DEC-172 (4bi)).
+ * `refresh` is called from the clock, the dashboard tool, every tab switch and every press; without
+ * a guard a slow read-back could run on top of another — the shape of the 2026-10-12 host-load
+ * incident, where every process's refresh stacked.
+ *
+ * A call that finds one already in flight does NOT start a second run, and is NOT dropped either:
+ * it sets `refreshQueued`, so EXACTLY ONE more refresh runs after the current one finishes. A
+ * person's press must never be a silent no-op, which is why a queued request runs rather than being
+ * skipped. Only CLOCK TICKS are skipped in flight — that is the tick's own guard, `tickInFlight`.
  */
 let refreshInFlight = false;
+let refreshQueued = false;
 
 async function refresh($: EngineInterface): Promise<void> {
   if (refreshInFlight) {
+    refreshQueued = true;
+
     return;
   }
   refreshInFlight = true;
   try {
-    await refreshOnce($);
+    do {
+      refreshQueued = false;
+      await refreshOnce($);
+    } while (refreshQueued);
   } finally {
     refreshInFlight = false;
   }
@@ -1288,6 +1299,10 @@ export const register: Register = (on, _options) => {
     refreshTimer?.cancel();
     refreshTimer = null;
     tickInFlight = false;
+    // Both in-flight guards are cleared (LCLI-707 (b)): a tick or a refresh still running at the
+    // boundary must not leave a flag set that blocks the next session's first read-back.
+    refreshInFlight = false;
+    refreshQueued = false;
 
     return next(e);
   });
