@@ -182,6 +182,11 @@ verbatim, so a task much longer than the measurement's fixed stand-in can still
 consume the margin (LCLI-662, DEC-98 B; the definition, the measured boundary
 and the second residual are
 [ADR-0025](../adr/0025-the-capacity-measurement-reserves-the-worst-case-bundle-wide-query-section-and-renders-score-annotations-at-full-width-dec-98.md)).
+A source named by **several** profiles is stricter still: growing it
+costs every pinning profile, so `lore check` FAILS with
+`agent-profile-pin-capacity` (LCLI-702, DEC-172 (4at)) when any profile that
+names it is over capacity — move every pinning profile's budget in the same
+change, not only the one you edited.
 It
 ships as a warning for one release, then as an error (LCLI-646). That is a floor
 rather than an answer to which budget is well chosen: a capacity finding means

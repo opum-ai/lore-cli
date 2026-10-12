@@ -64,6 +64,7 @@ import { INDEX_BLOCK_BEGIN } from "./indexes";
 import { decodeTarget, isExternalTarget, pathPart, validateLink } from "./links";
 import { type ManagedTaskRow, regenerateTaskBlock } from "./managed-block";
 import { type BundleState, CURRENT_OKF_VERSION, type TaskRollupField } from "./okf-version";
+import { compareCodeUnits } from "./order";
 import { ATTESTED_COMPUTATION_TYPE } from "./profile";
 import type { ReconciledStatus } from "./reconcile";
 import { claimVersion, RELATION_KINDS, readRelations, relationVersionState } from "./relations";
@@ -142,7 +143,8 @@ export type CheckRule =
   | "broken-relation"
   | "unknown-relation-kind"
   | "relation-version-drift"
-  | "agent-profile-capacity";
+  | "agent-profile-capacity"
+  | "agent-profile-pin-capacity";
 
 /**
  * One problem found in the bundle, attributed to the file that carries it: the shared
@@ -1069,6 +1071,68 @@ export function agentProfileCapacityFindings(
           `(or narrow the declared sources to what ${capacity.maxTokens} holds)`,
       };
     });
+}
+
+/**
+ * The severity {@link agentProfilePinCapacityFindings} reports at (LCLI-702, DEC-172 (4at)): a FIXED
+ * error, deliberately NOT {@link AGENT_PROFILE_CAPACITY_SEVERITY}. DEC-11's flip of that line to
+ * "error" is a separate held decision (LCLI-646), and this gate must fail regardless of it.
+ */
+export const AGENT_PROFILE_PIN_CAPACITY_SEVERITY: CheckSeverity = "error";
+
+/**
+ * The multi-profile-pin capacity gate (LCLI-702, DEC-172 (4at)). A source NAMED by several profiles —
+ * in their `pinned` OR `sources` lists — costs every one of them when it grows, and an author who
+ * raises only the budget they edited leaves the others over capacity. That is the LCLI-677 incident
+ * exactly: `reference/cli-contract` grew, only `verification`'s budget moved, and `implementation`'s
+ * deficit silently widened.
+ *
+ * The general per-profile capacity finding ({@link agentProfileCapacityFindings}) is DEC-11's WARNING
+ * and stays one. This gate is the ERROR that makes the multi-profile rule enforceable: for each source
+ * several profiles name, if ANY of those profiles is over capacity the gate FAILS, one finding apiece
+ * naming that profile and its deficit, attributed to its own declaration — so a change must move EVERY
+ * pinning profile's budget, never only the one it edited.
+ *
+ * `pinsByReference` maps each declared source's normalized reference to the names of every profile
+ * whose `pinned` or `sources` names it, built by the command layer from the loaded snapshot.
+ */
+export function agentProfilePinCapacityFindings(
+  capacities: readonly AgentProfileCapacity[],
+  pinsByReference: ReadonlyMap<string, readonly string[]>,
+  declaredByProfile: ReadonlyMap<string, readonly string[]>,
+): CheckFinding[] {
+  const findings: CheckFinding[] = [];
+  for (const capacity of capacities) {
+    if (!capacity.overCapacity) {
+      continue;
+    }
+    // Every source this over-capacity profile NAMES — its `pinned` AND its `sources` — that at least
+    // one OTHER profile also names. `AgentProfileCapacity.sources` covers only the profile's `sources`
+    // array, so the pinned set is read from `declaredByProfile` (LCLI-702 review round 1, blocker:
+    // a shared PINNED source — the LCLI-677 incident's own shape, `reference/cli-contract` — was
+    // otherwise missed, because the naming count included it but it was never selected as `shared`).
+    const declared = declaredByProfile.get(capacity.name) ?? capacity.sources.map((source) => source.reference);
+    const shared = [...declared]
+      .filter((reference) => (pinsByReference.get(reference)?.length ?? 0) >= 2)
+      .sort(compareCodeUnits);
+    if (shared.length === 0) {
+      continue;
+    }
+    const unfitting = capacity.sources.filter((source) => !source.fits).length;
+    const named = shared.slice(0, AGENT_PROFILE_CAPACITY_NAMED_SOURCES);
+    const more = shared.length - named.length;
+    findings.push({
+      severity: AGENT_PROFILE_PIN_CAPACITY_SEVERITY,
+      rule: "agent-profile-pin-capacity",
+      file: capacity.path,
+      message:
+        `agent profile "${capacity.name}" is over capacity and shares ${shared.length} declared source${shared.length === 1 ? "" : "s"} with other profiles ` +
+        `(${named.join(", ")}${more > 0 ? `, +${more} more` : ""}): its declared set renders to ~${capacity.declaredTokens} tokens against a ` +
+        `${capacity.maxTokens}-token budget — ~${capacity.declaredTokens - capacity.maxTokens} over, ${unfitting} of ${capacity.sources.length} sources dropped. ` +
+        "EVERY profile that names a shared source must move its budget in the same change, not only the one edited",
+    });
+  }
+  return findings;
 }
 
 // ── Link / anchor resolution (the gate) ──────────────────────────────────────────

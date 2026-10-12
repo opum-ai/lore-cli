@@ -355,4 +355,73 @@ describe("lore check gates agent profile capacity (LCLI-642, DEC-11)", () => {
     const strict = check(["--strict"]);
     expect(strict.code).toBe(EXIT_CODES.validation);
   });
+
+  test("[multi-pin] a shared source fails the gate on a pinning profile OTHER than the edited one (LCLI-702, DEC-172 (4at))", () => {
+    // The LCLI-677 shape: one source named by several profiles, and an author who raises only the
+    // budget they edited ("edited" fits). The OTHER pinning profile they did not move is over
+    // capacity, so the multi-profile gate — NOT DEC-11's per-profile warning — fails, naming it.
+    writeDoc("reference/shared.md", referenceDoc("Shared", 8000));
+    writeProfile("edited", 20000, ["reference/shared"]);
+    writeProfile("other", 4000, ["reference/shared"]);
+
+    const { code, report } = check();
+    const findings = report.findings.filter((finding) => finding.rule === "agent-profile-pin-capacity");
+    expect(findings).toHaveLength(1);
+    const finding = findings[0] as FindingJson;
+    expect(finding.file).toBe(".lore/agents/other.toml");
+    expect(finding.severity).toBe("error");
+    expect(finding.message).toContain('"other"');
+    expect(finding.message).toContain("reference/shared");
+    expect(finding.message).toContain("move its budget in the same change");
+    // The gate FAILS (exit 6), independent of DEC-11's held flip.
+    expect(code).toBe(EXIT_CODES.validation);
+    expect(report.errorCount).toBe(1);
+  });
+
+  test("[multi-pin] both ways: move EVERY pinning profile's budget and the gate passes", () => {
+    // The same fixture with the OTHER profile's budget also raised: no shared-pin failure, and the
+    // gate passes. This is the positive control the failing case needs — the finding is earned by the
+    // shortfall, not by the source simply being shared.
+    writeDoc("reference/shared.md", referenceDoc("Shared", 8000));
+    writeProfile("edited", 20000, ["reference/shared"]);
+    writeProfile("other", 20000, ["reference/shared"]);
+
+    const { code, report } = check();
+    expect(report.findings.filter((finding) => finding.rule === "agent-profile-pin-capacity")).toHaveLength(0);
+    expect(code).toBe(EXIT_OK);
+  });
+
+  test("[multi-pin] a source only ONE profile names is not the shared case (the scoped failure never widens)", () => {
+    // A lone over-capacity profile whose source no other profile names is DEC-11's per-profile
+    // WARNING, not the multi-profile gate: the new error fires only when a source is shared.
+    writeDoc("reference/solo.md", referenceDoc("Solo", 8000));
+    writeProfile("lone", 4000, ["reference/solo"]);
+
+    const { code, report } = check();
+    expect(report.findings.filter((finding) => finding.rule === "agent-profile-pin-capacity")).toHaveLength(0);
+    expect(report.findings.filter((finding) => finding.rule === "agent-profile-capacity")).toHaveLength(1);
+    expect(code).toBe(EXIT_OK);
+  });
+
+  test("[multi-pin] a source shared ONLY through `pinned` still fails the gate (LCLI-702 round-1 blocker)", () => {
+    // The LCLI-677 shape exactly: two profiles that name the source ONLY in `pinned`, the over-capacity
+    // one sharing no other source. The first cut read only `capacity.sources`, so a shared PIN was
+    // invisible and the gate stayed green — this case is the one that reddens if that regression returns.
+    writeDoc("reference/shared.md", referenceDoc("Shared", 8000));
+    writeFileSync(
+      join(root, ".lore", "agents", "edited.toml"),
+      `schema_version = 1\nname = "edited"\ndescription = "pin-only"\nkind = "specialist"\nmax_tokens = 20000\npinned = ["reference/shared"]\n`,
+    );
+    writeFileSync(
+      join(root, ".lore", "agents", "other.toml"),
+      `schema_version = 1\nname = "other"\ndescription = "pin-only"\nkind = "specialist"\nmax_tokens = 4000\npinned = ["reference/shared"]\n`,
+    );
+
+    const { code, report } = check();
+    const findings = report.findings.filter((finding) => finding.rule === "agent-profile-pin-capacity");
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.file).toBe(".lore/agents/other.toml");
+    expect(findings[0]?.message).toContain("reference/shared");
+    expect(code).toBe(EXIT_CODES.validation);
+  });
 });

@@ -213,7 +213,11 @@ reconciliation, managed blocks, portability, provenance paths, computation
 paths, staleness, and — for a repository that declares `.lore/agents/*.toml`
 profiles — whether each profile's declared sources can fit its `max_tokens`
 budget (`agent-profile-capacity`, LCLI-642; a warning for one release, then an
-error per DEC-11). It also fails on `lore validate`'s error-tier
+error per DEC-11). It also fails — as an error in its own right, independent of
+DEC-11's held flip — when a source several profiles name leaves **any** of those
+profiles over capacity (`agent-profile-pin-capacity`, LCLI-702, DEC-172 (4at)):
+growing a shared source costs every pinning profile, so a change must move every
+pinning profile's budget, not only the one it edited. It also fails on `lore validate`'s error-tier
 `frontmatter` and `required-section` findings for every type (LCLI-606):
 missing required sections, a missing `type`, missing or mistyped fields, and
 invalid enum values, under `validate`'s own rule names. It fails on
