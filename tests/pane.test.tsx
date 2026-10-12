@@ -128,6 +128,7 @@ function mockLore(
 
 test("browse lists concepts, opens one, navigates back, and toggles raw", async ($, on) => {
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   const reads: string[] = [];
@@ -171,6 +172,7 @@ test("browse lists concepts, opens one, navigates back, and toggles raw", async 
 
 test("search submits text and the refs toggle reads across refs", async ($, on) => {
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -191,6 +193,7 @@ test("search submits text and the refs toggle reads across refs", async ($, on) 
 
 test("the fields form saves through lore validate, and a failed validation restores the file", async ($, on) => {
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   const writes: { path: string; text: string }[] = [];
@@ -232,6 +235,7 @@ test("the fields form saves through lore validate, and a failed validation resto
 
 test("a validation failure keeps the previous file and shows lore's message", async ($, on) => {
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   const writes: { path: string; text: string }[] = [];
@@ -265,6 +269,7 @@ test("a validation failure keeps the previous file and shows lore's message", as
 
 test("new creates through lore new and opens the result", async ($, on) => {
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -291,6 +296,7 @@ test("new creates with the type the picker already shows, untouched", async ($, 
   // "A type and a title are required." for a form visibly naming a type
   // (LCLI-664 review F1).
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -311,6 +317,7 @@ test("new creates with the type the picker already shows, untouched", async ($, 
 
 test("a type filter and a rename reach lore with the right argv", async ($, on) => {
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -335,6 +342,7 @@ test("a type filter and a rename reach lore with the right argv", async ($, on) 
 
 test("the inline body editor keys, draws the document and saves through lore validate", async ($, on) => {
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   const writes: { path: string; text: string }[] = [];
@@ -381,6 +389,7 @@ test("the inline body editor keys, draws the document and saves through lore val
 
 test("a rejected body keeps the file and shows lore's message", async ($, on) => {
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   const writes: { path: string; text: string }[] = [];
@@ -414,6 +423,7 @@ test("a rejected body keeps the file and shows lore's message", async ($, on) =>
 
 test("a link press in the body opens the linked concept", async ($, on) => {
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen, false, "See [other](../reference/notes.md).");
@@ -438,6 +448,7 @@ test("opening another document closes the body editor rather than writing across
   // frontmatter kept, so it still validated and the pane still said "Saved and
   // validated." (LCLI-664 editor-arm review F1.)
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   const writes: { path: string; text: string }[] = [];
@@ -480,6 +491,7 @@ test("a body too large to hand the editor is refused, and the pane keeps drawing
   // the terminal surface: opum-lore: ui.render (Pane) refused`. docs/runbooks/
   // release-publishing.md in this repository carries a 108,718-character body.
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen, false, "x".repeat(108_718));
@@ -507,6 +519,7 @@ test("a body that GROWS past what the editor can hand back closes the editor ins
   // past its bound — a refusal the pane cannot be escaped from, because its own buttons
   // stop drawing with it. So the growth is refused and the editor closed.
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   const writes: { path: string; text: string }[] = [];
@@ -548,6 +561,7 @@ test("the editor's region has an explicit height, so it is not sized by what it 
   // draws `surface.rows - 1` document rows — a region sized by its own content, whose
   // only fixed point is a single visible document line (LCLI-664 editor-arm review F4).
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -595,6 +609,7 @@ test("a run killed at the timeout budget says so, in the shape that rejects", as
   // The message must name the timeout rather than report the bare rejection
   // (LCLI-664 review F8).
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const release = holdRuns(on, () => {
     throw new Error("the run was killed");
@@ -619,6 +634,7 @@ test("a run that reads as exit 1 past the budget is still the timeout it was", a
   // The other shape the timeout can take: a killed child's exit status is 1, the
   // same as a plain failure's, so only the elapsed time separates them.
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const release = holdRuns(on, () => ok("", 1));
   const ui = await $.ui.mount({
@@ -642,6 +658,7 @@ test("a run that fails fast keeps its own message, not the timeout's", async ($,
   // time is a plain failure, so the timeout text is earned by the clock and
   // never shown merely because a run failed.
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   on("process.run", async (_$, e) => (e.argv[0] === "git" ? ok("/repo\n") : ok("", 1)));
   const ui = await $.ui.mount({
@@ -778,6 +795,7 @@ test("z asks for the largest docked width, and a second press asks for the norma
   // dialog rather than a pane, and one that carried a size on the way back would
   // never return to the normal size.
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -826,6 +844,7 @@ test("an inline pane asks for rows, the viewport less the prompt area", async ($
   // The other axis: on the main screen the pane is a block above the prompt, so
   // it is `rows` that asks for its size and a `columns` request is ignored.
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -861,6 +880,7 @@ test("a stored full mode and a tool call raise the same inline ask as the person
   // first render, and a tool call carrying `full` -- so "every path" is measured on the
   // inline axis too and not only the dock's (LCLI-675 review, rule-1 note).
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on, { "pane-mode": "full" });
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -908,6 +928,7 @@ test("an open never lowers the ask a person's toggle left standing", async ($, o
   // pane beside it, and the next measured draw must spend the PERSON's ask -- keyboard
   // intent included.
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -954,6 +975,7 @@ test("a full pane asks once, on its first draw; a resize asks for nothing", asyn
   // moved under the pane. The earlier design re-asked on every viewport change, which is
   // exactly the shape that ends up chasing the pane's own new width.
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on, { "pane-mode": "full" });
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -1009,6 +1031,7 @@ test("a session opens the pane unsized, registers no command, and asks for no si
   // toggle -- without a mode change there is no size to ask for, so the pane must not
   // reopen on every draw.
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -1040,6 +1063,7 @@ test("the full-or-normal choice is written to the plugin's store, and a session 
   // write. A write that never landed would leave the store at `full` and this
   // session would ask for the full width again.
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on, { "pane-mode": "full" });
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -1092,6 +1116,7 @@ test("a session starting with no remembered choice opens at the normal size", as
   // The control for the restore above: the same session, the same store, with
   // nothing remembered.
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -1126,6 +1151,7 @@ test("a full docked pane names a held width in one line, and only when one holds
   // kept words, the same state both panes now classify the same way -- draws the line
   // too. That last arm is what a reintroduced spend-state suppression reddens.
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on, { "pane-mode": "full" });
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -1193,6 +1219,7 @@ test("a pane at its normal size says nothing about its size", async ($, on) => {
   // normal-size pane says nothing about the size it drew at -- not the kept-width line,
   // and not the generic hint the design used to keep.
   mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -1233,6 +1260,7 @@ test("in full mode at 120 body columns Read draws the bundle list beside the doc
   // list Browse draws, with the open document at full strength; the document is the
   // tree the stacked Read draws, so both are asserted in the one drawing.
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on, { "pane-mode": "full" });
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -1290,6 +1318,7 @@ test("in full mode at 120 body columns Search draws the results beside the docum
   // On Search the list is the results. The form that makes them stays pane-wide, and
   // the open document's own hit is at full strength beside the document it names.
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on, { "pane-mode": "full" });
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -1333,6 +1362,7 @@ test("the split is full mode's, not a wide pane's on its own", async ($, on) => 
   // be wide -- a docked pane on a wide terminal -- keeps the stacked layout, so the
   // split is the mode's and not only the width's.
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -1368,6 +1398,7 @@ test("the dashboard tool answers with the drawn size and why, and pins the slack
   // wanted - drawn equal to transcript - 23 (the formula's own identity), a 27-column
   // transcript lands exactly on the boundary where 28 is the first miss.
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on, { "pane-mode": "full" });
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -1452,6 +1483,7 @@ test("the dashboard tool registers at session start, and a bare call opens the p
   // matcher spelled as the engine spells the tool answers, and the misspelling control
   // after the loop is what says so.
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -1515,6 +1547,7 @@ test("the dashboard tool registers at session start, and a bare call opens the p
 
 test("each dashboard input lands where it should, on the terminal and the desktop", async ($, on) => {
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -1613,6 +1646,7 @@ test("a dashboard call on a pane that is already up restores the size its mode i
   // open args, not the kept-width line -- the harness draws whatever size the props name,
   // so it cannot show what a cleared request leaves on screen.
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on, { "pane-mode": "full" });
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -1663,6 +1697,7 @@ test("a dashboard call on a pane that is already up restores the size its mode i
 
 test("an unknown doc id is refused by name, and opens nothing else in its place", async ($, on) => {
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   // `adr/nope` is the one id this bundle does not have.
@@ -1705,6 +1740,7 @@ test("the landing strip belongs to an open document, not to an empty Read tab", 
   // repository whose status read reports a changed `.md` -- `mockLore` answers every git
   // argv with the toplevel, which parses to no paths at all.
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   mockSession(on);
   captureOpens(on);
@@ -1762,6 +1798,7 @@ test("every dashboard call refreshes the pane, as every slash-command call did",
   // stale as the 30-second timer allows. Counted rather than merely seen: the arm that
   // refreshes on its own must not be refreshed a second time for one ask.
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -1811,6 +1848,7 @@ const REFUSED =
 
 test("the dashboard tool answers for the pane it found, not the pane it asked for", async ($, on) => {
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -1849,6 +1887,7 @@ test("the dashboard tool answers for the pane it found, not the pane it asked fo
 
 test("the band draws the line that offers the pane, and its Button seats what the engine would not", async ($, on) => {
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen);
@@ -1906,6 +1945,7 @@ test("the band yields where a survey holds it, and where the pane is drawn", asy
   // band. Every call it takes is one the module yielded -- counted rather than inferred from
   // an absent element, so a Button that failed to draw cannot read as one never drawn.
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
   mock.store(on);
   const seen: string[][] = [];
   mockLore(on, seen);

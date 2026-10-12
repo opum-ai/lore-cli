@@ -40,6 +40,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Lore pane no longer auto-starts in a teammate, headless or workflow process** (LCLI-705).
+  Every Claude process loaded the plugin, opened the pane and refreshed it every 30 seconds with no
+  in-flight guard — half a host-load incident on 2026-10-12 (host load reached ~300). On
+  `session.start` the pane now opens, and its clock is registered, only when a person is at the
+  prompt (`isInteractive`) and the process is not a teammate (`CLAUDECODE !== "1"`); an explicit
+  open — the dashboard tool, or the band's button — still works and starts the clock then. The
+  clock is registered once per process, its whole callback is guarded in flight so a slow period
+  skips its tick rather than stacking, `refresh` is single-flight as well, and the timer is
+  cancelled at `session.end`. No subprocess spawns without its own timeout.
+
 - **A rerun after a COMPLETED Backlog-to-Quest migration is an idempotent success, keyed on Quest's
   durable status rather than Lore's local record** (LCLI-700). LCLI-699 made a rerun idempotent only
   while its pending record survived, and a migration that completed with no removal requested cleared
