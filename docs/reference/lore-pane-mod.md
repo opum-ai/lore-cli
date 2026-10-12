@@ -75,8 +75,9 @@ toplevel (`git rev-parse --show-toplevel`), resolved on first need; it refreshes
 Refresh button and every 30 seconds while it is shown. The clock is registered once per process
 and cancelled at `session.end`; an explicit open (the tool) works in a gated process too, and
 starts the clock from then on. A refresh already in flight coalesces a second request — exactly one
-more refresh runs after the current one finishes, so a person's press is never a silent no-op —
-while only clock ticks are skipped in flight.
+more refresh runs after the current one finishes, so a person's press is never a silent no-op. The
+only thing skipped in flight is a tick that meets a PRIOR TICK; a tick that meets an in-flight
+refresh is coalesced like any other caller.
 
 ### Opening the pane
 

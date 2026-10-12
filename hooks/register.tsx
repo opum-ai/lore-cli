@@ -584,10 +584,18 @@ async function seedDraftType($: EngineInterface, types: readonly { name: string 
  * A call that finds one already in flight does NOT start a second run, and is NOT dropped either:
  * it sets `refreshQueued`, so EXACTLY ONE more refresh runs after the current one finishes. A
  * person's press must never be a silent no-op, which is why a queued request runs rather than being
- * skipped. Only CLOCK TICKS are skipped in flight — that is the tick's own guard, `tickInFlight`.
+ * skipped. The only thing skipped in flight is a TICK meeting a PRIOR TICK — the tick's own guard,
+ * `tickInFlight`; a tick that meets an in-flight REFRESH is coalesced like any other caller.
+ *
+ * Both guards carry a session GENERATION (LCLI-709, DEC-172 (4bi)(a)): `session.end` bumps
+ * `sessionGeneration` and clears the flags, and a refresh that started under an older generation
+ * leaves the flags ALONE when it finally unwinds. Without this a slow refresh spanning a `/clear`
+ * could clear a later session's `refreshInFlight` in its `finally`, letting two refreshes stack
+ * across the boundary.
  */
 let refreshInFlight = false;
 let refreshQueued = false;
+let sessionGeneration = 0;
 
 async function refresh($: EngineInterface): Promise<void> {
   if (refreshInFlight) {
@@ -595,14 +603,19 @@ async function refresh($: EngineInterface): Promise<void> {
 
     return;
   }
+  const generation = sessionGeneration;
   refreshInFlight = true;
   try {
     do {
       refreshQueued = false;
       await refreshOnce($);
-    } while (refreshQueued);
+    } while (refreshQueued && generation === sessionGeneration);
   } finally {
-    refreshInFlight = false;
+    // Only this session's own run may clear the guard; one that outlived session.end must not touch
+    // the successor session's flags.
+    if (generation === sessionGeneration) {
+      refreshInFlight = false;
+    }
   }
 }
 
@@ -1299,8 +1312,9 @@ export const register: Register = (on, _options) => {
     refreshTimer?.cancel();
     refreshTimer = null;
     tickInFlight = false;
-    // Both in-flight guards are cleared (LCLI-707 (b)): a tick or a refresh still running at the
-    // boundary must not leave a flag set that blocks the next session's first read-back.
+    // Both in-flight guards are cleared (LCLI-707 (b), LCLI-709): the generation is bumped FIRST so
+    // a refresh still unwinding from THIS session cannot clear the successor session's flags.
+    sessionGeneration += 1;
     refreshInFlight = false;
     refreshQueued = false;
 
