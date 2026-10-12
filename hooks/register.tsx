@@ -87,6 +87,7 @@ function ensureClock($: EngineInterface): void {
     if (tickInFlight) {
       return;
     }
+    const generation = sessionGeneration;
     tickInFlight = true;
     void (async () => {
       try {
@@ -96,7 +97,11 @@ function ensureClock($: EngineInterface): void {
           await countUncommitted($);
         }
       } finally {
-        tickInFlight = false;
+        // Like the refresh guard, only THIS session's own tick may clear the flag (LCLI-710): a tick
+        // that outlived session.end must not clear the successor session's `tickInFlight`.
+        if (generation === sessionGeneration) {
+          tickInFlight = false;
+        }
       }
     })();
   });

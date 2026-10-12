@@ -392,3 +392,74 @@ test("a refresh that outlives session.end cannot clear the successor session's g
   await clock.settle();
 });
 
+test("a tick that outlives session.end cannot clear the successor session's tickInFlight (LCLI-710)", async ($, on) => {
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
+  mock.store(on);
+  const seen: string[][] = [];
+  const opens: Record<string, unknown>[] = [];
+  engine(on, opens);
+  // Two gates so tick #1 (old generation) can unwind while tick #2 (new generation) is still running.
+  let r1: (() => void) | null = null;
+  let r2: (() => void) | null = null;
+  const gate1 = new Promise<void>((resolve) => {
+    r1 = resolve;
+  });
+  const gate2 = new Promise<void>((resolve) => {
+    r2 = resolve;
+  });
+  const gates = {
+    held: (which: 1 | 2) => (which === 1 ? gate1 : gate2),
+    open: (which: 1 | 2) => {
+      (which === 1 ? r1 : r2)?.();
+    },
+  };
+  let armed: 0 | 1 | 2 = 0;
+  on("fs.read", async () => ({ value: "" }));
+  on("process.run", async (_$, e) => {
+    seen.push([...e.argv]);
+    if (e.argv[0] === "git") {
+      return ok("/repo\n");
+    }
+    if (armed !== 0) {
+      await gates.held(armed);
+    }
+
+    return loreBody(e.argv[1] ?? "");
+  });
+
+  await $.session.end({ reason: "clear", sessionId: "lcli710-a", resume: { id: "lcli710-a" } });
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  await clock.settle();
+
+  // Tick #1 in the FIRST session: held mid-body, so it is still running when that session ends.
+  armed = 1;
+  await clock.advance(31_000);
+
+  await $.session.end({ reason: "clear", sessionId: "lcli710-b", resume: { id: "lcli710-b" } });
+  // A SECOND session registers a fresh clock; its tick must be able to run.
+  armed = 0;
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  await clock.settle();
+
+  // Tick #2 in the SECOND session, held mid-body too.
+  armed = 2;
+  await clock.advance(31_000);
+  const mid = seen.length;
+
+  gates.open(1); // tick #1 unwinds while tick #2 is still in flight
+  await clock.settle();
+  const afterUnwind = seen.length;
+
+  // A further tick must be SKIPPED (tick #2 still owns the guard). Without the token, tick #1's
+  // unwind cleared `tickInFlight`, so this third tick starts a SECOND concurrent tick -> seen grows.
+  await clock.advance(31_000);
+  expect(seen.length).toBe(afterUnwind);
+  // Control: tick #1's unwind really did land its `countUncommitted` (a git read) above, so a green
+  // here is not a test in which no tick ever ran.
+  expect(afterUnwind).toBeGreaterThan(mid);
+
+  gates.open(2); // release tick #2 so nothing dangles past the test
+  await clock.settle();
+});
+
