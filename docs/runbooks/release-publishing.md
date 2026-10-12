@@ -1697,6 +1697,13 @@ each item says which release it belongs to.
   `"warning"` to `"error"`. LCLI-646 holds it and its criteria require the
   ordering to be read off what was actually published rather than assumed.
 
+- **`agent-profile-pin-capacity` ships at error from its first release** (LCLI-702,
+  DEC-172 (4at)). It is deliberately NOT a flip and nothing holds it by a record: a source that
+  several `.lore/agents/*.toml` profiles name (in `pinned` or `sources`) fails `lore check`
+  immediately when any pinning profile is over capacity, because it is a new gate rather than the
+  strengthening of an already-shipped warning. Every release carrying it turns such a repository
+  red at once, with no warning release in between.
+
 ## Rollback
 
 - **Before publish**: nothing external happened — delete the tag, fix the
