@@ -109,11 +109,14 @@ export type CheckSeverity = Severity;
  * (error), a Constants document from which no entry was read -- the positive control (error), and a
  * link citing a deprecated or retired entry (warning, on the citing file; the message says which).
  *
- * `agent-profile-capacity` (LCLI-642, DEC-11) is the one rule whose severity is not fixed at its
- * call site but named by {@link AGENT_PROFILE_CAPACITY_SEVERITY}: a `.lore/agents/*.toml` profile
- * whose declared sources cannot fit its `max_tokens` budget. It ships as a **warning for one
- * release**, so external users are not turned red without notice, and DEC-11 then makes it an
- * error -- the flip is that one constant's value (LCLI-646 holds the schedule).
+ * Two rules name their severity by a constant rather than a literal at the call site.
+ * `agent-profile-capacity` (LCLI-642, DEC-11) is one: a `.lore/agents/*.toml` profile whose
+ * declared sources cannot fit its `max_tokens` budget. It ships as a **warning for one release**,
+ * so external users are not turned red without notice, and DEC-11 then makes it an error -- the
+ * flip is that one constant's value ({@link AGENT_PROFILE_CAPACITY_SEVERITY}; LCLI-646 holds the
+ * schedule). `agent-profile-pin-capacity` (LCLI-702, DEC-172 (4at)) is the other, fixed at
+ * {@link AGENT_PROFILE_PIN_CAPACITY_SEVERITY}: a source several profiles name that leaves any of
+ * them over capacity.
  */
 export type CheckRule =
   | "type-shape"
