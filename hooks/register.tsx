@@ -13,7 +13,7 @@
 // values (an argv to run, a run's result) and answers with parsed shapes.
 
 import { atom, read, update } from "claude-code";
-import type { EngineInterface, Register, UiOpenResult, UiPane } from "claude-code";
+import type { EngineInterface, Register, Timer, UiOpenResult, UiPane } from "claude-code";
 
 import type { Catalog, DocState, Edits, PaneMode, PaneState, View } from "../types";
 import type { Outcome, Run } from "./lore";
@@ -53,6 +53,54 @@ const PANE = "lore-pane";
 const REFRESH_MS = 30_000;
 const TIMEOUT_MS = 30_000;
 const ROW_CAP = 120;
+
+// ── The refresh clock, once per process (LCLI-705) ──────────────────────────────
+
+/**
+ * The pane's ONE refresh clock for this process, and the guards that keep it single.
+ *
+ * `$.clock.every` hands back a `Timer`, but the engine does not serialize a callback that
+ * returns before its work is done: the old code fired `void (async () => …)()` and returned
+ * immediately, so a slow read-back let the next tick start on top of it. Two guards stand in
+ * for the serialization the engine cannot give a `void` callback (DEC-172 (4bg) item 2):
+ *
+ * - the registration is guarded once per process (`refreshTimer !== null`);
+ * - the WHOLE callback is guarded in flight (`tickInFlight`), so a tick that finds the previous
+ *   one still running is SKIPPED rather than stacked.
+ *
+ * `session.end` cancels the timer (and a fresh `session.start` in the same process can register
+ * a new one), so a process stops polling when its session ends.
+ */
+let refreshTimer: Timer | null = null;
+let tickInFlight = false;
+
+/**
+ * Registers the refresh clock ONCE per process; every later call is a no-op. Called where the
+ * pane is actually opened -- session start for an interactive process, or an explicit open (the
+ * dashboard tool, the band's button) in a process the auto-start gate left alone.
+ */
+function ensureClock($: EngineInterface): void {
+  if (refreshTimer !== null) {
+    return;
+  }
+  refreshTimer = $.clock.every(REFRESH_MS, () => {
+    if (tickInFlight) {
+      return;
+    }
+    tickInFlight = true;
+    void (async () => {
+      try {
+        const panes = await $.ui.panes();
+        if (panes.some((pane) => pane.id === PANE && pane.isShown)) {
+          await refresh($);
+          await countUncommitted($);
+        }
+      } finally {
+        tickInFlight = false;
+      }
+    })();
+  });
+}
 
 // ── The full-screen toggle (LCLI-666) ─────────────────────────────────────────
 
@@ -527,7 +575,27 @@ async function seedDraftType($: EngineInterface, types: readonly { name: string 
   await update($, edits, (e) => (e.draft.type ? e : { ...e, draft: { ...e.draft, type: first } }));
 }
 
+/**
+ * The refresh, single-flight (LCLI-705). `refresh` is called from the clock, the dashboard
+ * tool, every tab switch and every press; without a guard a slow read-back could run on top of
+ * another -- the shape of the 2026-10-12 host-load incident, where every process's refresh
+ * stacked. A call that finds one already in flight returns without starting a second run.
+ */
+let refreshInFlight = false;
+
 async function refresh($: EngineInterface): Promise<void> {
+  if (refreshInFlight) {
+    return;
+  }
+  refreshInFlight = true;
+  try {
+    await refreshOnce($);
+  } finally {
+    refreshInFlight = false;
+  }
+}
+
+async function refreshOnce($: EngineInterface): Promise<void> {
   const root = await ensureRoot($);
   const current = await read($, view);
   await setView($, { isLoading: true });
@@ -1120,6 +1188,10 @@ async function openDashboard(
   // which is the steady state of a remembered full mode, or a `full: true` call on one)
   // would leave the surface at its share and nothing to re-ask (LCLI-668 review F2).
   const asked = await openPane($);
+  // A person's or a model's open in a process the auto-start gate left alone registers the clock
+  // here, so the pane polls (only while shown) from this open on (LCLI-705); it is a no-op when a
+  // session.start already registered it.
+  ensureClock($);
   // What actually happened, from the engine rather than from the ask: the listing says
   // whether the pane is drawn and whether it is the tab on top, and the open's own answer
   // stands where the engine cannot be asked or lists nothing of ours.
@@ -1160,7 +1232,14 @@ async function openDashboard(
 
 export const register: Register = (on, _options) => {
   on("session.start", async ($, e, next) => {
-    await setView($, { root: await resolveRoot($) });
+    // The auto-start gate (LCLI-705, DEC-172 (4bg) item 2). A teammate process carries
+    // CLAUDECODE=1; a headless/`-p` run, the SDK and a dynamic-workflow child arrive with
+    // `!e.isInteractive`. Mod clocks running in EVERY Claude process were half a host-load
+    // incident on 2026-10-12 (host load reached ~300), and this pane's own clock opened and
+    // re-read the bundle in every one of them. In such a process the pane is not opened, the
+    // clock is not registered and the initial read-back is not run; an explicit open -- the
+    // dashboard tool, or the band's button -- still works and starts the clock then.
+    const gated = !e.isInteractive || (await $.env.get("CLAUDECODE")) === "1";
     // The pane's ONLY entry point (LCLI-667/668, opum-doc design of record): the tool the
     // `lore` skill routes `dashboard` to. No slash command is registered -- the engine's
     // `lore` skill owns that name, so a command of the same name is refused and takes this
@@ -1182,20 +1261,33 @@ export const register: Register = (on, _options) => {
     // the held-width reading both describe the pane THIS session draws.
     pendingAsk = remembered === "full" ? { mode: "full", byPerson: false } : null;
     lastDraw = null;
+
+    if (gated) {
+      return next(e);
+    }
+
+    // Resolved only for a process that shows the pane: a gated process runs no `git` for a view
+    // nothing draws, and `ensureRoot` resolves the root on first need if one is opened later
+    // (its own note: "session.start may not have run").
+    await setView($, { root: await resolveRoot($) });
     void refresh($);
     void countUncommitted($);
     // The session's own open, which nobody asked for by hand: on a terminal under the
     // engine's floor it is refused, and the refused answer is what the band then offers.
     void openPane($);
-    $.clock.every(REFRESH_MS, () => {
-      void (async () => {
-        const panes = await $.ui.panes();
-        if (panes.some((pane) => pane.id === PANE && pane.isShown)) {
-          await refresh($);
-          await countUncommitted($);
-        }
-      })();
-    });
+    // The clock, registered once per process (LCLI-705). An explicit open registers it too, so a
+    // gated process that opens the pane by hand polls from then on.
+    ensureClock($);
+
+    return next(e);
+  });
+
+  // The clock is this process's, so `session.end` is where it is cancelled (LCLI-705): nothing
+  // else stops it, and a timer left running would poll for a session that is gone.
+  on("session.end", async (_$, e, next) => {
+    refreshTimer?.cancel();
+    refreshTimer = null;
+    tickInFlight = false;
 
     return next(e);
   });
@@ -1987,6 +2079,7 @@ export const register: Register = (on, _options) => {
     // is unasked again and waits at the same width (measured, LCLI-672).
     const open = async () => {
       await openPane($);
+      ensureClock($);
     };
     const { Box, Button, Text } = $.ui.resolve(e);
 
