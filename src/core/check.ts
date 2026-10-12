@@ -1099,15 +1099,20 @@ export const AGENT_PROFILE_PIN_CAPACITY_SEVERITY: CheckSeverity = "error";
 export function agentProfilePinCapacityFindings(
   capacities: readonly AgentProfileCapacity[],
   pinsByReference: ReadonlyMap<string, readonly string[]>,
+  declaredByProfile: ReadonlyMap<string, readonly string[]>,
 ): CheckFinding[] {
   const findings: CheckFinding[] = [];
   for (const capacity of capacities) {
     if (!capacity.overCapacity) {
       continue;
     }
-    // The sources this over-capacity profile NAMES that at least one OTHER profile also names.
-    const shared = capacity.sources
-      .map((source) => source.reference)
+    // Every source this over-capacity profile NAMES — its `pinned` AND its `sources` — that at least
+    // one OTHER profile also names. `AgentProfileCapacity.sources` covers only the profile's `sources`
+    // array, so the pinned set is read from `declaredByProfile` (LCLI-702 review round 1, blocker:
+    // a shared PINNED source — the LCLI-677 incident's own shape, `reference/cli-contract` — was
+    // otherwise missed, because the naming count included it but it was never selected as `shared`).
+    const declared = declaredByProfile.get(capacity.name) ?? capacity.sources.map((source) => source.reference);
+    const shared = [...declared]
       .filter((reference) => (pinsByReference.get(reference)?.length ?? 0) >= 2)
       .sort(compareCodeUnits);
     if (shared.length === 0) {

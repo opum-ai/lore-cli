@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   over-capacity pinning profile with its deficit, so a change must move EVERY pinning profile's budget,
   not only the one it edited. It is independent of DEC-11's `agent-profile-capacity` warning and its
   held flip (LCLI-646), which are unchanged. lore-cli's own `implementation` profile budget rises to
-  `110000` in the same change, so the new gate passes here.
+  `111000` in the same change, so the new gate passes here.
 
 ### Changed
 

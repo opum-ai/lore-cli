@@ -276,12 +276,19 @@ function checkAfterSchemaPass(
       }
     }
     agentProfileFindings.push(...agentProfileCapacityFindings(capacities));
-    // Every source a profile NAMES — in `pinned` or `sources` — mapped to the profiles that name it.
-    // The multi-profile-pin gate (LCLI-702, DEC-172 (4at)) fails when a source several profiles name
-    // has any pinning profile over capacity, so a change must move every pinning profile's budget.
+    // Every source a profile NAMES — in `pinned` or `sources` — mapped to the profiles that name it,
+    // and separately each profile's own named set. The multi-profile-pin gate (LCLI-702, DEC-172
+    // (4at)) fails when a source several profiles name has any pinning profile over capacity, so a
+    // change must move every pinning profile's budget. The per-profile set is carried because
+    // `AgentProfileCapacity.sources` covers only the `sources` array, not `pinned`.
     const pinsByReference = new Map<string, string[]>();
+    const declaredByProfile = new Map<string, string[]>();
     for (const profile of agentProfiles.profiles.values()) {
+      const declared: string[] = [];
       for (const reference of [...profile.pinned, ...profile.sources]) {
+        if (!declared.includes(reference.normalized)) {
+          declared.push(reference.normalized);
+        }
         const named = pinsByReference.get(reference.normalized);
         if (named === undefined) {
           pinsByReference.set(reference.normalized, [profile.name]);
@@ -289,8 +296,9 @@ function checkAfterSchemaPass(
           named.push(profile.name);
         }
       }
+      declaredByProfile.set(profile.name, declared);
     }
-    agentProfileFindings.push(...agentProfilePinCapacityFindings(capacities, pinsByReference));
+    agentProfileFindings.push(...agentProfilePinCapacityFindings(capacities, pinsByReference, declaredByProfile));
     agentProfileCounts = {
       read: capacities.length,
       overCapacity: capacities.filter((capacity) => capacity.overCapacity).length,

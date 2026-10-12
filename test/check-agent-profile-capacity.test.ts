@@ -402,4 +402,26 @@ describe("lore check gates agent profile capacity (LCLI-642, DEC-11)", () => {
     expect(report.findings.filter((finding) => finding.rule === "agent-profile-capacity")).toHaveLength(1);
     expect(code).toBe(EXIT_OK);
   });
+
+  test("[multi-pin] a source shared ONLY through `pinned` still fails the gate (LCLI-702 round-1 blocker)", () => {
+    // The LCLI-677 shape exactly: two profiles that name the source ONLY in `pinned`, the over-capacity
+    // one sharing no other source. The first cut read only `capacity.sources`, so a shared PIN was
+    // invisible and the gate stayed green — this case is the one that reddens if that regression returns.
+    writeDoc("reference/shared.md", referenceDoc("Shared", 8000));
+    writeFileSync(
+      join(root, ".lore", "agents", "edited.toml"),
+      `schema_version = 1\nname = "edited"\ndescription = "pin-only"\nkind = "specialist"\nmax_tokens = 20000\npinned = ["reference/shared"]\n`,
+    );
+    writeFileSync(
+      join(root, ".lore", "agents", "other.toml"),
+      `schema_version = 1\nname = "other"\ndescription = "pin-only"\nkind = "specialist"\nmax_tokens = 4000\npinned = ["reference/shared"]\n`,
+    );
+
+    const { code, report } = check();
+    const findings = report.findings.filter((finding) => finding.rule === "agent-profile-pin-capacity");
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.file).toBe(".lore/agents/other.toml");
+    expect(findings[0]?.message).toContain("reference/shared");
+    expect(code).toBe(EXIT_CODES.validation);
+  });
 });
