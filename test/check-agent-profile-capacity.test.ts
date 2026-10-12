@@ -39,12 +39,14 @@
  *                   lone-profile cases stay GREEN.
  *
  * Measured against that map (re-measured 2026-10-12 over the 16 cases here, after LCLI-702 added
- * [multi-pin]): forcing the comparison false reddens 4 of 16 (both [capacity], the over-capacity
- * [count], the command-level [severity]); zeroing the query-section reserve reddens [query-reserve]
- * alone, 1 of 16; rendering the score placeholder at one character reddens [pack-size] alone, 1 of
- * 16; removing the pin gate reddens [multi-pin]'s failing case alone, 1 of 16 (and its pinned-only
- * case reddens if the gate reads `capacity.sources` alone). The map is written out because
- * predicting the subset from the file is the point.
+ * [multi-pin]; every count below was MEASURED by applying the mutation, not predicted): forcing the
+ * comparison false reddens 7 of 16 — both [capacity], the over-capacity [count], the command-level
+ * [severity], and the three [multi-pin] cases that need an over-capacity profile; zeroing the
+ * query-section reserve reddens [query-reserve] alone, 1 of 16; rendering the score placeholder at
+ * one character reddens [pack-size] alone, 1 of 16; neutering the pin gate reddens the failing and
+ * pinned-only [multi-pin] cases, 2 of 16 (and reverting the gate to read `capacity.sources` alone
+ * reddens the pinned-only case alone, 1 of 16). The map is written out because predicting the
+ * subset from the file is the point.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
