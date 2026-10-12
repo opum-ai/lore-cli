@@ -74,7 +74,9 @@ mobile surface it says it needs the terminal or desktop. Its root is the session
 toplevel (`git rev-parse --show-toplevel`), resolved on first need; it refreshes on an explicit
 Refresh button and every 30 seconds while it is shown. The clock is registered once per process
 and cancelled at `session.end`; an explicit open (the tool) works in a gated process too, and
-starts the clock from then on.
+starts the clock from then on. A refresh already in flight coalesces a second request — exactly one
+more refresh runs after the current one finishes, so a person's press is never a silent no-op —
+while only clock ticks are skipped in flight.
 
 ### Opening the pane
 

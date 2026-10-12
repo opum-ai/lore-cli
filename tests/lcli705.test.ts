@@ -263,7 +263,7 @@ test("a tick that finds the previous one still running is skipped (LCLI-705 AC2)
   expect(afterTick2).toBe(afterTick1);
 });
 
-test("a refresh already in flight drops a second one (single-flight, LCLI-705 AC2)", async ($, on) => {
+test("a refresh during an in-flight refresh is COALESCED: exactly one more runs (LCLI-707 (a))", async ($, on) => {
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
   mock.env(on, {});
   mock.store(on);
@@ -272,24 +272,57 @@ test("a refresh already in flight drops a second one (single-flight, LCLI-705 AC
   const held = holdable(on, seen);
   engine(on, opens);
 
-  await $.session.end({ reason: "clear", sessionId: "lcli705-prior", resume: { id: "lcli705-prior" } });
+  await $.session.end({ reason: "clear", sessionId: "lcli707-prior", resume: { id: "lcli707-prior" } });
   await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
   await clock.settle();
 
   held.hold();
-  const before = seen.length;
-  const first = $.tool.call({ tool: "mcp__opum-lore__dashboard" }); // fires a refresh, held in flight
+  const first = $.tool.call({ tool: "mcp__opum-lore__dashboard" }); // refresh #1, held in flight
   await clock.settle();
   const mid = seen.length;
-  const second = $.tool.call({ tool: "mcp__opum-lore__dashboard" }); // refresh in flight -> dropped
+  const second = $.tool.call({ tool: "mcp__opum-lore__dashboard" }); // in flight -> coalesced, not dropped
   await clock.settle();
-  const after = seen.length;
+  // #2 does not START while #1 runs (still one refresh at a time).
+  expect(seen.length).toBe(mid);
+
+  held.release();
+  await clock.settle(); // the queued refresh runs AFTER #1 finishes
+  await first;
+  await second;
+  await clock.settle();
+  // EXACTLY one more refresh ran — its two `lore` reads, and no third. With the guard reverted to a
+  // plain skip this is 0, so the case reddens.
+  expect(seen.length - mid).toBe(2);
+});
+
+test("session.end clears the refresh guard, so a later refresh is not blocked (LCLI-707 (b))", async ($, on) => {
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
+  mock.store(on);
+  const seen: string[][] = [];
+  const opens: Record<string, unknown>[] = [];
+  const held = holdable(on, seen);
+  engine(on, opens);
+
+  await $.session.end({ reason: "clear", sessionId: "lcli707-prior", resume: { id: "lcli707-prior" } });
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  await clock.settle();
+
+  held.hold();
+  const first = $.tool.call({ tool: "mcp__opum-lore__dashboard" }); // refresh #1, held in flight
+  await clock.settle();
+  // The session ends while #1 is STILL running, so its guard is the only thing that could clear it.
+  await $.session.end({ reason: "clear", sessionId: "lcli707-cur", resume: { id: "lcli707-cur" } });
+
+  const before = seen.length;
+  const second = $.tool.call({ tool: "mcp__opum-lore__dashboard" }); // runs only if the guard was reset
+  await clock.settle();
+  // Without the reset, `refreshInFlight` is still set (from #1) and this refresh is swallowed -> 0, red.
+  expect(seen.length).toBeGreaterThan(before);
+
   held.release();
   await first;
   await second;
-  await clock.settle(); // drain the released run before the environment goes
-
-  expect(mid).toBeGreaterThan(before);
-  expect(after).toBe(mid);
+  await clock.settle();
 });
 
