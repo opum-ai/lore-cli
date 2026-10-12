@@ -253,7 +253,7 @@ npm's OIDC-based Trusted Publishing (GA since 2025-07) lets `release.yml`
 publish **without a long-lived `NPM_TOKEN` secret** — GitHub's OIDC token
 authenticates the publish directly. npm requires a package to exist before its
 trust relationship can be created, so OIDC cannot authenticate lore's first
-publication. See <https://docs.npmjs.com/cli/v11/commands/npm-trust/>.
+publication. See https://docs.npmjs.com/cli/v11/commands/npm-trust/.
 
 For `0.1.0`, Release run `30870431925` ran with `publish: false`; its exact
 `npm-packages` tarballs were published interactively with 2FA. All five
@@ -1080,7 +1080,7 @@ the promotion half, item 7. It is not part of staging.
    dist-tag move prompts for a one-time password — that is the EOTP wall that
    blocked the `0.3.4` release. Granular access tokens (and classic *Automation*
    tokens) bypass 2FA by design, which is what makes an unattended release
-   possible. Create one at <https://www.npmjs.com/settings/~/tokens> scoped to
+   possible. Create one at https://www.npmjs.com/settings/~/tokens scoped to
    the `@opum-ai/lore*` packages with read-and-write permission, then store it
    once in the macOS Keychain:
 

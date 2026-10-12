@@ -396,8 +396,8 @@ The **drift gate** — read-only, never writes. Aggregates:
   the [portable Markdown rules](./portable-markdown.md): wikilinks/embeds/callouts/
   highlights/`%%`-comments and Obsidian block refs (`^id`); non-portable link
   form (leading-slash, missing `.md`, unencoded, accidental-colon filenames,
-  trailing-slash directory links); and MDX hazards (raw `<`/`{` in prose, raw
-  HTML, leading-underscore and `.mdx` file names).
+  trailing-slash directory links); and MDX hazards (raw `<`/`{` in prose,
+  angle-bracket autolinks, raw HTML, leading-underscore and `.mdx` file names).
 - **Committed-schema drift** (LCLI-539, LCLI-565) — compares each committed
   `.lore/schemas/*.schema.json` with what the active profile generates now.
   Every finding carries a `schemaClass`: `missing` or `stale` (`lore schema

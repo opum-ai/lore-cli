@@ -1342,11 +1342,25 @@ const CALLOUT = /^\s*\[!([A-Za-z][\w-]*)\]/;
  * parsed tree. The Obsidian detectors run over **text nodes only** — scanning text (never
  * `inlineCode`/`code`) excludes fenced and inline code for free, so a `[[x]]` inside a code span
  * is correctly left alone — while the MDX scan also inspects raw-`html` nodes (the form
- * CommonMark pulls a `<tag>` out of the text as), skipping HTML comments.
+ * CommonMark pulls a `<tag>` out of the text as), skipping HTML comments, and `link` nodes that are
+ * angle-bracket autolinks (whose URL text is then excluded from the raw-character arms, LCLI-701).
  */
 function portabilityScan(tree: Nodes, file: string, source: string): CheckFinding[] {
   const findings: CheckFinding[] = [];
+  // The SOURCE spans of an angle-bracket autolink's text child. That text is the raw URL, and a
+  // `<`/`{` inside a URL is not prose: the autolink arm reports the whole construct with a rewrite
+  // remedy, so {@link mdxHazardFindings} skips its raw-character arms for a text node an autolink
+  // covers (LCLI-701). walkMdast is a PRE-ORDER walk, so the link is visited — and its child's span
+  // recorded — before that child is.
+  const autolinkInner = new Set<string>();
   walkMdast(tree, (node) => {
+    if (node.type === "link" && autolinkSource(node, source) !== null) {
+      for (const child of node.children) {
+        const start = child.position?.start.offset;
+        const end = child.position?.end.offset;
+        if (typeof start === "number" && typeof end === "number") autolinkInner.add(`${start}:${end}`);
+      }
+    }
     if (node.type === "text") {
       for (const detector of DETECTORS) {
         detector.re.lastIndex = 0;
@@ -1359,7 +1373,7 @@ function portabilityScan(tree: Nodes, file: string, source: string): CheckFindin
     }
     findings.push(...blockReferenceFinding(node, file));
     findings.push(...calloutFinding(node, file));
-    findings.push(...mdxHazardFindings(node, file, source));
+    findings.push(...mdxHazardFindings(node, file, source, autolinkInner));
   });
   return findings;
 }
@@ -1454,22 +1468,52 @@ function rawSourceOf(
 }
 
 /**
+ * The raw SOURCE of a node when it is an angle-bracket autolink — a `link` node whose source begins
+ * with `<` (`<https://x/>`, `<a@b.com>`) — else `null`. Shared by {@link mdxHazardFindings}, which
+ * reports it, and {@link portabilityScan}, which excludes the covered text from the raw-character
+ * arms so a `<`/`{` in the URL is not reported a second time (LCLI-701).
+ */
+function autolinkSource(node: Nodes, source: string): string | null {
+  if (node.type !== "link") return null;
+  const raw = rawSourceOf(node, source);
+  return raw !== null && raw.startsWith("<") ? raw : null;
+}
+
+/**
  * MDX-safety warnings (portable-markdown.md §MDX): Docusaurus parses Markdown as **MDX**, where a
  * raw `<` starts a JSX element and a raw `{` a JSX expression — so un-escaped, non-code `<`/`{` in
  * prose make its build throw even though the same source renders fine on GitHub/Obsidian/MkDocs.
- * lore detects (never escapes) two shapes, one finding apiece to keep the report readable:
+ * lore detects (never escapes) three shapes, one finding apiece to keep the report readable:
  *
- * - a `<` or `{` CommonMark left literal in a **text** node (`temperature < 0`, `{ "k": 1 }`);
+ * - a `<` or `{` CommonMark left literal in a **text** node (`temperature < 0`, `{ "k": 1 }`),
+ *   except a text node an angle-bracket autolink covers — its raw URL, reported below as a whole;
+ * - a **link** node whose SOURCE begins with `<` — an angle-bracket autolink (`<https://x/>`,
+ *   `<a@b.com>`) — whose `<` and `>` are link syntax and so never reach a `text` node (LCLI-701).
+ *   A `[text](url)` link's source begins with `[`, and a bare URL stays a `text` node under the
+ *   CommonMark parser this scan uses, so neither is flagged;
  * - a raw-`html` node that carries any non-comment markup (`<T>`, `<div>`, `<Component>` — what
  *   CommonMark pulled out of the text as inline/block HTML). HTML **comments** (`<!-- … -->`) are
  *   portable and are what lore writes for its managed regions, so they are stripped first; a node
  *   that is *only* comments is left alone, but `<!-- … --><div>` still flags the `<div>`.
  *
- * Code spans/blocks are `inlineCode`/`code` nodes, never `text`/`html`, so they never reach here.
+ * Code spans/blocks are `inlineCode`/`code` nodes, never `text`/`link`/`html`, so they never reach here.
  */
-function mdxHazardFindings(node: Nodes, file: string, source: string): CheckFinding[] {
+function mdxHazardFindings(
+  node: Nodes,
+  file: string,
+  source: string,
+  autolinkInner: ReadonlySet<string>,
+): CheckFinding[] {
   const findings: CheckFinding[] = [];
   if (node.type === "text") {
+    // A text node an angle-bracket autolink covers is its raw URL, not prose: the autolink arm below
+    // reports the whole construct, and a `<`/`{` in a URL never surfaces for a `[text](url)` link
+    // either. Skipping its arms here keeps one finding per construct (LCLI-701).
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (typeof start === "number" && typeof end === "number" && autolinkInner.has(`${start}:${end}`)) {
+      return findings;
+    }
     // Scan the SOURCE the node covers, never its decoded `value` (LCLI-663): mdast resolves
     // character references before the value reaches us, so a source `&#123;` arrives as a literal
     // `{` and a source `&lt;` as `<`. Scanning `value` therefore flagged the very escape this
@@ -1482,6 +1526,16 @@ function mdxHazardFindings(node: Nodes, file: string, source: string): CheckFind
     }
     if (raw.includes("{")) {
       findings.push(mdxHazard(file, "{"));
+    }
+  } else if (node.type === "link") {
+    // An angle-bracket autolink (`<https://x/>`, `<a@b.com>`) is a `link` node whose SOURCE begins
+    // with `<`: the `<` and `>` are link syntax, so neither reaches a text node and the raw-`<` arm
+    // above never sees them (LCLI-701). A `[text](url)` link's source begins with `[`, and a bare
+    // URL stays a plain `text` node under the CommonMark parser this scan uses, so both are left
+    // alone. The remedy is a rewrite rather than an escape — the source already means a link.
+    const raw = autolinkSource(node, source);
+    if (raw !== null) {
+      findings.push(autolinkHazard(file, raw));
     }
   } else if (node.type === "html" && node.value.replace(HTML_COMMENT, "").trim() !== "") {
     findings.push({
@@ -1506,6 +1560,20 @@ function mdxHazard(file: string, ch: "<" | "{"): CheckFinding {
     rule: "portability",
     file,
     message: `non-portable raw "${ch}" in prose; MDX (Docusaurus) reads it as the start of ${role} — escape it (${entity}) or wrap the text in backticks`,
+  };
+}
+
+/**
+ * One MDX angle-bracket autolink warning (LCLI-701), naming the hazard and the portable rewrite. A
+ * distinct message from {@link mdxHazard}'s, because the repair differs: escaping the `<` (that
+ * function's first remedy) would break the link, where dropping the angle brackets keeps it.
+ */
+function autolinkHazard(file: string, raw: string): CheckFinding {
+  return {
+    severity: "warning",
+    rule: "portability",
+    file,
+    message: `non-portable angle-bracket autolink "${clip(raw)}"; MDX (Docusaurus) reads "<" as the start of a JSX element — use [text](url) or a bare URL`,
   };
 }
 

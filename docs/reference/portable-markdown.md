@@ -146,6 +146,14 @@ lore's rules for staying MDX-safe:
   the content in inline code (`` `Promise<T>` ``) or a fenced code block, where
   MDX does not interpret it. lore's portability lint **detects** un-escaped,
   non-code `<`/`{` and warns; it does **not** auto-escape.
+- **Rewrite an angle-bracket autolink; do not escape it.** An autolink such as
+  `<https://x.example/>` (or `<a@b.com>`) carries its `<` and `>` as **link
+  syntax**, so escaping the `<` — the rule above — writes a literal `&lt;` and
+  destroys the link. Write a `[text](url)` link instead, or a bare URL where the
+  target renders GFM autolink literals (GitHub, Obsidian). A bare URL is **plain
+  text** where it does not — the scaffolded MkDocs/Material config sets no autolink
+  extension — so `[text](url)` is the form that renders everywhere. The portability
+  lint flags neither.
 - **Files stay `.md`, never `.mdx`.** Keeping the `.md` extension is what makes
   the same file portable to GitHub/Obsidian/MkDocs. lore therefore never writes
   `.mdx`; instead, [`lore scaffold`](consumer-compatibility.md) configures
@@ -196,8 +204,8 @@ of [`lore check`](cli-contract.md) over the whole bundle and reports:
   `scheme:` URL), trailing-slash directory links (`../reference/`);
 - **Obsidian-isms** — `==highlight==`, `%% comment %%`, `^block-id`,
   `> [!callout]`;
-- **MDX hazards** — un-escaped raw `<` / `{` in prose, raw HTML tags,
-  `_`-prefixed file names, `.mdx` files.
+- **MDX hazards** — un-escaped raw `<` / `{` in prose, angle-bracket autolinks
+  (`<https://x.example/>`), raw HTML tags, `_`-prefixed file names, `.mdx` files.
 
 Every finding is a **warning** (output mode follows the global
 `--json` / `--plain` / pretty precedence; warnings go to stderr, data to
