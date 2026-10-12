@@ -29,6 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A repository that was clean and now shows a non-zero warning count is **expected, not a CI
   break**: warnings alone still exit `0`. Per-file detail remains in `lore validate`.
 
+- **The portability check flags angle-bracket autolinks** (LCLI-701). An autolink such as
+  `<https://x.example/>` (or `<a@b.com>`) is a `link` node whose `<` and `>` are **link syntax**,
+  so they never reach a text node and the raw-`<` hazard scan missed it; the portability lint now
+  flags the angle-bracket form, naming the portable rewrite — a bare URL or a `[text](url)` link,
+  not an escape (escaping the `<` breaks the link). A bare URL and a `[text](url)` link are **not**
+  flagged, and a `<`/`{` inside an autolink's own URL is reported with the autolink rather than a
+  second time. Decided by opum-doc DEC-172 (4at); a repository that now shows a non-zero portability
+  warning count is **expected, not a CI break** — warnings alone still exit `0`.
+
 ### Fixed
 
 - **A rerun after a COMPLETED Backlog-to-Quest migration is an idempotent success, keyed on Quest's

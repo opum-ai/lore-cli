@@ -146,6 +146,12 @@ lore's rules for staying MDX-safe:
   the content in inline code (`` `Promise<T>` ``) or a fenced code block, where
   MDX does not interpret it. lore's portability lint **detects** un-escaped,
   non-code `<`/`{` and warns; it does **not** auto-escape.
+- **Rewrite an angle-bracket autolink; do not escape it.** An autolink such as
+  `<https://x.example/>` (or `<a@b.com>`) carries its `<` and `>` as **link
+  syntax**, so escaping the `<` — the rule above — writes a literal `&lt;` and
+  destroys the link. Write a bare URL or a `[text](url)` link instead; both render
+  everywhere the angle-bracket form does, and the portability lint flags the
+  angle-bracket form.
 - **Files stay `.md`, never `.mdx`.** Keeping the `.md` extension is what makes
   the same file portable to GitHub/Obsidian/MkDocs. lore therefore never writes
   `.mdx`; instead, [`lore scaffold`](consumer-compatibility.md) configures

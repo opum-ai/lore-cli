@@ -823,6 +823,17 @@ describe("checkBundle — MDX hazards (LORE-48)", () => {
     );
     expect(finding?.severity).toBe("warning");
   });
+
+  test("a < or { inside an autolink's URL is not reported a second time", () => {
+    // The autolink arm reports the whole construct with a rewrite remedy; the raw-character arms
+    // must not also fire on its URL text (LCLI-701 review finding 4). The URL's `{` is not prose,
+    // exactly as a `[text](url)` destination's is not — so only the trailing real `{` is raw.
+    const findings = checkBundle([
+      { path: "x.md", raw: ref("X", "See <https://x/{id}/> now, and a raw { brace after.") },
+    ]).findings.filter((f) => f.rule === "portability");
+    expect(findings.filter((f) => f.message.includes("autolink"))).toHaveLength(1);
+    expect(findings.filter((f) => f.message.includes('raw "{"'))).toHaveLength(1);
+  });
 });
 
 // ── checkBundle: Obsidian block references (LORE-48) ──────────────────────────────
