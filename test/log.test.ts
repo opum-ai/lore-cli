@@ -558,3 +558,95 @@ describe("LCLI-485 — regeneration reports what it added, carried forward, and 
     expect(built.stats.dropped).toBe(4);
   });
 });
+
+describe("LCLI-711 — the bundle's generated log.md earns no entry (DEC-172 (4bq))", () => {
+  const docsCommit: GitCommit = {
+    hash: "d0c5",
+    timestamp: "2026-08-01T10:00:00Z",
+    subject: "Revise the ADR",
+    files: ["docs/adr/0001.md"],
+  };
+  const logOnlyCommit: GitCommit = {
+    hash: "1090",
+    timestamp: "2026-08-02T10:00:00Z",
+    subject: "Update the change log",
+    files: ["docs/log.md"],
+  };
+
+  test("a commit whose only bundle change is log.md contributes no entry", () => {
+    const out = generateLog([docsCommit, logOnlyCommit]);
+    expect(out).not.toContain("1090");
+    expect(out).not.toContain("Update the change log");
+  });
+
+  test("the log reaches a fixed point: [docs, log-only] is byte-identical to [docs] alone", () => {
+    // sync #1 records docsCommit; committing that log.md adds logOnlyCommit to history. With the
+    // exclusion the second sync sees nothing new — the fixed point this task exists to reach.
+    expect(generateLog([docsCommit, logOnlyCommit])).toBe(generateLog([docsCommit]));
+  });
+
+  test("a mixed commit (log.md plus a concept) is still logged, by its other paths", () => {
+    const mixed: GitCommit = {
+      hash: "m1xed",
+      timestamp: "2026-08-03T10:00:00Z",
+      subject: "Add an ADR and refresh the log",
+      files: ["docs/log.md", "docs/adr/0002.md"],
+    };
+    const out = generateLog([mixed]);
+    expect(out).toContain("m1xed Add an ADR and refresh the log");
+    expect(out).toContain("## docs/adr");
+  });
+
+  test("index.md is NOT excluded: a root-index-only commit still groups under the root", () => {
+    const indexOnly: GitCommit = {
+      hash: "1ndex",
+      timestamp: "2026-08-04T10:00:00Z",
+      subject: "Regenerate the index",
+      files: ["docs/index.md"],
+    };
+    const out = generateLog([indexOnly]);
+    expect(out).toContain("1ndex Regenerate the index");
+    expect(out).toContain("## docs\n");
+  });
+
+  test("only the bundle's OWN log is excluded, not a file named log.md elsewhere under the root", () => {
+    const nested: GitCommit = {
+      hash: "n3st",
+      timestamp: "2026-08-05T10:00:00Z",
+      subject: "A nested file literally named log.md",
+      files: ["docs/adr/log.md"],
+    };
+    expect(generateLog([nested])).toContain("n3st");
+    expect(generateLog([nested])).toContain("## docs/adr");
+  });
+
+  test("a log.md outside the bundle root is ignored, like any other out-of-root file", () => {
+    const outside: GitCommit = {
+      hash: "out1",
+      timestamp: "2026-08-06T10:00:00Z",
+      subject: "Another log elsewhere",
+      files: ["other/log.md"],
+    };
+    expect(generateLog([outside])).toBe("# Change log\n");
+  });
+
+  test("a committed entry for a log-only commit is kept, not rewritten (no history dropped)", () => {
+    // A log generated before this fix recorded logOnlyCommit. It is still in visible history but is
+    // no longer derived, so the carry-forward merge is what keeps it — the file is never truncated.
+    const legacy = ["# Change log", "", "## docs", "", "- 2026-08-02T10:00:00Z 1090 Update the change log", ""].join(
+      "\n",
+    );
+    const merged = generateLog([docsCommit, logOnlyCommit], { existing: legacy });
+    expect(merged).toContain("- 2026-08-02T10:00:00Z 1090 Update the change log");
+    // ...and it is stable: re-syncing over its own output changes nothing.
+    expect(generateLog([docsCommit, logOnlyCommit], { existing: merged })).toBe(merged);
+  });
+
+  test("a sync over [docs, log-only] with the log already written reports nothing added", () => {
+    const first = generateLog([docsCommit]);
+    const { stats, bytes } = generateLogWithStats([docsCommit, logOnlyCommit], { existing: first });
+    expect(bytes).toBe(first);
+    expect(stats.added).toBe(0);
+    expect(stats.dropped).toBe(0);
+  });
+});

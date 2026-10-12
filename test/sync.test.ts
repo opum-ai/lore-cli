@@ -310,6 +310,37 @@ describe("lore sync — log.md is a full-history projection", () => {
     expect(second.report.files.map((file) => file.path)).not.toContain("docs/log.md");
   });
 
+  // LCLI-711 (DEC-172 (4bq)): the commit that records the log is itself a bundle commit, so counting
+  // it made the log one entry behind forever. This is the fixed point end-to-end: a real docs commit
+  // followed by a log-only commit leaves sync with NO diff.
+  test("LCLI-711: a log-only commit leaves sync with no diff (the log reaches a fixed point)", async () => {
+    writeDoc("stories/x.md", storyDoc("X", [], "todo"));
+    const docsCommit: GitCommit = {
+      hash: "aaaa111122223333444455556666777788889999",
+      timestamp: "2026-08-13T04:17:00Z",
+      subject: "add story",
+      files: ["docs/stories/x.md"],
+    };
+    const logOnlyCommit: GitCommit = {
+      hash: "bbbb111122223333444455556666777788889999",
+      timestamp: "2026-08-13T04:18:00Z",
+      subject: "update the change log",
+      files: ["docs/log.md"],
+    };
+    // The log as the FIRST sync wrote it: the docs commit only, no entry for its own recording commit.
+    writeDoc("log.md", generateLog([docsCommit], { root: "docs" }));
+    const before = readDoc("log.md");
+
+    const { report } = await syncCmd([], fakeAdapter([]), {
+      gitAdapter: { history: () => [docsCommit, logOnlyCommit] },
+    });
+
+    // With the exclusion the log-only commit earns no entry, so the projection is unchanged and sync
+    // writes nothing. Without it, the log-only commit adds a fresh entry and docs/log.md is rewritten.
+    expect(report.files.map((file) => file.path)).not.toContain("docs/log.md");
+    expect(readDoc("log.md")).toBe(before);
+  });
+
   // LCLI-474: the projection is a projection of history PLUS the committed file, because the two are
   // not always in that order. quest-cli lost 279 dated entries to five successive syncs after its
   // history was rewritten, and this repository staged the same 324-entry deletion on the day the

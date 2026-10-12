@@ -489,15 +489,29 @@ function resolveRoot(root: string | undefined): string {
   return normalized === "" || normalized === "." ? DOCS_DIR : normalized;
 }
 
+/** The bundle's generated change log, at the bundle root (LCLI-711). */
+const LOG_FILE = "log.md";
+
 /**
  * The distinct bundle folders a commit's `files` touch, scoped to `root`. A folder is the immediate
  * parent directory of a touched file (`docs/adr/0014.md` → `docs/adr`). A file directly under the
  * root (`docs/index.md` → `docs`) groups under the root itself. Files outside the root are dropped.
  * {@link generateLog} assigns the commit to this set's deepest common folder.
+ *
+ * The bundle's own generated `<root>/log.md` is EXCLUDED (LCLI-711, DEC-172 (4bq)): counting it would
+ * make the commit that records the log itself a bundle commit, so the log could never reach a fixed
+ * point — every sync would add a fresh entry for the previous sync's log commit, and a commit that
+ * only updates the log would earn yet another. A commit that touches `log.md` alongside real docs is
+ * still logged, by its other paths. `index.md` is deliberately NOT excluded: it changes only with
+ * concept changes, which are real docs changes.
  */
 function foldersTouched(files: readonly string[], root: string): Set<string> {
+  const generatedLog = `${root}/${LOG_FILE}`;
   const folders = new Set<string>();
   for (const file of files) {
+    if (file === generatedLog) {
+      continue;
+    }
     if (isUnderRoot(file, root)) {
       folders.add(posix.dirname(file));
     }
