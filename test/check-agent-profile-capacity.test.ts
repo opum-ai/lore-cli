@@ -19,7 +19,7 @@
  *                   renderer and validator share one heading enumeration (LCLI-647, DEC-22 A;
  *                   before the fix this profile was declined) -> RED if the renderer regresses to
  *                   top-level-only headings and the profile declines again.
- *   [unmeasurable]  3 cases: a profile this bundle cannot measure (a qualified reference that does
+ *   [unmeasurable]  2 cases: a profile this bundle cannot measure (a qualified reference that does
  *                   not resolve, and a qualified reference whose anchor cannot resolve) -> stay
  *                   GREEN.
  *   [severity]      2 cases: the DEC-11 severity plumbing. The builder-level case is hand-built and
@@ -32,13 +32,19 @@
  *                   measurement certifies holds every declared candidate for a task with three
  *                   bundle-wide hits -> RED if the reserve is zeroed (and doubly RED if it is
  *                   dropped from `declaredTokens` alone, which also reddens [pack-size]).
+ *   [multi-pin]     4 cases: the multi-profile-pin gate (LCLI-702, DEC-172 (4at)) — a source several
+ *                   profiles name with a pinning profile over capacity fails the gate -> RED when
+ *                   the gate call is removed. Its pinned-only case (a source shared ONLY through
+ *                   `pinned`) reddens if the gate reads `capacity.sources` alone. The both-ways and
+ *                   lone-profile cases stay GREEN.
  *
- * Measured against that map (re-measured 2026-10-01 over the 12 cases here, after LCLI-662 added
- * [query-reserve]): forcing the comparison false reddens 4 of 12 (both [capacity], the
- * over-capacity [count], the command-level [severity]); zeroing the query-section reserve reddens
- * [query-reserve] alone, 1 of 12; rendering the score placeholder at one character reddens
- * [pack-size] alone, 1 of 12. The map is written out because predicting the subset from the file is the
- * point.
+ * Measured against that map (re-measured 2026-10-12 over the 16 cases here, after LCLI-702 added
+ * [multi-pin]): forcing the comparison false reddens 4 of 16 (both [capacity], the over-capacity
+ * [count], the command-level [severity]); zeroing the query-section reserve reddens [query-reserve]
+ * alone, 1 of 16; rendering the score placeholder at one character reddens [pack-size] alone, 1 of
+ * 16; removing the pin gate reddens [multi-pin]'s failing case alone, 1 of 16 (and its pinned-only
+ * case reddens if the gate reads `capacity.sources` alone). The map is written out because
+ * predicting the subset from the file is the point.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
