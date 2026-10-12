@@ -1637,7 +1637,7 @@ function autolinkHazard(file: string, raw: string): CheckFinding {
     severity: "warning",
     rule: "portability",
     file,
-    message: `non-portable angle-bracket autolink "${clip(raw)}"; MDX (Docusaurus) reads "<" as the start of a JSX element — use [text](url) or a bare URL`,
+    message: `non-portable angle-bracket autolink "${clip(raw)}"; MDX (Docusaurus) reads "<" as the start of a JSX element — use [text](url)`,
   };
 }
 

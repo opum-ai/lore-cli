@@ -809,7 +809,10 @@ describe("checkBundle — MDX hazards (LORE-48)", () => {
     );
     expect(finding?.severity).toBe("warning");
     expect(finding?.rule).toBe("portability");
-    expect(finding?.message).toContain("use [text](url) or a bare URL");
+    expect(finding?.message).toContain("use [text](url)");
+    // The remedy names [text](url) ONLY (DEC-172 (4bi), amending (4at)): a bare URL renders as plain
+    // text in the scaffolded MkDocs config, so it is not offered as a repair. Pinned BOTH ways.
+    expect(finding?.message).not.toContain("bare URL");
   });
 
   test("AC#2/#3: a bare URL and a [text](url) link are NOT flagged (positive control)", () => {
