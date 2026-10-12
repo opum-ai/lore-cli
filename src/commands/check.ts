@@ -44,6 +44,7 @@ import { effectiveProfileFor, loadBundle, loadBundleState, walkFiles } from "../
 import {
   type AgentProfileCounts,
   agentProfileCapacityFindings,
+  agentProfilePinCapacityFindings,
   bodyText,
   type CheckFinding,
   type CheckInputFile,
@@ -275,6 +276,21 @@ function checkAfterSchemaPass(
       }
     }
     agentProfileFindings.push(...agentProfileCapacityFindings(capacities));
+    // Every source a profile NAMES — in `pinned` or `sources` — mapped to the profiles that name it.
+    // The multi-profile-pin gate (LCLI-702, DEC-172 (4at)) fails when a source several profiles name
+    // has any pinning profile over capacity, so a change must move every pinning profile's budget.
+    const pinsByReference = new Map<string, string[]>();
+    for (const profile of agentProfiles.profiles.values()) {
+      for (const reference of [...profile.pinned, ...profile.sources]) {
+        const named = pinsByReference.get(reference.normalized);
+        if (named === undefined) {
+          pinsByReference.set(reference.normalized, [profile.name]);
+        } else if (!named.includes(profile.name)) {
+          named.push(profile.name);
+        }
+      }
+    }
+    agentProfileFindings.push(...agentProfilePinCapacityFindings(capacities, pinsByReference));
     agentProfileCounts = {
       read: capacities.length,
       overCapacity: capacities.filter((capacity) => capacity.overCapacity).length,

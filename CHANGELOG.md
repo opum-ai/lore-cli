@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`lore check` fails when a source several agent profiles name leaves any of them over capacity**
+  (LCLI-702, DEC-172 (4at)). A source NAMED by several `.lore/agents/*.toml` profiles — in `pinned`
+  or `sources` — costs every one of them when it grows, and an author who raises only the budget they
+  edited leaves the others over capacity: exactly the LCLI-677 incident, where `reference/cli-contract`
+  grew, only `verification`'s budget moved, and `implementation`'s deficit silently widened. The new
+  `agent-profile-pin-capacity` finding is **error-tier from its first release** and names each
+  over-capacity pinning profile with its deficit, so a change must move EVERY pinning profile's budget,
+  not only the one it edited. It is independent of DEC-11's `agent-profile-capacity` warning and its
+  held flip (LCLI-646), which are unchanged. lore-cli's own `implementation` profile budget rises to
+  `110000` in the same change, so the new gate passes here.
+
 ### Changed
 
 - **`lore check`'s committed-schema drift findings name the committing step** (LCLI-545). The

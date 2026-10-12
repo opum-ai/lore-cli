@@ -95,7 +95,12 @@ Contract:
   `sources` reference, plus the auto-pinned Constitution — must fit inside it.
   A profile whose declared set cannot fit is reported by `lore check`
   as `agent-profile-capacity`, naming the profile, its budget, and the sources
-  that cannot fit (LCLI-642). That measurement is the size of the set **as a real
+  that cannot fit (LCLI-642). A source that **several** profiles name — in
+  `pinned` or `sources` — is stricter: `lore check` fails with
+  `agent-profile-pin-capacity` (LCLI-702, DEC-172 (4at)) when ANY profile that
+  names it is over capacity, because growing such a source costs every one of
+  them, so the change must move every pinning profile's budget, not only the one
+  it edited. That measurement is the size of the set **as a real
   pack renders it** — the per-item and catalog score annotations at full score
   width, and the worst-case bundle-wide query section reserved rather than
   rendered — so it stands for the largest pack a task can compile, up to the one
