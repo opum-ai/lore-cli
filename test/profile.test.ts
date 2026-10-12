@@ -110,10 +110,10 @@ describe("defaultProfile — the built-in story convention (AC#3)", () => {
     // Constitution's four fields (LCLI-595) sit with the other per-type fields, where the compiler
     // places every type's own fields. A document carrying none of them is byte-identical; one that
     // already used one of these names as a producer-extension key moves it here on its next
-    // rewrite. Measured when added: 0 of lore-cli's 82 docs carry any of the four.
+    // rewrite. Measured when added: none of lore-cli's docs carry any of the four.
     //
     // Constants (LCLI-596) adds `last_reviewed` and `owner` after them (`version` is already
-    // Constitution's). Measured when added: 0 of lore-cli's docs/ and test/fixtures/ carry either.
+    // Constitution's). Measured when added: none of lore-cli's docs/ and test/fixtures/ carries either.
     expect(defaultProfile().canonicalKeyOrder).toEqual([
       "type",
       "title",

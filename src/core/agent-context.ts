@@ -640,7 +640,7 @@ export interface AgentProfileCapacity {
  * F2 held the placeholder at `1` on the reasoning that a non-zero constant is fixed-width. It is
  * not: {@link formatScore} strips trailing zeros, so `1` renders as ONE character while a real score
  * for a matching task renders as seven to ten (`0.142617`, `12.345678`). Measured 2026-10-01
- * (LCLI-662): the hit-free pack of this repository's `implementation` profile — 254 items — runs
+ * (LCLI-662): the hit-free pack of this repository's `implementation` profile runs
  * ~500 tokens larger than the measurement on a matching task, mostly this annotation. The
  * placeholder therefore carries four integer digits and six decimals, rendering to 11 characters —
  * at least the widest score observed in this repository's bundle (10, measured 2026-10-01). A score
