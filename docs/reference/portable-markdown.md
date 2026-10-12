@@ -149,9 +149,11 @@ lore's rules for staying MDX-safe:
 - **Rewrite an angle-bracket autolink; do not escape it.** An autolink such as
   `<https://x.example/>` (or `<a@b.com>`) carries its `<` and `>` as **link
   syntax**, so escaping the `<` — the rule above — writes a literal `&lt;` and
-  destroys the link. Write a bare URL or a `[text](url)` link instead; both render
-  everywhere the angle-bracket form does, and the portability lint flags the
-  angle-bracket form.
+  destroys the link. Write a `[text](url)` link instead, or a bare URL where the
+  target renders GFM autolink literals (GitHub, Obsidian). A bare URL is **plain
+  text** where it does not — the scaffolded MkDocs/Material config sets no autolink
+  extension — so `[text](url)` is the form that renders everywhere. The portability
+  lint flags neither.
 - **Files stay `.md`, never `.mdx`.** Keeping the `.md` extension is what makes
   the same file portable to GitHub/Obsidian/MkDocs. lore therefore never writes
   `.mdx`; instead, [`lore scaffold`](consumer-compatibility.md) configures
