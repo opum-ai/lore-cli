@@ -64,10 +64,17 @@ session sees it. The registration is therefore dropped (opum-doc seq 176/180) ra
 than left dead, and the pane opens through the skill's `dashboard` verb calling the
 module's tool (see "Opening the pane").
 
-`session.start` registers that tool and opens the pane, unfocused. The pane's id is
-`lore-pane`, its title "Lore", and on a mobile surface it says it needs the terminal or
-desktop. Its root is the session cwd's git toplevel (`git rev-parse --show-toplevel`);
-it refreshes on an explicit Refresh button and every 30 seconds while it is shown.
+`session.start` registers that tool in every process, and opens the pane -- unfocused --
+only where a person is at the prompt and the process is not a teammate. The auto-start gate
+(LCLI-705, DEC-172 (4bg) item 2) opens no pane, registers no clock and runs no read-back when
+`!e.isInteractive` (a headless `-p` run, the SDK, a dynamic-workflow child) or
+`$.env.get("CLAUDECODE") === "1"` (a teammate), so a fleet of teammate processes does not each
+open a pane and poll the bundle. The pane's id is `lore-pane`, its title "Lore", and on a
+mobile surface it says it needs the terminal or desktop. Its root is the session cwd's git
+toplevel (`git rev-parse --show-toplevel`), resolved on first need; it refreshes on an explicit
+Refresh button and every 30 seconds while it is shown. The clock is registered once per process
+and cancelled at `session.end`; an explicit open (the tool) works in a gated process too, and
+starts the clock from then on.
 
 ### Opening the pane
 

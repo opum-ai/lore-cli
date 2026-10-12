@@ -193,3 +193,103 @@ test("eight interactive sessions in one process still run ONE clock (LCLI-705 AC
   expect(seen.length - atStart).toBe(3);
 });
 
+// The in-flight guards themselves (LCLI-705 AC2). The fast `respond` above cannot exercise
+// them -- a run that resolves instantly is never still running -- so these HOLD a read-back and
+// assert a second period or a second refresh is dropped rather than stacked. Delete
+// `tickInFlight` or `refreshInFlight` and these go red.
+const loreBody = (sub: string) =>
+  ok(
+    sub === "types"
+      ? JSON.stringify({ kind: "types.report", data: { types: [] } })
+      : JSON.stringify({ kind: "query.results", data: { hits: [] } }),
+  );
+
+/** A process.run handler that can be put on hold: held `lore` runs block until `release`. */
+function holdable(on: On, seen: string[][]): { hold: () => void; release: () => void } {
+  let holding = false;
+  let release: (() => void) | null = null;
+  let gate: Promise<void> = Promise.resolve();
+  on("fs.read", async () => ({ value: "" }));
+  on("process.run", async (_$, e) => {
+    seen.push([...e.argv]);
+    if (e.argv[0] === "git") {
+      return ok("/repo\n");
+    }
+    if (holding) {
+      await gate;
+    }
+
+    return loreBody(e.argv[1] ?? "");
+  });
+
+  return {
+    hold() {
+      holding = true;
+      gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    },
+    release() {
+      holding = false;
+      release?.();
+      release = null;
+    },
+  };
+}
+
+test("a tick that finds the previous one still running is skipped (LCLI-705 AC2)", async ($, on) => {
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
+  mock.store(on);
+  const seen: string[][] = [];
+  const opens: Record<string, unknown>[] = [];
+  const held = holdable(on, seen);
+  engine(on, opens);
+
+  await $.session.end({ reason: "clear", sessionId: "lcli705-prior", resume: { id: "lcli705-prior" } });
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  await clock.settle();
+  const atStart = seen.length;
+
+  held.hold();
+  await clock.advance(31_000); // period 1: its read-back blocks on the hold and stays in flight
+  const afterTick1 = seen.length;
+  await clock.advance(31_000); // period 2: the first is still running, so this tick is SKIPPED
+  const afterTick2 = seen.length;
+  held.release();
+  await clock.settle(); // let the released run drain before the environment goes, so nothing rejects after the test
+
+  expect(afterTick1).toBeGreaterThan(atStart);
+  expect(afterTick2).toBe(afterTick1);
+});
+
+test("a refresh already in flight drops a second one (single-flight, LCLI-705 AC2)", async ($, on) => {
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
+  mock.store(on);
+  const seen: string[][] = [];
+  const opens: Record<string, unknown>[] = [];
+  const held = holdable(on, seen);
+  engine(on, opens);
+
+  await $.session.end({ reason: "clear", sessionId: "lcli705-prior", resume: { id: "lcli705-prior" } });
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  await clock.settle();
+
+  held.hold();
+  const before = seen.length;
+  const first = $.tool.call({ tool: "mcp__opum-lore__dashboard" }); // fires a refresh, held in flight
+  await clock.settle();
+  const mid = seen.length;
+  const second = $.tool.call({ tool: "mcp__opum-lore__dashboard" }); // refresh in flight -> dropped
+  await clock.settle();
+  const after = seen.length;
+  held.release();
+  await first;
+  await second;
+  await clock.settle(); // drain the released run before the environment goes
+
+  expect(mid).toBeGreaterThan(before);
+  expect(after).toBe(mid);
+});
+
