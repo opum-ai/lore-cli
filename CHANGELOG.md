@@ -66,7 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   skips its tick rather than stacking, and the timer is cancelled at `session.end` (which clears both
   in-flight guards). A refresh already in flight **coalesces** a second request rather than dropping
   it — exactly one more refresh runs after the current one finishes, so a person's press is never a
-  silent no-op — while only clock ticks are skipped in flight (LCLI-705, LCLI-707). No subprocess
+  silent no-op. The only thing skipped in flight is a tick that meets a PRIOR TICK; a tick that meets
+  an in-flight refresh is coalesced like any other caller. No subprocess
   spawns without its own timeout.
 
 - **A rerun after a COMPLETED Backlog-to-Quest migration is an idempotent success, keyed on Quest's

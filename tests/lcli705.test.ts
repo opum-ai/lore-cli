@@ -326,3 +326,69 @@ test("session.end clears the refresh guard, so a later refresh is not blocked (L
   await clock.settle();
 });
 
+test("a refresh that outlives session.end cannot clear the successor session's guard (LCLI-709)", async ($, on) => {
+  const clock = mock.clock(on, { now: Date.UTC(2026, 9, 2, 12) });
+  mock.env(on, {});
+  mock.store(on);
+  const seen: string[][] = [];
+  const opens: Record<string, unknown>[] = [];
+  engine(on, opens);
+  // Two independent gates: the first holds refresh #1's reads, the second holds everything after, so
+  // #1 can unwind while #2 is STILL in flight. Two gates are what makes the cross-session leak
+  // observable — with one, releasing it would let both refreshes finish and hide the clobber. The
+  // release calls live in a returned method so TypeScript does not narrow them to `null`.
+  let r1: (() => void) | null = null;
+  let r2: (() => void) | null = null;
+  const gate1 = new Promise<void>((resolve) => {
+    r1 = resolve;
+  });
+  const gate2 = new Promise<void>((resolve) => {
+    r2 = resolve;
+  });
+  const gates = {
+    held: (which: 1 | 2) => (which === 1 ? gate1 : gate2),
+    open: (which: 1 | 2) => {
+      (which === 1 ? r1 : r2)?.();
+    },
+  };
+  let armed: 1 | 2 = 1;
+  on("fs.read", async () => ({ value: "" }));
+  on("process.run", async (_$, e) => {
+    seen.push([...e.argv]);
+    if (e.argv[0] === "git") {
+      return ok("/repo\n");
+    }
+    await gates.held(armed);
+
+    return loreBody(e.argv[1] ?? "");
+  });
+
+  await $.session.end({ reason: "clear", sessionId: "lcli709-prior", resume: { id: "lcli709-prior" } });
+  await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+  await clock.settle();
+
+  const first = $.tool.call({ tool: "mcp__opum-lore__dashboard" }); // #1 (old generation), held on gate1
+  await clock.settle();
+  await $.session.end({ reason: "clear", sessionId: "lcli709-cur", resume: { id: "lcli709-cur" } });
+  armed = 2;
+  const second = $.tool.call({ tool: "mcp__opum-lore__dashboard" }); // #2 (new generation), held on gate2
+  await clock.settle();
+  const mid = seen.length;
+
+  gates.open(1); // #1 unwinds while #2 is still in flight — its `finally` must NOT clear #2's guard
+  await clock.settle();
+  await first;
+
+  const third = $.tool.call({ tool: "mcp__opum-lore__dashboard" }); // must COALESCE onto #2's guard
+  await clock.settle();
+  // With the generation token nothing new starts. Without it, #1's unwind left `refreshInFlight`
+  // false and this third request starts a SECOND concurrent refresh -> seen grows -> red.
+  expect(seen.length).toBe(mid);
+
+  gates.open(2);
+  await clock.settle();
+  await second;
+  await third;
+  await clock.settle();
+});
+
