@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.13.1] - 2026-10-13
+## [0.14.0] - 2026-10-13
 
 ### Added
 
@@ -16,7 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`0010-alpha.md`, `0010-beta.md`) that merge with no git conflict and no diagnostic. A new
   `duplicate-adr-ordinal` finding, **error-tier from its first release**, groups `adr/*.md` by the
   integer its leading digits parse to (so `0010-` and `10-` collide, `9` and `10` do not) and names every
-  conflicting path and the ordinal. The remedy is prose: no command is named, because no
+  conflicting path and the ordinal. **This may turn a bundle that passed `lore check` on 0.13.0 red**
+  (exit `6`). The fix: rename one of the colliding ADR files to an unused ordinal, and update every
+  link that names it. The remedy is prose: no command is named, because no
   `lore adr renumber` exists yet. It exits `6` through the existing error-count gate.
 
 - **`lore init` writes `docs/log.md merge=union` to the root `.gitattributes`** (LCLI-713, DEC-180 (4)).
@@ -37,7 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not only the one it edited. It is independent of DEC-11's `agent-profile-capacity` warning and its
   held flip (LCLI-646), which are unchanged. lore-cli's own budgets move in the same change, because
   both name the grown source: `implementation` 108000 -> 111000 and `verification` 96523 -> 97000, so
-  the new gate passes here.
+  the new gate passes here. **This may turn a bundle that passed `lore check` on 0.13.0 red** (exit
+  `6`). The fix: raise the `budget` of every profile the finding names until its deficit is zero, or
+  remove the source from the profiles that should not pin it.
 
 ### Changed
 
