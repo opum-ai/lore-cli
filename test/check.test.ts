@@ -1024,6 +1024,95 @@ describe("checkBundle — frontmatter-free leading indented code block (LORE-240
   });
 });
 
+// ── checkBundle: duplicate ADR ordinal (DEC-180 (1), LCLI-712) ───────────────────
+//
+// `lore new adr` numbers from the working tree alone (`nextAdrNumber`, commands/new.ts), so two
+// branches each scaffolding "the next" ADR get different slugs (0010-alpha.md, 0010-beta.md) that
+// merge with NO git conflict — nothing about the two names is textually equal, so git has nothing
+// to flag. The bundle-wide `duplicate-adr-ordinal` rule groups `docs/adr` files by the INTEGER their
+// leading `\d+` prefix parses to and reports an error when two share one, so the collision surfaces
+// at the gate (lore check exits 6) instead of silently. The comparison must be NUMERIC: the ordinal
+// is what `lore new` assigns, and it compares `0010-…` and `10-…` as the same 10.
+
+describe("checkBundle — duplicate ADR ordinal (DEC-180 (1), LCLI-712)", () => {
+  /** One ADR-shaped fixture: a Reference-typed doc at an `adr/…` path with a link-free body, so the
+   *  only finding it can produce is the one under test. */
+  function adr(path: string): CheckInputFile {
+    return { path, raw: ref("Doc", "No links.") };
+  }
+
+  function ordinalFindings(files: CheckInputFile[]) {
+    return checkBundle(files).findings.filter((f) => f.rule === "duplicate-adr-ordinal");
+  }
+
+  test("AC1: two ADRs sharing an ordinal report exactly one error naming BOTH paths and the ordinal", () => {
+    const findings = ordinalFindings([adr("adr/0010-alpha.md"), adr("adr/0010-beta.md")]);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      severity: "error",
+      rule: "duplicate-adr-ordinal",
+      // Stable attribution: the first conflicting path in code-unit order.
+      file: "adr/0010-alpha.md",
+    });
+    expect(findings[0]?.message).toContain("duplicate ADR ordinal 10");
+    expect(findings[0]?.message).toContain("adr/0010-alpha.md");
+    expect(findings[0]?.message).toContain("adr/0010-beta.md");
+    // The remedy is prose: it must name no `lore` subcommand, because `lore adr renumber` (DEC-180
+    // (2)) does not exist yet and pointing a user at it would be a lie.
+    expect(findings[0]?.message).not.toMatch(/\blore\b/);
+  });
+
+  test("AC1: a shared ordinal is an error-severity finding, so the report counts a failure", () => {
+    const report = checkBundle([adr("adr/0010-alpha.md"), adr("adr/0010-beta.md")]);
+    expect(report.errorCount).toBe(1);
+  });
+
+  test("AC2: distinct ordinals 9 and 10 report no ordinal finding", () => {
+    expect(ordinalFindings([adr("adr/0009-a.md"), adr("adr/0010-b.md")])).toEqual([]);
+  });
+
+  test("AC2: distinct ordinals 99 and 100 report no ordinal finding (numeric, not lexicographic)", () => {
+    expect(ordinalFindings([adr("adr/0099-a.md"), adr("adr/0100-b.md")])).toEqual([]);
+  });
+
+  test("AC2 (control): a bundle of ADRs with unique ordinals yields no duplicate-ordinal finding", () => {
+    const findings = ordinalFindings([
+      adr("adr/0001-a.md"),
+      adr("adr/0002-b.md"),
+      adr("adr/0010-c.md"),
+      adr("adr/0100-d.md"),
+    ]);
+    expect(findings).toEqual([]);
+  });
+
+  test("MUTATION ARM: a numeric collision differing only in zero-padding is reported (0010 vs 10)", () => {
+    // Predicted: the pair below shares integer ordinal 10, so the NUMERIC comparison reports it and
+    // this test stays green. Keying the group by the RAW PREFIX STRING would instead compare "0010"
+    // against "10", see two distinct keys, and MISS the pair — this test would go red.
+    // OBSERVED (2026-10-13): with `pathsByOrdinal` keyed on the raw prefix string, this test failed
+    // (`expected [  ] to have a length of 1` → received 0 findings); restoring the numeric key made
+    // it pass. Predicted red, observed red.
+    const findings = ordinalFindings([adr("adr/0010-a.md"), adr("adr/10-b.md")]);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.message).toContain("duplicate ADR ordinal 10");
+    expect(findings[0]?.file).toBe("adr/0010-a.md");
+  });
+
+  test("neither a non-ADR path nor an ADR with no leading ordinal joins a group", () => {
+    // `reference/0010-b.md` is outside adr/, and `adr/notes.md` carries no ordinal: neither shares a
+    // group, so neither can manufacture a collision with the real ADR.
+    const findings = ordinalFindings([adr("adr/0010-a.md"), adr("reference/0010-b.md"), adr("adr/notes.md")]);
+    expect(findings).toEqual([]);
+  });
+
+  test("three ADRs on one ordinal report ONE finding naming all three, in stable order", () => {
+    const findings = ordinalFindings([adr("adr/0007-c.md"), adr("adr/0007-a.md"), adr("adr/0007-b.md")]);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.file).toBe("adr/0007-a.md");
+    expect(findings[0]?.message).toContain("adr/0007-a.md, adr/0007-b.md and adr/0007-c.md");
+  });
+});
+
 // ── Command layer: runCheck ──────────────────────────────────────────────────────
 
 describe("runCheck — exit codes and discovery", () => {
@@ -1140,6 +1229,28 @@ describe("runCheck — exit codes and discovery", () => {
       rule: "broken-link",
     });
     expect(report.data.findings[0].message).toContain("reference/ghost.md");
+  });
+
+  test("AC1 (command layer): a duplicate ADR ordinal makes lore check exit 6 with the error finding", () => {
+    writeFileSync(join(root, "docs", "adr", "0010-alpha.md"), ref("Alpha", "No links."));
+    writeFileSync(join(root, "docs", "adr", "0010-beta.md"), ref("Beta", "No links."));
+    const json = opts([], JSON_CTX);
+    expect(runCheck(json)).toBe(EXIT_CODES.validation);
+    const report = JSON.parse((json.stdout as ReturnType<typeof capture>).text());
+    expect(report.data.findings).toContainEqual(
+      expect.objectContaining({
+        severity: "error",
+        rule: "duplicate-adr-ordinal",
+        file: "adr/0010-alpha.md",
+        message: expect.stringContaining("adr/0010-beta.md"),
+      }),
+    );
+  });
+
+  test("AC1/AC2 (command layer, control): distinct ADR ordinals exit 0", () => {
+    writeFileSync(join(root, "docs", "adr", "0009-a.md"), ref("A", "No links."));
+    writeFileSync(join(root, "docs", "adr", "0010-b.md"), ref("B", "No links."));
+    expect(runCheck(opts([]))).toBe(EXIT_OK);
   });
 
   test("reports skipped out-of-bundle links in JSON and the plain summary without failing the gate", () => {

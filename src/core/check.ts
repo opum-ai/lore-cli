@@ -68,7 +68,7 @@ import { compareCodeUnits } from "./order";
 import { ATTESTED_COMPUTATION_TYPE } from "./profile";
 import type { ReconciledStatus } from "./reconcile";
 import { claimVersion, RELATION_KINDS, readRelations, relationVersionState } from "./relations";
-import { foldSchemaName, readGeneratorStamp } from "./schema";
+import { foldSchemaName, readGeneratorStamp, typeDirectory } from "./schema";
 import { strayFenceMessage } from "./validate";
 
 /** `error` fails the gate (exit `6`); `warning` is advisory (fails only under `--strict`). The shared {@link Severity}. */
@@ -103,6 +103,16 @@ export type CheckSeverity = Severity;
  * reported. `singleton-type` is a second document of a type a bundle may hold only one of (error),
  * counted per selected bundle root.
  *
+ * `duplicate-adr-ordinal` (LCLI-712, DEC-180 (1)) is a **bundle-wide** error, the one rule here that
+ * is neither per-file nor a drift comparison: two ADRs under the ADR directory whose filenames share
+ * a leading ordinal — `/^(\d+)-/`, compared NUMERICALLY so `0010-…` and `10-…` collide. It reports a
+ * collision `lore new adr` structurally CANNOT prevent: {@link nextAdrNumber} numbers from the working
+ * tree alone, so two branches each scaffolding "the next" ADR produce different slugs
+ * (`0010-alpha.md`, `0010-beta.md`) that merge with no git conflict. The finding is attributed to the
+ * first conflicting path in {@link compareCodeUnits} order and its message names every conflicting
+ * path and the duplicated integer; the remedy is stated in prose because `lore adr renumber` does not
+ * exist yet (DEC-180 (2)) — the message names no `lore` subcommand it could not run.
+ *
  * `source-of-truth`, `zero-entries-read` and `deprecated-reference` (LCLI-596) come from a
  * registered type's BUNDLE rules (`TypeRule.bundle`), today only the built-in Constants type:
  * an entry whose JSON/TOML/YAML `source_of_truth` disagrees with its `value` or cannot be read
@@ -136,6 +146,7 @@ export type CheckRule =
   | "managed-block-drift"
   | "unsupported-task-coupling"
   | "index-drift"
+  | "duplicate-adr-ordinal"
   | "schema-drift"
   | "schema-unattributable"
   | "okf-version"
@@ -535,7 +546,79 @@ export function checkBundle(
     }
   }
 
+  // Post-loop, cross-file pass (DEC-180 (1)): a duplicate ADR ordinal is a property of the whole
+  // membership, not of any one file, so it is judged after every path is known — the same reason the
+  // link pass runs in a second pass over a fully-indexed bundle. Appended last so it reads after the
+  // per-file findings, and before summarize so its errors are counted into the gate's exit code.
+  findings.push(...duplicateAdrOrdinalFindings(files));
+
   return summarize(findings, files.length, skippedOutOfBundleLinkCount);
+}
+
+/**
+ * An ADR filename's leading ordinal — `"0007"` from `0007-cli-contract.md`, `/^(\d+)-/`. The SAME
+ * shape `lore new`'s {@link nextAdrNumber} counts from (`commands/new.ts`), so a collision detected
+ * here is exactly one scaffolder assignment could not see coming (it numbers from the working tree
+ * alone). Kept a local literal rather than imported: `new.ts`'s copy answers "which number to
+ * assign" and this one "which numbers already exist", and exporting one to serve both would couple
+ * two concerns that are otherwise free to differ.
+ */
+const ADR_ORDINAL_PREFIX = /^(\d+)-/;
+
+/**
+ * Bundle-wide (DEC-180 (1), LCLI-712): report ONE error finding for each integer ordinal that two or
+ * more ADRs directly under the ADR directory share.
+ *
+ * The ordinal is the leading `\d+` of the basename parsed as an INTEGER, never the raw prefix string.
+ * That is the whole point: `lore new adr` zero-pads to 4 digits (`nextAdrNumber`), so a branch that
+ * scaffolds `0010-alpha.md` and another reusing the un-padded `10-b.md` name the SAME ordinal — a
+ * string-keyed grouping would report no collision for that pair. The numeric key matches how ADR
+ * order actually reads.
+ *
+ * Paths are attributed and named in {@link compareCodeUnits} order so the finding's `file` and its
+ * message are deterministic regardless of the order the command layer walked the bundle in. The
+ * ADR directory is taken from the schema's own type→directory mapping ({@link typeDirectory}) rather
+ * than a repeated `"adr"` literal, so this rule and `lore new` cannot drift to two folder names.
+ */
+function duplicateAdrOrdinalFindings(files: readonly CheckInputFile[]): CheckFinding[] {
+  const adrDirectory = typeDirectory("ADR");
+  const pathsByOrdinal = new Map<number, string[]>();
+  for (const file of files) {
+    if (posix.dirname(file.path) !== adrDirectory) {
+      continue;
+    }
+    const match = ADR_ORDINAL_PREFIX.exec(posix.basename(file.path));
+    if (match === null) {
+      continue;
+    }
+    const ordinal = Number.parseInt(match[1] as string, 10);
+    const paths = pathsByOrdinal.get(ordinal);
+    if (paths === undefined) {
+      pathsByOrdinal.set(ordinal, [file.path]);
+    } else {
+      paths.push(file.path);
+    }
+  }
+
+  const findings: CheckFinding[] = [];
+  // Ascending integer order so a multi-collision bundle reports deterministically and reads in
+  // ordinal order.
+  for (const ordinal of [...pathsByOrdinal.keys()].sort((a, b) => a - b)) {
+    const conflicting = [...(pathsByOrdinal.get(ordinal) as string[])].sort(compareCodeUnits);
+    if (conflicting.length < 2) {
+      continue;
+    }
+    // >= 2, so `slice(0, -1)` names the leading paths and the tail is the last: "a and b" for two,
+    // "a, b and c" for more.
+    const named = `${conflicting.slice(0, -1).join(", ")} and ${conflicting[conflicting.length - 1] as string}`;
+    findings.push({
+      severity: "error",
+      rule: "duplicate-adr-ordinal",
+      file: conflicting[0] as string,
+      message: `duplicate ADR ordinal ${ordinal}: ${named} — renumber one of them to the next free ordinal and update its links`,
+    });
+  }
+  return findings;
 }
 
 /** A file's frontmatter mapping, or an empty one when it has none or cannot be parsed. */
