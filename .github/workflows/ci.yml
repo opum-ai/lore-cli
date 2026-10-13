@@ -137,7 +137,7 @@ env:
   # quest-cli's main promoted, this is quest-cli's dev tip again, carrying
   # 0.13.0 in package.json. The fallback fires only when the version CLAUDE.md
   # declares is absent from npm, so the npm path is what runs today.
-  QUEST_SOURCE_REF: b1011e405b3b8a34bb94046ef85e932e1c1d4fd1
+  QUEST_SOURCE_REF: b39314ce76378560651bdfd421cb86d5662c5bea
 
 jobs:
   check:
