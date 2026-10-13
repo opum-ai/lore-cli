@@ -346,6 +346,7 @@ describe("lore init — fresh bundle (AC#1)", () => {
       ".lore/schemas/attested-computation.schema.json",
       ".lore/templates/.gitkeep",
       "docs/index.md",
+      ".gitattributes",
     ]);
     for (const path of result.created) {
       expect(existsSync(join(root, path))).toBe(true);
@@ -420,7 +421,9 @@ describe("lore init — idempotent re-run (AC#2)", () => {
     expect(code).toBe(0);
     expect(result.created).toEqual([]);
     // 16, not 15: Arc's deprecated `Story` alias scaffolds a schema file of its own (LCLI-553).
-    expect(result.skipped.length).toBe(16);
+    // 17, not 16: the managed `docs/log.md merge=union` line makes `.gitattributes` a path this
+    // run leaves untouched on the second pass (LCLI-713).
+    expect(result.skipped.length).toBe(17);
     expect(readFileSync(join(root, "docs/index.md"), "utf8")).toBe(before);
   });
 
@@ -444,6 +447,62 @@ describe("lore init — idempotent re-run (AC#2)", () => {
     expect(result.created).toEqual([".lore/schemas/adr.schema.json"]);
     expect(result.skipped).toContain("docs/index.md");
     expect(existsSync(join(root, ".lore/schemas/adr.schema.json"))).toBe(true);
+  });
+});
+
+/**
+ * LCLI-713, DEC-180 (4): `lore init` ensures the root `.gitattributes` carries
+ * `docs/log.md merge=union`, so two branches that each append a `log.md` entry merge cleanly
+ * instead of conflicting. This is a managed LINE (not a whole scaffold file), so it is applied by
+ * the command layer ({@link ensureLogMergeUnionAttribute}) rather than the pure scaffold plan — these
+ * tests exercise the command-layer discipline: create-when-missing, append-without-clobber,
+ * byte-identical re-run, and no-op when the line is already present.
+ */
+describe("lore init — the docs/log.md union-merge attribute (LCLI-713, DEC-180 (4))", () => {
+  const LINE = "docs/log.md merge=union";
+
+  test("fresh bundle: creates .gitattributes carrying the line, reported created", async () => {
+    const { code, result } = await init();
+    expect(code).toBe(0);
+    expect(result.created).toContain(".gitattributes");
+    expect(readFileSync(join(root, ".gitattributes"), "utf8")).toBe(`${LINE}\n`);
+  });
+
+  test("pre-existing .gitattributes: appends the line, preserving every existing line", async () => {
+    const original = "* text=auto eol=lf\n\n*.png binary\n";
+    writeFileSync(join(root, ".gitattributes"), original);
+    const { code, result } = await init();
+    expect(code).toBe(0);
+    expect(result.created).toContain(".gitattributes");
+    expect(readFileSync(join(root, ".gitattributes"), "utf8")).toBe(`${original}${LINE}\n`);
+  });
+
+  test("appends after an unterminated final line without gluing onto it", async () => {
+    writeFileSync(join(root, ".gitattributes"), "*.png binary"); // no trailing newline
+    await init();
+    expect(readFileSync(join(root, ".gitattributes"), "utf8")).toBe(`*.png binary\n${LINE}\n`);
+  });
+
+  test("re-run is a byte-identical no-op: exactly one line, reported skipped", async () => {
+    await init();
+    const before = readFileSync(join(root, ".gitattributes"), "utf8");
+    expect(before.split(LINE).length - 1).toBe(1);
+
+    const { code, result } = await init();
+    expect(code).toBe(0);
+    expect(readFileSync(join(root, ".gitattributes"), "utf8")).toBe(before);
+    expect(result.created).not.toContain(".gitattributes");
+    expect(result.skipped).toContain(".gitattributes");
+  });
+
+  test("a file already carrying the line is left byte-for-byte untouched", async () => {
+    const original = `*.png binary\n${LINE}\n`;
+    writeFileSync(join(root, ".gitattributes"), original);
+    const { code, result } = await init();
+    expect(code).toBe(0);
+    expect(readFileSync(join(root, ".gitattributes"), "utf8")).toBe(original);
+    expect(result.created).not.toContain(".gitattributes");
+    expect(result.skipped).toContain(".gitattributes");
   });
 });
 
