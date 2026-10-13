@@ -11,3 +11,8 @@
 *.ico  binary
 *.woff binary
 *.woff2 binary
+
+# docs/log.md is append-only and regenerated from git history by `lore sync`
+# (DEC-180 (4)). A union merge keeps both branches' appended entries instead of
+# conflicting; the following sync de-duplicates and orders them.
+docs/log.md merge=union

@@ -78,7 +78,7 @@
  * actually-requested backlog check return a `Promise`.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as readline from "node:readline/promises";
 import type { Readable, Writable } from "node:stream";
@@ -126,7 +126,7 @@ import {
   thenMaybe,
 } from "../core/agent-plugins";
 import { loadProfile } from "../core/profile";
-import { buildScaffold } from "../core/scaffold";
+import { buildScaffold, DOCS_DIR } from "../core/scaffold";
 import { ANSI, EXIT_OK, LoreError, paint, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { applyCutover } from "../tracker-cutover";
@@ -148,7 +148,14 @@ import { type AgentsResult, applyAgentsBridge, bridgeActionColor, renderTrailer 
 import { type AntigravityBridgeResult, applyAntigravityBridge } from "./antigravity-bridge";
 import { optionValues, parseCommandArgs, singleOptionValue, usage } from "./args";
 import { applyCodexBridge, type CodexBridgeResult } from "./codex-bridge";
-import { assertNoSymlinkInPath, assertScaffoldPathsFree, createIfAbsent, ensureDir, writeFileAtomic } from "./fswrite";
+import {
+  assertNoSymlinkInPath,
+  assertScaffoldPathsFree,
+  createIfAbsent,
+  ensureDir,
+  writeFileAtomic,
+  writeFileOverwriting,
+} from "./fswrite";
 import { applyHermesBridge, type HermesBridgeResult } from "./hermes-bridge";
 import { applyScaffold, TARGETS as SCAFFOLD_TARGETS, type ScaffoldResult } from "./scaffold";
 
@@ -729,11 +736,76 @@ async function verifyBackendReadiness(
   }
 }
 
-/** The base OKF bundle this run wrote (or found already present). */
+/**
+ * The base OKF bundle this run wrote (or found already present).
+ */
 interface BaseScaffold {
   root: string;
   created: string[];
   skipped: string[];
+}
+
+/** The root `.gitattributes` — where a bundle records the merge attributes its generated files need. */
+const GITATTRIBUTES_PATH = ".gitattributes";
+
+/**
+ * The exact line `lore init` ensures in the root `.gitattributes` (DEC-180 (4)). `docs/log.md` is
+ * append-only and regenerated from git history, so two branches that each append an entry must merge
+ * as a union rather than conflict; `lore sync` then de-duplicates and orders the result.
+ */
+const LOG_MERGE_UNION_LINE = `${DOCS_DIR}/log.md merge=union`;
+
+/**
+ * Ensure the root `.gitattributes` carries {@link LOG_MERGE_UNION_LINE}.
+ *
+ * This is a managed **line**, not a whole file, which is exactly why it lives in the command layer
+ * and NOT in the pure {@link buildScaffold}: the scaffold plan describes whole files applied by
+ * {@link createIfAbsent} (write-if-absent), which cannot express "add one line only when it is
+ * missing, preserving every existing line". A pre-existing `.gitattributes` is the common case — this
+ * repository has one — and it must never be clobbered or reordered, so the command reads the current
+ * bytes, appends the line only when that exact line is absent (tolerating a trailing `\r` and
+ * surrounding whitespace), and creates the file when it is missing. It is idempotent by construction:
+ * a second run over a file that already carries the line writes nothing, so the file stays
+ * byte-identical.
+ *
+ * Deliberately NOT routed through {@link assertScaffoldPathsFree}: that preflight refuses a
+ * PRE-EXISTING path, and an existing `.gitattributes` is precisely the case this step exists to
+ * extend rather than to refuse. The shared symlink guard still applies
+ * ({@link assertNoSymlinkInPath}), so a symlinked `.gitattributes` refuses rather than redirecting the
+ * write outside the repo.
+ *
+ * Returns `"created"` when this call made the file, `"updated"` when it appended the line to an
+ * existing one, and `"unchanged"` when the line was already present (a byte-identical no-op).
+ */
+function ensureLogMergeUnionAttribute(root: string): "created" | "updated" | "unchanged" {
+  assertNoSymlinkInPath(root, GITATTRIBUTES_PATH);
+  const abs = join(root, GITATTRIBUTES_PATH);
+  const current = existsSync(abs) ? readFileSync(abs, "utf8") : undefined;
+  if (current !== undefined && hasLogMergeUnionLine(current)) {
+    return "unchanged";
+  }
+  const next = current === undefined ? `${LOG_MERGE_UNION_LINE}\n` : appendManagedLine(current, LOG_MERGE_UNION_LINE);
+  writeFileOverwriting(abs, next, GITATTRIBUTES_PATH);
+  return current === undefined ? "created" : "updated";
+}
+
+/**
+ * Whether `contents` already carries {@link LOG_MERGE_UNION_LINE} as a line. Compared after stripping
+ * a trailing `\r` (a CRLF working copy parses identically to an LF one) and surrounding whitespace, so
+ * the idempotency guard holds whether the line was written by lore or by hand.
+ */
+function hasLogMergeUnionLine(contents: string): boolean {
+  return contents.split("\n").some((line) => line.replace(/\r$/, "").trim() === LOG_MERGE_UNION_LINE);
+}
+
+/**
+ * Append `line` to `contents`, preserving every existing byte and adding exactly one separating
+ * newline even when the file does not already end with one — so a file whose last line is
+ * unterminated is extended rather than corrupted (the appended attribute must never glue onto it).
+ */
+function appendManagedLine(contents: string, line: string): string {
+  const separator = contents === "" || contents.endsWith("\n") ? "" : "\n";
+  return `${contents}${separator}${line}\n`;
 }
 
 /**
@@ -761,6 +833,15 @@ function applyBaseScaffold(options: InitOptions, plan: ReturnType<typeof buildSc
     } else {
       skipped.push(file.path);
     }
+  }
+  // A managed LINE applied after the whole-file scaffold (DEC-180 (4)) — see
+  // {@link ensureLogMergeUnionAttribute} for why it is separate from the pure plan. A file this call
+  // made or extended is reported as created (the base-scaffold vocabulary has no "updated" bucket and
+  // `skipped` means "left untouched"); an already-correct file is a no-op and lands in `skipped`.
+  if (ensureLogMergeUnionAttribute(options.root) === "unchanged") {
+    skipped.push(GITATTRIBUTES_PATH);
+  } else {
+    created.push(GITATTRIBUTES_PATH);
   }
   return { root: options.root, created, skipped };
 }

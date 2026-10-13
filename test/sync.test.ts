@@ -63,6 +63,11 @@ function readDoc(rel: string): string {
   return readFileSync(join(root, "docs", rel), "utf8");
 }
 
+/** How many times `needle` occurs in `haystack` — for `log.md` dedup assertions (LCLI-713). */
+function countOccurrences(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1;
+}
+
 function docExists(rel: string): boolean {
   try {
     readDoc(rel);
@@ -1230,5 +1235,135 @@ describe("lore sync — real git integration + router", () => {
     expect(code).toBe(EXIT_OK);
     const envelope = JSON.parse(stdout.text()) as { kind: string; data: SyncReport };
     expect(envelope.kind).toBe("sync.result");
+  });
+
+  /**
+   * LCLI-713, DEC-180 (4): `docs/log.md` unions on merge, and `lore sync` then keeps the result
+   * de-duplicated and canonically ordered.
+   *
+   * The two appends below are deliberately ordered so a merge that preserved file order would be
+   * OUT of canonical order (branch A's entry is the later instant, branch B's the earlier) — only a
+   * real sort after the merge can put them right — and the shared `base entry` line, present on both
+   * sides, must still appear exactly once (the union must not duplicate it).
+   */
+  describe("LCLI-713 — docs/log.md unions on merge, then re-syncs deduped + ordered", () => {
+    const BASE_LOG = "# Change log\n\n## docs\n\n- 2026-01-01T00:00:00Z base000 base entry\n";
+    const A_ENTRY = "- 2026-01-02T00:00:00Z aaaaaaa add a\n";
+    const B_ENTRY = "- 2026-01-01T12:00:00Z bbbbbbb add b\n";
+
+    function trunkBranch(): string {
+      return Bun.spawnSync(["git", "rev-parse", "--abbrev-ref", "HEAD"], { cwd: root, stdout: "pipe" })
+        .stdout.toString("utf8")
+        .trim();
+    }
+
+    /** Commit a divergent `docs/log.md` append on a fresh branch off `trunk`, then return to it. */
+    function appendOnBranch(trunk: string, name: string, entry: string): void {
+      git(["checkout", "-q", trunk]);
+      git(["checkout", "-q", "-b", name]);
+      writeDoc("log.md", BASE_LOG + entry);
+      git(["add", "."]);
+      git(["commit", "-q", "-m", name]);
+    }
+
+    async function syncReal(): Promise<number> {
+      return runSync({
+        root,
+        output: JSON_CTX,
+        args: [],
+        adapter: fakeAdapter([]),
+        gitAdapter: realGitAdapter(root),
+        resolveHead: resolveHeadSha,
+        gitSpawn: bunGitSpawn(root),
+        stdout: capture(),
+        stderr: capture(),
+      });
+    }
+
+    test("AC2 + AC4 (clean arm): the union merge is clean and the following sync dedupes, orders, and is idempotent", async () => {
+      git(["init", "-q"]);
+      git(["config", "user.name", "lore test"]);
+      git(["config", "user.email", "lore-test@example.com"]);
+      // A base doc so the bundle loads, a committed log.md the branches will diverge on, and the
+      // union attribute (as `lore init` writes it).
+      writeDoc("stories/x.md", storyDoc("X", [], "todo"));
+      writeDoc("log.md", BASE_LOG);
+      writeFileSync(join(root, ".gitattributes"), "docs/log.md merge=union\n");
+      git(["add", "."]);
+      git(["commit", "-q", "-m", "base"]);
+      const trunk = trunkBranch();
+
+      appendOnBranch(trunk, "feat-a", A_ENTRY);
+      appendOnBranch(trunk, "feat-b", B_ENTRY);
+      git(["checkout", "-q", "feat-a"]);
+      // CLEAN: the union attribute is present, so both appends survive the merge — no conflict.
+      git(["merge", "--no-edit", "feat-b"]);
+
+      const code = await syncReal();
+      expect(code).toBe(EXIT_OK);
+      const log = readDoc("log.md");
+      expect(countOccurrences(log, "add a")).toBe(1);
+      expect(countOccurrences(log, "add b")).toBe(1);
+      expect(countOccurrences(log, "base entry")).toBe(1); // present on both sides; union must not duplicate it
+      // Canonical order by instant, NOT file order: base (00:00) < add b (12:00) < add a (next day).
+      expect(log.indexOf("base entry")).toBeLessThan(log.indexOf("add b"));
+      expect(log.indexOf("add b")).toBeLessThan(log.indexOf("add a"));
+
+      // AC2 idempotency: a second sync over the same history rewrites nothing.
+      await syncReal();
+      expect(readDoc("log.md")).toBe(log);
+    });
+
+    test("AC4 (mutation arm): without the attribute the SAME merge conflicts (predicted: conflict)", async () => {
+      git(["init", "-q"]);
+      git(["config", "user.name", "lore test"]);
+      git(["config", "user.email", "lore-test@example.com"]);
+      writeDoc("log.md", BASE_LOG); // NO .gitattributes with the union line
+      git(["add", "."]);
+      git(["commit", "-q", "-m", "base"]);
+      const trunk = trunkBranch();
+
+      appendOnBranch(trunk, "feat-a", A_ENTRY);
+      appendOnBranch(trunk, "feat-b", B_ENTRY);
+      git(["checkout", "-q", "feat-a"]);
+
+      // `gitRun` throws on non-zero, so spawn the merge directly to inspect the failure rather than
+      // the exception. Predicted: exit != 0 with conflict markers. Observed: exactly that.
+      const merge = Bun.spawnSync(["git", "merge", "--no-edit", "feat-b"], {
+        cwd: root,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(merge.exitCode).not.toBe(0);
+      expect(readDoc("log.md")).toContain("<<<<<<<");
+      // The attribute really is absent in this repository (the mutation is the input, not the code).
+      const attr = Bun.spawnSync(["git", "check-attr", "merge", "docs/log.md"], {
+        cwd: root,
+        stdout: "pipe",
+      }).stdout.toString("utf8");
+      expect(attr).toContain("unspecified");
+    });
+  });
+});
+
+/**
+ * LCLI-713, DEC-180 (4): the merge identity is `(timestamp, hash)`, never timestamp alone — so two
+ * genuinely different entries that share one timestamp both survive a regeneration, and a committed
+ * entry that a DIFFERENT commit happens to share a timestamp with is not swallowed as a duplicate.
+ * The recorded mutation arm (keying on timestamp alone) drops the second entry; this is the positive
+ * control that would go red.
+ */
+describe("lore sync — LCLI-713: a distinct entry sharing a timestamp is never dropped", () => {
+  test("a committed entry sharing a timestamp with a derived one (different hash) survives", () => {
+    const ts = "2026-03-01T00:00:00Z";
+    const commits: GitCommit[] = [{ hash: "aaaaaaa", timestamp: ts, subject: "derived-one", files: ["docs/a.md"] }];
+    const existing = `# Change log\n\n## docs\n\n- ${ts} aaaaaaa derived-one\n- ${ts} bbbbbbb carried-two\n`;
+    const out = generateLog(commits, { existing });
+    // The derived commit renders once; the committed entry with the SAME timestamp but a different
+    // hash is carried forward rather than deduped away.
+    expect(countOccurrences(out, "derived-one")).toBe(1);
+    expect(countOccurrences(out, "carried-two")).toBe(1);
+    // Two distinct commits, two entry lines — nothing collapsed.
+    expect(out.split("\n").filter((line) => line.startsWith("- ")).length).toBe(2);
   });
 });
