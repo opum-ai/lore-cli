@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-10-13
+
 ### Added
+
+- **`lore check` errors on a duplicate ADR ordinal** (LCLI-712, DEC-180 (1)). `lore new adr` numbers
+  from the working tree alone, so two branches that each scaffold "the next" ADR get different slugs
+  (`0010-alpha.md`, `0010-beta.md`) that merge with no git conflict and no diagnostic. A new
+  `duplicate-adr-ordinal` finding, **error-tier from its first release**, groups `adr/*.md` by the
+  integer its leading digits parse to (so `0010-` and `10-` collide, `9` and `10` do not) and names every
+  conflicting path and the ordinal. The remedy is prose: no command is named, because no
+  `lore adr renumber` exists yet. It exits `6` through the existing error-count gate.
+
+- **`lore init` writes `docs/log.md merge=union` to the root `.gitattributes`** (LCLI-713, DEC-180 (4)).
+  `docs/log.md` is append-only and regenerated from git history, so two branches that each append an
+  entry conflicted at merge although either side plus a re-run of `lore sync` is correct. The attribute
+  is a managed line: created when the file is missing, appended without clobbering an existing file, and
+  byte-identical on a re-run. `lore sync` already keeps a union-merged log de-duplicated and
+  canonically ordered (identity is `(timestamp, hash)`), verified against a real two-append merge.
+  lore-cli's own `.gitattributes` adopts the line.
 
 - **`lore check` fails when a source several agent profiles name leaves any of them over capacity**
   (LCLI-702, DEC-172 (4at)). A source NAMED by several `.lore/agents/*.toml` profiles — in `pinned`
@@ -53,6 +71,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the autolink rather than a second time. Decided by opum-doc DEC-172 (4at) and narrowed by
   DEC-172 (4bi); a repository that now shows a non-zero portability warning count is **expected, not
   a CI break** — warnings alone still exit `0`.
+
+- **The denied `--remove-backlog` hint names only a recovery that works** (LCLI-525, DEC-172 (4af)).
+  The old hint said to clean `backlog/` and rerun, and the rerun failed with a conflict (exit `5`) on
+  the aliases the first run had created. The hint now says there is no removal-only path after an
+  applied migration, and that deleting `backlog/` by hand skips the verified archive. The refusal's
+  `input` also carries `migrationDigest` and `migrationApplied` (additive under cli-contract §7.1), the
+  only channel a `--json` caller has, since stdout is empty on exit `4`.
+
+- **The MDX autolink remedy reads "use `[text](url)`" only** (LCLI-706, DEC-172 (4bi)). A bare URL is
+  plain text in the scaffolded MkDocs config, so it is dropped from the remedy. Detection is unchanged.
 
 ### Fixed
 
@@ -107,6 +135,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   contradicting the portable-markdown spec, which states that escaping **is** portable. The scan
   now reads each text node's **source** span, so references pass and raw `<`/`{` in prose still
   warn. Found in the field by opum-doc on lore 0.12.0, measured 2026-10-01.
+
+- **`lore sync` logs no entry for a commit whose only bundle change is `docs/log.md`** (LCLI-711,
+  DEC-172 (4bq)). The log's own file counted as a touched folder, so every sync that committed the log
+  earned another entry and the log never reached a fixed point. A mixed commit (the log plus a concept)
+  is still logged by its other paths, and `index.md` still counts.
+
+- **`scripts/promote-latest.mjs` refuses a zero-byte promotion record** (LCLI-641). An empty record
+  read as "no record", so a `--promote` reached the exclusive record write and died with an uncaught
+  `EEXIST`. It is now refused before any registry write, on `--dry-run` and `--promote` alike, naming
+  the path and exiting `1`. A missing record still takes the fresh path unchanged.
 
 ## [0.13.0] - 2026-10-07
 
