@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **An ADR type in `.lore/profile.toml` may declare `superseded_status`** (LCLI-723, DEC-192 (6)) —
+  the `status` value `lore supersede` writes when the type's lifecycle enum does not contain
+  `deprecated`, e.g. `{ name = "ADR", superseded_status = "approved" }` beside `fields` and
+  `sections`. It must be a member of that type's effective `status` enum or the profile refuses to
+  load, by name; it is profile configuration rather than a document field, so it is never emitted
+  into `adr.schema.json`. The scaffolded `.lore/profile.toml` documents it. It is only needed where
+  the enum has no `deprecated`: where it does, that value is written and this key is unused.
+
 - **`lore link --decision <id>` links a decision id the way a task id is linked** (LCLI-670, DEC-192
   (2) and (5)). The concept's `decisions:` frontmatter (mirroring `tasks:`) gains
   repository-qualified `<repo>:DEC-N` entries, because a `DEC-n` exists in more than one fleet
@@ -64,6 +72,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a CI break** — warnings alone still exit `0`.
 
 ### Fixed
+
+- **A profile that declares its own ADR `status` enum emitted that enum but was validated against the
+  built-in one, so its own schema declared documents valid that `lore` refused to load** (LCLI-723,
+  DEC-192 (4)). The effective lifecycle enum is now the profile's DECLARED `status` enum where it
+  declares one, and the built-in `draft` / `stable` / `deprecated` only where it declares none — and
+  one source feeds all three readers: the schema `lore init` and `lore schema export` emit, the
+  load-time check, and `lore supersede`. A `[draft, approved]` profile now accepts `approved` on an
+  ADR and rejects `stable`, on OKF 0.1 and 0.2 alike. **`lore supersede` follows the same enum**: it
+  writes `deprecated` where the effective enum has it, else the type's `superseded_status`, and
+  otherwise refuses by name, quoting the enum and the key to set, rather than writing an out-of-enum
+  value. A profile that declares no `status` enum — including the built-in one, and every bundle with
+  no `.lore/profile.toml` — behaves exactly as before, and its emitted `.lore/schemas/*.json` are
+  byte-identical.
 
 - **`lore supersede` wrote a lifecycle `status` that was never valid, and `lore check` did not report
   it on an OKF 0.1 bundle** (LCLI-669, DEC-192). The lifecycle enum is `draft` / `stable` /

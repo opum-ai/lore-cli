@@ -7,7 +7,7 @@ import { runSupersede, type SupersedeReport } from "../src/commands/supersede";
 import { loadBundle } from "../src/core/bundle";
 import { parseConcept, serializeConcept } from "../src/core/concept";
 import type { BundleState } from "../src/core/okf-version";
-import { defaultProfile, profileForBundle } from "../src/core/profile";
+import { defaultProfile, loadProfile, profileForBundle } from "../src/core/profile";
 import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
@@ -51,6 +51,28 @@ function supersedeCmd(args: string[]): { code: number; report: SupersedeReport; 
   const envelope = JSON.parse(stdout.text()) as { kind: string; data: SupersedeReport };
   expect(envelope.kind).toBe("supersede.result");
   return { code, report: envelope.data, stderr: stderr.text() };
+}
+
+/**
+ * Write `.lore/profile.toml` declaring a custom `status` enum for every type, with an optional
+ * `superseded_status` on the ADR type (DEC-192 (4)/(6), LCLI-723).
+ */
+function writeProfile(statusEnum: readonly string[], supersededStatus?: string): void {
+  mkdirSync(join(root, ".lore"), { recursive: true });
+  writeFileSync(
+    join(root, ".lore/profile.toml"),
+    [
+      "[profile]",
+      'name = "custom"',
+      'okf_version = "0.1"',
+      "[base.fields]",
+      "type = { required = true }",
+      `status = { enum = [${statusEnum.map((v) => `"${v}"`).join(", ")}] }`,
+      "[[types]]",
+      'name = "ADR"',
+      ...(supersededStatus === undefined ? [] : [`superseded_status = "${supersededStatus}"`]),
+    ].join("\n"),
+  );
 }
 
 /** Run `supersede` expecting a thrown {@link LoreError}, returned for assertions. */
@@ -462,29 +484,61 @@ describe("lore supersede — active profile", () => {
     expect(old.frontmatter.superseded_by).toBe("adr/0012-new");
   });
 
-  test("validates the written `status` against the project profile, failing fast on a custom enum", () => {
-    // a profile whose `status` enum forbids "superseded": writing it must fail here, not slip through
-    // to break the next `lore validate` / CI.
-    mkdirSync(join(root, ".lore"), { recursive: true });
-    writeFileSync(
-      join(root, ".lore/profile.toml"),
-      [
-        "[profile]",
-        'name = "strict"',
-        'okf_version = "0.1"',
-        "[base.fields]",
-        "type = { required = true }",
-        'status = { enum = ["draft", "approved"] }',
-        "[[types]]",
-        'name = "ADR"',
-      ].join("\n"),
-    );
+  test("refuses BY NAME when the effective enum has no `deprecated` and the type declares no `superseded_status`", () => {
+    // DEC-192 (4)/(6), LCLI-723. This is the test that used to pass for the WRONG reason: with the
+    // built-in enum still running at load, `status: approved` was rejected by the LOAD check before
+    // supersede's write-time validation was ever reached, so it proved nothing about this command.
+    // Under the precedence ruling the two documents LOAD (asserted below, as a positive control in
+    // the same invocation), and the refusal comes from supersede itself.
+    writeProfile(["draft", "approved"]);
     const oldBytes = "---\ntype: ADR\nstatus: approved\n---\nOld.\n";
     writeDoc("adr/0007-old.md", oldBytes);
     writeDoc("adr/0012-new.md", "---\ntype: ADR\nstatus: approved\n---\nNew.\n");
+
+    // Positive control: the bundle loads with both concepts intact. Before LCLI-723 this threw
+    // "invalid OKF lifecycle status" and the assertions below never ran.
+    const graph = loadBundle(join(root, "docs"), { profile: loadProfile({ root }) });
+    expect([...graph.concepts.keys()].sort()).toEqual(["adr/0007-old", "adr/0012-new"]);
+
     const err = expectError(["adr/0007-old", "adr/0012-new"]);
     expect(err.type).toBe("validation");
+    expect(err.message).toContain("superseded_status"); // names the key to set
+    expect(err.message).toContain('"draft", "approved"'); // quotes the enum
+    expect(err.message).not.toContain("invalid OKF lifecycle status"); // NOT the load check
     expect(readDoc("adr/0007-old.md")).toBe(oldBytes); // failed before writing — nothing stamped
+  });
+
+  test("writes the type's `superseded_status` when the effective enum has no `deprecated` (DEC-192 (6))", () => {
+    writeProfile(["draft", "approved"], "approved");
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: approved\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\nstatus: approved\n---\nNew.\n");
+
+    const { code } = supersedeCmd(["adr/0007-old", "adr/0012-new"]);
+    expect(code).toBe(EXIT_OK);
+    const bytes = readDoc("adr/0007-old.md");
+    expect(bytes).toContain("status: approved"); // the profile's superseded value, not "deprecated"
+    expect(bytes).not.toContain("deprecated");
+    expect(bytes).toContain("superseded_by: adr/0012-new");
+    expect(readDoc("adr/0012-new.md")).toContain("supersedes: adr/0007-old");
+  });
+
+  test("`deprecated` WINS over a declared `superseded_status` when the enum contains it", () => {
+    // The precedence DEC-192 (4) fixes: the key only decides where the built-in value is absent.
+    writeProfile(["draft", "approved", "deprecated"], "approved");
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: approved\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\nstatus: approved\n---\nNew.\n");
+
+    const { code } = supersedeCmd(["adr/0007-old", "adr/0012-new"]);
+    expect(code).toBe(EXIT_OK);
+    expect(readDoc("adr/0007-old.md")).toContain("status: deprecated");
+  });
+
+  test("the default profile is unchanged: it still writes `deprecated`", () => {
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: stable\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
+    const { code } = supersedeCmd(["adr/0007-old", "adr/0012-new"]);
+    expect(code).toBe(EXIT_OK);
+    expect(parseLegacyDoc("adr/0007-old.md").frontmatter.status).toBe("deprecated");
   });
 
   test("--rewrite-links honors the project profile when re-serializing an inbound concept it reshapes (LORE-88, AC#2)", () => {
