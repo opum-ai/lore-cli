@@ -59,8 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`lore supersede` wrote a lifecycle `status` that was never valid, and `lore check` did not report
   it on an OKF 0.1 bundle** (LCLI-669, DEC-192). The lifecycle enum is `draft` / `stable` /
   `deprecated` — declared in every profile's emitted `adr.schema.json`; `superseded` was never a
-  member on 0.1 either. Two fixes: the enum is now enforced on **every** OKF version, not only 0.2,
-  and `lore supersede` writes `deprecated` on 0.1 exactly as it already did on 0.2. **Existing 0.1
+  member on 0.1 either. Two fixes: the enum is now enforced on **ADR documents on every OKF version**,
+  not only on 0.2 (on 0.1 the same `status` field is the task-rollup key for task-coupled types, so
+  the enum reaches only where it is the lifecycle field), and `lore supersede` writes `deprecated` on
+  0.1 exactly as it already did on 0.2. **Existing 0.1
   bundles**: the one-line fix is `status: superseded` → `status: deprecated` on the superseded
   document. Its `superseded_by` back-reference is unaffected, and `lore supersede` still recognises
   the old spelling, so such a document is never superseded twice.

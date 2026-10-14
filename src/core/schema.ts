@@ -413,7 +413,7 @@ export function validateFrontmatter(fm: Record<string, unknown>, options: Valida
 
   validateVersionedFrontmatter(fm, type, profile, where, options.path, options.warnings);
   // Version-independent (DEC-192): the OKF lifecycle `status` enum holds on EVERY OKF version.
-  validateLifecycleStatus(fm, where, options.path);
+  validateLifecycleStatus(fm, type, profile, where, options.path);
 
   const compiled = profile.types.get(canonicalType(type, profile));
   if (compiled === undefined) {
@@ -447,14 +447,27 @@ export function validateFrontmatter(fm: Record<string, unknown>, options: Valida
 }
 
 /**
- * The OKF lifecycle `status` enum (DEC-192, LCLI-669): `draft`/`stable`/`deprecated`, enforced on
- * EVERY OKF version. A `status` outside it is a defect — `superseded` in particular was written by
- * `lore supersede` on 0.1 bundles but has never been a valid value, and every profile's emitted
- * `adr.schema.json` has always declared the three. Lore task progress belongs in
- * `lore_task_status`, a deliberately disjoint vocabulary (ADR-0019).
+ * The OKF lifecycle `status` enum (DEC-192, LCLI-669): `draft`/`stable`/`deprecated`. A `status`
+ * outside it is a defect — `superseded` in particular was written by `lore supersede` on 0.1
+ * bundles but has never been a valid value, and every profile's emitted `adr.schema.json` has
+ * always declared the three.
+ *
+ * SCOPE, because "every OKF version" needs one qualification: on OKF 0.2 the enum governs `status`
+ * for every type, but on OKF 0.1 `status` IS the task-rollup key for task-coupled types
+ * (`check.ts`'s version-selected rollup: `status` on 0.1, `lore_task_status` on 0.2), whose
+ * vocabulary is `todo`/`in-progress`/`done`. So on 0.1 the enum applies only where `status` is the
+ * LIFECYCLE field — ADR documents. Enforcing it more broadly would reject every 0.1 task-coupled
+ * `status` and break the rollup it is not about (DEC-192 as read by the leader, 2026-10-14).
  */
-function validateLifecycleStatus(fm: Record<string, unknown>, where: string, path: string | undefined): void {
+function validateLifecycleStatus(
+  fm: Record<string, unknown>,
+  type: string,
+  profile: Profile,
+  where: string,
+  path: string | undefined,
+): void {
   if (!Object.hasOwn(fm, "status")) return;
+  if (profile.okfVersion !== "0.2" && canonicalType(type, profile) !== "ADR") return;
   const result = LIFECYCLE_STATUS_SCHEMA.safeParse(fm.status);
   if (result.success) return;
   throw new LoreError(
