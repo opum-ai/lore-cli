@@ -49,14 +49,30 @@ function emittedStatusEnum(property: unknown): readonly string[] | undefined {
 const V01: BundleState = { okfVersion: "0.1", source: "legacy-missing" };
 const V02: BundleState = { okfVersion: "0.2", source: "declared" };
 
-/** A profile whose declared `status` enum REPLACES the built-in one: `[draft, approved]` only. */
+/**
+ * A profile whose declared `status` enum REPLACES the built-in one: `[draft, approved]` only.
+ *
+ * It declares a `Story` as well as an `ADR`, and that second type is load-bearing rather than
+ * incidental (LCLI-728 (2)). The 0.1 task-rollup carve-out is a claim about a type the profile
+ * DECLARES: with `ADR` alone, a `type: "Story"` document is an UNKNOWN type, so the carve-out
+ * return it exercised was the unknown-type one and the test proved less than its name said. The
+ * rollup test below asserts this precondition, so the fixture cannot quietly regress to that.
+ *
+ * `Story` carries its OWN `status`, deliberately open (`{}`, an optional string), rather than
+ * inheriting the base enum. That is not decoration either, and it was measured: with the inherited
+ * `[draft, approved]`, a `status: "done"` Story is refused — but by the generated TYPE SCHEMA
+ * (`invalid Story frontmatter: status: Invalid option`), which runs on every version, not by the
+ * lifecycle check this test is about. A profile that closes `status` on a task-coupled 0.1 type has
+ * closed its own rollup key, and the schema says so first. Declaring `status` open here mirrors how
+ * the built-in profile declares it, and isolates the carve-out the test names.
+ */
 function customProfile(okfVersion: "0.1" | "0.2"): Profile {
   return compileProfile(
     parseProfile(
       {
         profile: { name: "custom", okf_version: okfVersion },
         base: { fields: { type: { required: true }, status: { enum: ["draft", "approved"] } } },
-        types: [{ name: "ADR" }],
+        types: [{ name: "ADR" }, { name: "Story", fields: { status: {} } }],
       },
       "test-profile",
     ),
@@ -105,11 +121,26 @@ describe("effective status enum — a profile's DECLARED enum takes precedence (
     }
   });
 
-  test("the 0.1 task-rollup carve-out survives the precedence change", () => {
+  test("the 0.1 task-rollup carve-out holds on a DECLARED type, not an unknown one", () => {
     const profile = customProfile("0.1");
+    // The precondition that makes the rest of this test mean anything (LCLI-728 (2)): the carve-out
+    // is defined for a type the profile KNOWS. With `Story` undeclared, `validateLifecycleStatus`
+    // returned at the unknown-type guard instead and the test passed for the wrong reason.
+    expect(profile.types.has("Story")).toBe(true);
     for (const rollup of ["todo", "in-progress", "done"]) {
       expect(validateFrontmatter({ type: "Story", status: rollup }, { profile, bundleState: V01 })).toBe("Story");
     }
+  });
+
+  test("...and the SAME declared type IS judged on 0.2, where the carve-out does not apply", () => {
+    // The other half, so the test above cannot pass by the carve-out simply never firing: on 0.2
+    // the effective enum governs every type, so this profile's `[draft, approved]` rejects a rollup
+    // value on the very type 0.1 let through.
+    const profile = customProfile("0.2");
+    expect(profile.types.has("Story")).toBe(true);
+    expect(() => validateFrontmatter({ type: "Story", status: "done" }, { profile, bundleState: V02 })).toThrow(
+      /invalid OKF lifecycle status/,
+    );
   });
 });
 

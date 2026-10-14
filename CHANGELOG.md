@@ -99,7 +99,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declares one, and the built-in `draft` / `stable` / `deprecated` only where it declares none — and
   one source feeds all three readers: the schema `lore init` and `lore schema export` emit, the
   load-time check, and `lore supersede`. A `[draft, approved]` profile now accepts `approved` on an
-  ADR and rejects `stable`, on OKF 0.1 and 0.2 alike. **`lore supersede` follows the same enum**: it
+  ADR and rejects `stable`, on OKF 0.1 and 0.2 alike. **On OKF 0.2 the enum governs `status` for
+  EVERY type, not only an ADR** — the ADR-only reach is the 0.1 carve-out for task-coupled types
+  (whose `status` is the task rollup there), not a rule about 0.2; a custom profile that declares
+  its own `status` enum is held to it on every type it declares. **`lore supersede` follows the same enum**: it
   writes `deprecated` where the effective enum has it, else the type's `superseded_status`, and
   otherwise refuses by name, quoting the enum and the key to set, rather than writing an out-of-enum
   value. A profile that declares no `status` enum — including the built-in one, and every bundle with
