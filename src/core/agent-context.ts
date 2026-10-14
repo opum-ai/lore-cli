@@ -267,12 +267,72 @@ export interface AgentContextExport {
  */
 export type AgentContextFigureProvenance = "chars/4 estimate" | "tokenizer count";
 
+/**
+ * One ranked SECTION a budget class considered and did NOT carry, with the reason it is absent
+ * (LCLI-722 AC4).
+ *
+ * Three different facts used to collapse into the same absence, and each has its own remedy: the
+ * declared `task_evidence` cap cut the section, the pack's own `max_tokens` cut it, or the
+ * zero-score filter dropped it before any budget was spent because it had nothing for this task.
+ * The catalog distinguishes only the last of those from the rest, and per SOURCE
+ * (`omitted-by-budget` against `omitted-by-relevance`) — which cannot answer the per-SECTION
+ * question: a source with one section selected and one cut for any reason reads
+ * `partially-included`. This field carries the distinction at the section.
+ */
+export interface AgentContextOmittedSection {
+  /** The reference the section belongs to, spelled as this class's `content` labels spell it. */
+  readonly reference: string;
+  /** The section's breadcrumb when it has one; absent for a candidate that IS its whole concept. */
+  readonly section?: string;
+  /**
+   * Which ceiling refused it, or that it was never eligible (DEC-194 (11) and (12)). The cut values
+   * are kept apart because the REMEDY differs — raise or reshape the profile's declared
+   * `task_evidence` target, raise the pack's `max_tokens`, or both, because either alone still
+   * refuses it — and the report should name which knobs to turn without the reader opening the
+   * profile. `scored-zero` is none of those: the zero-score relevance filter dropped it whole,
+   * before any budget was spent (LCLI-680).
+   */
+  readonly reason: AgentContextOmissionReason;
+}
+
+/**
+ * Why one ranked section is absent from a budget class.
+ *
+ * The single-ceiling values say what would happen if the OTHER ceiling were lifted, which is what
+ * makes them a remedy rather than a restatement of whichever check happened to run first:
+ * `cut-by-task-evidence-cap` means the pack's own budget would have admitted the section,
+ * `cut-by-max-tokens` means the declared target would have, and `cut-by-both-ceilings` means neither
+ * would have on its own (DEC-194 (12)). `scored-zero` is not a ceiling at all — the section was never
+ * eligible (LCLI-680).
+ */
+export type AgentContextOmissionReason =
+  | "cut-by-task-evidence-cap"
+  | "cut-by-max-tokens"
+  | "cut-by-both-ceilings"
+  | "scored-zero";
+
+/** The omission reasons a CEILING produces — every value but the zero-score filter's own. */
+export type AgentContextCeilingCut = Exclude<AgentContextOmissionReason, "scored-zero">;
+
 export interface AgentContextBudgetEntry {
   readonly target: number | null;
   readonly measured: number | null;
   readonly measuredBy?: AgentContextFigureProvenance;
   readonly over: boolean;
   readonly content: readonly string[];
+  /**
+   * Every SECTION this class considered and did not carry, each with its reason (LCLI-722 AC4).
+   * Present only on a class that ranks candidates — `taskEvidence` — and always as a list there,
+   * so an empty one means "nothing was cut" rather than "this report does not say".
+   *
+   * Deliberately NOT gated on `over` the way `content` is: the case this exists for is a class
+   * inside its target whose cap is doing the cutting, where `content` is empty and the report
+   * would otherwise have nothing to say about what was dropped.
+   *
+   * Additive under cli-contract §7.1, and JSON-only: the rendered budget footer prints `content`
+   * alone, so this field costs no bytes in a pack and cannot move a capacity figure.
+   */
+  readonly omittedSections?: readonly AgentContextOmittedSection[];
   readonly note?: string;
 }
 
@@ -570,7 +630,15 @@ function compilePack(
   );
   const delegates = delegateSummaries(profile, snapshot);
   const rankedQueryHits = withQueryHits ? bundleQueryHits(workspace?.queryGraph ?? graph, task, provenanceById) : [];
-  const build = (selection: readonly RankedCandidate[], queryHitLimit: number, querySection = withQueryHits) =>
+  // `cutByCeiling` is the selection loop's own record of which ceiling refused a candidate (AC4).
+  // Only the FINAL build carries one: the intermediate builds exist to size a candidate list, and
+  // their budget reports are discarded, so the default keeps every earlier call site unchanged.
+  const build = (
+    selection: readonly RankedCandidate[],
+    queryHitLimit: number,
+    querySection = withQueryHits,
+    cutByCeiling: ReadonlyMap<string, AgentContextCeilingCut> = new Map(),
+  ) =>
     assemble(
       profile,
       task,
@@ -597,6 +665,7 @@ function compilePack(
       contractOmissions,
       true,
       providerInput,
+      cutByCeiling,
     );
 
   // The mandatory-budget failure is judged on pins alone, exactly as before LCLI-575: the query
@@ -714,18 +783,41 @@ function compilePack(
 
   const selected: RankedCandidate[] = [...required];
   let rankedTokens = 0;
+  // WHICH ceiling refused a candidate (LCLI-722 AC4, DEC-194 (11) and (12)). The values are
+  // different facts with different remedies — raise or reshape the declared `task_evidence` target,
+  // raise the pack's `max_tokens`, or both — and the report is the only place a reader can learn
+  // which knobs to turn without opening the profile.
+  //
+  // THE LABEL IS DECIDED BY BOTH REMAINDERS, NOT BY WHICH CHECK RUNS FIRST. That is why the trial
+  // build below now runs even for a candidate the cap already refuses: a single-ceiling value
+  // asserts that the OTHER ceiling would have admitted the section, and only the build can say
+  // whether the pack would have. It costs one build per cap-refused candidate, which is the price
+  // of a label that points at a knob that actually unblocks.
+  //
+  // A candidate that reaches neither refusal is admitted, so this map covers the eligible deck
+  // minus what was selected; whatever is left over was never eligible at all (the zero-score
+  // filter, below).
+  const cutByCeiling = new Map<string, AgentContextCeilingCut>();
   for (const candidate of ordered) {
     if (requiredKeys.has(candidate.key)) continue;
-    if (rankedBudget !== undefined && rankedTokens + candidate.tokenEstimate > rankedBudget) {
-      continue;
-    }
+    const capRefuses = rankedBudget !== undefined && rankedTokens + candidate.tokenEstimate > rankedBudget;
     const tentative = build([...selected, candidate], queryHitLimit, querySection);
-    if (tentative.tokenEstimate <= effectiveBudget) {
+    const packRefuses = tentative.tokenEstimate > effectiveBudget;
+    if (!capRefuses && !packRefuses) {
       selected.push(candidate);
       rankedTokens += candidate.tokenEstimate;
+      continue;
     }
+    cutByCeiling.set(
+      candidate.key,
+      capRefuses && packRefuses
+        ? "cut-by-both-ceilings"
+        : capRefuses
+          ? "cut-by-task-evidence-cap"
+          : "cut-by-max-tokens",
+    );
   }
-  return build(selected, queryHitLimit, querySection);
+  return build(selected, queryHitLimit, querySection, cutByCeiling);
 }
 
 /**
@@ -1213,6 +1305,8 @@ function computeBudgets(
   contract: ContractView | undefined,
   contractOmissions: readonly { readonly source: string; readonly reason: string }[] | undefined,
   subtotal: number,
+  sources: readonly SourceCandidates[],
+  cutByCeiling: ReadonlyMap<string, AgentContextCeilingCut>,
 ): AgentContextBudgets | undefined {
   if (!profileDeclaresBudgets(profile)) return undefined;
   const targets = profile.targets;
@@ -1236,10 +1330,34 @@ function computeBudgets(
     contract === undefined ? 0 : estimateTokens(contractSectionLines(contract, contractOmissions).join("\n")),
     contract === undefined ? [] : [`task ${contract.task.id}`],
   );
+  // The per-SECTION attribution (LCLI-722 AC4, DEC-194 (11)). Every candidate of every declared
+  // source that did not reach the pack is named with the reason it did not, in declaration order —
+  // source, then section — so the list is stable run to run and a diff is readable.
+  //
+  // `?? "scored-zero"` is a derivation, not a guess. `cutByCeiling` covers the ELIGIBLE deck minus
+  // what was selected: a candidate that reached neither `continue` in the selection loop was
+  // admitted, so every eligible candidate left over is in the map. The only candidates NOT eligible
+  // are the ones the zero-score filter removed before any budget was spent (LCLI-680) — it computes
+  // the eligible deck by subtraction, so "ineligible" and "scored zero" are the same set by
+  // construction, not by coincidence.
+  const selectedKeys = new Set(selected.map((item) => item.key));
+  const omittedSections: AgentContextOmittedSection[] = [];
+  for (const source of sources) {
+    for (const item of source.items) {
+      if (selectedKeys.has(item.key)) continue;
+      omittedSections.push({
+        reference: item.reference,
+        ...(item.breadcrumb === undefined ? {} : { section: item.breadcrumb }),
+        reason: cutByCeiling.get(item.key) ?? "scored-zero",
+      });
+    }
+  }
   const taskEvidence = budgetEntry(
     targets.taskEvidence,
     selected.reduce((sum, item) => sum + item.tokenEstimate, 0),
     bySize(selected),
+    undefined,
+    omittedSections,
   );
   // The initial code map and the harness/tools floor are the composer's (opum-cli) to own: lore's
   // pack contains neither, so lore reports them NOT-APPLICABLE with that reason — never a 0, which
@@ -1282,6 +1400,7 @@ function budgetEntry(
   measured: number | null,
   content: readonly string[],
   note?: string,
+  omittedSections?: readonly AgentContextOmittedSection[],
 ): AgentContextBudgetEntry {
   const bound = target ?? null;
   const over = bound !== null && measured !== null && measured > bound;
@@ -1294,6 +1413,7 @@ function budgetEntry(
     ...(measured === null ? {} : { measuredBy: "chars/4 estimate" as const }),
     over,
     content: over ? content : [],
+    ...(omittedSections === undefined ? {} : { omittedSections }),
     ...(note === undefined ? {} : { note }),
   };
 }
@@ -1322,6 +1442,10 @@ function assemble(
   // (agent-profile-capacity). A real pack keeps it (default true).
   reportBudgets = true,
   providerInput?: number,
+  // Which ceiling refused each candidate the selection loop left behind (LCLI-722 AC4, DEC-194
+  // (11)). Empty by default, which is what every caller that is not the final selection pass wants:
+  // its report is discarded.
+  cutByCeiling: ReadonlyMap<string, AgentContextCeilingCut> = new Map(),
 ): AgentContextPack {
   const selectedKeys = new Set(selected.map((item) => item.key));
   // "Not already selected" is by concept: a document the pack already quotes any part of is not
@@ -1438,6 +1562,9 @@ function assemble(
           contractView,
           contractOmissions,
           estimateTokens(renderAgentContextMarkdown(provisional)),
+          // `sources` IS the scored deck: the compiler's callers pass `scoredSources` here.
+          sources,
+          cutByCeiling,
         )
       : undefined;
   const withUsage: AgentContextPack = {

@@ -683,3 +683,187 @@ describe("agent context — selection skips a misfit rather than stopping (DEC-1
     expect(entry("specs/tiny")?.selectedCount).toBe(1);
   });
 });
+
+// ── LCLI-722 AC4 / DEC-194 (6), (11), (12): the report attributes each OMITTED section ──────────
+
+/**
+ * AC4: per SECTION, the budget report says whether a section was cut by the CAP or scored zero, so
+ * a reader can tell the two apart from the report alone. DEC-194 (11) took that further and SPLIT
+ * the cut value, because the remedy differs by cause: `cut-by-task-evidence-cap` is answered by the
+ * profile's declared target, `cut-by-max-tokens` by the pack's `max_tokens`. DEC-194 (12) then added
+ * `cut-by-both-ceilings`, because the two can refuse ONE candidate — measured below — and either
+ * single-ceiling label would then name a knob that does not unblock it. AC4 is met by the cut values
+ * together.
+ *
+ * The CATALOG cannot answer the question at all, and the fixture asserts it rather than assuming it:
+ * its reason is per SOURCE, so one source with a section selected and another cut reads
+ * `partially-included` whichever way the second one left — measured below, in the same report, for a
+ * source that carries one of each.
+ *
+ * `omittedSections` is ADDITIVE under cli-contract §7.1: `content` keeps its `string[]` shape
+ * (asserted), and the field is JSON-only — the rendered budget footer prints `content`, so nothing
+ * here can move a capacity figure.
+ */
+describe("agent context — the budget report attributes each omitted section (LCLI-722 AC4)", () => {
+  /**
+   * One ranked source whose sections split three ways: `Alpha`, `Gamma` and `Delta` match the task;
+   * `Beta` shares no term with it and is dropped by the zero-score filter; the intro paragraph is
+   * selected. The document is long enough to be partitioned into sections (the threshold is
+   * min(2000, maxTokens/4)), which is what makes a per-SECTION claim possible at all.
+   *
+   * `cap` is written into `[targets].task_evidence`. Leaving it out declares NO evidence target,
+   * which is the case DEC-194 (11) names for `cut-by-max-tokens`: with no cap to bind, the pack's
+   * own `max_tokens` is what refuses a section.
+   *
+   * `sectionPad` sizes every section and `pinPad` pads the PINNED document, which is the lever that
+   * makes the pack's own budget — rather than the declared cap — the tighter ceiling: the pin eats
+   * `max_tokens` before any ranked section is considered. Both default to the sizes the cap and
+   * max-tokens tests use, so only the both-ceilings test moves them.
+   */
+  function attributionFixture(
+    opts: { cap?: number; maxTokens?: number; sectionPad?: number; pinPad?: number } = {},
+  ): void {
+    const sectionPad = opts.sectionPad ?? 40;
+    doc(
+      "reference/rules.md",
+      `# Rules\n\nCheckout validation rules. ${"checkout validation ".repeat(opts.pinPad ?? 0)}\n`,
+      "Checkout validation rules",
+    );
+    doc(
+      "specs/ranked.md",
+      [
+        "# Ranked",
+        "",
+        `Intro ${"checkout validation ".repeat(sectionPad)}`,
+        "",
+        "## Alpha",
+        "",
+        `Alpha ${"checkout validation ".repeat(sectionPad)}`,
+        "",
+        "## Beta",
+        "",
+        `Beta ${"unrelated theorem prose ".repeat(sectionPad)}`,
+        "",
+        "## Gamma",
+        "",
+        `Gamma ${"checkout validation ".repeat(sectionPad)}`,
+        "",
+        "## Delta",
+        "",
+        `Delta ${"checkout validation ".repeat(sectionPad)}`,
+        "",
+      ].join("\n"),
+      "Ranked evidence",
+    );
+    const path = join(root, ".lore/agents/section-attribution.toml");
+    mkdirSync(join(path, ".."), { recursive: true });
+    const targets =
+      opts.cap === undefined
+        ? "[targets]\npolicy_and_role = 3000\nlore_subtotal = 11000\n"
+        : `[targets]\npolicy_and_role = 3000\ntask_evidence = ${opts.cap}\nlore_subtotal = 11000\n`;
+    writeFileSync(
+      path,
+      `schema_version = 1\nname = "section-attribution"\ndescription = "Attributes omitted sections."\nkind = "specialist"\nmax_tokens = ${opts.maxTokens ?? 4000}\npinned = ["reference/rules"]\nsources = ["specs/ranked"]\n${targets}`,
+    );
+  }
+
+  function attributionPack(opts: { cap?: number; maxTokens?: number; sectionPad?: number; pinPad?: number } = {}) {
+    attributionFixture(opts);
+    return compileAgentContext(loadAgentProfiles(root), loadBundle(join(root, "docs")), "section-attribution", TASK);
+  }
+
+  test("one source reports a cap cut and a zero-score drop side by side, per section", () => {
+    const pack = attributionPack({ cap: 300 });
+    const omitted = pack.budgets?.taskEvidence.omittedSections;
+    expect(Array.isArray(omitted)).toBe(true);
+
+    // BOTH reasons, in one report, from the SAME source — which is the whole point.
+    expect(omitted).toContainEqual({
+      reference: "specs/ranked",
+      section: "Ranked > Alpha",
+      reason: "cut-by-task-evidence-cap",
+    });
+    expect(omitted).toContainEqual({ reference: "specs/ranked", section: "Ranked > Beta", reason: "scored-zero" });
+
+    // With a cap declared and a generous `max_tokens`, NOTHING can be attributed to the pack budget:
+    // the cap binds first, so the pack's own ceiling never refuses a candidate here.
+    expect((omitted ?? []).some((entry) => entry.reason === "cut-by-max-tokens")).toBe(false);
+
+    // NOT GATED ON `over` (DEC-194 (11), which ratified the shape as built). This class is inside
+    // its declared target — it is the CAP doing the cutting, not a total overrun — so a report that
+    // only spoke when `over` was true would say nothing at all about the four omissions above.
+    expect((omitted ?? []).length).toBeGreaterThan(0);
+    expect(pack.budgets?.taskEvidence.over).toBe(false);
+
+    // THE CONTROL: the section the pack DID carry is not advertised as omitted.
+    expect(pack.sections.map((item) => item.breadcrumb)).toContain("Ranked");
+    expect((omitted ?? []).map((entry) => entry.section)).not.toContain("Ranked");
+
+    // THE PREMISE, measured rather than remembered: from the catalog alone this source reads
+    // `partially-included`, exactly as it would if Beta had been cut by the cap instead.
+    const catalogEntry = pack.catalog.find((entry) => entry.reference === "specs/ranked");
+    expect(catalogEntry?.reason).toBe("partially-included");
+    expect(catalogEntry?.selectedCount).toBeLessThan(catalogEntry?.candidateCount ?? 0);
+
+    // ADDITIVE: `content` keeps its shape, and the class that does not rank candidates carries no
+    // attribution at all — pins are never cut.
+    const content = pack.budgets?.taskEvidence.content;
+    expect(Array.isArray(content)).toBe(true);
+    expect(content?.every((line) => typeof line === "string")).toBe(true);
+    expect(pack.budgets?.policyAndRole.omittedSections).toBeUndefined();
+  });
+
+  test("a section the pack's OWN max_tokens refuses is named apart from a cap cut (DEC-194 (11))", () => {
+    // No `task_evidence` target at all: nothing binds the ranked tier but the pack's own budget, so
+    // a section that shares a term with the task and does not fit is a max-tokens cut — the case
+    // DEC-194 (11) keeps apart from the cap, because its remedy is `--max-tokens`, not the target.
+    const pack = attributionPack({ maxTokens: 400 });
+    const omitted = pack.budgets?.taskEvidence.omittedSections ?? [];
+
+    expect(omitted).toContainEqual({
+      reference: "specs/ranked",
+      section: "Ranked > Alpha",
+      reason: "cut-by-max-tokens",
+    });
+    // The pack really does not carry it — the attribution is not describing a section that is
+    // present under another spelling.
+    expect(pack.sections.map((item) => item.breadcrumb)).not.toContain("Ranked > Alpha");
+
+    // BOTH values in one report, and the cap value is IMPOSSIBLE here: there is no declared cap for
+    // it to name. That is what keeps the two cut reasons from collapsing into one another.
+    expect(omitted).toContainEqual({ reference: "specs/ranked", section: "Ranked > Beta", reason: "scored-zero" });
+    expect(omitted.some((entry) => entry.reason === "cut-by-task-evidence-cap")).toBe(false);
+  });
+
+  test("a section BOTH ceilings refuse is named as neither one alone (DEC-194 (12))", () => {
+    // The measured fixture: a padded PIN eats most of `max_tokens`, so the pack's remaining room is
+    // smaller than the cap's. That is the case where the cap check happens to run first but raising
+    // the cap would NOT admit the section — the pack budget would refuse it too — so neither
+    // single-ceiling value is true of it, and the label must be decided by BOTH remainders rather
+    // than by which check ran first.
+    const pack = attributionPack({ cap: 250, maxTokens: 800, sectionPad: 30, pinPad: 20 });
+    const omitted = pack.budgets?.taskEvidence.omittedSections ?? [];
+
+    expect(omitted).toContainEqual({
+      reference: "specs/ranked",
+      section: "Ranked > Alpha",
+      reason: "cut-by-both-ceilings",
+    });
+
+    // ...and neither single-ceiling value is claimable here: every section that matches the task is
+    // over BOTH remainders, which is exactly why a cap-first label would point at a knob that
+    // unblocks nothing on its own. The zero-score value is untouched by the split and still appears.
+    expect(omitted.some((entry) => entry.reason === "cut-by-task-evidence-cap")).toBe(false);
+    expect(omitted.some((entry) => entry.reason === "cut-by-max-tokens")).toBe(false);
+    expect(omitted).toContainEqual({ reference: "specs/ranked", section: "Ranked > Beta", reason: "scored-zero" });
+  });
+
+  test("nothing omitted reads as an EMPTY list, not an absent field", () => {
+    // The shared fixture's only ranked source matches the task and fits whole, so the class has
+    // nothing to attribute — and a reader must still be able to tell that from "this report does
+    // not carry the field".
+    fixture(DECLARED);
+    const pack = compile();
+    expect(pack.budgets?.taskEvidence.omittedSections).toEqual([]);
+  });
+});
