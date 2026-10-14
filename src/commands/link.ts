@@ -60,13 +60,14 @@ import { createConfiguredTrackerAdapter } from "../adapters/tracker";
 import type { TrackerBackend } from "../config";
 import { type BundleGraph, conceptNotInBundle, loadBundle, toRefList } from "../core/bundle";
 import { type Concept, idFromPath, serializeConcept } from "../core/concept";
+import { qualifyDecisionRef, resolveDecisionQualifier } from "../core/decision-ref";
 import { loadProfile, type Profile, profileForBundle, profileTypeDeclaresField } from "../core/profile";
 import { DOCS_DIR } from "../core/scaffold";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { type BacklogCommitResult, type GitSpawn, renderBacklogCommitLine } from "../state";
 import { persistTrackerWrites, resolveSelectedBackend, type TrackerWriteRef } from "../tracker-persistence";
-import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
+import { assertNotReservedStem, optionValues, parseCommandArgs, singleOptionValue, usage } from "./args";
 // The pure worker-pool + shared cap live in the neutral `./concurrency` module (LORE-233), not
 // `./reconcile-shared` — `reconcile-shared.ts` already imports `verifiedViewTask`/`dedupeTaskIds`/
 // `defaultAdapter` FROM this file, so importing back from it here would create a
@@ -104,6 +105,14 @@ interface LinkArgs {
   id: string;
   /** One or more Backlog task ids. */
   taskIds: string[];
+  /**
+   * `--decision <id…>` (LCLI-670, DEC-192 (2)): decision ids to link instead of task ids. The write
+   * is DOC-SIDE ONLY — there is no tracker back-reference for a decision — and every stored entry is
+   * repository-qualified `<repo>:DEC-N`.
+   */
+  decisions: readonly string[];
+  /** `--repo <name>` (DEC-192 (5)): the repository qualifier for a bare decision id; always wins. */
+  repo?: string;
   /** `--no-back-ref`: skip the Backlog-side label/`--doc` edit entirely. */
   noBackRef: boolean;
   /** `unlink --allow-missing`: tolerate `id` not resolving to a live concept — see {@link runUnlink}. Always `false` for `link`. */
@@ -122,12 +131,22 @@ export interface LinkedTask {
   readonly error?: string;
 }
 
+/** One decision's outcome in a {@link LinkReport} (LCLI-670). Doc-side only: no back-reference exists. */
+export interface LinkedDecision {
+  /** The decision id AS STORED: repository-qualified `<repo>:DEC-N`. */
+  readonly decision: string;
+  /** Whether the concept's `decisions:` frontmatter gained this id or already carried it. */
+  readonly status: "added" | "already-linked";
+}
+
 /** The `link.result` payload. */
 export interface LinkReport {
   /** The concept's repo-relative path. */
   readonly concept: string;
   /** Every task id passed, in argument order, deduplicated case-insensitively. */
   readonly tasks: readonly LinkedTask[];
+  /** Present only for a `--decision` link (LCLI-670); absent from a task link's result. */
+  readonly decisions?: readonly LinkedDecision[];
   /** Whether the concept file was written (false when every id was already linked). */
   readonly changed: boolean;
   /** The `backlog/` commit outcome — `{committed: false, files: []}` when no back-reference edit was made (`--no-back-ref`, or every id already linked). */
@@ -210,11 +229,27 @@ function flushWrittenConceptLint(
  *   `drift` (exit 6) {@link LoreError} instead — see {@link backRefFailure}.
  */
 export async function runLink(options: LinkOptions): Promise<number> {
-  const { concept, id, taskIds, noBackRef, docsRoot, profile, lintByPath } = await prepare(options, "link");
+  const { concept, id, taskIds, decisions, repo, noBackRef, docsRoot, profile, lintByPath } = await prepare(
+    options,
+    "link",
+  );
   if (concept === undefined) {
     // Unreachable: `--allow-missing` is `unlink`-only (see `parseLinkArgs`), so `prepare` always
     // resolves `id` to a live concept or throws `not_found` for `link`.
     throw conceptNotInBundle(id);
+  }
+  // LCLI-670: the decision arm is a DIFFERENT write from the task arm — a different field, and no
+  // tracker back-reference — so it branches BEFORE `assertTaskCouplingSupported`. An ADR declares no
+  // `tasks:` field, so the task gate would refuse a decision link for entirely the wrong reason.
+  if (decisions.length > 0) {
+    return runLinkDecisions(options, {
+      concept,
+      decisions,
+      ...(repo === undefined ? {} : { repo }),
+      docsRoot,
+      profile,
+      lintByPath,
+    });
   }
   assertTaskCouplingSupported(concept, profile);
   const adapter = options.adapter ?? defaultAdapter(options.root);
@@ -873,6 +908,10 @@ interface Prepared {
   readonly concept: Concept | undefined;
   readonly id: string;
   readonly taskIds: string[];
+  /** LCLI-670: the decision arm's ids (empty on the task arm). */
+  readonly decisions: readonly string[];
+  /** LCLI-670: `--repo`, the decision qualifier that always wins. */
+  readonly repo?: string;
   readonly noBackRef: boolean;
   readonly docsRoot: string;
   readonly profile: Profile;
@@ -924,6 +963,8 @@ async function prepare(options: LinkOptions, command: "link" | "unlink"): Promis
         concept: undefined,
         id,
         taskIds: dedupeTaskIds(parsed.taskIds),
+        decisions: parsed.decisions,
+        ...(parsed.repo === undefined ? {} : { repo: parsed.repo }),
         noBackRef: parsed.noBackRef,
         docsRoot,
         profile,
@@ -939,6 +980,8 @@ async function prepare(options: LinkOptions, command: "link" | "unlink"): Promis
     concept,
     id,
     taskIds: dedupeTaskIds(parsed.taskIds),
+    decisions: parsed.decisions,
+    ...(parsed.repo === undefined ? {} : { repo: parsed.repo }),
     noBackRef: parsed.noBackRef,
     docsRoot,
     profile,
@@ -1096,6 +1139,91 @@ function writeTasksIfChanged(
 }
 
 /** Refuse new task coupling when the active profile has no schema contract for `tasks:`. */
+/**
+ * `lore link <adr> --decision <id…>` (LCLI-670; DEC-192 (2) and (5)): add repository-qualified
+ * decision ids to the concept's `decisions:` frontmatter. The write is DOC-SIDE ONLY — a decision has
+ * no tracker back-reference — and every stored entry is `<repo>:DEC-N`, with a bare `DEC-N` qualified
+ * by {@link resolveDecisionQualifier}'s order.
+ */
+function runLinkDecisions(
+  options: LinkOptions,
+  context: {
+    concept: Concept;
+    decisions: readonly string[];
+    repo?: string;
+    docsRoot: string;
+    profile: Profile;
+    lintByPath: ReadonlyMap<string, readonly string[]>;
+  },
+): number {
+  const { concept, decisions, repo, docsRoot, profile, lintByPath } = context;
+  assertDecisionCouplingSupported(concept, profile);
+  const qualifier = resolveDecisionQualifier({ root: options.root, repoFlag: repo });
+  // Deduped case-insensitively BEFORE scoring, the rule `dedupeTaskIds` applies to task ids
+  // (LCLI-670 review B1): `--decision DEC-9 --decision DEC-9`, and `DEC-9` alongside the already
+  // qualified `lore-cli:DEC-9`, are one entry, not two rows both reporting `added`.
+  const qualified = dedupeTaskIds(decisions.map((raw) => qualifyDecisionRef(raw, qualifier)));
+  const existing = toRefList(concept.frontmatter.decisions);
+  const rows: LinkedDecision[] = qualified.map((decision) => ({
+    decision,
+    status: containsCaseInsensitive(existing, decision) ? "already-linked" : "added",
+  }));
+  const next = [...existing, ...rows.filter((row) => row.status === "added").map((row) => row.decision)];
+  const changed = writeDecisionsIfChanged(docsRoot, concept, existing, next, profile);
+  if (changed) {
+    flushWrittenConceptLint(lintByPath, concept, options);
+  }
+  const report: LinkReport = {
+    concept: repoRelativePath(concept.path),
+    tasks: [],
+    decisions: rows,
+    changed,
+    backlogCommit: { committed: false, files: [] },
+  };
+  emit(reportRenderable("link.result", report, renderDecisionReport), options.output, options.stdout);
+  return EXIT_OK;
+}
+
+/** The plain/pretty rendering of a decision link's `link.result`. */
+function renderDecisionReport(data: LinkReport): string {
+  const lines = (data.decisions ?? []).map((row) => `${row.decision}: decisions: ${row.status}`);
+  lines.push(`${data.concept}: ${data.changed ? "updated" : "unchanged"}`);
+  return lines.join("\n");
+}
+
+/** Write the concept's `decisions:` list when it changes; returns whether the file was written. */
+function writeDecisionsIfChanged(
+  docsRoot: string,
+  concept: Concept,
+  existing: readonly string[],
+  next: readonly string[],
+  profile: Profile,
+): boolean {
+  if (sameList(existing, next)) {
+    return false;
+  }
+  const updated: Concept = { ...concept, frontmatter: { ...concept.frontmatter, decisions: [...next] } };
+  writeFileOverwriting(
+    join(docsRoot, concept.path),
+    serializeConcept(updated, { profile }),
+    repoRelativePath(concept.path),
+  );
+  return true;
+}
+
+/** Refuse a decision link when the active profile has no schema contract for `decisions:`. */
+function assertDecisionCouplingSupported(concept: Concept, profile: Profile): void {
+  if (profileTypeDeclaresField(concept.type, "decisions", profile)) {
+    return;
+  }
+  throw new LoreError(
+    "validation",
+    `cannot link a decision to ${concept.id}: type ${JSON.stringify(concept.type)} does not declare a \`decisions\` field in the active profile`,
+    "link the decision to a concept type whose profile schema declares `decisions` (the built-in ADR type), or update the active profile before retrying",
+    { id: concept.id, path: repoRelativePath(concept.path), type: concept.type, field: "decisions" },
+  );
+}
+
 function assertTaskCouplingSupported(concept: Concept, profile: Profile): void {
   if (profileTypeDeclaresField(concept.type, "tasks", profile)) {
     return;
@@ -1122,20 +1250,50 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
  * tail, not a fixed count).
  */
 function parseLinkArgs(args: readonly string[], command: "link" | "unlink"): LinkArgs {
-  const { positionals, flags } = parseCommandArgs(args, command);
+  const parsed = parseCommandArgs(args, command);
+  const { positionals, flags } = parsed;
 
   const id = positionals[0];
   if (id === undefined) {
     throw usage(`\`lore ${command}\` needs a concept id`, `run \`lore ${command} <id> <taskId…>\``);
   }
   const taskIds = positionals.slice(1);
-  if (taskIds.length === 0) {
+  const decisions = optionValues(parsed, "decision");
+  const repo = singleOptionValue(parsed, "repo");
+  const noBackRef = flags.has("no-back-ref");
+  const allowMissing = flags.has("allow-missing");
+  // LCLI-670 (DEC-192 (2)): `--decision` is the OTHER arm of the same command, not a companion to a
+  // task link. The two write different fields and only one of them has a tracker back-reference, so
+  // mixing them is refused rather than silently half-applied.
+  if (taskIds.length > 0 && decisions.length > 0) {
+    throw usage(`\`lore ${command}\` cannot mix task ids and --decision`, "pass task ids OR --decision ids, not both");
+  }
+  if (taskIds.length === 0 && decisions.length === 0) {
     throw usage(
-      `\`lore ${command}\` needs at least one task id`,
-      `pass one or more task ids, e.g. \`lore ${command} ${id} task-42\``,
+      `\`lore ${command}\` needs at least one task id or --decision id`,
+      `pass one or more ids, e.g. \`lore ${command} ${id} task-42\` or \`lore link ${id} --decision DEC-187\``,
     );
   }
-  return { id, taskIds, noBackRef: flags.has("no-back-ref"), allowMissing: flags.has("allow-missing") };
+  if (repo !== undefined && repo.trim() === "") {
+    throw usage("--repo needs a value", "pass a repository NAME, e.g. --repo lore-cli");
+  }
+  if (repo !== undefined && decisions.length === 0) {
+    throw usage("--repo requires --decision", "name the decision ids with --decision, or drop --repo");
+  }
+  if (noBackRef && decisions.length > 0) {
+    throw usage("--no-back-ref is not available with --decision", "a decision link writes the document only");
+  }
+  // NOTE: there is deliberately NO `--decision`-with-unlink refusal here. `unlink` does not declare
+  // the flag, so the argument parser rejects it before this function is reached, and a branch here
+  // would be unreachable code (LCLI-670 review N3).
+  return {
+    id,
+    taskIds,
+    decisions,
+    ...(repo === undefined ? {} : { repo }),
+    noBackRef,
+    allowMissing,
+  };
 }
 
 // ── Output ─────────────────────────────────────────────────────────────────────

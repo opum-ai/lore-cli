@@ -1118,7 +1118,13 @@ function storyConventionProfile(okfVersion: OkfVersion = CURRENT_OKF_VERSION): P
         sections: ["Acceptance criteria"],
       },
       { name: "Spec", fields: {}, sections: [] },
-      { name: "ADR", fields: {}, sections: ["Status", "Context", "Decision", "Consequences"] },
+      // LCLI-670 (DEC-192 (2)): an ADR links decision ids the way an Arc links task ids. Entries are
+      // repository-qualified `<repo>:DEC-N`, because a DEC-n exists in more than one fleet tracker.
+      {
+        name: "ADR",
+        fields: { decisions: optionalStringList },
+        sections: ["Status", "Context", "Decision", "Consequences"],
+      },
       { name: "Runbook", fields: {}, sections: [] },
       { name: "Reference", fields: {}, sections: [] },
       // Declared on EVERY OKF version, unlike Attested Computation below (OPAG-425 R1: "available on

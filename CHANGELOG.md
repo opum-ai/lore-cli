@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`lore link --decision <id>` links a decision id the way a task id is linked** (LCLI-670, DEC-192
+  (2) and (5)). The concept's `decisions:` frontmatter (mirroring `tasks:`) gains
+  repository-qualified `<repo>:DEC-N` entries, because a `DEC-n` exists in more than one fleet
+  tracker. The write is document-side only — a decision has no back-reference for this command to
+  edit — so `--no-back-ref` is refused with it. A bare `DEC-N` is qualified from `--repo` when given,
+  else the `origin` remote's name (its last path segment without `.git`, the same for SSH and HTTPS),
+  and otherwise the command refuses and says to pass `--repo`; the remote's name, never the directory
+  name, is what makes a primary checkout and a review worktree write the same entry.
+
 - **`lore check` fails when a source several agent profiles name leaves any of them over capacity**
   (LCLI-702, DEC-172 (4at)). A source NAMED by several `.lore/agents/*.toml` profiles — in `pinned`
   or `sources` — costs every one of them when it grows, and an author who raises only the budget they

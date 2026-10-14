@@ -78,7 +78,7 @@ detail with `lore instructions <topic>`:
 - `replace`       Find-and-replace across the bundle, skipping managed regions
 - `rename`        Move a concept and repoint every inbound link + ref
 - `supersede`     Mark a concept superseded by another, wiring both ways
-- `link`          Add task ids to a concept's tasks: + the doc: back-ref
+- `link`          Add task ids to a concept's tasks: + the doc: back-ref, or a decision id to its decisions:
 - `unlink`        Remove task ids from a concept's tasks: + the doc: back-ref
 - `sync`          Reconcile status + managed task blocks, regen index/log; commits tracker files on the Backlog backend only
 - `tasks`         Show the live status rollup for a concept's linked tasks

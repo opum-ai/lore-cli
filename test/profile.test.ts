@@ -124,6 +124,11 @@ describe("defaultProfile — the built-in story convention (AC#3)", () => {
       "status",
       "tasks",
       "specs",
+      // LCLI-670 (DEC-192 (2)): ADR's own `decisions` field, beside Arc's `specs`. Inserted mid-list
+      // rather than appended, which the note above warns about — it is safe here for that note's own
+      // reason: a document carrying no `decisions` key serializes to exactly the bytes it did before,
+      // because an absent key contributes nothing wherever it sits.
+      "decisions",
       "version",
       "ratified",
       "last_amended",

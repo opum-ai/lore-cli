@@ -73,7 +73,10 @@ export const LORE_COMMANDS: readonly CommandSummary[] = [
   { name: "replace", summary: "Find-and-replace across the bundle, skipping managed regions" },
   { name: "rename", summary: "Move a concept and repoint every inbound link + ref" },
   { name: "supersede", summary: "Mark a concept superseded by another, wiring both ways" },
-  { name: "link", summary: "Add task ids to a concept's tasks: + the doc: back-ref" },
+  {
+    name: "link",
+    summary: "Add task ids to a concept's tasks: + the doc: back-ref, or a decision id to its decisions:",
+  },
   { name: "unlink", summary: "Remove task ids from a concept's tasks: + the doc: back-ref" },
   {
     name: "sync",
