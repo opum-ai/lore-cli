@@ -14,7 +14,7 @@ tags:
   - agent
 summary: lore combines in-memory full-text search, frontmatter filters, and deterministic graph expansion without a vector stack.
 timestamp: 2026-06-21T00:00:00Z
-status: superseded
+status: deprecated
 superseded_by: adr/0018-persistent-local-graph-projection-with-ladybugdb
 ---
 

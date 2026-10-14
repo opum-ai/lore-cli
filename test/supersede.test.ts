@@ -77,7 +77,7 @@ describe("lore supersede — frontmatter wiring (AC#1)", () => {
     expect(report.new).toBe("docs/adr/0012-new.md");
 
     const old = parseLegacyDoc("adr/0007-old.md");
-    expect(old.frontmatter.status).toBe("superseded");
+    expect(old.frontmatter.status).toBe("deprecated");
     expect(old.frontmatter.superseded_by).toBe("adr/0012-new");
     const fresh = parseLegacyDoc("adr/0012-new.md");
     expect(fresh.frontmatter.supersedes).toBe("adr/0007-old");
@@ -234,8 +234,8 @@ describe("lore supersede — --rewrite-links (AC#2)", () => {
       const err = expectError(["adr/0007-old", "adr/0012-new", "--rewrite-links"]);
       expect(err.type).toBe("validation");
       expect(err.message).toContain("incomplete");
-      // No partial write: the old concept was never wired to superseded (only committed after the check).
-      expect(readDoc("adr/0007-old.md")).not.toContain("status: superseded");
+      // No partial write: the old concept was never wired to deprecated (only committed after the check).
+      expect(readDoc("adr/0007-old.md")).not.toContain("status: deprecated");
     } finally {
       chmodSync(locked, 0o755); // restore so afterEach cleanup can remove it
     }
@@ -271,7 +271,7 @@ describe("lore supersede — --rewrite-links (AC#2)", () => {
     writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
     writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
     // adr/0003-ancient was historically superseded BY adr/0007-old (which still exists on disk)
-    const ancientBytes = "---\ntype: ADR\nstatus: superseded\nsuperseded_by: adr/0007-old\n---\nAncient.\n";
+    const ancientBytes = "---\ntype: ADR\nstatus: deprecated\nsuperseded_by: adr/0007-old\n---\nAncient.\n";
     writeDoc("adr/0003-ancient.md", ancientBytes);
     // adr/0099-z supersedes adr/0007-old
     const zBytes = "---\ntype: ADR\nsupersedes: adr/0007-old\n---\nZ.\n";
@@ -386,26 +386,31 @@ describe("lore supersede — errors and arg parsing", () => {
   });
 
   test("superseding an already-superseded concept is a conflict (exit 5)", () => {
-    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: superseded\n---\nOld.\n");
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: deprecated\nsuperseded_by: adr/0012-new\n---\nOld.\n");
     writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
     expect(expectError(["adr/0007-old", "adr/0012-new"]).type).toBe("conflict");
   });
 
   test("re-superseding by the same successor is an idempotent conflict (exit 5)", () => {
-    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: active\nsuperseded_by: adr/0012-new\n---\nOld.\n");
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: deprecated\nsuperseded_by: adr/0012-new\n---\nOld.\n");
     writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
     expect(expectError(["adr/0007-old", "adr/0012-new"]).type).toBe("conflict");
   });
 
-  test("a non-lowercase `status: Superseded` is still detected (case-insensitive guard)", () => {
-    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: Superseded\n---\nOld.\n");
+  test("a legacy ADR carrying `status: superseded` is invalid, so supersede exits 6 (DEC-192)", () => {
+    // The marker `lore supersede` used to write on a 0.1 bundle was never a valid lifecycle value, so
+    // the document cannot load and validation (exit 6) answers BEFORE the already-superseded guard.
+    // The remedy is the CHANGELOG's one-line fix: status: superseded -> status: deprecated.
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: superseded\n---\nOld.\n");
     writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
-    expect(expectError(["adr/0007-old", "adr/0012-new"]).type).toBe("conflict");
+    const err = expectError(["adr/0007-old", "adr/0012-new"]);
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("superseded");
   });
 
   test("an existing `superseded_by` (any status) blocks the supersede — it is never clobbered (exit 5)", () => {
     // the old doc already records adr/0042-x as its successor; superseding would silently overwrite it
-    const oldBytes = "---\ntype: ADR\nstatus: active\nsuperseded_by: adr/0042-x\n---\nOld.\n";
+    const oldBytes = "---\ntype: ADR\nstatus: deprecated\nsuperseded_by: adr/0042-x\n---\nOld.\n";
     writeDoc("adr/0007-old.md", oldBytes);
     writeDoc("adr/0042-x.md", "---\ntype: ADR\n---\nX.\n");
     writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
@@ -426,7 +431,7 @@ describe("lore supersede — errors and arg parsing", () => {
     writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
     const { code } = supersedeCmd(["--", "adr/0007-old", "adr/0012-new"]);
     expect(code).toBe(EXIT_OK);
-    expect(parseLegacyDoc("adr/0007-old.md").frontmatter.status).toBe("superseded");
+    expect(parseLegacyDoc("adr/0007-old.md").frontmatter.status).toBe("deprecated");
   });
 });
 
@@ -544,7 +549,7 @@ describe("lore supersede — router integration", () => {
       stderr: capture(),
     });
     expect(code).toBe(EXIT_OK);
-    expect(parseLegacyDoc("adr/0007-old.md").frontmatter.status).toBe("superseded");
+    expect(parseLegacyDoc("adr/0007-old.md").frontmatter.status).toBe("deprecated");
   });
 
   test("a not_found surfaces exit 3 through the router", () => {
@@ -558,7 +563,7 @@ describe("lore supersede — router integration", () => {
   });
 
   test("an already-superseded concept surfaces exit 5 through the router", () => {
-    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: superseded\n---\nOld.\n");
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: deprecated\nsuperseded_by: adr/0012-new\n---\nOld.\n");
     writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
     const code = run(["bun", "lore", "supersede", "adr/0007-old", "adr/0012-new", "--json"], {
       cwd: root,

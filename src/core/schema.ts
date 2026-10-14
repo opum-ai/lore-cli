@@ -472,8 +472,8 @@ function validateLifecycleStatus(
   if (result.success) return;
   throw new LoreError(
     "validation",
-    `invalid OKF lifecycle status${where}: ${describeIssues(result.error)}`,
-    "set `status` to draft, stable, or deprecated; Lore task progress belongs in `lore_task_status`",
+    `invalid OKF lifecycle status${where}: ${describeIssues(result.error)} (got ${JSON.stringify(fm.status)})`,
+    "set `status` to draft, stable, or deprecated; `status: superseded`, which an older `lore supersede` wrote on a 0.1 bundle, is the one-line fix in the CHANGELOG (`status: superseded` -> `status: deprecated`); Lore task progress belongs in `lore_task_status`",
     { path, key: "status", issues: issueList(result.error) },
   );
 }

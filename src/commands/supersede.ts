@@ -38,7 +38,7 @@
  * Validation lives here, because the engine's `move:false` path checks only that `oldId` exists (its
  * conflict guard is move-only): both ids must name concepts (`not_found`, exit 3); neither may be a
  * reserved hub name (`usage`, exit 2); and the old concept must not already be superseded —
- * `status: superseded` (any case) **or** an already-recorded `superseded_by` — which would otherwise
+ * an already-recorded `superseded_by` — which would otherwise
  * be silently overwritten (`conflict`, exit 5). All file I/O is here
  * ({@link writeFileOverwriting}, overwrite in place); every link/ref judgement stays pure in
  * `core/rewrite.ts`.
@@ -55,12 +55,10 @@ import { emit, type OutputContext, type Renderable } from "../output";
 import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
 import { writeFileOverwriting } from "./fswrite";
 
-/**
- * The legacy OKF 0.1 `status` value (`superseded`) that `lore supersede` USED to write. It was
- * never a legal lifecycle value; since DEC-192 it survives only as the recognition arm of the
- * already-superseded guard, so a bundle still carrying it is not superseded a second time.
- */
-const SUPERSEDED_STATUS = "superseded";
+// DEC-192 (LCLI-669) retired the legacy OKF 0.1 `status` value "superseded" this command used to
+// write: it was never a legal lifecycle value, `lore supersede` now writes `deprecated` on both
+// versions, and nothing reads the old spelling. A document still carrying it fails validation
+// (exit 6); the CHANGELOG names the one-line fix.
 
 /** Options for {@link runSupersede}; `root` and the streams are injectable for tests. */
 export interface SupersedeOptions {
@@ -316,13 +314,15 @@ function appendSupersedes(
 
 /**
  * Reject superseding a concept that is already superseded (`conflict`, exit 5). "Already superseded"
- * is either the `status: superseded` lifecycle signal (matched case-insensitively, since `status` is
- * a free-form string) **or** an already-recorded `superseded_by` — the structured field
- * {@link wireOld} would otherwise silently overwrite, discarding the concept's real recorded
- * successor.
+ * is an already-recorded `superseded_by` — the structured field {@link wireOld} would otherwise
+ * silently overwrite, discarding the concept's real recorded successor.
+ *
+ * A `status: superseded` arm was REMOVED (DEC-192): that value was never a valid lifecycle status,
+ * so a document carrying it cannot load and validation (exit 6) answers before this guard. Keeping
+ * the arm would be dead code masquerading as a live path.
  */
 function assertNotAlreadySuperseded(oldConcept: Concept): void {
-  if (hasRecordedSuccessor(oldConcept) || statusIsSuperseded(oldConcept)) {
+  if (hasRecordedSuccessor(oldConcept)) {
     throw new LoreError(
       "conflict",
       `concept "${oldConcept.id}" is already superseded`,
@@ -339,12 +339,6 @@ function hasRecordedSuccessor(concept: Concept): boolean {
     return false;
   }
   return !(Array.isArray(value) && value.length === 0);
-}
-
-/** Whether the concept's `status` is `superseded`, matched case-insensitively (status is free-form text). */
-function statusIsSuperseded(concept: Concept): boolean {
-  const status = concept.frontmatter.status;
-  return typeof status === "string" && status.trim().toLowerCase() === SUPERSEDED_STATUS;
 }
 
 // ── Argument parsing ───────────────────────────────────────────────────────────
