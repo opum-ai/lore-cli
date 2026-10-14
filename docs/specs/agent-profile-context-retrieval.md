@@ -111,11 +111,10 @@ Contract:
   width, and the worst-case bundle-wide query section reserved rather than
   rendered — so it stands for the largest pack a task can compile, up to the one
   residual [ADR-0025](../adr/0025-the-capacity-measurement-reserves-the-worst-case-bundle-wide-query-section-and-renders-score-annotations-at-full-width-dec-98.md)
-  records and measures: the pack header renders the task text verbatim, so a task
+  records: the pack header renders the task text verbatim, so a task
   much longer than the measurement's fixed stand-in can still consume the margin.
-  Within that bound, a
-  budget that satisfies it cannot start dropping declared evidence on a task, and
-  a budget that only appears to satisfy it cannot hide behind that appearance (LCLI-662, DEC-98 B). DEC-11 rules that this ships as a **warning for one
+  Within that bound, a budget that satisfies it cannot drop declared evidence on a
+  task, and one that only appears to cannot hide behind that appearance (LCLI-662, DEC-98 B). DEC-11 rules that this ships as a **warning for one
   release and then as an error**; the flip is held by LCLI-646. The finding is
   computed from the declaration and the bundle, never from a task, so it is the
   same on every task and never
@@ -124,17 +123,18 @@ Contract:
 - `targets` is an optional table of context-budget TARGETS the profile declares
   (LCLI-682; MDL-7, ODOC-437 AC3, DEC-187): `policy_and_role`, `task_contract`,
   `task_evidence` and `lore_subtotal`, each a positive integer of estimated
-  tokens. They are **design defaults the compiler measures a compiled pack
-  against and reports**, NOT ceilings enforced before a request — `max_tokens`
-  above stays the ceiling. The report is additive on `agent.context.export` as
-  `budgets`, present only when a profile declares at least one target, and also
+  tokens. Three are **defaults the compiler measures a compiled pack against and
+  reports**; `task_evidence` is ENFORCED for selection when declared (DEC-194
+  (4), LCLI-722). `max_tokens` above stays the ceiling. The report is additive on
+  `agent.context.export` as `budgets`, present only when a profile declares at
+  least one target, and also
   rendered as the pack's `## Context budgets` section.
   - **Classes.** Policy and role is the pinned tier, task evidence the ranked
     sections, task contract the `--task-contract` block, and `loreSubtotal` the
     pack lore composes. `codeMap` and `harnessAndTools` are composed by
     `opum-cli`, so they are reported **not-applicable** — `measured: null` with
-    the reason `composed by opum-cli`, never a `0` and never an absent key, either
-    of which a consumer could read as a measurement.
+    the reason `composed by opum-cli`, never a `0` or an absent key, which a
+    consumer could read as a measurement.
   - **AC3 ceilings.** `authoredBootstrapCeiling` (8k) measures policy and role
     **plus** task contract; `taskEvidenceCeiling` (16k) measures the ranked tier.
     The code map is generated and the harness floor is not authored, so neither

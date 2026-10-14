@@ -19,6 +19,7 @@ import type { Concept } from "./concept";
 import { compareCodeUnits } from "./order";
 import { query, scoreBm25Records } from "./query";
 import {
+  CONTEXT_REQUIRED_CONTENT_OVER_BUDGET,
   CONTEXT_REQUIRED_SOURCE_MISSING,
   isMandatoryLink,
   type ParsedTaskContract,
@@ -634,12 +635,48 @@ function compilePack(
   // and so always fits. `queryHitsOmitted` carries the count either way.
   const querySection = withQueryHits && (queryHitLimit > 0 || build([], 0).tokenEstimate <= effectiveBudget);
 
+  // THE EVIDENCE CAP (DEC-194 (4), LCLI-722). A profile that declares `[targets].task_evidence`
+  // selects ranked evidence only up to that many tokens, highest-scoring first — `ordered` is
+  // already in score order. A profile that declares NO targets keeps exactly the behaviour it had:
+  // the cap is never inferred, because lore is published and a pack silently bounded by a number
+  // the profile never wrote would surprise external users who never asked for one.
+  //
+  // REQUIRED evidence is never dropped (MDL-9). In this tier the required content is the bundle's
+  // Constitution when the profile RANKS it in `sources` — the one candidate the ranking keeps at
+  // zero score on purpose, because it is mandatory policy rather than ranked evidence. If that
+  // cannot fit the cap the compile FAILS: a pack silently missing mandatory content is
+  // indistinguishable downstream from a complete one, which is the whole reason this is an error
+  // and not an omission.
+  const evidenceBudget = profile.targets.taskEvidence;
+  if (evidenceBudget !== undefined) {
+    const requiredTokens = ordered
+      .filter((candidate) => candidate.conceptId === constitutionId)
+      .reduce((sum, candidate) => sum + candidate.tokenEstimate, 0);
+    if (requiredTokens > evidenceBudget) {
+      throw new LoreError(
+        "validation",
+        `${CONTEXT_REQUIRED_CONTENT_OVER_BUDGET}: agent profile "${profile.name}" requires ~${requiredTokens} tokens of mandatory evidence, above its declared task_evidence budget of ${evidenceBudget}`,
+        "raise the profile's `[targets] task_evidence`, or drop the mandatory source from its `sources` — the cap will not silently omit it",
+        { profile: profile.name, requiredTokens, evidenceBudget, constitution: constitutionId },
+      );
+    }
+  }
+
   // Every tentative pack is rendered with its own deduplicated query section, so a candidate whose
   // selection swaps a longer hit into the section is admitted only if that whole pack still fits.
+  // The cap skips rather than breaks, matching how `effectiveBudget` already behaves: a section too
+  // large for what is left of the evidence budget does not shut out the smaller ones behind it.
   const selected: RankedCandidate[] = [];
+  let evidenceTokens = 0;
   for (const candidate of ordered) {
+    if (evidenceBudget !== undefined && evidenceTokens + candidate.tokenEstimate > evidenceBudget) {
+      continue;
+    }
     const tentative = build([...selected, candidate], queryHitLimit, querySection);
-    if (tentative.tokenEstimate <= effectiveBudget) selected.push(candidate);
+    if (tentative.tokenEstimate <= effectiveBudget) {
+      selected.push(candidate);
+      evidenceTokens += candidate.tokenEstimate;
+    }
   }
   return build(selected, queryHitLimit, querySection);
 }
@@ -1132,8 +1169,16 @@ function computeBudgets(
 ): AgentContextBudgets | undefined {
   if (!profileDeclaresBudgets(profile)) return undefined;
   const targets = profile.targets;
+  // Each entry is named by its reference PLUS the SECTION it came from when it has one (LCLI-722).
+  // A ranked candidate is a section, not a document, but `reference` is the concept id — so before
+  // this, a 110-section budget rendered as 110 strings drawn from 13 concepts, and DEC-194 (3)'s
+  // "any residual comes back with the content behind it" could not be answered from the report. The
+  // labels are rendered into the pack by `budgetLine`, so they are not free; the evidence cap lands
+  // first precisely because it takes that list from ~110 entries to ~13.
+  const label = (item: AgentContextItem): string =>
+    item.breadcrumb === undefined ? item.reference : `${item.reference} (${item.breadcrumb})`;
   const bySize = (items: readonly AgentContextItem[]): string[] =>
-    [...items].sort((a, b) => b.tokenEstimate - a.tokenEstimate).map((item) => item.reference);
+    [...items].sort((a, b) => b.tokenEstimate - a.tokenEstimate).map(label);
   const policyAndRole = budgetEntry(
     targets.policyAndRole,
     pinned.reduce((sum, item) => sum + item.tokenEstimate, 0),

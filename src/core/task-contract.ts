@@ -25,6 +25,16 @@ export const TASK_CONTRACT_SCHEMA_VERSION = 1;
 export const CONTEXT_REQUIRED_SOURCE_MISSING = "CONTEXT_REQUIRED_SOURCE_MISSING";
 
 /**
+ * The stable public marker for REQUIRED content that cannot fit the budget it is measured against
+ * (MDL-9). It lives beside {@link CONTEXT_REQUIRED_SOURCE_MISSING} rather than in `agent-context.ts`
+ * because the two are one family — the `CONTEXT_REQUIRED_*` markers a consumer branches on — and a
+ * caller that handles one should be able to find the other. The compile FAILS on this rather than
+ * dropping the content: a pack silently missing what the profile declared as mandatory is worse than
+ * a pack that does not compile, because nothing downstream can tell it apart from a complete one.
+ */
+export const CONTEXT_REQUIRED_CONTENT_OVER_BUDGET = "CONTEXT_REQUIRED_CONTENT_OVER_BUDGET";
+
+/**
  * How a documentation link relates to the task. `requires` and `constrains` are MANDATORY: the
  * task cannot be prepared without them. `explains` and `verifies` are optional background — a
  * missing one is recorded as an omission, never a failure.

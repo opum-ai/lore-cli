@@ -109,8 +109,12 @@ describe("agent context — declared context budgets (LCLI-682)", () => {
     const budgets = compile().budgets;
     expect(budgets?.policyAndRole.over).toBe(true);
     expect(budgets?.policyAndRole.content).toContain("reference/rules");
-    expect(budgets?.taskEvidence.over).toBe(true);
-    expect(budgets?.taskEvidence.content.some((reference) => reference.startsWith("specs/ui"))).toBe(true);
+    // `task_evidence` can no longer be OVER: since DEC-194 (4) it is a CAP on selection, so a
+    // one-token budget selects nothing rather than selecting everything and reporting an overrun
+    // (LCLI-722). This assertion used to require `over` here; the cap is asserted in full in the
+    // LCLI-722 describe below, and this line records the consequence where the old expectation was.
+    expect(budgets?.taskEvidence.measured).toBe(0);
+    expect(budgets?.taskEvidence.over).toBe(false);
     expect(budgets?.loreSubtotal.over).toBe(true);
   });
 
@@ -212,5 +216,128 @@ describe("agent context — declared context budgets (LCLI-682)", () => {
       .find((candidate) => candidate.startsWith("- policy and role"));
     expect(line).toBeDefined();
     expect((line ?? "").match(/no target declared/g)).toHaveLength(1);
+  });
+});
+
+// ── DEC-194 (4) / LCLI-722: the declared `task_evidence` CAP ───────────────────
+
+/**
+ * A declared `task_evidence` is a CAP on ranked selection, not only a measurement (DEC-194 (4),
+ * chosen as A at opum-ai/opum-doc#1022). Both arms are proved: a profile that declares it selects
+ * ranked evidence only up to it, highest-scoring first; a profile that declares NO `[targets]`
+ * behaves exactly as before, because lore is published and a pack silently bounded by a number the
+ * profile never wrote would surprise external users. Required content that cannot fit fails the
+ * compile with `CONTEXT_REQUIRED_CONTENT_OVER_BUDGET` rather than being dropped (MDL-9).
+ */
+describe("agent context — the declared `task_evidence` cap (DEC-194 (4), LCLI-722)", () => {
+  /** `count` ranked evidence documents, each one section of `padWords` words. */
+  function corpus(count: number, padWords = 60): void {
+    doc("reference/rules.md", "# Rules\n\nCheckout validation rules.\n", "Checkout validation rules");
+    for (let i = 0; i < count; i += 1) {
+      doc(`specs/e${i}.md`, `# Evidence ${i}\n\n${"checkout validation ".repeat(padWords)}\n`, `Evidence ${i}`);
+    }
+  }
+
+  /** The profile, with `sources` defaulting to the whole corpus, over an optional `[targets]` tail. */
+  function profile(targets: string, sources: readonly string[], extra = ""): void {
+    const path = join(root, ".lore/agents/frontend-dev.toml");
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(
+      path,
+      `schema_version = 1\nname = "frontend-dev"\ndescription = "Frontend implementation context."\nkind = "specialist"\nmax_tokens = 20000\npinned = ["reference/rules"]\nsources = [${sources.map((s) => `"${s}"`).join(", ")}]\n${extra}${targets}`,
+    );
+  }
+
+  const allSources = (count: number): string[] => Array.from({ length: count }, (_, i) => `specs/e${i}`);
+
+  /**
+   * Compile with the bundle's Constitution path supplied. `compile()` does not pass one, and
+   * `constitutionConceptId` returns `undefined` without it — so a RANKED Constitution is not
+   * recognised as the mandatory candidate and the required-content arm cannot be reached at all.
+   */
+  function compileWithConstitution() {
+    return compileAgentContext(
+      loadAgentProfiles(root),
+      loadBundle(join(root, "docs")),
+      "frontend-dev",
+      TASK,
+      20000,
+      "docs/constitution.md",
+    );
+  }
+
+  test("a declared task_evidence caps the selection, and names the cap as its target", () => {
+    corpus(20);
+    profile("[targets]\ntask_evidence = 200\n", allSources(20));
+    const pack = compile();
+    expect(pack.budgets?.taskEvidence.target).toBe(200);
+    expect(pack.budgets?.taskEvidence.measured).toBeLessThanOrEqual(200);
+    expect(pack.budgets?.taskEvidence.over).toBe(false);
+    // The cap BITES: without it all 20 sources are selected (proved by the arm below).
+    expect(pack.shown).toBeLessThan(20);
+  });
+
+  test("...and a profile declaring NO targets keeps today's behaviour — the cap is never inferred", () => {
+    corpus(20);
+    profile("", allSources(20));
+    const pack = compile();
+    expect(pack.budgets).toBeUndefined();
+    expect(pack.shown).toBe(20);
+  });
+
+  test("the SAME corpus under a larger declared cap selects more — the cap is the profile's number", () => {
+    corpus(20);
+    profile("[targets]\ntask_evidence = 200\n", allSources(20));
+    const capped = compile();
+    const tight = capped.shown;
+    rmSync(join(root, ".lore"), { recursive: true, force: true });
+    profile("[targets]\ntask_evidence = 1000\n", allSources(20));
+    const looser = compile().shown;
+    expect(looser).toBeGreaterThan(tight);
+  });
+
+  test("required content over the cap FAILS instead of being dropped (CONTEXT_REQUIRED_CONTENT_OVER_BUDGET)", () => {
+    // The Constitution, when a profile RANKS it in `sources`, is mandatory policy rather than ranked
+    // evidence — the one candidate the ranking keeps at zero score on purpose. A cap it cannot fit
+    // must fail the compile: a pack silently missing mandatory content is indistinguishable
+    // downstream from a complete one, which is why this is an error and not an omission.
+    doc("reference/rules.md", "# Rules\n\nCheckout validation rules.\n", "Checkout validation rules");
+    doc("specs/ui.md", "# Checkout form\n\nCheckout validation in the form.\n", "Checkout validation UI");
+    writeFileSync(
+      join(root, "docs/constitution.md"),
+      `---\ntype: Constitution\ntitle: Project constitution\nsummary: The principles this project holds.\nversion: 1.0.0\nratified: "2026-01-01"\nlast_amended: "2026-01-01"\namendment_authority: project maintainers\n---\n\n# Project constitution\n\n## Principles\n\n${"accountable reversible scoped ".repeat(120)}\n\n## Governance\n\n${"accountable reversible scoped ".repeat(120)}\n\n## Amendment log\n\nNone yet.\n`,
+    );
+    profile("[targets]\ntask_evidence = 50\n", ["constitution", "specs/ui"]);
+    expect(() => compileWithConstitution()).toThrow(/CONTEXT_REQUIRED_CONTENT_OVER_BUDGET/);
+  });
+
+  test("...and the SAME profile compiles once the cap can hold it (the other way)", () => {
+    doc("reference/rules.md", "# Rules\n\nCheckout validation rules.\n", "Checkout validation rules");
+    doc("specs/ui.md", "# Checkout form\n\nCheckout validation in the form.\n", "Checkout validation UI");
+    writeFileSync(
+      join(root, "docs/constitution.md"),
+      `---\ntype: Constitution\ntitle: Project constitution\nsummary: The principles this project holds.\nversion: 1.0.0\nratified: "2026-01-01"\nlast_amended: "2026-01-01"\namendment_authority: project maintainers\n---\n\n# Project constitution\n\n## Principles\n\nShort enough to fit.\n\n## Governance\n\nShort.\n\n## Amendment log\n\nNone yet.\n`,
+    );
+    profile("[targets]\ntask_evidence = 6000\n", ["constitution", "specs/ui"]);
+    expect(compileWithConstitution().budgets?.taskEvidence.over).toBe(false);
+  });
+
+  test("a budget names the SECTION an entry came from, not just the concept (LCLI-722)", () => {
+    // The labels matter where a class is OVER and its content is a SECTION. Post-cap the ranked tier
+    // can no longer overrun, so this reads the pinned tier with an ANCHORED pin — the form the
+    // profile reshape (DEC-194 (1)) introduces — where the same defect existed: a whole-document
+    // reference tells a reader nothing about which part required the budget.
+    doc("reference/rules.md", "# Rules\n\nIntro.\n\n## Alpha\n\nCheckout validation alpha.\n", "Rules");
+    const profilePath = join(root, ".lore/agents/frontend-dev.toml");
+    mkdirSync(join(profilePath, ".."), { recursive: true });
+    writeFileSync(
+      profilePath,
+      `schema_version = 1\nname = "frontend-dev"\ndescription = "Frontend implementation context."\nkind = "specialist"\nmax_tokens = 20000\npinned = ["reference/rules#alpha"]\nsources = []\n[targets]\npolicy_and_role = 1\n`,
+    );
+    const budgets = compile().budgets;
+    expect(budgets?.policyAndRole.over).toBe(true);
+    expect(budgets?.policyAndRole.content).toHaveLength(1);
+    expect(budgets?.policyAndRole.content[0]).toContain("reference/rules");
+    expect(budgets?.policyAndRole.content[0]).toContain("Alpha");
   });
 });

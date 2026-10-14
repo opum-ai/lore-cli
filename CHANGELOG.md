@@ -40,6 +40,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A declared `task_evidence` target now CAPS evidence selection, not only measures it** (LCLI-722,
+  DEC-194 (4), option A, opum-ai/opum-doc#1022). A profile that declares `[targets] task_evidence`
+  selects ranked evidence only up to that many tokens, highest-scoring first; a profile that declares
+  **no** `[targets]` behaves exactly as before, because lore is published and a pack silently bounded
+  by a number the profile never wrote would surprise external users who never asked for one. Two
+  consequences worth knowing. `task_evidence` can no longer report `over` — a capped class cannot
+  exceed its own cap, so a pack that used to report a 48k-token evidence overrun against a 6000
+  target now reports the 6000 it selected — and the same is true of the 16k `taskEvidenceCeiling`.
+  And required content that cannot fit the cap — the bundle's Constitution, when a profile RANKS it
+  in `sources` — fails the compile with the new `CONTEXT_REQUIRED_CONTENT_OVER_BUDGET` rather than
+  being dropped, because a pack silently missing mandatory content is indistinguishable downstream
+  from a complete one. The budget report also names the SECTION each entry came from rather than only
+  its concept, so a residual can say what required it.
+
 - **`lore check`'s committed-schema drift findings name the committing step** (LCLI-545). The
   `missing` / `stale` / `orphaned` schema-drift findings named `lore schema export` but stopped
   there, and regenerating *without committing* leaves the drift in place for the next reader — the

@@ -189,12 +189,24 @@ describe("LCLI-680 — zero-score filler is excluded from optional-evidence sele
     const packA = compile(taskA);
     const packB = compile(taskB);
 
-    // The reason-eliminator: neither pack is budget-truncated (the profile's 108000-token budget
-    // holds every eligible candidate). So a section that is absent from one pack is absent because
-    // step 4 excluded it as zero-score, NOT because step 9's budget dropped it. This is what makes
-    // the absence assertions below statements about relevance.
-    expect(packA.truncated).toBe(false);
-    expect(packB.truncated).toBe(false);
+    // THE REASON-ELIMINATOR, RESTATED FOR THE CAPPED WORLD (LCLI-722). It used to read "neither pack
+    // is budget-truncated — the profile's 108000-token budget holds every eligible candidate — so an
+    // absence must be a relevance omission". Since DEC-194 (4) the profile's declared `task_evidence`
+    // CAPS the pack, so both packs ARE truncated and absence alone no longer implies relevance. The
+    // reason is therefore asserted DIRECTLY on the catalog below, which is stronger than the proxy
+    // it replaces: the proxy said "no budget cut happened", the assertions say which reason each
+    // omission carries.
+    expect(packA.truncated).toBe(true);
+    expect(packB.truncated).toBe(true);
+    for (const pack of [packA, packB]) {
+      // The distinction the two reasons exist for: a candidate the zero-score filter emptied is
+      // never reported as one the budget dropped.
+      for (const entry of pack.catalog) {
+        if (entry.topScore === 0 && entry.selectedCount === 0) {
+          expect(entry.reason).toBe("omitted-by-relevance");
+        }
+      }
+    }
 
     // Every selected section is relevant to its own task: no zero-score filler leaked into either
     // pack (step 6: unused capacity is never filled with low-value sections).
@@ -311,13 +323,21 @@ describe("LCLI-680 — a zero-score exclusion carries its own reason, and a mand
     expect(pack.catalog.find((entry) => entry.reference === "constitution")?.reason).toBe("included");
   });
 
-  test("the real tasks drop zero-score candidates without reporting any budget omission", () => {
+  test("the real tasks drop zero-score candidates without CALLING them budget omissions", () => {
     for (const task of [realTaskTitle(TASK_A_ID), realTaskTitle(TASK_B_ID)]) {
       const pack = compile(task);
-      // Neither real pack is truncated, so every omission in it is a relevance omission; nothing may
-      // read `omitted-by-budget`.
-      expect(pack.truncated).toBe(false);
-      expect(pack.catalog.some((entry) => entry.reason === "omitted-by-budget")).toBe(false);
+      // The old form of this test required neither pack to be truncated and no omission to read
+      // `omitted-by-budget`. The declared `task_evidence` cap (DEC-194 (4), LCLI-722) makes both
+      // false for the real profiles, so what is asserted now is the distinction the reasons exist
+      // for, which the cap must not blur: these packs DO truncate and DO drop positives by budget,
+      // and a zero-score candidate is never reported as one of those.
+      expect(pack.truncated).toBe(true);
+      expect(pack.catalog.some((entry) => entry.reason === "omitted-by-budget")).toBe(true);
+      for (const entry of pack.catalog) {
+        if (entry.topScore === 0 && entry.selectedCount === 0) {
+          expect(entry.reason).toBe("omitted-by-relevance");
+        }
+      }
     }
   });
 
