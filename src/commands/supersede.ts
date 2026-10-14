@@ -60,8 +60,9 @@ import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
 import { writeFileOverwriting } from "./fswrite";
 
 // DEC-192 (LCLI-669) retired the legacy OKF 0.1 `status` value "superseded" this command used to
-// write: it was never a legal lifecycle value, `lore supersede` now writes `deprecated` on both
-// versions, and nothing reads the old spelling. A document still carrying it fails validation
+// write: it was never a legal lifecycle value, `lore supersede` writes the effective enum's
+// superseded value on both versions (DEC-192 (4)/(6), LCLI-723), and nothing reads the old spelling.
+// A document still carrying it fails validation
 // (exit 6); the CHANGELOG names the one-line fix.
 
 /** Options for {@link runSupersede}; `root` and the streams are injectable for tests. */

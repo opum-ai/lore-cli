@@ -481,15 +481,16 @@ function validateLifecycleStatus(
   if (!Object.hasOwn(fm, "status")) return;
   const canonical = canonicalType(type, profile);
   if (profile.okfVersion !== "0.2" && canonical !== "ADR") return;
-  // Unknown type: an OKF producer extension this profile cannot speak for, so the built-in triple
-  // is the only vocabulary available (and what every version of lore has enforced here).
-  const allowed = profile.types.get(canonical)?.lifecycleStatusEnum;
-  const result = lifecycleStatusSchema(allowed ?? BUILTIN_LIFECYCLE_STATUS).safeParse(fm.status);
+  // An unknown type — an OKF producer extension this profile cannot speak for — falls back to the
+  // built-in triple, which is the only vocabulary available for it (and what lore has always
+  // enforced there).
+  const effective = profile.types.get(canonical)?.lifecycleStatusEnum ?? BUILTIN_LIFECYCLE_STATUS;
+  const result = lifecycleStatusSchema(effective).safeParse(fm.status);
   if (result.success) return;
   throw new LoreError(
     "validation",
     `invalid OKF lifecycle status${where}: ${describeIssues(result.error)} (got ${JSON.stringify(fm.status)})`,
-    lifecycleStatusRemedy(allowed ?? BUILTIN_LIFECYCLE_STATUS),
+    lifecycleStatusRemedy(effective),
     { path, key: "status", issues: issueList(result.error) },
   );
 }
