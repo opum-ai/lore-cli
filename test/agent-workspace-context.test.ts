@@ -336,4 +336,55 @@ describe("agent context --workspace — CLI wiring", () => {
       "--workspace is not available with --contract",
     );
   });
+
+  test("--provider-input-tokens reaches the workspace pack (LCLI-682 review, blocking)", async () => {
+    profile(
+      "specialist",
+      'schema_version = 1\nname = "specialist"\ndescription = "Specialist."\nkind = "specialist"\nmax_tokens = 4000\npinned = ["alpha::glossary"]\nsources = ["alpha::design"]\n',
+    );
+    const stdout = capture();
+    const code = await runAgent({
+      root,
+      output: JSON_OUTPUT,
+      args: [
+        "context",
+        "specialist",
+        "--task",
+        "how do we build checkout forms?",
+        "--workspace",
+        manifestPath,
+        "--repository",
+        "alpha",
+        "--provider-input-tokens",
+        "4242",
+      ],
+      stdout,
+      retrieval: bareRetrieval,
+      loadWorkspaceProjection: (options) => loadWorkspaceProjection({ ...options, ...sourceOptions() }),
+    });
+    expect(code).toBe(0);
+    const envelope = JSON.parse(stdout.text()) as { kind: string; data: AgentContextExport };
+    // The flag is advertised command-wide, so the workspace arm must carry it. Before the fix this
+    // was silently dropped and `providerUsage` was absent.
+    expect(envelope.data.providerUsage).toEqual({ inputTokens: 4242, source: "manual" });
+  });
+
+  test("--provider-input-tokens with --contract is a usage error (LCLI-682 review, blocking)", async () => {
+    profile(
+      "specialist",
+      'schema_version = 1\nname = "specialist"\ndescription = "Specialist."\nkind = "specialist"\nmax_tokens = 4000\nsources = ["design"]\n',
+    );
+    await expectErrorAsync(
+      () =>
+        runAgent({
+          root,
+          output: JSON_OUTPUT,
+          args: ["context", "specialist", "--contract", "opum-agent-workflow/v1", "--provider-input-tokens", "1"],
+          stdout: capture(),
+          retrieval: bareRetrieval,
+        }),
+      "usage",
+      "--provider-input-tokens is not available with --contract",
+    );
+  });
 });

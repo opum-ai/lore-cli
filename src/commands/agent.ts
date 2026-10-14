@@ -88,6 +88,13 @@ type AgentAction =
       readonly request?: string;
       readonly requestFile?: string;
       readonly maxTokens?: number;
+      /**
+       * `--provider-input-tokens <n>` (LCLI-682 AC2): a provider input-token count a caller supplies
+       * MANUALLY, recorded in the pack's `providerUsage` with source `manual`. opum-cli's model
+       * gateway records a `provider-reported` figure instead (MDL-15). A manual figure is never
+       * treated as provider-reported — the AC3 ceilings are checked against lore's own estimate.
+       */
+      readonly providerInputTokens?: number;
       readonly out?: string;
       readonly force: boolean;
       readonly contract?: string;
@@ -192,14 +199,24 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
             action.maxTokens,
             constitutionPath,
             taskContract,
+            action.providerInputTokens,
           )
-        : await compileWorkspaceAgentContext(options.root, compileSnapshot, profile.name, task, action.maxTokens, {
-            manifestPath: action.workspace.manifestPath,
-            memberIds: action.workspace.memberIds,
-            ...(options.loadWorkspaceProjection === undefined
-              ? {}
-              : { loadProjection: options.loadWorkspaceProjection }),
-          });
+        : await compileWorkspaceAgentContext(
+            options.root,
+            compileSnapshot,
+            profile.name,
+            task,
+            action.maxTokens,
+            {
+              manifestPath: action.workspace.manifestPath,
+              memberIds: action.workspace.memberIds,
+              ...(options.loadWorkspaceProjection === undefined
+                ? {}
+                : { loadProjection: options.loadWorkspaceProjection }),
+            },
+            // LCLI-682 fix: the flag is advertised command-wide, so the workspace arm must carry it.
+            action.providerInputTokens,
+          );
     const markdown = renderAgentContextMarkdown(data);
     if (action.out !== undefined) {
       const target = confineOutFile(action.out, options.root);
@@ -427,7 +444,17 @@ async function runAgentProject(action: Extract<AgentAction, { kind: "project" }>
 
 function parseAgentArgs(args: readonly string[]): AgentAction {
   const parsed = parseCommandArgs(args, "agent");
-  for (const flag of ["task", "task-file", "task-contract", "max-tokens", "out", "force", "request", "contract"]) {
+  for (const flag of [
+    "task",
+    "task-file",
+    "task-contract",
+    "max-tokens",
+    "provider-input-tokens",
+    "out",
+    "force",
+    "request",
+    "contract",
+  ]) {
     assertFlagAtMostOnce(parsed, flag);
   }
   const action = parsed.positionals[0];
@@ -462,6 +489,7 @@ function parseAgentArgs(args: readonly string[]): AgentAction {
       "task-file",
       "task-contract",
       "max-tokens",
+      "provider-input-tokens",
       "out",
       "force",
       "workspace",
@@ -532,6 +560,17 @@ function parseAgentArgs(args: readonly string[]): AgentAction {
   }
   const rawMaxTokens = nonEmptyOption(parsed, "max-tokens");
   const maxTokens = rawMaxTokens === undefined ? undefined : parsePositiveInteger("--max-tokens", rawMaxTokens);
+  const rawProviderInput = nonEmptyOption(parsed, "provider-input-tokens");
+  const providerInputTokens =
+    rawProviderInput === undefined ? undefined : parseNonNegativeInteger("--provider-input-tokens", rawProviderInput);
+  // LCLI-682 fix: contract mode compiles no pack, so the flag has nowhere to land. It used to be
+  // silently ignored there; reject the combination as a usage error instead.
+  if (providerInputTokens !== undefined && contract !== undefined) {
+    throw usage(
+      "--provider-input-tokens is not available with --contract",
+      "contract mode compiles no pack; drop --provider-input-tokens or compile without --contract",
+    );
+  }
   const out = nonEmptyOption(parsed, "out");
   const force = parsed.flags.has("force");
   if (force && out === undefined) {
@@ -549,6 +588,7 @@ function parseAgentArgs(args: readonly string[]): AgentAction {
     ...(request === undefined ? {} : { request }),
     ...(requestFile === undefined ? {} : { requestFile }),
     ...(maxTokens === undefined ? {} : { maxTokens }),
+    ...(providerInputTokens === undefined ? {} : { providerInputTokens }),
     ...(out === undefined ? {} : { out }),
     ...(workspace === undefined ? {} : { workspace }),
     force,
@@ -577,6 +617,16 @@ function parsePositiveInteger(flag: string, value: string): number {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isSafeInteger(parsed)) throw usage(`${flag} "${value}" is too large`, "pass a smaller integer");
   if (parsed < 1) throw usage(`invalid ${flag} "${value}"`, `pass a positive integer, e.g. ${flag} 8000`);
+  return parsed;
+}
+
+/** Like {@link parsePositiveInteger} but accepts `0`: a provider input-token count may legitimately be zero. */
+function parseNonNegativeInteger(flag: string, value: string): number {
+  if (!/^\d+$/.test(value)) {
+    throw usage(`invalid ${flag} "${value}"`, `pass a non-negative integer, e.g. ${flag} 12000`);
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isSafeInteger(parsed)) throw usage(`${flag} "${value}" is too large`, "pass a smaller integer");
   return parsed;
 }
 

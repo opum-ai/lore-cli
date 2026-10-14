@@ -223,17 +223,14 @@
 - 2026-09-09T09:46:24Z 003039c15cb286c3b6d9b15709b0c1109b8ce58a docs(LCLI-333): fix stale Quest version-pin and actor language in the tracker contract (#624)
 - 2026-09-10T14:29:00-05:00 e3d758679d46cd0e80cd59432b059bf0a4f83e88 chore: fresh history for the public repository
 - 2026-09-11T20:01:02-05:00 901646cfe59e50e4f2dc5d9075eeb28cfe7f811d fix(LCLI-474): merge log.md regeneration instead of replacing it (#6)
-- 2026-09-13T17:27:51-05:00 c44045bb8ffe86ee5b5532085386b74b4a37059d docs(LCLI-278): record the release Environment gate as verified, not absent (#13)
 - 2026-09-13T17:58:47-05:00 39a3cd48817a31308f3d32f645facf1e7766c001 docs(LCLI-475): 0.6.1 released — record the release, the OIDC root cause, and close LCLI-475/278 (#14)
 - 2026-09-13T18:29:33-05:00 f11c10d257b393afab9b4da84b2b73707d26ed4f chore(LCLI-484): track the consumer report that 0.6.1 did not fix log.md clobbering (#17)
-- 2026-09-14T02:24:16-05:00 cc1db067fa85e8f7461915286a4bf3ba6318cf5c feat(LCLI-489): publish-release.sh performs its own prerequisites, and its digest claim matches what it checks (#50)
 - 2026-09-14T12:02:35-05:00 90f5b689e98b4405634ba0f3f1b6e105c2ec3aaa chore(LCLI-486): bring scripts/, bin/ and root .ts under lint and typecheck (#52)
 - 2026-09-14T12:34:56-05:00 34f6d8ce48b117011d9ad90cd7f91c07806e49e8 chore(LCLI-490): shellcheck in CI, and the 29 SC2034 findings triaged (#54)
 - 2026-09-14T15:07:02-05:00 661529cf49cbea86075c64df4b689ba5f455eb58 fix(LCLI-487): artifact names drop run_attempt so a partial re-run resolves (#56)
 - 2026-09-14T16:10:14-05:00 4913196690b1739ea7e687cd6201a5fbbe0a4cc5 fix(LCLI-479): mark required flags in the usage line and the machine manifest (#62)
 - 2026-09-14T16:41:19-05:00 33bc124aabad6f65d8262ce0a6595fe89f39344d docs(LCLI-492): document --fail-on-drop in the CLI surface reference
 - 2026-09-14T16:46:59-05:00 a1df02ceac555b80d3d0e95e656e30f4e4c929ad feat(LCLI-476): dependency edges reach lore's projections, traversal and export (#63)
-- 2026-09-14T16:54:36-05:00 fcdf1e33dcb8275beb37a3440eed37c07ba2bdc1 feat(LCLI-492): --fail-on-drop refuses lore sync before any write (#64)
 - 2026-09-14T18:22:42-05:00 c67109182beaf3ef5cd2b8e73126a57a52bebbb3 fix(LCLI-497): the indexed backend stopped working the moment a tracker had a prerequisite
 - 2026-09-14T18:42:41-05:00 6f39deae57413ac5693979b93e7faf44c08341db fix(LCLI-497): the indexed backend stopped working the moment a tracker had a prerequisite (#75)
 - 2026-09-14T18:43:25-05:00 72fcf6c36258485105b8d77194673892b80b8f5f feat(LCLI-477): typed authored relationships, and claim state as its own axis
@@ -241,21 +238,16 @@
 - 2026-09-14T18:57:06-05:00 01f4ef749e38c8a97b540d08e8958b995c7a3f60 feat(LCLI-477): typed authored relationships, and claim state as its own axis (#76)
 - 2026-09-14T20:12:22-05:00 27070ef8da4db605a8ef377c139993636e71c105 chore(LCLI-478): write lore's half of the bounded-read contract as DEC-2 (#77)
 - 2026-09-14T20:25:45-05:00 72fb203cb4f8b6df12b91c4986819a3d0c9fb39f feat(LCLI-499): every retrieval-family command names the backend that served it
-- 2026-09-14T20:40:48-05:00 0205cb3dd6b2a8c5e0263ae6d1c8d30b1ecc6af0 feat(LCLI-499): every retrieval-family command names the backend that served it (#78)
 - 2026-09-14T20:51:21-05:00 e4dc251821e7d7049c173f9600d162b0982c4a9c feat(LCLI-478): --max-tokens becomes a ceiling, and `lore read` is the exact read
 - 2026-09-14T21:02:03-05:00 255aa0ac7d271444067a6f996b65a78ba1f4fade feat(LCLI-478): --max-tokens becomes a ceiling, and `lore read` is the exact read (#79)
 - 2026-09-14T21:10:11-05:00 0333665395d39bb4ec975c8258f750ed1da08d79 fix(LCLI-494): a task record names the adapter that produced it, not always Backlog
-- 2026-09-14T21:19:48-05:00 66a296ace9bec0070dc00e12c5d7fdc34bd7c126 fix(LCLI-494): a task record names the adapter that produced it, not always Backlog (#80)
 - 2026-09-14T21:32:43-05:00 c94088bcd9bdff869261605b89f57f7124d3e9a5 fix(LCLI-498): the fallback advisory names its cause, and every route announces itself
-- 2026-09-14T21:41:24-05:00 c1a25492d5aa42f83b61600ed4ea1a54ba691639 fix(LCLI-498): the fallback advisory names its cause, and every route announces itself (#81)
 - 2026-09-14T21:47:14-05:00 f5dd0d1e77de7391f9e69bd11ccea907961c0eb8 chore(LCLI-496): the 0.7.0 feature burndown is complete; item 1's deadline is met (#82)
 - 2026-09-14T22:01:31-05:00 9f4abdd23a22ea6e2f68fdc32eaa269382ff4af0 chore(LCLI-496): record the session handoff, and correct a stale brief (#85)
-- 2026-09-15T03:25:10-05:00 8598f885140b362f8be37d46728a893afa805067 docs(LCLI-469): the release runbook names the marketplace notification, at the tag (#87)
 - 2026-09-15T03:31:18-05:00 d9e8037000b60ebbc7d334971ed08acce2ede3fe chore(LCLI-496): the bump is landed and nothing is tagged; record what is still open (#89)
 - 2026-09-15T04:01:24-05:00 1f14c799e1dd711d0869f81e81c386544eb965f9 docs(LCLI-496): adjudicate target.body's optionality against cli-contract 7.1 (#90)
 - 2026-09-15T04:20:56-05:00 408668d0df40ee57a51c20f67a5ed400d6949cc2 chore(LCLI-496): void a conclusion I recorded today, and write the post-tag list down (#92)
 - 2026-09-15T05:15:19-05:00 5c437eb5137c19f4fd87c445ba88068671b993cc chore(LCLI-496): my own handoff note went stale; record the invariant, and a flake escalation (#96)
-- 2026-09-15T11:43:19-05:00 e4b384b92db59087eff27ea1eabfc5adc1c63225 fix(LCLI-333): unstrand the "Blocked" record and delete the override standing in for it (#108)
 - 2026-09-15T14:50:48-05:00 a390713c94f34896bf06130317fda23e60635940 fix(LCLI-510): generate the README's version lines, and refuse a release whose PACKED README disagrees
 - 2026-09-15T15:00:16-05:00 8b613e25352bfade06cb5de708be722ba8cc1050 fix(LCLI-510): markers must be INLINE — a line-initial one broke the rendered npm page
 - 2026-09-15T15:06:41-05:00 6051d57f054da204ea3682db14e1cde107a45c74 fix(LCLI-510): give clause 3 a sanctioned escape hatch, and prove the hatch ACCEPTS
@@ -266,8 +258,6 @@
 - 2026-09-18T09:32:33-05:00 1308fadf6659a006b12ec032b1adca6e560e64d6 feat(LCLI-538): add profile.strict_types so an unknown type can be an unconditional error (#157)
 - 2026-09-19T16:26:58-05:00 58c3c0023f761ba0f6123019e89e1ebf05073a6e feat(LCLI-554): rename Story to Arc, keeping Story as a resolving alias (#200)
 - 2026-09-19T16:32:57-05:00 4c225010f4e9da327dadf95d8f3b7fe490c8dc03 chore(LCLI-554): close the task its delivering PR should have closed (#202)
-- 2026-09-20T23:15:37-05:00 c3be779f5acd5433254fa821dfee6faacd9414af docs(LCLI-561): publish the 0.8.0 retained-snapshot upgrade note (#218)
-- 2026-09-20T23:27:18-05:00 90abf91826a84a2739977f0b3268c0e01fbecfba docs(LCLI-563): specify the committed-schema generator stamp (#219)
 - 2026-09-22T21:43:51Z 87a970a2fcc27017b0f388a48dc8c4ded1420b15 feat(LCLI-565): committed-schema generator stamp and lore check exit 7 (indeterminate) (#224)
 - 2026-09-22T17:23:00-05:00 3df7997eab3d34511ded356c0f4e7b5e66555910 chore(LCLI-566): open the 0.9.0 release preparation
 - 2026-09-22T22:39:44Z fd712748176b59175eaf40ec10eceb5ba6ac3bdd chore(LCLI-566): bump to 0.9.0 with the LCLI-565 rollout note (#227)
@@ -282,22 +272,26 @@
 - 2026-09-27T23:16:52-05:00 58dcb391af2198dd9afbecbc4f520be2dc8a222f fix(LCLI-626): readme-readback / promote-latest review nits (#347)
 - 2026-09-28T12:04:11-05:00 4c23a1d50761b462ea5dd9f1766d409808d324e6 feat(LCLI-612): lore check enforces validate's error-tier quote-safety findings (#368)
 - 2026-09-29T02:10:35-05:00 8ba60a02711772f5e78754b4f073a02be81b5011 feat(LCLI-642): lore check reports a profile whose declared set cannot fit its budget (#407)
-- 2026-09-29T03:11:47-05:00 ceef2b1f625d6c7b6a18e10c4f110f8c7b26f4cc docs(LCLI-644): the runbook now says how to choose a profile's max_tokens (#410)
 - 2026-09-29T06:16:39-05:00 5af3fe561f6caa7f51bc34809f9b5a3860c92b9c feat(LCLI-650): lock lore to its exact quest pair version at runtime (DEC-31 / ODOC-328) (#421)
 - 2026-09-29T11:21:29-05:00 b3d7649b4a4fc2cecfc7dc58930adc7b25db78dc fix(LCLI-544): assert bun.lock's platform pins against package.json
-- 2026-09-29T12:02:42-05:00 10274f641a9e5e6408772eeede1780a8a9bef9a2 fix(LCLI-544): assert bun.lock's platform pins against package.json (#431)
 - 2026-09-29T12:14:30-05:00 788229458f0587cace85af956f22c286abbeac28 chore(LCLI-621): RECYCLE HANDOFF 17, written after the recycle request (#432)
 - 2026-09-29T13:50:17-05:00 dd8ece1a122004de0a88a626119a70ef3e8fddf6 chore(LCLI-621): RECYCLE HANDOFF 18, landed on dev (#435)
 - 2026-09-29T15:13:05-05:00 376b7b94a2931971d9b3d225ff01c3f3b23d7f1c docs(LCLI-655): land the DEC-57 draft ADR — lore init stops and instructs (no installs)
 - 2026-09-29T16:39:04-05:00 16343bea2c84d9ce71e8570fd28fd5f0d8589657 chore(LCLI-621): RECYCLE HANDOFF 19, written at opum-agent's instruction (#437)
 - 2026-09-29T16:58:42-05:00 7351fba1513cabd828e441ab28cad759d4b3119c chore(LCLI-621): RECYCLE HANDOFF 20, written after the orchestrator's recycle request (#438)
-- 2026-09-29T19:00:23-05:00 09d15238335b7f9e400c7c15cd7fbd4993c92598 docs(LCLI-655): land the DEC-57 draft ADR — lore init stops and instructs (no installs) (#436)
 - 2026-09-29T21:03:34-05:00 488b66a983bf30c220a9ad248744f03e9954f589 feat(LCLI-656): lore init detects, offers, and instructs — it never installs (ADR-0024, DEC-57) (#440)
 - 2026-09-30T23:17:48-05:00 0d568f0f0d353511435107a7c1ea57018682fd2d fix(LCLI-662): reserve the query section's worst case in the capacity measurement (DEC-98 B) (#460)
 - 2026-10-02T12:07:00-05:00 38f2affd4df8470019293189c09ddbaa0b28ecd4 docs(LCLI-664): describe the Lore pane mod
 - 2026-10-02T13:38:00-05:00 1f9d70e383ee576c108ccc626a691be2e9e48a6a docs(LCLI-664): record the operator's design answers as ADRs, verbatim
 - 2026-10-02T17:16:30-05:00 dab213522174e11b98029ad72b008925be9dd4e5 feat(LCLI-664): ship the Lore pane mod in the opum-lore plugin (#466)
-- 2026-10-05T16:31:14-05:00 94044556320ca4d8458ccf08f942ad2640319a0e docs(LCLI-518): add --preserve-source-ids and --source-family to the init Key flags row (#490)
+- 2026-10-05T23:52:55-05:00 390077f9f06b65cb9a4d381a848a84babaa41614 feat(LCLI-680): exclude zero-score filler from context selection, and bump both affected envelope kinds (#493)
+- 2026-10-06T01:37:49-05:00 16a4ef60fc70dfd91061b258c3c3427aab6f9abd fix(LCLI-679): require the contract binding in the help and docs, and split the absent marker (#494)
+- 2026-10-06T10:11:55-05:00 1604bc4fadfbd923a92f26485edcbd71ed690daa feat(LCLI-681): the lean task-startup pack from --task-contract (AC1, AC3) (#501)
+- 2026-10-09T23:37:42-05:00 99c46419c7bec4343a7f22023ecdb11eedb5aeca chore(LCLI-684): correct stale LCLI-680 claims in cli-contract, agent-context, and a test docstring (#527)
+- 2026-10-11T05:46:58-05:00 432298ed1f45bd4de086edbcbe077d16d2921e97 fix(LCLI-545): name the full remedy in lore check's schema-drift findings (#530)
+- 2026-10-11T23:55:09-05:00 a6806b83ee7cdbeaa9f19405fa59e13de1ee8d82 fix(LCLI-701): flag angle-bracket autolinks in the MDX portability scan (#555)
+- 2026-10-12T02:54:16-05:00 dd59c65f736f8db4fd0a62c9ac7eaa4d8d21c8ad feat(LCLI-702): fail lore check when a shared source leaves a pinning profile over capacity (#557)
+- 2026-10-13T21:27:25-05:00 238ae22b11b11679847fd2cb95bfb49b19c4bba6 feat(LCLI-682): role profiles declare context budgets the compiler measures and reports
 
 ## docs/adr
 
@@ -309,7 +303,10 @@
 - 2026-07-26T21:25:31-05:00 dccfabfe1eea13ceeee034c70cc21ab68d52c8b1 docs(wave2-integration): fix label-flag comment/test contradictions and ADR-0002 item 6
 - 2026-09-03T02:33:01Z 043939c049ed1fe53d4b21ead70d9d39db1bb349 docs(new,adr): document the NNNN- ADR auto-numbering scheme (LCLI-373) (#527)
 - 2026-09-14T18:43:14-05:00 063ab399cf44384d24fb4ad3f3f0833e0f0a7958 docs(LCLI-477): ADR-0021 fixes the typed-relationship vocabulary before the code
+- 2026-09-29T19:00:23-05:00 09d15238335b7f9e400c7c15cd7fbd4993c92598 docs(LCLI-655): land the DEC-57 draft ADR — lore init stops and instructs (no installs) (#436)
 - 2026-09-29T21:16:09-05:00 5781f7ba13f9f894fc3e4c28f8b3620c166d4517 chore(LCLI-653, LCLI-654): bump lore to 0.12.0, and resolve quest from a pinned source build when its version is not on npm (DEC-55) (#433)
+- 2026-10-08T16:47:49-05:00 eae8f5959250cc0430c592e580b80446eb264eea feat(LCLI-691): check reports the frontmatter lint; retrieval stops emitting it (#525)
+- 2026-10-11T22:41:32-05:00 9ca945ad31acffc792d7c9511994058f0864c36f chore(LCLI-693): drop hard-coded bundle-derived counts from test docstrings, a src comment and an ADR (#553)
 
 ## docs/reference
 
@@ -372,6 +369,10 @@
 - 2026-09-09T05:11:07-05:00 f8b49f27de5ef4a32415b4bc39f4a4e8d1e45be0 docs(LCLI-461): correct 0.3.5's release-truth qualification citation, close LCLI-461
 - 2026-09-13T21:09:55-05:00 8c771dd71e886b5f115f5644029f9fc41ce45397 docs(LCLI-485): write down docs/log.md's content contract (#25)
 - 2026-09-14T01:47:06-05:00 e5b4152f58ba0334b63f149769a31c5710b237db docs(LCLI-488): 0.6.2 is released — replace the current-state claims (#48)
+- 2026-09-14T16:54:36-05:00 fcdf1e33dcb8275beb37a3440eed37c07ba2bdc1 feat(LCLI-492): --fail-on-drop refuses lore sync before any write (#64)
+- 2026-09-14T20:40:48-05:00 0205cb3dd6b2a8c5e0263ae6d1c8d30b1ecc6af0 feat(LCLI-499): every retrieval-family command names the backend that served it (#78)
+- 2026-09-14T21:19:48-05:00 66a296ace9bec0070dc00e12c5d7fdc34bd7c126 fix(LCLI-494): a task record names the adapter that produced it, not always Backlog (#80)
+- 2026-09-14T21:41:24-05:00 c1a25492d5aa42f83b61600ed4ea1a54ba691639 fix(LCLI-498): the fallback advisory names its cause, and every route announces itself (#81)
 - 2026-09-15T07:42:47-05:00 2b6181dfa5cec0a621973e809056d8f101f1add7 docs(LCLI-496): 0.7.0 is released — replace the release-truth and README current-state claims (#99)
 - 2026-09-15T15:01:41-05:00 5e5e5edabcfa8c7cd291e09f2fe64454bf0ae82e fix(LCLI-510): A4 re-runs the assertions instead of grepping — the literal would have gone red on a CORRECT release
 - 2026-09-15T16:57:43-05:00 eaa966374aa846ff9d94f9182c292719af8bb1ac docs(LCLI-511): the lockstep is an exact-version binding, and a unilateral patch is a declared break of it (#121)
@@ -382,6 +383,7 @@
 - 2026-09-16T23:15:21-05:00 73780d3a491f31c9a4c85edbf6670a889e77c39e fix(LCLI-521): warn before a --preserve-source-ids retry leaves a family behind (#146)
 - 2026-09-18T08:51:52-05:00 32993cc8eb793aca10c2e347e01b84d99ed9d257 feat(LCLI-537): add lore types (type-vocabulary discovery) and name the valid set in the unknown-type warning (#155)
 - 2026-09-18T18:54:08-05:00 c6f03ac0c01c8fc01aaeb0b6d4f50e8c96e8b8c1 fix(LCLI-512): derive the advertised projection schema version (#177)
+- 2026-09-20T23:15:37-05:00 c3be779f5acd5433254fa821dfee6faacd9414af docs(LCLI-561): publish the 0.8.0 retained-snapshot upgrade note (#218)
 - 2026-09-23T23:28:49-05:00 a17bf202aacae872baed66595610bd57f5297927 docs(LCLI-570): 0.9.1 is released -- release truth, close LCLI-570 and LCLI-569 (#236)
 - 2026-09-23T23:57:21-05:00 d24af8cfdf168d4cc5a82ee8622c248987809120 fix(LCLI-573): retrieval-first agent guidance; generate the plugin skill; drop the retired preflight (#237)
 - 2026-09-24T13:52:52Z 9c12c64fbd30050454b8ff7d514f54672def79ed docs(LCLI-577): 0.9.2 is released -- release truth; close LCLI-577 and LCLI-576 (#247)
@@ -405,6 +407,19 @@
 - 2026-10-03T07:32:30-05:00 977aeaef13f894a473ca1bbfbd02deb93d2e3473 feat(LCLI-673): the band's line names the focus step its hotkey needs (#482)
 - 2026-10-03T11:22:25-05:00 ba0640247ed3695862e1fc79f0eb05a3b49a7047 fix(LCLI-675): the Lore pane's full mode follows the engine's sizing (DEC-154) (#486)
 - 2026-10-03T17:09:51-05:00 1273d9b4881399cd81a0eaac0df126ad6bf32418 fix(LCLI-676): a kept dock width reads as held on every short draw, in the pane and in the tool's answer (#488)
+- 2026-10-05T16:31:14-05:00 94044556320ca4d8458ccf08f942ad2640319a0e docs(LCLI-518): add --preserve-source-ids and --source-family to the init Key flags row (#490)
+- 2026-10-05T17:43:32-05:00 5175790df2d19c17175f624b972278658bb89bc6 docs(LCLI-528): correct the kind registry for init and new, and guard it against the manifest (#491)
+- 2026-10-06T09:21:55-05:00 5417d8db3a3e560dc028193a54b792f247c4d2a9 chore(LCLI-686): pin Bun back to 1.3.14 per DEC-163 (8) (#500)
+- 2026-10-06T12:05:43-05:00 13bb6efab8321d17a7adaf7209735c186e1f6a52 feat(LCLI-681): exact section reads by anchor on `lore read` (AC2) (#504)
+- 2026-10-06T14:11:21-05:00 1c5159d21093faa19a8b81436c8a7fd869ab56e7 feat(LCLI-687): add a built-in Standard document type (DEC-167 (3)) (#510)
+- 2026-10-07T12:26:33-05:00 1ecafea73e4dc2b8a89c8e38130267cb3b1c117f chore(LCLI-665): DEC-169 step 5, the 0.13.0 release record, and the finalization (#519)
+- 2026-10-11T06:52:10-05:00 ffe972102887722b3be4fbaee2d48980380a2ffc fix(LCLI-677): make the §2.1 kind registry exhaustive and the guard an equality (#534)
+- 2026-10-11T11:01:39-05:00 75db8d8ded9af0eadaad493c4f9020e7a7564a9f fix(LCLI-525): the denied --remove-backlog hint names a recovery that works (arm A) (#541)
+- 2026-10-11T15:39:20-05:00 2531769c4f8295f9c48e3a95b8fdc5b2c9e12af2 feat(LCLI-700): key migration idempotence on Quest's durable status (supersedes LCLI-699) (#548)
+- 2026-10-12T01:45:12-05:00 9ab611c6638ac6bfb59ef57d989d9376a2022cac fix(LCLI-705): gate the Lore pane's auto-start and clock (DEC-172 (4bg)) (#556)
+- 2026-10-12T07:34:48-05:00 1975b4f9f9b803bb03530517d0523ff4fb78144c fix(LCLI-706): the MDX autolink remedy reads 'use [text](url)' only (DEC-172 (4bi)) (#559)
+- 2026-10-12T07:57:20-05:00 92022b8be2f929e7337a3307542a8e7205b1f23b fix(LCLI-707): coalesce a person's in-flight refresh and reset both guards at session.end (#560)
+- 2026-10-12T09:09:13-05:00 5ad46ad54db77d6b2f2d9e2de4d65d99c112039f fix(LCLI-709): generation-token the refresh guards at session.end, and correct the tick-skip wording (#563)
 
 ## docs/runbooks
 
@@ -432,9 +447,12 @@
 - 2026-08-29T22:48:39-05:00 d27ee3036ed76f4139e48e73bf92e593bb764d88 docs(release): make trusted publishing the documented path, and file the qualification gap it exposed (#471)
 - 2026-09-02T19:29:28-05:00 63e46d814ac3aab96e903969bda31f65596dedbd fix(agents): full-body retrieval for agent context packs (ODOC-63.1) (#518)
 - 2026-09-05T14:43:20-05:00 7807fce27d294cc48a1c589a635955cce1b64690 fix(LCLI-447): keep .claude-plugin/plugin.json in lockstep with package.json (#591)
+- 2026-09-13T17:27:51-05:00 c44045bb8ffe86ee5b5532085386b74b4a37059d docs(LCLI-278): record the release Environment gate as verified, not absent (#13)
 - 2026-09-13T21:11:36-05:00 d0829f66d147a743e85e52eba34dea9e31a9d8f3 docs(LCLI-481): document the dangling provenance, and that 0.6.1/0.6.2 ship unattested (#26)
 - 2026-09-14T02:03:23-05:00 51803177af3246ae2705adac5a56400113613d8f feat(LCLI-489): make publish-release.sh perform its own prerequisites
 - 2026-09-14T02:13:04-05:00 efd5482f53eb28030010b2a037b43b2e3bd920c0 fix(LCLI-489): close the reviewer's findings on the publish script
+- 2026-09-14T02:24:16-05:00 cc1db067fa85e8f7461915286a4bf3ba6318cf5c feat(LCLI-489): publish-release.sh performs its own prerequisites, and its digest claim matches what it checks (#50)
+- 2026-09-15T03:25:10-05:00 8598f885140b362f8be37d46728a893afa805067 docs(LCLI-469): the release runbook names the marketplace notification, at the tag (#87)
 - 2026-09-25T06:21:41Z 7e5ca28a66b07fa0371a1e07a60466b4f2aac8c7 feat(LCLI-578,LCLI-572): refuse to publish without a qualification receipt; surface gh's report-download error (#269)
 - 2026-09-25T07:22:55Z 4aa2d3e75ee984a946b6d0a85eb79f53deab6843 fix(LCLI-586): re-hash each tarball against the receipt immediately before npm publish (#275)
 - 2026-09-25T08:00:25Z 1d421972700e215b5d406cd7a2d7a100904d9e54 docs(LCLI-587): runbook no longer says publish-release.sh resolves the run attempt (#281)
@@ -451,12 +469,17 @@
 - 2026-09-28T19:06:22-05:00 dadd8ed9da0a3fbf0dbad13906cfbe1eaca95f36 fix(LCLI-635): provenance-post leads its not-published warning with the cause the publish job allows (#387)
 - 2026-09-28T21:14:53-05:00 f3305628b2e21aed7e02236cee98dfd9a7f081c7 fix(LCLI-638): a RESUMED promote-latest refuses when any current latest is newer than --version (#392)
 - 2026-09-28T23:33:30-05:00 ffc3ab3b66a866d4b00729d19066186990f1e475 fix(LCLI-639): read the release notes at the tagged commit, not the working tree (paired with quest-cli QCLI-407) (#398)
+- 2026-09-29T03:11:47-05:00 ceef2b1f625d6c7b6a18e10c4f110f8c7b26f4cc docs(LCLI-644): the runbook now says how to choose a profile's max_tokens (#410)
+- 2026-09-29T12:02:42-05:00 10274f641a9e5e6408772eeede1780a8a9bef9a2 fix(LCLI-544): assert bun.lock's platform pins against package.json (#431)
 - 2026-10-02T18:29:42-05:00 8702c08f3d28082ee40c5e580d8eeb45cffa0e4c chore(LCLI-665): apply ruling A, and file the full-screen toggle task (#475)
+- 2026-10-11T18:22:23-05:00 acca9ff20a865743db0621a5f755b4c66a008890 docs(LCLI-690): name the schema regeneration in the LCLI-469 pin-bump handshake (#552)
 
 ## docs/specs
 
 - 2026-06-23T19:50:34-05:00 b7395b168c68393bee89d437b33c92daf224e53b feat(LORE-10): .lore/config.toml loader (native TOML + env overlay) (#10)
+- 2026-09-20T23:27:18-05:00 90abf91826a84a2739977f0b3268c0e01fbecfba docs(LCLI-563): specify the committed-schema generator stamp (#219)
 
 ## docs/stories
 
 - 2026-08-12T23:24:56-05:00 63df417250ab1039404369b3626c35f9aee481df chore: enforce single active handover cursor
+- 2026-09-15T11:43:19-05:00 e4b384b92db59087eff27ea1eabfc5adc1c63225 fix(LCLI-333): unstrand the "Blocked" record and delete the override standing in for it (#108)
