@@ -55,14 +55,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ITS ROOM AGAINST BOTH BUDGETS, and reserves it BEFORE any ranked evidence is admitted: against the
   `task_evidence` cap and against the pack's own `max_tokens`. Reserving against the cap alone is not
   enough, because ranking puts the Constitution last at score zero, so a ranked section could
-  consume the pack's room first and leave the mandatory content to be skipped — which it silently
-  was, in the first revision of this change. With both reservations in place the new
-  `CONTEXT_REQUIRED_CONTENT_OVER_BUDGET` means exactly one thing, required content that cannot fit
-  even alone, rather than being dropped; a pack silently missing mandatory content is
-  indistinguishable downstream from a complete one. A profile that declares NO `[targets]` is
-  unaffected in behaviour but covered by the same reservation: its ranked Constitution is kept and
-  its ranked evidence is trimmed, exactly as it compiled before this feature. The budget report also names the SECTION each entry came from rather than only
-  its concept, so a residual can say what required it.
+  consume the pack's room first and leave the mandatory content to be skipped. With both reservations
+  in place the new `CONTEXT_REQUIRED_CONTENT_OVER_BUDGET` means exactly one thing, required content
+  that cannot fit even alone, rather than being dropped; a pack silently missing mandatory content is
+  indistinguishable downstream from a complete one. That floor is judged on the required content with
+  no query section at all, so the bundle-wide query section can never raise it. A profile that
+  declares NO `[targets]` is unaffected in behaviour but covered by the same reservation: its ranked
+  Constitution is kept and its ranked evidence is trimmed, exactly as it compiled before this
+  feature. The budget report also names the SECTION each entry came from rather than only its
+  concept, so a residual can say what required it.
 
 - **`lore check`'s committed-schema drift findings name the committing step** (LCLI-545). The
   `missing` / `stale` / `orphaned` schema-drift findings named `lore schema export` but stopped

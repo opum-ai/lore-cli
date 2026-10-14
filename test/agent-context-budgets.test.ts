@@ -11,9 +11,15 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runAgent } from "../src/commands/agent";
-import { compileAgentContext, renderAgentContextMarkdown } from "../src/core/agent-context";
+import {
+  AGENT_CONTEXT_QUERY_HIT_LIMIT,
+  compileAgentContext,
+  compileAgentContextWithoutQueryHits,
+  renderAgentContextMarkdown,
+} from "../src/core/agent-context";
 import { loadAgentProfiles } from "../src/core/agent-profile";
 import { loadBundle } from "../src/core/bundle";
+import { LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
 
@@ -358,6 +364,100 @@ describe("agent context — the declared `task_evidence` cap (DEC-194 (4), LCLI-
     // A control on the same fact: the corpus could not all have fitted, so the trim is the pack's
     // doing rather than an empty corpus.
     expect(allSources(20).filter((source) => ids.includes(source)).length).toBeLessThan(20);
+  });
+
+  /**
+   * The hit-free twin of {@link compileWithConstitution}: the same profile, ranking and budgeting
+   * with NO query section at all (`compileAgentContextWithoutQueryHits`). Its compile floor is
+   * therefore the honest "required content alone" boundary, and it is the control the test below
+   * measures the with-section floor against.
+   */
+  function compileHitFree(maxTokens: number) {
+    return compileAgentContextWithoutQueryHits(
+      loadAgentProfiles(root),
+      loadBundle(join(root, "docs")),
+      "frontend-dev",
+      TASK,
+      maxTokens,
+      "docs/constitution.md",
+    );
+  }
+
+  /**
+   * The smallest integer budget at which `attempt` succeeds, scanned up one token at a time, plus
+   * the count of budgets that were REFUSED before it — reported so a caller can see how much the
+   * scan read rather than resting on an equality that two identically-broken scans would also
+   * satisfy.
+   */
+  function floorOf(attempt: (budget: number) => unknown): { budget: number; refusals: number } {
+    for (let budget = 1; budget <= 20_000; budget += 1) {
+      try {
+        attempt(budget);
+        return { budget, refusals: budget - 1 };
+      } catch (cause) {
+        if (!(cause instanceof LoreError && cause.type === "validation")) throw cause;
+      }
+    }
+    throw new Error("no budget at or below 20000 compiled");
+  }
+
+  test("...and the query section's reserve never RAISES that floor (LCLI-722 review, blocking)", () => {
+    // DEC-194 (5)'s exception is "required content alone cannot fit", so a budget that holds the
+    // Constitution plus the pack's fixed overhead must compile — even when the three-hit query
+    // section cannot fit alongside it, because that section is a supplement and, per the rule stated
+    // with the mandatory-pin floor above, must NEVER turn a pack that used to compile into a failure.
+    // Sizing its reserve against a pins-only pack (the first revision of this change) made exactly
+    // that budget fail: the floor compared required + section, so a section-sized shortfall was
+    // reported as a mandatory-content one, and DEC-194 (5)'s exception fired where its own condition
+    // did not hold.
+    //
+    // Asserted as an INVARIANT rather than against a measured literal: the smallest budget at which
+    // a WITH-section compile succeeds equals the smallest budget at which the hit-free compile does.
+    // Any reserve that spends budget the section's own absence does not would separate the two
+    // numbers, which is precisely the pre-fix behaviour — so this reddens on the defect and not on
+    // the fixture's arithmetic.
+    doc("reference/rules.md", "# Rules\n\nCheckout validation rules.\n", "Checkout validation rules");
+    constitutionDoc(60);
+    doc(
+      "specs/ui.md",
+      "# Checkout form\n\nCheckout validation checkout validation in the form.\n",
+      "Checkout validation UI",
+    );
+    // FOUR documents the profile does NOT source, so the bundle-wide query has something to
+    // advertise. Without them `roomy.queryHits` below would be empty and the equality would hold
+    // vacuously, for a fixture that never exercised a query section at all.
+    for (let i = 0; i < AGENT_CONTEXT_QUERY_HIT_LIMIT + 1; i += 1) {
+      doc(`notes/n${i}.md`, `# Checkout note ${i}\n\nCheckout validation note ${i}.\n`, `Checkout note ${i}`);
+    }
+    profile("", ["constitution", "specs/ui"]);
+
+    const withSection = floorOf((budget) => compileWithConstitution(budget));
+    const hitFree = floorOf((budget) => compileHitFree(budget));
+    // How much the scans read, so a fixture whose floor collapsed to 1 (where both arms would agree
+    // for the wrong reason) cannot read as a pass.
+    expect(hitFree.refusals).toBeGreaterThan(100);
+    expect(withSection.budget).toBe(hitFree.budget);
+
+    // The pressure is REAL: at a roomy budget the section carries every hit it is allowed...
+    const roomy = compileWithConstitution(20_000);
+    expect(roomy.queryHits).toHaveLength(AGENT_CONTEXT_QUERY_HIT_LIMIT);
+    // ...and at the floor the very same section is squeezed away entirely, so the equality above is
+    // proved against a reserve that genuinely could not fit rather than one with nothing to reserve.
+    const atFloor = compileWithConstitution(withSection.budget);
+    expect(atFloor.queryHits).toHaveLength(0);
+    expect(atFloor.sections.map((item) => item.conceptId)).toContain("constitution");
+
+    // The other arm of the same gate, so the exception is proved NARROWED rather than removed: one
+    // token below the floor the required content itself does not fit, and the compile still fails.
+    let thrown: unknown;
+    try {
+      compileWithConstitution(withSection.budget - 1);
+    } catch (cause) {
+      thrown = cause;
+    }
+    expect(thrown).toBeInstanceOf(LoreError);
+    expect((thrown as LoreError).type).toBe("validation");
+    expect((thrown as LoreError).message).toMatch(/CONTEXT_REQUIRED_CONTENT_OVER_BUDGET/);
   });
 
   test("...and a Constitution that cannot fit the PACK budget also FAILS rather than being skipped", () => {

@@ -625,15 +625,32 @@ function compilePack(
     );
   }
 
+  // The REQUIRED candidates, computed HERE — before the query section is sized, and well before the
+  // ranked-evidence loop — because both of those must reserve room against a pack that already holds
+  // them (DEC-194 (5); the full rationale rides with the cap below).
+  const required = ordered.filter((candidate) => candidate.conceptId === constitutionId);
+  const requiredKeys = new Set(required.map((candidate) => candidate.key));
+
   // The query section is reserved BEFORE ranked evidence fills the rest (it is small and, per the
   // ADR's measurement, answers far more questions than the profile's ranked sections do), shrinking
-  // only when the pins leave no room for all three hits.
+  // only when the rest of the pack — the pins AND the required content — leaves no room for all
+  // three hits.
+  //
+  // It is sized against a pack that ALREADY HOLDS the required candidates (LCLI-722 review,
+  // blocking), not against the pins alone. Required content is admitted first below and reserves its
+  // own room in the pack that is finally rendered, so a section sized against a pins-only pack is
+  // measured against a pack this compiler never emits: where the required content fits the budget
+  // but not alongside all three hits, the pins-only reserve pushed the mandatory-content floor over
+  // the budget and the compile FAILED although the required content alone fits. That is DEC-194
+  // (5)'s exception tested against the wrong object, and it is also the rule stated two blocks up
+  // broken by the very section it describes — "the query section ... must never turn a pack that
+  // used to compile into a failure".
   let queryHitLimit = withQueryHits ? AGENT_CONTEXT_QUERY_HIT_LIMIT : 0;
-  while (queryHitLimit > 0 && build([], queryHitLimit).tokenEstimate > effectiveBudget) queryHitLimit--;
+  while (queryHitLimit > 0 && build(required, queryHitLimit).tokenEstimate > effectiveBudget) queryHitLimit--;
   // With no room for a single hit the section still says why (the budget, or an empty corpus) when
   // that line fits; when even that does not, the section is dropped, which is the floor's own shape
   // and so always fits. `queryHitsOmitted` carries the count either way.
-  const querySection = withQueryHits && (queryHitLimit > 0 || build([], 0).tokenEstimate <= effectiveBudget);
+  const querySection = withQueryHits && (queryHitLimit > 0 || build(required, 0).tokenEstimate <= effectiveBudget);
 
   // THE EVIDENCE CAP (DEC-194 (4), LCLI-722). A profile that declares `[targets].task_evidence`
   // selects ranked evidence only up to that many tokens, highest-scoring first — `ordered` is
@@ -655,12 +672,7 @@ function compilePack(
   // failure the error exists to prevent. Comparing its size to the cap can never catch that, because
   // it is not a size problem. Ranked evidence is therefore capped at `evidenceBudget -
   // requiredTokens`, so the mandatory content has its space whatever the ranking does ahead of it.
-  const requiredKeys = new Set(
-    ordered.filter((candidate) => candidate.conceptId === constitutionId).map((candidate) => candidate.key),
-  );
-  const requiredTokens = ordered
-    .filter((candidate) => candidate.conceptId === constitutionId)
-    .reduce((sum, candidate) => sum + candidate.tokenEstimate, 0);
+  const requiredTokens = required.reduce((sum, candidate) => sum + candidate.tokenEstimate, 0);
   const evidenceBudget = profile.targets.taskEvidence;
   if (evidenceBudget !== undefined && requiredTokens > evidenceBudget) {
     throw new LoreError(
@@ -678,10 +690,6 @@ function compilePack(
   // The cap skips rather than breaks, matching how `effectiveBudget` already behaves: a section too
   // large for what is left of the evidence budget does not shut out the smaller ones behind it.
   //
-  // Required candidates are exempt from the CAP (their room is already reserved) but NOT from the
-  // pack budget — and where one fails THAT, the compile fails too. Skipping it there would be the
-  // same silent drop by a different route: a required candidate the pack cannot hold is a profile
-  // that cannot compile, not a pack that quietly omits what it declared mandatory.
   // RESERVED AGAINST BOTH BUDGETS, AND BEFORE ANY RANKED EVIDENCE IS ADMITTED (DEC-194 (5) option
   // A, opum-ai/opum-doc#1030). Reserving against the cap alone was only half the fix: required
   // content also competes for the PACK's room, and admitting it in `ordered` position meant a
@@ -691,13 +699,14 @@ function compilePack(
   // So the required candidates go in FIRST, and every later admission is measured by `build` against
   // a pack that already contains them, which reserves their room for free. With that in place
   // `CONTEXT_REQUIRED_CONTENT_OVER_BUDGET` means exactly one thing: required content that cannot fit
-  // even alone.
-  const required = ordered.filter((candidate) => requiredKeys.has(candidate.key));
-  const requiredFloor = build(required, queryHitLimit, querySection);
+  // even alone — and "even alone" is what the floor below renders, with NO query section (LCLI-722
+  // review, blocking: measuring it against the reserved section instead made a section-sized
+  // shortfall fail a floor that means "the required content itself does not fit").
+  const requiredFloor = build(required, 0, false);
   if (requiredFloor.tokenEstimate > effectiveBudget) {
     throw new LoreError(
       "validation",
-      `${CONTEXT_REQUIRED_CONTENT_OVER_BUDGET}: agent profile "${profile.name}" requires ${requiredTokens} tokens of mandatory evidence${constitutionId === undefined ? "" : ` (${constitutionId})`}, which does not fit its ${effectiveBudget}-token pack budget`,
+      `${CONTEXT_REQUIRED_CONTENT_OVER_BUDGET}: agent profile "${profile.name}" requires ${requiredTokens} tokens of mandatory evidence${constitutionId === undefined ? "" : ` (${constitutionId})`}, which does not fit its ${effectiveBudget}-token pack budget — ${requiredFloor.tokenEstimate} tokens once the pack's own header and catalog are added`,
       "raise the budget (`--max-tokens`, or the profile's `max_tokens`), or drop the mandatory source from its `sources` — the pack will not silently omit it",
       { profile: profile.name, requiredTokens, maxTokens: effectiveBudget, constitution: constitutionId },
     );
