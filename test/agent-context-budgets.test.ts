@@ -775,6 +775,12 @@ describe("agent context — the budget report attributes each omitted section (L
     // the cap binds first, so the pack's own ceiling never refuses a candidate here.
     expect((omitted ?? []).some((entry) => entry.reason === "cut-by-max-tokens")).toBe(false);
 
+    // NOT GATED ON `over` (DEC-194 (11), which ratified the shape as built). This class is inside
+    // its declared target — it is the CAP doing the cutting, not a total overrun — so a report that
+    // only spoke when `over` was true would say nothing at all about the four omissions above.
+    expect((omitted ?? []).length).toBeGreaterThan(0);
+    expect(pack.budgets?.taskEvidence.over).toBe(false);
+
     // THE CONTROL: the section the pack DID carry is not advertised as omitted.
     expect(pack.sections.map((item) => item.breadcrumb)).toContain("Ranked");
     expect((omitted ?? []).map((entry) => entry.section)).not.toContain("Ranked");
