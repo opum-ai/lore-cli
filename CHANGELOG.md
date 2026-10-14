@@ -51,10 +51,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   WHERE a declared `task_evidence` sits below that ceiling: a profile that declares `[targets]`
   without `task_evidence`, or with a `task_evidence` above 16000, is measured against the ceiling
   exactly as before, because nothing capped its selection.
-  And required content that cannot fit the cap — the bundle's Constitution, when a profile RANKS it
-  in `sources` — fails the compile with the new `CONTEXT_REQUIRED_CONTENT_OVER_BUDGET` rather than
-  being dropped, because a pack silently missing mandatory content is indistinguishable downstream
-  from a complete one. The budget report also names the SECTION each entry came from rather than only
+  And required content — the bundle's Constitution, when a profile RANKS it in `sources` — RESERVES
+  ITS ROOM AGAINST BOTH BUDGETS, and reserves it BEFORE any ranked evidence is admitted: against the
+  `task_evidence` cap and against the pack's own `max_tokens`. Reserving against the cap alone is not
+  enough, because ranking puts the Constitution last at score zero, so a ranked section could
+  consume the pack's room first and leave the mandatory content to be skipped — which it silently
+  was, in the first revision of this change. With both reservations in place the new
+  `CONTEXT_REQUIRED_CONTENT_OVER_BUDGET` means exactly one thing, required content that cannot fit
+  even alone, rather than being dropped; a pack silently missing mandatory content is
+  indistinguishable downstream from a complete one. A profile that declares NO `[targets]` is
+  unaffected in behaviour but covered by the same reservation: its ranked Constitution is kept and
+  its ranked evidence is trimmed, exactly as it compiled before this feature. The budget report also names the SECTION each entry came from rather than only
   its concept, so a residual can say what required it.
 
 - **`lore check`'s committed-schema drift findings name the committing step** (LCLI-545). The

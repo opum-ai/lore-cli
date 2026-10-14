@@ -342,6 +342,24 @@ describe("agent context — the declared `task_evidence` cap (DEC-194 (4), LCLI-
     expect(rankedTokens).toBeLessThan(1200);
   });
 
+  test("a NO-TARGETS profile still reserves its ranked Constitution against the PACK budget (DEC-194 (5))", () => {
+    // The ruling's second reservation site. With no `[targets]` there is no evidence CAP, so only
+    // the pack budget binds — and required content has to reserve its room there too, exactly as
+    // before this feature, or a profile that compiled yesterday stops compiling today.
+    corpus(20);
+    constitutionDoc(60);
+    profile("", ["constitution", ...allSources(20)]);
+    const pack = compileWithConstitution(3000);
+
+    const ids = pack.sections.map((item) => item.conceptId);
+    expect(ids).toContain("constitution"); // KEPT — mandatory content is reserved, not outranked
+    expect(pack.budgets).toBeUndefined(); // ...and the no-targets profile is still unreported
+    expect(ids.length).toBeLessThan(21); // ranked evidence was TRIMMED to make the room
+    // A control on the same fact: the corpus could not all have fitted, so the trim is the pack's
+    // doing rather than an empty corpus.
+    expect(allSources(20).filter((source) => ids.includes(source)).length).toBeLessThan(20);
+  });
+
   test("...and a Constitution that cannot fit the PACK budget also FAILS rather than being skipped", () => {
     // The other route to the same silent drop: required content exempt from the cap but dropped by
     // the pack budget. The budget is sized to clear the pack's own fixed overhead (~374 tokens here,

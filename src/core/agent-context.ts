@@ -682,31 +682,38 @@ function compilePack(
   // pack budget — and where one fails THAT, the compile fails too. Skipping it there would be the
   // same silent drop by a different route: a required candidate the pack cannot hold is a profile
   // that cannot compile, not a pack that quietly omits what it declared mandatory.
-  const selected: RankedCandidate[] = [];
+  // RESERVED AGAINST BOTH BUDGETS, AND BEFORE ANY RANKED EVIDENCE IS ADMITTED (DEC-194 (5) option
+  // A, opum-ai/opum-doc#1030). Reserving against the cap alone was only half the fix: required
+  // content also competes for the PACK's room, and admitting it in `ordered` position meant a
+  // ranked candidate could consume that room first and leave the mandatory content to be skipped —
+  // or, under the previous revision, to fail a throw that then meant two different things.
+  //
+  // So the required candidates go in FIRST, and every later admission is measured by `build` against
+  // a pack that already contains them, which reserves their room for free. With that in place
+  // `CONTEXT_REQUIRED_CONTENT_OVER_BUDGET` means exactly one thing: required content that cannot fit
+  // even alone.
+  const required = ordered.filter((candidate) => requiredKeys.has(candidate.key));
+  const requiredFloor = build(required, queryHitLimit, querySection);
+  if (requiredFloor.tokenEstimate > effectiveBudget) {
+    throw new LoreError(
+      "validation",
+      `${CONTEXT_REQUIRED_CONTENT_OVER_BUDGET}: agent profile "${profile.name}" requires ${requiredTokens} tokens of mandatory evidence${constitutionId === undefined ? "" : ` (${constitutionId})`}, which does not fit its ${effectiveBudget}-token pack budget`,
+      "raise the budget (`--max-tokens`, or the profile's `max_tokens`), or drop the mandatory source from its `sources` — the pack will not silently omit it",
+      { profile: profile.name, requiredTokens, maxTokens: effectiveBudget, constitution: constitutionId },
+    );
+  }
+
+  const selected: RankedCandidate[] = [...required];
   let rankedTokens = 0;
   for (const candidate of ordered) {
-    const isRequired = requiredKeys.has(candidate.key);
-    if (!isRequired && rankedBudget !== undefined && rankedTokens + candidate.tokenEstimate > rankedBudget) {
+    if (requiredKeys.has(candidate.key)) continue;
+    if (rankedBudget !== undefined && rankedTokens + candidate.tokenEstimate > rankedBudget) {
       continue;
     }
     const tentative = build([...selected, candidate], queryHitLimit, querySection);
     if (tentative.tokenEstimate <= effectiveBudget) {
       selected.push(candidate);
-      if (!isRequired) rankedTokens += candidate.tokenEstimate;
-      continue;
-    }
-    if (isRequired) {
-      throw new LoreError(
-        "validation",
-        `${CONTEXT_REQUIRED_CONTENT_OVER_BUDGET}: agent profile "${profile.name}" cannot fit ~${candidate.tokenEstimate} tokens of mandatory evidence (${candidate.reference}) inside its ${effectiveBudget}-token pack budget`,
-        "raise the budget (`--max-tokens`, or the profile's `max_tokens`), or drop the mandatory source from its `sources` — the pack will not silently omit it",
-        {
-          profile: profile.name,
-          reference: candidate.reference,
-          requiredTokens: candidate.tokenEstimate,
-          maxTokens: effectiveBudget,
-        },
-      );
+      rankedTokens += candidate.tokenEstimate;
     }
   }
   return build(selected, queryHitLimit, querySection);
