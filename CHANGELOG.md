@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`lore check` warns when a 0.1 BUNDLE's task-coupled type closes `status` away from the rollup values**
+  (LCLI-730, DEC-192 (8), opum-ai/opum-doc#1023; surface ratified by DEC-192 (10),
+  opum-ai/opum-doc#1053). On an OKF 0.1 BUNDLE `status` IS the task-progress rollup key, so a profile
+  that declares a CLOSED `status` enum lacking `todo`/`in-progress`/`done` on a task-coupled type has
+  closed its own rollup key: a written `status: done` is refused by the generated type schema before
+  any lifecycle check is reached. The new `task-status-enum-inherited` finding is a **warning**,
+  emitted once per profile — once per offending type, however many bundles the run scans — and
+  attributed to the profile file. It is never an error, so a profile
+  that loads today keeps loading, and the schema's own refusal of such a document is unchanged. It
+  names the type, the inherited enum and the remedy (declare `status` on that type — open, or
+  including the rollup values). It is not raised for an OPEN `status`, nor for the built-in profile,
+  whose base `status` is an open optional string, nor once the remedy has been applied. The gate is
+  the version of the BUNDLE being checked, not the `okf_version` the profile file declares: the
+  schema that refuses the rollup `status` is built per bundle, so a `okf_version = "0.2"` profile is
+  still warned about over a bundle that resolves to 0.1, and a 0.1 profile is silent over a 0.2 one.
+
 - **The budget report attributes every omitted ranked section** (LCLI-722 AC4, DEC-194 (6), (11) and
   (12)). `budgets.taskEvidence.omittedSections` names each ranked section the class considered and
   did not carry, with the reason it is absent, in declaration order. The two single-ceiling values
