@@ -73,6 +73,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`lore link --decision`'s repository qualifier is a NAME at every arm, and it no longer refuses a
+  document id for a reason only the task arm can encounter** (LCLI-727, the round-2 review follow-ups
+  from LCLI-670). Two behaviour fixes:
+
+  - **F11** — `--repo` accepted `/` and whitespace, so `--repo "lore cli"` wrote `lore cli:DEC-1`,
+    which nothing can split back into repository and decision, and `--repo opum-ai/lore-cli` stored a
+    SECOND spelling of a repository its own remote already names. ONE predicate now holds all three
+    arms that produce a qualifier — the flag, the name derived from `origin`, and the workspace member
+    id, which was unvalidated entirely — so a name carrying `/`, `\`, `:` or whitespace is refused by
+    name. **A name that was already acceptable is still accepted, unchanged**; what changes is that
+    such a value is no longer written.
+  - **F12** — the Backlog-label guards (comma-bearing id, case-colliding id) ran on the `--decision`
+    arm, whose write is doc-side only and which can never send a label, so `lore link adr/0001-a,b
+    --decision DEC-9` was refused for a reason that arm cannot encounter. Both guards are skipped
+    when the run sends no label. The task arm is unchanged, and still refuses both.
+
+  Also: `originRepositoryName` takes an injectable synchronous `git` transport, so the branch that
+  treats "no `git` to run at all" as "no remote to read" is finally reachable from a test (F13); and
+  four code-hygiene nits are cleared (F16).
+
 - **A profile that declares its own ADR `status` enum emitted that enum but was validated against the
   built-in one, so its own schema declared documents valid that `lore` refused to load** (LCLI-723,
   DEC-192 (4)). The effective lifecycle enum is now the profile's DECLARED `status` enum where it

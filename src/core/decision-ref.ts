@@ -17,14 +17,28 @@
  * `--repo` overrides it.
  */
 
+import { bunGitPreflightSpawn, type GitPreflightSpawn } from "../adapters/git-preflight";
 import { LoreError } from "../errors";
 
 /** A decision id: a bare `DEC-N`, or a `<repo>:DEC-N` already qualified. */
 const DECISION_REF = /^(?:([^:\s]+):)?(DEC-[0-9]+)$/i;
 
-/** Whether a raw string is shaped like a decision id (bare or qualified). */
-export function isDecisionRef(raw: string): boolean {
-  return DECISION_REF.test(raw);
+/**
+ * Whether `name` is usable as a repository QUALIFIER: non-empty, and carrying no `:`, no path
+ * separator and no whitespace (LCLI-727 F11).
+ *
+ * ONE predicate for every arm that produces a stored qualifier, because all three write the SAME
+ * value into a document and a reader has to split it back out of `<repo>:DEC-N`. {@link DECISION_REF}
+ * matches the repository part with `[^:\s]+`, so a whitespace-bearing name is unparseable the moment
+ * it is written; `/` or `\` makes the qualifier a PATH, where DEC-192 (5) specifies a repository
+ * NAME that is identical in every clone and worktree — the whole reason the directory name is never
+ * used. The arms had drifted apart on exactly that: `--repo` rejected `:` and `\` but not `/` or
+ * whitespace, while the derived remote name rejected `/` but not whitespace, so `--repo "lore cli"`
+ * wrote `lore cli:DEC-1` and `--repo opum-ai/lore-cli` stored a second spelling of a repository
+ * already named by its remote.
+ */
+function isValidQualifier(name: string): boolean {
+  return name !== "" && !/[\s:/\\]/.test(name);
 }
 
 /**
@@ -43,18 +57,30 @@ export function qualifyDecisionRef(raw: string, qualifier: string): string {
   return repo === undefined ? `${qualifier}:${id}` : `${repo}:${id}`;
 }
 
-/** The last path segment of the `origin` remote URL, without `.git`; `undefined` when it cannot be read. */
-export function originRepositoryName(root: string): string | undefined {
+/**
+ * The last path segment of the `origin` remote URL, without `.git`; `undefined` when it cannot be
+ * read.
+ *
+ * `spawn` is the SYNC `git` transport, injectable for one reason (LCLI-727 F13): the `catch` below
+ * is the branch that turns "there is no `git` on PATH at all" into an ordinary "there is no remote
+ * to read", and the only way to reach it for real is to remove `git` from the environment — which a
+ * test cannot do safely. `Bun.spawnSync` snapshots the environment at startup, so mutating
+ * `process.env` mid-suite provokes nothing, and emptying `PATH` for a call would leak a
+ * process-global into every other test in the same run, `windows-latest` included. Injecting a
+ * thrower reaches the branch without touching either. It is deliberately the SYNC transport and not
+ * `state.ts`'s async `GitSpawn`: `resolveDecisionQualifier` and its callers are synchronous, and
+ * making them async to satisfy a test would be a far larger change than the branch is worth.
+ */
+export function originRepositoryName(
+  root: string,
+  spawn: GitPreflightSpawn = bunGitPreflightSpawn(root),
+): string | undefined {
   // Git's own command, deliberately: a hand parse of .git/config would have to model the file's
   // include/rewrite rules and would silently disagree with git about a redirect.
   try {
-    const result = Bun.spawnSync(["git", "remote", "get-url", "origin"], {
-      cwd: root,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const result = spawn(["remote", "get-url", "origin"]);
     if (result.exitCode !== 0) return undefined;
-    return repositoryNameFromRemoteUrl(result.stdout.toString("utf8").trim());
+    return repositoryNameFromRemoteUrl(result.stdout.trim());
   } catch {
     // Bun THROWS when the binary cannot be started at all — no `git` on PATH. That is "there is no
     // remote to read", not an internal error, and an uncaught throw would exit 1 with a code link's
@@ -75,8 +101,7 @@ export function repositoryNameFromRemoteUrl(url: string): string | undefined {
   if (trimmed === "") return undefined;
   const lastSegment = trimmed.split(/[:/]/).pop() ?? "";
   const name = lastSegment.replace(/\.git$/i, "");
-  if (name === "" || name.includes(":") || name.includes("\\") || name.includes("/")) return undefined;
-  return name;
+  return isValidQualifier(name) ? name : undefined;
 }
 
 /**
@@ -86,10 +111,10 @@ export function repositoryNameFromRemoteUrl(url: string): string | undefined {
  */
 export function resolveDecisionQualifier(options: { root: string; repoFlag?: string; memberId?: string }): string {
   if (options.repoFlag !== undefined) {
-    // An explicit qualifier still has to BE a name: empty, or carrying a separator, it would write
-    // an id no reader can split back into repository and decision.
+    // An explicit qualifier still has to BE a name: empty, carrying a path separator, or carrying
+    // whitespace, it would write an id no reader can split back into repository and decision.
     const name = options.repoFlag.trim();
-    if (name === "" || name.includes(":") || name.includes("\\")) {
+    if (!isValidQualifier(name)) {
       throw new LoreError(
         "usage",
         `invalid --repo "${options.repoFlag}"`,
@@ -98,7 +123,20 @@ export function resolveDecisionQualifier(options: { root: string; repoFlag?: str
     }
     return name;
   }
-  if (options.memberId !== undefined) return options.memberId;
+  if (options.memberId !== undefined) {
+    // The same value reaches the same field, so the same predicate holds it (LCLI-727 F11). NOT
+    // trimmed: a member id is configuration rather than a flag, and a padded one would store a
+    // padded qualifier that no reader can match to the member it names.
+    if (!isValidQualifier(options.memberId)) {
+      throw new LoreError(
+        "usage",
+        `invalid workspace member id "${options.memberId}"`,
+        "a member id is a repository NAME: no `/`, `:`, `\\` or whitespace",
+        { memberId: options.memberId },
+      );
+    }
+    return options.memberId;
+  }
   const fromRemote = originRepositoryName(options.root);
   if (fromRemote !== undefined) return fromRemote;
   throw new LoreError(
