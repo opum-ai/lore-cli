@@ -11,7 +11,12 @@ kind = "specialist"
 # written here on purpose: it moves with every edit to a declared source, and `lore check` prints
 # the current requirement when it is exceeded.
 max_tokens = 63000
-pinned = ["reference/cli-contract"]
+pinned = [
+  "reference/cli-contract#7-versioning-policy",
+  "reference/cli-contract#22-relationship-to-the-backlogmd-envelope",
+  "reference/cli-contract#51-semantic-exit-codes",
+  "reference/cli-contract#52-the---json-error-envelope",
+]
 sources = [
   "adr/0003-okf-substrate",
   "adr/0005-cli-contract",

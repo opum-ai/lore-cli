@@ -536,3 +536,75 @@ describe("agent context — the declared `task_evidence` cap (DEC-194 (4), LCLI-
     expect(budgets?.policyAndRole.content[0]).toContain("Alpha");
   });
 });
+
+// ── DEC-194 (1)/(7)/(8) / LCLI-722: the four real profiles inside the AC3 ceilings ──────────────
+
+/**
+ * The reshape's acceptance test (DEC-194 (3)): all four REAL role profiles, measured with the same
+ * command class the overrun was filed from, each inside the 3k policy-and-role target and the AC3
+ * authored-bootstrap ceiling of 8k. DEC-194 (8) fixed all four pin sets, so these numbers are the
+ * ruling's own arithmetic — 2725, 2621, 2171, 2353 — read back through the compiler rather than
+ * restated. A test, not a docstring, because the ceilings are the thing a later edit to a pinned
+ * source can break: `docs/specs/agent-profile-context-retrieval.md` is a ranked source of
+ * `implementation`, so growing it can push that profile over with no other test going red.
+ *
+ * `authoredBootstrapCeiling` measures policy and role PLUS task contract (the spec's AC3 note), so
+ * the two ceilings below are asserted as ceilings and the target as a target: crossing the 3k TARGET
+ * is a `[targets]` measurement the compiler reports, while crossing the 8k CEILING is the AC3
+ * failure this task exists to remove.
+ */
+describe("the four real role profiles measure inside the AC3 ceilings (DEC-194 (1)/(8), LCLI-722)", () => {
+  const TASK = "review the context budget change to the role profiles";
+  const REPO_ROOT = join(import.meta.dir, "..");
+  const PINNED_SETS: Readonly<Record<string, readonly string[]>> = {
+    documentation: [
+      "index#current-control-set",
+      "index#architecture--design",
+      "index#references",
+      "index#adrs",
+      "index#runbooks",
+    ],
+    implementation: [
+      "reference/cli-contract#1-output-modes-and-precedence",
+      "reference/cli-contract#22-relationship-to-the-backlogmd-envelope",
+      "reference/cli-contract#51-semantic-exit-codes",
+      "reference/cli-contract#52-the---json-error-envelope",
+      "reference/cli-contract#53-error_type--exit-code-alignment",
+    ],
+    review: [
+      "reference/cli-contract#7-versioning-policy",
+      "reference/cli-contract#22-relationship-to-the-backlogmd-envelope",
+      "reference/cli-contract#51-semantic-exit-codes",
+      "reference/cli-contract#52-the---json-error-envelope",
+    ],
+    verification: [
+      "reference/okf-conformance#the-two-conformance-floors",
+      "reference/okf-conformance#lores-validation-tiers",
+      "reference/cli-contract#3-bounded-output-and-truncation-hints",
+      "reference/cli-contract#51-semantic-exit-codes",
+    ],
+  };
+
+  for (const [name, pinned] of Object.entries(PINNED_SETS)) {
+    test(`${name}: pins its DEC-194 (8) sections and nothing else, inside both ceilings`, () => {
+      const snapshot = loadAgentProfiles(REPO_ROOT);
+      const profile = snapshot.profiles.get(name);
+      expect(profile).toBeDefined();
+      // The DECISION is asserted, not only its arithmetic: a set that fits because a pin was
+      // silently dropped would pass the ceilings below while no longer being the ruled set.
+      expect(profile?.pinned.map((reference) => reference.normalized)).toEqual([...pinned]);
+
+      const pack = compileAgentContext(snapshot, loadBundle(join(REPO_ROOT, "docs")), name, TASK);
+      const budgets = pack.budgets;
+      expect(budgets).toBeDefined();
+      expect(budgets?.policyAndRole.measured).toBeLessThanOrEqual(3000);
+      expect(budgets?.policyAndRole.over).toBe(false);
+      expect(budgets?.authoredBootstrapCeiling.measured).toBeLessThanOrEqual(8000);
+      expect(budgets?.authoredBootstrapCeiling.over).toBe(false);
+      // The AC3 evidence ceiling, and the subtotal DEC-194 (3) asks each profile to report.
+      expect(budgets?.taskEvidenceCeiling.measured).toBeLessThanOrEqual(16000);
+      expect(budgets?.taskEvidenceCeiling.over).toBe(false);
+      expect(typeof budgets?.loreSubtotal.measured).toBe("number");
+    });
+  }
+});

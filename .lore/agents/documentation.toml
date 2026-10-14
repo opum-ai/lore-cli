@@ -11,7 +11,13 @@ kind = "specialist"
 # written here on purpose: it moves with every edit to a declared source, and `lore check` prints
 # the current requirement when it is exceeded.
 max_tokens = 63000
-pinned = ["index"]
+pinned = [
+  "index#current-control-set",
+  "index#architecture--design",
+  "index#references",
+  "index#adrs",
+  "index#runbooks",
+]
 sources = [
   "reference/lore-cli-documentation-ownership",
   "reference/operate-autonomous-lore-cli-documentation-campaigns",
