@@ -143,6 +143,16 @@ Contract:
   - **Provenance.** Each lore figure carries `measuredBy: "chars/4 estimate"`
     (MDL-10). A class whose estimate exceeds its target — or a ceiling — sets
     `over` and names the content that required it, largest first.
+  - **Omitted sections.** `taskEvidence.omittedSections` lists every ranked
+    SECTION the class considered and did not carry, each as
+    `{reference, section?, reason}` in declaration order, so the two ways a
+    section goes missing are told apart from the report alone (LCLI-722 AC4,
+    DEC-194 (6)): `cut-by-cap` for a capacity ceiling — the declared
+    `task_evidence` cap, or the pack's `max_tokens` where no cap is declared —
+    and `scored-zero` for the zero-score filter, which drops a section before
+    any budget is spent (LCLI-680). The field belongs to `taskEvidence` alone,
+    is present as a list even when nothing was omitted, and is additive and
+    JSON-only: the rendered `## Context budgets` section prints `content`.
   - **Provider usage.** `lore agent context --provider-input-tokens <n>` records
     the pack's `providerUsage` with `source: "manual"`; `opum-cli`'s model
     gateway records `source: "provider-reported"` (MDL-15). A manual figure is

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The budget report attributes every omitted ranked section** (LCLI-722 AC4, DEC-194 (6)).
+  `budgets.taskEvidence.omittedSections` names each ranked section the class considered and did not
+  carry, with the reason it is absent: `cut-by-cap` for a section a capacity ceiling excluded (the
+  declared `task_evidence` cap, or the pack's `max_tokens` where no cap is declared), and
+  `scored-zero` for one the zero-score filter dropped before any budget was spent. Before this, a
+  section the cap cut and a section that scored zero were the same absence in the report — the
+  catalog's reason is per SOURCE, so a source with one section selected and another cut for either
+  reason read `partially-included`. The field is additive (`content` keeps its shape) and JSON-only,
+  so no rendered pack grows by a byte.
+
 - **An ADR type in `.lore/profile.toml` may declare `superseded_status`** (LCLI-723, DEC-192 (6)) —
   the `status` value `lore supersede` writes when the type's lifecycle enum does not contain
   `deprecated`, e.g. `{ name = "ADR", superseded_status = "approved" }` beside `fields` and

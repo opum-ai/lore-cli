@@ -683,3 +683,117 @@ describe("agent context — selection skips a misfit rather than stopping (DEC-1
     expect(entry("specs/tiny")?.selectedCount).toBe(1);
   });
 });
+
+// ── LCLI-722 AC4 / DEC-194 (6): the budget report attributes each OMITTED section ──────────────
+
+/**
+ * AC4: per SECTION, the budget report says whether a section was cut by the CAP or scored zero, so
+ * a reader can tell the two apart from the report alone.
+ *
+ * The CATALOG cannot answer that question, and the fixture asserts it rather than assuming it: its
+ * reason is per SOURCE, so one source with a section selected and another cut reads
+ * `partially-included` whichever way the second one left — measured here, in the same report, for a
+ * source that carries one of each.
+ *
+ * `omittedSections` is ADDITIVE under cli-contract §7.1: `content` keeps its `string[]` shape
+ * (asserted), and the field is JSON-only — the rendered budget footer prints `content`, so nothing
+ * here can move a capacity figure.
+ */
+describe("agent context — the budget report attributes each omitted section (LCLI-722 AC4)", () => {
+  /**
+   * One ranked source whose sections split three ways: `Alpha`, `Gamma` and `Delta` match the task
+   * and are cut by the declared cap; `Beta` shares no term with it and is dropped by the zero-score
+   * filter; the intro paragraph is selected. The document is long enough to be partitioned into
+   * sections (the threshold is min(2000, maxTokens/4)), which is what makes a per-SECTION claim
+   * possible at all.
+   */
+  function attributionFixture(cap: number): void {
+    doc("reference/rules.md", "# Rules\n\nCheckout validation rules.\n", "Checkout validation rules");
+    doc(
+      "specs/ranked.md",
+      [
+        "# Ranked",
+        "",
+        `Intro ${"checkout validation ".repeat(40)}`,
+        "",
+        "## Alpha",
+        "",
+        `Alpha ${"checkout validation ".repeat(40)}`,
+        "",
+        "## Beta",
+        "",
+        `Beta ${"unrelated theorem prose ".repeat(40)}`,
+        "",
+        "## Gamma",
+        "",
+        `Gamma ${"checkout validation ".repeat(40)}`,
+        "",
+        "## Delta",
+        "",
+        `Delta ${"checkout validation ".repeat(40)}`,
+        "",
+      ].join("\n"),
+      "Ranked evidence",
+    );
+    const path = join(root, ".lore/agents/section-attribution.toml");
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(
+      path,
+      `schema_version = 1\nname = "section-attribution"\ndescription = "Attributes omitted sections."\nkind = "specialist"\nmax_tokens = 4000\npinned = ["reference/rules"]\nsources = ["specs/ranked"]\n[targets]\npolicy_and_role = 3000\ntask_evidence = ${cap}\nlore_subtotal = 11000\n`,
+    );
+  }
+
+  function attributionPack(cap: number) {
+    attributionFixture(cap);
+    return compileAgentContext(loadAgentProfiles(root), loadBundle(join(root, "docs")), "section-attribution", TASK);
+  }
+
+  test("one source reports cut-by-cap and scored-zero side by side, per section", () => {
+    const pack = attributionPack(300);
+    const omitted = pack.budgets?.taskEvidence.omittedSections;
+    expect(Array.isArray(omitted)).toBe(true);
+
+    // BOTH reasons, in one report, from the SAME source — which is the whole point.
+    expect(omitted).toContainEqual({ reference: "specs/ranked", section: "Ranked > Alpha", reason: "cut-by-cap" });
+    expect(omitted).toContainEqual({ reference: "specs/ranked", section: "Ranked > Beta", reason: "scored-zero" });
+
+    // Nothing else is claimed: the two reasons are the complete vocabulary of this report.
+    expect(new Set((omitted ?? []).map((entry) => entry.reason))).toEqual(new Set(["cut-by-cap", "scored-zero"]));
+
+    // THE CONTROL: the section the pack DID carry is not advertised as omitted.
+    expect(pack.sections.map((item) => item.breadcrumb)).toContain("Ranked");
+    expect((omitted ?? []).map((entry) => entry.section)).not.toContain("Ranked");
+
+    // THE PREMISE, measured rather than remembered: from the catalog alone this source reads
+    // `partially-included`, exactly as it would if Beta had been cut by the cap instead.
+    const catalogEntry = pack.catalog.find((entry) => entry.reference === "specs/ranked");
+    expect(catalogEntry?.reason).toBe("partially-included");
+    expect(catalogEntry?.selectedCount).toBeLessThan(catalogEntry?.candidateCount ?? 0);
+
+    // ADDITIVE: `content` keeps its shape, and the class that does not rank candidates carries no
+    // attribution at all — pins are never cut.
+    const content = pack.budgets?.taskEvidence.content;
+    expect(Array.isArray(content)).toBe(true);
+    expect(content?.every((line) => typeof line === "string")).toBe(true);
+    expect(pack.budgets?.policyAndRole.omittedSections).toBeUndefined();
+  });
+
+  test("...and raising the cap removes the cap entries while the scored-zero one stays (the other way)", () => {
+    const pack = attributionPack(3000);
+    const omitted = pack.budgets?.taskEvidence.omittedSections ?? [];
+    // Every section that shares a term with the task fits now, so no `cut-by-cap` survives...
+    expect(omitted.map((entry) => entry.reason)).toEqual(["scored-zero"]);
+    expect(omitted[0]?.section).toBe("Ranked > Beta");
+    // ...and the section it names is one the pack genuinely does not carry.
+    expect(pack.sections.map((item) => item.breadcrumb)).not.toContain("Ranked > Beta");
+  });
+
+  test("nothing omitted reads as an EMPTY list, not an absent field", () => {
+    // The shared fixture's only ranked source matches the task and fits whole, so the class has
+    // nothing to attribute — and a reader must still be able to tell that from "this report does
+    // not carry the field".
+    fixture(DECLARED);
+    const pack = compile();
+    expect(pack.budgets?.taskEvidence.omittedSections).toEqual([]);
+  });
+});

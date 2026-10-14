@@ -267,12 +267,50 @@ export interface AgentContextExport {
  */
 export type AgentContextFigureProvenance = "chars/4 estimate" | "tokenizer count";
 
+/**
+ * One ranked SECTION a budget class considered and did NOT carry, with the reason it is absent
+ * (LCLI-722 AC4).
+ *
+ * Two different facts used to collapse into the same absence. A section can be missing because a
+ * capacity ceiling excluded it — the declared `task_evidence` cap, or the pack's own `max_tokens`
+ * when no cap is declared — or because the zero-score filter dropped it before any budget was
+ * spent, because it had nothing for this task. The catalog distinguishes those two per SOURCE
+ * (`omitted-by-budget` against `omitted-by-relevance`), which cannot answer the per-SECTION
+ * question: a source with one section selected and one cut for either reason reads
+ * `partially-included` in both cases. This field carries the distinction at the section.
+ */
+export interface AgentContextOmittedSection {
+  /** The reference the section belongs to, spelled as this class's `content` labels spell it. */
+  readonly reference: string;
+  /** The section's breadcrumb when it has one; absent for a candidate that IS its whole concept. */
+  readonly section?: string;
+  /**
+   * `cut-by-cap` — a capacity ceiling excluded it: the declared `task_evidence` cap where there is
+   * one, otherwise the pack's `max_tokens`. `scored-zero` — the zero-score relevance filter dropped
+   * it whole, before any budget was spent (LCLI-680).
+   */
+  readonly reason: "cut-by-cap" | "scored-zero";
+}
+
 export interface AgentContextBudgetEntry {
   readonly target: number | null;
   readonly measured: number | null;
   readonly measuredBy?: AgentContextFigureProvenance;
   readonly over: boolean;
   readonly content: readonly string[];
+  /**
+   * Every SECTION this class considered and did not carry, each with its reason (LCLI-722 AC4).
+   * Present only on a class that ranks candidates — `taskEvidence` — and always as a list there,
+   * so an empty one means "nothing was cut" rather than "this report does not say".
+   *
+   * Deliberately NOT gated on `over` the way `content` is: the case this exists for is a class
+   * inside its target whose cap is doing the cutting, where `content` is empty and the report
+   * would otherwise have nothing to say about what was dropped.
+   *
+   * Additive under cli-contract §7.1, and JSON-only: the rendered budget footer prints `content`
+   * alone, so this field costs no bytes in a pack and cannot move a capacity figure.
+   */
+  readonly omittedSections?: readonly AgentContextOmittedSection[];
   readonly note?: string;
 }
 
@@ -1213,6 +1251,8 @@ function computeBudgets(
   contract: ContractView | undefined,
   contractOmissions: readonly { readonly source: string; readonly reason: string }[] | undefined,
   subtotal: number,
+  sources: readonly SourceCandidates[],
+  excludedByRelevance: ReadonlySet<string>,
 ): AgentContextBudgets | undefined {
   if (!profileDeclaresBudgets(profile)) return undefined;
   const targets = profile.targets;
@@ -1236,10 +1276,29 @@ function computeBudgets(
     contract === undefined ? 0 : estimateTokens(contractSectionLines(contract, contractOmissions).join("\n")),
     contract === undefined ? [] : [`task ${contract.task.id}`],
   );
+  // The per-SECTION attribution (LCLI-722 AC4). Every candidate of every declared source that did
+  // not reach the pack is named with the reason it did not: `excludedByRelevance` is the zero-score
+  // filter's own key set (LCLI-680), so a key inside it scored zero, and every other absent
+  // candidate is one a capacity ceiling left behind. Declaration order — source, then section — so
+  // the list is stable run to run and a diff is readable.
+  const selectedKeys = new Set(selected.map((item) => item.key));
+  const omittedSections: AgentContextOmittedSection[] = [];
+  for (const source of sources) {
+    for (const item of source.items) {
+      if (selectedKeys.has(item.key)) continue;
+      omittedSections.push({
+        reference: item.reference,
+        ...(item.breadcrumb === undefined ? {} : { section: item.breadcrumb }),
+        reason: excludedByRelevance.has(item.key) ? "scored-zero" : "cut-by-cap",
+      });
+    }
+  }
   const taskEvidence = budgetEntry(
     targets.taskEvidence,
     selected.reduce((sum, item) => sum + item.tokenEstimate, 0),
     bySize(selected),
+    undefined,
+    omittedSections,
   );
   // The initial code map and the harness/tools floor are the composer's (opum-cli) to own: lore's
   // pack contains neither, so lore reports them NOT-APPLICABLE with that reason — never a 0, which
@@ -1282,6 +1341,7 @@ function budgetEntry(
   measured: number | null,
   content: readonly string[],
   note?: string,
+  omittedSections?: readonly AgentContextOmittedSection[],
 ): AgentContextBudgetEntry {
   const bound = target ?? null;
   const over = bound !== null && measured !== null && measured > bound;
@@ -1294,6 +1354,7 @@ function budgetEntry(
     ...(measured === null ? {} : { measuredBy: "chars/4 estimate" as const }),
     over,
     content: over ? content : [],
+    ...(omittedSections === undefined ? {} : { omittedSections }),
     ...(note === undefined ? {} : { note }),
   };
 }
@@ -1438,6 +1499,10 @@ function assemble(
           contractView,
           contractOmissions,
           estimateTokens(renderAgentContextMarkdown(provisional)),
+          // `sources` IS the scored deck: the compiler's callers pass `scoredSources` here, and
+          // `excludedByRelevance` rides beside it.
+          sources,
+          excludedByRelevance,
         )
       : undefined;
   const withUsage: AgentContextPack = {
