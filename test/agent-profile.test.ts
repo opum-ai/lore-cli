@@ -173,6 +173,44 @@ describe("agent profiles — strict snapshot validation", () => {
       "missing heading",
     );
   });
+
+  test("retitling a section a profile PINS fails loudly; it never resolves elsewhere (LCLI-722)", () => {
+    // The reshape pins sub-sections by anchor, so a profile's pin is now a SLUG, and a heading is
+    // prose a later editor may retitle. This pins the failure that must survive that: the old slug
+    // resolves to nothing and the compile STOPS with a named error, rather than the pin quietly
+    // landing on a neighbouring section or on the whole document.
+    const body = (heading: string): string =>
+      `# Contract\n\n## 2. The envelope\n\nIntro prose for the section.\n\n### ${heading}\n\nThe kind registry body.\n\n### 2.2 Other\n\nOther body.\n`;
+    doc("reference/contract.md", body("2.1 The kind registry"), "Probe contract");
+    profile(
+      "pin-holder",
+      'schema_version = 1\nname = "pin-holder"\ndescription = "Pins a sub-section by anchor."\nkind = "specialist"\nmax_tokens = 1200\npinned = ["reference/contract#21-the-kind-registry"]\nsources = []\n',
+    );
+    const compile = () =>
+      compileAgentContext(loadAgentProfiles(root), loadBundle(join(root, "docs")), "pin-holder", "checkout");
+
+    // POSITIVE CONTROL, and the reason the failure below is about the anchor rather than a broken
+    // fixture: with the heading present the pin resolves to EXACTLY that section — not to the whole
+    // document, which a silent fallback would have produced.
+    const ok = compile();
+    expect(ok.pinned.map((item) => item.reference)).toEqual(["reference/contract#21-the-kind-registry"]);
+    expect(ok.pinned[0]?.body).toContain("The kind registry body");
+    expect(ok.pinned[0]?.body).not.toContain("Other body");
+
+    // The retitle. The new slug (`21-the-kind-registry-renamed`) is a heading; the pinned one is not.
+    doc("reference/contract.md", body("2.1 The kind registry (renamed)"), "Probe contract");
+    let thrown: unknown;
+    try {
+      compile();
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(LoreError);
+    expect((thrown as LoreError).type).toBe("validation");
+    expect((thrown as LoreError).message).toContain(
+      'references missing heading "reference/contract#21-the-kind-registry"',
+    );
+  });
 });
 
 describe("agent context compiler", () => {

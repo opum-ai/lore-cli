@@ -11,11 +11,15 @@ kind = "specialist"
 # written here on purpose: it moves with every edit to a declared source, and `lore check` prints
 # the current requirement when it is exceeded.
 max_tokens = 97000
-pinned = ["reference/okf-conformance"]
+pinned = [
+  "reference/okf-conformance#the-two-conformance-floors",
+  "reference/okf-conformance#lores-validation-tiers",
+  "reference/cli-contract#3-bounded-output-and-truncation-hints",
+  "reference/cli-contract#51-semantic-exit-codes",
+]
 sources = [
   "reference/consumer-compatibility",
   "reference/lore-cli-release-truth",
-  "reference/cli-contract",
   "reference/ladybugdb-benchmark-and-scale-acceptance-strategy",
   "runbooks/docker-e2e-testing-environment",
   "runbooks/release-publishing",

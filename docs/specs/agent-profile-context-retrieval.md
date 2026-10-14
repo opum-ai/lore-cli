@@ -150,6 +150,15 @@ Contract:
     own estimate.
   - A profile that declares no target is not reported at all, so its pack stays
     byte-identical.
+  - When a ranked evidence item does not fit the evidence budget that remains,
+    the compiler omits that item, records it as omitted-by-budget, and continues
+    with the next-ranked item. Selection does not stop at the first item that
+    does not fit, so a smaller lower-ranked item that fits is still included. The
+    order of consideration is the ranking, and ties keep a stable order, so the
+    same inputs give the same pack. Required content is never skipped: if
+    required content does not fit, the compile fails with
+    CONTEXT_REQUIRED_CONTENT_OVER_BUDGET (MDL-9), naming the content and its size
+    against the budget.
 - `pinned` and `sources` are optional ordered arrays defaulting to empty. Each
   item is a canonical bundle-relative concept id with an optional
   GitHub-compatible `#heading-anchor`.

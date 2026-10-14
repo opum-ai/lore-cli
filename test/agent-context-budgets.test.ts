@@ -536,3 +536,150 @@ describe("agent context — the declared `task_evidence` cap (DEC-194 (4), LCLI-
     expect(budgets?.policyAndRole.content[0]).toContain("Alpha");
   });
 });
+
+// ── DEC-194 (1)/(7)/(8) / LCLI-722: the four real profiles inside the AC3 ceilings ──────────────
+
+/**
+ * The reshape's acceptance test (DEC-194 (3)): all four REAL role profiles, measured with the same
+ * command class the overrun was filed from, each inside the 3k policy-and-role target and the AC3
+ * authored-bootstrap ceiling of 8k. DEC-194 (8) fixed all four pin sets, so these numbers are the
+ * ruling's own arithmetic — 2725, 2621, 2171, 2353 — read back through the compiler rather than
+ * restated. A test, not a docstring, because the 3k target is the thing a later edit to a PINNED
+ * source can break — implementation pins five `reference/cli-contract` sections, so growing one of
+ * them can push that profile over with no other test going red. A `sources` entry cannot move
+ * either ceiling: policy and role sums the pinned tier alone, and ranked evidence is capped at the
+ * declared `task_evidence` (6000), far under the 16k evidence ceiling. (LCLI-722 review F1: an
+ * earlier revision of this comment named a RANKED source as the risk, which no assertion here can
+ * catch — the writer session grew that very file and every assertion stayed green.)
+ *
+ * `authoredBootstrapCeiling` measures policy and role PLUS task contract (the spec's AC3 note), so
+ * the two ceilings below are asserted as ceilings and the target as a target: crossing the 3k TARGET
+ * is a `[targets]` measurement the compiler reports, while crossing the 8k CEILING is the AC3
+ * failure this task exists to remove.
+ */
+describe("the four real role profiles measure inside the AC3 ceilings (DEC-194 (1)/(8), LCLI-722)", () => {
+  const TASK = "review the context budget change to the role profiles";
+  const REPO_ROOT = join(import.meta.dir, "..");
+  const PINNED_SETS: Readonly<Record<string, readonly string[]>> = {
+    documentation: [
+      "index#current-control-set",
+      "index#architecture--design",
+      "index#references",
+      "index#adrs",
+      "index#runbooks",
+    ],
+    implementation: [
+      "reference/cli-contract#1-output-modes-and-precedence",
+      "reference/cli-contract#22-relationship-to-the-backlogmd-envelope",
+      "reference/cli-contract#51-semantic-exit-codes",
+      "reference/cli-contract#52-the---json-error-envelope",
+      "reference/cli-contract#53-error_type--exit-code-alignment",
+    ],
+    review: [
+      "reference/cli-contract#7-versioning-policy",
+      "reference/cli-contract#22-relationship-to-the-backlogmd-envelope",
+      "reference/cli-contract#51-semantic-exit-codes",
+      "reference/cli-contract#52-the---json-error-envelope",
+    ],
+    verification: [
+      "reference/okf-conformance#the-two-conformance-floors",
+      "reference/okf-conformance#lores-validation-tiers",
+      "reference/cli-contract#3-bounded-output-and-truncation-hints",
+      "reference/cli-contract#51-semantic-exit-codes",
+    ],
+  };
+
+  for (const [name, pinned] of Object.entries(PINNED_SETS)) {
+    test(`${name}: pins its DEC-194 (8) sections and nothing else, inside both ceilings`, () => {
+      const snapshot = loadAgentProfiles(REPO_ROOT);
+      const profile = snapshot.profiles.get(name);
+      expect(profile).toBeDefined();
+      // The DECISION is asserted, not only its arithmetic: a set that fits because a pin was
+      // silently dropped would pass the ceilings below while no longer being the ruled set.
+      expect(profile?.pinned.map((reference) => reference.normalized)).toEqual([...pinned]);
+
+      const pack = compileAgentContext(snapshot, loadBundle(join(REPO_ROOT, "docs")), name, TASK);
+      const budgets = pack.budgets;
+      expect(budgets).toBeDefined();
+      expect(budgets?.policyAndRole.measured).toBeLessThanOrEqual(3000);
+      expect(budgets?.policyAndRole.over).toBe(false);
+      expect(budgets?.authoredBootstrapCeiling.measured).toBeLessThanOrEqual(8000);
+      expect(budgets?.authoredBootstrapCeiling.over).toBe(false);
+      // The AC3 evidence ceiling. With a cap declared this cannot bite — ranked evidence is capped
+      // at `task_evidence` (6000) — so its value here is as a guard for a profile that LOSES its
+      // cap, not as a stress of the 16k ceiling itself (LCLI-722 review F2).
+      expect(budgets?.taskEvidenceCeiling.measured).toBeLessThanOrEqual(16000);
+      expect(budgets?.taskEvidenceCeiling.over).toBe(false);
+      // DEC-194 (3) asks each profile to REPORT a subtotal; this asserts one is reported, nothing
+      // about its size. The numbered subtotals live in the PR body and the task record, which can
+      // carry a dated figure that a docstring in a test cannot.
+      expect(typeof budgets?.loreSubtotal.measured).toBe("number");
+    });
+  }
+});
+
+// ── DEC-194 (9) / LCLI-722 clause (c): selection SKIPS a misfit, it does not STOP ───────────────
+
+/**
+ * "When a ranked evidence item does not fit the evidence budget that remains, the compiler omits
+ * that item, records it as omitted-by-budget, and continues with the next-ranked item. Selection
+ * does not stop at the first item that does not fit, so a smaller lower-ranked item that fits is
+ * still included." (DEC-194 (9), opum-doc.)
+ *
+ * The fixture is built so the misfit genuinely LEADS the ranking — the precondition is asserted,
+ * not assumed — because a test whose large item happened to rank last would pass on a
+ * stop-at-the-first-misfit compiler too. The mutation is `break` where the selection loop has
+ * `continue`: it reddens exactly the assertions below and nothing else in this file.
+ *
+ * The required-content half of the clause is unchanged by this behaviour and is proved in the
+ * declared-cap describe above (a ranked Constitution that cannot fit the cap fails the compile
+ * with CONTEXT_REQUIRED_CONTENT_OVER_BUDGET rather than being skipped).
+ */
+describe("agent context — selection skips a misfit rather than stopping (DEC-194 (9), LCLI-722)", () => {
+  const CAP = 300;
+
+  function rankedFixture(): void {
+    doc("reference/rules.md", "# Rules\n\nCheckout validation rules.\n", "Rules");
+    // Descending size, and `big` outranks both on the task's terms despite its length.
+    doc("specs/big.md", `# Big\n\n${"checkout validation ".repeat(60)}\n`, "Big");
+    doc("specs/small.md", `# Small\n\n${"checkout validation ".repeat(6)}\n`, "Small");
+    doc("specs/tiny.md", `# Tiny\n\n${"checkout validation ".repeat(3)}\n`, "Tiny");
+    const path = join(root, ".lore/agents/skipper.toml");
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(
+      path,
+      `schema_version = 1\nname = "skipper"\ndescription = "Ranks sections."\nkind = "specialist"\nmax_tokens = 20000\npinned = ["reference/rules"]\nsources = ["specs/big", "specs/small", "specs/tiny"]\n[targets]\ntask_evidence = ${CAP}\n`,
+    );
+  }
+
+  function compileSkipper() {
+    return compileAgentContext(
+      loadAgentProfiles(root),
+      loadBundle(join(root, "docs")),
+      "skipper",
+      "checkout validation",
+    );
+  }
+
+  test("a large high-ranked misfit does not shut out the smaller lower-ranked items behind it", () => {
+    rankedFixture();
+    const pack = compileSkipper();
+    const entry = (conceptId: string) => pack.catalog.find((candidate) => candidate.conceptId === conceptId);
+
+    // PRECONDITION: `big` is the highest-ranked candidate and is larger than the whole cap, so it
+    // can never be admitted. Without this the test could pass on a compiler that stops at the first
+    // misfit simply because no misfit ever led the order.
+    expect(entry("specs/big")?.topScore).toBeGreaterThan(entry("specs/small")?.topScore ?? Number.POSITIVE_INFINITY);
+    expect(entry("specs/big")?.tokenEstimate).toBeGreaterThan(CAP);
+
+    // OMITTED: not selected, and RECORDED as an omission rather than silently absent.
+    expect(pack.sections.map((item) => item.conceptId)).not.toContain("specs/big");
+    expect(entry("specs/big")?.reason).toBe("omitted-by-budget");
+    expect(entry("specs/big")?.selectedCount).toBe(0);
+
+    // CONTINUED PAST IT: the two items ranked behind the misfit are still selected, in rank order.
+    expect(pack.sections.map((item) => item.conceptId)).toEqual(["specs/small", "specs/tiny"]);
+    expect(entry("specs/small")?.selectedCount).toBe(1);
+    expect(entry("specs/tiny")?.selectedCount).toBe(1);
+  });
+});

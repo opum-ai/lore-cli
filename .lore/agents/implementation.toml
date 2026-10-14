@@ -11,7 +11,13 @@ kind = "specialist"
 # annotations at full width. No number is written here on purpose: it moves with
 # every edit to a declared source. `lore check` prints the current requirement when it is exceeded.
 max_tokens = 111000
-pinned = ["reference/cli-contract"]
+pinned = [
+  "reference/cli-contract#1-output-modes-and-precedence",
+  "reference/cli-contract#22-relationship-to-the-backlogmd-envelope",
+  "reference/cli-contract#51-semantic-exit-codes",
+  "reference/cli-contract#52-the---json-error-envelope",
+  "reference/cli-contract#53-error_type--exit-code-alignment",
+]
 sources = [
   "specs/lore-design",
   "reference/architecture",

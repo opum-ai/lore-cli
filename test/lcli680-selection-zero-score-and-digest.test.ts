@@ -19,8 +19,9 @@
  * read verbatim from the committed tracker (LCLI-289 and LCLI-380), and both packs compile the real
  * `.lore/agents/implementation.toml` profile against the real `docs/` bundle. The two tasks are
  * unrelated — one is about the agent-context subsystem, the other about the LadybugDB indexing
- * subsystem — yet share that profile's required policy (`pinned = ["reference/cli-contract"]`), which
- * is exactly the CTX-01 shape: same mandatory policy, different task-shaped optional evidence.
+ * subsystem — yet share that profile's required policy (LCLI-722 reshaped implementation's pin from
+ * `reference/cli-contract` whole to five of its sections by anchor), which is exactly the CTX-01
+ * shape: same mandatory policy, different task-shaped optional evidence.
  *
  * Each real task's pack selects only the sections that scored above zero for its own task, and the
  * two selections differ in BOTH directions — each task selects sections the other does not — so the
@@ -169,8 +170,17 @@ describe("LCLI-680 — zero-score filler is excluded from optional-evidence sele
 
     // SHARED required policy: the profile's own pins are identical in both packs. This is the
     // "share required policy" half of CTX-01 — the mandatory tier does not move with the task.
-    expect(packA.pinned.map((item) => item.conceptId)).toEqual(["reference/cli-contract"]);
-    expect(packB.pinned.map((item) => item.conceptId)).toEqual(packA.pinned.map((item) => item.conceptId));
+    // Asserted on the NORMALIZED references, not the concept ids: since LCLI-722 the profile pins
+    // five ANCHORED sections of `reference/cli-contract`, so every pin shares one concept id and a
+    // concept-id list would no longer say which policy is shared.
+    expect(packA.pinned.map((item) => item.reference)).toEqual([
+      "reference/cli-contract#1-output-modes-and-precedence",
+      "reference/cli-contract#22-relationship-to-the-backlogmd-envelope",
+      "reference/cli-contract#51-semantic-exit-codes",
+      "reference/cli-contract#52-the---json-error-envelope",
+      "reference/cli-contract#53-error_type--exit-code-alignment",
+    ]);
+    expect(packB.pinned.map((item) => item.reference)).toEqual(packA.pinned.map((item) => item.reference));
 
     // DIFFERENT optional evidence, and different in BOTH directions — each task selects sections the
     // other does not, so the two packs are not mere nestings of one another.
