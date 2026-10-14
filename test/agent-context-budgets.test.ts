@@ -255,13 +255,16 @@ describe("agent context — the declared `task_evidence` cap (DEC-194 (4), LCLI-
    * `constitutionConceptId` returns `undefined` without it — so a RANKED Constitution is not
    * recognised as the mandatory candidate and the required-content arm cannot be reached at all.
    */
-  function compileWithConstitution() {
+  function compileWithConstitution(maxTokens = 20000) {
+    // `maxTokens` is a REQUIRED parameter of the call, so a profile file's own `max_tokens` is
+    // overridden here — a test that sizes the pack budget in the profile file and not in this
+    // argument silently exercises a 20000-token pack instead of the one it wrote.
     return compileAgentContext(
       loadAgentProfiles(root),
       loadBundle(join(root, "docs")),
       "frontend-dev",
       TASK,
-      20000,
+      maxTokens,
       "docs/constitution.md",
     );
   }
@@ -278,11 +281,20 @@ describe("agent context — the declared `task_evidence` cap (DEC-194 (4), LCLI-
   });
 
   test("...and a profile declaring NO targets keeps today's behaviour — the cap is never inferred", () => {
-    corpus(20);
-    profile("", allSources(20));
+    // SIXTY documents, not twenty (LCLI-722 review): at ~300 tokens each, twenty sum to ~6000, so a
+    // silently-inferred default cap of 6000, 8000 or 16000 would still have selected all of them and
+    // this test would have passed against the very defect it exists to catch. Sixty sum to ~18000,
+    // which is over every plausible default.
+    corpus(60);
+    profile("", allSources(60));
     const pack = compile();
     expect(pack.budgets).toBeUndefined();
-    expect(pack.shown).toBe(20);
+    // The claim asserted DIRECTLY rather than as a count: this pack's ranked evidence is larger than
+    // any conceivable default cap, so a silently-inferred one cannot have been applied. (The count
+    // itself is the pack budget's business — `max_tokens` still binds, as it should — which is why
+    // pinning `shown` to the corpus size would have been pinning the wrong object.)
+    const evidenceTokens = pack.sections.reduce((sum, item) => sum + item.tokenEstimate, 0);
+    expect(evidenceTokens).toBeGreaterThan(16000);
   });
 
   test("the SAME corpus under a larger declared cap selects more — the cap is the profile's number", () => {
@@ -294,6 +306,71 @@ describe("agent context — the declared `task_evidence` cap (DEC-194 (4), LCLI-
     profile("[targets]\ntask_evidence = 1000\n", allSources(20));
     const looser = compile().shown;
     expect(looser).toBeGreaterThan(tight);
+  });
+
+  /**
+   * A Constitution whose body shares NO term with `TASK`, so it scores zero and the ranking sorts it
+   * LAST — behind every positive-scoring section. That ordering is what made the reservation
+   * necessary: the cap filled before the mandatory candidate was ever reached.
+   */
+  function constitutionDoc(padWords = 40): void {
+    writeFileSync(
+      join(root, "docs/constitution.md"),
+      `---\ntype: Constitution\ntitle: Project constitution\nsummary: The principles this project holds.\nversion: 1.0.0\nratified: "2026-01-01"\nlast_amended: "2026-01-01"\namendment_authority: project maintainers\n---\n\n# Project constitution\n\n## Principles\n\n${"accountable reversible scoped ".repeat(padWords)}\n\n## Governance\n\nShort.\n\n## Amendment log\n\nNone yet.\n`,
+    );
+  }
+
+  test("REQUIRED content is KEPT when ranked evidence would fill the cap first (the reservation)", () => {
+    corpus(20);
+    constitutionDoc(40);
+    profile("[targets]\ntask_evidence = 1200\n", ["constitution", ...allSources(20)]);
+    const pack = compileWithConstitution();
+
+    // The blocking case on the first version of this change: the Constitution scores ZERO, so it
+    // sorts last, positive evidence filled the cap ahead of it, and the loop's `continue` skipped it
+    // — a successful compile with the mandatory content silently absent.
+    const ids = pack.sections.map((item) => item.conceptId);
+    expect(ids).toContain("constitution");
+    expect(pack.budgets?.taskEvidence.measured).toBeLessThanOrEqual(1200);
+
+    // ...and the room was genuinely RESERVED, not merely left over: ranked evidence stops short of
+    // the cap, because `evidenceBudget - requiredTokens` is what it was allowed to spend. Deleting
+    // the reservation lets it run to ~1200 and this assertion is what goes red.
+    const rankedTokens = pack.sections
+      .filter((item) => item.conceptId !== "constitution")
+      .reduce((sum, item) => sum + item.tokenEstimate, 0);
+    expect(rankedTokens).toBeLessThan(1200);
+  });
+
+  test("...and a Constitution that cannot fit the PACK budget also FAILS rather than being skipped", () => {
+    // The other route to the same silent drop: required content exempt from the cap but dropped by
+    // the pack budget. The budget is sized to clear the pack's own fixed overhead (~374 tokens here,
+    // header plus budgets section) and to be far short of overhead-plus-Constitution — taking it
+    // under the overhead instead would trip the PRE-EXISTING "mandatory evidence needs ~N tokens"
+    // floor first, which is a different error about a different tier, and this test would pass
+    // without ever reaching the path it names.
+    doc("reference/rules.md", "# Rules\n\nCheckout validation rules.\n", "Checkout validation rules");
+    constitutionDoc(300);
+    const path = join(root, ".lore/agents/frontend-dev.toml");
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(
+      path,
+      `schema_version = 1\nname = "frontend-dev"\ndescription = "Frontend implementation context."\nkind = "specialist"\nmax_tokens = 1000\npinned = ["reference/rules"]\nsources = ["constitution"]\n[targets]\ntask_evidence = 20000\n`,
+    );
+    expect(() => compileWithConstitution(1000)).toThrow(/CONTEXT_REQUIRED_CONTENT_OVER_BUDGET/);
+  });
+
+  test("equal scores are cut in DECLARATION order under the cap — sourceIndex, then sectionIndex", () => {
+    // Every corpus document shares the task's only terms, so they all score identically and the
+    // cap's cut is decided by the TIEBREAK alone. That makes this a pin on ORDER rather than on
+    // size: the sections kept are the first ones in declaration order, not an arbitrary subset.
+    corpus(12, 40);
+    profile("[targets]\ntask_evidence = 400\n", allSources(12));
+    const pack = compile();
+    const kept = pack.sections.map((item) => item.conceptId);
+    expect(kept.length).toBeGreaterThan(0);
+    expect(kept.length).toBeLessThan(12);
+    expect(kept).toEqual(allSources(12).slice(0, kept.length));
   });
 
   test("required content over the cap FAILS instead of being dropped (CONTEXT_REQUIRED_CONTENT_OVER_BUDGET)", () => {

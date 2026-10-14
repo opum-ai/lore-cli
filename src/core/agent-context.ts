@@ -647,35 +647,66 @@ function compilePack(
   // cannot fit the cap the compile FAILS: a pack silently missing mandatory content is
   // indistinguishable downstream from a complete one, which is the whole reason this is an error
   // and not an omission.
+  //
+  // RESERVING ITS ROOM is what makes that guard mean anything, and the first version of this change
+  // did not (LCLI-722 review, blocking). `ordered` is SCORE-ordered, so the Constitution sorts LAST
+  // at score zero: higher-scoring evidence fills the cap first, the loop's `continue` then skips the
+  // Constitution, and the compile succeeds with the mandatory content silently absent — the exact
+  // failure the error exists to prevent. Comparing its size to the cap can never catch that, because
+  // it is not a size problem. Ranked evidence is therefore capped at `evidenceBudget -
+  // requiredTokens`, so the mandatory content has its space whatever the ranking does ahead of it.
+  const requiredKeys = new Set(
+    ordered.filter((candidate) => candidate.conceptId === constitutionId).map((candidate) => candidate.key),
+  );
+  const requiredTokens = ordered
+    .filter((candidate) => candidate.conceptId === constitutionId)
+    .reduce((sum, candidate) => sum + candidate.tokenEstimate, 0);
   const evidenceBudget = profile.targets.taskEvidence;
-  if (evidenceBudget !== undefined) {
-    const requiredTokens = ordered
-      .filter((candidate) => candidate.conceptId === constitutionId)
-      .reduce((sum, candidate) => sum + candidate.tokenEstimate, 0);
-    if (requiredTokens > evidenceBudget) {
-      throw new LoreError(
-        "validation",
-        `${CONTEXT_REQUIRED_CONTENT_OVER_BUDGET}: agent profile "${profile.name}" requires ~${requiredTokens} tokens of mandatory evidence, above its declared task_evidence budget of ${evidenceBudget}`,
-        "raise the profile's `[targets] task_evidence`, or drop the mandatory source from its `sources` — the cap will not silently omit it",
-        { profile: profile.name, requiredTokens, evidenceBudget, constitution: constitutionId },
-      );
-    }
+  if (evidenceBudget !== undefined && requiredTokens > evidenceBudget) {
+    throw new LoreError(
+      "validation",
+      `${CONTEXT_REQUIRED_CONTENT_OVER_BUDGET}: agent profile "${profile.name}" requires ~${requiredTokens} tokens of mandatory evidence, above its declared task_evidence budget of ${evidenceBudget}`,
+      "raise the profile's `[targets] task_evidence`, or drop the mandatory source from its `sources` — the cap will not silently omit it",
+      { profile: profile.name, requiredTokens, evidenceBudget, constitution: constitutionId },
+    );
   }
+  /** What RANKED evidence may spend once the mandatory content's room is reserved; `undefined` = no declared cap. */
+  const rankedBudget = evidenceBudget === undefined ? undefined : evidenceBudget - requiredTokens;
 
   // Every tentative pack is rendered with its own deduplicated query section, so a candidate whose
   // selection swaps a longer hit into the section is admitted only if that whole pack still fits.
   // The cap skips rather than breaks, matching how `effectiveBudget` already behaves: a section too
   // large for what is left of the evidence budget does not shut out the smaller ones behind it.
+  //
+  // Required candidates are exempt from the CAP (their room is already reserved) but NOT from the
+  // pack budget — and where one fails THAT, the compile fails too. Skipping it there would be the
+  // same silent drop by a different route: a required candidate the pack cannot hold is a profile
+  // that cannot compile, not a pack that quietly omits what it declared mandatory.
   const selected: RankedCandidate[] = [];
-  let evidenceTokens = 0;
+  let rankedTokens = 0;
   for (const candidate of ordered) {
-    if (evidenceBudget !== undefined && evidenceTokens + candidate.tokenEstimate > evidenceBudget) {
+    const isRequired = requiredKeys.has(candidate.key);
+    if (!isRequired && rankedBudget !== undefined && rankedTokens + candidate.tokenEstimate > rankedBudget) {
       continue;
     }
     const tentative = build([...selected, candidate], queryHitLimit, querySection);
     if (tentative.tokenEstimate <= effectiveBudget) {
       selected.push(candidate);
-      evidenceTokens += candidate.tokenEstimate;
+      if (!isRequired) rankedTokens += candidate.tokenEstimate;
+      continue;
+    }
+    if (isRequired) {
+      throw new LoreError(
+        "validation",
+        `${CONTEXT_REQUIRED_CONTENT_OVER_BUDGET}: agent profile "${profile.name}" cannot fit ~${candidate.tokenEstimate} tokens of mandatory evidence (${candidate.reference}) inside its ${effectiveBudget}-token pack budget`,
+        "raise the budget (`--max-tokens`, or the profile's `max_tokens`), or drop the mandatory source from its `sources` — the pack will not silently omit it",
+        {
+          profile: profile.name,
+          reference: candidate.reference,
+          requiredTokens: candidate.tokenEstimate,
+          maxTokens: effectiveBudget,
+        },
+      );
     }
   }
   return build(selected, queryHitLimit, querySection);

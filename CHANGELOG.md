@@ -47,7 +47,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by a number the profile never wrote would surprise external users who never asked for one. Two
   consequences worth knowing. `task_evidence` can no longer report `over` — a capped class cannot
   exceed its own cap, so a pack that used to report a 48k-token evidence overrun against a 6000
-  target now reports the 6000 it selected — and the same is true of the 16k `taskEvidenceCeiling`.
+  target now reports the 6000 it selected — and the 16k `taskEvidenceCeiling` follows it, but only
+  WHERE a declared `task_evidence` sits below that ceiling: a profile that declares `[targets]`
+  without `task_evidence`, or with a `task_evidence` above 16000, is measured against the ceiling
+  exactly as before, because nothing capped its selection.
   And required content that cannot fit the cap — the bundle's Constitution, when a profile RANKS it
   in `sources` — fails the compile with the new `CONTEXT_REQUIRED_CONTENT_OVER_BUDGET` rather than
   being dropped, because a pack silently missing mandatory content is indistinguishable downstream
