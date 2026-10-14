@@ -201,13 +201,22 @@ export async function runAgent(options: AgentCommandOptions): Promise<number> {
             taskContract,
             action.providerInputTokens,
           )
-        : await compileWorkspaceAgentContext(options.root, compileSnapshot, profile.name, task, action.maxTokens, {
-            manifestPath: action.workspace.manifestPath,
-            memberIds: action.workspace.memberIds,
-            ...(options.loadWorkspaceProjection === undefined
-              ? {}
-              : { loadProjection: options.loadWorkspaceProjection }),
-          });
+        : await compileWorkspaceAgentContext(
+            options.root,
+            compileSnapshot,
+            profile.name,
+            task,
+            action.maxTokens,
+            {
+              manifestPath: action.workspace.manifestPath,
+              memberIds: action.workspace.memberIds,
+              ...(options.loadWorkspaceProjection === undefined
+                ? {}
+                : { loadProjection: options.loadWorkspaceProjection }),
+            },
+            // LCLI-682 fix: the flag is advertised command-wide, so the workspace arm must carry it.
+            action.providerInputTokens,
+          );
     const markdown = renderAgentContextMarkdown(data);
     if (action.out !== undefined) {
       const target = confineOutFile(action.out, options.root);
@@ -554,6 +563,14 @@ function parseAgentArgs(args: readonly string[]): AgentAction {
   const rawProviderInput = nonEmptyOption(parsed, "provider-input-tokens");
   const providerInputTokens =
     rawProviderInput === undefined ? undefined : parseNonNegativeInteger("--provider-input-tokens", rawProviderInput);
+  // LCLI-682 fix: contract mode compiles no pack, so the flag has nowhere to land. It used to be
+  // silently ignored there; reject the combination as a usage error instead.
+  if (providerInputTokens !== undefined && contract !== undefined) {
+    throw usage(
+      "--provider-input-tokens is not available with --contract",
+      "contract mode compiles no pack; drop --provider-input-tokens or compile without --contract",
+    );
+  }
   const out = nonEmptyOption(parsed, "out");
   const force = parsed.flags.has("force");
   if (force && out === undefined) {

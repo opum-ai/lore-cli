@@ -240,8 +240,9 @@ export interface AgentContextExport {
   /**
    * The provider-usage slot (LCLI-682 AC2; MDL-7), present only when supplied. A provider
    * input-token count recorded SEPARATELY from lore's estimator: `lore agent context
-   * --provider-input-tokens N` records `manual`, opum-cli's model gateway records
-   * `provider-reported` (MDL-15). Additive under cli-contract §1.
+   * --provider-input-tokens N` records `manual`. The `provider-reported` value is RESERVED for
+   * opum-cli's model gateway (MDL-15) and is **unreachable from lore** — no lore seam produces it
+   * yet; only a consumer that reads this export and fills it can. Additive under cli-contract §1.
    */
   readonly providerUsage?: AgentContextProviderUsage;
   readonly write?: {
@@ -276,10 +277,10 @@ export interface AgentContextBudgetEntry {
 
 /**
  * The provider-usage slot (LCLI-682 AC2; MDL-7): a provider input-token count recorded SEPARATELY
- * from lore's estimator, tagged with its source. opum-cli's model gateway supplies a
- * `provider-reported` figure (MDL-15); `lore agent context --provider-input-tokens N` records
- * `manual`, and a manual figure is never treated as provider-reported — AC3's ceilings are checked
- * against lore's own estimate, not this.
+ * from lore's estimator, tagged with its source. `lore agent context --provider-input-tokens N`
+ * records `manual`, and a manual figure is never treated as provider-reported — AC3's ceilings are
+ * checked against lore's own estimate, not this. `provider-reported` (MDL-15) is RESERVED for
+ * opum-cli's model gateway and is unreachable from lore: no lore seam produces it yet.
  */
 export interface AgentContextProviderUsage {
   readonly inputTokens: number;
@@ -1054,8 +1055,11 @@ function budgetRows(budgets: AgentContextBudgets): readonly (readonly [string, A
 function budgetLine(entry: AgentContextBudgetEntry): string {
   if (entry.measured === null) return `not applicable — ${entry.note ?? "not composed by lore"}`;
   const by = entry.measuredBy === undefined ? "" : ` ${entry.measuredBy}`;
-  const target = entry.target === null ? "no target declared" : `target ~${entry.target}`;
-  const status = entry.over ? "OVER" : entry.target === null ? "no target declared" : "within target";
+  // A class with no declared target says so ONCE. It used to say it twice — once as the target and
+  // once as the status — because both branches fell back to the same phrase (LCLI-682 review).
+  if (entry.target === null) return `~${entry.measured}${by} (no target declared)`;
+  const target = `target ~${entry.target}`;
+  const status = entry.over ? "OVER" : "within target";
   const content = entry.over && entry.content.length > 0 ? `; required by ${entry.content.join(", ")}` : "";
   return `~${entry.measured}${by} (${target}; ${status})${content}`;
 }

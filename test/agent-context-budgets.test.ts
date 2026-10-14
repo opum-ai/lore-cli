@@ -190,4 +190,27 @@ describe("agent context — declared context budgets (LCLI-682)", () => {
     expect(envelope.data.providerUsage).toEqual({ inputTokens: 4242, source: "manual" });
     expect(envelope.data.budgets.authoredBootstrapCeiling.target).toBe(8000);
   });
+
+  test("the repository's four role profiles declare [targets] (LCLI-682 review)", () => {
+    const snapshot = loadAgentProfiles(join(import.meta.dir, ".."));
+    for (const name of ["implementation", "review", "verification", "documentation"]) {
+      const profile = snapshot.profiles.get(name);
+      expect(profile).toBeDefined();
+      expect(profile?.targets).toEqual({
+        policyAndRole: 3000,
+        taskContract: 2000,
+        taskEvidence: 6000,
+        loreSubtotal: 11000,
+      });
+    }
+  });
+
+  test("a class with no declared target says so once, not twice (LCLI-682 review)", () => {
+    fixture("[targets]\ntask_evidence = 6000\n");
+    const line = renderAgentContextMarkdown(compile())
+      .split("\n")
+      .find((candidate) => candidate.startsWith("- policy and role"));
+    expect(line).toBeDefined();
+    expect((line ?? "").match(/no target declared/g)).toHaveLength(1);
+  });
 });

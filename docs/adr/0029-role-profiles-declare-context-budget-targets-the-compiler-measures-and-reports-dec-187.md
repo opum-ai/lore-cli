@@ -13,7 +13,7 @@ timestamp: 2026-10-14T02:33:06.000Z
 status: stable
 ---
 
-# ADR-0029: Role profiles declare context-budget targets the compiler measures and reports (DEC-187)
+# ADR-0029: Role profiles declare context-budget targets the compiler measures and reports, and lore checks ODOC-437 AC3's ceilings (DEC-187)
 
 ## Status
 
@@ -77,3 +77,15 @@ section.**
   the provider-usage slot this decision adds a home for.
 - lore's half of the mapping is now recorded; the class-to-part mapping as it applies to the whole
   startup prompt remains `opum-cli`'s to compose against.
+- **A recorded residual in the measurement, following
+  [ADR-0025](./0025-the-capacity-measurement-reserves-the-worst-case-bundle-wide-query-section-and-renders-score-annotations-at-full-width-dec-98.md)'s
+  precedent.** The declared-set capacity measurement (`measureAgentProfileCapacity`) renders through
+  the same `assemble` with `reportBudgets: false`, while the first-fit fill and the pinned-ceiling
+  check pass `true`. The measurement therefore sizes the profile's EVIDENCE and deliberately excludes
+  this report — a report that measured itself would inflate the very size it measures. The residual is
+  that a pack's rendered `## Context budgets` bytes are outside the capacity figure; that exclusion is
+  the intent, and it is recorded rather than left to be rediscovered (LCLI-682 review finding 2).
+- **`provider-reported` is unreachable from lore.** The provider-usage slot's `provider-reported`
+  value is reserved for `opum-cli`'s model gateway (MDL-15), and no lore seam produces it today — only
+  `manual`, from `--provider-input-tokens`. A consumer must therefore not read the absence of a
+  `provider-reported` figure as "there was no provider input" (LCLI-682 review finding 3).
