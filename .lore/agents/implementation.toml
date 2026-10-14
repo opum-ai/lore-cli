@@ -27,3 +27,13 @@ sources = [
   "adr/0014-core-has-no-llm-dependency",
   "adr/0018-persistent-local-graph-projection-with-ladybugdb",
 ]
+
+# Context-budget TARGETS the compiler measures a compiled pack against and reports (MDL-7,
+# ODOC-437 AC3). Design defaults, NOT ceilings enforced before a request -- `max_tokens` above
+# stays the ceiling. The initial code map and the harness/tools floor of the total startup are
+# composed by opum-cli and are reported not-applicable by lore.
+[targets]
+policy_and_role = 3000
+task_contract = 2000
+task_evidence = 6000
+lore_subtotal = 11000

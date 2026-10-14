@@ -59,6 +59,9 @@ export async function compileWorkspaceAgentContext(
   task: string,
   maxTokens: number | undefined,
   workspace: CompileWorkspaceAgentContextOptions,
+  // LCLI-682 fix: `--provider-input-tokens` is advertised command-wide, so the workspace arm
+  // carries it too. It was threaded on the bare path only, which silently dropped it here.
+  providerInputTokens?: number,
 ): Promise<AgentContextExport> {
   const profile = findAgentProfile(snapshot, profileName);
   const loader = workspace.loadProjection ?? loadWorkspaceProjection;
@@ -95,7 +98,17 @@ export async function compileWorkspaceAgentContext(
       .map((skipped) => ({ memberId: skipped.memberId, reason: skipped.error.message })),
     queryGraph: queryGraphFor(loaded, workspace.memberIds, skippedMemberIds),
   };
-  return compileAgentContextForProfile(expandedProfile, graph, task, maxTokens, snapshot, extras);
+  return compileAgentContextForProfile(
+    expandedProfile,
+    graph,
+    task,
+    maxTokens,
+    snapshot,
+    extras,
+    undefined,
+    undefined,
+    providerInputTokens,
+  );
 }
 
 /**
