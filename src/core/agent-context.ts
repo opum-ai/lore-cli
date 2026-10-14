@@ -121,6 +121,9 @@ export function missingAgentProfile(
     description: `no agent profile named "${name}"; bundle-wide query hits${constitutionPinned ? " and the auto-pinned Constitution" : ""} only`,
     kind: "specialist",
     maxTokens,
+    // A missing profile declares no targets: there is no role for the budgets to belong to, so the
+    // pack is measured with no target rather than against a fabricated one.
+    targets: {},
     pinned: [],
     sources: [],
     delegates: [],
@@ -227,10 +230,49 @@ export interface AgentContextExport {
   readonly total: number;
   readonly shown: number;
   readonly truncated: boolean;
+  /**
+   * The context-budget report (LCLI-682, MDL-7 / ODOC-437 AC3), present only when the profile
+   * declares at least one target. The compiler MEASURES this pack's classes against those targets
+   * and reports each; an overrun names the content that required it. The figures are the chars/4
+   * ESTIMATE, not a provider tokenizer count (MDL-7). Additive under cli-contract §1.
+   */
+  readonly budgets?: AgentContextBudgets;
   readonly write?: {
     readonly path: string;
     readonly action: "created" | "updated" | "unchanged";
   };
+}
+
+/**
+ * One class's context-budget report (LCLI-682, MDL-7; ODOC-437 AC3). `target` is the profile's
+ * declared design-default for the class (`null` when it declares none); `measured` is the
+ * compiler's chars/4 ESTIMATE for the class in THIS compiled pack; `over` is true only when a
+ * target exists and the estimate exceeds it, and `content` then names what required the overrun,
+ * largest first. A class lore does not compose carries a `note` naming its composer and is never
+ * `over`.
+ */
+export interface AgentContextBudgetEntry {
+  readonly target: number | null;
+  readonly measured: number | null;
+  readonly over: boolean;
+  readonly content: readonly string[];
+  readonly note?: string;
+}
+
+/**
+ * The compiled pack's classes measured against the profile's declared targets (MDL-7; ODOC-437
+ * AC3). The three lore-measured classes plus `loreSubtotal` are what lore composes; `codeMap` and
+ * `harnessAndTools` are composed by opum-cli and are reported not-applicable. Every figure is the
+ * chars/4 ESTIMATE (`estimator`), never a provider tokenizer count.
+ */
+export interface AgentContextBudgets {
+  readonly estimator: "chars/4";
+  readonly policyAndRole: AgentContextBudgetEntry;
+  readonly taskContract: AgentContextBudgetEntry;
+  readonly taskEvidence: AgentContextBudgetEntry;
+  readonly codeMap: AgentContextBudgetEntry;
+  readonly harnessAndTools: AgentContextBudgetEntry;
+  readonly loreSubtotal: AgentContextBudgetEntry;
 }
 
 /**
@@ -779,6 +821,9 @@ export function measureAgentProfileCapacity(
       0,
       false,
       false,
+      undefined,
+      undefined,
+      false,
     );
 
   const querySectionReserve = worstCaseQuerySectionTokens(graph);
@@ -841,6 +886,37 @@ function bundleQueryHits(
 }
 
 /** Canonical pasteable Markdown. The digest is computed over these exact bytes. */
+/**
+ * The exact lines of the pack's lean task-startup block (LCLI-681), shared by the renderer and the
+ * LCLI-682 budget measurement so the measured bytes and the rendered bytes are the same bytes.
+ */
+function contractSectionLines(
+  contract: NonNullable<AgentContextPack["contract"]>,
+  omissions?: readonly { readonly source: string; readonly reason: string }[],
+): string[] {
+  const lines = ["", "## Task startup", ""];
+  lines.push(`Task: ${contract.task.id} (${contract.task.repositoryId}@${contract.task.revision})`);
+  lines.push(`Purpose: ${oneLine(contract.purpose)}`);
+  lines.push(`Phase: ${contract.phase}`);
+  lines.push("", "### Acceptance criteria", "");
+  if (contract.acceptance.length === 0) lines.push("_None._");
+  for (const criterion of contract.acceptance) {
+    lines.push(`- ${criterion.id}: ${oneLine(criterion.text)} (evidence: ${oneLine(criterion.evidenceRule)})`);
+  }
+  lines.push("", "### Dependencies", "");
+  if (contract.dependencies.length === 0) lines.push("_None._");
+  for (const dependency of contract.dependencies) {
+    lines.push(`- ${dependency.taskId}@${dependency.revision}: ${dependency.satisfied ? "satisfied" : "unsatisfied"}`);
+  }
+  if (omissions !== undefined && omissions.length > 0) {
+    lines.push("", "### Omitted documentation links", "");
+    for (const omission of omissions) {
+      lines.push(`- ${omission.source}: ${oneLine(omission.reason)}`);
+    }
+  }
+  return lines;
+}
+
 export function renderAgentContextMarkdown(data: AgentContextPack): string {
   const lines = [
     `# Lore agent context — ${data.profile.name}`,
@@ -865,30 +941,10 @@ export function renderAgentContextMarkdown(data: AgentContextPack): string {
   }
   // LCLI-681: the lean task-startup fields, rendered before the catalog so a worker meets the task
   // itself (purpose, acceptance, dependencies) before any evidence — and so they are covered by the
-  // pack digest, which is computed over this markdown.
+  // pack digest, which is computed over this markdown. LCLI-682 renders the SAME lines through one
+  // helper so the budget measurement and the footer cannot drift.
   if (data.contract !== undefined) {
-    lines.push("", "## Task startup", "");
-    lines.push(`Task: ${data.contract.task.id} (${data.contract.task.repositoryId}@${data.contract.task.revision})`);
-    lines.push(`Purpose: ${oneLine(data.contract.purpose)}`);
-    lines.push(`Phase: ${data.contract.phase}`);
-    lines.push("", "### Acceptance criteria", "");
-    if (data.contract.acceptance.length === 0) lines.push("_None._");
-    for (const criterion of data.contract.acceptance) {
-      lines.push(`- ${criterion.id}: ${oneLine(criterion.text)} (evidence: ${oneLine(criterion.evidenceRule)})`);
-    }
-    lines.push("", "### Dependencies", "");
-    if (data.contract.dependencies.length === 0) lines.push("_None._");
-    for (const dependency of data.contract.dependencies) {
-      lines.push(
-        `- ${dependency.taskId}@${dependency.revision}: ${dependency.satisfied ? "satisfied" : "unsatisfied"}`,
-      );
-    }
-    if (data.omissions !== undefined && data.omissions.length > 0) {
-      lines.push("", "### Omitted documentation links", "");
-      for (const omission of data.omissions) {
-        lines.push(`- ${omission.source}: ${oneLine(omission.reason)}`);
-      }
-    }
+    lines.push(...contractSectionLines(data.contract, data.omissions));
   }
   lines.push("", "## Allowed source catalog", "");
   // Only a hit-bearing pack can have an empty catalog worth naming (a degraded, profile-less one);
@@ -922,7 +978,38 @@ export function renderAgentContextMarkdown(data: AgentContextPack): string {
     "",
     `Ranked evidence: ${data.shown} of ${data.total} selected; truncated: ${data.truncated ? "yes" : "no"}.`,
   );
+  // LCLI-682 (MDL-7 / ODOC-437 AC3): the measured classes against the profile's declared targets.
+  // Rendered before the catalog's closing footer so an overrun is met late in the pack, where a
+  // reader who is budgeting has looked, not buried in the JSON alone.
+  if (data.budgets !== undefined) {
+    lines.push("", "## Context budgets", "");
+    lines.push("Measured against the profile's declared targets; chars/4 estimate, not a provider token count.");
+    for (const row of budgetRows(data.budgets)) {
+      lines.push(`- ${row[0]}: ${budgetLine(row[1])}`);
+    }
+  }
   return `${lines.join("\n").replace(/\n{3,}/g, "\n\n")}\n`;
+}
+
+/** The budget classes in report order, paired with their reader-facing label. */
+function budgetRows(budgets: AgentContextBudgets): readonly (readonly [string, AgentContextBudgetEntry])[] {
+  return [
+    ["policy and role (always loaded)", budgets.policyAndRole],
+    ["task contract", budgets.taskContract],
+    ["task evidence", budgets.taskEvidence],
+    ["initial code map", budgets.codeMap],
+    ["harness and tools", budgets.harnessAndTools],
+    ["lore subtotal", budgets.loreSubtotal],
+  ];
+}
+
+/** One budget line: a not-applicable note, or the estimate against its target with any overrun content. */
+function budgetLine(entry: AgentContextBudgetEntry): string {
+  if (entry.measured === null) return `not applicable — ${entry.note ?? "not composed by lore"}`;
+  const target = entry.target === null ? "no target declared" : `target ~${entry.target}`;
+  const status = entry.over ? "OVER" : entry.target === null ? "no target declared" : "within target";
+  const content = entry.over && entry.content.length > 0 ? `; required by ${entry.content.join(", ")}` : "";
+  return `~${entry.measured} est (${target}; ${status})${content}`;
 }
 
 /**
@@ -954,6 +1041,91 @@ function renderQueryHitsSection(queryHits: readonly AgentContextQueryHit[], omit
   return lines;
 }
 
+/** The export-shaped task-contract view the renderer and the LCLI-682 budget measurement share. */
+type ContractView = NonNullable<AgentContextPack["contract"]>;
+
+/** Whether a profile declares any context-budget target; a profile that declares none is not reported. */
+function profileDeclaresBudgets(profile: AgentProfile): boolean {
+  const targets = profile.targets;
+  return (
+    targets.policyAndRole !== undefined ||
+    targets.taskContract !== undefined ||
+    targets.taskEvidence !== undefined ||
+    targets.loreSubtotal !== undefined
+  );
+}
+
+/**
+ * Measure a compiled pack's classes against the profile's declared targets (LCLI-682; MDL-7 /
+ * ODOC-437 AC3). Returns `undefined` when the profile declares no target, so a profile without a
+ * `[targets]` table renders byte-identical output to before this feature. Every figure is the
+ * chars/4 estimate; a class whose estimate exceeds its target sets `over` and names the content
+ * that required it, largest first.
+ */
+function computeBudgets(
+  profile: AgentProfile,
+  pinned: readonly AgentContextItem[],
+  selected: readonly RankedCandidate[],
+  contract: ContractView | undefined,
+  contractOmissions: readonly { readonly source: string; readonly reason: string }[] | undefined,
+  subtotal: number,
+): AgentContextBudgets | undefined {
+  if (!profileDeclaresBudgets(profile)) return undefined;
+  const targets = profile.targets;
+  const bySize = (items: readonly AgentContextItem[]): string[] =>
+    [...items].sort((a, b) => b.tokenEstimate - a.tokenEstimate).map((item) => item.reference);
+  const policyAndRole = budgetEntry(
+    targets.policyAndRole,
+    pinned.reduce((sum, item) => sum + item.tokenEstimate, 0),
+    bySize(pinned),
+  );
+  const taskContract = budgetEntry(
+    targets.taskContract,
+    contract === undefined ? 0 : estimateTokens(contractSectionLines(contract, contractOmissions).join("\n")),
+    contract === undefined ? [] : [`task ${contract.task.id}`],
+  );
+  const taskEvidence = budgetEntry(
+    targets.taskEvidence,
+    selected.reduce((sum, item) => sum + item.tokenEstimate, 0),
+    bySize(selected),
+  );
+  // The initial code map and the harness/tools floor are the composer's (opum-cli) to own: lore's
+  // pack contains neither, so lore reports them not-applicable rather than fabricating a number.
+  const codeMap = budgetEntry(undefined, null, [], "composed by opum-cli; lore emits no initial code map");
+  const harnessAndTools = budgetEntry(
+    undefined,
+    null,
+    [],
+    "composed by opum-cli; the harness/tools floor is outside the lore pack",
+  );
+  const budgets = [policyAndRole, taskContract, taskEvidence];
+  const overNames = budgets.filter((entry) => entry.over).map((entry) => entry.content.join(", "));
+  const loreSubtotal = budgetEntry(
+    targets.loreSubtotal,
+    subtotal,
+    overNames.length > 0 ? overNames : bySize([...pinned, ...selected]),
+  );
+  return { estimator: "chars/4", policyAndRole, taskContract, taskEvidence, codeMap, harnessAndTools, loreSubtotal };
+}
+
+/** One budget entry; `content` is kept only when a measured estimate exceeds its target. */
+function budgetEntry(
+  target: number | undefined,
+  measured: number | null,
+  content: readonly string[],
+  note?: string,
+): AgentContextBudgetEntry {
+  const bound = target ?? null;
+  const over = bound !== null && measured !== null && measured > bound;
+  return {
+    target: bound,
+    measured,
+    over,
+    content: over ? content : [],
+    ...(note === undefined ? {} : { note }),
+  };
+}
+
 function assemble(
   profile: AgentProfile,
   task: string,
@@ -972,6 +1144,11 @@ function assemble(
   withQueryHits: boolean,
   contract?: ParsedTaskContract,
   contractOmissions?: readonly { readonly source: string; readonly reason: string }[],
+  // The declared-set capacity measurement (measureAgentProfileCapacity) renders through this same
+  // assemble to size the profile's EVIDENCE, not a pack for a reader: the LCLI-682 budget report is
+  // metadata, so it is excluded there or it would inflate the very size it is measuring
+  // (agent-profile-capacity). A real pack keeps it (default true).
+  reportBudgets = true,
 ): AgentContextPack {
   const selectedKeys = new Set(selected.map((item) => item.key));
   // "Not already selected" is by concept: a document the pack already quotes any part of is not
@@ -1029,6 +1206,19 @@ function assemble(
   }
   catalog.push(...(workspace?.extraCatalogEntries ?? []));
 
+  // The export-shaped contract view the renderer and the LCLI-682 budget measurement both read —
+  // one object, so the measured bytes are the rendered bytes.
+  const contractView: ContractView | undefined =
+    contract === undefined
+      ? undefined
+      : {
+          task: contract.task,
+          purpose: contract.purpose,
+          phase: contract.phase,
+          acceptance: contract.acceptance,
+          dependencies: contract.dependencies,
+        };
+
   const provisional: AgentContextPack = {
     profile: {
       name: profile.name,
@@ -1051,16 +1241,10 @@ function assemble(
       ? {}
       : { skippedWorkspaceMembers: workspace.skippedWorkspaceMembers }),
     ...(delegates === undefined ? {} : { delegates }),
-    ...(contract === undefined
+    ...(contractView === undefined
       ? {}
       : {
-          contract: {
-            task: contract.task,
-            purpose: contract.purpose,
-            phase: contract.phase,
-            acceptance: contract.acceptance,
-            dependencies: contract.dependencies,
-          },
+          contract: contractView,
           ...(contractOmissions === undefined || contractOmissions.length === 0
             ? {}
             : { omissions: contractOmissions }),
@@ -1069,9 +1253,24 @@ function assemble(
     shown: selected.length,
     truncated: selected.length < total,
   };
-  const markdown = renderAgentContextMarkdown(provisional);
+  // Measure the pack WITHOUT the budget footer first, so the subtotal is not circular (the footer
+  // would otherwise report a figure that already includes itself), then render the report in. A
+  // profile that declares no target skips the whole step, so its output stays byte-identical.
+  const budgets =
+    reportBudgets && profileDeclaresBudgets(profile)
+      ? computeBudgets(
+          profile,
+          pinned,
+          selected,
+          contractView,
+          contractOmissions,
+          estimateTokens(renderAgentContextMarkdown(provisional)),
+        )
+      : undefined;
+  const withBudgets: AgentContextPack = budgets === undefined ? provisional : { ...provisional, budgets };
+  const markdown = renderAgentContextMarkdown(withBudgets);
   return {
-    ...provisional,
+    ...withBudgets,
     tokenEstimate: estimateTokens(markdown),
     packDigest: sha256(markdown),
   };

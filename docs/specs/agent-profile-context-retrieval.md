@@ -73,6 +73,12 @@ sources = [
   "specs/ui-design",
   "adr/0012-client-state"
 ]
+
+[targets]
+policy_and_role = 3000
+task_contract = 2000
+task_evidence = 6000
+lore_subtotal = 11000
 ```
 
 Orchestrator addition:
@@ -115,6 +121,20 @@ Contract:
   same on every task and never
   depends on what a particular pack happens to retain — task-ranked omission is
   normal retention and is not this finding.
+- `targets` is an optional table of context-budget TARGETS the profile declares
+  (LCLI-682; MDL-7 and ODOC-437 AC3): `policy_and_role`, `task_contract`,
+  `task_evidence` and `lore_subtotal`, each a positive integer of estimated
+  tokens. They are **design defaults the compiler measures a compiled pack
+  against and reports**, NOT ceilings enforced before a request — `max_tokens`
+  above stays the ceiling. The report is additive on `agent.context.export` as
+  `budgets`, present only when a profile declares at least one target: the three
+  lore-composed classes plus `loreSubtotal`, each measured with the `chars/4`
+  estimator (never a provider token count), and `codeMap` and `harnessAndTools`
+  reported not-applicable because opum-cli composes them, not lore. A class whose
+  estimate exceeds its target sets `over` and names the content that required it,
+  largest first, in both `--json` and the pack's rendered `## Context budgets`
+  section. A profile that declares no target is not reported at all, so its pack
+  stays byte-identical.
 - `pinned` and `sources` are optional ordered arrays defaulting to empty. Each
   item is a canonical bundle-relative concept id with an optional
   GitHub-compatible `#heading-anchor`.
