@@ -147,7 +147,7 @@ OKF lifecycle and Lore delivery progress are separate:
 
 | Concern | OKF 0.1 | OKF 0.2 |
 |---|---|---|
-| Knowledge lifecycle | `status`: the lifecycle values below, on ADRs | `status`: `draft`, `stable`, or `deprecated`; absent means stable |
+| Knowledge lifecycle | `status`: `draft`, `stable`, or `deprecated` on ADRs | `status`: `draft`, `stable`, or `deprecated`; absent means stable |
 | Linked-task progress | `status`: `todo`, `in-progress`, or `done` | `lore_task_status`: `todo`, `in-progress`, or `done` |
 | Superseded concept | `status: deprecated` plus `superseded_by` | `status: deprecated` plus `superseded_by` |
 

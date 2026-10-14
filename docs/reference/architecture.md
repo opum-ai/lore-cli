@@ -426,9 +426,11 @@ replay-validated contract; ordinary explorer bytes do not change. See
 [Snapshot change and provenance workflows](../specs/snapshot-change-and-provenance-workflows.md).
 
 ### `lore rename / supersede / replace`
-Mutation commands continue to load `bundle.ts` directly. `rename` and
-`supersede` rewrite **all inbound links and frontmatter refs** through the graph and set
-`superseded_by`/`supersedes`/`status`; `replace` does literal/regex find-replace
+Mutation commands continue to load `bundle.ts` directly. `rename` rewrites **all inbound links and
+frontmatter refs** through the graph; `supersede` rewrites inbound links and sets
+`superseded_by`/`supersedes`/`status`, but deliberately **not** frontmatter refs
+(`rewriteFrontmatterRefs: false` — the old file is preserved as history, so a third party's ref to it
+stays a true record); `replace` does literal/regex find-replace
 (`--in` glob, `--dry-run`) and **skips lore-managed regions**.
 
 ## 6. The on-hold MCP transport (`mcp.ts`)

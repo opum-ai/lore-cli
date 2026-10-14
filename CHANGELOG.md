@@ -73,8 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the enum reaches only where it is the lifecycle field), and `lore supersede` writes `deprecated` on
   0.1 exactly as it already did on 0.2. **Existing 0.1
   bundles**: the one-line fix is `status: superseded` → `status: deprecated` on the superseded
-  document; its `superseded_by` back-reference is unaffected. On an ADR the old spelling now fails to
-  load (exit `6`), which is the defect being fixed. On a 0.1 document that is NOT an ADR the marker
+  document; its `superseded_by` back-reference is unaffected. The defect is that `lore supersede`
+  WROTE `superseded`, which was never a legal lifecycle value; on an ADR that spelling now fails to
+  load (exit `6`), so it cannot be relied on. On a 0.1 document that is NOT an ADR the marker
   still loads — `status` is that type's task-rollup key — and `lore supersede` refuses it as a
   conflict (`5`) rather than overwriting the rollup, so it is never superseded twice.
 
