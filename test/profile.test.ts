@@ -326,6 +326,25 @@ describe("parseProfile — grammar errors throw (exit 6)", () => {
     expect(err.message).toContain("types[0].fields.tags.items.enum");
   });
 
+  test("an empty enum in `[base.fields]` is refused too — the third site, and the one nothing pinned (LCLI-728)", () => {
+    // `assertNonEmptyEnum` has TWO call sites but guards THREE addressable places: `parseFieldSpec`
+    // (shared by a type's own `fields` and by `[base.fields]`, told apart only by `where`) and
+    // `parseItems`. The type-field place and `items` were pinned above; `[base.fields]` was not. It
+    // is the one that matters most, because `effectiveLifecycleStatusEnum` (src/core/profile.ts)
+    // reads the BASE `status` spec whenever a type declares no `status` of its own — so an empty
+    // `[base.fields] status` is exactly the input that path depends on never seeing, and nothing
+    // held the line until now.
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true }, status: { enum: [] } } },
+        types: [{ name: "T" }],
+      }),
+    );
+    expect(err.message).toContain("base.fields.status.enum");
+    expect(err.message).toContain("must not be empty");
+  });
+
   test("a type name with no slug-able characters is an error", () => {
     expectValidation(() =>
       parse({
