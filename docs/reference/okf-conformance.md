@@ -147,9 +147,9 @@ OKF lifecycle and Lore delivery progress are separate:
 
 | Concern | OKF 0.1 | OKF 0.2 |
 |---|---|---|
-| Knowledge lifecycle | No closed Lore interpretation | `status`: `draft`, `stable`, or `deprecated`; absent means stable |
+| Knowledge lifecycle | `status`: the lifecycle values below, on ADRs | `status`: `draft`, `stable`, or `deprecated`; absent means stable |
 | Linked-task progress | `status`: `todo`, `in-progress`, or `done` | `lore_task_status`: `todo`, `in-progress`, or `done` |
-| Superseded concept | `status: superseded` plus `superseded_by` | `status: deprecated` plus `superseded_by` |
+| Superseded concept | `status: deprecated` plus `superseded_by` | `status: deprecated` plus `superseded_by` |
 
 `verified` accepts one event or a list. Lore validates the actor convention and
 time but does not authenticate identity or certify that review occurred.

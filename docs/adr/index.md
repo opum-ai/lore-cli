@@ -13,10 +13,9 @@ point, start at the [bundle index](../index.md).
 ADRs are plain markdown concept files (`type: ADR`) and are **immutable once
 Accepted** — the historical record of a decision is never rewritten in place. To
 change a past decision you author a **new ADR** that supersedes the old one and
-run `lore supersede <old> <new>`, which sets `status: superseded`,
+run `lore supersede <old> <new>`, which sets `status: deprecated`,
 `superseded_by`/`supersedes` frontmatter on both records, and rewrites inbound
-graph links. Statuses follow the usual lifecycle: `Proposed` → `Accepted` →
-(`Deprecated` | `Superseded`). All records currently in this log are **Accepted**
+graph links. Statuses follow the lifecycle `draft` → `stable` → `deprecated`. All records currently in this log are `stable`
 as of 2026-06-21.
 
 Filenames follow an `NNNN-slug.md` convention (e.g. `0001-runtime-build-distribution.md`),

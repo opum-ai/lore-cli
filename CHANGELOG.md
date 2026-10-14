@@ -56,6 +56,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`lore supersede` wrote a lifecycle `status` that was never valid, and `lore check` did not report
+  it on an OKF 0.1 bundle** (LCLI-669, DEC-192). The lifecycle enum is `draft` / `stable` /
+  `deprecated` — declared in every profile's emitted `adr.schema.json`; `superseded` was never a
+  member on 0.1 either. Two fixes: the enum is now enforced on **ADR documents on every OKF version**,
+  not only on 0.2 (on 0.1 the same `status` field is the task-rollup key for task-coupled types, so
+  the enum reaches only where it is the lifecycle field), and `lore supersede` writes `deprecated` on
+  0.1 exactly as it already did on 0.2. **Existing 0.1
+  bundles**: the one-line fix is `status: superseded` → `status: deprecated` on the superseded
+  document; its `superseded_by` back-reference is unaffected. On an ADR the old spelling now fails to
+  load (exit `6`), which is the defect being fixed. On a 0.1 document that is NOT an ADR the marker
+  still loads — `status` is that type's task-rollup key — and `lore supersede` refuses it as a
+  conflict (`5`) rather than overwriting the rollup, so it is never superseded twice.
+
 - **The Lore pane no longer auto-starts in a teammate, headless or workflow process** (LCLI-705).
   Every Claude process loaded the plugin, opened the pane and refreshed it every 30 seconds with no
   in-flight guard — half a host-load incident on 2026-10-12 (host load reached ~300). On

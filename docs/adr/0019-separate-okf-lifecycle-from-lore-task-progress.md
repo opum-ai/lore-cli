@@ -28,7 +28,7 @@ Lore treats lifecycle and task progress as separate facts.
 - In OKF 0.2, Lore writes and checks its derived Backlog task rollup in `lore_task_status`: `todo`, `in-progress`, or `done`.
 - In OKF 0.1, Lore keeps the existing task rollup in `status` for byte and behavior compatibility.
 - Version selection chooses the field. Lore never translates or coerces a lifecycle value into task progress, or task progress into lifecycle state.
-- Superseding an OKF 0.2 concept records `superseded_by` and changes lifecycle `status` to `deprecated`. OKF 0.1 retains the historical `status: superseded` behavior.
+- Superseding a concept records `superseded_by` and changes lifecycle `status` to `deprecated`, on every OKF version. The historical OKF 0.1 `status: superseded` value is no longer written: it was never a legal lifecycle value, and an ADR carrying it now fails validation (LCLI-669, DEC-192). On a 0.1 NON-ADR, where `status` is the task rollup, `lore supersede` refuses such a target as a conflict rather than overwriting the rollup.
 
 Lore validates the OKF 0.2 trust and lifecycle family as follows:
 
