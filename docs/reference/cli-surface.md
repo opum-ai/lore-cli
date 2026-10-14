@@ -1134,10 +1134,11 @@ lore rename stories/bulk-archive-orders stories/order-archival
 
 ### `supersede`
 
-Mark one concept as superseded by another and wire the relationship both ways:
-set `status: deprecated` and `superseded_by: <newId>` on the old concept, set
-`supersedes: <oldId>` on the new one, and (configurably) rewrite inbound links
-to point at the successor. Preserves the old file (history), unlike `rename`.
+Mark one concept as superseded by another:
+set `status` to the superseded value (`deprecated`, or the type's
+`superseded_status`) and `superseded_by: <newId>` on the old concept, set
+`supersedes: <oldId>` on the new one, and rewrite inbound links to the
+successor. Keeps the old file, unlike `rename`.
 
 ```
 lore supersede adr/0007-old-decision adr/0012-new-decision
@@ -1146,9 +1147,9 @@ lore supersede adr/0007-old-decision adr/0012-new-decision
 | | |
 |---|---|
 | **Args** | `<oldId>` `<newId>` |
-| **Key flags** | `--rewrite-links` (repoint inbound links to the successor) · `--dry-run` |
+| **Key flags** | `--rewrite-links` · `--dry-run` |
 | **Output** | `kind: supersede.result` — frontmatter changes + any link rewrites |
-| **Exit** | `0` ok · `3` either id not found · `5` `<oldId>` already superseded · `6` an ADR carries the legacy `status: superseded`, which is not a lifecycle value (see the CHANGELOG's one-line fix) |
+| **Exit** | `0` ok · `3` either id not found · `5` `<oldId>` already superseded · `6` the legacy `status: superseded` (CHANGELOG has the one-line fix), or the profile's `status` enum has no superseded value and the type no `superseded_status` |
 
 ---
 
