@@ -13,6 +13,14 @@
  * returning the `[draft, stable, deprecated]` fallback when NO enum is declared) only shows up once
  * the 0.2 version gate is passed. The 0.2 built-in would be silenced by the version gate and would
  * prove nothing about the fallback.
+ *
+ * The version gate is the **BUNDLE's**, not the producer profile's own `okf_version` (LCLI-730
+ * review). The schema that refuses a rollup `status` is built per bundle by `profileForBundle`, and
+ * DEC-192 (8) is scoped to "a 0.1 BUNDLE's task-coupled type". Gating on the producer version failed
+ * BOTH ways and each direction has its own test below: a `okf_version = "0.2"` profile over a legacy
+ * 0.1 bundle warned NOTHING where the collision is real, and a `okf_version = "0.1"` profile over a
+ * 0.2 bundle warned where it is not. Every unit call therefore passes bundle STATES, and the mixed
+ * cases pin that N 0.1 bundles still yield exactly ONE finding per type.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -29,6 +37,16 @@ import { capture } from "./helpers";
 
 const JSON_CTX: OutputContext = { mode: "json", color: false };
 const V01: BundleState = { okfVersion: "0.1", source: "legacy-missing" };
+const V02: BundleState = { okfVersion: "0.2", source: "declared" };
+
+/** Every unit call takes the scanned bundle STATES — the gate is the bundle's version, not the producer profile's. */
+const PROFILE_FILE = ".lore/profile.toml";
+function findingsFor(
+  profile: Profile,
+  states: readonly BundleState[],
+): ReturnType<typeof taskStatusEnumInheritedFindings> {
+  return taskStatusEnumInheritedFindings(profile, states, PROFILE_FILE);
+}
 
 /** The base fields every fixture shares: a required `type` and a CLOSED `status` enum with no rollup value. */
 const CLOSED_BASE = { type: { required: true }, status: { enum: ["draft", "approved"] } };
@@ -95,7 +113,7 @@ describe("task-status-enum-inherited (LCLI-730, DEC-192 (8), (10))", () => {
   // stay silent — is the WARNING test, and the mutation control must redden exactly it (AC3).
   test("warns on a 0.1 task-coupled type with a closed declared enum, and stays silent for the built-in profile and both remedies", () => {
     // (a) the offender warns, NAMING the type, the inherited enum and the remedy (assert on content).
-    const findings = taskStatusEnumInheritedFindings(OFFENDING, ".lore/profile.toml");
+    const findings = findingsFor(OFFENDING, [V01]);
     expect(findings).toHaveLength(1);
     const finding = findings[0] as { rule: string; severity: string; file: string; message: string };
     expect(finding.rule).toBe("task-status-enum-inherited");
@@ -111,23 +129,48 @@ describe("task-status-enum-inherited (LCLI-730, DEC-192 (8), (10))", () => {
     expect(finding.message).not.toContain("\n"); // Finding.message is single-line
 
     // (b) the built-in profile SILENT — its `Arc` inherits an OPEN `status`, so no enum is declared.
-    expect(taskStatusEnumInheritedFindings(BUILTIN_01, ".lore/profile.toml")).toEqual([]);
+    expect(findingsFor(BUILTIN_01, [V01])).toEqual([]);
 
     // (c) remedy arm 1: `status` declared OPEN on the type.
-    expect(taskStatusEnumInheritedFindings(REMEDY_OPEN, ".lore/profile.toml")).toEqual([]);
+    expect(findingsFor(REMEDY_OPEN, [V01])).toEqual([]);
 
     // (d) remedy arm 2: `status` declared with an enum that INCLUDES the rollup values.
-    expect(taskStatusEnumInheritedFindings(REMEDY_ROLLUP, ".lore/profile.toml")).toEqual([]);
+    expect(findingsFor(REMEDY_ROLLUP, [V01])).toEqual([]);
   });
 
-  test("a 0.2 profile never warns — the rollup key there is `lore_task_status`, so `status` is the lifecycle key", () => {
+  test("a 0.2 BUNDLE never warns — the rollup key there is `lore_task_status`, so `status` is the lifecycle key", () => {
     // `taskRollupFieldFor("0.2")` is `lore_task_status` (src/core/okf-version.ts:45): 0.2 reserves
-    // `status` for the lifecycle enum, so closing it collides with no rollup and the trigger is 0.1-only.
-    expect(taskStatusEnumInheritedFindings(V02_OFFENDING, ".lore/profile.toml")).toEqual([]);
+    // `status` for the lifecycle enum, so closing it collides with no rollup and the trigger is
+    // 0.1-only. The gate is the BUNDLE's version, so a 0.1 PRODUCER profile over a 0.2 bundle is
+    // silent too — that is the false positive the producer-version gate produced (LCLI-730 review).
+    expect(findingsFor(OFFENDING, [V02])).toEqual([]);
+    expect(findingsFor(V02_OFFENDING, [V02])).toEqual([]);
+  });
+
+  test("the gate is the BUNDLE's version, not the producer profile's — a 0.2 profile over a 0.1 bundle WARNS", () => {
+    // The measured false negative (LCLI-730 review): a `okf_version = "0.2"` profile ran over a bundle
+    // whose root index omits `okf_version`, which resolves to legacy 0.1, so `status` IS the rollup
+    // key there and the closed enum collides — but the producer-version gate read "0.2" and said
+    // nothing. The schema still refused the document; only the warning was missing.
+    expect(findingsFor(V02_OFFENDING, [V01])).toHaveLength(1);
+    expect(findingsFor(V02_OFFENDING, [V01])[0]?.message).toContain('"Story"');
+    // and the SAME producer profile over a 0.2 bundle stays silent — one input, two bundle states,
+    // two different (correct) answers, which is only expressible with the bundle in the gate.
+    expect(findingsFor(V02_OFFENDING, [V02])).toEqual([]);
+  });
+
+  test("mixed and repeated bundles: any 0.1 bundle warns, and N 0.1 bundles still warn EXACTLY ONCE", () => {
+    // One finding per offending TYPE, whatever the bundle count — the finding is profile-scoped and
+    // carries no bundle, so a second 0.1 bundle must not duplicate it (DEC-192 (10)).
+    expect(findingsFor(OFFENDING, [V01, V02])).toHaveLength(1);
+    expect(findingsFor(OFFENDING, [V01, V01])).toHaveLength(1);
+    expect(findingsFor(OFFENDING, [V02, V01])).toHaveLength(1);
+    // no 0.1 bundle anywhere: silent, however many bundles are scanned.
+    expect(findingsFor(OFFENDING, [V02, V02])).toEqual([]);
   });
 
   test("a non-task-coupled 0.1 type with the same closed enum never warns", () => {
-    expect(taskStatusEnumInheritedFindings(NON_COUPLED, ".lore/profile.toml")).toEqual([]);
+    expect(findingsFor(NON_COUPLED, [V01])).toEqual([]);
   });
 
   // Pins the DECLARED-vs-FALLBACK distinction, and is the only test that does. Measured: reverting
@@ -135,13 +178,13 @@ describe("task-status-enum-inherited (LCLI-730, DEC-192 (8), (10))", () => {
   // other test in this file green and reddens this one alone, because the two shapes below read the
   // SAME `lifecycleStatusEnum` while only one of them declares anything.
   test("a DECLARED enum byte-equal to the built-in triple still warns, though the built-in profile reads the same values", () => {
-    const findings = taskStatusEnumInheritedFindings(DECLARED_BUILTIN_TRIPLE, ".lore/profile.toml");
+    const findings = findingsFor(DECLARED_BUILTIN_TRIPLE, [V01]);
     expect(findings).toHaveLength(1);
     expect(findings[0]?.message).toContain('"draft"');
     expect(findings[0]?.message).toContain('"stable"');
     expect(findings[0]?.message).toContain('"deprecated"');
     // the same three values, reached WITHOUT a declared enum, stay silent — see BUILTIN_01 above.
-    expect(taskStatusEnumInheritedFindings(BUILTIN_01, ".lore/profile.toml")).toEqual([]);
+    expect(findingsFor(BUILTIN_01, [V01])).toEqual([]);
   });
 
   test("the warning is not an acceptance: a document the closed enum refuses is STILL refused (AC2)", () => {
@@ -188,15 +231,21 @@ describe("task-status-enum-inherited — the gate (LCLI-730 exit-code proofs, DE
     return { root, output, args, stdout: capture(), stderr: capture() };
   }
 
-  /** Write the offending 0.1 profile (closed base `status`, task-coupled `Story`) to `.lore/profile.toml`. */
-  function writeOffendingProfile(): void {
+  /**
+   * Write the offending profile (closed base `status`, task-coupled `Story`) to `.lore/profile.toml`.
+   * `okfVersion` is the PRODUCER target in the profile file, and is deliberately independent of the
+   * bundle's own version — the pairs below vary it against the bundle on purpose, because the gate
+   * must read the bundle. `Reference` is declared so a frontmattered `docs/index.md` (which is how a
+   * bundle DECLARES 0.2) is a known type and does not add an `unknown-type` warning of its own.
+   */
+  function writeOffendingProfile(okfVersion = "0.1"): void {
     mkdirSync(join(root, ".lore"), { recursive: true });
     writeFileSync(
       join(root, ".lore", "profile.toml"),
       [
         "[profile]",
         'name = "demo"',
-        'okf_version = "0.1"',
+        `okf_version = "${okfVersion}"`,
         "",
         "[base.fields]",
         "type = { required = true }",
@@ -206,7 +255,34 @@ describe("task-status-enum-inherited — the gate (LCLI-730 exit-code proofs, DE
         'name = "Story"',
         'fields = { tasks = { kind = "list" } }',
         "",
+        "[[types]]",
+        'name = "Reference"',
+        "",
       ].join("\n"),
+    );
+  }
+
+  /**
+   * Rewrite `docs/index.md` so the BUNDLE resolves to `okfVersion`. Omit it for a root index with no
+   * `okf_version` at all, which is the `legacy-missing` case that resolves to 0.1.
+   */
+  function writeIndex(okfVersion?: string): void {
+    writeFileSync(
+      join(root, "docs", "index.md"),
+      okfVersion === undefined
+        ? "# Docs\n\nRoot.\n"
+        : // `summary` is present so the built-in index `missing summary` WARNING does not turn a
+          // `--strict` run red for a reason that has nothing to do with this rule.
+          [
+            "---",
+            "type: Reference",
+            "title: Docs",
+            `okf_version: "${okfVersion}"`,
+            "summary: Docs root.",
+            "---",
+            "# Docs",
+            "",
+          ].join("\n"),
     );
   }
 
@@ -240,6 +316,45 @@ describe("task-status-enum-inherited — the gate (LCLI-730 exit-code proofs, DE
   test("WITH --strict: the BUILT-IN profile (no `.lore/profile.toml`) PASSES", () => {
     // No profile file: the built-in story-convention profile loads, whose task-coupled `Arc`
     // inherits an OPEN `status`. Its own repo producer version is 0.2, so nothing here warns.
+    // NOTE: with no profile file the detector is never reached at all (`activeProfilePath` yields
+    // `undefined`), so this case alone proves nothing about the warning; the two below carry that.
     expect(runCheck(opts(["--strict"]))).toBe(EXIT_OK);
+  });
+
+  test("WITH --strict: a 0.1 BUNDLE on the BUILT-IN profile PASSES (the bundle is declared 0.1, the profile is not ours)", () => {
+    // The bundle DECLARES 0.1 rather than inheriting it, so this exercises the resolved-version path
+    // instead of the legacy-missing default. The built-in profile declares no `status` enum at all,
+    // so there is no closed vocabulary to collide with — on 0.1 or on 0.2.
+    writeIndex("0.1");
+    expect(runCheck(opts(["--strict"]))).toBe(EXIT_OK);
+  });
+
+  test("WITH --strict: a POPULATED 0.2 profile over a 0.2 bundle PASSES — the gate reads the bundle", () => {
+    writeOffendingProfile("0.2");
+    writeIndex("0.2");
+    const options = opts(["--strict"]);
+    expect(runCheck(options)).toBe(EXIT_OK);
+    expect(JSON.parse((options.stdout as ReturnType<typeof capture>).text()).data.warningCount).toBe(0);
+  });
+
+  // The measured false negative, end to end on the real command path rather than only in the unit:
+  // a 0.2 PRODUCER profile over a bundle with no declared version, which resolves to legacy 0.1.
+  test("a 0.2 producer profile over a legacy-0.1 bundle WARNS — the case the producer-version gate missed", () => {
+    writeOffendingProfile("0.2");
+    const options = opts([]);
+    expect(runCheck(options)).toBe(EXIT_OK);
+    expect(JSON.parse((options.stdout as ReturnType<typeof capture>).text()).data.findings).toContainEqual(
+      expect.objectContaining({ severity: "warning", rule: "task-status-enum-inherited", file: ".lore/profile.toml" }),
+    );
+  });
+
+  // ...and its mirror: the same 0.1 PRODUCER profile the old gate keyed on stays silent over a 0.2
+  // bundle, which the producer-version gate wrongly warned about.
+  test("a 0.1 producer profile over a 0.2 bundle is SILENT end to end", () => {
+    writeOffendingProfile("0.1");
+    writeIndex("0.2");
+    const options = opts(["--strict"]);
+    expect(runCheck(options)).toBe(EXIT_OK);
+    expect(JSON.parse((options.stdout as ReturnType<typeof capture>).text()).data.warningCount).toBe(0);
   });
 });
