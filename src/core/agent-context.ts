@@ -285,21 +285,34 @@ export interface AgentContextOmittedSection {
   /** The section's breadcrumb when it has one; absent for a candidate that IS its whole concept. */
   readonly section?: string;
   /**
-   * Which ceiling refused it, or that it was never eligible (DEC-194 (11)). The two cut values are
-   * kept apart because the REMEDY differs: `cut-by-task-evidence-cap` is answered by raising or
-   * reshaping the profile's declared `task_evidence` target, `cut-by-max-tokens` by raising the
-   * pack's `max_tokens` — and the report should name which without the reader opening the profile.
-   * `scored-zero` is neither: the zero-score relevance filter dropped it whole, before any budget
-   * was spent (LCLI-680).
+   * Which ceiling refused it, or that it was never eligible (DEC-194 (11) and (12)). The cut values
+   * are kept apart because the REMEDY differs — raise or reshape the profile's declared
+   * `task_evidence` target, raise the pack's `max_tokens`, or both, because either alone still
+   * refuses it — and the report should name which knobs to turn without the reader opening the
+   * profile. `scored-zero` is none of those: the zero-score relevance filter dropped it whole,
+   * before any budget was spent (LCLI-680).
    */
   readonly reason: AgentContextOmissionReason;
 }
 
 /**
- * Why one ranked section is absent from a budget class: the declared `task_evidence` cap cut it,
- * the pack's own `max_tokens` cut it, or it scored zero and was never eligible.
+ * Why one ranked section is absent from a budget class.
+ *
+ * The single-ceiling values say what would happen if the OTHER ceiling were lifted, which is what
+ * makes them a remedy rather than a restatement of whichever check happened to run first:
+ * `cut-by-task-evidence-cap` means the pack's own budget would have admitted the section,
+ * `cut-by-max-tokens` means the declared target would have, and `cut-by-both-ceilings` means neither
+ * would have on its own (DEC-194 (12)). `scored-zero` is not a ceiling at all — the section was never
+ * eligible (LCLI-680).
  */
-export type AgentContextOmissionReason = "cut-by-task-evidence-cap" | "cut-by-max-tokens" | "scored-zero";
+export type AgentContextOmissionReason =
+  | "cut-by-task-evidence-cap"
+  | "cut-by-max-tokens"
+  | "cut-by-both-ceilings"
+  | "scored-zero";
+
+/** The omission reasons a CEILING produces — every value but the zero-score filter's own. */
+export type AgentContextCeilingCut = Exclude<AgentContextOmissionReason, "scored-zero">;
 
 export interface AgentContextBudgetEntry {
   readonly target: number | null;
@@ -624,7 +637,7 @@ function compilePack(
     selection: readonly RankedCandidate[],
     queryHitLimit: number,
     querySection = withQueryHits,
-    cutByCeiling: ReadonlyMap<string, "cut-by-task-evidence-cap" | "cut-by-max-tokens"> = new Map(),
+    cutByCeiling: ReadonlyMap<string, AgentContextCeilingCut> = new Map(),
   ) =>
     assemble(
       profile,
@@ -770,26 +783,39 @@ function compilePack(
 
   const selected: RankedCandidate[] = [...required];
   let rankedTokens = 0;
-  // WHICH ceiling refused a candidate, recorded as the loop decides it (LCLI-722 AC4, DEC-194 (11)).
-  // The two cut paths below are different facts with different remedies — raise or reshape the
-  // declared `task_evidence` target, or raise the pack's `max_tokens` — and the report is the only
-  // place a reader can learn which one applied without opening the profile. A candidate that
-  // reaches neither `continue` is admitted, so this map covers the eligible deck minus what was
-  // selected; whatever is left over was never eligible at all (the zero-score filter, below).
-  const cutByCeiling = new Map<string, "cut-by-task-evidence-cap" | "cut-by-max-tokens">();
+  // WHICH ceiling refused a candidate (LCLI-722 AC4, DEC-194 (11) and (12)). The values are
+  // different facts with different remedies — raise or reshape the declared `task_evidence` target,
+  // raise the pack's `max_tokens`, or both — and the report is the only place a reader can learn
+  // which knobs to turn without opening the profile.
+  //
+  // THE LABEL IS DECIDED BY BOTH REMAINDERS, NOT BY WHICH CHECK RUNS FIRST. That is why the trial
+  // build below now runs even for a candidate the cap already refuses: a single-ceiling value
+  // asserts that the OTHER ceiling would have admitted the section, and only the build can say
+  // whether the pack would have. It costs one build per cap-refused candidate, which is the price
+  // of a label that points at a knob that actually unblocks.
+  //
+  // A candidate that reaches neither refusal is admitted, so this map covers the eligible deck
+  // minus what was selected; whatever is left over was never eligible at all (the zero-score
+  // filter, below).
+  const cutByCeiling = new Map<string, AgentContextCeilingCut>();
   for (const candidate of ordered) {
     if (requiredKeys.has(candidate.key)) continue;
-    if (rankedBudget !== undefined && rankedTokens + candidate.tokenEstimate > rankedBudget) {
-      cutByCeiling.set(candidate.key, "cut-by-task-evidence-cap");
-      continue;
-    }
+    const capRefuses = rankedBudget !== undefined && rankedTokens + candidate.tokenEstimate > rankedBudget;
     const tentative = build([...selected, candidate], queryHitLimit, querySection);
-    if (tentative.tokenEstimate <= effectiveBudget) {
+    const packRefuses = tentative.tokenEstimate > effectiveBudget;
+    if (!capRefuses && !packRefuses) {
       selected.push(candidate);
       rankedTokens += candidate.tokenEstimate;
-    } else {
-      cutByCeiling.set(candidate.key, "cut-by-max-tokens");
+      continue;
     }
+    cutByCeiling.set(
+      candidate.key,
+      capRefuses && packRefuses
+        ? "cut-by-both-ceilings"
+        : capRefuses
+          ? "cut-by-task-evidence-cap"
+          : "cut-by-max-tokens",
+    );
   }
   return build(selected, queryHitLimit, querySection, cutByCeiling);
 }
@@ -1280,7 +1306,7 @@ function computeBudgets(
   contractOmissions: readonly { readonly source: string; readonly reason: string }[] | undefined,
   subtotal: number,
   sources: readonly SourceCandidates[],
-  cutByCeiling: ReadonlyMap<string, "cut-by-task-evidence-cap" | "cut-by-max-tokens">,
+  cutByCeiling: ReadonlyMap<string, AgentContextCeilingCut>,
 ): AgentContextBudgets | undefined {
   if (!profileDeclaresBudgets(profile)) return undefined;
   const targets = profile.targets;
@@ -1419,7 +1445,7 @@ function assemble(
   // Which ceiling refused each candidate the selection loop left behind (LCLI-722 AC4, DEC-194
   // (11)). Empty by default, which is what every caller that is not the final selection pass wants:
   // its report is discarded.
-  cutByCeiling: ReadonlyMap<string, "cut-by-task-evidence-cap" | "cut-by-max-tokens"> = new Map(),
+  cutByCeiling: ReadonlyMap<string, AgentContextCeilingCut> = new Map(),
 ): AgentContextPack {
   const selectedKeys = new Set(selected.map((item) => item.key));
   // "Not already selected" is by concept: a document the pack already quotes any part of is not

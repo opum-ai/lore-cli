@@ -145,17 +145,19 @@ Contract:
     `over` and names the content that required it, largest first.
   - **Omitted sections.** `taskEvidence.omittedSections` lists every ranked
     SECTION the class considered and did not carry, each as
-    `{reference, section?, reason}` in declaration order, so the three ways a
-    section goes missing are told apart from the report alone (LCLI-722 AC4,
-    DEC-194 (6) and (11)): `cut-by-task-evidence-cap` for a section the declared
-    `task_evidence` target refused, `cut-by-max-tokens` for one the pack's own
-    `max_tokens` refused, and `scored-zero` for the zero-score filter, which
-    drops a section before any budget is spent (LCLI-680). The two cut values
-    are kept apart because the REMEDY differs — raise or reshape the target, or
-    raise the pack budget — so the report names which ceiling to move. The field
-    belongs to `taskEvidence` alone, is present as a list even when nothing was
-    omitted, and is additive and JSON-only: the rendered `## Context budgets`
-    section prints `content`.
+    `{reference, section?, reason}` in declaration order, so the ways a section
+    goes missing are told apart from the report alone (LCLI-722 AC4, DEC-194 (6),
+    (11) and (12)). The two single-ceiling values say what the OTHER ceiling
+    would have done, which is what makes them a remedy rather than a restatement
+    of whichever check ran first: `cut-by-task-evidence-cap` means the declared
+    `task_evidence` target refused it and the pack's budget would have admitted
+    it, `cut-by-max-tokens` means the pack's own `max_tokens` refused it and the
+    target would have admitted it, and `cut-by-both-ceilings` means both refused
+    it, so neither alone unblocks it. `scored-zero` is not a ceiling at all — the
+    zero-score filter drops a section before any budget is spent (LCLI-680). The
+    field belongs to `taskEvidence` alone, is present as a list even when nothing
+    was omitted, and is additive and JSON-only: the rendered
+    `## Context budgets` section prints `content`.
   - **Provider usage.** `lore agent context --provider-input-tokens <n>` records
     the pack's `providerUsage` with `source: "manual"`; `opum-cli`'s model
     gateway records `source: "provider-reported"` (MDL-15). A manual figure is
