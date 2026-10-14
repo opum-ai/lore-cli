@@ -511,7 +511,7 @@ lore link adr/0012-new-decision --decision DEC-192
 |---|---|
 | **Args** | `<id>` `<taskId…>`, or `<id>` with `--decision <decisionId…>` |
 | **Key flags** | `--no-back-ref` (skip the `doc:` label write to the task) · `--decision <id…>` (link decision ids, document-side only) · `--repo <name>` (a bare decision id's qualifier; overrides the remote) |
-| **Output** | `kind: link.result` — links added / already present, plus the `backlog/` commit outcome. Emitted **only on exit `0`**; if any task's back-reference edit (or the `backlog/` commit) fails, stdout stays empty and the same per-task detail moves into the standard `--json` error envelope's `input` on stderr (cli-contract §4/§5) — never a partial-success envelope on stdout (LCLI-58). |
+| **Output** | `kind: link.result` — links added / already present, plus the `backlog/` commit outcome. Emitted **only on exit `0`**; if any task's back-reference edit (or the `backlog/` commit) fails, stdout stays empty and the same per-task detail moves into the standard `--json` error envelope's `input` on stderr (cli-contract §4/§5) — never a partial-success envelope on stdout (LCLI-58). On the `--decision` arm the payload carries `decisions` instead (`{decision, status}`, the id qualified) and `tasks` is `[]`. |
 | **Exit** | `0` ok · `2` usage (bad flag, comma-bearing id) · `3` concept or task id not found · `4` writing into a managed region denied · `5` `<id>` collides case-insensitively with another concept · `6` a task's back-reference edit failed, or the `backlog/` commit failed (drift); against a Quest-backed bundle, a missing/invalid actor declaration fails the same way but reports `validation` instead (see `lore instructions linking`) |
 
 ### `unlink`

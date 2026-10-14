@@ -150,4 +150,61 @@ describe("lore link --decision (LCLI-670)", () => {
     }
     expect(error.message ?? "").toContain("decisions");
   });
+
+  test("a duplicated decision id is ONE entry, not two (deduped case-insensitively)", async () => {
+    initRepoWithOrigin(root, ORIGIN);
+    adr("0012-new-decision");
+    await link(["adr/0012-new-decision", "--decision", "DEC-9", "--decision", "DEC-9"]);
+    expect(decisionsOf("0012-new-decision")).toEqual(["lore-cli:DEC-9"]);
+  });
+
+  test("a bare id and its qualified twin collapse to one entry", async () => {
+    initRepoWithOrigin(root, ORIGIN);
+    adr("0012-new-decision");
+    await link(["adr/0012-new-decision", "--decision", "DEC-9", "--decision", "lore-cli:DEC-9"]);
+    expect(decisionsOf("0012-new-decision")).toEqual(["lore-cli:DEC-9"]);
+  });
+
+  test("mixing task ids and --decision is refused (usage)", async () => {
+    initRepoWithOrigin(root, ORIGIN);
+    adr("0012-new-decision");
+    await expect(link(["adr/0012-new-decision", "task-42", "--decision", "DEC-1"])).rejects.toThrow(/cannot mix/);
+  });
+
+  test("--no-back-ref with --decision is refused (usage)", async () => {
+    initRepoWithOrigin(root, ORIGIN);
+    adr("0012-new-decision");
+    await expect(link(["adr/0012-new-decision", "--decision", "DEC-1", "--no-back-ref"])).rejects.toThrow(
+      /--no-back-ref/,
+    );
+  });
+
+  test("--repo without --decision is refused (usage)", async () => {
+    initRepoWithOrigin(root, ORIGIN);
+    adr("0012-new-decision");
+    await expect(link(["adr/0012-new-decision", "task-42", "--repo", "lore-cli"])).rejects.toThrow(
+      /--repo requires --decision/,
+    );
+  });
+
+  test("an empty --repo is refused (usage)", async () => {
+    initRepoWithOrigin(root, ORIGIN);
+    adr("0012-new-decision");
+    await expect(link(["adr/0012-new-decision", "--decision", "DEC-1", "--repo="])).rejects.toThrow(
+      /--repo needs a value/,
+    );
+  });
+
+  test("no ids at all is a usage error (it was one before this change too)", async () => {
+    initRepoWithOrigin(root, ORIGIN);
+    adr("0012-new-decision");
+    await expect(link(["adr/0012-new-decision"])).rejects.toThrow(/at least one task id or --decision id/);
+  });
+
+  test("an ownerless scp remote yields the name; a separator-carrying name is refused", () => {
+    expect(repositoryNameFromRemoteUrl("git@host:lore-cli.git")).toBe("lore-cli");
+    // A local Windows path is not a remote URL: its last `:`-or-`/` segment still carries `\`.
+    expect(repositoryNameFromRemoteUrl("C:\\repos\\lore-cli")).toBeUndefined();
+    expect(repositoryNameFromRemoteUrl("git@host:opum-ai/lore-cli.git")).toBe("lore-cli");
+  });
 });

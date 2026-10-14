@@ -1159,7 +1159,10 @@ function runLinkDecisions(
   const { concept, decisions, repo, docsRoot, profile, lintByPath } = context;
   assertDecisionCouplingSupported(concept, profile);
   const qualifier = resolveDecisionQualifier({ root: options.root, repoFlag: repo });
-  const qualified = decisions.map((raw) => qualifyDecisionRef(raw, qualifier));
+  // Deduped case-insensitively BEFORE scoring, the rule `dedupeTaskIds` applies to task ids
+  // (LCLI-670 review B1): `--decision DEC-9 --decision DEC-9`, and `DEC-9` alongside the already
+  // qualified `lore-cli:DEC-9`, are one entry, not two rows both reporting `added`.
+  const qualified = dedupeTaskIds(decisions.map((raw) => qualifyDecisionRef(raw, qualifier)));
   const existing = toRefList(concept.frontmatter.decisions);
   const rows: LinkedDecision[] = qualified.map((decision) => ({
     decision,
@@ -1271,11 +1274,8 @@ function parseLinkArgs(args: readonly string[], command: "link" | "unlink"): Lin
       `pass one or more ids, e.g. \`lore ${command} ${id} task-42\` or \`lore link ${id} --decision DEC-187\``,
     );
   }
-  if (decisions.length > 0 && command === "unlink") {
-    throw usage(
-      "--decision is not available with `lore unlink`",
-      "a decision link is removed by editing the document's `decisions:` list",
-    );
+  if (repo !== undefined && repo.trim() === "") {
+    throw usage("--repo needs a value", "pass a repository NAME, e.g. --repo lore-cli");
   }
   if (repo !== undefined && decisions.length === 0) {
     throw usage("--repo requires --decision", "name the decision ids with --decision, or drop --repo");
@@ -1283,6 +1283,9 @@ function parseLinkArgs(args: readonly string[], command: "link" | "unlink"): Lin
   if (noBackRef && decisions.length > 0) {
     throw usage("--no-back-ref is not available with --decision", "a decision link writes the document only");
   }
+  // NOTE: there is deliberately NO `--decision`-with-unlink refusal here. `unlink` does not declare
+  // the flag, so the argument parser rejects it before this function is reached, and a branch here
+  // would be unreachable code (LCLI-670 review N3).
   return {
     id,
     taskIds,

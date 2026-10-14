@@ -47,26 +47,36 @@ export function qualifyDecisionRef(raw: string, qualifier: string): string {
 export function originRepositoryName(root: string): string | undefined {
   // Git's own command, deliberately: a hand parse of .git/config would have to model the file's
   // include/rewrite rules and would silently disagree with git about a redirect.
-  const result = Bun.spawnSync(["git", "remote", "get-url", "origin"], {
-    cwd: root,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  if (result.exitCode !== 0) return undefined;
-  return repositoryNameFromRemoteUrl(result.stdout.toString("utf8").trim());
+  try {
+    const result = Bun.spawnSync(["git", "remote", "get-url", "origin"], {
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (result.exitCode !== 0) return undefined;
+    return repositoryNameFromRemoteUrl(result.stdout.toString("utf8").trim());
+  } catch {
+    // Bun THROWS when the binary cannot be started at all — no `git` on PATH. That is "there is no
+    // remote to read", not an internal error, and an uncaught throw would exit 1 with a code link's
+    // exit set does not name. Returning undefined routes it to the caller's own refusal.
+    return undefined;
+  }
 }
 
 /**
- * The repository name a remote URL names: its last path segment without a `.git` suffix. Written for
- * BOTH shapes, so `git@github.com:opum-ai/lore-cli.git` and `https://github.com/opum-ai/lore-cli` (and
- * a trailing slash on either) all yield `lore-cli`.
+ * The repository name a remote URL names: the segment after the LAST `:` or `/`, without a `.git`
+ * suffix. Written for every shape a remote can take — `git@github.com:opum-ai/lore-cli.git`
+ * (scp-style, no scheme), `https://github.com/opum-ai/lore-cli`, `ssh://git@host/lore-cli.git`, a
+ * bare `git@host:lore-cli.git` with no owner — and a name that still carries `\` or `/` (what a local
+ * Windows path leaves behind) is REFUSED rather than written into an id.
  */
 export function repositoryNameFromRemoteUrl(url: string): string | undefined {
-  if (url === "") return undefined;
-  const withoutTrailingSlash = url.replace(/\/+$/, "");
-  const lastSegment = withoutTrailingSlash.split("/").pop() ?? "";
+  const trimmed = url.replace(/[/\\]+$/, "");
+  if (trimmed === "") return undefined;
+  const lastSegment = trimmed.split(/[:/]/).pop() ?? "";
   const name = lastSegment.replace(/\.git$/i, "");
-  return name === "" ? undefined : name;
+  if (name === "" || name.includes(":") || name.includes("\\") || name.includes("/")) return undefined;
+  return name;
 }
 
 /**
@@ -75,7 +85,19 @@ export function repositoryNameFromRemoteUrl(url: string): string | undefined {
  * when none applies this REFUSES by name rather than inventing one.
  */
 export function resolveDecisionQualifier(options: { root: string; repoFlag?: string; memberId?: string }): string {
-  if (options.repoFlag !== undefined) return options.repoFlag;
+  if (options.repoFlag !== undefined) {
+    // An explicit qualifier still has to BE a name: empty, or carrying a separator, it would write
+    // an id no reader can split back into repository and decision.
+    const name = options.repoFlag.trim();
+    if (name === "" || name.includes(":") || name.includes("\\")) {
+      throw new LoreError(
+        "usage",
+        `invalid --repo "${options.repoFlag}"`,
+        "pass a repository NAME, e.g. --repo lore-cli",
+      );
+    }
+    return name;
+  }
   if (options.memberId !== undefined) return options.memberId;
   const fromRemote = originRepositoryName(options.root);
   if (fromRemote !== undefined) return fromRemote;

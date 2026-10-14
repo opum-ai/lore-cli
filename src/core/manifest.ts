@@ -495,14 +495,15 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
   },
   {
     name: "link",
-    summary: "Add task ids to a concept's tasks: + the doc: back-ref",
+    summary: "Add task ids to a concept's tasks: + the doc: back-ref, or a decision id to its decisions:",
     args: "<id> <taskId…>",
     flags: [
       { name: "no-back-ref", takesValue: false, summary: "Skip the doc: label write to the task" },
       {
         name: "decision",
         takesValue: true,
-        summary: "Link a decision id instead of task ids, as <repo>:DEC-N (doc-side only; repeatable)",
+        repeatable: true,
+        summary: "Link a decision id instead of task ids, as <repo>:DEC-N (doc-side only, no back-reference)",
       },
       {
         name: "repo",
