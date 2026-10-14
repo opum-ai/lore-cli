@@ -40,6 +40,7 @@ import { LoreError, type WarningCollector } from "../errors";
 import type { BundleState } from "./okf-version";
 import {
   ATTESTED_COMPUTATION_TYPE,
+  BUILTIN_LIFECYCLE_STATUS,
   type CompiledType,
   defaultProfile,
   type Profile,
@@ -158,8 +159,12 @@ const SOURCES_SCHEMA = z.array(SOURCE_SCHEMA);
 const SOURCES_JSON_SCHEMA = z.toJSONSchema(SOURCES_SCHEMA, { target: "draft-7" });
 const USAGE_WINDOW_JSON_SCHEMA = z.toJSONSchema(USAGE_WINDOW_SCHEMA, { target: "draft-7" });
 
-/** OKF lifecycle and Lore task-progress vocabularies are deliberately disjoint. */
-const LIFECYCLE_STATUS_SCHEMA = z.enum(["draft", "stable", "deprecated"]);
+/**
+ * OKF lifecycle and Lore task-progress vocabularies are deliberately disjoint. Only the task-rollup
+ * one is a constant here: the lifecycle enum is per-type, owned by `profile.ts`
+ * ({@link BUILTIN_LIFECYCLE_STATUS} plus anything the active profile declares) and materialized
+ * into a validator on demand by {@link lifecycleStatusSchema}.
+ */
 const TASK_ROLLUP_STATUS_SCHEMA = z.enum(["todo", "in-progress", "done"]);
 const STALE_AFTER_SCHEMA = z.iso.date();
 
@@ -206,7 +211,6 @@ const ATTESTED_COMPUTATION_FIELDS: ReadonlySet<string> = new Set([
 ]);
 
 /** Editor forms are generated from the same runtime validators. */
-const LIFECYCLE_STATUS_JSON_SCHEMA = z.toJSONSchema(LIFECYCLE_STATUS_SCHEMA, { target: "draft-7" });
 const TASK_ROLLUP_STATUS_JSON_SCHEMA = z.toJSONSchema(TASK_ROLLUP_STATUS_SCHEMA, { target: "draft-7" });
 const STALE_AFTER_JSON_SCHEMA = z.toJSONSchema(STALE_AFTER_SCHEMA, { target: "draft-7" });
 const VERIFIED_JSON_SCHEMA = z.toJSONSchema(VERIFIED_SCHEMA, { target: "draft-7" });
@@ -447,10 +451,18 @@ export function validateFrontmatter(fm: Record<string, unknown>, options: Valida
 }
 
 /**
- * The OKF lifecycle `status` enum (DEC-192, LCLI-669): `draft`/`stable`/`deprecated`. A `status`
- * outside it is a defect — `superseded` in particular was written by `lore supersede` on 0.1
- * bundles but has never been a valid value, and every profile's emitted `adr.schema.json` has
- * always declared the three.
+ * The OKF lifecycle `status` enum (DEC-192, LCLI-669): `draft`/`stable`/`deprecated` as the
+ * BUILT-IN default. A `status` outside the effective enum is a defect — `superseded` in
+ * particular was written by `lore supersede` on 0.1 bundles but has never been a valid value, and
+ * every profile's emitted `adr.schema.json` has always declared the three.
+ *
+ * **The effective enum, not the built-in one (DEC-192 (4), LCLI-723).** When the active profile
+ * declares its own `status` enum, THAT is the vocabulary an ADR is judged against, and the built-in
+ * triple is only the fallback for a profile that declares none. Reading it from the compiled type
+ * here rather than hard-coding the built-in triple is what puts this check and the emitted schema
+ * ({@link schemaForVersion}) on one source: a `[draft, approved]` profile used to EMIT its own enum
+ * while LOAD enforced the built-in, so a document its own committed schema declared valid was
+ * rejected at load.
  *
  * SCOPE, because "every OKF version" needs one qualification: on OKF 0.2 the enum governs `status`
  * for every type, but on OKF 0.1 `status` IS the task-rollup key for task-coupled types
@@ -467,15 +479,75 @@ function validateLifecycleStatus(
   path: string | undefined,
 ): void {
   if (!Object.hasOwn(fm, "status")) return;
-  if (profile.okfVersion !== "0.2" && canonicalType(type, profile) !== "ADR") return;
-  const result = LIFECYCLE_STATUS_SCHEMA.safeParse(fm.status);
+  const canonical = canonicalType(type, profile);
+  if (profile.okfVersion !== "0.2" && canonical !== "ADR") return;
+  // Unknown type: an OKF producer extension this profile cannot speak for, so the built-in triple
+  // is the only vocabulary available (and what every version of lore has enforced here).
+  const allowed = profile.types.get(canonical)?.lifecycleStatusEnum;
+  const result = lifecycleStatusSchema(allowed ?? BUILTIN_LIFECYCLE_STATUS).safeParse(fm.status);
   if (result.success) return;
   throw new LoreError(
     "validation",
     `invalid OKF lifecycle status${where}: ${describeIssues(result.error)} (got ${JSON.stringify(fm.status)})`,
-    "set `status` to draft, stable, or deprecated; `status: superseded`, which an older `lore supersede` wrote on a 0.1 bundle, is the one-line fix in the CHANGELOG (`status: superseded` -> `status: deprecated`); Lore task progress belongs in `lore_task_status`",
+    lifecycleStatusRemedy(allowed ?? BUILTIN_LIFECYCLE_STATUS),
     { path, key: "status", issues: issueList(result.error) },
   );
+}
+
+/**
+ * The Zod validator for one effective lifecycle enum, memoized by its values (the same profile is
+ * threaded through every concept of a bundle, and `defaultProfile()` is module-cached, so this map
+ * holds one entry per distinct enum a run actually meets). Keyed on the values joined by a NUL,
+ * which no status value can contain.
+ */
+const LIFECYCLE_STATUS_VALIDATORS = new Map<string, z.ZodType>();
+
+/** The shared validator for `allowed` — see {@link LIFECYCLE_STATUS_VALIDATORS}. */
+function lifecycleStatusSchema(allowed: readonly string[]): z.ZodType {
+  const key = allowed.join("\u0000");
+  const cached = LIFECYCLE_STATUS_VALIDATORS.get(key);
+  if (cached !== undefined) return cached;
+  const schema = z.enum([...allowed]);
+  LIFECYCLE_STATUS_VALIDATORS.set(key, schema);
+  return schema;
+}
+
+/** The Draft-7 editor form of one type's effective lifecycle enum, memoized on the same key. */
+const LIFECYCLE_STATUS_JSON_SCHEMAS = new Map<string, Record<string, unknown>>();
+
+/** See {@link LIFECYCLE_STATUS_JSON_SCHEMAS}; derives from the SAME validator the load check uses. */
+function lifecycleStatusJsonSchema(type: CompiledType): Record<string, unknown> {
+  const key = type.lifecycleStatusEnum.join("\u0000");
+  const cached = LIFECYCLE_STATUS_JSON_SCHEMAS.get(key);
+  if (cached !== undefined) return cached;
+  const json = z.toJSONSchema(lifecycleStatusSchema(type.lifecycleStatusEnum), { target: "draft-7" }) as Record<
+    string,
+    unknown
+  >;
+  LIFECYCLE_STATUS_JSON_SCHEMAS.set(key, json);
+  return json;
+}
+
+/** Whether `allowed` IS the built-in triple, by value — the two remedies below differ on it. */
+function isBuiltinLifecycleEnum(allowed: readonly string[]): boolean {
+  return (
+    allowed.length === BUILTIN_LIFECYCLE_STATUS.length && allowed.every((v, i) => v === BUILTIN_LIFECYCLE_STATUS[i])
+  );
+}
+
+/**
+ * The remedy for an out-of-enum lifecycle `status`, naming the values that would have been
+ * accepted. The built-in case keeps the CHANGELOG's one-line fix for the legacy `superseded`
+ * marker, because that is the migration an existing 0.1 bundle actually needs; a profile-declared
+ * enum names two things instead, since neither the legacy fix nor `lore_task_status` applies to a
+ * bundle that has its own vocabulary.
+ */
+function lifecycleStatusRemedy(allowed: readonly string[]): string {
+  const list = allowed.map((value) => `"${value}"`).join(", ");
+  if (isBuiltinLifecycleEnum(allowed)) {
+    return "set `status` to draft, stable, or deprecated; `status: superseded`, which an older `lore supersede` wrote on a 0.1 bundle, is the one-line fix in the CHANGELOG (`status: superseded` -> `status: deprecated`); Lore task progress belongs in `lore_task_status`";
+  }
+  return `set \`status\` to one of this profile's declared values (${list}); the built-in draft/stable/deprecated values do NOT apply here, because the active profile's \`status\` enum replaces them (DEC-192)`;
 }
 
 /** Validate and classify the OKF 0.2 frontmatter families without mutating authored data. */
@@ -891,7 +963,12 @@ export function schemaForVersion(type: CompiledType, profile: Profile): Record<s
       sources: SOURCES_JSON_SCHEMA,
       usage_window: USAGE_WINDOW_JSON_SCHEMA,
       verified: VERIFIED_JSON_SCHEMA,
-      status: LIFECYCLE_STATUS_JSON_SCHEMA,
+      // THE EFFECTIVE ENUM, not the built-in one (DEC-192 (4), LCLI-723). A profile that declares
+      // its own `status` enum must see it here too, or the editor schema and the load check
+      // disagree again — the emitted schema declaring a `[draft, approved]` profile's values while
+      // `validateLifecycleStatus` rejected them was the reported defect. For a profile that
+      // declares NO enum this is byte-identical to the built-in enum it has always emitted.
+      status: lifecycleStatusJsonSchema(type),
       stale_after: STALE_AFTER_JSON_SCHEMA,
       lore_task_status: TASK_ROLLUP_STATUS_JSON_SCHEMA,
       ...computationProperties,

@@ -6,8 +6,10 @@
  * supersede half). Unlike {@link runRename}, it **preserves the old file** as history — nothing
  * moves or is deleted — and only edits frontmatter:
  *
- * - on the **old** concept: `superseded_by: <newId>` plus the lifecycle marker
- *   (`status: deprecated`, on every OKF version since DEC-192);
+ * - on the **old** concept: `superseded_by: <newId>` plus the lifecycle marker — `status:
+ *   deprecated` on every OKF version since DEC-192, or the value the active profile's lifecycle
+ *   enum uses for a superseded document when it does not contain `deprecated` (DEC-192 (4)/(6),
+ *   LCLI-723; see {@link resolveSupersededStatus});
  * - on the **new** concept: `supersedes: <oldId>`, **appended** to any existing entry (a concept may
  *   supersede several) rather than clobbering it.
  *
@@ -48,9 +50,10 @@
 import { join, posix } from "node:path";
 import { conceptNotInBundle, loadBundle, resolveRef, UNREADABLE_DIRECTORY_WARNING } from "../core/bundle";
 import { type Concept, idFromPath, serializeConcept } from "../core/concept";
-import { loadProfile, profileForBundle } from "../core/profile";
+import { BUILTIN_LIFECYCLE_STATUS, loadProfile, type Profile, profileForBundle } from "../core/profile";
 import { renderLinkTextMismatchWarning, rewriteInbound } from "../core/rewrite";
 import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
+import { canonicalType } from "../core/schema";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
@@ -205,10 +208,11 @@ export function runSupersede(options: SupersedeOptions): number {
   // Wire the principals' frontmatter (cloned, never mutating the graph snapshot) and serialize under
   // the active profile. The old doc always changes (it gains the lifecycle keys); the new doc is
   // written only when its `supersedes` actually changes, so a no-op append is not reported as a write.
-  // DEC-192 (LCLI-669): the old end ALWAYS goes to `deprecated`, the profile's valid lifecycle
-  // value, on every OKF version. It used to write the invalid `status: superseded` on a 0.1 bundle —
-  // never a legal value there either, and silently unchecked until the enum began running on 0.1.
-  const supersededLifecycle = "deprecated";
+  // DEC-192 (LCLI-669): the old end goes to a valid lifecycle value on every OKF version. It used to
+  // write the invalid `status: superseded` on a 0.1 bundle — never a legal value there either, and
+  // silently unchecked until the enum began running on 0.1.
+  // DEC-192 (4)/(6) (LCLI-723): WHICH value is the effective enum's business, not this command's.
+  const supersededLifecycle = resolveSupersededStatus(profile, oldConcept);
   writes.set(oldConcept.path, serializeConcept(wireOld(oldConcept, newId, supersededLifecycle), { profile }));
   const wiredNew = wireNew(newConcept, oldId, graph);
   if (wiredNew !== null) {
@@ -343,11 +347,47 @@ function hasRecordedSuccessor(concept: Concept): boolean {
   return !(Array.isArray(value) && value.length === 0);
 }
 
+/** The OKF lifecycle value that means "this document has been superseded" in the built-in enum. */
+const DEPRECATED_STATUS = "deprecated";
+
 /**
  * The legacy `status` value (`superseded`) an older `lore supersede` wrote. Never a legal lifecycle
  * value; since DEC-192 it is only ever READ here, by {@link statusIsSuperseded}.
  */
 const SUPERSEDED_STATUS = "superseded";
+
+/**
+ * The `status` value {@link wireOld} writes on the concept being superseded. DEC-192 (4) makes the
+ * profile the authority: the value is `deprecated` whenever the concept's type resolves to an
+ * effective lifecycle enum containing it — the built-in `[draft, stable, deprecated]` for every
+ * profile that declares none, which is the behaviour this command has had since LCLI-669 — and
+ * otherwise the value the type's `superseded_status` profile key names (DEC-192 (6)), e.g.
+ * `superseded_status = "approved"` on an ADR type whose enum is `[draft, approved]`.
+ *
+ * When neither exists the command refuses **by name**, quoting the enum and the key to set. That
+ * refusal is the point of the ruling rather than a nicety: this command writes the value straight
+ * into a document, and a value outside the enum would be a file its own `lore check` then rejects.
+ * A type the profile does not declare falls back to the built-in enum, exactly as
+ * `validateLifecycleStatus` judges such a concept.
+ */
+function resolveSupersededStatus(profile: Profile, concept: Concept): string {
+  const typeName = typeof concept.frontmatter.type === "string" ? concept.frontmatter.type : "";
+  const compiled = profile.types.get(canonicalType(typeName, profile));
+  const allowed = compiled?.lifecycleStatusEnum ?? BUILTIN_LIFECYCLE_STATUS;
+  if (allowed.includes(DEPRECATED_STATUS)) {
+    return DEPRECATED_STATUS;
+  }
+  if (compiled?.supersededStatus !== undefined) {
+    return compiled.supersededStatus;
+  }
+  const list = allowed.map((value) => `"${value}"`).join(", ");
+  throw new LoreError(
+    "validation",
+    `cannot mark "${concept.id}" superseded: the profile's lifecycle \`status\` enum for type "${typeName}" (${list}) has no "deprecated", and that type declares no \`superseded_status\``,
+    `add \`superseded_status = <one of ${list}>\` to the \`[[types]]\` table for "${typeName}" in .lore/profile.toml, or add "deprecated" to that type's \`status\` enum; nothing was written`,
+    { id: concept.id, type: typeName, key: "types.superseded_status" },
+  );
+}
 
 /** Whether the concept's `status` is the legacy `superseded` marker, matched case-insensitively. */
 function statusIsSuperseded(concept: Concept): boolean {

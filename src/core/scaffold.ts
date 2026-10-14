@@ -267,4 +267,12 @@ const DEFAULT_PROFILE_TOML = `# lore profile — committed, declarative type voc
 # sections = ["Summary", "Design"]    # required body headings (## …)
 # template = "spec.md"                # template under .lore/templates/
 # fields = { feature = { required = true }, status = { enum = ["draft", "approved"] } }
+# superseded_status = "approved"      # the \`status\` lore supersede writes when it retires one of
+#                                     # these documents. It must be a member of THIS type's \`status\`
+#                                     # enum (its own \`fields\`, else [base.fields], else the built-in
+#                                     # draft/stable/deprecated) or the profile will not load.
+#                                     # Declare it only where that enum has no "deprecated": when it
+#                                     # does, supersede writes "deprecated" and this key is unused.
+#                                     # It is profile configuration, not a document field, so it is
+#                                     # never emitted into .lore/schemas/<slug>.schema.json.
 `;
