@@ -49,14 +49,40 @@ function emittedStatusEnum(property: unknown): readonly string[] | undefined {
 const V01: BundleState = { okfVersion: "0.1", source: "legacy-missing" };
 const V02: BundleState = { okfVersion: "0.2", source: "declared" };
 
-/** A profile whose declared `status` enum REPLACES the built-in one: `[draft, approved]` only. */
+/**
+ * A profile whose declared `status` enum REPLACES the built-in one: `[draft, approved]` only.
+ *
+ * It declares a `Story` as well as an `ADR`, and that second type is load-bearing rather than
+ * incidental (LCLI-728 (2)). The 0.1 task-rollup carve-out is a claim about a type the profile
+ * DECLARES: with `ADR` alone, a `type: "Story"` document is an UNKNOWN type, so the carve-out
+ * return it exercised was the unknown-type one and the test proved less than its name said. The
+ * rollup test below asserts this precondition, so the fixture cannot quietly regress to that.
+ *
+ * Two more types carry the two halves of the version split, and telling them apart is the point:
+ *
+ * - `Story` declares `status` OPEN (`{}`, an optional string) rather than inheriting the base enum.
+ *   It has to, and that was measured: with the inherited `[draft, approved]`, a `status: "done"`
+ *   Story is refused by the generated TYPE SCHEMA (`invalid Story frontmatter: status: Invalid
+ *   option`) — which runs on every version — before the lifecycle check is consulted. An open
+ *   `status` mirrors how the built-in profile declares it, so on 0.1 the only thing that can let a
+ *   rollup value through is the carve-out this test names.
+ * - `Task` declares its OWN closed enum, `status = { enum = ["todo", "in-progress", "done"] }`,
+ *   which is what makes the 0.2 half a proof of anything. Without it, every declared type here
+ *   either inherits the base enum or falls back to the BUILT-IN triple, and a 0.2 assertion would
+ *   pass just as well against a hard-coded built-in — the exact defect LCLI-723 fixed. A type whose
+ *   own enum ACCEPTS `done` and REFUSES `draft` can only be judged by its own enum.
+ */
 function customProfile(okfVersion: "0.1" | "0.2"): Profile {
   return compileProfile(
     parseProfile(
       {
         profile: { name: "custom", okf_version: okfVersion },
         base: { fields: { type: { required: true }, status: { enum: ["draft", "approved"] } } },
-        types: [{ name: "ADR" }],
+        types: [
+          { name: "ADR" },
+          { name: "Story", fields: { status: {} } },
+          { name: "Task", fields: { status: { enum: ["todo", "in-progress", "done"] } } },
+        ],
       },
       "test-profile",
     ),
@@ -105,11 +131,49 @@ describe("effective status enum — a profile's DECLARED enum takes precedence (
     }
   });
 
-  test("the 0.1 task-rollup carve-out survives the precedence change", () => {
+  test("the 0.1 task-rollup carve-out holds on a DECLARED type, not an unknown one", () => {
     const profile = customProfile("0.1");
+    // The precondition that makes the rest of this test mean anything (LCLI-728 (2)): the carve-out
+    // is defined for a type the profile KNOWS. With `Story` undeclared, `validateLifecycleStatus`
+    // returned at the unknown-type guard instead and the test passed for the wrong reason.
+    expect(profile.types.has("Story")).toBe(true);
     for (const rollup of ["todo", "in-progress", "done"]) {
       expect(validateFrontmatter({ type: "Story", status: rollup }, { profile, bundleState: V01 })).toBe("Story");
     }
+  });
+
+  test("...and a type that re-declares `status` WITHOUT an enum falls back to the built-in on 0.2", () => {
+    // The FALLBACK arm, labelled for what it is. `Story` redeclares `status` fully — `{}` replaces
+    // the base field rather than merging with it — so its effective enum is the BUILT-IN triple and
+    // its `done` is refused against `[draft, stable, deprecated]`. That is worth pinning, but it is
+    // NOT evidence that the profile's own vocabulary is read: a hard-coded built-in passes this
+    // assertion too. The `Task` test below is the one that carries that claim.
+    const profile = customProfile("0.2");
+    expect(profile.types.has("Story")).toBe(true);
+    const err = thrownBy(() => validateFrontmatter({ type: "Story", status: "done" }, { profile, bundleState: V02 }));
+    expect(err.message).toMatch(/invalid OKF lifecycle status/);
+    expect(err.hint).toMatch(/draft, stable, or deprecated/);
+  });
+
+  test("...and a declared type's OWN enum is the one enforced on 0.2 — `done` in, `draft` out", () => {
+    // THE PROOF THAT THE EFFECTIVE ENUM IS READ PER TYPE (LCLI-723's whole point, LCLI-728 review).
+    // `Task` declares `[todo, in-progress, done]`. If the load check fell back to the built-in triple
+    // — hard-coded, as it was before LCLI-723 — `done` would be REFUSED here and `draft` accepted,
+    // which is precisely inverted from what this asserts. The two halves are therefore not
+    // interchangeable, and a mutation control in the record confirms the inversion.
+    const profile = customProfile("0.2");
+    expect(profile.types.has("Task")).toBe(true);
+
+    expect(validateFrontmatter({ type: "Task", status: "done" }, { profile, bundleState: V02 })).toBe("Task");
+    for (const inEnum of ["todo", "in-progress"]) {
+      expect(validateFrontmatter({ type: "Task", status: inEnum }, { profile, bundleState: V02 })).toBe("Task");
+    }
+
+    // The refusal names the TYPE'S OWN values, not the built-in ones.
+    const err = thrownBy(() => validateFrontmatter({ type: "Task", status: "draft" }, { profile, bundleState: V02 }));
+    expect(err.message).toMatch(/invalid OKF lifecycle status/);
+    expect(err.message).toMatch(/got "draft"/);
+    expect(err.hint).toMatch(/"todo", "in-progress", "done"/);
   });
 });
 
