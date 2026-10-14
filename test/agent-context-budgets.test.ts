@@ -1,19 +1,24 @@
 /**
  * LCLI-682 — the four role profiles declare context-budget TARGETS, and the compiler MEASURES a
- * compiled pack against them and reports it (MDL-7; ODOC-437 AC3). Both arms are proved here: a pack
- * within target reports it with no content named, and an overrun sets `over` and NAMES the content
- * that required it. A profile with no `[targets]` table is not reported at all, so its pack stays
- * byte-identical to before the feature — the property that keeps this additive.
+ * compiled pack against them and against ODOC-437 AC3's acceptance ceilings, and reports it
+ * (MDL-7; DEC-187). Both arms are proved here: a pack within target reports it with no content
+ * named, and an overrun sets `over` and NAMES the content that required it. Provenance rides with
+ * every figure; a class lore does not compose is not-applicable (`measured: null` plus a `note`),
+ * never a 0 or an absent key. A profile with no `[targets]` table is not reported at all.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runAgent } from "../src/commands/agent";
 import { compileAgentContext, renderAgentContextMarkdown } from "../src/core/agent-context";
 import { loadAgentProfiles } from "../src/core/agent-profile";
 import { loadBundle } from "../src/core/bundle";
+import type { OutputContext } from "../src/output";
+import { capture } from "./helpers";
 
 const TASK = "checkout validation";
+const JSON_OUTPUT: OutputContext = { mode: "json", color: false };
 const DECLARED =
   "[targets]\npolicy_and_role = 3000\ntask_contract = 2000\ntask_evidence = 6000\nlore_subtotal = 11000\n";
 
@@ -37,11 +42,16 @@ function doc(rel: string, body: string, title: string): void {
   );
 }
 
-/** The two profile documents (pinned `reference/rules`, ranked `specs/ui`) plus an optional `[targets]` tail. */
-function fixture(targets?: string): void {
+/**
+ * The two profile documents (pinned `reference/rules`, ranked `specs/ui`) plus an optional
+ * `[targets]` tail. `pinPad` grows the pinned body so the AC3 authored-bootstrap ceiling can be
+ * pushed over; `maxTokens` must then be large enough that the (never-truncated) pin still fits.
+ */
+function fixture(targets?: string, opts: { maxTokens?: number; pinPad?: number } = {}): void {
+  const pad = opts.pinPad === undefined ? "" : `\n${"checkout ".repeat(Math.ceil(opts.pinPad / 9))}`;
   doc(
     "reference/rules.md",
-    "# Rules\n\nCheckout validation checkout validation checkout validation.\n",
+    `# Rules\n\nCheckout validation checkout validation checkout validation.${pad}\n`,
     "Checkout validation rules",
   );
   doc(
@@ -53,12 +63,21 @@ function fixture(targets?: string): void {
   mkdirSync(join(path, ".."), { recursive: true });
   writeFileSync(
     path,
-    `schema_version = 1\nname = "frontend-dev"\ndescription = "Frontend implementation context."\nkind = "specialist"\nmax_tokens = 4000\npinned = ["reference/rules"]\nsources = ["specs/ui"]\n${targets ?? ""}`,
+    `schema_version = 1\nname = "frontend-dev"\ndescription = "Frontend implementation context."\nkind = "specialist"\nmax_tokens = ${opts.maxTokens ?? 4000}\npinned = ["reference/rules"]\nsources = ["specs/ui"]\n${targets ?? ""}`,
   );
 }
 
-function compile() {
-  return compileAgentContext(loadAgentProfiles(root), loadBundle(join(root, "docs")), "frontend-dev", TASK);
+function compile(maxTokens?: number, providerInput?: number) {
+  return compileAgentContext(
+    loadAgentProfiles(root),
+    loadBundle(join(root, "docs")),
+    "frontend-dev",
+    TASK,
+    maxTokens,
+    undefined,
+    undefined,
+    providerInput,
+  );
 }
 
 describe("agent context — declared context budgets (LCLI-682)", () => {
@@ -95,14 +114,50 @@ describe("agent context — declared context budgets (LCLI-682)", () => {
     expect(budgets?.loreSubtotal.over).toBe(true);
   });
 
-  test("code map and harness/tools are not-applicable, naming opum-cli as the composer", () => {
+  test("every lore figure carries its provenance; not-applicable is null + a note, never 0", () => {
     fixture(DECLARED);
     const budgets = compile().budgets;
-    expect(budgets?.codeMap.measured).toBeNull();
-    expect(budgets?.codeMap.over).toBe(false);
-    expect(budgets?.codeMap.note).toContain("opum-cli");
-    expect(budgets?.harnessAndTools.measured).toBeNull();
-    expect(budgets?.harnessAndTools.note).toContain("opum-cli");
+    for (const entry of [budgets?.policyAndRole, budgets?.taskEvidence, budgets?.loreSubtotal]) {
+      expect(entry?.measuredBy).toBe("chars/4 estimate");
+    }
+    for (const entry of [budgets?.codeMap, budgets?.harnessAndTools]) {
+      expect(entry?.measured).toBeNull();
+      expect(entry?.measuredBy).toBeUndefined();
+      expect(entry?.note).toBe("composed by opum-cli");
+    }
+  });
+
+  test("AC3 ceilings: authored bootstrap is policy+role+contract, task evidence is the ranked tier", () => {
+    fixture(DECLARED);
+    const budgets = compile().budgets;
+    expect(budgets?.authoredBootstrapCeiling.target).toBe(8000);
+    expect(budgets?.authoredBootstrapCeiling.measured).toBe(
+      (budgets?.policyAndRole.measured ?? 0) + (budgets?.taskContract.measured ?? 0),
+    );
+    expect(budgets?.authoredBootstrapCeiling.over).toBe(false);
+    expect(budgets?.taskEvidenceCeiling.target).toBe(16000);
+    expect(budgets?.taskEvidenceCeiling.measured).toBe(budgets?.taskEvidence.measured);
+  });
+
+  test("an AC3 authored-bootstrap ceiling overrun names the policy content, independent of a class target", () => {
+    // No policy_and_role target is declared, so the ceiling is the only thing that can flag this.
+    fixture("[targets]\ntask_evidence = 6000\n", { maxTokens: 200_000, pinPad: 40_000 });
+    const budgets = compile().budgets;
+    expect(budgets?.authoredBootstrapCeiling.over).toBe(true);
+    expect(budgets?.authoredBootstrapCeiling.content).toContain("reference/rules");
+  });
+
+  test("a manually supplied provider figure is recorded separately, with source manual", () => {
+    fixture(DECLARED);
+    const pack = compile(undefined, 4242);
+    expect(pack.providerUsage).toEqual({ inputTokens: 4242, source: "manual" });
+    // It never becomes the measured figure: the ceilings stay on lore's own estimate.
+    expect(pack.budgets?.taskEvidenceCeiling.measured).toBe(pack.budgets?.taskEvidence.measured);
+  });
+
+  test("no provider figure supplied: the slot is absent, not zero", () => {
+    fixture(DECLARED);
+    expect(compile().providerUsage).toBeUndefined();
   });
 
   test("the plain pack renders a Context budgets section, and an overrun names its content there too", () => {
@@ -111,6 +166,7 @@ describe("agent context — declared context budgets (LCLI-682)", () => {
     expect(markdown).toContain("## Context budgets");
     expect(markdown).toContain("OVER");
     expect(markdown).toContain("required by reference/rules");
+    expect(markdown).toContain("not applicable — composed by opum-cli");
   });
 
   test("task contract measures 0 without a contract and is not over", () => {
@@ -118,5 +174,20 @@ describe("agent context — declared context budgets (LCLI-682)", () => {
     const budgets = compile().budgets;
     expect(budgets?.taskContract.measured).toBe(0);
     expect(budgets?.taskContract.over).toBe(false);
+  });
+
+  test("CLI: --provider-input-tokens reaches the export as source manual", async () => {
+    fixture(DECLARED);
+    const stdout = capture();
+    const code = await runAgent({
+      root,
+      output: JSON_OUTPUT,
+      args: ["context", "frontend-dev", "--task", TASK, "--provider-input-tokens", "4242"],
+      stdout,
+    });
+    expect(code).toBe(0);
+    const envelope = JSON.parse(stdout.text());
+    expect(envelope.data.providerUsage).toEqual({ inputTokens: 4242, source: "manual" });
+    expect(envelope.data.budgets.authoredBootstrapCeiling.target).toBe(8000);
   });
 });
