@@ -263,6 +263,20 @@ export interface CompiledType {
    */
   readonly lifecycleStatusEnum: readonly string[];
   /**
+   * Whether {@link lifecycleStatusEnum} was **declared** (a `status` spec carrying an `enum`, own or
+   * inherited from `[base.fields]`) rather than falling back to {@link BUILTIN_LIFECYCLE_STATUS}.
+   *
+   * Kept BESIDE the enum because the enum alone cannot answer it: an open `status`, the built-in
+   * profile and a profile whose declared enum is byte-equal to the built-in triple all produce the
+   * same three values, so `lifecycleStatusEnum` conflates "no enum declared" with "this exact enum
+   * declared". A consumer that must act on a DECLARED closed vocabulary -- `lore check`'s
+   * `task-status-enum-inherited` warning is the first (LCLI-730, DEC-192 (8)) -- would otherwise skip
+   * the declared-built-in-triple case as though it were the fallback. `schema.ts`'s
+   * `isBuiltinLifecycleEnum` makes that conflation deliberately, for the REMEDY text, where naming
+   * the triple is correct either way; this flag is for the callers where it is not.
+   */
+  readonly lifecycleStatusDeclared: boolean;
+  /**
    * The `status` value `lore supersede` writes on this type when {@link lifecycleStatusEnum} has
    * no `deprecated` member (DEC-192 (6)) — the ADR type's `superseded_status` profile key.
    * `undefined` when the type declares none. Already validated at parse against
@@ -992,6 +1006,7 @@ export function compileProfile(parsed: ParsedProfile): Profile {
       requiredSections: type.sections,
       aliases: type.aliases ?? [],
       lifecycleStatusEnum: effectiveLifecycleStatusEnum(merged.status),
+      lifecycleStatusDeclared: merged.status?.enum !== undefined,
       declaredFields: new Set(fieldOrder),
       requiredFields: new Set(fieldOrder.filter((field) => merged[field]?.required === true)),
       acceptsStampedResource: acceptsStampedResource(merged.resource),

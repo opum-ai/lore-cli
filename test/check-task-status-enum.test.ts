@@ -73,6 +73,20 @@ const NON_COUPLED = build({
   types: [{ name: "Story", fields: {} }],
 });
 
+/**
+ * The DISCRIMINATING fixture: a base enum DECLARED and byte-equal to the built-in lifecycle triple.
+ * It lacks every rollup value, so it inherits a closed base `status` enum and the rule must fire —
+ * but its EFFECTIVE enum is indistinguishable from the compiler fallback, which is what an open
+ * `status` and the built-in profile also read. A detector that keys on the effective enum being the
+ * triple rather than on the enum being DECLARED skips exactly this case and nothing else, so this
+ * fixture is the only one that pins the distinction.
+ */
+const DECLARED_BUILTIN_TRIPLE = build({
+  profile: { name: "demo", okf_version: "0.1" },
+  base: { fields: { type: { required: true }, status: { enum: ["draft", "stable", "deprecated"] } } },
+  types: [{ name: "Story", fields: { tasks: { kind: "list" } } }],
+});
+
 /** The 0.1 built-in profile — its task-coupled `Arc` inherits an OPEN `status`, so it must stay silent. */
 const BUILTIN_01 = profileForBundle(defaultProfile(), V01);
 
@@ -96,7 +110,7 @@ describe("task-status-enum-inherited (LCLI-730, DEC-192 (8), (10))", () => {
     expect(finding.message).toContain("declare `status`"); // the remedy
     expect(finding.message).not.toContain("\n"); // Finding.message is single-line
 
-    // (b) the built-in profile SILENT — the control that catches keying on the fallback triple.
+    // (b) the built-in profile SILENT — its `Arc` inherits an OPEN `status`, so no enum is declared.
     expect(taskStatusEnumInheritedFindings(BUILTIN_01, ".lore/profile.toml")).toEqual([]);
 
     // (c) remedy arm 1: `status` declared OPEN on the type.
@@ -114,6 +128,20 @@ describe("task-status-enum-inherited (LCLI-730, DEC-192 (8), (10))", () => {
 
   test("a non-task-coupled 0.1 type with the same closed enum never warns", () => {
     expect(taskStatusEnumInheritedFindings(NON_COUPLED, ".lore/profile.toml")).toEqual([]);
+  });
+
+  // Pins the DECLARED-vs-FALLBACK distinction, and is the only test that does. Measured: reverting
+  // the guard to a comparison against the built-in triple (`isBuiltinLifecycleStatus`) leaves every
+  // other test in this file green and reddens this one alone, because the two shapes below read the
+  // SAME `lifecycleStatusEnum` while only one of them declares anything.
+  test("a DECLARED enum byte-equal to the built-in triple still warns, though the built-in profile reads the same values", () => {
+    const findings = taskStatusEnumInheritedFindings(DECLARED_BUILTIN_TRIPLE, ".lore/profile.toml");
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.message).toContain('"draft"');
+    expect(findings[0]?.message).toContain('"stable"');
+    expect(findings[0]?.message).toContain('"deprecated"');
+    // the same three values, reached WITHOUT a declared enum, stay silent — see BUILTIN_01 above.
+    expect(taskStatusEnumInheritedFindings(BUILTIN_01, ".lore/profile.toml")).toEqual([]);
   });
 
   test("the warning is not an acceptance: a document the closed enum refuses is STILL refused (AC2)", () => {

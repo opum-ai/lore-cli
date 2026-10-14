@@ -65,7 +65,7 @@ import { decodeTarget, isExternalTarget, pathPart, validateLink } from "./links"
 import { type ManagedTaskRow, regenerateTaskBlock } from "./managed-block";
 import { type BundleState, CURRENT_OKF_VERSION, type TaskRollupField } from "./okf-version";
 import { compareCodeUnits } from "./order";
-import { ATTESTED_COMPUTATION_TYPE, BUILTIN_LIFECYCLE_STATUS, type Profile, profileTypeDeclaresField } from "./profile";
+import { ATTESTED_COMPUTATION_TYPE, type Profile, profileTypeDeclaresField } from "./profile";
 import { RECONCILED_STATUSES, type ReconciledStatus } from "./reconcile";
 import { claimVersion, RELATION_KINDS, readRelations, relationVersionState } from "./relations";
 import { foldSchemaName, readGeneratorStamp, typeDirectory } from "./schema";
@@ -1240,14 +1240,6 @@ export function agentProfilePinCapacityFindings(
 
 // ── Profile-scoped load-time warnings (LCLI-730) ────────────────────────────────
 
-/** Whether `values` IS the built-in lifecycle triple, by value — the "no DECLARED enum" shape. */
-function isBuiltinLifecycleStatus(values: readonly string[]): boolean {
-  return (
-    values.length === BUILTIN_LIFECYCLE_STATUS.length &&
-    BUILTIN_LIFECYCLE_STATUS.every((value, index) => values[index] === value)
-  );
-}
-
 /**
  * The `task-status-enum-inherited` findings (LCLI-730, DEC-192 (8), opum-ai/opum-doc#1023; surface
  * ratified by DEC-192 (10), opum-ai/opum-doc#1053): one warning per OKF **0.1** task-coupled type
@@ -1265,11 +1257,14 @@ function isBuiltinLifecycleStatus(values: readonly string[]): boolean {
  * ({@link import("./okf-version").taskRollupFieldFor}), so `status` there is the LIFECYCLE key and
  * closing it collides with nothing.
  *
- * An OPEN `status` is silent by construction: the effective enum is the compiled FALLBACK
- * ({@link BUILTIN_LIFECYCLE_STATUS}) exactly when no enum is declared, and an open field, the
- * built-in profile and a declared-open override all read it. A declared enum byte-equal to that
- * fallback is indistinguishable from it in the compiled profile and is treated as the built-in case
- * — the same conflation `schema.ts`'s own `isBuiltinLifecycleEnum` already makes.
+ * The "DECLARED" guard reads {@link import("./profile").CompiledType.lifecycleStatusDeclared}, NOT
+ * a comparison against the built-in triple. The distinction is load-bearing and was measured: an
+ * open `status`, the built-in profile, and a profile whose declared enum is byte-equal to the
+ * built-in triple all yield the SAME {@link import("./profile").CompiledType.lifecycleStatusEnum},
+ * so a triple comparison silently skips the third case -- a declared closed enum lacking every
+ * rollup value, which is exactly the shape this rule exists for. Only an enum that was not declared
+ * at all is out of scope; `schema.ts`'s `isBuiltinLifecycleEnum` still makes the conflation
+ * deliberately, for the REMEDY text, where naming the triple is right either way.
  */
 export function taskStatusEnumInheritedFindings(profile: Profile, profileFile: string): CheckFinding[] {
   if (profile.okfVersion !== "0.1") {
@@ -1280,10 +1275,10 @@ export function taskStatusEnumInheritedFindings(profile: Profile, profileFile: s
     if (!profileTypeDeclaresField(type.name, "tasks", profile)) {
       continue; // not task-coupled -- no rollup key to collide with
     }
-    const enumValues = type.lifecycleStatusEnum;
-    if (isBuiltinLifecycleStatus(enumValues)) {
+    if (!type.lifecycleStatusDeclared) {
       continue; // no DECLARED enum -- an open `status`, or the built-in profile: the fallback, not a defect
     }
+    const enumValues = type.lifecycleStatusEnum;
     if (RECONCILED_STATUSES.every((value) => enumValues.includes(value))) {
       continue; // the remedy is already applied -- the declared enum carries the rollup values
     }
