@@ -7,11 +7,10 @@
  * primary checkout and a review worktree write the SAME entry.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runLink } from "../src/commands/link";
-import { loadBundle } from "../src/core/bundle";
 import { originRepositoryName, repositoryNameFromRemoteUrl, resolveDecisionQualifier } from "../src/core/decision-ref";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
@@ -40,6 +39,42 @@ function initRepoWithOrigin(dir: string, url: string): void {
   Bun.spawnSync(["git", "init", "-q"], { cwd: dir, stdout: "pipe", stderr: "pipe" });
   appendFileSync(join(dir, ".git", "config"), `[remote "origin"]\n\turl = ${url}\n`);
 }
+
+/**
+ * Whether this filesystem can hold two names differing ONLY in case (LCLI-727). It cannot on macOS's
+ * default APFS or on NTFS: the second write lands on the SAME inode, so a fixture written that way is
+ * silently a ONE-file fixture and any claim drawn from it is a claim about the filesystem, not about
+ * the code. Probed at RUNTIME rather than read off `process.platform`, because APFS can be formatted
+ * case-sensitive and a Linux mount can be case-insensitive — the platform is not the property these
+ * tests need.
+ *
+ * NOTE, because it is a bug this file has already shipped once: the probe is deliberately NOT wrapped
+ * in a try/catch. A temp directory that cannot be created or written is a broken environment, and a
+ * probe that silently answered "no" would skip the proof everywhere while looking considered. It
+ * throws, loudly, at registration time.
+ *
+ * `test.skipIf`'s condition is evaluated at REGISTRATION time, before any `beforeEach`, which is why
+ * this is a module-level constant and touches no per-test `root`.
+ */
+const CASE_SENSITIVE_FILESYSTEM: boolean = (() => {
+  const dir = mkdtempSync(join(tmpdir(), "lore-case-probe-"));
+  try {
+    writeFileSync(join(dir, "probe"), "");
+    writeFileSync(join(dir, "PROBE"), "");
+    return readdirSync(dir).length === 2;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+})();
+
+/**
+ * The marker the two case-collision tests carry IN THEIR NAME when, and only when, they are skipped,
+ * so a skip says why on the face of it. Empty where the tests actually run, because a passing test
+ * announcing a precondition it has already met reads as though it had been skipped.
+ */
+const CASE_SKIP_MARKER = CASE_SENSITIVE_FILESYSTEM
+  ? ""
+  : " [SKIPPED: needs a case-sensitive filesystem — a runtime probe wrote `probe` and `PROBE` and got one entry back]";
 
 function adr(id: string, body = "Body.\n"): void {
   writeFileSync(join(root, "docs", "adr", `${id}.md`), `---\ntype: ADR\ntitle: ${id}\n---\n\n${body}`);
@@ -273,12 +308,19 @@ describe("lore link --decision: the label guards are skipped on the doc-side arm
   // refused beside it, so it can never be set here — yet the guards ran on this arm regardless and
   // refused a document id for a reason the arm can never encounter.
   //
-  // Only the COMMA half is observable from here, and that is not an omission: `loadBundle` folds
-  // case-colliding ids, so two ids differing only by case cannot both be concepts of a loaded bundle
-  // and the case-collision guard can never fire on one. It is reachable only from a graph built by
-  // hand (`test/link.test.ts` does exactly that, for `lore rename`'s call pattern). The
-  // `--decision` arm skips BOTH through the one `sendsLabel` predicate, and the comma arm below is
-  // what holds that predicate in place — reverting it to `!noBackRef` reddens it.
+  // The COMMA half is provable anywhere. The CASE-COLLISION half needs a filesystem that can hold
+  // two names differing only in case, so its two tests below are gated on a runtime probe.
+  //
+  // An earlier revision of this file got that wrong, and the way it got it wrong is the reason this
+  // comment is long. It asserted that the pair "cannot be observed from here" because `loadBundle`
+  // "folds case-colliding ids", and passed `loadBundle` the fixture to prove it. That expectation
+  // came from this machine's case-insensitive APFS, where the second write lands on the same inode —
+  // a claim about a FILESYSTEM, reported as a claim about `loadBundle`. It was green on macOS and on
+  // windows-latest (NTFS collapses the pair too) and red on the case-sensitive ubuntu runner, which
+  // is the only place it could show. The lesson, as a rule rather than an incident: a test whose
+  // fixture differs only by case proves nothing until a case-sensitive filesystem has run it.
+  // The `--decision` arm skips BOTH halves through the one `sendsLabel` predicate, and the four
+  // tests here are what hold it in place — reverting it to `!noBackRef` reddens the comma pair.
   test("a comma-bearing ADR id links with --decision", async () => {
     initRepoWithOrigin(root, ORIGIN);
     adr("0001-a,b");
@@ -292,15 +334,28 @@ describe("lore link --decision: the label guards are skipped on the doc-side arm
     await expect(link(["adr/0001-a,b", "task-42"])).rejects.toThrow(/comma/i);
   });
 
-  test("the case-collision half cannot be observed from here: loadBundle folds such ids", () => {
-    // Not a test of the skip — a MEASUREMENT of why the skip cannot be observed from here, so a
-    // later reader does not spend an afternoon building a fixture that cannot exist. See this
-    // describe's comment. The guard's own test builds the graph by hand (test/link.test.ts).
-    adr("0001-a");
-    adr("0001-A");
-    expect(existsSync(join(root, "docs", "adr", "0001-A.md"))).toBe(true); // the file IS there
-    expect([...loadBundle(join(root, "docs"), {}).concepts.keys()]).toEqual(["adr/0001-a"]);
-  });
+  // The real proof of the case-collision half, both ways: the doc-side arm links the id, the task
+  // arm still refuses it. Gated on the runtime probe rather than on the platform — see it above.
+  test.skipIf(!CASE_SENSITIVE_FILESYSTEM)(
+    `a case-colliding ADR id links with --decision${CASE_SKIP_MARKER}`,
+    async () => {
+      initRepoWithOrigin(root, ORIGIN);
+      adr("0001-a");
+      adr("0001-A");
+      expect((await link(["adr/0001-A", "--decision", "DEC-9"])).code).toBe(0);
+      expect(decisionsOf("0001-A")).toEqual(["lore-cli:DEC-9"]);
+    },
+  );
+
+  test.skipIf(!CASE_SENSITIVE_FILESYSTEM)(
+    `...and that same id is still refused on the task arm${CASE_SKIP_MARKER}`,
+    async () => {
+      initRepoWithOrigin(root, ORIGIN);
+      adr("0001-a");
+      adr("0001-A");
+      await expect(link(["adr/0001-A", "task-42"])).rejects.toThrow(/differing only by case/);
+    },
+  );
 });
 
 // ── LCLI-727 F13: the unreadable-remote catch branch is reachable ─────────────
