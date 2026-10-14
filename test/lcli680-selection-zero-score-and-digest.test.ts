@@ -256,21 +256,31 @@ describe("LCLI-680 — zero-score filler is excluded from optional-evidence sele
       expect(pack.catalog.some((entry) => entry.reason === "omitted-by-budget")).toBe(true);
     }
 
-    // THE CONVERSE (LCLI-722 review addendum). Everything asserted above looks at ZERO-SCORE entries,
-    // and these packs have none — so a mutant that labelled EVERY `selectedCount: 0` source
-    // `omitted-by-relevance` would satisfy every one of those assertions. Measured, that mutant would
-    // have to move SEVEN labels in pack A and TEN in pack B, every one of them a source with a
-    // POSITIVE top score that the cap cut. The positive-score population is therefore asserted
-    // directly, with count floors so neither loop can pass on zero inputs.
+    // THE POSITIVE-SCORE POPULATION THE CAP CUT, asserted directly. Measured, a mutant labelling
+    // every `selectedCount: 0` source `omitted-by-relevance` would move SEVEN labels in pack A and
+    // TEN in pack B, every one a source with a POSITIVE top score.
+    //
+    // The filter deliberately does NOT include `reason === "omitted-by-budget"` (LCLI-722 review):
+    // filtering on the reason and then asserting the reason cannot fail, and an earlier form of this
+    // did exactly that. The population is "cut by the cap" as the DATA describes it — nothing
+    // selected, a positive score — and the reason is then the thing under test.
     for (const pack of [packA, packB]) {
-      expect(pack.catalog.filter((entry) => entry.topScore === 0).length).toBeGreaterThan(0);
-      const cutByBudget = pack.catalog.filter(
-        (entry) => entry.selectedCount === 0 && entry.topScore > 0 && entry.reason === "omitted-by-budget",
-      );
-      expect(cutByBudget.length).toBeGreaterThan(0);
-      for (const entry of cutByBudget) {
-        expect(entry.reason).not.toBe("omitted-by-relevance");
+      const cutByCap = pack.catalog.filter((entry) => entry.selectedCount === 0 && entry.topScore > 0);
+      expect(cutByCap.length).toBeGreaterThan(0);
+      for (const entry of cutByCap) {
+        expect(entry.reason).toBe("omitted-by-budget");
       }
+    }
+
+    // THE ZERO-SCORE FLOOR, and what actually satisfies it (LCLI-722 review): the only `topScore: 0`
+    // source in either pack is the PINNED `reference/cli-contract`, with `selectedCount: 1`. It is
+    // therefore NOT a zero-score-nothing-selected population — there is no such population here, which
+    // is exactly why the relevance loops above are vacuous and the distinction had to move to the
+    // synthetic bundle. Asserting that shape rather than a bare count keeps the floor honest.
+    for (const pack of [packA, packB]) {
+      const zeroScore = pack.catalog.filter((entry) => entry.topScore === 0);
+      expect(zeroScore.length).toBeGreaterThan(0);
+      expect(zeroScore.every((entry) => entry.selectedCount > 0)).toBe(true);
     }
 
     // AND THE SAMPLES' OWN SOURCES, for the same reason — asserted for what they ARE rather than for

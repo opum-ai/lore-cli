@@ -90,51 +90,52 @@ delegates = ["frontend-dev", "backend-dev", "qa-reviewer"]
 
 Contract:
 
-- `schema_version` is required and equals `1`.
+- `schema_version` is required and equals integer `1`.
 - `name` is required lower-kebab, matches the filename stem, and is unique.
-- `description` is required: single-line routing metadata, at most 300
-  characters. Not injected behavioral guidance.
-- `kind` is required: `specialist` or `orchestrator`.
+- `description` is required, single-line routing metadata of at most 300
+  characters. It is not injected behavioral guidance.
+- `kind` is required and is `specialist` or `orchestrator`.
 - `max_tokens` is an optional positive safe integer and defaults to `8000`. It is
-  a ceiling on the pack, and a promise about the declaration: the
+  a ceiling on the pack, and it is also a promise about the declaration: the
   profile's **complete declared set** — every candidate of every `pinned` and
-  `sources` reference, plus the auto-pinned Constitution — must fit.
+  `sources` reference, plus the auto-pinned Constitution — must fit inside it.
   A profile whose declared set cannot fit is reported by `lore check`
-  as `agent-profile-capacity`, naming the profile, its budget and the sources that
-  cannot fit (LCLI-642). A source that **several** profiles name — in
+  as `agent-profile-capacity`, naming the profile, its budget, and the sources
+  that cannot fit (LCLI-642). A source that **several** profiles name — in
   `pinned` or `sources` — is stricter: `lore check` fails with
   `agent-profile-pin-capacity` (LCLI-702, DEC-172 (4at)) when ANY profile that
   names it is over capacity, because growing such a source costs every one of
-  them: the change must move every pinning profile's budget, not only the one it
-  edited. That measurement is the size of the set **as a real
-  pack renders it** — the per-item and catalog score annotations at full
+  them, so the change must move every pinning profile's budget, not only the one
+  it edited. That measurement is the size of the set **as a real
+  pack renders it** — the per-item and catalog score annotations at full score
   width, and the worst-case bundle-wide query section reserved rather than
-  rendered — so it stands for the largest pack a task can compile, up to the
+  rendered — so it stands for the largest pack a task can compile, up to the one
   residual [ADR-0025](../adr/0025-the-capacity-measurement-reserves-the-worst-case-bundle-wide-query-section-and-renders-score-annotations-at-full-width-dec-98.md)
-  records: the pack header renders the task text verbatim, so a task
-  longer than the measurement's stand-in can still consume the margin.
-  Within that bound, a budget that satisfies it cannot drop declared evidence on a
-  task, and one that only appears to cannot hide behind that appearance (LCLI-662, DEC-98 B). DEC-11 rules that this ships as a **warning for one
+  records and measures: the pack header renders the task text verbatim, so a task
+  much longer than the measurement's fixed stand-in can still consume the margin.
+  Within that bound, a
+  budget that satisfies it cannot start dropping declared evidence on a task, and
+  a budget that only appears to satisfy it cannot hide behind that appearance (LCLI-662, DEC-98 B). DEC-11 rules that this ships as a **warning for one
   release and then as an error**; the flip is held by LCLI-646. The finding is
-  computed from the declaration and the bundle, never from a task, so it never depends on what a
-  particular pack retains — task-ranked omission is
+  computed from the declaration and the bundle, never from a task, so it is the
+  same on every task and never
+  depends on what a particular pack happens to retain — task-ranked omission is
   normal retention and is not this finding.
 - `targets` is an optional table of context-budget TARGETS the profile declares
   (LCLI-682; MDL-7, ODOC-437 AC3, DEC-187): `policy_and_role`, `task_contract`,
   `task_evidence` and `lore_subtotal`, each a positive integer of estimated
-  tokens. Three are **defaults the compiler measures a compiled pack against and
-  reports**; `task_evidence` is ENFORCED for selection when declared (DEC-194
-  (4), LCLI-722) — highest-scoring first, skipping rather than stopping, and
-  `CONTEXT_REQUIRED_CONTENT_OVER_BUDGET` if reserved required content cannot fit.
-  `max_tokens` above stays the ceiling. The report is additive on
-  `agent.context.export` as `budgets`, present only when a profile declares a
-  target, and rendered as the pack's `## Context budgets` section.
+  tokens. They are **design defaults the compiler measures a compiled pack
+  against and reports**; only `task_evidence` is ENFORCED for selection, and
+  `CONTEXT_REQUIRED_CONTENT_OVER_BUDGET` over reserved content. `max_tokens`
+  above stays the ceiling. The report is additive on `agent.context.export` as
+  `budgets`, present only when a profile declares at least one target, and also
+  rendered as the pack's `## Context budgets` section.
   - **Classes.** Policy and role is the pinned tier, task evidence the ranked
     sections, task contract the `--task-contract` block, and `loreSubtotal` the
     pack lore composes. `codeMap` and `harnessAndTools` are composed by
-    `opum-cli`, so they are reported **not-applicable** — `measured: null`,
-    reason `composed by opum-cli`, never a `0` or an absent key a consumer could
-    read as a measurement.
+    `opum-cli`, so they are reported **not-applicable** — `measured: null` with
+    the reason `composed by opum-cli`, never a `0` and never an absent key, either
+    of which a consumer could read as a measurement.
   - **AC3 ceilings.** `authoredBootstrapCeiling` (8k) measures policy and role
     **plus** task contract; `taskEvidenceCeiling` (16k) measures the ranked tier.
     The code map is generated and the harness floor is not authored, so neither
@@ -143,7 +144,8 @@ Contract:
     (MDL-10). A class whose estimate exceeds its target — or a ceiling — sets
     `over` and names the content that required it, largest first.
   - **Provider usage.** `lore agent context --provider-input-tokens <n>` records
-    the pack's `providerUsage` with `source: "manual"`; `opum-cli`'s gateway records `source: "provider-reported"` (MDL-15). A manual figure is
+    the pack's `providerUsage` with `source: "manual"`; `opum-cli`'s model
+    gateway records `source: "provider-reported"` (MDL-15). A manual figure is
     never treated as provider-reported — the ceilings are checked against lore's
     own estimate.
   - A profile that declares no target is not reported at all, so its pack stays
