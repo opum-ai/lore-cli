@@ -394,24 +394,47 @@ export function slugForTypeName(name: string): string {
  */
 export function loadProfile(options: LoadProfileOptions = {}): Profile {
   const root = options.root ?? process.cwd();
-  // A present-but-empty `.toml` (the commented file `lore init` scaffolds) is NOT a populated
-  // profile, so it must not shadow a real `.json` form — fall through to it, exactly as an absent
-  // `.toml` would. Only a non-empty profile (either form) is compiled; otherwise the default.
+  const resolved = resolveProfileDoc(root);
+  return resolved === null ? defaultProfile() : compileProfile(parseProfile(resolved.doc, resolved.path));
+}
+
+/**
+ * The repo-root-relative path of the profile file actually **in effect** under `root`, or `undefined`
+ * when the built-in default loads (no populated profile: an absent file, or the present-but-empty
+ * commented `.toml` `lore init` scaffolds). Shares {@link resolveProfileDoc} with {@link loadProfile},
+ * so a finding attributed to "the profile file"
+ * ({@link import("./check").taskStatusEnumInheritedFindings}, LCLI-730) names the SAME file the load
+ * read — the lower-precedence `.json` form included, and even when an empty `.toml` skeleton sits
+ * beside a populated `.json`.
+ */
+export function activeProfilePath(root: string): string | undefined {
+  return resolveProfileDoc(root)?.path;
+}
+
+/**
+ * Read and parse the populated profile under `root`, or `null` for the zero-config default. The
+ * shared resolver behind {@link loadProfile} and {@link activeProfilePath}.
+ *
+ * A present-but-empty `.toml` (the commented file `lore init` scaffolds) is NOT a populated profile,
+ * so it must not shadow a real `.json` form — it falls through to it, exactly as an absent `.toml`
+ * would. Only a non-empty profile (either form) is returned; otherwise the default.
+ */
+function resolveProfileDoc(root: string): { path: string; doc: Record<string, unknown> } | null {
   const tomlText = readProfileText(join(root, PROFILE_REL_PATH), PROFILE_REL_PATH);
   if (tomlText !== undefined) {
     const doc = parseToml(tomlText);
     if (!isEmptyDoc(doc)) {
-      return compileProfile(parseProfile(doc, PROFILE_REL_PATH));
+      return { path: PROFILE_REL_PATH, doc };
     }
   }
   const jsonText = readProfileText(join(root, PROFILE_JSON_REL_PATH), PROFILE_JSON_REL_PATH);
   if (jsonText !== undefined) {
     const doc = parseJson(jsonText);
     if (!isEmptyDoc(doc)) {
-      return compileProfile(parseProfile(doc, PROFILE_JSON_REL_PATH));
+      return { path: PROFILE_JSON_REL_PATH, doc };
     }
   }
-  return defaultProfile();
+  return null;
 }
 
 /**

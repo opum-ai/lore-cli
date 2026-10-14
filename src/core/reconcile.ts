@@ -31,8 +31,12 @@ import { LoreError } from "../errors";
 /** The three derived rollup values (ADR-0009 §3, backlog-cli-contract.md §3.2). */
 export type ReconciledStatus = "todo" | "in-progress" | "done";
 
-/** The closed set {@link ReconciledStatus} draws from, for validating a `[reconcile.overrides]` target. */
-const RECONCILED_STATUSES: readonly ReconciledStatus[] = ["todo", "in-progress", "done"];
+/**
+ * The closed set {@link ReconciledStatus} draws from, for validating a `[reconcile.overrides]` target.
+ * Exported so a consumer that must NAME the three rollup values — `check.ts`'s
+ * `task-status-enum-inherited` warning (LCLI-730) — reads the one source rather than respelling them.
+ */
+export const RECONCILED_STATUSES: readonly ReconciledStatus[] = ["todo", "in-progress", "done"];
 
 /** Where one task's status falls in the project's ordered {@link StatusFlow}. */
 type StatusPosition = "not-started" | "active" | "terminal";

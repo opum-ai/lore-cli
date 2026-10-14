@@ -4,6 +4,11 @@
  * field is the task-rollup key for task-coupled types (`check.ts`'s version-selected rollup) whose
  * vocabulary is `todo`/`in-progress`/`done`. Proved both ways on both versions, plus the rollup
  * carve-out that made the broad reading wrong.
+ *
+ * The rollup carve-out below holds for the BUILT-IN profile, whose base `status` is an OPEN optional
+ * string. It does NOT hold for a profile that CLOSES `status` on a 0.1 task-coupled type: there the
+ * generated TYPE SCHEMA refuses the rollup value before the lifecycle check is reached. That scoping
+ * is LCLI-730 (DEC-192 (8), (10)) — the `task-status-enum-inherited` warning names it.
  */
 import { describe, expect, test } from "bun:test";
 import type { BundleState } from "../src/core/okf-version";
@@ -36,9 +41,15 @@ describe("lifecycle status enum — ADRs, both OKF versions (LCLI-669, DEC-192)"
     });
   }
 
-  test("0.1: a Story carrying the ROLLUP vocabulary in `status` still passes (the carve-out)", () => {
-    // On 0.1 `status` IS the task-rollup key; the lifecycle enum must not reach it there, or the
-    // whole status-drift surface breaks (this is the 38 -> 9 finding, decided by the leader).
+  test("0.1: a Story carrying the ROLLUP vocabulary in `status` still passes ON THE BUILT-IN profile, whose base `status` is OPEN (the carve-out)", () => {
+    // Scoped to the BUILT-IN profile (LCLI-730, DEC-192 (8), (10)): `validate` compiles
+    // `defaultProfile()`, whose base `status` is an OPEN optional string, so the generated TYPE
+    // SCHEMA accepts any value and only the lifecycle check could refuse it — and on 0.1 that check
+    // returns early for a non-ADR type, leaving the rollup vocabulary alone. The claim is FALSE for
+    // a profile that CLOSES `status`: there the type schema refuses `status: done` before the
+    // lifecycle check is reached, which is exactly what the `task-status-enum-inherited` warning
+    // (LCLI-730) names. On 0.1 `status` IS the task-rollup key, or the whole status-drift surface
+    // breaks (this is the 38 -> 9 finding, decided by the leader).
     for (const rollup of ["todo", "in-progress", "done"]) {
       expect(validate({ type: "Story", status: rollup }, V01, "docs/stories/x.md")).not.toThrow();
     }
