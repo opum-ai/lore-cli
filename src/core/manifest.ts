@@ -497,11 +497,26 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     name: "link",
     summary: "Add task ids to a concept's tasks: + the doc: back-ref",
     args: "<id> <taskId…>",
-    flags: [{ name: "no-back-ref", takesValue: false, summary: "Skip the doc: label write to the task" }],
+    flags: [
+      { name: "no-back-ref", takesValue: false, summary: "Skip the doc: label write to the task" },
+      {
+        name: "decision",
+        takesValue: true,
+        summary: "Link a decision id instead of task ids, as <repo>:DEC-N (doc-side only; repeatable)",
+      },
+      {
+        name: "repo",
+        takesValue: true,
+        summary: "The repository qualifier for a bare decision id; always wins. Defaults to the origin remote's name",
+      },
+    ],
     json: true,
     kind: "link.result",
     exitCodes: exitCodesFor(["bundle", "profile", "write", "backlog"]),
-    examples: ["lore link stories/bulk-archive-orders task-42 task-57"],
+    examples: [
+      "lore link stories/bulk-archive-orders task-42 task-57",
+      "lore link adr/0012-new-decision --decision DEC-192",
+    ],
   },
   {
     name: "unlink",

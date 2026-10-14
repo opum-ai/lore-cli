@@ -496,14 +496,21 @@ lore is the sole committer of `backlog/`), so it is never left uncommitted for t
 next `lore sync` to sweep up; a `--no-back-ref` link or a no-op re-link writes
 nothing to Backlog and so commits nothing.
 
+`lore link` also links DECISION ids (LCLI-670; DEC-192 (2), (5)): `--decision <id…>` adds
+repository-qualified ids to a concept's `decisions:` frontmatter (mirroring `tasks:`). The write is
+document-side only — a decision has no back-reference to edit — so `--no-back-ref` is refused. Every
+entry is `<repo>:DEC-N`; a bare `DEC-N` takes `--repo` when given, else the `origin` remote's name,
+and otherwise the command refuses and says to pass `--repo`.
+
 ```
 lore link stories/bulk-archive-orders task-42 task-57
+lore link adr/0012-new-decision --decision DEC-192
 ```
 
 | | |
 |---|---|
-| **Args** | `<id>` `<taskId…>` |
-| **Key flags** | `--no-back-ref` (skip the `doc:` label write to the task) |
+| **Args** | `<id>` `<taskId…>`, or `<id>` with `--decision <decisionId…>` |
+| **Key flags** | `--no-back-ref` (skip the `doc:` label write to the task) · `--decision <id…>` (link decision ids, document-side only) · `--repo <name>` (a bare decision id's qualifier; overrides the remote) |
 | **Output** | `kind: link.result` — links added / already present, plus the `backlog/` commit outcome. Emitted **only on exit `0`**; if any task's back-reference edit (or the `backlog/` commit) fails, stdout stays empty and the same per-task detail moves into the standard `--json` error envelope's `input` on stderr (cli-contract §4/§5) — never a partial-success envelope on stdout (LCLI-58). |
 | **Exit** | `0` ok · `2` usage (bad flag, comma-bearing id) · `3` concept or task id not found · `4` writing into a managed region denied · `5` `<id>` collides case-insensitively with another concept · `6` a task's back-reference edit failed, or the `backlog/` commit failed (drift); against a Quest-backed bundle, a missing/invalid actor declaration fails the same way but reports `validation` instead (see `lore instructions linking`) |
 
