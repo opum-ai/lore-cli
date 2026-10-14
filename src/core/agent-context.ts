@@ -19,6 +19,7 @@ import type { Concept } from "./concept";
 import { compareCodeUnits } from "./order";
 import { query, scoreBm25Records } from "./query";
 import {
+  CONTEXT_REQUIRED_CONTENT_OVER_BUDGET,
   CONTEXT_REQUIRED_SOURCE_MISSING,
   isMandatoryLink,
   type ParsedTaskContract,
@@ -624,22 +625,105 @@ function compilePack(
     );
   }
 
+  // The REQUIRED candidates, computed HERE — before the query section is sized, and well before the
+  // ranked-evidence loop — because both of those must reserve room against a pack that already holds
+  // them (DEC-194 (5); the full rationale rides with the cap below).
+  const required = ordered.filter((candidate) => candidate.conceptId === constitutionId);
+  const requiredKeys = new Set(required.map((candidate) => candidate.key));
+
   // The query section is reserved BEFORE ranked evidence fills the rest (it is small and, per the
   // ADR's measurement, answers far more questions than the profile's ranked sections do), shrinking
-  // only when the pins leave no room for all three hits.
+  // only when the rest of the pack — the pins AND the required content — leaves no room for all
+  // three hits.
+  //
+  // It is sized against a pack that ALREADY HOLDS the required candidates (LCLI-722 review,
+  // blocking), not against the pins alone. Required content is admitted first below and reserves its
+  // own room in the pack that is finally rendered, so a section sized against a pins-only pack is
+  // measured against a pack this compiler never emits: where the required content fits the budget
+  // but not alongside all three hits, the pins-only reserve pushed the mandatory-content floor over
+  // the budget and the compile FAILED although the required content alone fits. That is DEC-194
+  // (5)'s exception tested against the wrong object, and it is also the rule stated two blocks up
+  // broken by the very section it describes — "the query section ... must never turn a pack that
+  // used to compile into a failure".
   let queryHitLimit = withQueryHits ? AGENT_CONTEXT_QUERY_HIT_LIMIT : 0;
-  while (queryHitLimit > 0 && build([], queryHitLimit).tokenEstimate > effectiveBudget) queryHitLimit--;
+  while (queryHitLimit > 0 && build(required, queryHitLimit).tokenEstimate > effectiveBudget) queryHitLimit--;
   // With no room for a single hit the section still says why (the budget, or an empty corpus) when
   // that line fits; when even that does not, the section is dropped, which is the floor's own shape
   // and so always fits. `queryHitsOmitted` carries the count either way.
-  const querySection = withQueryHits && (queryHitLimit > 0 || build([], 0).tokenEstimate <= effectiveBudget);
+  const querySection = withQueryHits && (queryHitLimit > 0 || build(required, 0).tokenEstimate <= effectiveBudget);
+
+  // THE EVIDENCE CAP (DEC-194 (4), LCLI-722). A profile that declares `[targets].task_evidence`
+  // selects ranked evidence only up to that many tokens, highest-scoring first — `ordered` is
+  // already in score order. A profile that declares NO targets keeps exactly the behaviour it had:
+  // the cap is never inferred, because lore is published and a pack silently bounded by a number
+  // the profile never wrote would surprise external users who never asked for one.
+  //
+  // REQUIRED evidence is never dropped (MDL-9). In this tier the required content is the bundle's
+  // Constitution when the profile RANKS it in `sources` — the one candidate the ranking keeps at
+  // zero score on purpose, because it is mandatory policy rather than ranked evidence. If that
+  // cannot fit the cap the compile FAILS: a pack silently missing mandatory content is
+  // indistinguishable downstream from a complete one, which is the whole reason this is an error
+  // and not an omission.
+  //
+  // RESERVING ITS ROOM is what makes that guard mean anything, and the first version of this change
+  // did not (LCLI-722 review, blocking). `ordered` is SCORE-ordered, so the Constitution sorts LAST
+  // at score zero: higher-scoring evidence fills the cap first, the loop's `continue` then skips the
+  // Constitution, and the compile succeeds with the mandatory content silently absent — the exact
+  // failure the error exists to prevent. Comparing its size to the cap can never catch that, because
+  // it is not a size problem. Ranked evidence is therefore capped at `evidenceBudget -
+  // requiredTokens`, so the mandatory content has its space whatever the ranking does ahead of it.
+  const requiredTokens = required.reduce((sum, candidate) => sum + candidate.tokenEstimate, 0);
+  const evidenceBudget = profile.targets.taskEvidence;
+  if (evidenceBudget !== undefined && requiredTokens > evidenceBudget) {
+    throw new LoreError(
+      "validation",
+      `${CONTEXT_REQUIRED_CONTENT_OVER_BUDGET}: agent profile "${profile.name}" requires ~${requiredTokens} tokens of mandatory evidence, above its declared task_evidence budget of ${evidenceBudget}`,
+      "raise the profile's `[targets] task_evidence`, or drop the mandatory source from its `sources` — the cap will not silently omit it",
+      { profile: profile.name, requiredTokens, evidenceBudget, constitution: constitutionId },
+    );
+  }
+  /** What RANKED evidence may spend once the mandatory content's room is reserved; `undefined` = no declared cap. */
+  const rankedBudget = evidenceBudget === undefined ? undefined : evidenceBudget - requiredTokens;
 
   // Every tentative pack is rendered with its own deduplicated query section, so a candidate whose
   // selection swaps a longer hit into the section is admitted only if that whole pack still fits.
-  const selected: RankedCandidate[] = [];
+  // The cap skips rather than breaks, matching how `effectiveBudget` already behaves: a section too
+  // large for what is left of the evidence budget does not shut out the smaller ones behind it.
+  //
+  // RESERVED AGAINST BOTH BUDGETS, AND BEFORE ANY RANKED EVIDENCE IS ADMITTED (DEC-194 (5) option
+  // A, opum-ai/opum-doc#1030). Reserving against the cap alone was only half the fix: required
+  // content also competes for the PACK's room, and admitting it in `ordered` position meant a
+  // ranked candidate could consume that room first and leave the mandatory content to be skipped —
+  // or, under the previous revision, to fail a throw that then meant two different things.
+  //
+  // So the required candidates go in FIRST, and every later admission is measured by `build` against
+  // a pack that already contains them, which reserves their room for free. With that in place
+  // `CONTEXT_REQUIRED_CONTENT_OVER_BUDGET` means exactly one thing: required content that cannot fit
+  // even alone — and "even alone" is what the floor below renders, with NO query section (LCLI-722
+  // review, blocking: measuring it against the reserved section instead made a section-sized
+  // shortfall fail a floor that means "the required content itself does not fit").
+  const requiredFloor = build(required, 0, false);
+  if (requiredFloor.tokenEstimate > effectiveBudget) {
+    throw new LoreError(
+      "validation",
+      `${CONTEXT_REQUIRED_CONTENT_OVER_BUDGET}: agent profile "${profile.name}" requires ${requiredTokens} tokens of mandatory evidence${constitutionId === undefined ? "" : ` (${constitutionId})`}, which does not fit its ${effectiveBudget}-token pack budget — ${requiredFloor.tokenEstimate} tokens once the pack's own header and catalog are added`,
+      "raise the budget (`--max-tokens`, or the profile's `max_tokens`), or drop the mandatory source from its `sources` — the pack will not silently omit it",
+      { profile: profile.name, requiredTokens, maxTokens: effectiveBudget, constitution: constitutionId },
+    );
+  }
+
+  const selected: RankedCandidate[] = [...required];
+  let rankedTokens = 0;
   for (const candidate of ordered) {
+    if (requiredKeys.has(candidate.key)) continue;
+    if (rankedBudget !== undefined && rankedTokens + candidate.tokenEstimate > rankedBudget) {
+      continue;
+    }
     const tentative = build([...selected, candidate], queryHitLimit, querySection);
-    if (tentative.tokenEstimate <= effectiveBudget) selected.push(candidate);
+    if (tentative.tokenEstimate <= effectiveBudget) {
+      selected.push(candidate);
+      rankedTokens += candidate.tokenEstimate;
+    }
   }
   return build(selected, queryHitLimit, querySection);
 }
@@ -1132,8 +1216,16 @@ function computeBudgets(
 ): AgentContextBudgets | undefined {
   if (!profileDeclaresBudgets(profile)) return undefined;
   const targets = profile.targets;
+  // Each entry is named by its reference PLUS the SECTION it came from when it has one (LCLI-722).
+  // A ranked candidate is a section, not a document, but `reference` is the concept id — so before
+  // this, a 110-section budget rendered as 110 strings drawn from 13 concepts, and DEC-194 (3)'s
+  // "any residual comes back with the content behind it" could not be answered from the report. The
+  // labels are rendered into the pack by `budgetLine`, so they are not free; the evidence cap lands
+  // first precisely because it takes that list from ~110 entries to ~13.
+  const label = (item: AgentContextItem): string =>
+    item.breadcrumb === undefined ? item.reference : `${item.reference} (${item.breadcrumb})`;
   const bySize = (items: readonly AgentContextItem[]): string[] =>
-    [...items].sort((a, b) => b.tokenEstimate - a.tokenEstimate).map((item) => item.reference);
+    [...items].sort((a, b) => b.tokenEstimate - a.tokenEstimate).map(label);
   const policyAndRole = budgetEntry(
     targets.policyAndRole,
     pinned.reduce((sum, item) => sum + item.tokenEstimate, 0),

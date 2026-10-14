@@ -40,6 +40,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A declared `task_evidence` target now CAPS evidence selection, not only measures it** (LCLI-722,
+  DEC-194 (4), option A, opum-ai/opum-doc#1022). A profile that declares `[targets] task_evidence`
+  selects ranked evidence only up to that many tokens, highest-scoring first; a profile that declares
+  **no** `[targets]` behaves exactly as before, because lore is published and a pack silently bounded
+  by a number the profile never wrote would surprise external users who never asked for one. Two
+  consequences worth knowing. `task_evidence` can no longer report `over` — a capped class cannot
+  exceed its own cap, so a pack that used to report a 48k-token evidence overrun against a 6000
+  target now reports the 6000 it selected — and the 16k `taskEvidenceCeiling` follows it, but only
+  WHERE a declared `task_evidence` sits below that ceiling: a profile that declares `[targets]`
+  without `task_evidence`, or with a `task_evidence` above 16000, is measured against the ceiling
+  exactly as before, because nothing capped its selection.
+  And required content — the bundle's Constitution, when a profile RANKS it in `sources` — RESERVES
+  ITS ROOM AGAINST BOTH BUDGETS, and reserves it BEFORE any ranked evidence is admitted: against the
+  `task_evidence` cap and against the pack's own `max_tokens`. Reserving against the cap alone is not
+  enough, because ranking puts the Constitution last at score zero, so a ranked section could
+  consume the pack's room first and leave the mandatory content to be skipped. With both reservations
+  in place the new `CONTEXT_REQUIRED_CONTENT_OVER_BUDGET` means exactly one thing, required content
+  that cannot fit even alone, rather than being dropped; a pack silently missing mandatory content is
+  indistinguishable downstream from a complete one. That floor is judged on the required content with
+  no query section at all, so the bundle-wide query section can never raise it. A profile that
+  declares NO `[targets]` is unaffected in behaviour but covered by the same reservation: its ranked
+  Constitution is kept and its ranked evidence is trimmed, exactly as it compiled before this
+  feature. The budget report also names the SECTION each entry came from rather than only its
+  concept, so a residual can say what required it.
+
 - **`lore check`'s committed-schema drift findings name the committing step** (LCLI-545). The
   `missing` / `stale` / `orphaned` schema-drift findings named `lore schema export` but stopped
   there, and regenerating *without committing* leaves the drift in place for the next reader — the

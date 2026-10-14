@@ -125,8 +125,9 @@ Contract:
   (LCLI-682; MDL-7, ODOC-437 AC3, DEC-187): `policy_and_role`, `task_contract`,
   `task_evidence` and `lore_subtotal`, each a positive integer of estimated
   tokens. They are **design defaults the compiler measures a compiled pack
-  against and reports**, NOT ceilings enforced before a request — `max_tokens`
-  above stays the ceiling. The report is additive on `agent.context.export` as
+  against and reports**; only `task_evidence` is ENFORCED. Required content fits
+  BOTH budgets, else `CONTEXT_REQUIRED_CONTENT_OVER_BUDGET`. `max_tokens` above
+  stays the ceiling. The report is additive on `agent.context.export` as
   `budgets`, present only when a profile declares at least one target, and also
   rendered as the pack's `## Context budgets` section.
   - **Classes.** Policy and role is the pinned tier, task evidence the ranked
