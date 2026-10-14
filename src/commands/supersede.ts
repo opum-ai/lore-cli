@@ -38,7 +38,8 @@
  * Validation lives here, because the engine's `move:false` path checks only that `oldId` exists (its
  * conflict guard is move-only): both ids must name concepts (`not_found`, exit 3); neither may be a
  * reserved hub name (`usage`, exit 2); and the old concept must not already be superseded —
- * an already-recorded `superseded_by` — which would otherwise
+ * the legacy `status: superseded` marker (any case) **or** an already-recorded `superseded_by` —
+ * which would otherwise
  * be silently overwritten (`conflict`, exit 5). All file I/O is here
  * ({@link writeFileOverwriting}, overwrite in place); every link/ref judgement stays pure in
  * `core/rewrite.ts`.
@@ -317,16 +318,17 @@ function appendSupersedes(
  * is an already-recorded `superseded_by` — the structured field {@link wireOld} would otherwise
  * silently overwrite, discarding the concept's real recorded successor.
  *
- * A `status: superseded` arm was REMOVED (DEC-192): that value was never a valid lifecycle status,
- * so a document carrying it cannot load and validation (exit 6) answers before this guard. Keeping
- * the arm would be dead code masquerading as a live path.
+ * The legacy `status: superseded` arm is NOT dead code (LCLI-669 review F4). The ADR enum reaches
+ * ADRs on 0.1, but a 0.1 NON-ADR (a Story, a Reference) keeps `status` as its task-rollup key under
+ * the carve-out, so such a document carrying the legacy marker still LOADS. Without this arm
+ * {@link wireOld} would clobber its rollup `status` to `deprecated`.
  */
 function assertNotAlreadySuperseded(oldConcept: Concept): void {
-  if (hasRecordedSuccessor(oldConcept)) {
+  if (hasRecordedSuccessor(oldConcept) || statusIsSuperseded(oldConcept)) {
     throw new LoreError(
       "conflict",
       `concept "${oldConcept.id}" is already superseded`,
-      "a superseded concept cannot be superseded again; clear its `status`/`superseded_by` first if this is intentional",
+      "a superseded concept cannot be superseded again; if its `status` is the legacy `superseded`, apply the CHANGELOG's one-line fix (`status: superseded` -> `status: deprecated`) and set `superseded_by`, or clear it if this is intentional",
       { id: oldConcept.id },
     );
   }
@@ -339,6 +341,18 @@ function hasRecordedSuccessor(concept: Concept): boolean {
     return false;
   }
   return !(Array.isArray(value) && value.length === 0);
+}
+
+/**
+ * The legacy `status` value (`superseded`) an older `lore supersede` wrote. Never a legal lifecycle
+ * value; since DEC-192 it is only ever READ here, by {@link statusIsSuperseded}.
+ */
+const SUPERSEDED_STATUS = "superseded";
+
+/** Whether the concept's `status` is the legacy `superseded` marker, matched case-insensitively. */
+function statusIsSuperseded(concept: Concept): boolean {
+  const status = concept.frontmatter.status;
+  return typeof status === "string" && status.trim().toLowerCase() === SUPERSEDED_STATUS;
 }
 
 // ── Argument parsing ───────────────────────────────────────────────────────────

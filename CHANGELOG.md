@@ -64,8 +64,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the enum reaches only where it is the lifecycle field), and `lore supersede` writes `deprecated` on
   0.1 exactly as it already did on 0.2. **Existing 0.1
   bundles**: the one-line fix is `status: superseded` → `status: deprecated` on the superseded
-  document. Its `superseded_by` back-reference is unaffected, and `lore supersede` still recognises
-  the old spelling, so such a document is never superseded twice.
+  document; its `superseded_by` back-reference is unaffected. On an ADR the old spelling now fails to
+  load (exit `6`), which is the defect being fixed. On a 0.1 document that is NOT an ADR the marker
+  still loads — `status` is that type's task-rollup key — and `lore supersede` refuses it as a
+  conflict (`5`) rather than overwriting the rollup, so it is never superseded twice.
 
 - **The Lore pane no longer auto-starts in a teammate, headless or workflow process** (LCLI-705).
   Every Claude process loaded the plugin, opened the pane and refreshed it every 30 seconds with no

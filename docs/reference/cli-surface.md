@@ -1129,7 +1129,7 @@ lore rename stories/bulk-archive-orders stories/order-archival
 ### `supersede`
 
 Mark one concept as superseded by another and wire the relationship both ways:
-set `status: superseded` and `superseded_by: <newId>` on the old concept, set
+set `status: deprecated` and `superseded_by: <newId>` on the old concept, set
 `supersedes: <oldId>` on the new one, and (configurably) rewrite inbound links
 to point at the successor. Preserves the old file (history), unlike `rename`.
 
@@ -1142,7 +1142,7 @@ lore supersede adr/0007-old-decision adr/0012-new-decision
 | **Args** | `<oldId>` `<newId>` |
 | **Key flags** | `--rewrite-links` (repoint inbound links to the successor) · `--dry-run` |
 | **Output** | `kind: supersede.result` — frontmatter changes + any link rewrites |
-| **Exit** | `0` ok · `3` either id not found · `5` `<oldId>` already superseded |
+| **Exit** | `0` ok · `3` either id not found · `5` `<oldId>` already superseded · `6` an ADR carries the legacy `status: superseded`, which is not a lifecycle value (see the CHANGELOG's one-line fix) |
 
 ---
 

@@ -408,6 +408,15 @@ describe("lore supersede — errors and arg parsing", () => {
     expect(err.message).toContain("superseded");
   });
 
+  test("a 0.1 NON-ADR carrying the legacy `superseded` marker is refused (conflict, exit 5)", () => {
+    // Under the carve-out a 0.1 Story keeps `status` as its task-rollup key, so this document LOADS
+    // even though `superseded` is not a lifecycle value. Without the guard arm, supersede would
+    // clobber its rollup status to `deprecated` (LCLI-669 review F4).
+    writeDoc("stories/legacy.md", "---\ntype: Story\nstatus: superseded\n---\nLegacy.\n");
+    writeDoc("stories/successor.md", "---\ntype: Story\n---\nNew.\n");
+    expect(expectError(["stories/legacy", "stories/successor"]).type).toBe("conflict");
+  });
+
   test("an existing `superseded_by` (any status) blocks the supersede — it is never clobbered (exit 5)", () => {
     // the old doc already records adr/0042-x as its successor; superseding would silently overwrite it
     const oldBytes = "---\ntype: ADR\nstatus: deprecated\nsuperseded_by: adr/0042-x\n---\nOld.\n";
