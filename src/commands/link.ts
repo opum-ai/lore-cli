@@ -103,8 +103,8 @@ export interface LinkOptions {
 interface LinkArgs {
   /** The concept id (or path) being linked/unlinked. */
   id: string;
-  /** One or more Backlog task ids. */
-  taskIds: string[];
+  /** One or more Backlog task ids. Readonly for the same reason {@link decisions} is: this is the parsed form, and nothing downstream writes back into it. */
+  readonly taskIds: readonly string[];
   /**
    * `--decision <id…>` (LCLI-670, DEC-192 (2)): decision ids to link instead of task ids. The write
    * is DOC-SIDE ONLY — there is no tracker back-reference for a decision — and every stored entry is
@@ -932,10 +932,14 @@ async function prepare(options: LinkOptions, command: "link" | "unlink"): Promis
   const id = idFromPath(parsed.id);
   // Reserved-hub-stem is checked unconditionally: the doc-side tasks: write always happens
   // (--no-back-ref only skips the Backlog side), so index.md/log.md is never a safe target either
-  // way. The comma/case-collision guards below are Backlog-label concerns, so they gate on
-  // `!noBackRef` — --no-back-ref never sends a doc: label, so neither problem can occur on that path.
+  // way. The comma/case-collision guards below are Backlog-LABEL concerns, so one predicate says
+  // whether this run sends a label at all. `--no-back-ref` never does; neither does `--decision`,
+  // whose write is doc-side only — and because the two flags are mutually exclusive (see
+  // `parseLinkArgs`), `--decision` ALWAYS reached these guards before LCLI-727, refusing
+  // `lore link adr/0001-a,b --decision DEC-9` for a label reason that arm can never encounter.
+  const sendsLabel = !parsed.noBackRef && parsed.decisions.length === 0;
   assertNotReservedStem(id, command);
-  if (!parsed.noBackRef) {
+  if (sendsLabel) {
     assertNoCommaInId(id, command);
   }
   const docsRoot = join(options.root, DOCS_DIR);
@@ -956,7 +960,7 @@ async function prepare(options: LinkOptions, command: "link" | "unlink"): Promis
       // The case-collision guard still applies: Backlog's own label store can't distinguish `id`
       // from a *live* concept whose id collides with it case-insensitively, so removing `id`'s
       // label could otherwise strip that live concept's real back-reference.
-      if (!parsed.noBackRef) {
+      if (sendsLabel) {
         assertNoLabelCaseCollision(graph, id, id, command);
       }
       return {
@@ -973,7 +977,7 @@ async function prepare(options: LinkOptions, command: "link" | "unlink"): Promis
     }
     throw conceptNotInBundle(id);
   }
-  if (!parsed.noBackRef) {
+  if (sendsLabel) {
     assertNoLabelCaseCollision(graph, concept.id, concept.id, command);
   }
   return {
@@ -1040,11 +1044,18 @@ export function assertNoLabelCaseCollision(
 }
 
 /**
- * Deduplicate task ids case-insensitively, keeping the first-seen casing and argument order.
- * Exported for `commands/rename.ts`, which needs the same dedup applied to a concept's `tasks:`
- * frontmatter list before {@link moveBackRefs} — that list isn't schema-enforced unique, so a
- * hand-edited case-duplicate (`["lore-1", "LORE-1"]`) would otherwise drive a redundant Backlog
- * round trip and a duplicate report row.
+ * Deduplicate a coupling id list case-insensitively, keeping the first-seen casing and argument
+ * order. It serves BOTH coupling fields, which have the same requirement for the same reason —
+ * neither list is schema-enforced unique, so a hand-edited case-duplicate writes the same edge
+ * twice:
+ *
+ * - `tasks:` ids. Exported for `commands/rename.ts`, which dedups a concept's `tasks:` frontmatter
+ *   before {@link moveBackRefs} — without it a `["lore-1", "LORE-1"]` pair drives a redundant
+ *   Backlog round trip and a duplicate report row.
+ * - `decisions:` entries, already qualified to `<repo>:DEC-N` when they reach it (LCLI-670;
+ *   LCLI-727 F16 corrected this docstring, which spoke of task ids alone after that arm landed).
+ *   The NAME stays as-is: it is imported by three commands, and renaming it would be a wider change
+ *   than the contract it states.
  */
 export function dedupeTaskIds(taskIds: readonly string[]): string[] {
   const seen = new Set<string>();

@@ -7,11 +7,11 @@
  * primary checkout and a review worktree write the SAME entry.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runLink } from "../src/commands/link";
-import { repositoryNameFromRemoteUrl } from "../src/core/decision-ref";
+import { originRepositoryName, repositoryNameFromRemoteUrl, resolveDecisionQualifier } from "../src/core/decision-ref";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
 
@@ -39,6 +39,42 @@ function initRepoWithOrigin(dir: string, url: string): void {
   Bun.spawnSync(["git", "init", "-q"], { cwd: dir, stdout: "pipe", stderr: "pipe" });
   appendFileSync(join(dir, ".git", "config"), `[remote "origin"]\n\turl = ${url}\n`);
 }
+
+/**
+ * Whether this filesystem can hold two names differing ONLY in case (LCLI-727). It cannot on macOS's
+ * default APFS or on NTFS: the second write lands on the SAME inode, so a fixture written that way is
+ * silently a ONE-file fixture and any claim drawn from it is a claim about the filesystem, not about
+ * the code. Probed at RUNTIME rather than read off `process.platform`, because APFS can be formatted
+ * case-sensitive and a Linux mount can be case-insensitive — the platform is not the property these
+ * tests need.
+ *
+ * NOTE, because it is a bug this file has already shipped once: the probe is deliberately NOT wrapped
+ * in a try/catch. A temp directory that cannot be created or written is a broken environment, and a
+ * probe that silently answered "no" would skip the proof everywhere while looking considered. It
+ * throws, loudly, at registration time.
+ *
+ * `test.skipIf`'s condition is evaluated at REGISTRATION time, before any `beforeEach`, which is why
+ * this is a module-level constant and touches no per-test `root`.
+ */
+const CASE_SENSITIVE_FILESYSTEM: boolean = (() => {
+  const dir = mkdtempSync(join(tmpdir(), "lore-case-probe-"));
+  try {
+    writeFileSync(join(dir, "probe"), "");
+    writeFileSync(join(dir, "PROBE"), "");
+    return readdirSync(dir).length === 2;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+})();
+
+/**
+ * The marker the two case-collision tests carry IN THEIR NAME when, and only when, they are skipped,
+ * so a skip says why on the face of it. Empty where the tests actually run, because a passing test
+ * announcing a precondition it has already met reads as though it had been skipped.
+ */
+const CASE_SKIP_MARKER = CASE_SENSITIVE_FILESYSTEM
+  ? ""
+  : " [SKIPPED: needs a case-sensitive filesystem — a runtime probe wrote `probe` and `PROBE` and got one entry back]";
 
 function adr(id: string, body = "Body.\n"): void {
   writeFileSync(join(root, "docs", "adr", `${id}.md`), `---\ntype: ADR\ntitle: ${id}\n---\n\n${body}`);
@@ -102,10 +138,7 @@ describe("lore link --decision (LCLI-670)", () => {
           output: PLAIN_OUTPUT,
         }),
       ).toBe(0);
-      const text = require("node:fs").readFileSync(
-        join(worktreeish, "docs", "adr", "0012-new-decision.md"),
-        "utf8",
-      ) as string;
+      const text = readFileSync(join(worktreeish, "docs", "adr", "0012-new-decision.md"), "utf8");
       expect(text).toContain("lore-cli:DEC-192");
       expect(text).not.toContain("lore-cli-review-669-r2:DEC-192");
     } finally {
@@ -206,5 +239,147 @@ describe("lore link --decision (LCLI-670)", () => {
     // A local Windows path is not a remote URL: its last `:`-or-`/` segment still carries `\`.
     expect(repositoryNameFromRemoteUrl("C:\\repos\\lore-cli")).toBeUndefined();
     expect(repositoryNameFromRemoteUrl("git@host:opum-ai/lore-cli.git")).toBe("lore-cli");
+  });
+});
+
+// ── LCLI-727 F11: the qualifier is a NAME, at every arm that writes it ─────────
+
+describe("lore link --decision: one qualifier predicate across every arm (LCLI-727 F11)", () => {
+  // The stored entry is `<repo>:DEC-N` and a reader splits it back with `[^:\s]+`, so a qualifier
+  // carrying whitespace is unparseable the moment it is written; `/` or `\` makes it a PATH where
+  // DEC-192 (5) specifies a repository NAME that is identical in every clone and worktree. The arms
+  // had drifted: `--repo` rejected `:` and `\` but not `/` or whitespace, while the derived remote
+  // name rejected `/` but not whitespace — so `--repo "lore cli"` wrote an id nothing could read
+  // back, and `--repo opum-ai/lore-cli` stored a second spelling of a repository its remote already
+  // names. Proved both ways at every arm.
+  for (const bad of ["lore cli", "lore\tcli", "opum-ai/lore-cli", "a\\b", "a:b"]) {
+    test(`--repo ${JSON.stringify(bad)} is refused by name, and nothing is written`, async () => {
+      initRepoWithOrigin(root, ORIGIN);
+      adr("0012-new-decision");
+      await expect(link(["adr/0012-new-decision", "--decision", "DEC-1", "--repo", bad])).rejects.toThrow(
+        /invalid --repo/,
+      );
+      expect(decisionsOf("0012-new-decision")).toEqual([]);
+    });
+  }
+
+  test("...and a NAME still passes at that same arm, writing the entry (the other way)", async () => {
+    initRepoWithOrigin(root, ORIGIN);
+    adr("0012-new-decision");
+    expect((await link(["adr/0012-new-decision", "--decision", "DEC-1", "--repo", "lore-cli"])).code).toBe(0);
+    expect(decisionsOf("0012-new-decision")).toEqual(["lore-cli:DEC-1"]);
+  });
+
+  test("the DERIVED remote name takes the same predicate", () => {
+    expect(repositoryNameFromRemoteUrl("git@host:lore cli.git")).toBeUndefined();
+    expect(repositoryNameFromRemoteUrl("git@host:lore-cli.git")).toBe("lore-cli"); // control
+  });
+
+  test("a whitespace-bearing origin remote refuses by name rather than writing it", async () => {
+    initRepoWithOrigin(root, "git@github.com:opum-ai/lore cli.git");
+    adr("0012-new-decision");
+    let error: { message?: string; hint?: string } = {};
+    try {
+      await link(["adr/0012-new-decision", "--decision", "DEC-1"]);
+    } catch (cause) {
+      error = cause as { message?: string; hint?: string };
+    }
+    // The remote name is refused, so the derived arm finds nothing and the caller's own refusal
+    // answers — a whitespace qualifier is never written, which is the claim.
+    expect(error.message ?? "").toContain("origin");
+    expect(error.hint ?? "").toContain("--repo");
+    expect(decisionsOf("0012-new-decision")).toEqual([]);
+  });
+
+  test("the workspace memberId arm takes the same predicate (it writes the same value)", () => {
+    for (const bad of ["lore cli", "opum-ai/lore-cli", "a:b", "a\\b", ""]) {
+      expect(() => resolveDecisionQualifier({ root, memberId: bad })).toThrow(/invalid workspace member id/);
+    }
+    // ...and a NAME passes, without the arm falling through to the remote.
+    expect(resolveDecisionQualifier({ root: join(root, "no-such-repo"), memberId: "lore-cli" })).toBe("lore-cli");
+  });
+});
+
+// ── LCLI-727 F12: the Backlog-label guards do not run on the doc-side arm ──────
+
+describe("lore link --decision: the label guards are skipped on the doc-side arm (LCLI-727 F12)", () => {
+  // Both guards exist because a Backlog LABEL cannot round-trip a comma and because Backlog's label
+  // store de-dups case-insensitively. `--decision` writes no label at all — and `--no-back-ref` is
+  // refused beside it, so it can never be set here — yet the guards ran on this arm regardless and
+  // refused a document id for a reason the arm can never encounter.
+  //
+  // The COMMA half is provable anywhere. The CASE-COLLISION half needs a filesystem that can hold
+  // two names differing only in case, so its two tests below are gated on a runtime probe.
+  //
+  // An earlier revision of this file got that wrong, and the way it got it wrong is the reason this
+  // comment is long. It asserted that the pair "cannot be observed from here" because `loadBundle`
+  // "folds case-colliding ids", and passed `loadBundle` the fixture to prove it. That expectation
+  // came from this machine's case-insensitive APFS, where the second write lands on the same inode —
+  // a claim about a FILESYSTEM, reported as a claim about `loadBundle`. It was green on macOS and on
+  // windows-latest (NTFS collapses the pair too) and red on the case-sensitive ubuntu runner, which
+  // is the only place it could show. The lesson, as a rule rather than an incident: a test whose
+  // fixture differs only by case proves nothing until a case-sensitive filesystem has run it.
+  // The `--decision` arm skips BOTH halves through the one `sendsLabel` predicate, and the four
+  // tests here are what hold it in place — reverting it to `!noBackRef` reddens the comma pair.
+  test("a comma-bearing ADR id links with --decision", async () => {
+    initRepoWithOrigin(root, ORIGIN);
+    adr("0001-a,b");
+    expect((await link(["adr/0001-a,b", "--decision", "DEC-9"])).code).toBe(0);
+    expect(decisionsOf("0001-a,b")).toEqual(["lore-cli:DEC-9"]);
+  });
+
+  test("...and the SAME id is still refused on the task arm, where a label IS written", async () => {
+    initRepoWithOrigin(root, ORIGIN);
+    adr("0001-a,b");
+    await expect(link(["adr/0001-a,b", "task-42"])).rejects.toThrow(/comma/i);
+  });
+
+  // The real proof of the case-collision half, both ways: the doc-side arm links the id, the task
+  // arm still refuses it. Gated on the runtime probe rather than on the platform — see it above.
+  test.skipIf(!CASE_SENSITIVE_FILESYSTEM)(
+    `a case-colliding ADR id links with --decision${CASE_SKIP_MARKER}`,
+    async () => {
+      initRepoWithOrigin(root, ORIGIN);
+      adr("0001-a");
+      adr("0001-A");
+      expect((await link(["adr/0001-A", "--decision", "DEC-9"])).code).toBe(0);
+      expect(decisionsOf("0001-A")).toEqual(["lore-cli:DEC-9"]);
+    },
+  );
+
+  test.skipIf(!CASE_SENSITIVE_FILESYSTEM)(
+    `...and that same id is still refused on the task arm${CASE_SKIP_MARKER}`,
+    async () => {
+      initRepoWithOrigin(root, ORIGIN);
+      adr("0001-a");
+      adr("0001-A");
+      await expect(link(["adr/0001-A", "task-42"])).rejects.toThrow(/differing only by case/);
+    },
+  );
+});
+
+// ── LCLI-727 F13: the unreadable-remote catch branch is reachable ─────────────
+
+describe("originRepositoryName: 'no git to run' is an ordinary 'no remote' (LCLI-727 F13)", () => {
+  // The branch is the `catch` around the spawn: Bun THROWS when the binary cannot be started at
+  // all, and an uncaught throw would exit 1 with a code link's exit set does not name. It was
+  // untestable because the only way to reach it for real is to remove `git` from the environment —
+  // which `Bun.spawnSync`'s startup environment snapshot ignores, and which a `PATH` mutation would
+  // leak into every other test in the same run. The sync spawner is injectable for exactly this.
+  test("a spawn that throws yields undefined rather than propagating", () => {
+    const noGit = (): never => {
+      throw new Error("spawn git ENOENT");
+    };
+    expect(originRepositoryName(root, noGit)).toBeUndefined();
+  });
+
+  test("a non-zero exit yields undefined (the control: the branch that already worked)", () => {
+    expect(originRepositoryName(root, () => ({ exitCode: 128, stdout: "", stderr: "fatal" }))).toBeUndefined();
+  });
+
+  test("...and a readable remote still resolves through the same seam", () => {
+    initRepoWithOrigin(root, ORIGIN);
+    expect(originRepositoryName(root)).toBe("lore-cli");
+    expect(originRepositoryName(root, () => ({ exitCode: 0, stdout: `${ORIGIN}\n`, stderr: "" }))).toBe("lore-cli");
   });
 });
