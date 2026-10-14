@@ -12,7 +12,7 @@ tags:
   - story
 summary: Story task IDs are the coupling source of truth, Backlog labels provide back-references, and live task statuses determine Story status.
 timestamp: 2026-06-21T00:00:00Z
-status: superseded
+status: deprecated
 superseded_by: adr/0022-tracker-status-flow-is-backend-polymorphic-not-backlog-config
 ---
 

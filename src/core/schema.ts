@@ -412,6 +412,8 @@ export function validateFrontmatter(fm: Record<string, unknown>, options: Valida
   const type = requireType(fm, where, options.path);
 
   validateVersionedFrontmatter(fm, type, profile, where, options.path, options.warnings);
+  // Version-independent (DEC-192): the OKF lifecycle `status` enum holds on EVERY OKF version.
+  validateLifecycleStatus(fm, type, profile, where, options.path);
 
   const compiled = profile.types.get(canonicalType(type, profile));
   if (compiled === undefined) {
@@ -442,6 +444,38 @@ export function validateFrontmatter(fm: Record<string, unknown>, options: Valida
   warnExtraKeys(fm, compiled, where, options.warnings, isIndex, isRootIndex, profile);
   warnSummary(fm.summary, where, options.warnings);
   return type;
+}
+
+/**
+ * The OKF lifecycle `status` enum (DEC-192, LCLI-669): `draft`/`stable`/`deprecated`. A `status`
+ * outside it is a defect — `superseded` in particular was written by `lore supersede` on 0.1
+ * bundles but has never been a valid value, and every profile's emitted `adr.schema.json` has
+ * always declared the three.
+ *
+ * SCOPE, because "every OKF version" needs one qualification: on OKF 0.2 the enum governs `status`
+ * for every type, but on OKF 0.1 `status` IS the task-rollup key for task-coupled types
+ * (`check.ts`'s version-selected rollup: `status` on 0.1, `lore_task_status` on 0.2), whose
+ * vocabulary is `todo`/`in-progress`/`done`. So on 0.1 the enum applies only where `status` is the
+ * LIFECYCLE field — ADR documents. Enforcing it more broadly would reject every 0.1 task-coupled
+ * `status` and break the rollup it is not about (DEC-192 as read by the leader, 2026-10-14).
+ */
+function validateLifecycleStatus(
+  fm: Record<string, unknown>,
+  type: string,
+  profile: Profile,
+  where: string,
+  path: string | undefined,
+): void {
+  if (!Object.hasOwn(fm, "status")) return;
+  if (profile.okfVersion !== "0.2" && canonicalType(type, profile) !== "ADR") return;
+  const result = LIFECYCLE_STATUS_SCHEMA.safeParse(fm.status);
+  if (result.success) return;
+  throw new LoreError(
+    "validation",
+    `invalid OKF lifecycle status${where}: ${describeIssues(result.error)} (got ${JSON.stringify(fm.status)})`,
+    "set `status` to draft, stable, or deprecated; `status: superseded`, which an older `lore supersede` wrote on a 0.1 bundle, is the one-line fix in the CHANGELOG (`status: superseded` -> `status: deprecated`); Lore task progress belongs in `lore_task_status`",
+    { path, key: "status", issues: issueList(result.error) },
+  );
 }
 
 /** Validate and classify the OKF 0.2 frontmatter families without mutating authored data. */
@@ -501,17 +535,11 @@ function validateVersionedFrontmatter(
       );
     }
   }
-  if (Object.hasOwn(fm, "status")) {
-    const result = LIFECYCLE_STATUS_SCHEMA.safeParse(fm.status);
-    if (!result.success) {
-      throw new LoreError(
-        "validation",
-        `invalid OKF lifecycle status${where}: ${describeIssues(result.error)}`,
-        "set `status` to draft, stable, or deprecated; Lore task progress belongs in `lore_task_status`",
-        { path, key: "status", issues: issueList(result.error) },
-      );
-    }
-  }
+  // The OKF lifecycle `status` enum is enforced for EVERY version (DEC-192), so its check lives in
+  // {@link validateFrontmatter} above rather than here in the OKF 0.2-only family. `status` is a
+  // base field every type can carry, and `superseded` was never a valid value in 0.1 either — the
+  // profile's `adr.schema.json` has always declared [draft, stable, deprecated]. Enforcing it only
+  // under 0.2 let an invalid status through silently on the legacy path.
   if (Object.hasOwn(fm, "lore_task_status")) {
     const result = TASK_ROLLUP_STATUS_SCHEMA.safeParse(fm.lore_task_status);
     if (!result.success) {
