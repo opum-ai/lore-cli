@@ -412,6 +412,8 @@ export function validateFrontmatter(fm: Record<string, unknown>, options: Valida
   const type = requireType(fm, where, options.path);
 
   validateVersionedFrontmatter(fm, type, profile, where, options.path, options.warnings);
+  // Version-independent (DEC-192): the OKF lifecycle `status` enum holds on EVERY OKF version.
+  validateLifecycleStatus(fm, where, options.path);
 
   const compiled = profile.types.get(canonicalType(type, profile));
   if (compiled === undefined) {
@@ -442,6 +444,25 @@ export function validateFrontmatter(fm: Record<string, unknown>, options: Valida
   warnExtraKeys(fm, compiled, where, options.warnings, isIndex, isRootIndex, profile);
   warnSummary(fm.summary, where, options.warnings);
   return type;
+}
+
+/**
+ * The OKF lifecycle `status` enum (DEC-192, LCLI-669): `draft`/`stable`/`deprecated`, enforced on
+ * EVERY OKF version. A `status` outside it is a defect — `superseded` in particular was written by
+ * `lore supersede` on 0.1 bundles but has never been a valid value, and every profile's emitted
+ * `adr.schema.json` has always declared the three. Lore task progress belongs in
+ * `lore_task_status`, a deliberately disjoint vocabulary (ADR-0019).
+ */
+function validateLifecycleStatus(fm: Record<string, unknown>, where: string, path: string | undefined): void {
+  if (!Object.hasOwn(fm, "status")) return;
+  const result = LIFECYCLE_STATUS_SCHEMA.safeParse(fm.status);
+  if (result.success) return;
+  throw new LoreError(
+    "validation",
+    `invalid OKF lifecycle status${where}: ${describeIssues(result.error)}`,
+    "set `status` to draft, stable, or deprecated; Lore task progress belongs in `lore_task_status`",
+    { path, key: "status", issues: issueList(result.error) },
+  );
 }
 
 /** Validate and classify the OKF 0.2 frontmatter families without mutating authored data. */
@@ -501,17 +522,11 @@ function validateVersionedFrontmatter(
       );
     }
   }
-  if (Object.hasOwn(fm, "status")) {
-    const result = LIFECYCLE_STATUS_SCHEMA.safeParse(fm.status);
-    if (!result.success) {
-      throw new LoreError(
-        "validation",
-        `invalid OKF lifecycle status${where}: ${describeIssues(result.error)}`,
-        "set `status` to draft, stable, or deprecated; Lore task progress belongs in `lore_task_status`",
-        { path, key: "status", issues: issueList(result.error) },
-      );
-    }
-  }
+  // The OKF lifecycle `status` enum is enforced for EVERY version (DEC-192), so its check lives in
+  // {@link validateFrontmatter} above rather than here in the OKF 0.2-only family. `status` is a
+  // base field every type can carry, and `superseded` was never a valid value in 0.1 either — the
+  // profile's `adr.schema.json` has always declared [draft, stable, deprecated]. Enforcing it only
+  // under 0.2 let an invalid status through silently on the legacy path.
   if (Object.hasOwn(fm, "lore_task_status")) {
     const result = TASK_ROLLUP_STATUS_SCHEMA.safeParse(fm.lore_task_status);
     if (!result.success) {

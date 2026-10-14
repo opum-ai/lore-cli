@@ -6,8 +6,8 @@
  * supersede half). Unlike {@link runRename}, it **preserves the old file** as history — nothing
  * moves or is deleted — and only edits frontmatter:
  *
- * - on the **old** concept: `superseded_by: <newId>` plus the versioned lifecycle marker
- *   (`status: superseded` in legacy OKF 0.1, `status: deprecated` in OKF 0.2);
+ * - on the **old** concept: `superseded_by: <newId>` plus the lifecycle marker
+ *   (`status: deprecated`, on every OKF version since DEC-192);
  * - on the **new** concept: `supersedes: <oldId>`, **appended** to any existing entry (a concept may
  *   supersede several) rather than clobbering it.
  *
@@ -55,7 +55,11 @@ import { emit, type OutputContext, type Renderable } from "../output";
 import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
 import { writeFileOverwriting } from "./fswrite";
 
-/** The legacy OKF 0.1 `status` value that marks a concept superseded. */
+/**
+ * The legacy OKF 0.1 `status` value (`superseded`) that `lore supersede` USED to write. It was
+ * never a legal lifecycle value; since DEC-192 it survives only as the recognition arm of the
+ * already-superseded guard, so a bundle still carrying it is not superseded a second time.
+ */
 const SUPERSEDED_STATUS = "superseded";
 
 /** Options for {@link runSupersede}; `root` and the streams are injectable for tests. */
@@ -202,7 +206,10 @@ export function runSupersede(options: SupersedeOptions): number {
   // Wire the principals' frontmatter (cloned, never mutating the graph snapshot) and serialize under
   // the active profile. The old doc always changes (it gains the lifecycle keys); the new doc is
   // written only when its `supersedes` actually changes, so a no-op append is not reported as a write.
-  const supersededLifecycle = graph.state.okfVersion === "0.2" ? "deprecated" : SUPERSEDED_STATUS;
+  // DEC-192 (LCLI-669): the old end ALWAYS goes to `deprecated`, the profile's valid lifecycle
+  // value, on every OKF version. It used to write the invalid `status: superseded` on a 0.1 bundle —
+  // never a legal value there either, and silently unchecked until the enum began running on 0.1.
+  const supersededLifecycle = "deprecated";
   writes.set(oldConcept.path, serializeConcept(wireOld(oldConcept, newId, supersededLifecycle), { profile }));
   const wiredNew = wireNew(newConcept, oldId, graph);
   if (wiredNew !== null) {
