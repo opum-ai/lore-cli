@@ -124,6 +124,23 @@ describe("lore link --decision (LCLI-670)", () => {
     expect(repositoryNameFromRemoteUrl("x.git")).toBe("x"); // ...the same rule, one suffix along
   });
 
+  test("...and a numeric-only origin remote refuses by name rather than writing it", async () => {
+    // The END-TO-END half of the rule above: the derived arm yields nothing, so the CALLER's own
+    // refusal answers and no entry is written. The node-level assertions alone would not show that —
+    // they prove the name is refused, not what happens to a link that needs one.
+    initRepoWithOrigin(root, "https://host:8080");
+    adr("0012-new-decision");
+    let error: { message?: string; hint?: string } = {};
+    try {
+      await link(["adr/0012-new-decision", "--decision", "DEC-1"]);
+    } catch (cause) {
+      error = cause as { message?: string; hint?: string };
+    }
+    expect(error.message ?? "").toContain("origin");
+    expect(error.hint ?? "").toContain("--repo");
+    expect(decisionsOf("0012-new-decision")).toEqual([]);
+  });
+
   test("a bare DEC-N is stored qualified from the ORIGIN REMOTE", async () => {
     initRepoWithOrigin(root, ORIGIN);
     adr("0012-new-decision");
