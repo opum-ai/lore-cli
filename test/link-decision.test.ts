@@ -74,7 +74,7 @@ const CASE_SENSITIVE_FILESYSTEM: boolean = (() => {
  */
 const CASE_SKIP_MARKER = CASE_SENSITIVE_FILESYSTEM
   ? ""
-  : " [SKIPPED: needs a case-sensitive filesystem — a runtime probe wrote `probe` and `PROBE` and got one entry back]";
+  : " [SKIPPED: needs a case-sensitive filesystem — a runtime probe wrote `probe` and `PROBE` and got fewer than two entries back]";
 
 function adr(id: string, body = "Body.\n"): void {
   writeFileSync(join(root, "docs", "adr", `${id}.md`), `---\ntype: ADR\ntitle: ${id}\n---\n\n${body}`);
@@ -105,6 +105,23 @@ describe("lore link --decision (LCLI-670)", () => {
     expect(repositoryNameFromRemoteUrl("ssh://git@github.com/opum-ai/lore-cli.git")).toBe("lore-cli");
     expect(repositoryNameFromRemoteUrl("https://github.com/opum-ai/lore-cli/")).toBe("lore-cli");
     expect(repositoryNameFromRemoteUrl("")).toBeUndefined();
+  });
+
+  test("a derived name that is not a NAME at all is refused (LCLI-729 (2))", () => {
+    // The split on `:` takes the LAST colon, so a bare `host:port` leaves the PORT as the last
+    // segment. A port is not a repository, and writing `8080:DEC-1` into a committed document is
+    // worse than refusing to guess — the caller then answers with its own by-name `--repo` refusal.
+    expect(repositoryNameFromRemoteUrl("https://host:8080")).toBeUndefined();
+    expect(repositoryNameFromRemoteUrl("https://host:8080/")).toBeUndefined();
+    expect(repositoryNameFromRemoteUrl("git@host:8080")).toBeUndefined();
+    expect(repositoryNameFromRemoteUrl("https://host:8080/lore-cli")).toBe("lore-cli"); // control
+    // A segment that truncates to NOTHING was already safe; pinned now that the pair is written down.
+    expect(repositoryNameFromRemoteUrl("git@host:.git")).toBeUndefined();
+    // The single-suffix strip is DELIBERATE, and it is what `git clone` does to name the directory:
+    // one `.git` is removed, so `x.git.git` yields the directory git itself would create. That is the
+    // remote's own name rather than a truncation this tool invents, so it is kept rather than refused.
+    expect(repositoryNameFromRemoteUrl("x.git.git")).toBe("x.git");
+    expect(repositoryNameFromRemoteUrl("x.git")).toBe("x"); // ...the same rule, one suffix along
   });
 
   test("a bare DEC-N is stored qualified from the ORIGIN REMOTE", async () => {
@@ -298,6 +315,51 @@ describe("lore link --decision: one qualifier predicate across every arm (LCLI-7
     // ...and a NAME passes, without the arm falling through to the remote.
     expect(resolveDecisionQualifier({ root: join(root, "no-such-repo"), memberId: "lore-cli" })).toBe("lore-cli");
   });
+
+  test("a PADDED memberId is refused — it does NOT trim where --repo does (LCLI-729 (3))", () => {
+    // The asymmetry is DELIBERATE, and was previously unstated by any test: `--repo` trims because a
+    // flag value is something a human typed, while a member id is CONFIGURATION — a padded one would
+    // store a padded qualifier that no reader can match back to the member it names. F11's tests
+    // covered this arm's separators but not its padding, so both halves are pinned together here.
+    expect(() => resolveDecisionQualifier({ root, memberId: " lore-cli " })).toThrow(/invalid workspace member id/);
+    // ...the UNPADDED id at that same arm passes, so the refusal is about the padding and not the arm.
+    expect(resolveDecisionQualifier({ root, memberId: "lore-cli" })).toBe("lore-cli");
+    // ...and `--repo` accepts the SAME padded string because it trims: the asymmetry itself, proved.
+    expect(resolveDecisionQualifier({ root, repoFlag: " lore-cli " })).toBe("lore-cli");
+  });
+});
+
+// ── LCLI-729 (1): a by-hand qualified id takes the same predicate ─────────────
+
+describe("lore link --decision: a hand-supplied qualifier is a NAME too (LCLI-729 (1))", () => {
+  // `--decision opum-ai/lore-cli:DEC-9` is the FOURTH arm that writes the stored `<repo>:DEC-N`
+  // field, after `--repo`, the derived remote name and the workspace member id — and it was the only
+  // one that skipped the predicate, so an owner/repo PATH was written VERBATIM into a document.
+  // DEC-192 (5) specifies a repository NAME, identical in every clone and worktree; a path is not
+  // one, and the reader splits the entry back with `[^:\s]+`. Whitespace cannot reach this arm
+  // (DECISION_REF's repo part excludes it), so `/` and `\` are the residual hole, proved both ways.
+  for (const bad of ["opum-ai/lore-cli:DEC-9", "a\\b:DEC-9"]) {
+    test(`--decision ${JSON.stringify(bad)} is refused by name, and nothing is written`, async () => {
+      initRepoWithOrigin(root, ORIGIN);
+      adr("0012-new-decision");
+      await expect(link(["adr/0012-new-decision", "--decision", bad])).rejects.toThrow(/not a NAME/);
+      expect(decisionsOf("0012-new-decision")).toEqual([]);
+    });
+  }
+
+  test("...and a NAME still passes at that same arm, stored verbatim (the other way)", async () => {
+    initRepoWithOrigin(root, ORIGIN);
+    adr("0012-new-decision");
+    expect((await link(["adr/0012-new-decision", "--decision", "opum-doc:DEC-9"])).code).toBe(0);
+    expect(decisionsOf("0012-new-decision")).toEqual(["opum-doc:DEC-9"]);
+  });
+
+  test("...and a bare DEC-N still takes the resolved qualifier unchanged", async () => {
+    initRepoWithOrigin(root, ORIGIN);
+    adr("0012-new-decision");
+    expect((await link(["adr/0012-new-decision", "--decision", "DEC-9"])).code).toBe(0);
+    expect(decisionsOf("0012-new-decision")).toEqual(["lore-cli:DEC-9"]);
+  });
 });
 
 // ── LCLI-727 F12: the Backlog-label guards do not run on the doc-side arm ──────
@@ -344,6 +406,10 @@ describe("lore link --decision: the label guards are skipped on the doc-side arm
       adr("0001-A");
       expect((await link(["adr/0001-A", "--decision", "DEC-9"])).code).toBe(0);
       expect(decisionsOf("0001-A")).toEqual(["lore-cli:DEC-9"]);
+      // The guard this arm skips exists because a Backlog LABEL cannot round-trip a name differing
+      // only by case from a sibling's, so proving the skip also shows the SIBLING was left alone
+      // (LCLI-729 (a)) — the half the claim does not otherwise make.
+      expect(decisionsOf("0001-a")).toEqual([]);
     },
   );
 
@@ -356,6 +422,19 @@ describe("lore link --decision: the label guards are skipped on the doc-side arm
       await expect(link(["adr/0001-A", "task-42"])).rejects.toThrow(/differing only by case/);
     },
   );
+
+  // LCLI-729 (b). The two tests above are the only real proof that the doc-side arm skips the
+  // case-collision guard, and they are GATED on the runtime probe — so a runner whose filesystem
+  // collapsed the pair (a case-INsensitive ubuntu image, a case-SENSITIVE macOS one) would turn the
+  // proof into a GREEN SKIP and nothing would say so. Where the environment states this IS the
+  // case-sensitive leg, assert the probe rather than trusting it: the probe has to be able to FAIL,
+  // not only to skip. The guard is deliberately narrow — `CI` unset or a non-Linux runner is simply
+  // not the leg this protects, and asserting there would fail on the very machines that legitimately
+  // cannot run the pair.
+  test("the case probe reports TRUE on the case-sensitive leg (a probe that can only skip proves nothing)", () => {
+    if (process.env.CI === undefined || process.platform !== "linux") return; // not the leg under test
+    expect(CASE_SENSITIVE_FILESYSTEM).toBe(true);
+  });
 });
 
 // ── LCLI-727 F13: the unreadable-remote catch branch is reachable ─────────────

@@ -541,6 +541,80 @@ describe("lore supersede — active profile", () => {
     expect(parseLegacyDoc("adr/0007-old.md").frontmatter.status).toBe("deprecated");
   });
 
+  // ── DEC-192 (7): `superseded_status` is valid on ANY type (LCLI-729 (d)) ──────
+  //
+  // DEC-192 (7) RATIFIED `superseded_status` as built: valid on ANY type, and validated against
+  // THAT type's own effective enum. Every proof shipped with LCLI-723 was ADR-only (`[draft,
+  // approved]` on an `ADR` type), so the "any type" half of the ruling was UNPROVEN. A `Story` is a
+  // NON-ADR type and the natural one: closing a `status` enum with no `deprecated` is exactly the
+  // shape the key exists for, and it is not an ADR. Three arms below — load, write, refuse — with
+  // the mutation control recorded on the task.
+  describe("superseded_status on a non-ADR type (DEC-192 (7), LCLI-729 (d))", () => {
+    /**
+     * A profile declaring ONLY a `Story` type whose own `status` enum is `["open", "shipped"]` — no
+     * `deprecated` in it, which is what makes the key reachable rather than redundant.
+     */
+    function writeStoryProfile(supersededStatus: string): void {
+      mkdirSync(join(root, ".lore"), { recursive: true });
+      writeFileSync(
+        join(root, ".lore/profile.toml"),
+        [
+          "[profile]",
+          'name = "story-supersede"',
+          'okf_version = "0.1"',
+          "[base.fields]",
+          "type = { required = true }",
+          "[[types]]",
+          'name = "Story"',
+          'fields = { status = { enum = ["open", "shipped"] } }',
+          `superseded_status = "${supersededStatus}"`,
+        ].join("\n"),
+      );
+    }
+
+    function writeStoryDocs(): void {
+      writeDoc("stories/0007-old.md", "---\ntype: Story\nstatus: open\n---\nOld.\n");
+      writeDoc("stories/0012-new.md", "---\ntype: Story\nstatus: open\n---\nNew.\n");
+    }
+
+    test("(i) the profile LOADS with the value, and the Story concept loads too", () => {
+      writeStoryProfile("shipped");
+      writeStoryDocs();
+      const profile = loadProfile({ root });
+      expect(profile.types.get("Story")?.supersededStatus).toBe("shipped");
+      // The bundle loads as well, so arm (i) is proved through the consumer and not only the parser.
+      const graph = loadBundle(join(root, "docs"), { profile });
+      expect([...graph.concepts.keys()].sort()).toEqual(["stories/0007-old", "stories/0012-new"]);
+    });
+
+    test("(ii) `lore supersede` WRITES the declared value on a Story", () => {
+      writeStoryProfile("shipped");
+      writeStoryDocs();
+      const { code } = supersedeCmd(["stories/0007-old", "stories/0012-new"]);
+      expect(code).toBe(EXIT_OK);
+      const bytes = readDoc("stories/0007-old.md");
+      expect(bytes).toContain("status: shipped"); // the declared value, not "deprecated"
+      expect(bytes).not.toContain("deprecated");
+      expect(bytes).toContain("superseded_by: stories/0012-new");
+      expect(readDoc("stories/0012-new.md")).toContain("supersedes: stories/0007-old");
+    });
+
+    test("(iii) a value OUTSIDE that type's own enum is refused AT LOAD, by name", () => {
+      writeStoryProfile("retired"); // not in the Story enum ["open", "shipped"]
+      writeStoryDocs();
+      let error: LoreError | undefined;
+      try {
+        loadProfile({ root });
+      } catch (cause) {
+        error = cause as LoreError;
+      }
+      expect(error).toBeInstanceOf(LoreError);
+      expect(error?.message ?? "").toContain("superseded_status"); // names the key
+      expect(error?.message ?? "").toContain('"retired"'); // names the offending value
+      expect(error?.message ?? "").toContain('"open", "shipped"'); // quotes the type's own enum
+    });
+  });
+
   test("--rewrite-links honors the project profile when re-serializing an inbound concept it reshapes (LORE-88, AC#2)", () => {
     // A Story whose custom-profile-only scalar `tasks:` field is repointed by --rewrite-links (an
     // INBOUND concept, not one of the two supersede principals) — before LORE-88, rewriteInbound's
