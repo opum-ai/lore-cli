@@ -697,6 +697,16 @@ function compilePack(
   // The REQUIRED candidates, computed HERE — before the query section is sized, and well before the
   // ranked-evidence loop — because both of those must reserve room against a pack that already holds
   // them (DEC-194 (5); the full rationale rides with the cap below).
+  //
+  // The filter reads conceptId, but its INPUT is already the profile's REFERENCE SHAPE, and that is
+  // where DEC-194 (5)'s "conceptId means whole, conceptId#anchor means that section" is implemented:
+  // `buildSourceCandidates` builds each source's candidates through
+  // `regionForReference(concept.body, reference.anchor)`, so an anchored reference contributes only
+  // that section's candidates and this filter never sees the rest of the document. Read the filter
+  // alone and it says "every candidate of that concept is required", which is true of the candidates
+  // the producer MADE and false of the document — the distinction that made a filed defect look real
+  // on LCLI-731 until the producer was read too. Pinned by the "required content follows the
+  // reference shape" tests in test/agent-context-budgets.test.ts.
   const required = ordered.filter((candidate) => candidate.conceptId === constitutionId);
   const requiredKeys = new Set(required.map((candidate) => candidate.key));
 

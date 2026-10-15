@@ -867,3 +867,130 @@ describe("agent context — the budget report attributes each omitted section (L
     expect(pack.budgets?.taskEvidence.omittedSections).toEqual([]);
   });
 });
+
+// ── LCLI-731 / DEC-194 (5): required content follows the profile's REFERENCE shape ─────────────
+
+/**
+ * DEC-194 (5): "required = what the profile pins — `conceptId` means whole, `conceptId#anchor`
+ * means that section", proved BOTH ways. The behaviour is already right and nothing pinned it, so
+ * these tests are the deliverable: `required` is computed by
+ * `ordered.filter((candidate) => candidate.conceptId === constitutionId)`, and its INPUT is already
+ * anchor-shaped, because `buildSourceCandidates` builds every source's candidates through
+ * `regionForReference(concept.body, reference.anchor)`. An anchored reference therefore yields ONLY
+ * that section's candidates and the conceptId filter never sees the rest of the document — which is
+ * the semantics the ruling asks for, reached by the candidate PRODUCER rather than the filter.
+ *
+ * That distinction is the whole point of writing them down. Reading the filter alone says "EVERY
+ * candidate of that concept is required", which is TRUE of the candidates the producer made and
+ * false of the document: the producer already honoured the anchor. Measured on the LCLI-731 record.
+ *
+ * The document below is deliberately LOPSIDED — `## Principles` is enormous and `## Governance` is
+ * two words — so "reserved the whole document" and "reserved one section" are separated by an order
+ * of magnitude rather than by a few tokens, and no assertion can pass on the rounding.
+ */
+describe("agent context — required content follows the reference shape (LCLI-731, DEC-194 (5))", () => {
+  /** A cap that holds ONE small section and is nowhere near the whole document. */
+  const ONE_SECTION_CAP = 300;
+
+  function corpus(): void {
+    doc("reference/rules.md", "# Rules\n\nCheckout validation rules.\n", "Checkout validation rules");
+    for (let i = 0; i < 20; i += 1) {
+      doc(`specs/e${i}.md`, `# Evidence ${i}\n\n${"checkout validation ".repeat(60)}\n`, `Evidence ${i}`);
+    }
+  }
+
+  /** `padWords` sizes `## Principles`; `## Governance` stays two words. */
+  function lopsidedConstitutionDoc(padWords: number): void {
+    writeFileSync(
+      join(root, "docs/constitution.md"),
+      `---\ntype: Constitution\ntitle: Project constitution\nsummary: The principles this project holds.\nversion: 1.0.0\nratified: "2026-01-01"\nlast_amended: "2026-01-01"\namendment_authority: project maintainers\n---\n\n# Project constitution\n\n## Principles\n\n${"accountable reversible scoped ".repeat(padWords)}\n\n## Governance\n\nShort.\n`,
+    );
+  }
+
+  function rankedProfile(sources: readonly string[], cap: number): void {
+    const path = join(root, ".lore/agents/frontend-dev.toml");
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(
+      path,
+      `schema_version = 1\nname = "frontend-dev"\ndescription = "Frontend implementation context."\nkind = "specialist"\nmax_tokens = 20000\npinned = ["reference/rules"]\nsources = [${sources.map((s) => `"${s}"`).join(", ")}]\n[targets]\ntask_evidence = ${cap}\n`,
+    );
+  }
+
+  /** The corpus's ranked sources, minus whichever Constitution reference the case is testing. */
+  const evidence = (): string[] => Array.from({ length: 20 }, (_, i) => `specs/e${i}`);
+
+  function compileWithConstitution() {
+    return compileAgentContext(
+      loadAgentProfiles(root),
+      loadBundle(join(root, "docs")),
+      "frontend-dev",
+      TASK,
+      20000,
+      "docs/constitution.md",
+    );
+  }
+
+  /** Swap the profile for a second case without rebuilding the bundle. */
+  function rerank(sources: readonly string[], cap: number): void {
+    rmSync(join(root, ".lore/agents"), { recursive: true, force: true });
+    rankedProfile(sources, cap);
+  }
+
+  test("at ONE cap, a ranked `constitution#governance` compiles and a ranked bare `constitution` is REFUSED by name", () => {
+    corpus();
+    lopsidedConstitutionDoc(400);
+
+    // The anchored arm FIRST — the positive control in the same invocation, so the refusal below
+    // cannot be an artefact of a fixture that fails to compile for some unrelated reason.
+    rankedProfile(["constitution#governance", ...evidence()], ONE_SECTION_CAP);
+    const pack = compileWithConstitution();
+    const held = pack.sections.filter((item) => item.conceptId === "constitution");
+    expect(held.map((item) => item.reference)).toEqual(["constitution#governance"]);
+
+    // ...and the SAME cap, the SAME document, one field different: the bare reference is refused,
+    // because a bare reference means the whole document and the whole document cannot fit.
+    rerank(["constitution", ...evidence()], ONE_SECTION_CAP);
+    let error: LoreError | undefined;
+    try {
+      compileWithConstitution();
+    } catch (cause) {
+      error = cause as LoreError;
+    }
+    expect(error).toBeInstanceOf(LoreError);
+    expect(error?.message).toContain("CONTEXT_REQUIRED_CONTENT_OVER_BUDGET");
+    expect(error?.message).toContain("mandatory evidence");
+  });
+
+  test("the anchored reservation is the SECTION's size, not the document's", () => {
+    corpus();
+    lopsidedConstitutionDoc(400);
+    rankedProfile(["constitution#governance", ...evidence()], ONE_SECTION_CAP);
+
+    const pack = compileWithConstitution();
+    const held = pack.sections.filter((item) => item.conceptId === "constitution");
+    const heldTokens = held.reduce((sum, item) => sum + item.tokenEstimate, 0);
+
+    expect(held).toHaveLength(1); // one section, not the four the bare reference produces below
+    expect(heldTokens).toBeLessThan(ONE_SECTION_CAP);
+
+    // The control, on the same document and the same cap: the BIG sibling section is refused, so the
+    // cap is genuinely binding and the anchored arm passed because of WHICH section it asked for.
+    rerank(["constitution#principles", ...evidence()], ONE_SECTION_CAP);
+    expect(() => compileWithConstitution()).toThrow(/CONTEXT_REQUIRED_CONTENT_OVER_BUDGET/);
+  });
+
+  test("a ranked bare `constitution` still reserves the WHOLE document when the cap can hold it — the present behaviour, pinned", () => {
+    // The other way, and the reason this describe exists: the change must not silently NARROW either.
+    // A bare reference means the whole document, so every section of it is required.
+    corpus();
+    lopsidedConstitutionDoc(400);
+    rankedProfile(["constitution", ...evidence()], 4000);
+
+    const pack = compileWithConstitution();
+    const held = pack.sections.filter((item) => item.conceptId === "constitution");
+    // The document is PARTITIONED into sections, so "the whole document" is more than one item —
+    // and their sum is far past the single section the anchored arm holds.
+    expect(held.length).toBeGreaterThan(1);
+    expect(held.reduce((sum, item) => sum + item.tokenEstimate, 0)).toBeGreaterThan(1000);
+  });
+});
