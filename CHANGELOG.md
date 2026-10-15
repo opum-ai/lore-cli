@@ -69,6 +69,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The scaffolded profile reference says `superseded_status` is valid on ANY type** (LCLI-729,
+  DEC-192 (7)). The comment sat under a single `[[types]]` example, which read as though the key
+  belonged to that one type. It now says plainly that the key is legal on **every** type and is
+  validated against **that type's own** effective `status` enum — which is what the ratified ruling
+  says, and what `lore supersede` has done since DEC-192 (6). The scaffolded `.lore/profile.toml`
+  bytes change; nothing about how a profile is parsed or validated does.
+
 - **A declared `task_evidence` target now CAPS evidence selection, not only measures it** (LCLI-722,
   DEC-194 (4), option A, opum-ai/opum-doc#1022). A profile that declares `[targets] task_evidence`
   selects ranked evidence only up to that many tokens, highest-scoring first; a profile that declares
@@ -126,6 +133,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a CI break** — warnings alone still exit `0`.
 
 ### Fixed
+
+- **The LCLI-727 follow-ups: a qualified decision id supplied BY HAND, and a derived repository name
+  that is not a name at all** (LCLI-729). Two behaviour fixes:
+
+  - **A hand-supplied qualified id now takes the same predicate as the three arms beside it.**
+    `lore link --decision opum-ai/lore-cli:DEC-9` was stored **verbatim**: this was the FOURTH arm
+    writing the stored `<repo>:DEC-N` field, after `--repo`, the name derived from `origin` and the
+    workspace member id, and the only one that never validated — so an owner/repo PATH reached a
+    committed document, where DEC-192 (5) specifies a repository NAME that is identical in every
+    clone and worktree. It is refused **by name** now. Whitespace cannot reach this arm (the id
+    grammar excludes it), so `/` and `\` were the residual hole. **A valid `<repo>:DEC-N` is still
+    stored verbatim and a bare `DEC-N` still takes the resolved qualifier**, unchanged.
+  - **A remote URL whose last segment is a PORT yields no name.** The split on `:` takes the last
+    colon, so `https://host:8080` and its trailing-slash twin left `8080` as the "repository" — a
+    port is not one, and writing `8080:DEC-1` into a committed document is worse than refusing to
+    guess. The derived arm now returns nothing and the caller answers with its own refusal that
+    names `--repo`. A segment that truncates to nothing (`git@host:.git`) was already safe and is
+    now pinned. **The single-suffix strip is unchanged and deliberate**: `x.git.git` still yields
+    `x.git`, which is the directory `git clone` itself would create from that URL.
+
+  Also, no production change: a padded workspace `memberId` is pinned as refused, with the reason
+  recorded that it does NOT trim where `--repo` does (a member id is configuration, so a padded one
+  would store a qualifier no reader can match back to the member it names); the doc-side
+  case-collision proof now also asserts the colliding **sibling** was left untouched; and on the
+  case-sensitive leg the runtime case probe is **asserted** rather than trusted, so a runner that
+  collapsed the pair fails loudly instead of turning the proof into a green skip.
 
 - **`lore link --decision`'s repository qualifier is a NAME at every arm, and it no longer refuses a
   document id for a reason only the task arm can encounter** (LCLI-727, the round-2 review follow-ups

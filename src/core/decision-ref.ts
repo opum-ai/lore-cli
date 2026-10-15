@@ -45,6 +45,14 @@ function isValidQualifier(name: string): boolean {
  * Qualify one decision id. A bare `DEC-N` takes `qualifier`; an already-qualified `<repo>:DEC-N` is
  * kept as authored, so a caller can name another repository's decision explicitly. The decision part
  * is normalised to its canonical uppercase `DEC-N` spelling.
+ *
+ * "Kept as authored" means a VALID qualified id, not any string before the `:` (LCLI-729 (1)). This
+ * is the FOURTH arm that writes the same stored field, after `--repo`, the derived remote name and
+ * the workspace member id, so it takes the same {@link isValidQualifier} predicate: an owner/repo
+ * PATH such as `opum-ai/lore-cli:DEC-9` is refused BY NAME rather than stored, where DEC-192 (5)
+ * specifies a repository NAME identical in every clone and worktree. {@link DECISION_REF} matches
+ * the repository part with `[^:\s]+`, so whitespace and `:` cannot arrive here — `/` and `\` are the
+ * residual hole this closes, and the author supplying the qualifier whole is the path that reached it.
  */
 export function qualifyDecisionRef(raw: string, qualifier: string): string {
   const trimmed = raw.trim();
@@ -54,7 +62,16 @@ export function qualifyDecisionRef(raw: string, qualifier: string): string {
   }
   const id = (match[2] as string).toUpperCase();
   const repo = match[1];
-  return repo === undefined ? `${qualifier}:${id}` : `${repo}:${id}`;
+  if (repo === undefined) return `${qualifier}:${id}`;
+  if (!isValidQualifier(repo)) {
+    throw new LoreError(
+      "usage",
+      `invalid decision id "${raw}": the repository qualifier "${repo}" is not a NAME`,
+      "the qualifier is a repository NAME — no `/` or `\\`, e.g. <repo>:DEC-N or --repo <name>",
+      { decision: raw },
+    );
+  }
+  return `${repo}:${id}`;
 }
 
 /**
@@ -95,12 +112,27 @@ export function originRepositoryName(
  * (scp-style, no scheme), `https://github.com/opum-ai/lore-cli`, `ssh://git@host/lore-cli.git`, a
  * bare `git@host:lore-cli.git` with no owner — and a name that still carries `\` or `/` (what a local
  * Windows path leaves behind) is REFUSED rather than written into an id.
+ *
+ * Two shapes that are not names at all are refused here as well (LCLI-729 (2)), both by returning
+ * `undefined` so the caller answers with its own refusal that names `--repo`:
+ *
+ *   - `https://host:8080` (and its trailing-slash twin) — the split on `:` takes the last colon, so
+ *     the last segment is the PORT. A port is not a repository, and writing `8080:DEC-1` into a
+ *     committed document is worse than refusing to guess.
+ *   - `git@host:.git` — the segment is the `.git` suffix and nothing else, so it truncates to the
+ *     empty string the predicate refuses. `repositoryNameFromRemoteUrl("git@host:.git")` has always
+ *     been safe; it is pinned by a test now that the pair is being written down.
+ *
+ * The single-suffix strip is deliberate and matches `git clone`'s own directory naming: `x.git.git`
+ * yields `x.git` (one `.git` removed, the same directory git would create). That is the remote's own
+ * name rather than a truncation this tool invents, so it is kept and pinned by a test.
  */
 export function repositoryNameFromRemoteUrl(url: string): string | undefined {
   const trimmed = url.replace(/[/\\]+$/, "");
   if (trimmed === "") return undefined;
   const lastSegment = trimmed.split(/[:/]/).pop() ?? "";
   const name = lastSegment.replace(/\.git$/i, "");
+  if (/^[0-9]+$/.test(name)) return undefined;
   return isValidQualifier(name) ? name : undefined;
 }
 
