@@ -11,7 +11,13 @@ kind = "specialist"
 # written here on purpose: it moves with every edit to a declared source, and `lore check` prints
 # the current requirement when it is exceeded.
 max_tokens = 63000
-pinned = ["index"]
+pinned = [
+  "index#current-control-set",
+  "index#architecture--design",
+  "index#references",
+  "index#adrs",
+  "index#runbooks",
+]
 sources = [
   "reference/lore-cli-documentation-ownership",
   "reference/operate-autonomous-lore-cli-documentation-campaigns",
@@ -24,3 +30,13 @@ sources = [
   "runbooks/agent-profile-operation",
   "runbooks/release-publishing",
 ]
+
+# Context-budget TARGETS the compiler measures a compiled pack against and reports (MDL-7,
+# ODOC-437 AC3). Design defaults, NOT ceilings enforced before a request -- `max_tokens` above
+# stays the ceiling. The initial code map and the harness/tools floor of the total startup are
+# composed by opum-cli and are reported not-applicable by lore.
+[targets]
+policy_and_role = 3000
+task_contract = 2000
+task_evidence = 6000
+lore_subtotal = 11000

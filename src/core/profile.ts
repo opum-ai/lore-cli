@@ -127,6 +127,33 @@ export const CASE_STYLES = ["Title", "lower", "UPPER", "kebab", "snake"] as cons
 export type CaseStyle = (typeof CASE_STYLES)[number];
 
 /**
+ * The built-in OKF lifecycle `status` vocabulary, used whenever a profile declares no `status`
+ * enum of its own. It is the ONLY place these three values are spelled in this module.
+ *
+ * This is the built-in half of DEC-192 (4)'s *effective* status enum: a project's DECLARED
+ * `status` enum takes precedence where it has one, and this triple is the fallback where it does
+ * not. It lives here, rather than in `schema.ts` where the runtime check is, because the profile
+ * is what decides the vocabulary — `schema.ts` is a consumer of it.
+ */
+export const BUILTIN_LIFECYCLE_STATUS = ["draft", "stable", "deprecated"] as const;
+
+/**
+ * The **effective lifecycle `status` enum** for one type's `status` field spec (`undefined` = the
+ * type carries no `status` field at all): the profile's declared `enum` when its `status` spec
+ * declares one, else {@link BUILTIN_LIFECYCLE_STATUS}.
+ *
+ * The single source three consumers share, so they cannot disagree — which IS the defect DEC-192
+ * (4) names. Before it, the emitted schema read the profile's declared enum (`FieldSpec.enum`
+ * through `baseKindToZod`) while the runtime load check hard-coded the built-in triple in
+ * `schema.ts`, so a custom `[draft, approved]` profile emitted its own enum and enforced the
+ * built-in one. Returning `readonly string[]` rather than a Zod schema keeps this module free of
+ * `schema.ts`'s dependency direction: `schema.ts` imports `profile.ts`, never the reverse.
+ */
+function effectiveLifecycleStatusEnum(statusSpec: FieldSpec | undefined): readonly string[] {
+  return statusSpec?.enum ?? BUILTIN_LIFECYCLE_STATUS;
+}
+
+/**
  * One declared field's spec — the parsed form of an inline table in `[base.fields]`
  * or a type's `fields`. `{}` (every attribute defaulted) is an optional string field.
  */
@@ -173,6 +200,16 @@ export interface ParsedType {
   readonly sections: readonly string[];
   /** The template filename under `.lore/templates/` `lore new` renders for this type. */
   readonly template?: string;
+  /**
+   * The `status` value `lore supersede` writes on a concept of this type when the effective
+   * lifecycle enum has no `deprecated` member (DEC-192 (6)) — `superseded_status = "approved"` on
+   * an ADR type whose declared enum is `[draft, approved]`. A key BESIDE `fields` and `sections`,
+   * not a field: it is profile configuration, so it is never emitted into `<slug>.schema.json` and
+   * never appears in a document. {@link parseProfile} refuses a value outside the type's own
+   * {@link effectiveLifecycleStatusEnum} at load, by name; `lore supersede` refuses, also by name,
+   * when the type needs one and declares none.
+   */
+  readonly superseded_status?: string;
 }
 
 /** A fully-parsed-but-uncompiled profile — what {@link compileProfile} turns into a {@link Profile}. */
@@ -216,6 +253,37 @@ export interface CompiledType {
   readonly requiredSections: readonly string[];
   /** The template filename under `.lore/templates/`, if the type declares one. */
   readonly template?: string;
+  /**
+   * The **effective lifecycle `status` enum** for this type (DEC-192 (4)): its own `status` field
+   * spec's declared `enum` when it has one, else the `[base.fields]` one, else
+   * {@link BUILTIN_LIFECYCLE_STATUS}. Computed once at compile so the runtime check
+   * (`schema.ts`'s `validateLifecycleStatus`), the emitted 0.2 `status` property
+   * (`schemaForVersion`) and `lore supersede` all read one value and cannot disagree — the
+   * disagreement between the emitted schema and the load check is the defect LCLI-723 fixes.
+   */
+  readonly lifecycleStatusEnum: readonly string[];
+  /**
+   * Whether {@link lifecycleStatusEnum} was **declared** (a `status` spec carrying an `enum`, own or
+   * inherited from `[base.fields]`) rather than falling back to {@link BUILTIN_LIFECYCLE_STATUS}.
+   *
+   * Kept BESIDE the enum because the enum alone cannot answer it: an open `status`, the built-in
+   * profile and a profile whose declared enum is byte-equal to the built-in triple all produce the
+   * same three values, so `lifecycleStatusEnum` conflates "no enum declared" with "this exact enum
+   * declared". A consumer that must act on a DECLARED closed vocabulary -- `lore check`'s
+   * `task-status-enum-inherited` warning is the first (LCLI-730, DEC-192 (8)) -- would otherwise skip
+   * the declared-built-in-triple case as though it were the fallback. `schema.ts`'s
+   * `isBuiltinLifecycleEnum` makes that conflation deliberately, for the REMEDY text, where naming
+   * the triple is correct either way; this flag is for the callers where it is not.
+   */
+  readonly lifecycleStatusDeclared: boolean;
+  /**
+   * The `status` value `lore supersede` writes on this type when {@link lifecycleStatusEnum} has
+   * no `deprecated` member (DEC-192 (6)) — the ADR type's `superseded_status` profile key.
+   * `undefined` when the type declares none. Already validated at parse against
+   * {@link lifecycleStatusEnum}; NOT part of {@link declaredFields} or {@link jsonSchema}, because
+   * it is profile configuration rather than a document field.
+   */
+  readonly supersededStatus?: string;
   /** The field names this type declares (base ∪ own ∪ reserved), for the extra-key warning. */
   readonly declaredFields: ReadonlySet<string>;
   /**
@@ -340,24 +408,47 @@ export function slugForTypeName(name: string): string {
  */
 export function loadProfile(options: LoadProfileOptions = {}): Profile {
   const root = options.root ?? process.cwd();
-  // A present-but-empty `.toml` (the commented file `lore init` scaffolds) is NOT a populated
-  // profile, so it must not shadow a real `.json` form — fall through to it, exactly as an absent
-  // `.toml` would. Only a non-empty profile (either form) is compiled; otherwise the default.
+  const resolved = resolveProfileDoc(root);
+  return resolved === null ? defaultProfile() : compileProfile(parseProfile(resolved.doc, resolved.path));
+}
+
+/**
+ * The repo-root-relative path of the profile file actually **in effect** under `root`, or `undefined`
+ * when the built-in default loads (no populated profile: an absent file, or the present-but-empty
+ * commented `.toml` `lore init` scaffolds). Shares {@link resolveProfileDoc} with {@link loadProfile},
+ * so a finding attributed to "the profile file"
+ * ({@link import("./check").taskStatusEnumInheritedFindings}, LCLI-730) names the SAME file the load
+ * read — the lower-precedence `.json` form included, and even when an empty `.toml` skeleton sits
+ * beside a populated `.json`.
+ */
+export function activeProfilePath(root: string): string | undefined {
+  return resolveProfileDoc(root)?.path;
+}
+
+/**
+ * Read and parse the populated profile under `root`, or `null` for the zero-config default. The
+ * shared resolver behind {@link loadProfile} and {@link activeProfilePath}.
+ *
+ * A present-but-empty `.toml` (the commented file `lore init` scaffolds) is NOT a populated profile,
+ * so it must not shadow a real `.json` form — it falls through to it, exactly as an absent `.toml`
+ * would. Only a non-empty profile (either form) is returned; otherwise the default.
+ */
+function resolveProfileDoc(root: string): { path: string; doc: Record<string, unknown> } | null {
   const tomlText = readProfileText(join(root, PROFILE_REL_PATH), PROFILE_REL_PATH);
   if (tomlText !== undefined) {
     const doc = parseToml(tomlText);
     if (!isEmptyDoc(doc)) {
-      return compileProfile(parseProfile(doc, PROFILE_REL_PATH));
+      return { path: PROFILE_REL_PATH, doc };
     }
   }
   const jsonText = readProfileText(join(root, PROFILE_JSON_REL_PATH), PROFILE_JSON_REL_PATH);
   if (jsonText !== undefined) {
     const doc = parseJson(jsonText);
     if (!isEmptyDoc(doc)) {
-      return compileProfile(parseProfile(doc, PROFILE_JSON_REL_PATH));
+      return { path: PROFILE_JSON_REL_PATH, doc };
     }
   }
-  return defaultProfile();
+  return null;
 }
 
 /**
@@ -457,6 +548,7 @@ export function parseProfile(doc: Record<string, unknown>, source: string): Pars
   }
 
   const types = parseTypes(doc.types, source);
+  assertSupersededStatusIsInEnum(types, baseFields, source);
   if (types.length === 0) {
     // A profile with no types validates nothing — every concept would fall through to the
     // unknown-type warning tier, silently turning `lore validate` green over real defects. The
@@ -472,7 +564,7 @@ export function parseProfile(doc: Record<string, unknown>, source: string): Pars
 }
 
 /** The keys a `[[types]]` table may declare. */
-const TYPE_TABLE_KEYS = ["name", "aliases", "fields", "sections", "template"] as const;
+const TYPE_TABLE_KEYS = ["name", "aliases", "fields", "sections", "template", "superseded_status"] as const;
 
 /** Parse the `[[types]]` array-of-tables into {@link ParsedType}s, rejecting a duplicate type name. */
 function parseTypes(value: unknown, source: string): ParsedType[] {
@@ -534,12 +626,64 @@ function parseTypes(value: unknown, source: string): ParsedType[] {
       assertTemplateConfined(template, `types[${i}].template`, source);
     }
     const aliases = (asStringArray(table.aliases, `types[${i}].aliases`, source) ?? []).map((a) => a.trim());
-    types.push(
-      template === undefined ? { name, aliases, fields, sections } : { name, aliases, fields, sections, template },
-    );
+    // Trim at the config boundary, exactly as `resource_base` does: a padded value would be written
+    // verbatim into every superseded document's `status`, where the enum match is exact.
+    const supersededStatus = asString(table.superseded_status, `types[${i}].superseded_status`, source)?.trim();
+    types.push({
+      name,
+      aliases,
+      fields,
+      sections,
+      ...(template === undefined ? {} : { template }),
+      ...(supersededStatus === undefined ? {} : { superseded_status: supersededStatus }),
+    });
   }
   assertAliasesAreUnique(types, seen, seenSlugs, source);
   return types;
+}
+
+/**
+ * Refuse, **by name**, a `superseded_status` outside its own type's effective lifecycle enum
+ * (DEC-192 (6)). Run once here, over the whole `[[types]]` array, rather than inside the per-type
+ * parse loop: a type's effective enum is its own `status` field spec if it declares one, else the
+ * `[base.fields]` one — so the check needs `baseFields` too, which the loop does not have.
+ *
+ * A load-time refusal is the point of the ruling. `superseded_status` is the value
+ * `lore supersede` will WRITE into a document's `status`; a value outside the enum would be
+ * written straight past the very validation the enum exists to perform, and the next `lore check`
+ * would reject a file this tool itself produced. Refusing at load keeps the profile
+ * self-consistent before any document is touched.
+ *
+ * An empty value is refused here as well. An enum MAY legally hold `""` (only its length is
+ * checked, `assertNonEmptyEnum`), so membership alone would let `superseded_status = ""` through
+ * and write a useless empty `status: ""`.
+ */
+function assertSupersededStatusIsInEnum(
+  types: readonly ParsedType[],
+  baseFields: Readonly<Record<string, FieldSpec>>,
+  source: string,
+): void {
+  for (const type of types) {
+    const declared = type.superseded_status;
+    if (declared === undefined) {
+      continue;
+    }
+    // Same merge `compileProfile` performs: a type's own `status` spec fully replaces the base one.
+    const allowed = effectiveLifecycleStatusEnum(type.fields.status ?? baseFields.status);
+    if (declared !== "" && allowed.includes(declared)) {
+      continue;
+    }
+    fail(
+      `${source}: types "${type.name}".superseded_status "${declared}" is not in that type's lifecycle \`status\` enum (${quoteEnum(allowed)})`,
+      `set superseded_status to one of ${quoteEnum(allowed)}, or add "${declared}" to the \`status\` enum this type resolves (its own \`fields\`, else [base.fields])`,
+      { key: "types.superseded_status" },
+    );
+  }
+}
+
+/** Render an enum for a diagnostic: `"draft", "approved"` — the quoting authors copy back verbatim. */
+function quoteEnum(values: readonly string[]): string {
+  return values.map((value) => `"${value}"`).join(", ");
 }
 
 /**
@@ -861,10 +1005,13 @@ export function compileProfile(parsed: ParsedProfile): Profile {
       jsonSchema: buildJsonSchema(schema, merged, fieldOrder),
       requiredSections: type.sections,
       aliases: type.aliases ?? [],
+      lifecycleStatusEnum: effectiveLifecycleStatusEnum(merged.status),
+      lifecycleStatusDeclared: merged.status?.enum !== undefined,
       declaredFields: new Set(fieldOrder),
       requiredFields: new Set(fieldOrder.filter((field) => merged[field]?.required === true)),
       acceptsStampedResource: acceptsStampedResource(merged.resource),
       ...(type.template === undefined ? {} : { template: type.template }),
+      ...(type.superseded_status === undefined ? {} : { supersededStatus: type.superseded_status }),
     };
     types.set(type.name, compiled);
     byLowerName.set(type.name.toLowerCase(), type.name);
@@ -1118,7 +1265,13 @@ function storyConventionProfile(okfVersion: OkfVersion = CURRENT_OKF_VERSION): P
         sections: ["Acceptance criteria"],
       },
       { name: "Spec", fields: {}, sections: [] },
-      { name: "ADR", fields: {}, sections: ["Status", "Context", "Decision", "Consequences"] },
+      // LCLI-670 (DEC-192 (2)): an ADR links decision ids the way an Arc links task ids. Entries are
+      // repository-qualified `<repo>:DEC-N`, because a DEC-n exists in more than one fleet tracker.
+      {
+        name: "ADR",
+        fields: { decisions: optionalStringList },
+        sections: ["Status", "Context", "Decision", "Consequences"],
+      },
       { name: "Runbook", fields: {}, sections: [] },
       { name: "Reference", fields: {}, sections: [] },
       // Declared on EVERY OKF version, unlike Attested Computation below (OPAG-425 R1: "available on

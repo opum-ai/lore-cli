@@ -495,13 +495,29 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
   },
   {
     name: "link",
-    summary: "Add task ids to a concept's tasks: + the doc: back-ref",
+    summary: "Add task ids to a concept's tasks: + the doc: back-ref, or a decision id to its decisions:",
     args: "<id> <taskId…>",
-    flags: [{ name: "no-back-ref", takesValue: false, summary: "Skip the doc: label write to the task" }],
+    flags: [
+      { name: "no-back-ref", takesValue: false, summary: "Skip the doc: label write to the task" },
+      {
+        name: "decision",
+        takesValue: true,
+        repeatable: true,
+        summary: "Link a decision id instead of task ids, as <repo>:DEC-N (doc-side only, no back-reference)",
+      },
+      {
+        name: "repo",
+        takesValue: true,
+        summary: "The repository qualifier for a bare decision id; always wins. Defaults to the origin remote's name",
+      },
+    ],
     json: true,
     kind: "link.result",
     exitCodes: exitCodesFor(["bundle", "profile", "write", "backlog"]),
-    examples: ["lore link stories/bulk-archive-orders task-42 task-57"],
+    examples: [
+      "lore link stories/bulk-archive-orders task-42 task-57",
+      "lore link adr/0012-new-decision --decision DEC-192",
+    ],
   },
   {
     name: "unlink",
@@ -915,6 +931,11 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
           "Compile the lean task-startup pack from a TaskContract/v1 JSON document at a repo-relative path or stdin (-)",
       },
       { name: "max-tokens", takesValue: true, summary: "Override the profile's chars/4 token budget" },
+      {
+        name: "provider-input-tokens",
+        takesValue: true,
+        summary: "Record a manually supplied provider input-token count (source: manual) in the pack's providerUsage",
+      },
       { name: "out", takesValue: true, summary: "Atomically save canonical Markdown to a repo-relative path" },
       { name: "force", takesValue: false, summary: "Replace a differing regular --out file" },
       {

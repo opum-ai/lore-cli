@@ -6,8 +6,10 @@
  * supersede half). Unlike {@link runRename}, it **preserves the old file** as history — nothing
  * moves or is deleted — and only edits frontmatter:
  *
- * - on the **old** concept: `superseded_by: <newId>` plus the versioned lifecycle marker
- *   (`status: superseded` in legacy OKF 0.1, `status: deprecated` in OKF 0.2);
+ * - on the **old** concept: `superseded_by: <newId>` plus the lifecycle marker — `status:
+ *   deprecated` on every OKF version since DEC-192, or the value the active profile's lifecycle
+ *   enum uses for a superseded document when it does not contain `deprecated` (DEC-192 (4)/(6),
+ *   LCLI-723; see {@link resolveSupersededStatus});
  * - on the **new** concept: `supersedes: <oldId>`, **appended** to any existing entry (a concept may
  *   supersede several) rather than clobbering it.
  *
@@ -38,7 +40,8 @@
  * Validation lives here, because the engine's `move:false` path checks only that `oldId` exists (its
  * conflict guard is move-only): both ids must name concepts (`not_found`, exit 3); neither may be a
  * reserved hub name (`usage`, exit 2); and the old concept must not already be superseded —
- * `status: superseded` (any case) **or** an already-recorded `superseded_by` — which would otherwise
+ * the legacy `status: superseded` marker (any case) **or** an already-recorded `superseded_by` —
+ * which would otherwise
  * be silently overwritten (`conflict`, exit 5). All file I/O is here
  * ({@link writeFileOverwriting}, overwrite in place); every link/ref judgement stays pure in
  * `core/rewrite.ts`.
@@ -47,16 +50,20 @@
 import { join, posix } from "node:path";
 import { conceptNotInBundle, loadBundle, resolveRef, UNREADABLE_DIRECTORY_WARNING } from "../core/bundle";
 import { type Concept, idFromPath, serializeConcept } from "../core/concept";
-import { loadProfile, profileForBundle } from "../core/profile";
+import { BUILTIN_LIFECYCLE_STATUS, loadProfile, type Profile, profileForBundle } from "../core/profile";
 import { renderLinkTextMismatchWarning, rewriteInbound } from "../core/rewrite";
 import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
+import { canonicalType } from "../core/schema";
 import { EXIT_OK, LoreError, WarningCollector, type Writer } from "../errors";
 import { emit, type OutputContext, type Renderable } from "../output";
 import { assertNotReservedStem, parseCommandArgs, usage } from "./args";
 import { writeFileOverwriting } from "./fswrite";
 
-/** The legacy OKF 0.1 `status` value that marks a concept superseded. */
-const SUPERSEDED_STATUS = "superseded";
+// DEC-192 (LCLI-669) retired the legacy OKF 0.1 `status` value "superseded" this command used to
+// write: it was never a legal lifecycle value, `lore supersede` writes the effective enum's
+// superseded value on both versions (DEC-192 (4)/(6), LCLI-723), and nothing reads the old spelling.
+// A document still carrying it fails validation
+// (exit 6); the CHANGELOG names the one-line fix.
 
 /** Options for {@link runSupersede}; `root` and the streams are injectable for tests. */
 export interface SupersedeOptions {
@@ -202,7 +209,11 @@ export function runSupersede(options: SupersedeOptions): number {
   // Wire the principals' frontmatter (cloned, never mutating the graph snapshot) and serialize under
   // the active profile. The old doc always changes (it gains the lifecycle keys); the new doc is
   // written only when its `supersedes` actually changes, so a no-op append is not reported as a write.
-  const supersededLifecycle = graph.state.okfVersion === "0.2" ? "deprecated" : SUPERSEDED_STATUS;
+  // DEC-192 (LCLI-669): the old end goes to a valid lifecycle value on every OKF version. It used to
+  // write the invalid `status: superseded` on a 0.1 bundle — never a legal value there either, and
+  // silently unchecked until the enum began running on 0.1.
+  // DEC-192 (4)/(6) (LCLI-723): WHICH value is the effective enum's business, not this command's.
+  const supersededLifecycle = resolveSupersededStatus(profile, oldConcept);
   writes.set(oldConcept.path, serializeConcept(wireOld(oldConcept, newId, supersededLifecycle), { profile }));
   const wiredNew = wireNew(newConcept, oldId, graph);
   if (wiredNew !== null) {
@@ -309,17 +320,20 @@ function appendSupersedes(
 
 /**
  * Reject superseding a concept that is already superseded (`conflict`, exit 5). "Already superseded"
- * is either the `status: superseded` lifecycle signal (matched case-insensitively, since `status` is
- * a free-form string) **or** an already-recorded `superseded_by` — the structured field
- * {@link wireOld} would otherwise silently overwrite, discarding the concept's real recorded
- * successor.
+ * is an already-recorded `superseded_by` — the structured field {@link wireOld} would otherwise
+ * silently overwrite, discarding the concept's real recorded successor.
+ *
+ * The legacy `status: superseded` arm is NOT dead code (LCLI-669 review F4). The ADR enum reaches
+ * ADRs on 0.1, but a 0.1 NON-ADR (a Story, a Reference) keeps `status` as its task-rollup key under
+ * the carve-out, so such a document carrying the legacy marker still LOADS. Without this arm
+ * {@link wireOld} would clobber its rollup `status` to `deprecated`.
  */
 function assertNotAlreadySuperseded(oldConcept: Concept): void {
   if (hasRecordedSuccessor(oldConcept) || statusIsSuperseded(oldConcept)) {
     throw new LoreError(
       "conflict",
       `concept "${oldConcept.id}" is already superseded`,
-      "a superseded concept cannot be superseded again; clear its `status`/`superseded_by` first if this is intentional",
+      "a superseded concept cannot be superseded again; if its `status` is the legacy `superseded`, apply the CHANGELOG's one-line fix (`status: superseded` -> `status: deprecated`) and set `superseded_by`, or clear it if this is intentional",
       { id: oldConcept.id },
     );
   }
@@ -334,7 +348,49 @@ function hasRecordedSuccessor(concept: Concept): boolean {
   return !(Array.isArray(value) && value.length === 0);
 }
 
-/** Whether the concept's `status` is `superseded`, matched case-insensitively (status is free-form text). */
+/** The OKF lifecycle value that means "this document has been superseded" in the built-in enum. */
+const DEPRECATED_STATUS = "deprecated";
+
+/**
+ * The legacy `status` value (`superseded`) an older `lore supersede` wrote. Never a legal lifecycle
+ * value; since DEC-192 it is only ever READ here, by {@link statusIsSuperseded}.
+ */
+const SUPERSEDED_STATUS = "superseded";
+
+/**
+ * The `status` value {@link wireOld} writes on the concept being superseded. DEC-192 (4) makes the
+ * profile the authority: the value is `deprecated` whenever the concept's type resolves to an
+ * effective lifecycle enum containing it — the built-in `[draft, stable, deprecated]` for every
+ * profile that declares none, which is the behaviour this command has had since LCLI-669 — and
+ * otherwise the value the type's `superseded_status` profile key names (DEC-192 (6)), e.g.
+ * `superseded_status = "approved"` on an ADR type whose enum is `[draft, approved]`.
+ *
+ * When neither exists the command refuses **by name**, quoting the enum and the key to set. That
+ * refusal is the point of the ruling rather than a nicety: this command writes the value straight
+ * into a document, and a value outside the enum would be a file its own `lore check` then rejects.
+ * A type the profile does not declare falls back to the built-in enum, exactly as
+ * `validateLifecycleStatus` judges such a concept.
+ */
+function resolveSupersededStatus(profile: Profile, concept: Concept): string {
+  const typeName = typeof concept.frontmatter.type === "string" ? concept.frontmatter.type : "";
+  const compiled = profile.types.get(canonicalType(typeName, profile));
+  const allowed = compiled?.lifecycleStatusEnum ?? BUILTIN_LIFECYCLE_STATUS;
+  if (allowed.includes(DEPRECATED_STATUS)) {
+    return DEPRECATED_STATUS;
+  }
+  if (compiled?.supersededStatus !== undefined) {
+    return compiled.supersededStatus;
+  }
+  const list = allowed.map((value) => `"${value}"`).join(", ");
+  throw new LoreError(
+    "validation",
+    `cannot mark "${concept.id}" superseded: the profile's lifecycle \`status\` enum for type "${typeName}" (${list}) has no "deprecated", and that type declares no \`superseded_status\``,
+    `add \`superseded_status = <one of ${list}>\` to the \`[[types]]\` table for "${typeName}" in .lore/profile.toml, or add "deprecated" to that type's \`status\` enum; nothing was written`,
+    { id: concept.id, type: typeName, key: "types.superseded_status" },
+  );
+}
+
+/** Whether the concept's `status` is the legacy `superseded` marker, matched case-insensitively. */
 function statusIsSuperseded(concept: Concept): boolean {
   const status = concept.frontmatter.status;
   return typeof status === "string" && status.trim().toLowerCase() === SUPERSEDED_STATUS;

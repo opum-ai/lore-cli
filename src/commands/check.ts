@@ -62,12 +62,19 @@ import {
   reconcileDriftFindings,
   schemaDriftFindings,
   tallySeverity,
+  taskStatusEnumInheritedFindings,
 } from "../core/check";
 import { type Concept, hasStrayFrontmatterFence, parseConcept, tryReadFrontmatter } from "../core/concept";
 import { generateIndexes } from "../core/indexes";
 import { type BundleState, type BundleVersionIssue, resolveBundleState, taskRollupFieldFor } from "../core/okf-version";
 import { compareCodeUnits } from "../core/order";
-import { loadProfile, type Profile, profileForBundle, profileTypeDeclaresField } from "../core/profile";
+import {
+  activeProfilePath,
+  loadProfile,
+  type Profile,
+  profileForBundle,
+  profileTypeDeclaresField,
+} from "../core/profile";
 import { DOCS_DIR, RESERVED_STEMS } from "../core/scaffold";
 import { canonicalType, emitSchemaFiles, profileDigest, SCHEMAS_DIR, unknownTypeHint } from "../core/schema";
 import {
@@ -357,6 +364,27 @@ function checkAfterSchemaPass(
   const conceptBundleResults = bundles.map((bundle) => tryConceptsForBundle(bundle, profile, judge));
   const multi = bundles.length > 1;
   const typeBundle = typeBundleRules(options.root, conceptBundleResults);
+  // The profile-scoped load-time warning (LCLI-730, DEC-192 (8); surface ratified by DEC-192 (10)).
+  // REPO-scoped like the schema and agent-profile findings below: the profile lives at the repository
+  // root, never in a bundle root, so the finding is computed ONCE here and emitted once per offending
+  // TYPE, never per bundle. `activeProfilePath` names the file the load actually read; a repository
+  // on the built-in default has none, and such a profile never carries the closed DECLARED enum this
+  // warns about anyway.
+  //
+  // The bundle STATES are passed because the gate is the bundle's version, not the producer
+  // profile's `okf_version` (LCLI-730 review): the schema that refuses a rollup `status` is built per
+  // bundle by `profileForBundle`. Reading the producer version failed both ways — a 0.2 profile over a
+  // legacy-0.1 bundle warned nothing where the collision is real, and a 0.1 profile over a 0.2 bundle
+  // warned where it is not.
+  const profileFile = activeProfilePath(options.root);
+  const profileFindings =
+    profileFile === undefined
+      ? []
+      : taskStatusEnumInheritedFindings(
+          profile,
+          bundles.map((bundle) => bundle.state),
+          profileFile,
+        );
   const scanFindings = [
     ...conceptBundleResults.flatMap((result) =>
       result.findings.map((finding) => prefixFinding(finding, result.bundle.label, multi)),
@@ -368,6 +396,7 @@ function checkAfterSchemaPass(
     // profiles live at the repository root, not in any one bundle root (LCLI-642).
     ...schemaFindings,
     ...agentProfileFindings,
+    ...profileFindings,
   ];
   const merged = mergeFindings(linkReport, scanFindings);
   const baseReport: CheckReport = {

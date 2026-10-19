@@ -29,6 +29,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   canonically ordered (identity is `(timestamp, hash)`), verified against a real two-append merge.
   lore-cli's own `.gitattributes` adopts the line.
 
+- **`lore check` warns when a 0.1 BUNDLE's task-coupled type closes `status` away from the rollup values**
+  (LCLI-730, DEC-192 (8), opum-ai/opum-doc#1023; surface ratified by DEC-192 (10),
+  opum-ai/opum-doc#1053). On an OKF 0.1 BUNDLE `status` IS the task-progress rollup key, so a profile
+  that declares a CLOSED `status` enum lacking `todo`/`in-progress`/`done` on a task-coupled type has
+  closed its own rollup key: a written `status: done` is refused by the generated type schema before
+  any lifecycle check is reached. The new `task-status-enum-inherited` finding is a **warning**,
+  emitted once per profile — once per offending type, however many bundles the run scans — and
+  attributed to the profile file. It is never an error, so a profile
+  that loads today keeps loading, and the schema's own refusal of such a document is unchanged. It
+  names the type, the inherited enum and the remedy (declare `status` on that type — open, or
+  including the rollup values). It is not raised for an OPEN `status`, nor for the built-in profile,
+  whose base `status` is an open optional string, nor once the remedy has been applied. The gate is
+  the version of the BUNDLE being checked, not the `okf_version` the profile file declares: the
+  schema that refuses the rollup `status` is built per bundle, so a `okf_version = "0.2"` profile is
+  still warned about over a bundle that resolves to 0.1, and a 0.1 profile is silent over a 0.2 one.
+
+- **The budget report attributes every omitted ranked section** (LCLI-722 AC4, DEC-194 (6), (11) and
+  (12)). `budgets.taskEvidence.omittedSections` names each ranked section the class considered and
+  did not carry, with the reason it is absent, in declaration order. The two single-ceiling values
+  say what the OTHER ceiling would have done, which is what makes them a remedy rather than a
+  restatement of whichever check ran first: `cut-by-task-evidence-cap` for a section the declared
+  `task_evidence` target refused and the pack budget would have admitted, `cut-by-max-tokens` for one
+  the pack's own `max_tokens` refused and the target would have admitted, `cut-by-both-ceilings` for
+  one both refused, so neither knob alone unblocks it, and `scored-zero` for one the zero-score
+  filter dropped before any budget was spent. Before this, all of them were the same absence in the
+  report: the catalog's reason is per SOURCE, so a source with one section selected and another cut
+  for any reason read `partially-included`. The field is additive (`content` keeps its shape) and
+  JSON-only, so no rendered pack grows by a byte.
+
+- **An ADR type in `.lore/profile.toml` may declare `superseded_status`** (LCLI-723, DEC-192 (6)) —
+  the `status` value `lore supersede` writes when the type's lifecycle enum does not contain
+  `deprecated`, e.g. `{ name = "ADR", superseded_status = "approved" }` beside `fields` and
+  `sections`. It must be a member of that type's effective `status` enum or the profile refuses to
+  load, by name; it is profile configuration rather than a document field, so it is never emitted
+  into `adr.schema.json`. The scaffolded `.lore/profile.toml` documents it. It is only needed where
+  the enum has no `deprecated`: where it does, that value is written and this key is unused.
+
+- **`lore link --decision <id>` links a decision id the way a task id is linked** (LCLI-670, DEC-192
+  (2) and (5)). The concept's `decisions:` frontmatter (mirroring `tasks:`) gains
+  repository-qualified `<repo>:DEC-N` entries, because a `DEC-n` exists in more than one fleet
+  tracker. The write is document-side only — a decision has no back-reference for this command to
+  edit — so `--no-back-ref` is refused with it. A bare `DEC-N` is qualified from `--repo` when given,
+  else the `origin` remote's name (its last path segment without `.git`, the same for SSH and HTTPS),
+  and otherwise the command refuses and says to pass `--repo`; the remote's name, never the directory
+  name, is what makes a primary checkout and a review worktree write the same entry.
+
 - **`lore check` fails when a source several agent profiles name leaves any of them over capacity**
   (LCLI-702, DEC-172 (4at)). A source NAMED by several `.lore/agents/*.toml` profiles — in `pinned`
   or `sources` — costs every one of them when it grows, and an author who raises only the budget they
@@ -44,6 +90,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remove the source from the profiles that should not pin it.
 
 ### Changed
+
+- **The scaffolded profile reference says `superseded_status` is valid on ANY type** (LCLI-729,
+  DEC-192 (7)). The comment sat under a single `[[types]]` example, which read as though the key
+  belonged to that one type. It now says plainly that the key is legal on **every** type and is
+  validated against **that type's own** effective `status` enum — which is what the ratified ruling
+  says, and what `lore supersede` has done since DEC-192 (6). The scaffolded `.lore/profile.toml`
+  bytes change; nothing about how a profile is parsed or validated does.
+
+- **A declared `task_evidence` target now CAPS evidence selection, not only measures it** (LCLI-722,
+  DEC-194 (4), option A, opum-ai/opum-doc#1022). A profile that declares `[targets] task_evidence`
+  selects ranked evidence only up to that many tokens, highest-scoring first; a profile that declares
+  **no** `[targets]` behaves exactly as before, because lore is published and a pack silently bounded
+  by a number the profile never wrote would surprise external users who never asked for one. Two
+  consequences worth knowing. `task_evidence` can no longer report `over` — a capped class cannot
+  exceed its own cap, so a pack that used to report a 48k-token evidence overrun against a 6000
+  target now reports the 6000 it selected — and the 16k `taskEvidenceCeiling` follows it, but only
+  WHERE a declared `task_evidence` sits below that ceiling: a profile that declares `[targets]`
+  without `task_evidence`, or with a `task_evidence` above 16000, is measured against the ceiling
+  exactly as before, because nothing capped its selection.
+  And required content — the bundle's Constitution, when a profile RANKS it in `sources` — RESERVES
+  ITS ROOM AGAINST BOTH BUDGETS, and reserves it BEFORE any ranked evidence is admitted: against the
+  `task_evidence` cap and against the pack's own `max_tokens`. Reserving against the cap alone is not
+  enough, because ranking puts the Constitution last at score zero, so a ranked section could
+  consume the pack's room first and leave the mandatory content to be skipped. With both reservations
+  in place the new `CONTEXT_REQUIRED_CONTENT_OVER_BUDGET` means exactly one thing, required content
+  that cannot fit even alone, rather than being dropped; a pack silently missing mandatory content is
+  indistinguishable downstream from a complete one. That floor is judged on the required content with
+  no query section at all, so the bundle-wide query section can never raise it. A profile that
+  declares NO `[targets]` is unaffected in behaviour but covered by the same reservation: its ranked
+  Constitution is kept and its ranked evidence is trimmed, exactly as it compiled before this
+  feature. The budget report also names the SECTION each entry came from rather than only its
+  concept, so a residual can say what required it.
 
 - **`lore check`'s committed-schema drift findings name the committing step** (LCLI-545). The
   `missing` / `stale` / `orphaned` schema-drift findings named `lore schema export` but stopped
@@ -87,6 +165,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plain text in the scaffolded MkDocs config, so it is dropped from the remedy. Detection is unchanged.
 
 ### Fixed
+
+- **The LCLI-727 follow-ups: a qualified decision id supplied BY HAND, and a derived repository name
+  that is not a name at all** (LCLI-729). Two behaviour fixes:
+
+  - **A hand-supplied qualified id now takes the same predicate as the three arms beside it.**
+    `lore link --decision opum-ai/lore-cli:DEC-9` was stored **verbatim**: this was the FOURTH arm
+    writing the stored `<repo>:DEC-N` field, after `--repo`, the name derived from `origin` and the
+    workspace member id, and the only one that never validated — so an owner/repo PATH reached a
+    committed document, where DEC-192 (5) specifies a repository NAME that is identical in every
+    clone and worktree. It is refused **by name** now. Whitespace cannot reach this arm (the id
+    grammar excludes it), so `/` and `\` were the residual hole. **A valid `<repo>:DEC-N` is still
+    stored verbatim and a bare `DEC-N` still takes the resolved qualifier**, unchanged.
+  - **A remote URL whose last segment is a PORT yields no name.** The split on `:` takes the last
+    colon, so `https://host:8080` and its trailing-slash twin left `8080` as the "repository" — a
+    port is not one, and writing `8080:DEC-1` into a committed document is worse than refusing to
+    guess. The derived arm now returns nothing and the caller answers with its own refusal that
+    names `--repo`. A segment that truncates to nothing (`git@host:.git`) was already safe and is
+    now pinned. **The single-suffix strip is unchanged and deliberate**: `x.git.git` still yields
+    `x.git`, which is the directory `git clone` itself would create from that URL.
+
+  Also, no production change: a padded workspace `memberId` is pinned as refused, with the reason
+  recorded that it does NOT trim where `--repo` does (a member id is configuration, so a padded one
+  would store a qualifier no reader can match back to the member it names); the doc-side
+  case-collision proof now also asserts the colliding **sibling** was left untouched; and on the
+  case-sensitive leg the runtime case probe is **asserted** rather than trusted, so a runner that
+  collapsed the pair fails loudly instead of turning the proof into a green skip.
+
+- **`lore link --decision`'s repository qualifier is a NAME at every arm, and it no longer refuses a
+  document id for a reason only the task arm can encounter** (LCLI-727, the round-2 review follow-ups
+  from LCLI-670). Two behaviour fixes:
+
+  - **F11** — `--repo` accepted `/` and whitespace, so `--repo "lore cli"` wrote `lore cli:DEC-1`,
+    which nothing can split back into repository and decision, and `--repo opum-ai/lore-cli` stored a
+    SECOND spelling of a repository its own remote already names. ONE predicate now holds all three
+    arms that produce a qualifier — the flag, the name derived from `origin`, and the workspace member
+    id, which was unvalidated entirely — so a name carrying `/`, `\`, `:` or whitespace is refused by
+    name. **A name that was already acceptable is still accepted, unchanged**; what changes is that
+    such a value is no longer written.
+  - **F12** — the Backlog-label guards (comma-bearing id, case-colliding id) ran on the `--decision`
+    arm, whose write is doc-side only and which can never send a label, so `lore link adr/0001-a,b
+    --decision DEC-9` was refused for a reason that arm cannot encounter. Both guards are skipped
+    when the run sends no label. The task arm is unchanged, and still refuses both.
+
+  Also: `originRepositoryName` takes an injectable synchronous `git` transport, so the branch that
+  treats "no `git` to run at all" as "no remote to read" is finally reachable from a test (F13); and
+  four code-hygiene nits are cleared (F16).
+
+- **A profile that declares its own ADR `status` enum emitted that enum but was validated against the
+  built-in one, so its own schema declared documents valid that `lore` refused to load** (LCLI-723,
+  DEC-192 (4)). The effective lifecycle enum is now the profile's DECLARED `status` enum where it
+  declares one, and the built-in `draft` / `stable` / `deprecated` only where it declares none — and
+  one source feeds all three readers: the schema `lore init` and `lore schema export` emit, the
+  load-time check, and `lore supersede`. A `[draft, approved]` profile now accepts `approved` on an
+  ADR and rejects `stable`, on OKF 0.1 and 0.2 alike. **On OKF 0.2 the enum governs `status` for
+  EVERY type, not only an ADR** — the ADR-only reach is the 0.1 carve-out for task-coupled types
+  (whose `status` is the task rollup there), not a rule about 0.2; a custom profile that declares
+  its own `status` enum is held to it on every type it declares, and a type that RE-declares
+  `status` without an enum (`status = {}`) falls back to the built-in triple, because a type's own
+  field replaces the base one rather than merging with it. **`lore supersede` follows the same enum**: it
+  writes `deprecated` where the effective enum has it, else the type's `superseded_status`, and
+  otherwise refuses by name, quoting the enum and the key to set, rather than writing an out-of-enum
+  value. A profile that declares no `status` enum — including the built-in one, and every bundle with
+  no `.lore/profile.toml` — behaves exactly as before, and its emitted `.lore/schemas/*.json` are
+  byte-identical.
+
+- **`lore supersede` wrote a lifecycle `status` that was never valid, and `lore check` did not report
+  it on an OKF 0.1 bundle** (LCLI-669, DEC-192). The lifecycle enum is `draft` / `stable` /
+  `deprecated` — declared in every profile's emitted `adr.schema.json`; `superseded` was never a
+  member on 0.1 either. Two fixes: the enum is now enforced on **ADR documents on every OKF version**,
+  not only on 0.2 (on 0.1 the same `status` field is the task-rollup key for task-coupled types, so
+  the enum reaches only where it is the lifecycle field), and `lore supersede` writes `deprecated` on
+  0.1 exactly as it already did on 0.2. **Existing 0.1
+  bundles**: the one-line fix is `status: superseded` → `status: deprecated` on the superseded
+  document; its `superseded_by` back-reference is unaffected. The defect is that `lore supersede`
+  WROTE `superseded`, which was never a legal lifecycle value; on an ADR that spelling now fails to
+  load (exit `6`), so it cannot be relied on. On a 0.1 document that is NOT an ADR the marker
+  still loads — `status` is that type's task-rollup key — and `lore supersede` refuses it as a
+  conflict (`5`) rather than overwriting the rollup, so it is never superseded twice.
 
 - **The Lore pane no longer auto-starts in a teammate, headless or workflow process** (LCLI-705).
   Every Claude process loaded the plugin, opened the pane and refreshed it every 30 seconds with no

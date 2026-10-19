@@ -496,15 +496,21 @@ lore is the sole committer of `backlog/`), so it is never left uncommitted for t
 next `lore sync` to sweep up; a `--no-back-ref` link or a no-op re-link writes
 nothing to Backlog and so commits nothing.
 
+`lore link` also links DECISION ids (LCLI-670; DEC-192 (2), (5)): `--decision <id…>` adds
+repository-qualified ids to `decisions:` (mirroring `tasks:`), document-side only — `--no-back-ref`
+is refused with it. A bare `DEC-N` takes `--repo`, else the `origin` remote's name, else the command
+refuses.
+
 ```
 lore link stories/bulk-archive-orders task-42 task-57
+lore link adr/0012-new-decision --decision DEC-192
 ```
 
 | | |
 |---|---|
-| **Args** | `<id>` `<taskId…>` |
-| **Key flags** | `--no-back-ref` (skip the `doc:` label write to the task) |
-| **Output** | `kind: link.result` — links added / already present, plus the `backlog/` commit outcome. Emitted **only on exit `0`**; if any task's back-reference edit (or the `backlog/` commit) fails, stdout stays empty and the same per-task detail moves into the standard `--json` error envelope's `input` on stderr (cli-contract §4/§5) — never a partial-success envelope on stdout (LCLI-58). |
+| **Args** | `<id>` `<taskId…>`, or `<id>` with `--decision <decisionId…>` |
+| **Key flags** | `--no-back-ref` (skip the `doc:` label write to the task) · `--decision <id…>` (link decision ids, document-side only) · `--repo <name>` (a bare decision id's qualifier; overrides the remote) |
+| **Output** | `kind: link.result` — links added / already present, plus the `backlog/` commit outcome. Emitted **only on exit `0`**; if any task's back-reference edit (or the `backlog/` commit) fails, stdout stays empty and the same per-task detail moves into the standard `--json` error envelope's `input` on stderr (cli-contract §4/§5) — never a partial-success envelope on stdout (LCLI-58). On the `--decision` arm the payload carries `decisions` instead and `tasks` is `[]`. |
 | **Exit** | `0` ok · `2` usage (bad flag, comma-bearing id) · `3` concept or task id not found · `4` writing into a managed region denied · `5` `<id>` collides case-insensitively with another concept · `6` a task's back-reference edit failed, or the `backlog/` commit failed (drift); against a Quest-backed bundle, a missing/invalid actor declaration fails the same way but reports `validation` instead (see `lore instructions linking`) |
 
 ### `unlink`
@@ -971,7 +977,7 @@ lore agent context orchestration --task "audit the release pipeline" --workspace
 |---|---|
 | `list` | Stable profile summaries; `kind: agent.profiles` |
 | `show <name>` | One normalized profile; `kind: agent.profile` |
-| `context <name>` | Exactly one of `--task <text>` or `--task-file <repo-relative-path|->`; optional `--max-tokens <n>`, `--out <repo-relative-path>`, `--force`, and `--workspace`/`--repository` (below); with `--contract opum-agent-workflow/v1` the request binding is **always required** (on stdin, or via `--request <repo-relative-path|->`), and an optional `--task <taskId>` is only a consistency check against the binding's `taskId`, never a standalone request (see the binding-seam row below); `kind: agent.context.export` (default) or `agent.workflow.projection` (`--contract`). **Or** `--task-contract <path|->` (LCLI-681), a `TaskContract` supplying the task and seeding its links as pins (a missing mandatory link fails `CONTEXT_REQUIRED_SOURCE_MISSING`) |
+| `context <name>` | Exactly one of `--task <text>` or `--task-file <repo-relative-path|->`; optional `--max-tokens <n>`, `--provider-input-tokens <n>` (record a manually supplied provider input-token count with source `manual`; LCLI-682), `--out <repo-relative-path>`, `--force`, and `--workspace`/`--repository` (below); with `--contract opum-agent-workflow/v1` the request binding is **always required** (on stdin, or via `--request <repo-relative-path|->`), and an optional `--task <taskId>` is only a consistency check against the binding's `taskId`, never a standalone request (see the binding-seam row below); `kind: agent.context.export` (default) or `agent.workflow.projection` (`--contract`). **Or** `--task-contract <path|->` (LCLI-681), a `TaskContract` supplying the task and seeding its links as pins (a missing mandatory link fails `CONTEXT_REQUIRED_SOURCE_MISSING`) |
 | `context <name>` binding seam | With `--contract opum-agent-workflow/v1`, the request binding is read from stdin exactly as the Opum facade sends it — `{contract:"opum-agent-workflow", supportedVersions:[1], requestId:<32hex>, taskId:<string>, profileId:<string>, profileRevision?:<string>}` — and stdout carries machine JSON only: a bare success record (`contract`, `selectedVersion:1`, `requestId`, `taskId`, `profileId`, `profileRevision`, `digestAlgorithm:"sha256"`, `digest:<64hex>`, `contextId`, `issuedAt`, `expiresAt` ≤5 minutes after `issuedAt`, `sourceIds`) on success, or nothing on failure: stdout stays byte-empty and the stable marker (`OPUM_WORKFLOW_LORE_BINDING_ABSENT|ABSENT|STALE|INCOMPATIBLE|MISMATCH`) is written to stderr with exit `1`. `BINDING_ABSENT` means no binding was supplied at all (empty or absent stdin); `ABSENT` means a binding WAS supplied but names a profile that does not exist; `STALE`/`INCOMPATIBLE`/`MISMATCH` are as named. Every failure is fail-closed; no fallback data is invented |
 
 `context` reserves space for metadata and mandatory pins, then ranks complete
@@ -1128,10 +1134,11 @@ lore rename stories/bulk-archive-orders stories/order-archival
 
 ### `supersede`
 
-Mark one concept as superseded by another and wire the relationship both ways:
-set `status: superseded` and `superseded_by: <newId>` on the old concept, set
-`supersedes: <oldId>` on the new one, and (configurably) rewrite inbound links
-to point at the successor. Preserves the old file (history), unlike `rename`.
+Mark one concept as superseded by another:
+set `status` to the superseded value (`deprecated`, or the type's
+`superseded_status`) and `superseded_by: <newId>` on the old concept, set
+`supersedes: <oldId>` on the new one, and rewrite inbound links to the
+successor. Keeps the old file, unlike `rename`.
 
 ```
 lore supersede adr/0007-old-decision adr/0012-new-decision
@@ -1140,9 +1147,9 @@ lore supersede adr/0007-old-decision adr/0012-new-decision
 | | |
 |---|---|
 | **Args** | `<oldId>` `<newId>` |
-| **Key flags** | `--rewrite-links` (repoint inbound links to the successor) · `--dry-run` |
+| **Key flags** | `--rewrite-links` · `--dry-run` |
 | **Output** | `kind: supersede.result` — frontmatter changes + any link rewrites |
-| **Exit** | `0` ok · `3` either id not found · `5` `<oldId>` already superseded |
+| **Exit** | `0` ok · `3` either id not found · `5` `<oldId>` already superseded · `6` the legacy `status: superseded` (CHANGELOG has the one-line fix), or the profile's `status` enum has no superseded value and the type no `superseded_status` |
 
 ---
 

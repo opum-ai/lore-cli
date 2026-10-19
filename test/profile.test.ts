@@ -124,6 +124,11 @@ describe("defaultProfile — the built-in story convention (AC#3)", () => {
       "status",
       "tasks",
       "specs",
+      // LCLI-670 (DEC-192 (2)): ADR's own `decisions` field, beside Arc's `specs`. Inserted mid-list
+      // rather than appended, which the note above warns about — it is safe here for that note's own
+      // reason: a document carrying no `decisions` key serializes to exactly the bytes it did before,
+      // because an absent key contributes nothing wherever it sits.
+      "decisions",
       "version",
       "ratified",
       "last_amended",
@@ -319,6 +324,25 @@ describe("parseProfile — grammar errors throw (exit 6)", () => {
       }),
     );
     expect(err.message).toContain("types[0].fields.tags.items.enum");
+  });
+
+  test("an empty enum in `[base.fields]` is refused too — the third site, and the one nothing pinned (LCLI-728)", () => {
+    // `assertNonEmptyEnum` has TWO call sites but guards THREE addressable places: `parseFieldSpec`
+    // (shared by a type's own `fields` and by `[base.fields]`, told apart only by `where`) and
+    // `parseItems`. The type-field place and `items` were pinned above; `[base.fields]` was not. It
+    // is the one that matters most, because `effectiveLifecycleStatusEnum` (src/core/profile.ts)
+    // reads the BASE `status` spec whenever a type declares no `status` of its own — so an empty
+    // `[base.fields] status` is exactly the input that path depends on never seeing, and nothing
+    // held the line until now.
+    const err = expectValidation(() =>
+      parse({
+        profile: { name: "x", okf_version: "0.1" },
+        base: { fields: { type: { required: true }, status: { enum: [] } } },
+        types: [{ name: "T" }],
+      }),
+    );
+    expect(err.message).toContain("base.fields.status.enum");
+    expect(err.message).toContain("must not be empty");
   });
 
   test("a type name with no slug-able characters is an error", () => {
@@ -983,5 +1007,78 @@ describe("AC#8 — reconciles ECK's 17-type SDD profile with zero consumer edits
       expect(type.jsonSchema.required).toContain("type");
       expect(type.jsonSchema.additionalProperties).toEqual({});
     }
+  });
+});
+
+// ── DEC-192 (6): the ADR type's `superseded_status` profile key (LCLI-723) ──────
+
+describe("parseProfile — superseded_status is validated against the type's effective status enum (DEC-192 (6))", () => {
+  /** A one-type profile whose `status` enum is declared in `[base.fields]`. */
+  function baseDoc(supersededStatus?: unknown, statusEnum?: unknown): Record<string, unknown> {
+    return {
+      profile: { name: "x", okf_version: "0.1" },
+      base: {
+        fields: {
+          type: { required: true },
+          ...(statusEnum === undefined ? {} : { status: { enum: statusEnum } }),
+        },
+      },
+      types: [supersededStatus === undefined ? { name: "ADR" } : { name: "ADR", superseded_status: supersededStatus }],
+    };
+  }
+
+  test("a declared value inside the enum is accepted and compiled onto the type", () => {
+    const compiled = compileProfile(parseProfile(baseDoc("approved", ["draft", "approved"]), "t"));
+    expect(compiled.types.get("ADR")?.supersededStatus).toBe("approved");
+    expect(compiled.types.get("ADR")?.lifecycleStatusEnum).toEqual(["draft", "approved"]);
+  });
+
+  test("a value OUTSIDE the enum refuses AT LOAD, by name, quoting the enum", () => {
+    // The whole point of the key: `lore supersede` writes this value into a document's `status`.
+    // A profile that could load with an out-of-enum value would have the tool write a file its own
+    // `lore check` then rejects, so the refusal has to happen before any document is touched.
+    const err = expectValidation(() => parseProfile(baseDoc("stable", ["draft", "approved"]), "t"));
+    expect(err.message).toContain("superseded_status");
+    expect(err.message).toContain('"stable"');
+    expect(err.message).toContain('"draft", "approved"');
+  });
+
+  test('an empty value is refused — an enum may legally contain "", so membership alone would pass it', () => {
+    const err = expectValidation(() => parseProfile(baseDoc("", ["draft", "approved", ""]), "t"));
+    expect(err.message).toContain("superseded_status");
+  });
+
+  test("a type with NO status enum of its own falls back to the built-in triple", () => {
+    // no [base.fields].status enum -> effective enum is draft/stable/deprecated, so `approved` is
+    // out of it and `deprecated` is a legal (if redundant) declaration.
+    const compiled = compileProfile(parseProfile(baseDoc("deprecated"), "t"));
+    expect(compiled.types.get("ADR")?.supersededStatus).toBe("deprecated");
+    expectValidation(() => parseProfile(baseDoc("approved"), "t"));
+  });
+
+  test("a type's OWN `status` enum wins over the base one — the same merge compileProfile performs", () => {
+    const doc = baseDoc(undefined, ["draft", "approved"]);
+    (doc.types as Record<string, unknown>[])[0] = {
+      name: "ADR",
+      fields: { status: { enum: ["draft", "retired"] } },
+      superseded_status: "retired",
+    };
+    const compiled = compileProfile(parseProfile(doc, "t"));
+    expect(compiled.types.get("ADR")?.supersededStatus).toBe("retired");
+    expect(compiled.types.get("ADR")?.lifecycleStatusEnum).toEqual(["draft", "retired"]);
+    // ...and the BASE enum's `approved` is not in the type's own enum, so it is refused.
+    (doc.types as Record<string, unknown>[])[0] = {
+      name: "ADR",
+      fields: { status: { enum: ["draft", "retired"] } },
+      superseded_status: "approved",
+    };
+    expectValidation(() => parseProfile(doc, "t"));
+  });
+
+  test("it is NOT a document field: it never reaches the type's declared fields or emitted schema", () => {
+    const compiled = compileProfile(parseProfile(baseDoc("approved", ["draft", "approved"]), "t"));
+    const adr = compiled.types.get("ADR");
+    expect(adr?.declaredFields.has("superseded_status")).toBe(false);
+    expect((adr?.jsonSchema.properties as Record<string, unknown> | undefined)?.superseded_status).toBeUndefined();
   });
 });

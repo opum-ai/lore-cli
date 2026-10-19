@@ -19,8 +19,9 @@
  * read verbatim from the committed tracker (LCLI-289 and LCLI-380), and both packs compile the real
  * `.lore/agents/implementation.toml` profile against the real `docs/` bundle. The two tasks are
  * unrelated — one is about the agent-context subsystem, the other about the LadybugDB indexing
- * subsystem — yet share that profile's required policy (`pinned = ["reference/cli-contract"]`), which
- * is exactly the CTX-01 shape: same mandatory policy, different task-shaped optional evidence.
+ * subsystem — yet share that profile's required policy (LCLI-722 reshaped implementation's pin from
+ * `reference/cli-contract` whole to five of its sections by anchor), which is exactly the CTX-01
+ * shape: same mandatory policy, different task-shaped optional evidence.
  *
  * Each real task's pack selects only the sections that scored above zero for its own task, and the
  * two selections differ in BOTH directions — each task selects sections the other does not — so the
@@ -169,8 +170,17 @@ describe("LCLI-680 — zero-score filler is excluded from optional-evidence sele
 
     // SHARED required policy: the profile's own pins are identical in both packs. This is the
     // "share required policy" half of CTX-01 — the mandatory tier does not move with the task.
-    expect(packA.pinned.map((item) => item.conceptId)).toEqual(["reference/cli-contract"]);
-    expect(packB.pinned.map((item) => item.conceptId)).toEqual(packA.pinned.map((item) => item.conceptId));
+    // Asserted on the NORMALIZED references, not the concept ids: since LCLI-722 the profile pins
+    // five ANCHORED sections of `reference/cli-contract`, so every pin shares one concept id and a
+    // concept-id list would no longer say which policy is shared.
+    expect(packA.pinned.map((item) => item.reference)).toEqual([
+      "reference/cli-contract#1-output-modes-and-precedence",
+      "reference/cli-contract#22-relationship-to-the-backlogmd-envelope",
+      "reference/cli-contract#51-semantic-exit-codes",
+      "reference/cli-contract#52-the---json-error-envelope",
+      "reference/cli-contract#53-error_type--exit-code-alignment",
+    ]);
+    expect(packB.pinned.map((item) => item.reference)).toEqual(packA.pinned.map((item) => item.reference));
 
     // DIFFERENT optional evidence, and different in BOTH directions — each task selects sections the
     // other does not, so the two packs are not mere nestings of one another.
@@ -189,20 +199,36 @@ describe("LCLI-680 — zero-score filler is excluded from optional-evidence sele
     const packA = compile(taskA);
     const packB = compile(taskB);
 
-    // The reason-eliminator: neither pack is budget-truncated (the profile's 108000-token budget
-    // holds every eligible candidate). So a section that is absent from one pack is absent because
-    // step 4 excluded it as zero-score, NOT because step 9's budget dropped it. This is what makes
-    // the absence assertions below statements about relevance.
-    expect(packA.truncated).toBe(false);
-    expect(packB.truncated).toBe(false);
+    // THE REASON-ELIMINATOR, RESTATED FOR THE CAPPED WORLD (LCLI-722). It used to read "neither pack
+    // is budget-truncated — the profile's 108000-token budget holds every eligible candidate — so an
+    // absence must be a relevance omission". Since DEC-194 (4) the profile's declared `task_evidence`
+    // CAPS the pack, so both packs ARE truncated and absence alone no longer implies relevance. The
+    // reason is therefore asserted DIRECTLY on the catalog below, which is stronger than the proxy
+    // it replaces: the proxy said "no budget cut happened", the assertions say which reason each
+    // omission carries.
+    expect(packA.truncated).toBe(true);
+    expect(packB.truncated).toBe(true);
+    for (const pack of [packA, packB]) {
+      // REASONS STAY HONEST, asserted on a POPULATION THAT IS NOT EMPTY (LCLI-722 review). Writing
+      // this as "every entry with topScore 0 and selectedCount 0 must read omitted-by-relevance" was
+      // VACUOUS: measured on these very packs, no such entry exists. What does exist is the other
+      // half — a source with something SELECTED must never claim to be omitted, by either reason.
+      expect(pack.catalog.filter((entry) => entry.selectedCount > 0).length).toBeGreaterThan(0);
+      for (const entry of pack.catalog) {
+        if (entry.selectedCount > 0) {
+          expect(entry.reason.startsWith("omitted-by")).toBe(false);
+        }
+      }
+    }
 
     // Every selected section is relevant to its own task: no zero-score filler leaked into either
     // pack (step 6: unused capacity is never filled with low-value sections).
     for (const item of packA.sections) expect(item.score ?? 0).toBeGreaterThan(0);
     for (const item of packB.sections) expect(item.score ?? 0).toBeGreaterThan(0);
 
-    // A section task A selects but task B does not is a section that scored zero for B, and such
-    // sections exist in both directions. Concrete, named instances of the exclusion:
+    // The two packs select DIFFERENT sections, in both directions. That much is still true and still
+    // worth asserting — but with the cap on, it is no longer EVIDENCE OF RELEVANCE, and this test
+    // must not pretend otherwise (LCLI-722 review).
     const selectionA = selectedSections(packA);
     const selectionB = selectedSections(packB);
     const onlyA = [...selectionA].filter((key) => !selectionB.has(key));
@@ -210,8 +236,9 @@ describe("LCLI-680 — zero-score filler is excluded from optional-evidence sele
     expect(onlyA.length).toBeGreaterThan(0);
     expect(onlyB.length).toBeGreaterThan(0);
 
-    // Spot-check one real section from each side: present in its own task's pack, and absent (as a
-    // zero-score section) from the unrelated task's pack.
+    // One named section from each side: present in its own task's pack, absent from the unrelated
+    // task's pack. (Present-and-absent is all that can be asserted here; WHY it is absent is settled
+    // at the source, below, because the cap can cut a section and score alone cannot say which.)
     const sampleOnlyA = onlyA.find((key) => key.startsWith("specs/lore-design\u0000"));
     const sampleOnlyB = onlyB.find((key) => key.startsWith("adr/0018-"));
     if (sampleOnlyA === undefined || sampleOnlyB === undefined) {
@@ -221,6 +248,68 @@ describe("LCLI-680 — zero-score filler is excluded from optional-evidence sele
     expect(selectionB.has(sampleOnlyA)).toBe(false);
     expect(selectionB.has(sampleOnlyB)).toBe(true);
     expect(selectionA.has(sampleOnlyB)).toBe(false);
+
+    // WHAT REPLACED THE REASON-ELIMINATOR, and why it had to change rather than be reworded. The
+    // old test read an absence as a relevance omission because neither pack was truncated. The cap
+    // removes that warrant, and MEASURING the catalog shows the replacement cannot live here either:
+    // across both packs every declared source of `implementation` is `pinned`, `partially-included`
+    // or `omitted-by-budget` — NOT ONE is `omitted-by-relevance`. A section that A selects and B does
+    // not may now be missing from B because the CAP cut it, and no per-section attribution is
+    // available to tell the two apart from a pack.
+    //
+    // So the distinction is asserted where it still HAS a witness, which is the synthetic bundle in
+    // this file: `compileSynthetic()` declares a wholly off-task source, and the test below pins that
+    // it reads `omitted-by-relevance` and never `omitted-by-budget`. Recording the measurement here
+    // keeps the move honest instead of silent.
+    for (const pack of [packA, packB]) {
+      expect(pack.catalog.some((entry) => entry.reason === "omitted-by-relevance")).toBe(false);
+      expect(pack.catalog.some((entry) => entry.reason === "omitted-by-budget")).toBe(true);
+    }
+
+    // THE POSITIVE-SCORE POPULATION THE CAP CUT, asserted directly. Measured, a mutant labelling
+    // every `selectedCount: 0` source `omitted-by-relevance` would move SEVEN labels in pack A and
+    // TEN in pack B, every one a source with a POSITIVE top score.
+    //
+    // The filter deliberately does NOT include `reason === "omitted-by-budget"` (LCLI-722 review):
+    // filtering on the reason and then asserting the reason cannot fail, and an earlier form of this
+    // did exactly that. The population is "cut by the cap" as the DATA describes it — nothing
+    // selected, a positive score — and the reason is then the thing under test.
+    for (const pack of [packA, packB]) {
+      const cutByCap = pack.catalog.filter((entry) => entry.selectedCount === 0 && entry.topScore > 0);
+      expect(cutByCap.length).toBeGreaterThan(0);
+      for (const entry of cutByCap) {
+        expect(entry.reason).toBe("omitted-by-budget");
+      }
+    }
+
+    // THE ZERO-SCORE FLOOR, and what actually satisfies it (LCLI-722 review): the only `topScore: 0`
+    // source in either pack is the PINNED `reference/cli-contract`, with `selectedCount: 1`. It is
+    // therefore NOT a zero-score-nothing-selected population — there is no such population here, which
+    // is exactly why the relevance loops above are vacuous and the distinction had to move to the
+    // synthetic bundle. Asserting that shape rather than a bare count keeps the floor honest.
+    for (const pack of [packA, packB]) {
+      const zeroScore = pack.catalog.filter((entry) => entry.topScore === 0);
+      expect(zeroScore.length).toBeGreaterThan(0);
+      expect(zeroScore.every((entry) => entry.selectedCount > 0)).toBe(true);
+    }
+
+    // AND THE SAMPLES' OWN SOURCES, for the same reason — asserted for what they ARE rather than for
+    // what the reason-eliminator used to infer. The addendum asks for "its source's catalog reason in
+    // the other pack is omitted-by-relevance"; that form is FALSE here and MEASURED to be: neither
+    // pack has a single relevance-omitted source, and both samples' sources read `omitted-by-budget`
+    // with positive scores (A's `adr/0018…` at 4.7, B's `specs/lore-design` at 6.1). Their absence
+    // from the other pack is the CAP's doing, not a relevance call, and no per-section score is
+    // exposed to separate the two — which is exactly why the distinction is pinned on the synthetic
+    // bundle above instead.
+    const sourceOf = (key: string): string => key.split("\u0000")[0] as string;
+    for (const [pack, key] of [
+      [packB, sampleOnlyA],
+      [packA, sampleOnlyB],
+    ] as const) {
+      const entry = pack.catalog.find((candidate) => candidate.reference === sourceOf(key));
+      expect(entry).toBeDefined();
+      expect(entry?.reason).not.toBe("omitted-by-relevance");
+    }
   });
 });
 
@@ -311,13 +400,26 @@ describe("LCLI-680 — a zero-score exclusion carries its own reason, and a mand
     expect(pack.catalog.find((entry) => entry.reference === "constitution")?.reason).toBe("included");
   });
 
-  test("the real tasks drop zero-score candidates without reporting any budget omission", () => {
+  test("the real tasks drop zero-score candidates without CALLING them budget omissions", () => {
     for (const task of [realTaskTitle(TASK_A_ID), realTaskTitle(TASK_B_ID)]) {
       const pack = compile(task);
-      // Neither real pack is truncated, so every omission in it is a relevance omission; nothing may
-      // read `omitted-by-budget`.
-      expect(pack.truncated).toBe(false);
-      expect(pack.catalog.some((entry) => entry.reason === "omitted-by-budget")).toBe(false);
+      // The old form of this test required neither pack to be truncated and no omission to read
+      // `omitted-by-budget`. The declared `task_evidence` cap (DEC-194 (4), LCLI-722) makes both
+      // false for the real profiles, so what is asserted now is the distinction the reasons exist
+      // for, which the cap must not blur: these packs DO truncate and DO drop positives by budget,
+      // and a zero-score candidate is never reported as one of those.
+      expect(pack.truncated).toBe(true);
+      expect(pack.catalog.some((entry) => entry.reason === "omitted-by-budget")).toBe(true);
+      // The honesty half, on a population that is NOT empty (LCLI-722 review — the zero-score loop
+      // that used to sit here was vacuous, since these packs contain no such entry at all): a source
+      // with something SELECTED never claims to be omitted, and a source with NOTHING selected names
+      // a reason rather than going silently missing.
+      expect(pack.catalog.filter((entry) => entry.selectedCount > 0).length).toBeGreaterThan(0);
+      expect(pack.catalog.filter((entry) => entry.selectedCount === 0).length).toBeGreaterThan(0);
+      for (const entry of pack.catalog) {
+        if (entry.selectedCount > 0) expect(entry.reason.startsWith("omitted-by")).toBe(false);
+        else expect(entry.reason.startsWith("omitted-by") || entry.reason === "no-candidates").toBe(true);
+      }
     }
   });
 

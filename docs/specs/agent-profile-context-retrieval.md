@@ -73,6 +73,12 @@ sources = [
   "specs/ui-design",
   "adr/0012-client-state"
 ]
+
+[targets]
+policy_and_role = 3000
+task_contract = 2000
+task_evidence = 6000
+lore_subtotal = 11000
 ```
 
 Orchestrator addition:
@@ -115,6 +121,59 @@ Contract:
   same on every task and never
   depends on what a particular pack happens to retain — task-ranked omission is
   normal retention and is not this finding.
+- `targets` is an optional table of context-budget TARGETS the profile declares
+  (LCLI-682; MDL-7, ODOC-437 AC3, DEC-187): `policy_and_role`, `task_contract`,
+  `task_evidence` and `lore_subtotal`, each a positive integer of estimated
+  tokens. They are **design defaults the compiler measures a compiled pack
+  against and reports**; only `task_evidence` is ENFORCED. Required content fits
+  BOTH budgets, else `CONTEXT_REQUIRED_CONTENT_OVER_BUDGET`. `max_tokens` above
+  stays the ceiling. The report is additive on `agent.context.export` as
+  `budgets`, present only when a profile declares at least one target, and also
+  rendered as the pack's `## Context budgets` section.
+  - **Classes.** Policy and role is the pinned tier, task evidence the ranked
+    sections, task contract the `--task-contract` block, and `loreSubtotal` the
+    pack lore composes. `codeMap` and `harnessAndTools` are composed by
+    `opum-cli`, so they are reported **not-applicable** — `measured: null` with
+    the reason `composed by opum-cli`, never a `0` and never an absent key, either
+    of which a consumer could read as a measurement.
+  - **AC3 ceilings.** `authoredBootstrapCeiling` (8k) measures policy and role
+    **plus** task contract; `taskEvidenceCeiling` (16k) measures the ranked tier.
+    The code map is generated and the harness floor is not authored, so neither
+    counts toward authored bootstrap.
+  - **Provenance.** Each lore figure carries `measuredBy: "chars/4 estimate"`
+    (MDL-10). A class whose estimate exceeds its target — or a ceiling — sets
+    `over` and names the content that required it, largest first.
+  - **Omitted sections.** `taskEvidence.omittedSections` lists every ranked
+    SECTION the class considered and did not carry, each as
+    `{reference, section?, reason}` in declaration order, so the ways a section
+    goes missing are told apart from the report alone (LCLI-722 AC4, DEC-194 (6),
+    (11) and (12)). The two single-ceiling values say what the OTHER ceiling
+    would have done, which is what makes them a remedy rather than a restatement
+    of whichever check ran first: `cut-by-task-evidence-cap` means the declared
+    `task_evidence` target refused it and the pack's budget would have admitted
+    it, `cut-by-max-tokens` means the pack's own `max_tokens` refused it and the
+    target would have admitted it, and `cut-by-both-ceilings` means both refused
+    it, so neither alone unblocks it. `scored-zero` is not a ceiling at all — the
+    zero-score filter drops a section before any budget is spent (LCLI-680). The
+    field belongs to `taskEvidence` alone, is present as a list even when nothing
+    was omitted, and is additive and JSON-only: the rendered
+    `## Context budgets` section prints `content`.
+  - **Provider usage.** `lore agent context --provider-input-tokens <n>` records
+    the pack's `providerUsage` with `source: "manual"`; `opum-cli`'s model
+    gateway records `source: "provider-reported"` (MDL-15). A manual figure is
+    never treated as provider-reported — the ceilings are checked against lore's
+    own estimate.
+  - A profile that declares no target is not reported at all, so its pack stays
+    byte-identical.
+  - When a ranked evidence item does not fit the evidence budget that remains,
+    the compiler omits that item, records it as omitted-by-budget, and continues
+    with the next-ranked item. Selection does not stop at the first item that
+    does not fit, so a smaller lower-ranked item that fits is still included. The
+    order of consideration is the ranking, and ties keep a stable order, so the
+    same inputs give the same pack. Required content is never skipped: if
+    required content does not fit, the compile fails with
+    CONTEXT_REQUIRED_CONTENT_OVER_BUDGET (MDL-9), naming the content and its size
+    against the budget.
 - `pinned` and `sources` are optional ordered arrays defaulting to empty. Each
   item is a canonical bundle-relative concept id with an optional
   GitHub-compatible `#heading-anchor`.
@@ -147,6 +206,8 @@ A profile command fails before output when its snapshot is invalid.
   `--task-file <repo-relative-path|->`; task files cannot escape the repository
   or traverse a symlink;
 - `--max-tokens <n>` to override the profile default;
+- `--provider-input-tokens <n>` (LCLI-682) to record a manually supplied provider
+  input-token count in the pack's `providerUsage` with source `manual`;
 - `--task-contract <repo-relative-path|->` (LCLI-681) to compile the lean
   task-startup pack from a `TaskContract`;
 - `--out <repo-relative-path>` to atomically write the same canonical Markdown

@@ -11,13 +11,27 @@ kind = "specialist"
 # written here on purpose: it moves with every edit to a declared source, and `lore check` prints
 # the current requirement when it is exceeded.
 max_tokens = 97000
-pinned = ["reference/okf-conformance"]
+pinned = [
+  "reference/okf-conformance#the-two-conformance-floors",
+  "reference/okf-conformance#lores-validation-tiers",
+  "reference/cli-contract#3-bounded-output-and-truncation-hints",
+  "reference/cli-contract#51-semantic-exit-codes",
+]
 sources = [
   "reference/consumer-compatibility",
   "reference/lore-cli-release-truth",
-  "reference/cli-contract",
   "reference/ladybugdb-benchmark-and-scale-acceptance-strategy",
   "runbooks/docker-e2e-testing-environment",
   "runbooks/release-publishing",
   "adr/0020-tracker-version-gates-are-minimum-floors",
 ]
+
+# Context-budget TARGETS the compiler measures a compiled pack against and reports (MDL-7,
+# ODOC-437 AC3). Design defaults, NOT ceilings enforced before a request -- `max_tokens` above
+# stays the ceiling. The initial code map and the harness/tools floor of the total startup are
+# composed by opum-cli and are reported not-applicable by lore.
+[targets]
+policy_and_role = 3000
+task_contract = 2000
+task_evidence = 6000
+lore_subtotal = 11000

@@ -925,6 +925,108 @@ jobs:
           if-no-files-found: error
           overwrite: true
 
+  # LCLI-738, DEC-204 (b). Prove that the host binary this release QUALIFIED can do something the
+  # previous published release cannot, on every platform in the matrix. The probe feature is the
+  # `[targets]` key in `.lore/agents/*.toml` (agent-profile budget targets, added after v0.13.0 by
+  # LCLI-682/LCLI-722). It is observable as an exit status: `lore check` exits 0 under a binary
+  # built from this tree, and 0.13.0 exits 6 with
+  # `Unrecognized key: "targets"`. scripts/release-gate-probe.mjs owns both expectations and the
+  # failure messages; this job only supplies the two binaries and the checkout to run them in.
+  #
+  # THE FRESH BINARY IS THE QUALIFIED ARTIFACT, never a rebuild: it is unpacked from the matching
+  # platform tarball that package-qualification produced for THIS run. The previous binary comes
+  # from npm's `latest` dist-tag -- deliberately NOT `release-candidate`, which is where this run
+  # stages -- so the control is the release users actually have.
+  #
+  # publish lists this job in `needs:`, so no real publish can start without both arms: the fresh
+  # binary accepts the feature and the previous one rejects it with the exact rejection it prints.
+  # The job itself has no `if:`, so a publish:false rehearsal runs it too.
+  release-gate-probe:
+    name: "release gate probe (${{ matrix.name }}: fresh build accepts [targets], previous release rejects it)"
+    needs: [setup, package-qualification]
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.setup.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+      # Same pattern the package job uses; each artifact lands in its own directory named by the
+      # platform and run id, which is how the tarball for THIS matrix entry is located below.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: ladybug-package-qualification-*-${{ github.run_id }}
+          path: qualified-packages
+      - name: Probe the qualified fresh binary and the previous release binary
+        shell: bash
+        env:
+          PLATFORM_NAME: ${{ matrix.name }}
+          BINARY_NAME: ${{ matrix.binary }}
+        run: |
+          set -euo pipefail
+          artifact_dir="qualified-packages/ladybug-package-qualification-${PLATFORM_NAME}-${{ github.run_id }}"
+          version="$(node -p "require('./package.json').version")"
+          tarball="${artifact_dir}/opum-ai-lore-${PLATFORM_NAME}-${version}.tgz"
+          if [ ! -f "$tarball" ]; then
+            echo "::error::the matching-host qualified tarball is missing: $tarball"
+            exit 1
+          fi
+
+          fresh_dir="$RUNNER_TEMP/lore-release-gate-probe-fresh-${PLATFORM_NAME}"
+          rm -rf "$fresh_dir"
+          mkdir -p "$fresh_dir"
+          tar -xzf "$tarball" -C "$fresh_dir" "package/bin/${BINARY_NAME}"
+          fresh_binary="$fresh_dir/package/bin/${BINARY_NAME}"
+          if [ ! -f "$fresh_binary" ]; then
+            echo "::error::the qualified tarball $tarball does not carry package/bin/${BINARY_NAME}"
+            exit 1
+          fi
+          # npm pack preserves the compiled binary's mode; assert it rather than assume it.
+          # Windows binaries need no executable bit (and chmod on one is meaningless there).
+          if [ "$BINARY_NAME" != "lore.exe" ]; then
+            chmod +x "$fresh_binary"
+            if [ ! -x "$fresh_binary" ]; then
+              echo "::error::the qualified binary $fresh_binary is not executable after chmod, so the probe could not run it"
+              exit 1
+            fi
+          fi
+
+          previous_version="$(npm view @opum-ai/lore version)" || {
+            echo "::error::could not read the previous release: npm view @opum-ai/lore version failed. The negative control needs the published platform package at npm's latest dist-tag."
+            exit 1
+          }
+          if [ -z "$previous_version" ]; then
+            echo "::error::npm view @opum-ai/lore version printed nothing, so the previous release could not be identified"
+            exit 1
+          fi
+          previous_dir="$RUNNER_TEMP/lore-release-gate-probe-previous-${PLATFORM_NAME}"
+          rm -rf "$previous_dir"
+          mkdir -p "$previous_dir"
+          npm install --prefix "$previous_dir" "@opum-ai/lore-${PLATFORM_NAME}@${previous_version}"
+          previous_binary="$previous_dir/node_modules/@opum-ai/lore-${PLATFORM_NAME}/bin/${BINARY_NAME}"
+          if [ ! -f "$previous_binary" ]; then
+            echo "::error::npm installed @opum-ai/lore-${PLATFORM_NAME}@${previous_version} but $previous_binary is missing"
+            exit 1
+          fi
+          if [ "$BINARY_NAME" != "lore.exe" ]; then
+            chmod +x "$previous_binary"
+            if [ ! -x "$previous_binary" ]; then
+              echo "::error::the previous release binary $previous_binary is not executable after chmod, so the control could not run it"
+              exit 1
+            fi
+          fi
+
+          # BOTH ARMS IN THE SAME JOB AND CHECKOUT. `present` runs the fresh, qualified binary;
+          # `absent` runs the previous release and requires a nonzero exit whose output carries
+          # the exact rejection `Unrecognized key: "targets"`, so neither an unrelated breakage
+          # nor output that merely mentions the word can stand in for the control.
+          node scripts/release-gate-probe.mjs --binary "$fresh_binary" --expect present --cwd "$PWD"
+          node scripts/release-gate-probe.mjs --binary "$previous_binary" --expect absent --cwd "$PWD"
+
   provenance-pre:
     name: re-verify published provenance still resolves (LCLI-481)
     runs-on: ubuntu-latest
@@ -1000,7 +1102,7 @@ jobs:
     if: ${{ inputs.publish == true }}
     # provenance-pre gates this job: a rewrite that dangled an already-published version's
     # attestation must stop the release rather than be added to (LCLI-481).
-    needs: [setup, version-parity, release-window, breaking-bump, package, provenance-pre]
+    needs: [setup, version-parity, release-window, breaking-bump, package, release-gate-probe, provenance-pre]
     runs-on: ubuntu-latest
     # LCLI-268: an OUT-OF-FILE gate, on top of (not instead of) the `if:` guard above.
     # npm Trusted Publishing (LCLI-255) matches OIDC tokens on repo + WORKFLOW FILENAME,

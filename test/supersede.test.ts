@@ -7,7 +7,7 @@ import { runSupersede, type SupersedeReport } from "../src/commands/supersede";
 import { loadBundle } from "../src/core/bundle";
 import { parseConcept, serializeConcept } from "../src/core/concept";
 import type { BundleState } from "../src/core/okf-version";
-import { defaultProfile, profileForBundle } from "../src/core/profile";
+import { defaultProfile, loadProfile, profileForBundle } from "../src/core/profile";
 import { EXIT_CODES, EXIT_OK, LoreError } from "../src/errors";
 import type { OutputContext } from "../src/output";
 import { capture } from "./helpers";
@@ -53,6 +53,28 @@ function supersedeCmd(args: string[]): { code: number; report: SupersedeReport; 
   return { code, report: envelope.data, stderr: stderr.text() };
 }
 
+/**
+ * Write `.lore/profile.toml` declaring a custom `status` enum for every type, with an optional
+ * `superseded_status` on the ADR type (DEC-192 (4)/(6), LCLI-723).
+ */
+function writeProfile(statusEnum: readonly string[], supersededStatus?: string): void {
+  mkdirSync(join(root, ".lore"), { recursive: true });
+  writeFileSync(
+    join(root, ".lore/profile.toml"),
+    [
+      "[profile]",
+      'name = "custom"',
+      'okf_version = "0.1"',
+      "[base.fields]",
+      "type = { required = true }",
+      `status = { enum = [${statusEnum.map((v) => `"${v}"`).join(", ")}] }`,
+      "[[types]]",
+      'name = "ADR"',
+      ...(supersededStatus === undefined ? [] : [`superseded_status = "${supersededStatus}"`]),
+    ].join("\n"),
+  );
+}
+
 /** Run `supersede` expecting a thrown {@link LoreError}, returned for assertions. */
 function expectError(args: string[]): LoreError {
   try {
@@ -77,7 +99,7 @@ describe("lore supersede — frontmatter wiring (AC#1)", () => {
     expect(report.new).toBe("docs/adr/0012-new.md");
 
     const old = parseLegacyDoc("adr/0007-old.md");
-    expect(old.frontmatter.status).toBe("superseded");
+    expect(old.frontmatter.status).toBe("deprecated");
     expect(old.frontmatter.superseded_by).toBe("adr/0012-new");
     const fresh = parseLegacyDoc("adr/0012-new.md");
     expect(fresh.frontmatter.supersedes).toBe("adr/0007-old");
@@ -234,8 +256,8 @@ describe("lore supersede — --rewrite-links (AC#2)", () => {
       const err = expectError(["adr/0007-old", "adr/0012-new", "--rewrite-links"]);
       expect(err.type).toBe("validation");
       expect(err.message).toContain("incomplete");
-      // No partial write: the old concept was never wired to superseded (only committed after the check).
-      expect(readDoc("adr/0007-old.md")).not.toContain("status: superseded");
+      // No partial write: the old concept was never wired to deprecated (only committed after the check).
+      expect(readDoc("adr/0007-old.md")).not.toContain("status: deprecated");
     } finally {
       chmodSync(locked, 0o755); // restore so afterEach cleanup can remove it
     }
@@ -271,7 +293,7 @@ describe("lore supersede — --rewrite-links (AC#2)", () => {
     writeDoc("adr/0007-old.md", "---\ntype: ADR\n---\nOld.\n");
     writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
     // adr/0003-ancient was historically superseded BY adr/0007-old (which still exists on disk)
-    const ancientBytes = "---\ntype: ADR\nstatus: superseded\nsuperseded_by: adr/0007-old\n---\nAncient.\n";
+    const ancientBytes = "---\ntype: ADR\nstatus: deprecated\nsuperseded_by: adr/0007-old\n---\nAncient.\n";
     writeDoc("adr/0003-ancient.md", ancientBytes);
     // adr/0099-z supersedes adr/0007-old
     const zBytes = "---\ntype: ADR\nsupersedes: adr/0007-old\n---\nZ.\n";
@@ -386,26 +408,40 @@ describe("lore supersede — errors and arg parsing", () => {
   });
 
   test("superseding an already-superseded concept is a conflict (exit 5)", () => {
-    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: superseded\n---\nOld.\n");
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: deprecated\nsuperseded_by: adr/0012-new\n---\nOld.\n");
     writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
     expect(expectError(["adr/0007-old", "adr/0012-new"]).type).toBe("conflict");
   });
 
   test("re-superseding by the same successor is an idempotent conflict (exit 5)", () => {
-    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: active\nsuperseded_by: adr/0012-new\n---\nOld.\n");
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: deprecated\nsuperseded_by: adr/0012-new\n---\nOld.\n");
     writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
     expect(expectError(["adr/0007-old", "adr/0012-new"]).type).toBe("conflict");
   });
 
-  test("a non-lowercase `status: Superseded` is still detected (case-insensitive guard)", () => {
-    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: Superseded\n---\nOld.\n");
+  test("a legacy ADR carrying `status: superseded` is invalid, so supersede exits 6 (DEC-192)", () => {
+    // The marker `lore supersede` used to write on a 0.1 bundle was never a valid lifecycle value, so
+    // the document cannot load and validation (exit 6) answers BEFORE the already-superseded guard.
+    // The remedy is the CHANGELOG's one-line fix: status: superseded -> status: deprecated.
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: superseded\n---\nOld.\n");
     writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
-    expect(expectError(["adr/0007-old", "adr/0012-new"]).type).toBe("conflict");
+    const err = expectError(["adr/0007-old", "adr/0012-new"]);
+    expect(err.type).toBe("validation");
+    expect(err.message).toContain("superseded");
+  });
+
+  test("a 0.1 NON-ADR carrying the legacy `superseded` marker is refused (conflict, exit 5)", () => {
+    // Under the carve-out a 0.1 Story keeps `status` as its task-rollup key, so this document LOADS
+    // even though `superseded` is not a lifecycle value. Without the guard arm, supersede would
+    // clobber its rollup status to `deprecated` (LCLI-669 review F4).
+    writeDoc("stories/legacy.md", "---\ntype: Story\nstatus: superseded\n---\nLegacy.\n");
+    writeDoc("stories/successor.md", "---\ntype: Story\n---\nNew.\n");
+    expect(expectError(["stories/legacy", "stories/successor"]).type).toBe("conflict");
   });
 
   test("an existing `superseded_by` (any status) blocks the supersede — it is never clobbered (exit 5)", () => {
     // the old doc already records adr/0042-x as its successor; superseding would silently overwrite it
-    const oldBytes = "---\ntype: ADR\nstatus: active\nsuperseded_by: adr/0042-x\n---\nOld.\n";
+    const oldBytes = "---\ntype: ADR\nstatus: deprecated\nsuperseded_by: adr/0042-x\n---\nOld.\n";
     writeDoc("adr/0007-old.md", oldBytes);
     writeDoc("adr/0042-x.md", "---\ntype: ADR\n---\nX.\n");
     writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
@@ -426,7 +462,7 @@ describe("lore supersede — errors and arg parsing", () => {
     writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
     const { code } = supersedeCmd(["--", "adr/0007-old", "adr/0012-new"]);
     expect(code).toBe(EXIT_OK);
-    expect(parseLegacyDoc("adr/0007-old.md").frontmatter.status).toBe("superseded");
+    expect(parseLegacyDoc("adr/0007-old.md").frontmatter.status).toBe("deprecated");
   });
 });
 
@@ -448,29 +484,135 @@ describe("lore supersede — active profile", () => {
     expect(old.frontmatter.superseded_by).toBe("adr/0012-new");
   });
 
-  test("validates the written `status` against the project profile, failing fast on a custom enum", () => {
-    // a profile whose `status` enum forbids "superseded": writing it must fail here, not slip through
-    // to break the next `lore validate` / CI.
-    mkdirSync(join(root, ".lore"), { recursive: true });
-    writeFileSync(
-      join(root, ".lore/profile.toml"),
-      [
-        "[profile]",
-        'name = "strict"',
-        'okf_version = "0.1"',
-        "[base.fields]",
-        "type = { required = true }",
-        'status = { enum = ["draft", "approved"] }',
-        "[[types]]",
-        'name = "ADR"',
-      ].join("\n"),
-    );
+  test("refuses BY NAME when the effective enum has no `deprecated` and the type declares no `superseded_status`", () => {
+    // DEC-192 (4)/(6), LCLI-723. This is the test that used to pass for the WRONG reason: with the
+    // built-in enum still running at load, `status: approved` was rejected by the LOAD check before
+    // supersede's write-time validation was ever reached, so it proved nothing about this command.
+    // Under the precedence ruling the two documents LOAD (asserted below, as a positive control in
+    // the same invocation), and the refusal comes from supersede itself.
+    writeProfile(["draft", "approved"]);
     const oldBytes = "---\ntype: ADR\nstatus: approved\n---\nOld.\n";
     writeDoc("adr/0007-old.md", oldBytes);
     writeDoc("adr/0012-new.md", "---\ntype: ADR\nstatus: approved\n---\nNew.\n");
+
+    // Positive control: the bundle loads with both concepts intact. Before LCLI-723 this threw
+    // "invalid OKF lifecycle status" and the assertions below never ran.
+    const graph = loadBundle(join(root, "docs"), { profile: loadProfile({ root }) });
+    expect([...graph.concepts.keys()].sort()).toEqual(["adr/0007-old", "adr/0012-new"]);
+
     const err = expectError(["adr/0007-old", "adr/0012-new"]);
     expect(err.type).toBe("validation");
+    expect(err.message).toContain("superseded_status"); // names the key to set
+    expect(err.message).toContain('"draft", "approved"'); // quotes the enum
+    expect(err.message).not.toContain("invalid OKF lifecycle status"); // NOT the load check
     expect(readDoc("adr/0007-old.md")).toBe(oldBytes); // failed before writing — nothing stamped
+  });
+
+  test("writes the type's `superseded_status` when the effective enum has no `deprecated` (DEC-192 (6))", () => {
+    writeProfile(["draft", "approved"], "approved");
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: approved\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\nstatus: approved\n---\nNew.\n");
+
+    const { code } = supersedeCmd(["adr/0007-old", "adr/0012-new"]);
+    expect(code).toBe(EXIT_OK);
+    const bytes = readDoc("adr/0007-old.md");
+    expect(bytes).toContain("status: approved"); // the profile's superseded value, not "deprecated"
+    expect(bytes).not.toContain("deprecated");
+    expect(bytes).toContain("superseded_by: adr/0012-new");
+    expect(readDoc("adr/0012-new.md")).toContain("supersedes: adr/0007-old");
+  });
+
+  test("`deprecated` WINS over a declared `superseded_status` when the enum contains it", () => {
+    // The precedence DEC-192 (4) fixes: the key only decides where the built-in value is absent.
+    writeProfile(["draft", "approved", "deprecated"], "approved");
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: approved\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\nstatus: approved\n---\nNew.\n");
+
+    const { code } = supersedeCmd(["adr/0007-old", "adr/0012-new"]);
+    expect(code).toBe(EXIT_OK);
+    expect(readDoc("adr/0007-old.md")).toContain("status: deprecated");
+  });
+
+  test("the default profile is unchanged: it still writes `deprecated`", () => {
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: stable\n---\nOld.\n");
+    writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
+    const { code } = supersedeCmd(["adr/0007-old", "adr/0012-new"]);
+    expect(code).toBe(EXIT_OK);
+    expect(parseLegacyDoc("adr/0007-old.md").frontmatter.status).toBe("deprecated");
+  });
+
+  // ── DEC-192 (7): `superseded_status` is valid on ANY type (LCLI-729 (d)) ──────
+  //
+  // DEC-192 (7) RATIFIED `superseded_status` as built: valid on ANY type, and validated against
+  // THAT type's own effective enum. Every proof shipped with LCLI-723 was ADR-only (`[draft,
+  // approved]` on an `ADR` type), so the "any type" half of the ruling was UNPROVEN. A `Story` is a
+  // NON-ADR type and the natural one: closing a `status` enum with no `deprecated` is exactly the
+  // shape the key exists for, and it is not an ADR. Three arms below — load, write, refuse — with
+  // the mutation control recorded on the task.
+  describe("superseded_status on a non-ADR type (DEC-192 (7), LCLI-729 (d))", () => {
+    /**
+     * A profile declaring ONLY a `Story` type whose own `status` enum is `["open", "shipped"]` — no
+     * `deprecated` in it, which is what makes the key reachable rather than redundant.
+     */
+    function writeStoryProfile(supersededStatus: string): void {
+      mkdirSync(join(root, ".lore"), { recursive: true });
+      writeFileSync(
+        join(root, ".lore/profile.toml"),
+        [
+          "[profile]",
+          'name = "story-supersede"',
+          'okf_version = "0.1"',
+          "[base.fields]",
+          "type = { required = true }",
+          "[[types]]",
+          'name = "Story"',
+          'fields = { status = { enum = ["open", "shipped"] } }',
+          `superseded_status = "${supersededStatus}"`,
+        ].join("\n"),
+      );
+    }
+
+    function writeStoryDocs(): void {
+      writeDoc("stories/0007-old.md", "---\ntype: Story\nstatus: open\n---\nOld.\n");
+      writeDoc("stories/0012-new.md", "---\ntype: Story\nstatus: open\n---\nNew.\n");
+    }
+
+    test("(i) the profile LOADS with the value, and the Story concept loads too", () => {
+      writeStoryProfile("shipped");
+      writeStoryDocs();
+      const profile = loadProfile({ root });
+      expect(profile.types.get("Story")?.supersededStatus).toBe("shipped");
+      // The bundle loads as well, so arm (i) is proved through the consumer and not only the parser.
+      const graph = loadBundle(join(root, "docs"), { profile });
+      expect([...graph.concepts.keys()].sort()).toEqual(["stories/0007-old", "stories/0012-new"]);
+    });
+
+    test("(ii) `lore supersede` WRITES the declared value on a Story", () => {
+      writeStoryProfile("shipped");
+      writeStoryDocs();
+      const { code } = supersedeCmd(["stories/0007-old", "stories/0012-new"]);
+      expect(code).toBe(EXIT_OK);
+      const bytes = readDoc("stories/0007-old.md");
+      expect(bytes).toContain("status: shipped"); // the declared value, not "deprecated"
+      expect(bytes).not.toContain("deprecated");
+      expect(bytes).toContain("superseded_by: stories/0012-new");
+      expect(readDoc("stories/0012-new.md")).toContain("supersedes: stories/0007-old");
+    });
+
+    test("(iii) a value OUTSIDE that type's own enum is refused AT LOAD, by name", () => {
+      writeStoryProfile("retired"); // not in the Story enum ["open", "shipped"]
+      writeStoryDocs();
+      let error: LoreError | undefined;
+      try {
+        loadProfile({ root });
+      } catch (cause) {
+        error = cause as LoreError;
+      }
+      expect(error).toBeInstanceOf(LoreError);
+      expect(error?.message ?? "").toContain("superseded_status"); // names the key
+      expect(error?.message ?? "").toContain('"retired"'); // names the offending value
+      expect(error?.message ?? "").toContain('"open", "shipped"'); // quotes the type's own enum
+    });
   });
 
   test("--rewrite-links honors the project profile when re-serializing an inbound concept it reshapes (LORE-88, AC#2)", () => {
@@ -544,7 +686,7 @@ describe("lore supersede — router integration", () => {
       stderr: capture(),
     });
     expect(code).toBe(EXIT_OK);
-    expect(parseLegacyDoc("adr/0007-old.md").frontmatter.status).toBe("superseded");
+    expect(parseLegacyDoc("adr/0007-old.md").frontmatter.status).toBe("deprecated");
   });
 
   test("a not_found surfaces exit 3 through the router", () => {
@@ -558,7 +700,7 @@ describe("lore supersede — router integration", () => {
   });
 
   test("an already-superseded concept surfaces exit 5 through the router", () => {
-    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: superseded\n---\nOld.\n");
+    writeDoc("adr/0007-old.md", "---\ntype: ADR\nstatus: deprecated\nsuperseded_by: adr/0012-new\n---\nOld.\n");
     writeDoc("adr/0012-new.md", "---\ntype: ADR\n---\nNew.\n");
     const code = run(["bun", "lore", "supersede", "adr/0007-old", "adr/0012-new", "--json"], {
       cwd: root,

@@ -27,12 +27,25 @@ export interface AgentProfileReference {
   readonly normalized: string;
 }
 
+/**
+ * The context-budget targets a profile declares, in lore's own spelling (camelCase of the TOML
+ * snake_case keys). Every class is optional: a profile that declares none is measured but reported
+ * without a target, so adding `[targets]` is purely additive to an existing profile.
+ */
+export interface AgentProfileTargets {
+  readonly policyAndRole?: number;
+  readonly taskContract?: number;
+  readonly taskEvidence?: number;
+  readonly loreSubtotal?: number;
+}
+
 export interface AgentProfile {
   readonly schemaVersion: 1;
   readonly name: string;
   readonly description: string;
   readonly kind: AgentProfileKind;
   readonly maxTokens: number;
+  readonly targets: AgentProfileTargets;
   readonly pinned: readonly AgentProfileReference[];
   readonly sources: readonly AgentProfileReference[];
   readonly delegates: readonly string[];
@@ -45,12 +58,27 @@ export interface AgentProfileSnapshot {
 
 const PROFILE_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+/**
+ * Per-class context-budget TARGETS a role profile declares (MDL-7 and ODOC-437 AC3). These are
+ * design-default TARGETS the compiler measures a COMPILED pack against and reports — they are NOT
+ * ceilings enforced before a request (`max_tokens` stays the ceiling). The three measured classes
+ * plus the lore subtotal are the parts of a worker's startup prompt that lore composes; the initial
+ * code map and the harness/tools floor are composed by opum-cli and are reported not-applicable.
+ */
+const ProfileTargetsSchema = z.strictObject({
+  policy_and_role: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  task_contract: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  task_evidence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  lore_subtotal: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+});
+
 const ProfileFileSchema = z.strictObject({
   schema_version: z.literal(1),
   name: z.string(),
   description: z.string(),
   kind: z.enum(["specialist", "orchestrator"]),
   max_tokens: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  targets: ProfileTargetsSchema.optional(),
   pinned: z.array(z.string()).optional(),
   sources: z.array(z.string()).optional(),
   delegates: z.array(z.string()).optional(),
@@ -297,10 +325,21 @@ function compileProfile(file: ProfileFile, stem: string, path: string): AgentPro
     description: file.description,
     kind: file.kind,
     maxTokens: file.max_tokens ?? DEFAULT_AGENT_MAX_TOKENS,
+    targets: compileTargets(file.targets),
     pinned,
     sources,
     delegates,
     path,
+  };
+}
+
+/** Map the file's snake_case `[targets]` keys to the profile's camelCase targets, omitting absent keys. */
+function compileTargets(targets: ProfileFile["targets"]): AgentProfileTargets {
+  return {
+    ...(targets?.policy_and_role === undefined ? {} : { policyAndRole: targets.policy_and_role }),
+    ...(targets?.task_contract === undefined ? {} : { taskContract: targets.task_contract }),
+    ...(targets?.task_evidence === undefined ? {} : { taskEvidence: targets.task_evidence }),
+    ...(targets?.lore_subtotal === undefined ? {} : { loreSubtotal: targets.lore_subtotal }),
   };
 }
 

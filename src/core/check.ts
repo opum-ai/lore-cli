@@ -63,10 +63,10 @@ import type { Finding, Severity } from "./finding";
 import { INDEX_BLOCK_BEGIN } from "./indexes";
 import { decodeTarget, isExternalTarget, pathPart, validateLink } from "./links";
 import { type ManagedTaskRow, regenerateTaskBlock } from "./managed-block";
-import { type BundleState, CURRENT_OKF_VERSION, type TaskRollupField } from "./okf-version";
+import { type BundleState, CURRENT_OKF_VERSION, LEGACY_OKF_VERSION, type TaskRollupField } from "./okf-version";
 import { compareCodeUnits } from "./order";
-import { ATTESTED_COMPUTATION_TYPE } from "./profile";
-import type { ReconciledStatus } from "./reconcile";
+import { ATTESTED_COMPUTATION_TYPE, type Profile, profileForBundle, profileTypeDeclaresField } from "./profile";
+import { RECONCILED_STATUSES, type ReconciledStatus } from "./reconcile";
 import { claimVersion, RELATION_KINDS, readRelations, relationVersionState } from "./relations";
 import { foldSchemaName, readGeneratorStamp, typeDirectory } from "./schema";
 import { strayFenceMessage } from "./validate";
@@ -127,6 +127,22 @@ export type CheckSeverity = Severity;
  * schedule). `agent-profile-pin-capacity` (LCLI-702, DEC-172 (4at)) is the other, fixed at
  * {@link AGENT_PROFILE_PIN_CAPACITY_SEVERITY}: a source several profiles name that leaves any of
  * them over capacity.
+ *
+ * `task-status-enum-inherited` (LCLI-730, DEC-192 (8); its surface ratified by DEC-192 (10),
+ * opum-ai/opum-doc#1023 / #1053) is a **warn**-tier load-time finding, emitted ONCE per profile
+ * rather than per document and attributed to the profile file that carries the defect. An OKF
+ * **0.1** task-coupled type -- one declaring the `tasks` field, which is how `lore check` decides
+ * task coupling everywhere ({@link profileTypeDeclaresField}) -- whose merged `status` enum is
+ * CLOSED and omits all three rollup values (`todo`/`in-progress`/`done`) has closed its own rollup
+ * key: `status` IS that key on 0.1
+ * ({@link import("./okf-version").taskRollupFieldFor}), so a written `status: done` is refused by the
+ * generated TYPE SCHEMA before any lifecycle check. The warning names the type, the enum and the
+ * remedy (declare `status` on the type -- open, or including the rollup values). It is **not** an
+ * error and does not change what loads: the schema's own refusal of such a document stays exactly as
+ * it is, and a reader who wants the rollup key applies the remedy. It is deliberately NOT keyed on
+ * the compiler's fallback triple -- an OPEN `status`, and the built-in profile (whose `status` is an
+ * open optional string), reads the built-in `[draft, stable, deprecated]` fallback and stays SILENT;
+ * only a DECLARED closed enum warns.
  */
 export type CheckRule =
   | "type-shape"
@@ -158,7 +174,8 @@ export type CheckRule =
   | "unknown-relation-kind"
   | "relation-version-drift"
   | "agent-profile-capacity"
-  | "agent-profile-pin-capacity";
+  | "agent-profile-pin-capacity"
+  | "task-status-enum-inherited";
 
 /**
  * One problem found in the bundle, attributed to the file that carries it: the shared
@@ -1217,6 +1234,88 @@ export function agentProfilePinCapacityFindings(
         `${capacity.maxTokens}-token budget — ~${capacity.declaredTokens - capacity.maxTokens} over, ${unfitting} of ${capacity.sources.length} sources dropped. ` +
         "EVERY profile that names a shared source must move its budget in the same change, not only the one edited",
     });
+  }
+  return findings;
+}
+
+// ── Profile-scoped load-time warnings (LCLI-730) ────────────────────────────────
+
+/**
+ * The `task-status-enum-inherited` findings (LCLI-730, DEC-192 (8), opum-ai/opum-doc#1023; surface
+ * ratified by DEC-192 (10), opum-ai/opum-doc#1053): one warning per OKF **0.1** task-coupled type
+ * whose effective `status` enum is DECLARED and closed, yet omits every task-rollup value. The why
+ * is the rule's paragraph in this module's header; this is the detector.
+ *
+ * Computed from the compiled {@link Profile} alone — no filesystem, no document — so it is emitted
+ * ONCE per profile load and attributed to the profile file that carries the defect (`profileFile`,
+ * a repo-root-relative path, like every other profile-scoped finding). It reads the effective enum
+ * ({@link import("./profile").CompiledType.lifecycleStatusEnum}) so the warning names the SAME
+ * vocabulary the load check and the emitted schema enforce (DEC-192 (4), LCLI-723), and the three
+ * cannot disagree.
+ *
+ * The version gate is the **BUNDLE's**, per scanned bundle, NOT the producer profile's own
+ * `okf_version` — the distinction is the whole of the `bundleStates` parameter and was a measured
+ * defect (LCLI-730 review). The schema that refuses a rollup `status` is built per bundle
+ * ({@link profileForBundle} overrides `okfVersion` with the bundle's state), and DEC-192 (8) is
+ * scoped to "a 0.1 BUNDLE's task-coupled type". Reading the producer version instead fails BOTH
+ * ways, each reproduced on the real CLI: a `okf_version = "0.2"` profile over a bundle whose root
+ * index omits `okf_version` (legacy 0.1) refused `status: done` and warned NOTHING, and a
+ * `okf_version = "0.1"` profile over a bundle declaring 0.2 warned about a collision that cannot
+ * happen there (0.2 moved the rollup to a Lore-owned key,
+ * {@link import("./okf-version").taskRollupFieldFor}, so `status` is only the lifecycle key).
+ *
+ * Emitted ONCE per offending TYPE however many 0.1 bundles are scanned — the finding is
+ * profile-scoped and carries no bundle, so a second 0.1 bundle must not duplicate it.
+ *
+ * The "DECLARED" guard reads {@link import("./profile").CompiledType.lifecycleStatusDeclared}, NOT
+ * a comparison against the built-in triple. The distinction is load-bearing and was measured: an
+ * open `status`, the built-in profile, and a profile whose declared enum is byte-equal to the
+ * built-in triple all yield the SAME {@link import("./profile").CompiledType.lifecycleStatusEnum},
+ * so a triple comparison silently skips the third case -- a declared closed enum lacking every
+ * rollup value, which is exactly the shape this rule exists for. Only an enum that was not declared
+ * at all is out of scope; `schema.ts`'s `isBuiltinLifecycleEnum` still makes the conflation
+ * deliberately, for the REMEDY text, where naming the triple is right either way.
+ */
+export function taskStatusEnumInheritedFindings(
+  profile: Profile,
+  bundleStates: readonly BundleState[],
+  profileFile: string,
+): CheckFinding[] {
+  const findings: CheckFinding[] = [];
+  // Deduped by type, so N scanned 0.1 bundles still yield ONE finding per offending type.
+  const warnedTypes = new Set<string>();
+  for (const state of bundleStates) {
+    // The bundle's semantics, not the producer's — see the docstring above.
+    const effective = profileForBundle(profile, state);
+    if (effective.okfVersion !== LEGACY_OKF_VERSION) {
+      continue;
+    }
+    for (const type of effective.types.values()) {
+      if (warnedTypes.has(type.name)) {
+        continue; // already warned for this type on an earlier 0.1 bundle
+      }
+      if (!profileTypeDeclaresField(type.name, "tasks", effective)) {
+        continue; // not task-coupled -- no rollup key to collide with
+      }
+      if (!type.lifecycleStatusDeclared) {
+        continue; // no DECLARED enum -- an open `status`, or the built-in profile: the fallback, not a defect
+      }
+      const enumValues = type.lifecycleStatusEnum;
+      if (RECONCILED_STATUSES.every((value) => enumValues.includes(value))) {
+        continue; // the remedy is already applied -- the declared enum carries the rollup values
+      }
+      warnedTypes.add(type.name);
+      const named = enumValues.map((value) => JSON.stringify(value)).join(", ");
+      const rollup = RECONCILED_STATUSES.map((value) => JSON.stringify(value)).join(", ");
+      findings.push({
+        severity: "warning",
+        rule: "task-status-enum-inherited",
+        file: profileFile,
+        message:
+          `type ${JSON.stringify(type.name)} closes \`status\` to [${named}], which omits the OKF 0.1 task-rollup values [${rollup}], ` +
+          `so a written rollup \`status\` cannot load — declare \`status\` on ${JSON.stringify(type.name)} open, or including the rollup values`,
+      });
+    }
   }
   return findings;
 }

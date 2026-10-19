@@ -41,7 +41,7 @@ function graph() {
  *   a `summary` (its snippet); body is dense with "archive".
  * - `reference/orders` — Reference, title Orders, tags [orders], a `summary`; mentions
  *   "archive" once.
- * - `adr/0001-retention` — ADR, status Done, NO summary and NO title (snippet omitted);
+ * - `adr/0001-retention` — ADR, status stable, NO summary and NO title (snippet omitted);
  *   body is about "retention", not "archive".
  * - `notes/widget` — unknown type Widget, a whitespace-only `summary` (snippet falls
  *   back to title) and a `priority: 2` coerced scalar field; unrelated body.
@@ -57,7 +57,7 @@ function writeMixedBundle(): void {
   );
   writeDoc(
     "adr/0001-retention.md",
-    "---\ntype: ADR\nstatus: Done\n---\nRetention policy for archived records and retention windows.\n",
+    "---\ntype: ADR\nstatus: stable\n---\nRetention policy for archived records and retention windows.\n",
   );
   writeDoc(
     "notes/widget.md",
@@ -182,7 +182,7 @@ describe("query — frontmatter filters", () => {
     writeMixedBundle();
     expect(query(graph(), { status: "in progress" }).hits.map((h) => h.id)).toEqual(["stories/bulk-archive"]);
     // reference/orders and widget have no status at all → excluded from a status filter.
-    expect(query(graph(), { status: "done" }).hits.map((h) => h.id)).toEqual(["adr/0001-retention"]);
+    expect(query(graph(), { status: "STABLE" }).hits.map((h) => h.id)).toEqual(["adr/0001-retention"]);
   });
 
   test("--tag requires every listed tag (AND), case-insensitively; a bare-string tag counts as a one-tag list", () => {
@@ -202,7 +202,7 @@ describe("query — frontmatter filters", () => {
   test("--field matches a scalar (incl. a YAML-coerced number) and a list element; an absent key never matches", () => {
     writeMixedBundle();
     // Scalar string field.
-    expect(query(graph(), { fields: [{ key: "status", value: "Done" }] }).hits.map((h) => h.id)).toEqual([
+    expect(query(graph(), { fields: [{ key: "status", value: "Stable" }] }).hits.map((h) => h.id)).toEqual([
       "adr/0001-retention",
     ]);
     // A coerced number scalar (unknown type leaves `priority: 2` a number) stringifies to "2".
@@ -220,7 +220,7 @@ describe("query — frontmatter filters", () => {
   test("--field resolves the key case-insensitively (consistent with the value and the other filters)", () => {
     writeMixedBundle();
     // `Status`/`STATUS` find the `status:` frontmatter key, not just a verbatim-case match.
-    expect(query(graph(), { fields: [{ key: "Status", value: "done" }] }).hits.map((h) => h.id)).toEqual([
+    expect(query(graph(), { fields: [{ key: "Status", value: "stable" }] }).hits.map((h) => h.id)).toEqual([
       "adr/0001-retention",
     ]);
   });
