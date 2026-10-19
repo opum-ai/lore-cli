@@ -1323,3 +1323,45 @@ describe("release.yml: every scripts/ file a job runs is in that job's checkout 
     expect(seen("# bash scripts/h.sh")).toEqual([]);
   });
 });
+
+/**
+ * LCLI-738, DEC-204 (b). The release gate probe proves that the binary this release QUALIFIED
+ * can do something the previous published release cannot, and its whole safety property is an
+ * EDGE in this file: `publish` must not start without it. A probe job that exists but is not in
+ * `publish.needs` is a green badge beside an ungated publish — every shape check passes and the
+ * gate is not wired. This asserts the edge, and its mutation control removes the edge from the
+ * workflow TEXT (not from a parsed copy) so the assertion is shown to go red on removal.
+ */
+describe("release.yml publish is gated by the release gate probe (LCLI-738)", () => {
+  const PROBE_JOB = "release-gate-probe";
+
+  function needsList(needs: string[] | string | undefined): string[] {
+    if (needs === undefined) return [];
+    return Array.isArray(needs) ? needs : [needs];
+  }
+
+  /** True when the given workflow text has `publish` listing the probe in `needs`. */
+  function publishDependsOnProbe(workflowText: string): boolean {
+    const doc = yaml.load(workflowText, { schema: yaml.JSON_SCHEMA }) as WorkflowDoc;
+    return needsList(doc.jobs.publish?.needs).includes(PROBE_JOB);
+  }
+
+  test("the publish job lists the release gate probe in needs", () => {
+    expect(publishDependsOnProbe(readFileSync(WORKFLOW_PATH, "utf8"))).toBe(true);
+  });
+
+  test("MUTATION CONTROL: removing it from publish.needs turns the assertion above red", () => {
+    const text = readFileSync(WORKFLOW_PATH, "utf8");
+    const mutated = text.replace("package, release-gate-probe, provenance-pre", "package, provenance-pre");
+    // The replacement must have MATCHED. If a reformat ever stops it matching, this control
+    // would pass by accident and would be defending nothing — so that is its own failure.
+    expect(mutated).not.toBe(text);
+    expect(publishDependsOnProbe(mutated)).toBe(false);
+  });
+
+  test("the probe job exists and runs on the qualified artifact it needs", () => {
+    const doc = loadWorkflow();
+    expect(doc.jobs[PROBE_JOB]).toBeDefined();
+    expect(needsList(doc.jobs[PROBE_JOB]?.needs)).toContain("package-qualification");
+  });
+});
