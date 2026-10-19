@@ -134,10 +134,16 @@ env:
   # (opum-ai/quest-cli#486) merged, so this ref named that branch's head commit
   # (e49b62ce), which carried 0.13.0 — the only way lore's docs gate and compile
   # smoke could build the peer the pair lock required. With 0.13.0 published and
-  # quest-cli's main promoted, this is quest-cli's dev tip again, carrying
-  # 0.13.0 in package.json. The fallback fires only when the version CLAUDE.md
-  # declares is absent from npm, so the npm path is what runs today.
-  QUEST_SOURCE_REF: b1011e405b3b8a34bb94046ef85e932e1c1d4fd1
+  # quest-cli's main promoted, this named quest-cli's dev tip again, carrying
+  # 0.13.0 in package.json.
+  #
+  # MOVED FOR THE 0.14.0 PAIR RELEASE (2026-10-19): it now names quest-cli's
+  # promoted main f62ae28f6f25209e1c598e071cc765f05b118401, which carries
+  # 0.14.0, because quest 0.14.0 is not yet on npm and the pair lock requires the
+  # declared peer. The fallback fires only when the version CLAUDE.md declares is
+  # absent from npm, so the source path is what runs until quest 0.14.0 is
+  # published.
+  QUEST_SOURCE_REF: f62ae28f6f25209e1c598e071cc765f05b118401
 
 jobs:
   check:
