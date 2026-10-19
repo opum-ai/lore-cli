@@ -1013,8 +1013,9 @@ jobs:
           fi
 
           # BOTH ARMS IN THE SAME JOB AND CHECKOUT. `present` runs the fresh, qualified binary;
-          # `absent` runs the previous release and requires a nonzero exit whose output NAMES
-          # `targets`, so an unrelated breakage cannot stand in for the control.
+          # `absent` runs the previous release and requires a nonzero exit whose output carries
+          # the exact rejection `Unrecognized key: "targets"`, so neither an unrelated breakage
+          # nor output that merely mentions the word can stand in for the control.
           node scripts/release-gate-probe.mjs --binary "$fresh_binary" --expect present --cwd "$PWD"
           node scripts/release-gate-probe.mjs --binary "$previous_binary" --expect absent --cwd "$PWD"
 
