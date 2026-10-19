@@ -11,8 +11,8 @@
 //   FRESH   — the binary unpacked from this run's matching-host-qualified platform tarball,
 //             run with --expect present: `lore check` must exit 0.
 //   PREVIOUS — the platform package at npm's `latest` (deliberately NOT the release-candidate
-//             dist-tag), run with --expect absent: `lore check` must exit NONZERO and its
-//             output must name the probed feature.
+//             dist-tag), run with --expect absent: `lore check` must exit NONZERO and carry the
+//             exact rejection `Unrecognized key: "targets"`.
 //
 // The probe feature is the `[targets]` table in `.lore/agents/*.toml` (agent-profile budget
 // targets, LCLI-682/722). It is observable as an exit status because a binary built before
