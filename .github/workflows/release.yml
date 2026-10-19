@@ -939,8 +939,8 @@ jobs:
   # stages -- so the control is the release users actually have.
   #
   # publish lists this job in `needs:`, so no real publish can start without both arms: the fresh
-  # binary accepts the feature and the previous one rejects it BY NAME. The job itself has no `if:`,
-  # so a publish:false rehearsal runs it too.
+  # binary accepts the feature and the previous one rejects it with the exact rejection it prints.
+  # The job itself has no `if:`, so a publish:false rehearsal runs it too.
   release-gate-probe:
     name: "release gate probe (${{ matrix.name }}: fresh build accepts [targets], previous release rejects it)"
     needs: [setup, package-qualification]
@@ -989,6 +989,10 @@ jobs:
           # Windows binaries need no executable bit (and chmod on one is meaningless there).
           if [ "$BINARY_NAME" != "lore.exe" ]; then
             chmod +x "$fresh_binary"
+            if [ ! -x "$fresh_binary" ]; then
+              echo "::error::the qualified binary $fresh_binary is not executable after chmod, so the probe could not run it"
+              exit 1
+            fi
           fi
 
           previous_version="$(npm view @opum-ai/lore version)" || {
@@ -1010,11 +1014,16 @@ jobs:
           fi
           if [ "$BINARY_NAME" != "lore.exe" ]; then
             chmod +x "$previous_binary"
+            if [ ! -x "$previous_binary" ]; then
+              echo "::error::the previous release binary $previous_binary is not executable after chmod, so the control could not run it"
+              exit 1
+            fi
           fi
 
           # BOTH ARMS IN THE SAME JOB AND CHECKOUT. `present` runs the fresh, qualified binary;
-          # `absent` runs the previous release and requires a nonzero exit whose output NAMES
-          # `targets`, so an unrelated breakage cannot stand in for the control.
+          # `absent` runs the previous release and requires a nonzero exit whose output carries
+          # the exact rejection `Unrecognized key: "targets"`, so neither an unrelated breakage
+          # nor output that merely mentions the word can stand in for the control.
           node scripts/release-gate-probe.mjs --binary "$fresh_binary" --expect present --cwd "$PWD"
           node scripts/release-gate-probe.mjs --binary "$previous_binary" --expect absent --cwd "$PWD"
 
