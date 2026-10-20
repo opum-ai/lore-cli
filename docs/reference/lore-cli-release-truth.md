@@ -37,18 +37,19 @@ an ancestor of `origin/main` (`3aa5f020b668c0ea15be7f3cc86159b7de0fd06b` when re
 
 **Staged, then promoted.**
 - **Staged.** Release run `39366418979` (attempt 1, `workflow_dispatch` at `85d583c8`)
-  concluded `failure`. Its inputs `publish: false` and `launcher_rc: 1` rest on the dispatching
-  session's own account (its 2026-10-20T02:50Z handoff instruction and its 09:53Z note, both on
-  LCLI-714): LCLI-742 records that the run object carries no `inputs` field, so they cannot be
-  read off the run. Re-read at 2026-10-20T18:53Z, its 25 jobs are 20 `success`, 2 `failure` and
+  concluded `failure`. Its inputs `publish: false` and `launcher_rc: 1` rest on the 2026-10-20T02:50Z
+  handoff's instruction to the successor session that dispatched the run, and on that session's
+  09:53Z note calling it a dry run (both on LCLI-714; the 09:53Z note does not state
+  `launcher_rc`, which the registry's `0.14.1-rc.1` launcher suffix corroborates). LCLI-742
+  records that the run object carries no `inputs` field, so they cannot be read off the run. Re-read at 2026-10-20T18:53Z, its 25 jobs are 20 `success`, 2 `failure` and
   3 `skipped`. The two failures are the Windows `release
   gate probe` arms, win32-x64 (job `118445199876`) and win32-arm64 (job `118445199864`). The
   three skipped jobs are `Ladybug optional 1 GiB observation (ubuntu-24.04 x64)` (job
   `118444260849`), `verify this release's own provenance (LCLI-481)` (job `118446044825`) and
   `publish (npm, OIDC trusted publishing)` (job `118446045540`). The 1 GiB observation needs only
   the version checks and is skipped on its `ladybug_scale_observation` input alone, which was
-  false (whether left at its default or set is not readable) and has nothing to do with
-  publishing. The `publish` job's `needs:` includes `release-gate-probe`, and the provenance job
+  false (inferred from the skip; whether left at its default or set is not readable) and has
+  nothing to do with publishing. The `publish` job's `needs:` includes `release-gate-probe`, and the provenance job
   needs `publish`, so the two Windows probe failures would have skipped both of them even with
   `publish: true`.
   The two Windows failures were predicted before the run reported (opum-doc, relayed to the
@@ -154,7 +155,8 @@ readiness evidence only.
 
 **Tag `v0.14.0` exists and was NEVER published (LCLI-714).** It is an annotated tag object
 `9c147a34001e8de9fa06c566165dc50128276cfc` peeling to
-`077ee53f7b167acab0fabb745fc74cbb92ab0b1e`, which `origin/main` named when read 2026-10-20.
+`077ee53f7b167acab0fabb745fc74cbb92ab0b1e`, which `origin/main` named when read by the
+opum-ai/lore-cli#620 session on 2026-10-20 (not re-read here).
 Release run `39347496150` — attempt 1, dispatched at that tag with `publish: false` and
 `launcher_rc: 1` — concluded `failure`: its six `release gate probe` jobs failed in their FRESH
 arm because the job carried no `quest`, so `lore check` exited 3 with
