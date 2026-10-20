@@ -189,6 +189,8 @@ export declare function rollback(args: {
   setTag: SetTag;
   log?: (line: string) => void;
 }): Promise<{ ok: boolean; failed: string[] }>;
+export declare const VERIFY_DELAY_MS: number;
+export declare function readLagAttempts(windowSeconds: string | number, delayMs?: number): number;
 export declare function verifyTags(args: {
   expected: Record<string, string | null>;
   readTags?: (name: string) => Promise<Record<string, string>>;

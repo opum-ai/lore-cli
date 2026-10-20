@@ -102,7 +102,9 @@
 //   node scripts/promote-latest.mjs --rollback <path>                                # restore it
 // Optional: --version <v> (default: this checkout's package.json), --otp <code>.
 // Env: REGISTRY_WINDOW_SECONDS bounds the README read-back's wait (default 1800), as it does
-// scripts/readme-readback.sh's and publish-release.sh's.
+// scripts/readme-readback.sh's and publish-release.sh's. Since LCLI-689 it also bounds STEP 7's
+// post-write reads (every latest, then the launcher's integrity): a promotion whose writes all
+// succeeded is not failed on npm read lag inside that window, so the GitHub Release step still runs.
 //
 // Exit codes:
 //   0  done: the dry run found nothing to refuse, the promotion is complete, its GitHub Release is
@@ -648,6 +650,18 @@ export async function rollback({ record, setTag, log = () => {} }) {
   return { ok: failed.length === 0, failed };
 }
 
+/** The pause between STEP 7's reads. */
+export const VERIFY_DELAY_MS = 15_000;
+
+/**
+ * How many reads fit a REGISTRY_WINDOW_SECONDS window at `delayMs` apart: one at the start, then
+ * one per delay until the window is spent. Window 0 is one read, the old fail-fast behaviour.
+ * @param {string | number} windowSeconds
+ */
+export function readLagAttempts(windowSeconds, delayMs = VERIFY_DELAY_MS) {
+  return delayMs > 0 ? Math.floor((Number(windowSeconds) * 1000) / delayMs) + 1 : 1;
+}
+
 /**
  * Confirms the registry now serves the expected `latest` for every package. A
  * tag write returning success is not the registry serving it, so this re-reads,
@@ -657,7 +671,7 @@ export async function verifyTags({
   expected,
   readTags = (name) => readDistTags(name),
   attempts = 10,
-  delayMs = 15_000,
+  delayMs = VERIFY_DELAY_MS,
   sleep = (ms) => new Promise((done) => setTimeout(done, ms)),
 }) {
   let wrong = [];
@@ -1077,7 +1091,7 @@ export async function verifyFinalLauncher({
   final,
   probe,
   attempts = 10,
-  delayMs = 15_000,
+  delayMs = VERIFY_DELAY_MS,
   sleep = (ms) => new Promise((done) => setTimeout(done, ms)),
 }) {
   let last = "no read was made";
@@ -1497,6 +1511,13 @@ export async function main(
     throw new Error(
       `REGISTRY_WINDOW_SECONDS ${JSON.stringify(window)} is not a whole number of seconds (0 to 999999999, no leading zero); nothing was read, moved or published`,
     );
+  // LCLI-689: STEP 7 waits out registry read lag for the same window as the README read-back.
+  // An explicit verifyOptions (the tests') wins.
+  const lagWindow = window === undefined || window === "" ? "1800" : window;
+  verifyOptions = {
+    attempts: readLagAttempts(lagWindow, verifyOptions.delayMs ?? VERIFY_DELAY_MS),
+    ...verifyOptions,
+  };
   const readTags = (name) => readDistTags(name, { run });
   const execFile = (command, commandArgs, options) => run(command, commandArgs, options);
   const probe = (name, version) => probeVersion(name, version, { run });
@@ -1900,7 +1921,7 @@ export async function main(
     for (const line of check.wrong) err(`  ${line}`);
     if (!check.ok) {
       err(
-        `The writes returned success but the registry does not serve ${PROMOTE_TAG} = ${record.version} everywhere after ${check.attempts} reads.`,
+        `The writes returned success but the registry does not serve ${PROMOTE_TAG} = ${record.version} everywhere after ${check.attempts} reads (REGISTRY_WINDOW_SECONDS ${lagWindow}). Nothing was rolled back: re-read with npm view <name> dist-tags and, once every latest reads ${record.version}, run the GitHub Release step by hand.`,
       );
       return 1;
     }

@@ -73,6 +73,7 @@ import {
   tokenShape,
   treeReadArgs,
   validateRecord,
+  readLagAttempts,
   verifyFinalLauncher,
   versionReadArgs,
 } from "../scripts/promote-latest.mjs";
@@ -379,6 +380,8 @@ type WorldOptions = {
   /** How gh answers the skills/ tree reads: "fail" throws, "missing" serves a root tree without it. */
   skills?: "fail" | "missing";
   onAdd?: () => void;
+  /** LCLI-689: this many dist-tags reads of the launcher AFTER its publish still serve the prior latest (npm read lag). */
+  lagReads?: number;
   /** Runs once, when the LAST platform's latest move to V lands. */
   afterPlatforms?: (w: World) => void;
   /**
@@ -418,6 +421,7 @@ function world(options: WorldOptions = {}) {
       ...(options.tags?.[name] ?? {}),
     };
   const calls: string[][] = [];
+  let lagged = 0;
   const writes: string[] = [];
   /**
    * EVERY npm call, read or write, must carry both registry pins (review F6); one that does not is
@@ -538,6 +542,10 @@ function world(options: WorldOptions = {}) {
       if (command === "npm" && args[0] === "view" && args[2] === "dist-tags") {
         const t = tags[args[1] as string];
         if (!t) throw new Error("E404");
+        if (args[1] === LAUNCHER && state.xPublished && lagged < (options.lagReads ?? 0)) {
+          lagged++;
+          return { stdout: JSON.stringify([{ ...t, latest: PRIOR }]) };
+        }
         return { stdout: JSON.stringify([t]) };
       }
       if (command === "bash" && args[0] === README_READBACK_SCRIPT) {
@@ -3256,5 +3264,56 @@ describe("scripts/promote-latest.mjs: the Windows-probe excuse for a failed run 
       failed: [],
     });
     expect(calls).toEqual(["jobs", `log ${WIN_ARM64_ID}`, `log ${WIN_X64_ID}`, "times"]);
+  });
+});
+
+describe("scripts/promote-latest.mjs: STEP 7 waits out registry read lag (LCLI-689)", () => {
+  const NAP = { sleep: async () => {} };
+  const run = async (lagReads: number, window: string | undefined) => {
+    const h = harness();
+    const w = world({ lagReads });
+    const env: Record<string, string | undefined> = { NPM_TOKEN: "", REGISTRY_WINDOW_SECONDS: window };
+    const code = await main(["--record", h.record, "--promote", "--release-run", RUN], {
+      run: w.run,
+      env,
+      out: (l) => h.out.push(l),
+      err: (l) => h.err.push(l),
+      readPackageVersion: async () => V,
+      verifyOptions: NAP,
+    });
+    const text = h.text();
+    h.cleanup();
+    return { code, text, w };
+  };
+
+  test("readLagAttempts: one read at the start, then one per delay until the window is spent", () => {
+    expect(readLagAttempts("0")).toBe(1);
+    expect(readLagAttempts("14")).toBe(1);
+    expect(readLagAttempts("15")).toBe(2);
+    expect(readLagAttempts("1800")).toBe(121);
+    expect(readLagAttempts("30", 0)).toBe(1);
+  });
+
+  test("a read that lags and then converges passes within the window, and the release step still runs", async () => {
+    // Window 30s at 15s apart is 3 reads: two stale ones, then the converged one.
+    const { code, text, w } = await run(2, "30");
+    expect(code).toBe(0);
+    expect(text).not.toContain("the registry does not serve");
+    expect(w.calls.some((c) => c[0] === "gh" && c[1] === "release")).toBe(true);
+    expect(text).toContain("README read-back");
+  });
+
+  test("a read that never converges still fails at exit 1, names what it read, and cuts no release", async () => {
+    // Three stale reads exhaust a 3-read window: the same lag one read longer.
+    const { code, text, w } = await run(3, "30");
+    expect(code).toBe(1);
+    expect(text).toContain(`${LAUNCHER}: latest reads "${PRIOR}", expected ${V}`);
+    expect(text).toContain("after 3 reads (REGISTRY_WINDOW_SECONDS 30)");
+    expect(w.calls.some((c) => c[0] === "gh" && c[1] === "release" && c[2] === "create")).toBe(false);
+  });
+
+  test("with no window set the default (1800s) is used, not the old 10 reads", async () => {
+    const { code } = await run(50, undefined);
+    expect(code).toBe(0);
   });
 });

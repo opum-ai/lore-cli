@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`promote-latest.mjs` waits out npm read lag after its writes** (LCLI-689). STEP 7's post-write
+  reads (every `latest`, then the launcher's integrity) now run for the `REGISTRY_WINDOW_SECONDS`
+  window (default 1800s, one read per 15s) instead of a fixed 10 reads, so a promotion whose writes
+  all succeeded no longer exits 1 on a lagging read before the GitHub Release and README read-back
+  run. A read that never converges still exits 1 and names what it read.
+
 ## [0.14.1] - 2026-10-20
 
 **`0.14.0` was tagged and never published.** Tag `v0.14.0` names a commit and is not moved
