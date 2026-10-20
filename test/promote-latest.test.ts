@@ -44,12 +44,16 @@ import {
   distTagAddArgs,
   distTagReadArgs,
   downloadServedTarball,
+  errorAnnotations,
+  evaluateWindowsProbeExcuse,
+  jobLogReadArgs,
   launcherPublishArgs,
   main,
   POST_LATEST_RUNBOOK_ITEM,
   type PromotionRecord,
   postLatestChecklist,
   publishFinalLauncher,
+  questPublishTimesReadArgs,
   READBACK_FAILED,
   READBACK_NOT_CONFIRMED,
   READBACK_PASSED,
@@ -60,6 +64,7 @@ import {
   RELEASE_VERSION,
   readbackEnv,
   readbackRereadCommands,
+  releaseRunJobsReadArgs,
   releaseRunReadArgs,
   resolveSkillsTree,
   rollback,
@@ -275,6 +280,46 @@ function goodReceipt(commit = COMMIT): Record<string, unknown> {
   };
 }
 
+// ── DEC-204 (a4): the shape of the 0.14.1 dry run (Release run 39366418979) ──────────────────────
+// Two Windows probe arms failed at setup-quest's Windows refusal; every other job succeeded or was
+// skipped by design; quest 0.14.1 had no publish time (the launcher at X is published only at latest).
+const RUN_STARTED = "2026-10-20T03:50:49Z";
+const WIN_X64_ID = 101;
+const WIN_ARM64_ID = 102;
+const probeJobName = (platform: string) =>
+  `release gate probe (${platform}: fresh build accepts [targets], previous release rejects it)`;
+type JobFixture = { id: number; name: string; conclusion: string | null };
+function dryRunJobs(patch: (jobs: JobFixture[]) => JobFixture[] = (jobs) => jobs) {
+  const jobs = patch([
+    { id: 1, name: "lore/quest version parity (constitution Article 3 clause 6)", conclusion: "success" },
+    { id: 2, name: "package + install-sanity (dry-run, never publishes)", conclusion: "success" },
+    { id: 3, name: "Ladybug optional 1 GiB observation (ubuntu-24.04 x64)", conclusion: "skipped" },
+    { id: 4, name: "publish (npm, OIDC trusted publishing)", conclusion: "skipped" },
+    { id: 201, name: probeJobName("linux-x64"), conclusion: "success" },
+    { id: 202, name: probeJobName("darwin-arm64"), conclusion: "success" },
+    { id: WIN_X64_ID, name: probeJobName("win32-x64"), conclusion: "failure" },
+    { id: WIN_ARM64_ID, name: probeJobName("win32-arm64"), conclusion: "failure" },
+  ]);
+  return { total_count: jobs.length, jobs };
+}
+const WINDOWS_REFUSAL_LINE =
+  "##[error]setup-quest's source fallback does not support Windows runners (this runner is Windows): its shim is an extensionless bash script, which a bare-name lookup cannot resolve there. A Windows caller needs a different mechanism — see ADR-0023 and DEC-55.";
+/** A Windows arm's log: the step's own SOURCE echoes the words too (as the real log does), then the annotations. */
+function windowsLog(annotations: string[] = [WINDOWS_REFUSAL_LINE, "##[error]Process completed with exit code 1."]) {
+  return [
+    "﻿2026-10-20T03:54:35.7728398Z ##[group]Run ./.github/actions/setup-quest",
+    `2026-10-20T03:54:36.1000000Z echo "::error::setup-quest's source fallback does not support Windows runners (this runner is $RUNNER_OS)"`,
+    ...annotations.map((line, i) => `2026-10-20T03:54:37.${i}000000Z ${line}`),
+  ].join("\n");
+}
+const DRY_RUN_LOGS = { [WIN_X64_ID]: windowsLog(), [WIN_ARM64_ID]: windowsLog() };
+/** The world a run of that shape lives in. */
+const excusedWorld = (options: WorldOptions = {}): WorldOptions => ({
+  run: { conclusion: "failure", created_at: RUN_STARTED },
+  jobLogs: DRY_RUN_LOGS,
+  ...options,
+});
+
 type WorldOptions = {
   receipt?: unknown;
   pass1?: unknown | ((files: Map<string, Buffer>) => unknown);
@@ -321,6 +366,12 @@ type WorldOptions = {
    * source for its notes, so changing this is the only way to change them.
    */
   changelog?: string | "fail";
+  /** DEC-204 (a4): the jobs document `gh api .../runs/<RUN>/jobs` answers; "fail" throws. Default the 0.14.1 dry run's shape. */
+  jobs?: unknown;
+  /** DEC-204 (a4): job id -> the log `gh api .../jobs/<id>/logs` answers; an id with no entry throws. */
+  jobLogs?: Record<number, string>;
+  /** DEC-204 (a4): quest's `time` map from `npm view @opum-ai/quest time`; "fail" throws. Default carries no entry for V. */
+  questTimes?: Record<string, string> | "fail";
 };
 
 type World = ReturnType<typeof world>;
@@ -424,6 +475,24 @@ function world(options: WorldOptions = {}) {
             ...(options.run ?? {}),
           }),
         };
+      // DEC-204 (a4): the run's jobs, one job's log, and quest's publish times. Argvs come from the
+      // module's own builders, so a test cannot pin a shape the script does not send.
+      if (command === "gh" && line === `gh ${releaseRunJobsReadArgs(RUN).join(" ")}`) {
+        if (options.jobs === "fail") throw Object.assign(new Error("Command failed"), { stderr: "HTTP 502" });
+        return { stdout: JSON.stringify(options.jobs ?? dryRunJobs()) };
+      }
+      if (command === "gh" && args[0] === "api" && args[3]?.includes("/actions/jobs/")) {
+        const id = Number(/\/jobs\/(\d+)\/logs$/.exec(args[3])?.[1]);
+        expect(args).toEqual(jobLogReadArgs(id));
+        const log = options.jobLogs?.[id];
+        if (log === undefined) throw Object.assign(new Error("Command failed"), { stderr: "HTTP 404" });
+        return { stdout: log };
+      }
+      if (command === "npm" && args[0] === "view" && args[1] === "@opum-ai/quest" && args[2] === "time") {
+        expect(args).toEqual(questPublishTimesReadArgs());
+        if (options.questTimes === "fail") throw new Error("E503 registry unreachable");
+        return { stdout: JSON.stringify([{ created: "2026-01-01T00:00:00.000Z", ...(options.questTimes ?? {}) }]) };
+      }
       if (command === "gh" && args[0] === "run" && args[1] === "download") {
         const dir = args[args.length - 1] as string;
         expect(args).toEqual(artifactDownloadArgs(RUN, dir));
@@ -2800,5 +2869,197 @@ describe("scripts/promote-latest.mjs: the GitHub Release (LCLI-622)", () => {
     } finally {
       h.cleanup();
     }
+  });
+});
+
+// ── DEC-204 (a4): a failed Release run is promotable ONLY under the Windows-probe excuse ─────────
+// opum-doc ruling, LCLI-744. Everything reads through the injected runner; no network. The accepted
+// case is the 0.14.1 dry run's own shape, and each refusal is one condition of the four broken alone.
+describe("scripts/promote-latest.mjs: the Windows-probe excuse for a failed run (DEC-204 (a4), LCLI-744)", () => {
+  const jobReads = (w: World) => w.calls.filter((c) => c[0] === "gh" && c[1] === "api" && c[4]?.includes("/jobs"));
+
+  for (const mode of ["--dry-run", "--promote"] as const)
+    test(`the 0.14.1 dry run's shape is ACCEPTED (${mode}): exit 0, one line naming the excused jobs and DEC-204 (a4)`, async () => {
+      const h = harness();
+      const w = world(excusedWorld());
+      try {
+        expect(await h.go(["--record", h.record, mode], w)).toBe(0);
+        const line = h.out.find((l) => l.includes("DEC-204 (a4)")) ?? "";
+        expect(line).toContain(`Run ${RUN} concluded "failure" and is accepted under DEC-204 (a4)`);
+        expect(line).toContain(JSON.stringify(probeJobName("win32-x64")));
+        expect(line).toContain(JSON.stringify(probeJobName("win32-arm64")));
+        // Positive control: it read the jobs and both Windows logs, and went on to the artifact (step 2).
+        expect(jobReads(w).length).toBe(3);
+        expect(w.state.downloadDir).not.toBeNull();
+        expect(h.err.join("\n")).not.toContain("Refusing");
+      } finally {
+        h.cleanup();
+      }
+    });
+
+  test("quest published AFTER the run started is still not installable at its start: accepted", async () => {
+    const h = harness();
+    const w = world(excusedWorld({ questTimes: { [V]: "2026-10-20T09:00:00.000Z" } }));
+    try {
+      expect(await h.go(["--record", h.record, "--dry-run"], w)).toBe(0);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  refusalSuite("each condition broken alone refuses and NAMES it", `Refusing to promote ${V}`, [
+    [
+      "a NON-Windows probe arm failed too",
+      excusedWorld({
+        jobs: dryRunJobs((jobs) => jobs.map((j) => (j.id === 201 ? { ...j, conclusion: "failure" } : j))),
+      }),
+      `DEC-204 (a4) excuse refused, condition 1/4: a job other than a Windows release-gate-probe arm did not succeed: ${JSON.stringify(probeJobName("linux-x64"))} (failure)`,
+    ],
+    [
+      "a job that is not a probe arm failed",
+      excusedWorld({
+        jobs: dryRunJobs((jobs) => jobs.map((j) => (j.id === 2 ? { ...j, conclusion: "failure" } : j))),
+      }),
+      `a job other than a Windows release-gate-probe arm did not succeed: "package + install-sanity (dry-run, never publishes)" (failure)`,
+    ],
+    [
+      "a Windows arm that was CANCELLED, not failed",
+      excusedWorld({
+        jobs: dryRunJobs((jobs) => jobs.map((j) => (j.id === WIN_X64_ID ? { ...j, conclusion: "cancelled" } : j))),
+      }),
+      `${JSON.stringify(probeJobName("win32-x64"))} (cancelled)`,
+    ],
+    [
+      "a Windows probe that failed for ANOTHER reason (no setup-quest refusal)",
+      excusedWorld({
+        jobLogs: {
+          ...DRY_RUN_LOGS,
+          [WIN_ARM64_ID]: windowsLog([
+            "##[error]npm ERR! network timeout",
+            "##[error]Process completed with exit code 1.",
+          ]),
+        },
+      }),
+      `condition 2: ${JSON.stringify(probeJobName("win32-arm64"))} does not show setup-quest's Windows refusal`,
+    ],
+    [
+      "a Windows probe showing only the refusal's words in the step SOURCE, never as an annotation",
+      excusedWorld({
+        jobLogs: { ...DRY_RUN_LOGS, [WIN_X64_ID]: windowsLog(["##[error]Process completed with exit code 1."]) },
+      }),
+      `condition 2: ${JSON.stringify(probeJobName("win32-x64"))} does not show setup-quest's Windows refusal`,
+    ],
+    [
+      "a Windows probe with the refusal PLUS an extra ##[error] line",
+      excusedWorld({
+        jobLogs: {
+          ...DRY_RUN_LOGS,
+          [WIN_X64_ID]: windowsLog([
+            WINDOWS_REFUSAL_LINE,
+            "##[error]something else broke",
+            "##[error]Process completed with exit code 1.",
+          ]),
+        },
+      }),
+      `condition 2: ${JSON.stringify(probeJobName("win32-x64"))} carries another ##[error] line: "##[error]something else broke"`,
+    ],
+    [
+      "quest already installable when the run started (publish time BEFORE created_at)",
+      excusedWorld({ questTimes: { [V]: "2026-10-20T03:00:00.000Z" } }),
+      `condition 3: @opum-ai/quest@${V} was already installable when the run started (published 2026-10-20T03:00:00.000Z, run created ${RUN_STARTED})`,
+    ],
+    [
+      "quest's publish time unreadable (registry down)",
+      excusedWorld({ questTimes: "fail" }),
+      "condition 3: @opum-ai/quest's publish times could not be read",
+    ],
+    [
+      "the run's jobs unreadable",
+      excusedWorld({ jobs: "fail" }),
+      `condition 1: the jobs of run ${RUN} could not be read`,
+    ],
+    [
+      "the run's jobs cut off (total_count exceeds what came back)",
+      excusedWorld({ jobs: { ...dryRunJobs(), total_count: 120 } }),
+      "did not read in full (8 of 120)",
+    ],
+    [
+      "a run that concluded failure with NO failed job",
+      excusedWorld({ jobs: dryRunJobs((jobs) => jobs.map((j) => ({ ...j, conclusion: "success" }))) }),
+      "no job failed, so there is no Windows probe arm to excuse",
+    ],
+  ]);
+
+  test("a run that was CANCELLED, or any non-failure conclusion, is never excused and reads no jobs", async () => {
+    const h = harness();
+    const w = world(excusedWorld({ run: { conclusion: "cancelled", created_at: RUN_STARTED } }));
+    try {
+      expect(await h.go(["--record", h.record, "--dry-run"], w)).toBe(1);
+      expect(h.err.join("\n")).toContain(`run ${RUN} concluded "cancelled", not "success"`);
+      expect(jobReads(w)).toEqual([]);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("the excuse waives ONLY the conclusion: a failed run of ANOTHER commit still refuses on that", async () => {
+    const h = harness();
+    const w = world(
+      excusedWorld({ run: { conclusion: "failure", created_at: RUN_STARTED, head_sha: "e".repeat(40) } }),
+    );
+    try {
+      expect(await h.go(["--record", h.record, "--dry-run"], w)).toBe(1);
+      expect(h.err.join("\n")).toContain(`but the tag peels to ${COMMIT}`);
+      expect(jobReads(w)).toEqual([]);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("a SUCCESSFUL run never reads its jobs", async () => {
+    const h = harness();
+    const w = world();
+    try {
+      expect(await h.go(["--record", h.record, "--dry-run"], w)).toBe(0);
+      expect(jobReads(w)).toEqual([]);
+      expect(h.out.join("\n")).not.toContain("DEC-204");
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("errorAnnotations: only a line that STARTS with the annotation counts, timestamp and BOM stripped", () => {
+    expect(errorAnnotations(windowsLog())).toEqual([
+      WINDOWS_REFUSAL_LINE,
+      "##[error]Process completed with exit code 1.",
+    ]);
+    expect(errorAnnotations(`2026-10-20T03:54:36.1Z echo "##[error]inside a command"`)).toEqual([]);
+  });
+
+  test("evaluateWindowsProbeExcuse: an ABSENT publish time counts as not installable; the three readers are injected", async () => {
+    const calls: string[] = [];
+    const verdict = await evaluateWindowsProbeExcuse({
+      run: { created_at: RUN_STARTED },
+      runId: RUN,
+      version: V,
+      readJobs: async () => {
+        calls.push("jobs");
+        return dryRunJobs();
+      },
+      readJobLog: async (id: number) => {
+        calls.push(`log ${id}`);
+        return windowsLog();
+      },
+      readQuestPublishTimes: async () => {
+        calls.push("times");
+        return JSON.stringify({ created: "2026-01-01T00:00:00.000Z" });
+      },
+    });
+    expect(verdict).toEqual({
+      excused: true,
+      excusedJobs: [probeJobName("win32-x64"), probeJobName("win32-arm64")],
+      failed: [],
+    });
+    expect(calls).toEqual(["jobs", `log ${WIN_X64_ID}`, `log ${WIN_ARM64_ID}`, "times"]);
   });
 });
