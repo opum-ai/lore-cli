@@ -144,16 +144,16 @@ env:
   # on its own: quest 0.14.0 is absent from npm permanently, and this ref is what
   # kept the three quest-consuming jobs building the peer from source.
   #
-  # MOVED FOR THE 0.14.1 PAIR RELEASE (2026-10-20, LCLI-714). INTERIM: it names
-  # opum-ai/quest-cli#629's HEAD 04db1352dacff47dd3c49df36e3c7bb972bf1794, whose
-  # package.json reads 0.14.1, because quest-cli's 0.14.1 is not on npm and its
-  # main still reads 0.14.0. A PR head is enough: the action clones the public
-  # repository anonymously and checks out the commit, and GitHub keeps a pull
-  # request's head ref alive. 0.14.0 crossed the same way (92b09d28 -> 848c304f
-  # -> b39314ce -> f62ae28f). This value is replaced by quest-cli's promoted main
-  # SHA before anything is tagged, and the final value is the one that goes to
-  # review.
-  QUEST_SOURCE_REF: 04db1352dacff47dd3c49df36e3c7bb972bf1794
+  # MOVED FOR THE 0.14.1 PAIR RELEASE (2026-10-20, LCLI-714). It names quest-cli's
+  # PROMOTED MAIN 053d8595f2caa34b04abc451d711e62fff5314b4, whose package.json reads
+  # 0.14.1 (verified by ref: `refs/heads/main` resolves there and its only parent
+  # is the previous 0.14.0 main f62ae28f). It was INTERIM at quest-cli#629's head
+  # 04db1352d while the bump was still open — a PR head is enough for the action,
+  # because it clones the public repository anonymously and checks out the commit —
+  # and 0.14.0 crossed the same way (92b09d28 -> 848c304f -> b39314ce -> f62ae28f).
+  # quest 0.14.1 is not on npm yet, so the source path is what runs until it is
+  # published; this is the value that went to review.
+  QUEST_SOURCE_REF: 053d8595f2caa34b04abc451d711e62fff5314b4
 
 jobs:
   check:

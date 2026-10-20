@@ -547,7 +547,7 @@ describePosixSetupQuest("setup-quest installs the staged release candidate (LCLI
           'printf "%s\\n" "$*" >> "$NPM_LOG"',
           'if [ "$1" = "install" ]; then',
           '  if [ -n "$EXACT_AVAILABLE" ] && [ "$3" = "@opum-ai/quest@$EXACT_AVAILABLE" ]; then exit 0; fi',
-          '  if [ "$STAGED_INSTALLABLE" = "1" ] && [ "$3" = "@opum-ai/quest@release-candidate" ]; then exit 0; fi',
+          '  if [ "$STAGED_INSTALLABLE" = "1" ] && [ "$3" = "@opum-ai/quest@$STAGED" ]; then exit 0; fi',
           '  echo "npm error code E404 no such version" >&2',
           "  exit 1",
           "fi",
@@ -603,9 +603,13 @@ describePosixSetupQuest("setup-quest installs the staged release candidate (LCLI
 
   test("a declared version with only its rc staged installs the staged launcher", () => {
     // The release window this exists for: quest has staged 0.14.1-rc.1 and published no 0.14.1.
+    // The install names the EXACT version the tag read returned, never the tag itself: naming
+    // the tag twice would resolve it twice, and it can move between the read and the install
+    // (opum-doc, DEC-182 delta on #620).
     const outcome = runNpmStep("0.14.1", { staged: "0.14.1-rc.1", stagedInstallable: true });
     expect(outcome.method).toBe("npm");
-    expect(outcome.installs).toEqual(["@opum-ai/quest@0.14.1", "@opum-ai/quest@release-candidate"]);
+    expect(outcome.installs).toEqual(["@opum-ai/quest@0.14.1", "@opum-ai/quest@0.14.1-rc.1"]);
+    expect(outcome.installs).not.toContain("@opum-ai/quest@release-candidate");
   });
 
   test("an rc of a DIFFERENT base is refused, and the job falls back to the source build", () => {
@@ -614,7 +618,7 @@ describePosixSetupQuest("setup-quest installs the staged release candidate (LCLI
     const outcome = runNpmStep("0.14.1", { staged: "0.13.0-rc.1", stagedInstallable: true });
     expect(outcome.method).toBe("source");
     expect(outcome.installs).toEqual(["@opum-ai/quest@0.14.1"]);
-    expect(outcome.installs).not.toContain("@opum-ai/quest@release-candidate");
+    expect(outcome.installs).not.toContain("@opum-ai/quest@0.13.0-rc.1");
   });
 
   test("an unreadable release-candidate falls back to the source build and says what it read", () => {

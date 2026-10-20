@@ -60,14 +60,14 @@ runs:
           # promoted, and quest cannot be promoted before lore is staged. The
           # deadlock is the finding, not a side effect.
           #
-          # IT IS NOT A FLOAT. The tag is read once and the install happens ONLY
-          # when that tag's version has the DECLARED base (X-rc.N for a declared
-          # X), so a release-candidate left over from an earlier release is
-          # refused here rather than installed. `quest --version` prints the BASE
-          # version through an rc launcher — measured on 0.13.0-rc.1, whose
-          # launcher package.json reads 0.13.0-rc.1 while the platform binary it
-          # execs answers 0.13.0 — so the assertion step needs no relaxation and
-          # stays the guard it already was.
+          # IT IS NOT A FLOAT. The tag is read ONCE, the exact version it named is what
+          # gets installed, and that install happens ONLY when the version has the DECLARED
+          # base (X-rc.N for a declared X), so a release-candidate left over from an
+          # earlier release is refused here rather than installed. `quest --version` prints
+          # the BASE version through an rc launcher — measured on 0.13.0-rc.1, whose
+          # launcher package.json reads 0.13.0-rc.1 while the platform binary it execs
+          # answers 0.13.0 — so the assertion step needs no relaxation and stays the guard
+          # it already was.
           staged_err="$(mktemp)"
           staged=""
           if raw="$(npm view @opum-ai/quest@release-candidate version 2>"$staged_err")"; then
@@ -82,9 +82,14 @@ runs:
           echo "::notice::npm view @opum-ai/quest@release-candidate version => '${staged:-<none>}' (npm stderr: $(tr '\n' ' ' < "$staged_err" | cut -c1-400))"
           rm -f "$staged_err"
           if [ -n "$staged" ] && [ "${staged%-rc.*}" = "${{ inputs.version }}" ]; then
-            if npm install -g "@opum-ai/quest@release-candidate"; then
+            # INSTALL THE EXACT VERSION JUST READ, never the tag (opum-doc, DEC-182 delta on
+            # #620). Naming the tag twice resolves it twice, and it can move between this
+            # read and the install; the assertion below would then catch a moved tag as a
+            # version mismatch, which reads as a ref problem rather than the race it is.
+            # The exact spec cannot move.
+            if npm install -g "@opum-ai/quest@$staged"; then
               echo "method=npm" >> "$GITHUB_OUTPUT"
-              echo "::notice::quest ${{ inputs.version }} is not on npm yet; installed the staged $staged from release-candidate, whose base is the declared version. The assertion step is unchanged and still requires the installed binary to report ${{ inputs.version }}."
+              echo "::notice::quest ${{ inputs.version }} is not on npm yet; installed the staged $staged read from release-candidate, whose base is the declared version. The assertion step is unchanged and still requires the installed binary to report ${{ inputs.version }}."
               exit 0
             fi
           fi

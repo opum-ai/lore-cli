@@ -68,15 +68,16 @@ env:
   # VALUE, so `test/release-workflow.test.ts` asserts the two files name the same commit rather
   # than leaving "keep these in step" as a comment for the next person to trust.
   #
-  # MOVED FOR THE 0.14.1 PAIR RELEASE (2026-10-20, LCLI-714, DEC-204 (b)). INTERIM: it names
-  # opum-ai/quest-cli#629's HEAD 04db1352dacff47dd3c49df36e3c7bb972bf1794, whose package.json
-  # reads 0.14.1, because quest-cli's 0.14.1 is not on npm and its main still reads 0.14.0.
-  # This is the same crossing 0.14.0 used; the value is replaced by quest-cli's promoted main
-  # SHA before anything is tagged. The interim value is SAFE rather than merely stale:
-  # setup-quest asserts the built quest reports the version CLAUDE.md declares, so a ref that
-  # does not carry 0.14.1 fails loudly as a ref problem instead of quietly running the probe
-  # against the wrong peer.
-  QUEST_SOURCE_REF: 04db1352dacff47dd3c49df36e3c7bb972bf1794
+  # MOVED FOR THE 0.14.1 PAIR RELEASE (2026-10-20, LCLI-714, DEC-204 (b)). It names
+  # quest-cli's PROMOTED MAIN 053d8595f2caa34b04abc451d711e62fff5314b4, whose package.json
+  # reads 0.14.1 (verified by ref: `refs/heads/main` resolves there and its only parent is
+  # the previous 0.14.0 main). It was INTERIM at quest-cli#629's head 04db1352d while that
+  # bump was still open; this is the same crossing 0.14.0 used. setup-quest asserts the
+  # built quest reports the version CLAUDE.md declares, so a ref that does not carry 0.14.1
+  # fails loudly as a ref problem instead of quietly running the probe against the wrong
+  # peer. quest 0.14.1 is not on npm yet, so the source path — or, once quest stages it, the
+  # release-candidate path — is what runs until it is published.
+  QUEST_SOURCE_REF: 053d8595f2caa34b04abc451d711e62fff5314b4
 
 jobs:
   setup:
