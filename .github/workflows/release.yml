@@ -68,13 +68,15 @@ env:
   # VALUE, so `test/release-workflow.test.ts` asserts the two files name the same commit rather
   # than leaving "keep these in step" as a comment for the next person to trust.
   #
-  # MOVED FOR THE 0.14.1 PAIR RELEASE (2026-10-20, LCLI-714, DEC-204 (b)). INTERIM: it still
-  # names quest-cli's 0.14.0 main; the 0.14.1 commit is substituted here and in ci.yml once
-  # quest-cli's 0.14.1 main is promoted, and this PR is not reviewable before that. The interim
-  # value is SAFE rather than merely stale: setup-quest asserts the built quest reports the
-  # version CLAUDE.md declares, so a ref carrying 0.14.0 fails loudly as a ref problem instead
-  # of quietly running the probe against the wrong peer.
-  QUEST_SOURCE_REF: f62ae28f6f25209e1c598e071cc765f05b118401
+  # MOVED FOR THE 0.14.1 PAIR RELEASE (2026-10-20, LCLI-714, DEC-204 (b)). INTERIM: it names
+  # opum-ai/quest-cli#629's HEAD 04db1352dacff47dd3c49df36e3c7bb972bf1794, whose package.json
+  # reads 0.14.1, because quest-cli's 0.14.1 is not on npm and its main still reads 0.14.0.
+  # This is the same crossing 0.14.0 used; the value is replaced by quest-cli's promoted main
+  # SHA before anything is tagged. The interim value is SAFE rather than merely stale:
+  # setup-quest asserts the built quest reports the version CLAUDE.md declares, so a ref that
+  # does not carry 0.14.1 fails loudly as a ref problem instead of quietly running the probe
+  # against the wrong peer.
+  QUEST_SOURCE_REF: 04db1352dacff47dd3c49df36e3c7bb972bf1794
 
 jobs:
   setup:

@@ -137,13 +137,23 @@ env:
   # quest-cli's main promoted, this named quest-cli's dev tip again, carrying
   # 0.13.0 in package.json.
   #
-  # MOVED FOR THE 0.14.0 PAIR RELEASE (2026-10-19): it now names quest-cli's
-  # promoted main f62ae28f6f25209e1c598e071cc765f05b118401, which carries
-  # 0.14.0, because quest 0.14.0 is not yet on npm and the pair lock requires the
-  # declared peer. The fallback fires only when the version CLAUDE.md declares is
-  # absent from npm, so the source path is what runs until quest 0.14.0 is
-  # published.
-  QUEST_SOURCE_REF: f62ae28f6f25209e1c598e071cc765f05b118401
+  # MOVED FOR THE 0.14.0 PAIR RELEASE (2026-10-19): it named quest-cli's promoted
+  # main f62ae28f6f25209e1c598e071cc765f05b118401, which carried 0.14.0, because
+  # quest 0.14.0 was not yet on npm and the pair lock requires the declared peer.
+  # 0.14.0 was tagged and never published (LCLI-714), so that window never closed
+  # on its own: quest 0.14.0 is absent from npm permanently, and this ref is what
+  # kept the three quest-consuming jobs building the peer from source.
+  #
+  # MOVED FOR THE 0.14.1 PAIR RELEASE (2026-10-20, LCLI-714). INTERIM: it names
+  # opum-ai/quest-cli#629's HEAD 04db1352dacff47dd3c49df36e3c7bb972bf1794, whose
+  # package.json reads 0.14.1, because quest-cli's 0.14.1 is not on npm and its
+  # main still reads 0.14.0. A PR head is enough: the action clones the public
+  # repository anonymously and checks out the commit, and GitHub keeps a pull
+  # request's head ref alive. 0.14.0 crossed the same way (92b09d28 -> 848c304f
+  # -> b39314ce -> f62ae28f). This value is replaced by quest-cli's promoted main
+  # SHA before anything is tagged, and the final value is the one that goes to
+  # review.
+  QUEST_SOURCE_REF: 04db1352dacff47dd3c49df36e3c7bb972bf1794
 
 jobs:
   check:
