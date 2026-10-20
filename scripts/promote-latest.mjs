@@ -659,7 +659,9 @@ export const VERIFY_DELAY_MS = 15_000;
  * @param {string | number} windowSeconds
  */
 export function readLagAttempts(windowSeconds, delayMs = VERIFY_DELAY_MS) {
-  return delayMs > 0 ? Math.floor((Number(windowSeconds) * 1000) / delayMs) + 1 : 1;
+  const reads = Math.floor((Number(windowSeconds) * 1000) / delayMs) + 1;
+  // --rollback does not validate the window, and zero attempts would read nothing and pass.
+  return Number.isFinite(reads) && reads >= 1 ? reads : 1;
 }
 
 /**
@@ -1514,9 +1516,12 @@ export async function main(
   // LCLI-689: STEP 7 waits out registry read lag for the same window as the README read-back.
   // An explicit verifyOptions (the tests') wins.
   const lagWindow = window === undefined || window === "" ? "1800" : window;
-  verifyOptions = {
-    attempts: readLagAttempts(lagWindow, verifyOptions.delayMs ?? VERIFY_DELAY_MS),
-    ...verifyOptions,
+  const lagOptions = /** @type {{ attempts?: number, delayMs?: number, sleep?: (ms: number) => Promise<void> }} */ (
+    verifyOptions
+  );
+  const waitOptions = {
+    attempts: readLagAttempts(lagWindow, lagOptions.delayMs ?? VERIFY_DELAY_MS),
+    ...lagOptions,
   };
   const readTags = (name) => readDistTags(name, { run });
   const execFile = (command, commandArgs, options) => run(command, commandArgs, options);
@@ -1878,7 +1883,7 @@ export async function main(
       const check = await verifyTags({
         expected: Object.fromEntries(record.packages.map((entry) => [entry.name, entry.priorLatest])),
         readTags,
-        ...verifyOptions,
+        ...waitOptions,
       });
       for (const line of check.wrong) err(`  ${line}`);
       if (!check.ok) return 1;
@@ -1916,7 +1921,7 @@ export async function main(
     const check = await verifyTags({
       expected: Object.fromEntries(record.packages.map((entry) => [entry.name, record.version])),
       readTags,
-      ...verifyOptions,
+      ...waitOptions,
     });
     for (const line of check.wrong) err(`  ${line}`);
     if (!check.ok) {
@@ -1926,7 +1931,7 @@ export async function main(
       return 1;
     }
     // ...and npm serves X as the artifact's bytes.
-    const bytes = await verifyFinalLauncher({ version: record.version, final, probe, ...verifyOptions });
+    const bytes = await verifyFinalLauncher({ version: record.version, final, probe, ...waitOptions });
     if (!bytes.ok) {
       for (const problem of bytes.problems) err(`  ${problem}`);
       err(

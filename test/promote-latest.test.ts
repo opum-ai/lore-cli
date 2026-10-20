@@ -3292,6 +3292,8 @@ describe("scripts/promote-latest.mjs: STEP 7 waits out registry read lag (LCLI-6
     expect(readLagAttempts("15")).toBe(2);
     expect(readLagAttempts("1800")).toBe(121);
     expect(readLagAttempts("30", 0)).toBe(1);
+    // A window that is not a number must still read once: zero reads would "verify" nothing.
+    expect(readLagAttempts("abc")).toBe(1);
   });
 
   test("a read that lags and then converges passes within the window, and the release step still runs", async () => {
