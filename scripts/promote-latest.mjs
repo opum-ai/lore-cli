@@ -701,6 +701,17 @@ export function checkReleaseRun(run, { runId, commit, excused = false }) {
 
 /** A Windows release-gate-probe arm, by job name (release.yml's probe matrix names them `release gate probe (<platform>: ...)`). */
 const WINDOWS_PROBE_JOB = /^release gate probe \(win32-/;
+/**
+ * The jobs a publish:false dry run SKIPS BY CONSTRUCTION (release.yml gates each on `inputs.publish`
+ * or `inputs.ladybug_scale_observation`). Only these may be skipped under DEC-204 (a4) condition 4:
+ * any other skipped job is one that did not run, which is not one that succeeded.
+ */
+const PUBLISH_JOB = /^publish \(npm, OIDC trusted publishing\)/;
+const SKIPPED_BY_CONSTRUCTION = [
+  PUBLISH_JOB,
+  /^verify this release's own provenance/,
+  /^Ladybug optional 1 GiB observation/,
+];
 /** What setup-quest's source fallback says on a Windows runner (.github/actions/setup-quest/action.yml). */
 const SETUP_QUEST_WINDOWS_REFUSAL = "##[error]setup-quest's source fallback does not support Windows runners";
 /** The step-failure echo GitHub appends after any failing `run:` step; the one other ##[error] line a refused arm carries. */
@@ -729,8 +740,10 @@ export function errorAnnotations(log) {
  *   3. @opum-ai/quest@<version> was NOT installable from npm at the run's start: npm's own
  *      `time[<version>]` against the run's created_at, never against now. An absent publish time
  *      counts as not installable; an unreadable registry, or a time that does not parse, does not;
- *   4. every other job concluded success (or was skipped: a publish:false dry run always skips
- *      its publish and provenance jobs, and a job that never ran is not one that failed).
+ *   4. every other job concluded success; the only skip allowed is a job that a publish:false dry
+ *      run skips by construction (SKIPPED_BY_CONSTRUCTION: publish, this release's provenance
+ *      verification, the 1 GiB observation), and only when the publish job is present and itself
+ *      skipped (so the run published nothing); any other skipped job refuses by name.
  * The three readers are injected, so no test needs a network.
  * @param {{ run: any, runId: string, version: string,
  *   readJobs: () => Promise<any>, readJobLog: (jobId: number) => Promise<string>,
@@ -759,7 +772,20 @@ export async function evaluateWindowsProbeExcuse({ run, runId, version, readJobs
     return refuse();
   }
 
-  const unsuccessful = jobs.filter((job) => job.conclusion !== "success" && job.conclusion !== "skipped");
+  // DEC-204 (a4), ruling D: the named skips below are excused ONLY when the publish job is present
+  // and itself skipped, which shows this run published nothing. A run whose publish job ran, or
+  // that has none, cannot have its skips excused.
+  const publishJob = jobs.find((job) => PUBLISH_JOB.test(String(job.name)));
+  if (publishJob?.conclusion !== "skipped")
+    failed.push(
+      `condition 4: the publish job ${publishJob ? `concluded ${JSON.stringify(publishJob.conclusion)}` : "is absent"}, so run ${runId} is not shown to have published nothing, and no skipped job can be excused`,
+    );
+
+  const unsuccessful = jobs.filter(
+    (job) =>
+      job.conclusion !== "success" &&
+      !(job.conclusion === "skipped" && SKIPPED_BY_CONSTRUCTION.some((pattern) => pattern.test(String(job.name)))),
+  );
   const windowsFailures = unsuccessful.filter(
     (job) => WINDOWS_PROBE_JOB.test(String(job.name)) && job.conclusion === "failure",
   );

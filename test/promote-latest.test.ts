@@ -2952,6 +2952,25 @@ describe("scripts/promote-latest.mjs: the Windows-probe excuse for a failed run 
       `a job other than a Windows release-gate-probe arm did not succeed: "package + install-sanity (dry-run, never publishes)" (failure)`,
     ],
     [
+      "a job OUTSIDE the by-construction set was SKIPPED",
+      excusedWorld({
+        jobs: dryRunJobs((jobs) => jobs.map((j) => (j.id === 2 ? { ...j, conclusion: "skipped" } : j))),
+      }),
+      `a job other than a Windows release-gate-probe arm did not succeed: "package + install-sanity (dry-run, never publishes)" (skipped)`,
+    ],
+    [
+      "a named job skipped while the PUBLISH job RAN",
+      excusedWorld({
+        jobs: dryRunJobs((jobs) => jobs.map((j) => (j.id === 4 ? { ...j, conclusion: "success" } : j))),
+      }),
+      `condition 4: the publish job concluded "success", so run ${RUN} is not shown to have published nothing`,
+    ],
+    [
+      "the publish job ABSENT from the run",
+      excusedWorld({ jobs: dryRunJobs((jobs) => jobs.filter((j) => j.id !== 4)) }),
+      `condition 4: the publish job is absent, so run ${RUN} is not shown to have published nothing`,
+    ],
+    [
       "a Windows arm that was CANCELLED, not failed",
       excusedWorld({
         jobs: dryRunJobs((jobs) => jobs.map((j) => (j.id === WIN_X64_ID ? { ...j, conclusion: "cancelled" } : j))),

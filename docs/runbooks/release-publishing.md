@@ -1139,8 +1139,11 @@ the promotion half, item 7. It is not part of staging.
    job is a Windows probe arm, each arm's `##[error]` lines are exactly that
    refusal and then at most one generic `Process completed with exit code N.`
    line, `@opum-ai/quest@X` had no npm publish time before the run's
-   `created_at` (an absent `time` key counts), and every other job succeeded or
-   was skipped. Anything else
+   `created_at` (an absent `time` key counts), and every other job succeeded. The
+   only skips allowed are the jobs a `publish: false` dry run skips by
+   construction (`publish`, the release's own provenance verification and the
+   1 GiB Ladybug observation), and only when the `publish` job is present and
+   itself skipped, which shows the run published nothing. Anything else
    refuses and names the condition that failed. The real fix, setup-quest on
    Windows, retires this exception.
 
