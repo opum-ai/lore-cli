@@ -111,7 +111,7 @@ export declare function verifyFinalLauncher(args: {
   attempts?: number;
   delayMs?: number;
   sleep?: (ms: number) => Promise<void>;
-}): Promise<{ ok: boolean; attempts: number; problems: string[] }>;
+}): Promise<{ ok: boolean; mismatch?: boolean; attempts: number; problems: string[] }>;
 export declare const README_READBACK_SCRIPT: string;
 export declare const README_READBACK_EXIT: number;
 export declare function readbackEnv(env: Record<string, string | undefined>): Record<string, string | undefined>;

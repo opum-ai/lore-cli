@@ -105,6 +105,8 @@
 // scripts/readme-readback.sh's and publish-release.sh's. Since LCLI-689 it also bounds STEP 7's
 // post-write reads (every latest, then the launcher's integrity): a promotion whose writes all
 // succeeded is not failed on npm read lag inside that window, so the GitHub Release step still runs.
+// --rollback's restore check waits out the same window; an invalid value there falls back to 1800
+// (a restore is never refused for it), where --promote refuses it with exit 2.
 //
 // Exit codes:
 //   0  done: the dry run found nothing to refuse, the promotion is complete, its GitHub Release is
@@ -660,7 +662,7 @@ export const VERIFY_DELAY_MS = 15_000;
  */
 export function readLagAttempts(windowSeconds, delayMs = VERIFY_DELAY_MS) {
   const reads = Math.floor((Number(windowSeconds) * 1000) / delayMs) + 1;
-  // --rollback does not validate the window, and zero attempts would read nothing and pass.
+  // Zero reads fail closed in both callers, with nothing printed to explain the exit 1, so keep one.
   return Number.isFinite(reads) && reads >= 1 ? reads : 1;
 }
 
@@ -1105,6 +1107,7 @@ export async function verifyFinalLauncher({
       if (state.state === "present" && state.integrity)
         return {
           ok: false,
+          mismatch: true,
           attempts: attempt,
           problems: [
             `${LAUNCHER}@${version}: npm serves ${state.integrity}, the artifact's ${final.filename} is ${final.integrity}; restore every latest with \`node scripts/promote-latest.mjs --rollback <record>\`, and do NOT unpublish`,
@@ -1116,7 +1119,12 @@ export async function verifyFinalLauncher({
     }
     if (attempt < attempts) await sleep(delayMs);
   }
-  return { ok: false, attempts, problems: [`${LAUNCHER}@${version}: ${last} after ${attempts} reads`] };
+  return {
+    ok: false,
+    mismatch: false,
+    attempts,
+    problems: [`${LAUNCHER}@${version}: ${last} after ${attempts} reads`],
+  };
 }
 
 /**
@@ -1507,15 +1515,22 @@ export async function main(
       `--version ${JSON.stringify(args.version)} is not a semver version (no "v" prefix, no dist-tag name)`,
     );
   // LCLI-626 review 1: the read-back's window, refused HERE rather than by the read-back after the
-  // promotion. --rollback runs no read-back, so it does not read the variable.
+  // promotion. --rollback runs no read-back but its restore check waits out the same window
+  // (LCLI-689), so it reads the variable too; an invalid value there is not refused, which would
+  // stop a restore, and falls back to the default instead.
   const window = env.REGISTRY_WINDOW_SECONDS;
-  if (!args.rollbackPath && window !== undefined && window !== "" && !REGISTRY_WINDOW.test(window))
+  const windowSet = window !== undefined && window !== "";
+  if (!args.rollbackPath && windowSet && !REGISTRY_WINDOW.test(window))
     throw new Error(
       `REGISTRY_WINDOW_SECONDS ${JSON.stringify(window)} is not a whole number of seconds (0 to 999999999, no leading zero); nothing was read, moved or published`,
     );
-  // LCLI-689: STEP 7 waits out registry read lag for the same window as the README read-back.
-  // An explicit verifyOptions (the tests') wins.
-  const lagWindow = window === undefined || window === "" ? "1800" : window;
+  // LCLI-689: STEP 7 (and the rollback's restore check) waits out registry read lag for the same
+  // window as the README read-back. An explicit verifyOptions (the tests') wins.
+  const lagWindow = windowSet && REGISTRY_WINDOW.test(window) ? window : "1800";
+  if (args.rollbackPath && windowSet && lagWindow !== window)
+    err(
+      `REGISTRY_WINDOW_SECONDS ${JSON.stringify(window)} is not a whole number of seconds (0 to 999999999, no leading zero); the restore check uses the default 1800s`,
+    );
   const lagOptions = /** @type {{ attempts?: number, delayMs?: number, sleep?: (ms: number) => Promise<void> }} */ (
     verifyOptions
   );
@@ -1918,6 +1933,9 @@ export async function main(
       return 1;
     }
     // STEP 7: `latest` reads X on all seven...
+    out(
+      `\nSTEP 7: re-reading ${PROMOTE_TAG} on all ${record.packages.length} packages for up to ${lagWindow}s (REGISTRY_WINDOW_SECONDS) while the registry read catches up; do not interrupt.`,
+    );
     const check = await verifyTags({
       expected: Object.fromEntries(record.packages.map((entry) => [entry.name, record.version])),
       readTags,
@@ -1926,7 +1944,7 @@ export async function main(
     for (const line of check.wrong) err(`  ${line}`);
     if (!check.ok) {
       err(
-        `The writes returned success but the registry does not serve ${PROMOTE_TAG} = ${record.version} everywhere after ${check.attempts} reads (REGISTRY_WINDOW_SECONDS ${lagWindow}). Nothing was rolled back: re-read with npm view <name> dist-tags and, once every latest reads ${record.version}, run the GitHub Release step by hand.`,
+        `The writes returned success but the registry does not serve ${PROMOTE_TAG} = ${record.version} everywhere after ${check.attempts} reads (REGISTRY_WINDOW_SECONDS ${lagWindow}). Nothing was rolled back. This run exited before the launcher integrity check, the GitHub Release and the README read-back. Re-read with npm view <name> dist-tags; once every ${PROMOTE_TAG} reads ${record.version}, re-run node scripts/promote-latest.mjs --record ${args.recordPath} --release-run ${args.releaseRun} --promote: the record makes it a resume, which re-reaches STEP 7 and the steps after it without republishing.`,
       );
       return 1;
     }
@@ -1934,6 +1952,12 @@ export async function main(
     const bytes = await verifyFinalLauncher({ version: record.version, final, probe, ...waitOptions });
     if (!bytes.ok) {
       for (const problem of bytes.problems) err(`  ${problem}`);
+      if (!bytes.mismatch) {
+        err(
+          `${PROMOTE_TAG} reads ${record.version} everywhere, but npm never served ${LAUNCHER}@${record.version}'s dist.integrity within the window (REGISTRY_WINDOW_SECONDS ${lagWindow}); that is an unread value, not a different one. Nothing was rolled back. Re-read it with npm view ${LAUNCHER}@${record.version} dist.integrity (expect ${final.integrity}), then re-run --promote on the same record to resume.`,
+        );
+        return 1;
+      }
       err(
         `${PROMOTE_TAG} reads ${record.version} everywhere, but npm does not serve ${final.filename} as ${LAUNCHER}@${record.version}. This run restores nothing by itself: put every ${PROMOTE_TAG} back with node scripts/promote-latest.mjs --rollback ${args.recordPath}. Do NOT run npm unpublish.`,
       );

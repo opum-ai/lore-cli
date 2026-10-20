@@ -382,6 +382,8 @@ type WorldOptions = {
   onAdd?: () => void;
   /** LCLI-689: this many dist-tags reads of the launcher AFTER its publish still serve the prior latest (npm read lag). */
   lagReads?: number;
+  /** LCLI-689: this many probeVersion reads of the launcher AFTER its publish answer not-found (npm read lag). */
+  lagProbes?: number;
   /** Runs once, when the LAST platform's latest move to V lands. */
   afterPlatforms?: (w: World) => void;
   /**
@@ -422,6 +424,7 @@ function world(options: WorldOptions = {}) {
     };
   const calls: string[][] = [];
   let lagged = 0;
+  let laggedProbes = 0;
   const writes: string[] = [];
   /**
    * EVERY npm call, read or write, must carry both registry pins (review F6); one that does not is
@@ -610,6 +613,13 @@ function world(options: WorldOptions = {}) {
       if (command === "npm" && args[0] === "view" && args[2] === "--json" && args[1] === `${LAUNCHER}@${V}`) {
         // probeVersion: the X launcher, the only version this script ever reads at X for the launcher.
         if (state.xPublished === "unreadable") throw new Error("ETIMEDOUT reading the registry");
+        if (state.xPublished && laggedProbes < (options.lagProbes ?? 0)) {
+          laggedProbes++;
+          throw Object.assign(new Error("Command failed: npm view"), {
+            stderr: `npm error code E404\nnpm error 404 No match found for version ${V}`,
+            stdout: JSON.stringify({ error: { code: "E404" } }),
+          });
+        }
         if (state.xPublished === null)
           throw Object.assign(new Error("Command failed: npm view"), {
             stderr: `npm error code E404\nnpm error 404 No match found for version ${V}`,
@@ -3269,9 +3279,9 @@ describe("scripts/promote-latest.mjs: the Windows-probe excuse for a failed run 
 
 describe("scripts/promote-latest.mjs: STEP 7 waits out registry read lag (LCLI-689)", () => {
   const NAP = { sleep: async () => {} };
-  const run = async (lagReads: number, window: string | undefined) => {
+  const run = async (lagReads: number, window: string | undefined, lagProbes = 0) => {
     const h = harness();
-    const w = world({ lagReads });
+    const w = world({ lagReads, lagProbes });
     const env: Record<string, string | undefined> = { NPM_TOKEN: "", REGISTRY_WINDOW_SECONDS: window };
     const code = await main(["--record", h.record, "--promote", "--release-run", RUN], {
       run: w.run,
@@ -3292,7 +3302,7 @@ describe("scripts/promote-latest.mjs: STEP 7 waits out registry read lag (LCLI-6
     expect(readLagAttempts("15")).toBe(2);
     expect(readLagAttempts("1800")).toBe(121);
     expect(readLagAttempts("30", 0)).toBe(1);
-    // A window that is not a number must still read once: zero reads would "verify" nothing.
+    // A window that is not a number still reads once: zero reads fail closed, with nothing printed to say why.
     expect(readLagAttempts("abc")).toBe(1);
   });
 
@@ -3301,8 +3311,45 @@ describe("scripts/promote-latest.mjs: STEP 7 waits out registry read lag (LCLI-6
     const { code, text, w } = await run(2, "30");
     expect(code).toBe(0);
     expect(text).not.toContain("the registry does not serve");
-    expect(w.calls.some((c) => c[0] === "gh" && c[1] === "release")).toBe(true);
-    expect(text).toContain("README read-back");
+    expect(text).toContain("STEP 7: re-reading latest on all 7 packages for up to 30s");
+    expect(w.calls.some((c) => c[0] === "gh" && c[1] === "release" && c[2] === "create")).toBe(true);
+    expect(w.calls.some((c) => c[0] === "bash" && c[1] === README_READBACK_SCRIPT)).toBe(true);
+  });
+
+  test("the launcher integrity read lags and converges inside the window (the waitOptions wiring on verifyFinalLauncher)", async () => {
+    const { code, w } = await run(0, "30", 2);
+    expect(code).toBe(0);
+    expect(w.calls.some((c) => c[0] === "gh" && c[1] === "release" && c[2] === "create")).toBe(true);
+  });
+
+  test("an integrity that is never served within the window exits 1 with the RE-READ remedy, not --rollback", async () => {
+    const { code, text, w } = await run(0, "30", 3);
+    expect(code).toBe(1);
+    expect(text).toContain("never served");
+    expect(text).toContain("Nothing was rolled back");
+    expect(text).not.toContain("put every latest back");
+    expect(w.writes.some((l) => l.includes(`@${PRIOR} latest`))).toBe(false);
+    expect(w.calls.some((c) => c[0] === "gh" && c[1] === "release" && c[2] === "create")).toBe(false);
+  });
+
+  test("--rollback with a window that is not a bounded whole number uses the 1800s default and says so", async () => {
+    for (const bad of ["1e12", "30m"]) {
+      const h = harness();
+      const promoted = world();
+      try {
+        expect(await h.go(["--record", h.record, "--promote"], promoted)).toBe(0);
+        const w = world({
+          receipt: undefined,
+          pass1: undefined,
+          tags: Object.fromEntries(RELEASE_PACKAGES.map((n) => [n, { latest: V }])),
+        });
+        expect(await h.go(["--rollback", h.record], w, { NPM_TOKEN: "", REGISTRY_WINDOW_SECONDS: bad })).toBe(0);
+        expect(h.err.join("\n")).toContain(`REGISTRY_WINDOW_SECONDS "${bad}" is not a whole number of seconds`);
+        expect(h.err.join("\n")).toContain("the restore check uses the default 1800s");
+      } finally {
+        h.cleanup();
+      }
+    }
   });
 
   test("a read that never converges still fails at exit 1, names what it read, and cuts no release", async () => {
@@ -3311,6 +3358,9 @@ describe("scripts/promote-latest.mjs: STEP 7 waits out registry read lag (LCLI-6
     expect(code).toBe(1);
     expect(text).toContain(`${LAUNCHER}: latest reads "${PRIOR}", expected ${V}`);
     expect(text).toContain("after 3 reads (REGISTRY_WINDOW_SECONDS 30)");
+    expect(text).toContain("Nothing was rolled back");
+    expect(text).toContain("--promote");
+    expect(w.writes.some((l) => l.includes(`@${PRIOR} latest`))).toBe(false);
     expect(w.calls.some((c) => c[0] === "gh" && c[1] === "release" && c[2] === "create")).toBe(false);
   });
 
