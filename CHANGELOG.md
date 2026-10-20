@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-10-20
+
+**`0.14.0` was tagged and never published.** Tag `v0.14.0` names a commit and is not moved
+(LCLI-714). Its Release run — `39347496150`, dispatched at that tag with `publish: false`,
+attempt 1, head SHA `077ee53f7b167acab0fabb745fc74cbb92ab0b1e` — concluded `failure`, so no
+`@opum-ai/lore*` package at `0.14.0` exists on the registry and `latest` still reads `0.13.0`.
+Nothing was staged and nothing was re-run. `0.14.1` carries `0.14.0`'s changes, the commits
+landed since the tag, and the repair below.
+
+### Fixed
+
+- **The release gate probe installs the `quest` peer its `lore check` drives** (LCLI-714,
+  DEC-204 (b)). The `release-gate-probe` job added in LCLI-738 checks out the tree and downloads
+  the qualified tarballs, but carried no way to obtain `quest`, so `lore check` failed closed
+  before either arm could measure anything: the six jobs failed in their FRESH arm with
+  ``error: the `quest` CLI is not installed or not on PATH`` and
+  `hint: install @opum-ai/quest@0.14.0`. That is why run `39347496150` is red and `0.14.0` was
+  never staged. The job now calls `.github/actions/setup-quest`, the same composite action the
+  `tracker`, `docs-gate` and `build` jobs use, with the version derived from `CLAUDE.md`'s
+  managed block and the source ref pinned alongside `ci.yml`'s `QUEST_SOURCE_REF`. The pin and
+  the declaration move in lockstep, asserted by `test/release-workflow.test.ts` rather than by
+  a comment.
+
 ## [0.14.0] - 2026-10-13
 
 ### Added

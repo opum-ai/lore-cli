@@ -395,30 +395,31 @@ describe("the quest-side read (AC3, enforced)", () => {
 test("the real CHANGELOG: --next checks the named version's own section when it exists and [Unreleased] otherwise; the no-flag arm is the version's own section (canonical since LCLI-649)", () => {
   const real = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
   const version = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
-  // The bump's own section is the checked one: 0.14.0 has a "## [0.14.0]"
+  // The bump's own section is the checked one: 0.14.1 has a "## [0.14.1]"
   // heading, so it is checked against the versioned section below it, and the
-  // minor 0.13.0 -> 0.14.0 bump satisfies the section's entries. Since the
-  // 0.14.0 fold, this is also the no-flag arm: package.json names 0.14.0, so
+  // patch 0.14.0 -> 0.14.1 bump satisfies the section's entries. Since the
+  // 0.14.1 fold, this is also the no-flag arm: package.json names 0.14.1, so
   // the CLI with no flag selects the same section. That IS the stale-tree
   // window rule 4 describes, walked while the section is still the current
-  // release's — it reads clean, which is the assertion below. The 0.14.0
+  // release's — it reads clean, which is the assertion below. The 0.14.1
   // section carries no canonical breaking heading, so it reads `breaking:
   // false`; a tree that was genuinely breaking for a consumer would carry a
-  // `### ... (breaking)` heading here and read `true` instead.
-  const next = breakingBumpProblems(real, "0.14.0");
+  // `### ... (breaking)` heading here and read `true` instead. It MUST read
+  // false: 0.14.1 repairs a release job, and a patch cannot carry a break.
+  const next = breakingBumpProblems(real, "0.14.1");
   expect(next).toMatchObject({
-    source: "## [0.14.0] - 2026-10-13",
-    previous: "0.13.0",
-    level: "minor",
+    source: "## [0.14.1] - 2026-10-20",
+    previous: "0.14.0",
+    level: "patch",
     breaking: false,
   });
   expect(next.problems).toEqual([]);
-  // Unreleased arm on the real tree, after the fold: the 0.14.0 entries moved
+  // Unreleased arm on the real tree, after the fold: the 0.14.1 entries moved
   // below the dated heading and left [Unreleased] empty, so a patch above the
-  // current version reads [Unreleased] against 0.14.0 and is clean. The
+  // current version reads [Unreleased] against 0.14.1 and is clean. The
   // refusal direction (a breaking Unreleased section at a patch bump) is
   // proven on the synthetic fixtures above, not on this tree.
-  const patch = breakingBumpProblems(real, "0.14.1");
+  const patch = breakingBumpProblems(real, "0.14.2");
   expect(patch).toMatchObject({ source: "## [Unreleased]", previous: version, level: "patch", breaking: false });
   expect(patch.problems).toEqual([]);
   // The released section below it. LCLI-649 converted its legacy

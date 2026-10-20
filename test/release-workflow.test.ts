@@ -36,12 +36,14 @@ const WORKFLOW_PATH = join(import.meta.dir, "..", ".github", "workflows", "relea
 
 /** The handful of `release.yml` fields this file's assertions actually read. */
 interface WorkflowStep {
+  id?: string;
   name?: string;
   if?: string;
   uses?: string;
   with?: Record<string, string | boolean>;
   env?: Record<string, string>;
   run?: string;
+  shell?: string;
   "continue-on-error"?: boolean;
 }
 
@@ -66,6 +68,7 @@ interface WorkflowDoc {
     };
   };
   permissions: Record<string, string>;
+  env?: Record<string, string>;
   jobs: Record<string, WorkflowJob>;
 }
 
@@ -1363,5 +1366,84 @@ describe("release.yml publish is gated by the release gate probe (LCLI-738)", ()
     const doc = loadWorkflow();
     expect(doc.jobs[PROBE_JOB]).toBeDefined();
     expect(needsList(doc.jobs[PROBE_JOB]?.needs)).toContain("package-qualification");
+  });
+});
+
+/**
+ * LCLI-714. The probe job's FRESH arm runs `lore check`, which drives the `quest` binary and
+ * exits 3 when it is not on PATH — before the `[targets]` feature is ever reached. That is how
+ * the v0.14.0 dispatch (run 39347496150) reddened all six probe jobs while the artifact itself
+ * was clean: the gate failed closed on a missing peer, not on the thing it measures. So
+ * "the job can obtain quest" is a property of the gate, and these assert the WIRING rather
+ * than the prose that describes it.
+ */
+describe("release.yml's release gate probe can obtain the quest peer it drives (LCLI-714)", () => {
+  const CI_WORKFLOW_PATH = join(import.meta.dir, "..", ".github", "workflows", "ci.yml");
+
+  function parseDoc(text: string): WorkflowDoc {
+    return yaml.load(text, { schema: yaml.JSON_SCHEMA }) as WorkflowDoc;
+  }
+
+  function loadDoc(path: string): WorkflowDoc {
+    return parseDoc(readFileSync(path, "utf8"));
+  }
+
+  /** Report whether the release and ci workflow texts pin the same quest-cli commit. */
+  function questRefsAgree(releaseText: string, ciText: string): boolean {
+    return parseDoc(releaseText)?.env?.QUEST_SOURCE_REF === parseDoc(ciText)?.env?.QUEST_SOURCE_REF;
+  }
+
+  test("the probe job calls setup-quest with CLAUDE.md's declared version and the pinned ref", () => {
+    const job = loadDoc(WORKFLOW_PATH).jobs["release-gate-probe"];
+    const steps = job?.steps ?? [];
+    const derive = steps.find((step) => step.id === "quest");
+    expect(derive).toBeDefined();
+    // The matrix includes Windows runners, where the default shell is PowerShell and `sed` is
+    // not there. A derive step without `shell: bash` fails on those legs for a reason that has
+    // nothing to do with the release — which is the defect class this whole block is about.
+    expect(derive?.shell).toBe("bash");
+    expect(derive?.run ?? "").toContain("Quest CLI");
+    const setup = steps.find((step) => step.uses === "./.github/actions/setup-quest");
+    expect(setup).toBeDefined();
+    expect(setup?.with?.version).toBe("${{ steps.quest.outputs.version }}");
+    expect(setup?.with?.["source-ref"]).toBe("${{ env.QUEST_SOURCE_REF }}");
+    // The resolution stays in the ONE action: an inline install here would skip the
+    // npm-then-source fallback and red the window the action exists to cover.
+    expect(steps.filter((step) => (step.run ?? "").includes('npm install -g "@opum-ai/quest@'))).toEqual([]);
+  });
+
+  test("release.yml and ci.yml pin the SAME quest-cli commit", () => {
+    // Two files, two `env:` blocks, necessarily — a workflow_dispatch run reads this file from
+    // the dispatch ref's tree and cannot see ci.yml's. What must not drift is the VALUE, and a
+    // comment saying "keep these in step" is not a check.
+    const releaseText = readFileSync(WORKFLOW_PATH, "utf8");
+    const ciText = readFileSync(CI_WORKFLOW_PATH, "utf8");
+    const releaseRef = parseDoc(releaseText).env?.QUEST_SOURCE_REF;
+    const ciRef = parseDoc(ciText).env?.QUEST_SOURCE_REF;
+    // ABSENT is not agreement: two `undefined`s compare equal and would certify two missing
+    // pins as one value. Assert presence and shape before comparing.
+    expect(typeof releaseRef).toBe("string");
+    expect(typeof ciRef).toBe("string");
+    expect(releaseRef).toMatch(/^[0-9a-f]{40}$/);
+    expect(releaseRef).toBe(ciRef);
+  });
+
+  test("MUTATION CONTROL: changing one side's ref turns the equality assertion above red", () => {
+    const releaseText = readFileSync(WORKFLOW_PATH, "utf8");
+    const ciText = readFileSync(CI_WORKFLOW_PATH, "utf8");
+    const ref = parseDoc(releaseText).env?.QUEST_SOURCE_REF;
+    expect(typeof ref).toBe("string");
+    // A single hex digit changed: still a well-formed 40-character commit id, so this mutates
+    // the VALUE and nothing about the shape the assertions above check first. The replacement
+    // is keyed on `QUEST_SOURCE_REF: <ref>` rather than on the bare ref, so a future comment
+    // mentioning the old commit above the env block cannot absorb the edit and leave the
+    // control measuring an unchanged assignment.
+    const mutatedRef = `${(ref as string).slice(0, -1)}${(ref as string).endsWith("0") ? "1" : "0"}`;
+    const mutated = releaseText.replace(`QUEST_SOURCE_REF: ${ref}`, `QUEST_SOURCE_REF: ${mutatedRef}`);
+    // The replacement must have MATCHED, or this control would pass by doing nothing.
+    expect(mutated).not.toBe(releaseText);
+    expect(parseDoc(mutated).env?.QUEST_SOURCE_REF).toBe(mutatedRef);
+    expect(questRefsAgree(mutated, ciText)).toBe(false);
+    expect(questRefsAgree(releaseText, ciText)).toBe(true);
   });
 });
