@@ -494,6 +494,11 @@ const PUBLISH_SITE_ALLOWLIST: PublishSite[] = [
     path: "scripts/promote-latest.mjs",
     text: 'return ["publish", tarball, "--tag", PROMOTE_TAG, ...REGISTRY_PINS, ...(otp ? ["--otp", otp] : [])];',
   },
+  // A job NAME the DEC-204 (a4) excuse matches exactly (LCLI-744); it runs nothing.
+  {
+    path: "scripts/promote-latest.mjs",
+    text: 'const PUBLISH_JOB_NAME = "publish (npm, OIDC trusted publishing)";',
+  },
   {
     path: "scripts/promote-latest.mjs",
     // biome-ignore lint/suspicious/noTemplateCurlyInString: exact text of a tracked file the scanner reads, not a JS template.
