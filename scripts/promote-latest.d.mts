@@ -55,7 +55,22 @@ export declare function artifactDownloadArgs(runId: string, into: string): strin
 export declare function launcherPublishArgs(tarball: string, options?: { otp?: string }): string[];
 export declare function sha256Hex(bytes: Uint8Array): string;
 export declare function integrityOf(bytes: Uint8Array): string;
-export declare function checkReleaseRun(run: unknown, expected: { runId: string; commit: string }): string[];
+export declare function checkReleaseRun(
+  run: unknown,
+  expected: { runId: string; commit: string; excused?: boolean },
+): string[];
+export declare function releaseRunJobsReadArgs(runId: string): string[];
+export declare function jobLogReadArgs(jobId: string | number): string[];
+export declare function questPublishTimesReadArgs(): string[];
+export declare function errorAnnotations(log: string): string[];
+export declare function evaluateWindowsProbeExcuse(input: {
+  run: unknown;
+  runId: string;
+  version: string;
+  readJobs: () => Promise<unknown>;
+  readJobLog: (jobId: number) => Promise<string>;
+  readQuestPublishTimes: () => Promise<unknown>;
+}): Promise<{ excused: boolean; excusedJobs: string[]; failed: string[] }>;
 export declare function readArtifact(
   dir: string,
   version: string,

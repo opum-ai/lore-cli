@@ -31,7 +31,10 @@
 // QCLI-399), which lore agreed to adopt, and opum-cli-e2e's receipts/README.md
 // at 4f078e6b (#309, TASK-126) "What a reader must do" steps 5-7. The order:
 //   1. v<version> peels to a commit, and --release-run is release.yml's
-//      successful run of exactly that commit
+//      successful run of exactly that commit -- or a run that concluded "failure" ONLY
+//      because its Windows release-gate-probe arms failed at setup-quest's Windows refusal
+//      while quest <version> was not yet on npm (DEC-204 (a4); evaluateWindowsProbeExcuse
+//      names the four conditions, and a refusal names the one that failed)
 //   2. its npm-packages artifact holds the eight tarballs (six platforms at X,
 //      the launcher at X-rc.N, the launcher at X), and the two launchers pass
 //      scripts/launcher-equivalence.mjs
@@ -268,6 +271,33 @@ export function packArgs(spec, into) {
 /** The one argv the Release run is read with: host and repository pinned. @param {string} runId */
 export function releaseRunReadArgs(runId) {
   return ["api", "--hostname", RECEIPT_HOST, `repos/${OWN_REPOSITORY}/actions/runs/${runId}`];
+}
+
+/**
+ * The one argv a Release run's jobs are read with (DEC-204 (a4)). One page of 100: the caller
+ * refuses when `total_count` exceeds what came back, since an unread job is not a successful one.
+ * @param {string} runId
+ */
+export function releaseRunJobsReadArgs(runId) {
+  return ["api", "--hostname", RECEIPT_HOST, `repos/${OWN_REPOSITORY}/actions/runs/${runId}/jobs?per_page=100`];
+}
+
+/** The one argv a single job's log is read with (DEC-204 (a4)). @param {string | number} jobId */
+export function jobLogReadArgs(jobId) {
+  // --allow-escape-sequences: a job log carries ANSI colour codes, and gh refuses to print a response
+  // that does (measured on run 39366418979's Windows arms), which would refuse every promotion.
+  return [
+    "api",
+    "--hostname",
+    RECEIPT_HOST,
+    "--allow-escape-sequences",
+    `repos/${OWN_REPOSITORY}/actions/jobs/${jobId}/logs`,
+  ];
+}
+
+/** The one argv quest's per-version publish times are read with, anonymously (DEC-204 (a4)). */
+export function questPublishTimesReadArgs() {
+  return ["view", QUEST_PACKAGE, "time", "--json", "--prefer-online", ...ANONYMOUS];
 }
 
 /**
@@ -650,9 +680,12 @@ export async function verifyTags({
  * Is `run` (the GitHub API's workflow-run object) this repository's dispatched release.yml run of
  * exactly `commit`, and did it succeed? Returns every problem. quest-cli checks the same three fields of
  * its qualification run (QCLI-399, qualifyBundle).
- * @param {any} run @param {{ runId: string, commit: string }} expected
+ *
+ * `excused` waives ONLY the conclusion check, and only when evaluateWindowsProbeExcuse (DEC-204
+ * (a4)) has accepted the run: every other field is still checked.
+ * @param {any} run @param {{ runId: string, commit: string, excused?: boolean }} expected
  */
-export function checkReleaseRun(run, { runId, commit }) {
+export function checkReleaseRun(run, { runId, commit, excused = false }) {
   /** @type {string[]} */
   const problems = [];
   if (!run || typeof run !== "object" || Array.isArray(run)) return [`run ${runId} did not read as a workflow run`];
@@ -661,7 +694,7 @@ export function checkReleaseRun(run, { runId, commit }) {
     problems.push(`run ${runId} is ${JSON.stringify(run.path)}, not ${RELEASE_WORKFLOW}`);
   if (run.head_sha !== commit)
     problems.push(`run ${runId} built ${JSON.stringify(run.head_sha)}, but the tag peels to ${commit}`);
-  if (run.conclusion !== "success")
+  if (run.conclusion !== "success" && !excused)
     problems.push(`run ${runId} concluded ${JSON.stringify(run.conclusion)}, not "success"`);
   // release.yml is workflow_dispatch only, and its artifact must have been built from this
   // repository, never a fork's head (LCLI-621 review F8).
@@ -672,6 +705,172 @@ export function checkReleaseRun(run, { runId, commit }) {
       `run ${runId} built ${JSON.stringify(run.head_repository?.full_name ?? null)}'s code, not ${OWN_REPOSITORY}'s`,
     );
   return problems;
+}
+
+/** A Windows release-gate-probe arm, by EXACT job name as release.yml's probe matrix renders it. */
+const WINDOWS_PROBE_JOB =
+  /^release gate probe \(win32-(?:x64|arm64): fresh build accepts \[targets\], previous release rejects it\)$/;
+/**
+ * The jobs a publish:false dry run SKIPS BY CONSTRUCTION, by their FULL EXACT names as release.yml
+ * renders them (release.yml gates each on `inputs.publish` or `inputs.ladybug_scale_observation`). Only
+ * these may be skipped under DEC-204 (a4) condition 4: any other skipped job is one that did not run,
+ * which is not one that succeeded, and a lookalike name (one of these plus a suffix) is another job.
+ */
+const PUBLISH_JOB_NAME = "publish (npm, OIDC trusted publishing)";
+const SKIPPED_BY_CONSTRUCTION = new Set([
+  PUBLISH_JOB_NAME,
+  "verify this release's own provenance (LCLI-481)",
+  "Ladybug optional 1 GiB observation (ubuntu-24.04 x64)",
+]);
+/** The whole line setup-quest's source fallback emits on a Windows runner (.github/actions/setup-quest/action.yml), RUNNER_OS filled in. */
+const SETUP_QUEST_WINDOWS_REFUSAL =
+  "##[error]setup-quest's source fallback does not support Windows runners (this runner is Windows): its shim is an extensionless bash script, which a bare-name lookup cannot resolve there. A Windows caller needs a different mechanism — see ADR-0023 and DEC-55.";
+/** The step-failure echo GitHub appends after any failing `run:` step; the one other ##[error] line a refused arm carries. */
+const STEP_EXIT_ECHO = /^##\[error\]Process completed with exit code \d+\.$/;
+
+/**
+ * The `##[error]` lines of a job log, each stripped of its leading timestamp (and BOM). The log also
+ * carries the step's own SOURCE, where the same words sit inside an `echo`, so only a line that
+ * STARTS with the annotation counts.
+ * @param {string} log
+ */
+export function errorAnnotations(log) {
+  return String(log)
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^﻿?\d{4}-\d\d-\d\dT[\d:.]+Z /, ""))
+    .filter((line) => line.startsWith("##[error]"));
+}
+
+/**
+ * DEC-204 (a4): may a Release run that concluded "failure" still be promoted? Only when ALL FOUR hold,
+ * each evaluated and each named when it fails:
+ *   1. every failed job is a Windows release-gate-probe arm (and at least one is);
+ *   2. each such arm's ##[error] lines are EXACTLY the setup-quest Windows refusal, then at most one
+ *      generic runner line (`Process completed with exit code N.`) AFTER it: a generic line first,
+ *      two of them, or any other ##[error] line refuses;
+ *   3. @opum-ai/quest@<version> was NOT installable from npm at the run's start: npm's own
+ *      `time[<version>]` against the run's created_at, never against now. An absent publish time
+ *      counts as not installable; an unreadable registry, or a time that does not parse, does not;
+ *   4. every other job concluded success; the only skip allowed is a job that a publish:false dry
+ *      run skips by construction (SKIPPED_BY_CONSTRUCTION: publish, this release's provenance
+ *      verification, the 1 GiB observation), and only when the publish job is present and itself
+ *      skipped (so the run published nothing); any other skipped job refuses by name.
+ * The three readers are injected, so no test needs a network.
+ * @param {{ run: any, runId: string, version: string,
+ *   readJobs: () => Promise<any>, readJobLog: (jobId: number) => Promise<string>,
+ *   readQuestPublishTimes: () => Promise<any> }} input
+ * @returns {Promise<{ excused: boolean, excusedJobs: string[], failed: string[] }>}
+ */
+export async function evaluateWindowsProbeExcuse({ run, runId, version, readJobs, readJobLog, readQuestPublishTimes }) {
+  /** @type {string[]} */
+  const failed = [];
+  /** @type {string[]} */
+  const excusedJobs = [];
+  const refuse = () => ({ excused: false, excusedJobs: [], failed });
+
+  let jobsDoc;
+  try {
+    jobsDoc = await readJobs();
+  } catch (error) {
+    failed.push(`condition 1: the jobs of run ${runId} could not be read (${firstLine(error)})`);
+    return refuse();
+  }
+  const jobs = Array.isArray(jobsDoc?.jobs) ? jobsDoc.jobs : null;
+  if (!jobs || !Number.isInteger(jobsDoc.total_count) || jobsDoc.total_count !== jobs.length) {
+    failed.push(
+      `condition 1: the jobs of run ${runId} did not read in full (${jobs ? `${jobs.length} of ${JSON.stringify(jobsDoc.total_count)}` : "no job list"}), and an unread job is not a successful one`,
+    );
+    return refuse();
+  }
+
+  // DEC-204 (a4), ruling D: the named skips below are excused ONLY when the publish job is present
+  // and itself skipped, which shows this run published nothing. A run whose publish job ran, or
+  // that has none, cannot have its skips excused.
+  const publishJobs = jobs.filter((job) => job.name === PUBLISH_JOB_NAME);
+  if (publishJobs.length !== 1 || publishJobs[0].conclusion !== "skipped")
+    failed.push(
+      `condition 4: the publish job ${publishJobs.length === 0 ? "is absent" : publishJobs.length > 1 ? `appears ${publishJobs.length} times` : `concluded ${JSON.stringify(publishJobs[0].conclusion)}`}, so run ${runId} is not shown to have published nothing, and no skipped job can be excused`,
+    );
+
+  const unsuccessful = jobs.filter(
+    (job) => job.conclusion !== "success" && !(job.conclusion === "skipped" && SKIPPED_BY_CONSTRUCTION.has(job.name)),
+  );
+  const windowsFailures = unsuccessful.filter(
+    (job) => WINDOWS_PROBE_JOB.test(String(job.name)) && job.conclusion === "failure",
+  );
+  const others = unsuccessful.filter((job) => !windowsFailures.includes(job));
+  if (others.length)
+    failed.push(
+      `condition 1/4: a job other than a Windows release-gate-probe arm did not succeed: ${others.map((job) => `${JSON.stringify(job.name)} (${job.conclusion})`).join(", ")}`,
+    );
+  if (!windowsFailures.length && !others.length)
+    failed.push(
+      `condition 1: run ${runId} concluded failure but no job failed, so there is no Windows probe arm to excuse`,
+    );
+
+  if (!others.length) {
+    for (const job of windowsFailures) {
+      let log;
+      try {
+        log = await readJobLog(job.id);
+      } catch (error) {
+        failed.push(`condition 2: the log of ${JSON.stringify(job.name)} could not be read (${firstLine(error)})`);
+        continue;
+      }
+      const annotations = errorAnnotations(log);
+      const isRefusal = (/** @type {string} */ line) => line === SETUP_QUEST_WINDOWS_REFUSAL;
+      const strangers = annotations.slice(1).filter((line) => !STEP_EXIT_ECHO.test(line));
+      // The set must be EXACTLY the refusal, then at most one generic exit line after it.
+      if (!annotations.some(isRefusal))
+        failed.push(`condition 2: ${JSON.stringify(job.name)} does not show setup-quest's Windows refusal`);
+      else if (!isRefusal(annotations[0] ?? ""))
+        failed.push(
+          `condition 2: ${JSON.stringify(job.name)}'s first ##[error] line is not the setup-quest refusal, and a generic exit line before it refuses: ${JSON.stringify(annotations[0])}`,
+        );
+      else if (strangers.length)
+        failed.push(
+          `condition 2: ${JSON.stringify(job.name)} carries another ##[error] line: ${JSON.stringify(strangers[0])}`,
+        );
+      else if (annotations.length > 2)
+        failed.push(
+          `condition 2: ${JSON.stringify(job.name)} carries ${annotations.length} ##[error] lines; only the refusal and at most one generic exit line after it are allowed`,
+        );
+      else excusedJobs.push(String(job.name));
+    }
+  }
+
+  const startedAt = Date.parse(String(run?.created_at ?? ""));
+  if (Number.isNaN(startedAt))
+    failed.push(`condition 3: run ${runId} carries no created_at that parses, so the run's start is unknown`);
+  else {
+    let times;
+    try {
+      const parsed = JSON.parse(String(await readQuestPublishTimes()));
+      times = Array.isArray(parsed) ? (parsed.length === 1 ? parsed[0] : null) : parsed;
+      if (!times || typeof times !== "object" || Array.isArray(times)) throw new Error("not an object");
+    } catch (error) {
+      failed.push(`condition 3: ${QUEST_PACKAGE}'s publish times could not be read (${firstLine(error)})`);
+    }
+    if (times) {
+      // Decided by KEY, never by value: only time[<version>] is read, and an absent key is the
+      // ruled "not installable" case. A key that is present with anything but a string refuses.
+      if (Object.hasOwn(times, version)) {
+        const published = times[version];
+        const publishedAt = typeof published === "string" ? Date.parse(published) : Number.NaN;
+        if (Number.isNaN(publishedAt))
+          failed.push(
+            `condition 3: ${QUEST_PACKAGE}@${version}'s publish time ${JSON.stringify(published)} does not parse`,
+          );
+        else if (publishedAt <= startedAt)
+          failed.push(
+            `condition 3: ${QUEST_PACKAGE}@${version} was already installable when the run started (published ${published}, run created ${run.created_at})`,
+          );
+      }
+    }
+  }
+
+  if (failed.length) return refuse();
+  return { excused: true, excusedJobs, failed };
 }
 
 /**
@@ -1347,14 +1546,34 @@ export async function main(
         );
         return 1;
       }
-      const runProblems = checkReleaseRun(runMeta, { runId, commit: peeled.commit });
-      if (runProblems.length) {
+      // DEC-204 (a4): a run that concluded "failure" is looked at again ONLY when that is the one
+      // thing wrong with it (the same call with the conclusion waived finds nothing else).
+      let excuse = null;
+      if (
+        runMeta?.conclusion === "failure" &&
+        checkReleaseRun(runMeta, { runId, commit: peeled.commit, excused: true }).length === 0
+      )
+        excuse = await evaluateWindowsProbeExcuse({
+          run: runMeta,
+          runId,
+          version,
+          readJobs: async () => JSON.parse((await run("gh", releaseRunJobsReadArgs(runId))).stdout),
+          readJobLog: async (jobId) => (await run("gh", jobLogReadArgs(jobId))).stdout,
+          readQuestPublishTimes: async () => (await run("npm", questPublishTimesReadArgs())).stdout,
+        });
+      const runProblems = checkReleaseRun(runMeta, { runId, commit: peeled.commit, excused: excuse?.excused === true });
+      if (runProblems.length || (excuse && !excuse.excused)) {
         err(
           `Refusing to promote ${version}: run ${runId} is not a successful Release run of v${version}. Nothing has moved.`,
         );
         for (const problem of runProblems) err(`  - ${problem}`);
+        if (excuse) for (const problem of excuse.failed) err(`  - DEC-204 (a4) excuse refused, ${problem}`);
         return 1;
       }
+      if (excuse?.excused)
+        out(
+          `Run ${runId} concluded "failure" and is accepted under DEC-204 (a4): the only failed jobs are ${excuse.excusedJobs.map((name) => JSON.stringify(name)).join(" and ")}, each refused at setup-quest on Windows, and ${QUEST_PACKAGE}@${version} was not installable from npm when the run started.`,
+        );
 
       // 2. Its npm-packages artifact, downloaded afresh: the bytes that were staged, and the X launcher.
       artifactDir = await mkdtemp(join(tmpdir(), "lore-promote-artifact-"));
