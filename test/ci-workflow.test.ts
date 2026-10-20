@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as yaml from "js-yaml";
@@ -481,6 +481,153 @@ describe("ci.yml docs gate (LCLI-504)", () => {
     // context is absent rather than green — which blocks dev until an admin notices.
     // Same trap as an `if:` that evaluates false, reached through a dependency instead.
     expect(loadWorkflow().jobs["docs-gate"]?.needs).toBeUndefined();
+  });
+});
+
+/**
+ * LCLI-714, from the blocking finding in opum-doc's DEC-182 review of opum-ai/lore-cli#620.
+ *
+ * `setup-quest` now runs from release.yml's probe matrix, which includes two WINDOWS runners,
+ * and its source fallback refuses Windows BY DESIGN. Before a version is promoted, its exact
+ * launcher is not on npm — quest stages `X-rc.N` under `release-candidate` — so the npm step must
+ * be able to install the staged candidate or the probe can never go green on Windows, while the
+ * promotion it waits for cannot happen until lore is staged. These execute the action's real
+ * `run:` block under bash against a stub `npm`, rather than reading its text, because both of the
+ * behaviours that matter are decisions the script makes at runtime.
+ *
+ * POSIX-ONLY, for the reason version-parity.test.ts records: the stub is an extensionless bash
+ * script, and on Windows a bare-name `npm` lookup walks PATH for `npm.exe`/`npm.cmd` and cannot
+ * resolve it. The decision the script makes is platform-independent — the same `shell: bash`
+ * block runs on every runner — so the Windows-specific half (the fallback's refusal) is covered
+ * structurally by the assertion-step test above.
+ */
+const describePosixSetupQuest = process.platform === "win32" ? describe.skip : describe;
+
+describePosixSetupQuest("setup-quest installs the staged release candidate (LCLI-714)", () => {
+  interface StubBehaviour {
+    /** The version `npm install -g "@opum-ai/quest@<only this one>"` accepts; omit for none. */
+    exactAvailable?: string;
+    /** What `npm view @opum-ai/quest@release-candidate version` prints; omit to fail the read. */
+    staged?: string;
+    /** Whether `npm install -g "@opum-ai/quest@release-candidate"` succeeds. */
+    stagedInstallable?: boolean;
+  }
+
+  interface Outcome {
+    method: string;
+    installs: string[];
+    log: string;
+  }
+
+  /** The npm step's script, with its `${{ inputs.* }}` expressions substituted as GitHub does. */
+  function npmStepScript(declared: string): string {
+    const action = yaml.load(readFileSync(SETUP_QUEST_PATH, "utf8"), { schema: yaml.JSON_SCHEMA }) as {
+      runs: { steps: Array<{ id?: string; run?: string }> };
+    };
+    const run = action.runs.steps.find((step) => step.id === "npm")?.run;
+    if (run === undefined) throw new Error("setup-quest's npm step has no run block");
+    return run
+      .replace(/\$\{\{\s*inputs\.version\s*\}\}/g, declared)
+      .replace(/\$\{\{\s*inputs\.source-ref\s*\}\}/g, "0123456789abcdef0123456789abcdef01234567");
+  }
+
+  function runNpmStep(declared: string, behaviour: StubBehaviour): Outcome {
+    const dir = mkdtempSync(join(tmpdir(), "lore-setup-quest-"));
+    try {
+      const bin = join(dir, "bin");
+      mkdirSync(bin);
+      const logPath = join(dir, "npm.log");
+      const outputPath = join(dir, "github-output");
+      writeFileSync(outputPath, "");
+      // `install -g <spec>` is argv[1..3]; `view <spec> version` is argv[1..3] too.
+      writeFileSync(
+        join(bin, "npm"),
+        [
+          "#!/usr/bin/env bash",
+          'printf "%s\\n" "$*" >> "$NPM_LOG"',
+          'if [ "$1" = "install" ]; then',
+          '  if [ -n "$EXACT_AVAILABLE" ] && [ "$3" = "@opum-ai/quest@$EXACT_AVAILABLE" ]; then exit 0; fi',
+          '  if [ "$STAGED_INSTALLABLE" = "1" ] && [ "$3" = "@opum-ai/quest@$STAGED" ]; then exit 0; fi',
+          '  echo "npm error code E404 no such version" >&2',
+          "  exit 1",
+          "fi",
+          'if [ "$1" = "view" ]; then',
+          '  if [ -n "$STAGED" ]; then printf "%s\\n" "$STAGED"; exit 0; fi',
+          '  echo "npm error code E404 no such dist-tag" >&2',
+          "  exit 1",
+          "fi",
+          "exit 1",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const result = spawnSync("bash", ["-c", npmStepScript(declared)], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          GITHUB_OUTPUT: outputPath,
+          NPM_LOG: logPath,
+          EXACT_AVAILABLE: behaviour.exactAvailable ?? "",
+          STAGED: behaviour.staged ?? "",
+          STAGED_INSTALLABLE: behaviour.stagedInstallable === true ? "1" : "",
+          RUNNER_OS: "Linux",
+          RUNNER_TEMP: dir,
+        },
+      });
+      const log = readFileSync(logPath, "utf8");
+      const method =
+        readFileSync(outputPath, "utf8")
+          .split("\n")
+          .find((line) => line.startsWith("method="))
+          ?.slice("method=".length) ?? "";
+      return {
+        method,
+        installs: log
+          .split("\n")
+          .filter((line) => line.startsWith("install "))
+          .map((line) => line.slice("install -g ".length)),
+        log: `${result.stdout ?? ""}${result.stderr ?? ""}`,
+      };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  test("the exact declared version still wins when npm has it", () => {
+    const outcome = runNpmStep("0.14.1", { exactAvailable: "0.14.1" });
+    expect(outcome.method).toBe("npm");
+    expect(outcome.installs).toEqual(["@opum-ai/quest@0.14.1"]);
+  });
+
+  test("a declared version with only its rc staged installs the staged launcher", () => {
+    // The release window this exists for: quest has staged 0.14.1-rc.1 and published no 0.14.1.
+    // The install names the EXACT version the tag read returned, never the tag itself: naming
+    // the tag twice would resolve it twice, and it can move between the read and the install
+    // (opum-doc, DEC-182 delta on #620).
+    const outcome = runNpmStep("0.14.1", { staged: "0.14.1-rc.1", stagedInstallable: true });
+    expect(outcome.method).toBe("npm");
+    expect(outcome.installs).toEqual(["@opum-ai/quest@0.14.1", "@opum-ai/quest@0.14.1-rc.1"]);
+    expect(outcome.installs).not.toContain("@opum-ai/quest@release-candidate");
+  });
+
+  test("an rc of a DIFFERENT base is refused, and the job falls back to the source build", () => {
+    // The anti-float half: a release-candidate left over from the previous release names a
+    // different base, so installing it would run the gates against the wrong peer.
+    const outcome = runNpmStep("0.14.1", { staged: "0.13.0-rc.1", stagedInstallable: true });
+    expect(outcome.method).toBe("source");
+    expect(outcome.installs).toEqual(["@opum-ai/quest@0.14.1"]);
+    expect(outcome.installs).not.toContain("@opum-ai/quest@0.13.0-rc.1");
+  });
+
+  test("an unreadable release-candidate falls back to the source build and says what it read", () => {
+    const outcome = runNpmStep("0.14.1", {});
+    expect(outcome.method).toBe("source");
+    // The read is reported, including its stderr: silence is what routes the job to the
+    // source build, so a failed read must not be indistinguishable from an absent candidate.
+    expect(outcome.log).toContain("npm view @opum-ai/quest@release-candidate version => '<none>'");
+    expect(outcome.log).toContain("E404");
   });
 });
 

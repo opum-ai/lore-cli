@@ -56,6 +56,29 @@ on:
 permissions:
   contents: read
 
+env:
+  # DEC-55 (operator ruling, 2026-09-29). The opum-ai/quest-cli commit that carries the Quest
+  # version CLAUDE.md's managed block declares, read by .github/actions/setup-quest ONLY when
+  # that version does not install from npm — the window between a lore bump landing and quest
+  # publishing, in which the pair lock (LCLI-650) otherwise leaves `lore check` unable to run.
+  #
+  # WHY THIS FILE CARRIES ITS OWN COPY, which looks like the drift ci.yml warns about. A
+  # workflow_dispatch run executes THIS file from the dispatch ref's tree, so it cannot read
+  # ci.yml's `env:` — the two values are necessarily two sites. What must not drift is the
+  # VALUE, so `test/release-workflow.test.ts` asserts the two files name the same commit rather
+  # than leaving "keep these in step" as a comment for the next person to trust.
+  #
+  # MOVED FOR THE 0.14.1 PAIR RELEASE (2026-10-20, LCLI-714, DEC-204 (b)). It names
+  # quest-cli's PROMOTED MAIN 053d8595f2caa34b04abc451d711e62fff5314b4, whose package.json
+  # reads 0.14.1 (verified by ref: `refs/heads/main` resolves there and its only parent is
+  # the previous 0.14.0 main). It was INTERIM at quest-cli#629's head 04db1352d while that
+  # bump was still open; this is the same crossing 0.14.0 used. setup-quest asserts the
+  # built quest reports the version CLAUDE.md declares, so a ref that does not carry 0.14.1
+  # fails loudly as a ref problem instead of quietly running the probe against the wrong
+  # peer. quest 0.14.1 is not on npm yet, so the source path — or, once quest stages it, the
+  # release-candidate path — is what runs until it is published.
+  QUEST_SOURCE_REF: 053d8595f2caa34b04abc451d711e62fff5314b4
+
 jobs:
   setup:
     name: resolve the release platform matrix
@@ -941,6 +964,21 @@ jobs:
   # publish lists this job in `needs:`, so no real publish can start without both arms: the fresh
   # binary accepts the feature and the previous one rejects it with the exact rejection it prints.
   # The job itself has no `if:`, so a publish:false rehearsal runs it too.
+  #
+  # THE JOB MUST CARRY `quest`, which `lore check` drives (LCLI-714, DEC-204 (b)). Without it
+  # neither arm measures anything: `check` exits 3 with "the `quest` CLI is not installed or not
+  # on PATH" before the `[targets]` schema is reached, so the FRESH arm fails and the gate goes
+  # red for a reason that has nothing to do with the artifact. That is exactly what happened to
+  # all six jobs on the v0.14.0 dispatch (run 39347496150). The step below is the same composite
+  # action the tracker, docs-gate and build jobs use, so the npm-then-source resolution — and its
+  # assertion that the built quest reports CLAUDE.md's declared version — is the ONE
+  # implementation, not a fourth inline install that bypasses the source fallback.
+  #
+  # The version is DERIVED from CLAUDE.md rather than pinned a second time here, and the derive
+  # step needs `shell: bash` because this matrix includes Windows runners, whose default shell is
+  # PowerShell. On Windows the action's source fallback refuses an extensionless shim it cannot
+  # resolve rather than no-opping, so a Windows runner whose npm install failed fails loudly —
+  # the correct outcome, and the reason the fallback is not silently useless there.
   release-gate-probe:
     name: "release gate probe (${{ matrix.name }}: fresh build accepts [targets], previous release rejects it)"
     needs: [setup, package-qualification]
@@ -961,6 +999,24 @@ jobs:
         with:
           pattern: ladybug-package-qualification-*-${{ github.run_id }}
           path: qualified-packages
+      # The Quest version is DERIVED from the managed block in CLAUDE.md, exactly as ci.yml's
+      # tracker job does it — a second pin would drift from the block that already declares it.
+      - name: Resolve the Quest version CLAUDE.md declares
+        id: quest
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/.*Quest CLI \([0-9][0-9.]*\).*/\1/p' CLAUDE.md | head -1)"
+          if [ -z "$version" ]; then
+            echo "::error file=CLAUDE.md::No 'Quest CLI <version>' line found in the managed block. The release gate probe cannot run \`lore check\` against an undeclared peer, and without it neither arm measures anything."
+            exit 1
+          fi
+          echo "Declared Quest version: $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/setup-quest
+        with:
+          version: ${{ steps.quest.outputs.version }}
+          source-ref: ${{ env.QUEST_SOURCE_REF }}
       - name: Probe the qualified fresh binary and the previous release binary
         shell: bash
         env:

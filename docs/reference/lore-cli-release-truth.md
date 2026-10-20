@@ -86,6 +86,17 @@ npm serves for `@opum-ai/lore` is byte-equal to `0.13.0`'s packed `README.md`, r
 infer one from the trusted-publishing machinery in `release.yml`, which this path does not use.
 `0.12.0` and `0.11.0` were the same, for the same reason.
 
+**Tag `v0.14.0` exists and was NEVER published (LCLI-714).** It is an annotated tag object
+`9c147a34001e8de9fa06c566165dc50128276cfc` peeling to
+`077ee53f7b167acab0fabb745fc74cbb92ab0b1e`, which `origin/main` named when read 2026-10-20.
+Release run `39347496150` — attempt 1, dispatched at that tag with `publish: false` and
+`launcher_rc: 1` — concluded `failure`: its six `release gate probe` jobs failed in their FRESH
+arm because the job carried no `quest`, so `lore check` exited 3 with
+``the `quest` CLI is not installed or not on PATH``. Nothing was staged, no `@opum-ai/lore*`
+package at `0.14.0` exists on the registry, `latest` still reads `0.13.0` on all seven, and the
+run is not re-run. The tag is not moved; `0.14.1` carries the repair. A reader who finds
+`v0.14.0` in the tag list must not read it as a release.
+
 ### Previous state
 
 `0.12.0` was **RELEASED**. It is a minor release, paired with `quest` `0.12.0` under the Opum

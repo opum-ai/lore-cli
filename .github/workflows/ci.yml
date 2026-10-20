@@ -137,13 +137,23 @@ env:
   # quest-cli's main promoted, this named quest-cli's dev tip again, carrying
   # 0.13.0 in package.json.
   #
-  # MOVED FOR THE 0.14.0 PAIR RELEASE (2026-10-19): it now names quest-cli's
-  # promoted main f62ae28f6f25209e1c598e071cc765f05b118401, which carries
-  # 0.14.0, because quest 0.14.0 is not yet on npm and the pair lock requires the
-  # declared peer. The fallback fires only when the version CLAUDE.md declares is
-  # absent from npm, so the source path is what runs until quest 0.14.0 is
-  # published.
-  QUEST_SOURCE_REF: f62ae28f6f25209e1c598e071cc765f05b118401
+  # MOVED FOR THE 0.14.0 PAIR RELEASE (2026-10-19): it named quest-cli's promoted
+  # main f62ae28f6f25209e1c598e071cc765f05b118401, which carried 0.14.0, because
+  # quest 0.14.0 was not yet on npm and the pair lock requires the declared peer.
+  # 0.14.0 was tagged and never published (LCLI-714), so that window never closed
+  # on its own: quest 0.14.0 is absent from npm permanently, and this ref is what
+  # kept the three quest-consuming jobs building the peer from source.
+  #
+  # MOVED FOR THE 0.14.1 PAIR RELEASE (2026-10-20, LCLI-714). It names quest-cli's
+  # PROMOTED MAIN 053d8595f2caa34b04abc451d711e62fff5314b4, whose package.json reads
+  # 0.14.1 (verified by ref: `refs/heads/main` resolves there and its only parent
+  # is the previous 0.14.0 main f62ae28f). It was INTERIM at quest-cli#629's head
+  # 04db1352d while the bump was still open — a PR head is enough for the action,
+  # because it clones the public repository anonymously and checks out the commit —
+  # and 0.14.0 crossed the same way (92b09d28 -> 848c304f -> b39314ce -> f62ae28f).
+  # quest 0.14.1 is not on npm yet, so the source path is what runs until it is
+  # published; this is the value that went to review.
+  QUEST_SOURCE_REF: 053d8595f2caa34b04abc451d711e62fff5314b4
 
 jobs:
   check:
