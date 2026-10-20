@@ -64,6 +64,7 @@ import {
   RELEASE_VERSION,
   readbackEnv,
   readbackRereadCommands,
+  readLagAttempts,
   releaseRunJobsReadArgs,
   releaseRunReadArgs,
   resolveSkillsTree,
@@ -73,7 +74,6 @@ import {
   tokenShape,
   treeReadArgs,
   validateRecord,
-  readLagAttempts,
   verifyFinalLauncher,
   versionReadArgs,
 } from "../scripts/promote-latest.mjs";
