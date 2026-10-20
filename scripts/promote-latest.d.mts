@@ -111,7 +111,7 @@ export declare function verifyFinalLauncher(args: {
   attempts?: number;
   delayMs?: number;
   sleep?: (ms: number) => Promise<void>;
-}): Promise<{ ok: boolean; attempts: number; problems: string[] }>;
+}): Promise<{ ok: boolean; mismatch?: boolean; attempts: number; problems: string[] }>;
 export declare const README_READBACK_SCRIPT: string;
 export declare const README_READBACK_EXIT: number;
 export declare function readbackEnv(env: Record<string, string | undefined>): Record<string, string | undefined>;
@@ -189,6 +189,8 @@ export declare function rollback(args: {
   setTag: SetTag;
   log?: (line: string) => void;
 }): Promise<{ ok: boolean; failed: string[] }>;
+export declare const VERIFY_DELAY_MS: number;
+export declare function readLagAttempts(windowSeconds: string | number, delayMs?: number): number;
 export declare function verifyTags(args: {
   expected: Record<string, string | null>;
   readTags?: (name: string) => Promise<Record<string, string>>;

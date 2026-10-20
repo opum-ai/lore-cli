@@ -1243,6 +1243,16 @@ the promotion half, item 7. It is not part of staging.
    run it runs step 7. It re-reads `latest` on all seven packages until each
    reads `<version>`. It also checks that npm serves `@opum-ai/lore@<version>`
    with the artifact `X` launcher's `dist.integrity`.
+   Both reads wait out npm read lag for `REGISTRY_WINDOW_SECONDS` (default 1800,
+   one read per 15 seconds), each for its own window, and the run prints a line
+   saying so before it starts (LCLI-689). If a window runs out, it exits `1`
+   having rolled nothing back, and before the GitHub Release and the README
+   read-back. Re-read with `npm view`, then re-run the same `--promote` command:
+   the record makes it a resume that re-reaches step 7 without republishing. Use
+   `--rollback` only for an integrity npm served that differs from the artifact's.
+   `--rollback`'s own restore check waits out the same window; a value that is
+   not a bounded whole number falls back to 1800 there and is reported, where
+   `--promote` refuses it.
 
    **Then it cuts the GitHub Release (LCLI-622, paired with quest-cli QCLI-398
    and QCLI-401).** It first deletes the private npmrc that held the npm token,
