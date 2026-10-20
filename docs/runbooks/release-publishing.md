@@ -1138,12 +1138,14 @@ the promotion half, item 7. It is not part of staging.
    before the probe runs. Step 1 accepts such a `failure` only when every failed
    job is a Windows probe arm, each arm's `##[error]` lines are exactly that
    refusal and then at most one generic `Process completed with exit code N.`
-   line, `@opum-ai/quest@X` had no npm publish time before the run's
+   line, `@opum-ai/quest@X` had no npm publish time at or before the run's
    `created_at` (an absent `time` key counts), and every other job succeeded. The
    only skips allowed are the jobs a `publish: false` dry run skips by
-   construction (`publish`, the release's own provenance verification and the
-   1 GiB Ladybug observation), and only when the `publish` job is present and
-   itself skipped, which shows the run published nothing. Anything else
+   construction, matched by their full exact names (`publish (npm, OIDC trusted
+   publishing)`, `verify this release's own provenance (LCLI-481)` and `Ladybug
+   optional 1 GiB observation (ubuntu-24.04 x64)`), and only when exactly one
+   job is the `publish` job and it is skipped, which shows the run published
+   nothing. Anything else
    refuses and names the condition that failed. The real fix, setup-quest on
    Windows, retires this exception.
 
@@ -1152,7 +1154,8 @@ the promotion half, item 7. It is not part of staging.
 
    1. **The tag and the run.** `v<version>` peels to a commit, and
       `--release-run` is a successful `workflow_dispatch` run of `release.yml`,
-      built from `opum-ai/lore-cli` at exactly that commit.
+      built from `opum-ai/lore-cli` at exactly that commit. The one exception
+      is the Windows-probe exception above (DEC-204 (a4)).
    2. **The artifact.** It downloads `npm-packages` afresh into a private
       directory. It must hold exactly eight tarballs: six platforms at `X`,
       one launcher at `X-rc.N` (`N` is read from its name) and the launcher at

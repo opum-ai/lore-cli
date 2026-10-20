@@ -284,7 +284,15 @@ export function releaseRunJobsReadArgs(runId) {
 
 /** The one argv a single job's log is read with (DEC-204 (a4)). @param {string | number} jobId */
 export function jobLogReadArgs(jobId) {
-  return ["api", "--hostname", RECEIPT_HOST, `repos/${OWN_REPOSITORY}/actions/jobs/${jobId}/logs`];
+  // --allow-escape-sequences: a job log carries ANSI colour codes, and gh refuses to print a response
+  // that does (measured on run 39366418979's Windows arms), which would refuse every promotion.
+  return [
+    "api",
+    "--hostname",
+    RECEIPT_HOST,
+    "--allow-escape-sequences",
+    `repos/${OWN_REPOSITORY}/actions/jobs/${jobId}/logs`,
+  ];
 }
 
 /** The one argv quest's per-version publish times are read with, anonymously (DEC-204 (a4)). */
@@ -699,21 +707,24 @@ export function checkReleaseRun(run, { runId, commit, excused = false }) {
   return problems;
 }
 
-/** A Windows release-gate-probe arm, by job name (release.yml's probe matrix names them `release gate probe (<platform>: ...)`). */
-const WINDOWS_PROBE_JOB = /^release gate probe \(win32-/;
+/** A Windows release-gate-probe arm, by EXACT job name as release.yml's probe matrix renders it. */
+const WINDOWS_PROBE_JOB =
+  /^release gate probe \(win32-(?:x64|arm64): fresh build accepts \[targets\], previous release rejects it\)$/;
 /**
- * The jobs a publish:false dry run SKIPS BY CONSTRUCTION (release.yml gates each on `inputs.publish`
- * or `inputs.ladybug_scale_observation`). Only these may be skipped under DEC-204 (a4) condition 4:
- * any other skipped job is one that did not run, which is not one that succeeded.
+ * The jobs a publish:false dry run SKIPS BY CONSTRUCTION, by their FULL EXACT names as release.yml
+ * renders them (release.yml gates each on `inputs.publish` or `inputs.ladybug_scale_observation`). Only
+ * these may be skipped under DEC-204 (a4) condition 4: any other skipped job is one that did not run,
+ * which is not one that succeeded, and a lookalike name (one of these plus a suffix) is another job.
  */
-const PUBLISH_JOB = /^publish \(npm, OIDC trusted publishing\)/;
-const SKIPPED_BY_CONSTRUCTION = [
-  PUBLISH_JOB,
-  /^verify this release's own provenance/,
-  /^Ladybug optional 1 GiB observation/,
-];
-/** What setup-quest's source fallback says on a Windows runner (.github/actions/setup-quest/action.yml). */
-const SETUP_QUEST_WINDOWS_REFUSAL = "##[error]setup-quest's source fallback does not support Windows runners";
+const PUBLISH_JOB_NAME = "publish (npm, OIDC trusted publishing)";
+const SKIPPED_BY_CONSTRUCTION = new Set([
+  PUBLISH_JOB_NAME,
+  "verify this release's own provenance (LCLI-481)",
+  "Ladybug optional 1 GiB observation (ubuntu-24.04 x64)",
+]);
+/** The whole line setup-quest's source fallback emits on a Windows runner (.github/actions/setup-quest/action.yml), RUNNER_OS filled in. */
+const SETUP_QUEST_WINDOWS_REFUSAL =
+  "##[error]setup-quest's source fallback does not support Windows runners (this runner is Windows): its shim is an extensionless bash script, which a bare-name lookup cannot resolve there. A Windows caller needs a different mechanism — see ADR-0023 and DEC-55.";
 /** The step-failure echo GitHub appends after any failing `run:` step; the one other ##[error] line a refused arm carries. */
 const STEP_EXIT_ECHO = /^##\[error\]Process completed with exit code \d+\.$/;
 
@@ -765,9 +776,9 @@ export async function evaluateWindowsProbeExcuse({ run, runId, version, readJobs
     return refuse();
   }
   const jobs = Array.isArray(jobsDoc?.jobs) ? jobsDoc.jobs : null;
-  if (!jobs || (Number.isInteger(jobsDoc.total_count) && jobsDoc.total_count > jobs.length)) {
+  if (!jobs || !Number.isInteger(jobsDoc.total_count) || jobsDoc.total_count !== jobs.length) {
     failed.push(
-      `condition 1: the jobs of run ${runId} did not read in full (${jobs ? `${jobs.length} of ${jobsDoc.total_count}` : "no job list"}), and an unread job is not a successful one`,
+      `condition 1: the jobs of run ${runId} did not read in full (${jobs ? `${jobs.length} of ${JSON.stringify(jobsDoc.total_count)}` : "no job list"}), and an unread job is not a successful one`,
     );
     return refuse();
   }
@@ -775,16 +786,14 @@ export async function evaluateWindowsProbeExcuse({ run, runId, version, readJobs
   // DEC-204 (a4), ruling D: the named skips below are excused ONLY when the publish job is present
   // and itself skipped, which shows this run published nothing. A run whose publish job ran, or
   // that has none, cannot have its skips excused.
-  const publishJob = jobs.find((job) => PUBLISH_JOB.test(String(job.name)));
-  if (publishJob?.conclusion !== "skipped")
+  const publishJobs = jobs.filter((job) => job.name === PUBLISH_JOB_NAME);
+  if (publishJobs.length !== 1 || publishJobs[0].conclusion !== "skipped")
     failed.push(
-      `condition 4: the publish job ${publishJob ? `concluded ${JSON.stringify(publishJob.conclusion)}` : "is absent"}, so run ${runId} is not shown to have published nothing, and no skipped job can be excused`,
+      `condition 4: the publish job ${publishJobs.length === 0 ? "is absent" : publishJobs.length > 1 ? `appears ${publishJobs.length} times` : `concluded ${JSON.stringify(publishJobs[0].conclusion)}`}, so run ${runId} is not shown to have published nothing, and no skipped job can be excused`,
     );
 
   const unsuccessful = jobs.filter(
-    (job) =>
-      job.conclusion !== "success" &&
-      !(job.conclusion === "skipped" && SKIPPED_BY_CONSTRUCTION.some((pattern) => pattern.test(String(job.name)))),
+    (job) => job.conclusion !== "success" && !(job.conclusion === "skipped" && SKIPPED_BY_CONSTRUCTION.has(job.name)),
   );
   const windowsFailures = unsuccessful.filter(
     (job) => WINDOWS_PROBE_JOB.test(String(job.name)) && job.conclusion === "failure",
@@ -809,7 +818,7 @@ export async function evaluateWindowsProbeExcuse({ run, runId, version, readJobs
         continue;
       }
       const annotations = errorAnnotations(log);
-      const isRefusal = (/** @type {string} */ line) => line.startsWith(SETUP_QUEST_WINDOWS_REFUSAL);
+      const isRefusal = (/** @type {string} */ line) => line === SETUP_QUEST_WINDOWS_REFUSAL;
       const strangers = annotations.slice(1).filter((line) => !STEP_EXIT_ECHO.test(line));
       // The set must be EXACTLY the refusal, then at most one generic exit line after it.
       if (!annotations.some(isRefusal))
@@ -843,9 +852,11 @@ export async function evaluateWindowsProbeExcuse({ run, runId, version, readJobs
       failed.push(`condition 3: ${QUEST_PACKAGE}'s publish times could not be read (${firstLine(error)})`);
     }
     if (times) {
-      const published = times[version];
-      if (published !== undefined && published !== null) {
-        const publishedAt = Date.parse(String(published));
+      // Decided by KEY, never by value: only time[<version>] is read, and an absent key is the
+      // ruled "not installable" case. A key that is present with anything but a string refuses.
+      if (Object.hasOwn(times, version)) {
+        const published = times[version];
+        const publishedAt = typeof published === "string" ? Date.parse(published) : Number.NaN;
         if (Number.isNaN(publishedAt))
           failed.push(
             `condition 3: ${QUEST_PACKAGE}@${version}'s publish time ${JSON.stringify(published)} does not parse`,
