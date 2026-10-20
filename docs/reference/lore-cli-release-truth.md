@@ -21,7 +21,151 @@ availability claim.
 
 ### Current state
 
-`0.13.0` is **RELEASED**. It is a minor release, paired with `quest` `0.13.0` under the Opum
+`0.14.1` is **RELEASED**, measured 2026-10-20 (the evidence is below, each fresh measurement
+with its own time, including the clean registry install the definition below requires). It is paired with
+`quest` `0.14.1` under the Opum project constitution's Article 3, and it is the first release of
+the `0.14` line: `0.14.0` was tagged and never published, so `0.14.1` carries `0.14.0`'s
+changes, the commits landed since that tag, and the repair of the release gate probe (LCLI-714,
+DEC-204 (b)). The full entry list is `CHANGELOG.md`'s `[0.14.1]` section, which the GitHub
+Release is cut from.
+
+It was cut from tag `v0.14.1` (annotated tag object
+`1f084dd5e97a7c57b150f7735d7d6b6ce702cbdc`, peeling to
+`85d583c8c4338df6da65b57f9f4230c99ecea10e`, the squash of opum-ai/lore-cli#620). That commit is
+an ancestor of `origin/main` (`3aa5f020b668c0ea15be7f3cc86159b7de0fd06b` when read), checked by
+`git merge-base --is-ancestor` at 2026-10-20T19:08:49Z.
+
+**Staged, then promoted.**
+- **Staged.** Release run `39366418979` (attempt 1, `workflow_dispatch` at `85d583c8`)
+  concluded `failure`. Its inputs `publish: false` and `launcher_rc: 1` rest on the dispatching
+  session's own account (its 2026-10-20T02:50Z handoff instruction and its 09:53Z note, both on
+  LCLI-714): LCLI-742 records that the run object carries no `inputs` field, so they cannot be
+  read off the run. Re-read at 2026-10-20T18:53Z, its 25 jobs are 20 `success`, 2 `failure` and
+  3 `skipped`. The two failures are the Windows `release
+  gate probe` arms, win32-x64 (job `118445199876`) and win32-arm64 (job `118445199864`). The
+  three skipped jobs are `Ladybug optional 1 GiB observation (ubuntu-24.04 x64)` (job
+  `118444260849`), `verify this release's own provenance (LCLI-481)` (job `118446044825`) and
+  `publish (npm, OIDC trusted publishing)` (job `118446045540`). The 1 GiB observation needs only
+  the version checks and is skipped on its `ladybug_scale_observation` input alone, which was
+  false (whether left at its default or set is not readable) and has nothing to do with
+  publishing. The `publish` job's `needs:` includes `release-gate-probe`, and the provenance job
+  needs `publish`, so the two Windows probe failures would have skipped both of them even with
+  `publish: true`.
+  The two Windows failures were predicted before the run reported (opum-doc, relayed to the
+  predecessor session at 2026-10-20T03:51Z, recorded on LCLI-714): `setup-quest` refuses its
+  source fallback on Windows while the staged-candidate read still saw `0.13.0-rc.1`. DEC-204
+  (a4) accepts that shape for this release, and nothing else.
+  **How the packages were staged is NOT recorded in anything readable from this repository.**
+  The operator staged them (opum-doc dialog `dec-11le8ss`, option A, as the predecessor's LCLI-714
+  note of 2026-10-20T09:53Z records it), but no readable record holds the command, the gates it
+  applied, the authentication or the time, and none is inferred here. What the registry itself
+  shows, read 2026-10-20T18:53Z: `@opum-ai/lore@0.14.1-rc.1` was published at
+  `2026-10-20T05:54:34.728Z` and `@opum-ai/quest@0.14.1-rc.1` at `2026-10-20T04:55:32.866Z`.
+  LCLI-742's description (filed 2026-10-20T03:53Z at opum-doc's request, relayed by the leader)
+  records that on the dry-run-artifact staging path the probe jobs gate nothing and that
+  opum-doc read run `39366418979` by hand; it does not record the staging command. LCLI-742 is
+  the filed change that makes `publish-release.sh` read those jobs.
+  The launcher is `@opum-ai/lore@0.14.1-rc.1` under `release-candidate` (read 2026-10-20T18:08Z).
+  The sha256 both of opum-cli-e2e's receipts record for the `opum-ai-lore-0.14.1-rc.1.tgz`
+  launcher tarball is `e347ddad6bacd89ffdd82f686145cbd686788cc813e08a7ed07435c4cdb886b1`: the lore
+  receipt's `tarballs` map (`receipts/lore/0.14.1.json`) and the pair receipt's
+  `tarballs[...].sha256` beside its registry `distIntegrity` (`receipts/pair/0.14.1.json`), both
+  read at opum-cli-e2e `main` `483e6a27e88b4b314eda2f4fb8b6c854f4ecb749` (first read on
+  2026-10-20 by this session, the verdicts re-read at that ref at 19:08:50Z). That the staged
+  package matches it is the predecessor session's reading, recorded on LCLI-714 at 09:53Z ("rc launcher sha256 e347ddad...
+  equals the receipt"), not re-measured here, and that note does not say whether it hashed the
+  registry tarball or the run's artifact.
+- **Promoted.** quest moved first (Article 3 clause 5), bounded this way. Lore had moved nothing
+  at `2026-10-20T13:38:52.365Z`, the time its rollback record was written before any move (below).
+  Quest's launcher `0.14.1` was published at `2026-10-20T10:07:03.616Z` (registry read
+  2026-10-20T18:53Z; lore's own `0.14.1` launcher at `2026-10-20T13:40:46.016Z`), and quest's
+  exact-X launcher is published only at its `latest` promotion (opum-doc's 2026-10-20T01:41:11Z
+  review, recorded verbatim on LCLI-714: "The launcher at exact X is published only at the latest
+  promotion"). These are publication times, not a read of either `latest` tag at the moment
+  lore's moved. Then the operator ran
+  `scripts/promote-latest.mjs --promote` against Release run `39366418979`, first-party, in their
+  own terminal (opum-doc dialog `dec-1tqccy6`, step 1). The promotion wrote its rollback record
+  BEFORE moving anything, at `scripts/release-0.14.1/latest-rollback.json`: 805 bytes, sha256
+  `3acd9d2682f5cc8cd436830b0baba04e83caf0b3296cd56bf23ed2a4616ff21d`, recorded at
+  `2026-10-20T13:38:52.365Z`, naming `0.13.0` as the prior `latest` on all seven packages. A
+  copy is archived by the operator and verified identical by sha256 (opum-ai/lore-cli#628); the
+  gitignored working copy was then deleted, so the archive is the only copy.
+- **`promote-latest.mjs` output was NOT captured: the operator ran it in their own terminal, and
+  no log was kept.** This record therefore carries no `A4 VERDICT:` line from that run, none is
+  reconstructed here, and the run's own exit status is unknown. What stands is measured
+  separately, below. The process fix is recorded in the opum-agent leader's handoff record,
+  opum-ai/opum-agent `.quest/completed/OPAG-1454.json` at
+  `acb28c7bcc864c77dc3e440cd3b887ffc58054ee` (read 2026-10-20T19:08Z), which says verbatim:
+  "opum-doc says operator scripts now tee to ~/.opum-operator/logs/." That is a handoff note,
+  not a ruling, and it carries no decision id and no time; this session received the same
+  relay from the leader, and did not read the clock at receipt. If the operator later
+  pastes the output, it goes in as an amendment labelled with the paste time.
+
+**Measured afterwards.** opum-doc read `latest` at 2026-10-20T13:41:34Z. This session re-read
+it at 2026-10-20T18:08Z: all seven packages (`@opum-ai/lore` and the six platform packages)
+report `latest` = `0.14.1`; the wrapper's `release-candidate` remains `0.14.1-rc.1`. The
+registry's `dist.integrity` for `@opum-ai/lore@0.14.1` equals the sha512 of the carried
+`opum-ai-lore-0.14.1.tgz` (sha256 `c07d3e71865cae1ab12f6185756d2aa2ed533ffecdff13941e82fda229ef6f0b`).
+
+**Clean registry install: PASSED (item 5 of the released-evidence list below).** At
+2026-10-20T18:53:18Z, outside any repository, into an empty directory with its own fresh npm
+cache: `npm install @opum-ai/lore@0.14.1 --cache <dir>/cache --prefix <dir>/proj --no-audit
+--no-fund` printed `added 2 packages in 1s` (the launcher and `@opum-ai/lore-darwin-arm64`).
+At 18:53:26Z, `<dir>/proj/node_modules/.bin/lore --version` printed `0.14.1`, and the installed
+`<dir>/proj/node_modules/@opum-ai/lore/package.json` reads `"version": "0.14.1"`. The exact
+version was named, never the rc, and that `package.json` is what tells the two apart: an rc
+launcher would read `0.14.1-rc.1` there, though `--version` prints `0.14.1` either way.
+
+**The GitHub Release exists, and is not a draft.** `v0.14.1` "Lore CLI 0.14.1": `isDraft` false,
+`isPrerelease` false, published 2026-10-20T13:41:05Z, read again 2026-10-20T18:08Z. Its
+`targetCommitish` reads `dev`, which is the release's own field and says nothing about the tag;
+the tag is the object above.
+
+**README, a fresh read and not the promotion's verdict.** At 2026-10-20T18:08:11Z the readme npm
+serves for `@opum-ai/lore@latest` hashed (sha256) to
+`889e0943659e4ae7c553e4da96f18bdb94eb090327d3138a8c9ee0988775b329`, byte-equal to the
+`README.md` packed in the carried `opum-ai-lore-0.14.1.tgz`. This is a new measurement by this
+session. It stands in for nothing the promotion printed, and its subject is the package-level
+`readme` field, which is not per-version.
+
+**`0.14.1` carries NO provenance attestation (LCLI-482, open).** The Release run's OIDC publish
+job and the job that verifies that publish's provenance were `skipped` (above, with the reasons
+given there). At 2026-10-20T18:53:21Z, `npm view @opum-ai/lore@0.14.1 dist
+--json` returned `integrity` (`sha512-WZvxgQNX...`) and two registry `signatures` and NO
+`attestations` key: the read worked, and the field is absent rather than the read having failed.
+A reader must not infer an attestation from the trusted-publishing machinery in `release.yml`,
+which this path did not use. `0.13.0`, `0.12.0` and `0.11.0` were the same.
+
+**Pair-qualified, receipts not restated here.** opum-cli-e2e's `receipts/lore/0.14.1.json` and
+`receipts/pair/0.14.1.json` both read `QUALIFIED` at `main`
+`483e6a27e88b4b314eda2f4fb8b6c854f4ecb749` (re-read at that ref at 2026-10-20T19:08:50Z; the lore
+receipt binds Release run `39366418979` and `launcherSubstitution` `MATCH`). This record does not
+restate their counts.
+Separately, `promote-latest.mjs --dry-run` against that run's artifacts, from `dev`, ran twice
+on 2026-10-20. The predecessor session's run (recorded on LCLI-714 at 09:53Z and on LCLI-744, not
+re-measured here) accepted step 1 under DEC-204 (a4), and the artifact, pass-1 receipt and pair
+receipt gates passed; it refused only at Article 3 clause 5, because quest's `latest` was still
+`0.13.0`. This session's run exited 0, which its Article 3 clause 5 gate permits only when quest's
+`latest` reads `0.14.1`; its output file was last written at 2026-10-20T10:12:48Z (the clock time
+was not read when it ran), and the leader read the record file still absent at 10:13Z. Only the
+last 10 lines of its output were read, and that output is ephemeral harness output with no
+durable path. Both are local dry runs, not CI runs, so there is no run id, and dry runs are
+readiness evidence only.
+
+**Tag `v0.14.0` exists and was NEVER published (LCLI-714).** It is an annotated tag object
+`9c147a34001e8de9fa06c566165dc50128276cfc` peeling to
+`077ee53f7b167acab0fabb745fc74cbb92ab0b1e`, which `origin/main` named when read 2026-10-20.
+Release run `39347496150` — attempt 1, dispatched at that tag with `publish: false` and
+`launcher_rc: 1` — concluded `failure`: its six `release gate probe` jobs failed in their FRESH
+arm because the job carried no `quest`, so `lore check` exited 3 with
+``the `quest` CLI is not installed or not on PATH``. Nothing was staged, no `@opum-ai/lore*`
+package at `0.14.0` exists on the registry, and the run is not re-run. The tag is not moved;
+`0.14.1` carries the repair. A reader who finds `v0.14.0` in the tag list must not read it as a
+release.
+
+### Previous state
+
+`0.13.0` was **RELEASED**. It is a minor release, paired with `quest` `0.13.0` under the Opum
 project constitution's Article 3. It carries the **Lore pane** in the `opum-lore` plugin — a
 Claude Code hooks module that browses, reads, searches, creates and edits the repository's
 documentation bundle through the `lore` CLI, with an inline body editor, a full-screen toggle and
@@ -85,19 +229,6 @@ npm serves for `@opum-ai/lore` is byte-equal to `0.13.0`'s packed `README.md`, r
 `scripts/publish-release.sh` as a tarball-file publish, which carries none — so a reader must not
 infer one from the trusted-publishing machinery in `release.yml`, which this path does not use.
 `0.12.0` and `0.11.0` were the same, for the same reason.
-
-**Tag `v0.14.0` exists and was NEVER published (LCLI-714).** It is an annotated tag object
-`9c147a34001e8de9fa06c566165dc50128276cfc` peeling to
-`077ee53f7b167acab0fabb745fc74cbb92ab0b1e`, which `origin/main` named when read 2026-10-20.
-Release run `39347496150` — attempt 1, dispatched at that tag with `publish: false` and
-`launcher_rc: 1` — concluded `failure`: its six `release gate probe` jobs failed in their FRESH
-arm because the job carried no `quest`, so `lore check` exited 3 with
-``the `quest` CLI is not installed or not on PATH``. Nothing was staged, no `@opum-ai/lore*`
-package at `0.14.0` exists on the registry, `latest` still reads `0.13.0` on all seven, and the
-run is not re-run. The tag is not moved; `0.14.1` carries the repair. A reader who finds
-`v0.14.0` in the tag list must not read it as a release.
-
-### Previous state
 
 `0.12.0` was **RELEASED**. It is a minor release, paired with `quest` `0.12.0` under the Opum
 project constitution's Article 3 (one version number across lore and quest, and every release a
