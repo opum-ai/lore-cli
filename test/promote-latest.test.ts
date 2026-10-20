@@ -2907,6 +2907,35 @@ describe("scripts/promote-latest.mjs: the Windows-probe excuse for a failed run 
     }
   });
 
+  test("a Windows arm showing the refusal ALONE, with no generic exit line, is accepted", async () => {
+    const h = harness();
+    const w = world(
+      excusedWorld({
+        jobLogs: {
+          [WIN_X64_ID]: windowsLog([WINDOWS_REFUSAL_LINE]),
+          [WIN_ARM64_ID]: windowsLog([WINDOWS_REFUSAL_LINE]),
+        },
+      }),
+    );
+    try {
+      expect(await h.go(["--record", h.record, "--dry-run"], w)).toBe(0);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("only time[<version>] is read: an rc key or a platform key before created_at does not make quest installable", async () => {
+    const h = harness();
+    const w = world(
+      excusedWorld({ questTimes: { [`${V}-rc.1`]: "2026-10-20T01:00:00.000Z", "0.13.0": "2026-10-07T14:53:00.000Z" } }),
+    );
+    try {
+      expect(await h.go(["--record", h.record, "--dry-run"], w)).toBe(0);
+    } finally {
+      h.cleanup();
+    }
+  });
+
   refusalSuite("each condition broken alone refuses and NAMES it", `Refusing to promote ${V}`, [
     [
       "a NON-Windows probe arm failed too",
@@ -2962,6 +2991,30 @@ describe("scripts/promote-latest.mjs: the Windows-probe excuse for a failed run 
         },
       }),
       `condition 2: ${JSON.stringify(probeJobName("win32-x64"))} carries another ##[error] line: "##[error]something else broke"`,
+    ],
+    [
+      "a Windows probe whose generic exit line comes BEFORE the refusal",
+      excusedWorld({
+        jobLogs: {
+          ...DRY_RUN_LOGS,
+          [WIN_X64_ID]: windowsLog(["##[error]Process completed with exit code 1.", WINDOWS_REFUSAL_LINE]),
+        },
+      }),
+      `condition 2: ${JSON.stringify(probeJobName("win32-x64"))}'s first ##[error] line is not the setup-quest refusal, and a generic exit line before it refuses`,
+    ],
+    [
+      "a Windows probe with TWO generic exit lines after the refusal",
+      excusedWorld({
+        jobLogs: {
+          ...DRY_RUN_LOGS,
+          [WIN_ARM64_ID]: windowsLog([
+            WINDOWS_REFUSAL_LINE,
+            "##[error]Process completed with exit code 1.",
+            "##[error]Process completed with exit code 1.",
+          ]),
+        },
+      }),
+      `condition 2: ${JSON.stringify(probeJobName("win32-arm64"))} carries 3 ##[error] lines; only the refusal and at most one generic exit line after it are allowed`,
     ],
     [
       "quest already installable when the run started (publish time BEFORE created_at)",

@@ -1132,6 +1132,18 @@ the promotion half, item 7. It is not part of staging.
    `test/release-workflow.test.ts` pins that every `scripts/` file a
    `release.yml` job runs is in that job's own checkout.
 
+   **One exception: a failed run whose only failures are the Windows probe arms
+   (DEC-204 (a4), LCLI-744).** While quest `X` is not on npm, setup-quest refuses
+   its source fallback on Windows, so both Windows `release gate probe` arms fail
+   before the probe runs. Step 1 accepts such a `failure` only when every failed
+   job is a Windows probe arm, each arm's `##[error]` lines are exactly that
+   refusal and then at most one generic `Process completed with exit code N.`
+   line, `@opum-ai/quest@X` had no npm publish time before the run's
+   `created_at` (an absent `time` key counts), and every other job succeeded or
+   was skipped. Anything else
+   refuses and names the condition that failed. The real fix, setup-quest on
+   Windows, retires this exception.
+
    Before anything moves, dry run included, it checks each of these in order
    and refuses on the first that fails:
 

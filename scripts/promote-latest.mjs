@@ -723,8 +723,9 @@ export function errorAnnotations(log) {
  * DEC-204 (a4): may a Release run that concluded "failure" still be promoted? Only when ALL FOUR hold,
  * each evaluated and each named when it fails:
  *   1. every failed job is a Windows release-gate-probe arm (and at least one is);
- *   2. each such arm's log shows the setup-quest Windows refusal and no other ##[error] line
- *      beyond GitHub's own step-exit echo;
+ *   2. each such arm's ##[error] lines are EXACTLY the setup-quest Windows refusal, then at most one
+ *      generic runner line (`Process completed with exit code N.`) AFTER it: a generic line first,
+ *      two of them, or any other ##[error] line refuses;
  *   3. @opum-ai/quest@<version> was NOT installable from npm at the run's start: npm's own
  *      `time[<version>]` against the run's created_at, never against now. An absent publish time
  *      counts as not installable; an unreadable registry, or a time that does not parse, does not;
@@ -782,15 +783,22 @@ export async function evaluateWindowsProbeExcuse({ run, runId, version, readJobs
         continue;
       }
       const annotations = errorAnnotations(log);
-      const refusal = annotations.filter((line) => line.startsWith(SETUP_QUEST_WINDOWS_REFUSAL));
-      const strangers = annotations.filter(
-        (line) => !line.startsWith(SETUP_QUEST_WINDOWS_REFUSAL) && !STEP_EXIT_ECHO.test(line),
-      );
-      if (!refusal.length)
+      const isRefusal = (/** @type {string} */ line) => line.startsWith(SETUP_QUEST_WINDOWS_REFUSAL);
+      const strangers = annotations.slice(1).filter((line) => !STEP_EXIT_ECHO.test(line));
+      // The set must be EXACTLY the refusal, then at most one generic exit line after it.
+      if (!annotations.some(isRefusal))
         failed.push(`condition 2: ${JSON.stringify(job.name)} does not show setup-quest's Windows refusal`);
+      else if (!isRefusal(annotations[0] ?? ""))
+        failed.push(
+          `condition 2: ${JSON.stringify(job.name)}'s first ##[error] line is not the setup-quest refusal, and a generic exit line before it refuses: ${JSON.stringify(annotations[0])}`,
+        );
       else if (strangers.length)
         failed.push(
           `condition 2: ${JSON.stringify(job.name)} carries another ##[error] line: ${JSON.stringify(strangers[0])}`,
+        );
+      else if (annotations.length > 2)
+        failed.push(
+          `condition 2: ${JSON.stringify(job.name)} carries ${annotations.length} ##[error] lines; only the refusal and at most one generic exit line after it are allowed`,
         );
       else excusedJobs.push(String(job.name));
     }
