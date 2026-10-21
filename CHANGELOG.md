@@ -13,10 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reads (every `latest`, then the launcher's integrity) now run for the `REGISTRY_WINDOW_SECONDS`
   window (default 1800s, one read per 15s) instead of a fixed 10 reads, so a promotion whose writes
   all succeeded no longer exits 1 on a lagging read before the GitHub Release and README read-back
-  run. A read that never converges still exits 1 and names what it read; the exit-1 messages say
-  nothing was rolled back and that re-running `--promote` resumes. The wait is announced before it
-  starts. `--rollback`'s restore check uses the same window, falling back to 1800 on a value that
-  is not a bounded whole number rather than refusing.
+  run. A read that never converges still exits 1 and names what it read; the two read-lag exit-1
+  messages say nothing was rolled back and that re-running `--promote` resumes, while the
+  integrity-MISMATCH exit prescribes `--rollback`. Each wait (the `latest` re-read, the launcher
+  integrity re-read, and `--rollback`'s restore check) is announced before it starts.
+  `--rollback`'s restore check uses the same window, falling back to 1800 on a value that is not a
+  bounded whole number rather than refusing.
+- **A resume no longer plans a publish over a launcher npm has applied but not yet served**
+  (LCLI-748, DEC-225). When a record exists and the launcher reads absent while a platform's
+  `latest` already reads the version, or present with no `dist.integrity`, step 8 re-reads for the
+  `REGISTRY_WINDOW_SECONDS` window before deciding, instead of publishing, failing, and restoring
+  every tag over a correct release. Never converging exits 1 with nothing moved; a different
+  integrity is still refused as "needs a new version". A launcher a crash left genuinely
+  unpublished is published by re-running with `REGISTRY_WINDOW_SECONDS=0`, which decides on one
+  read (DEC-225 a1).
 
 ## [0.14.1] - 2026-10-20
 

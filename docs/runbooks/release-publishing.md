@@ -1254,6 +1254,20 @@ the promotion half, item 7. It is not part of staging.
    not a bounded whole number falls back to 1800 there and is reported, where
    `--promote` refuses it.
 
+   **A resume checks for an unread launcher before anything moves (LCLI-748,
+   DEC-225).** When a record already exists and the launcher reads absent while a
+   platform's `latest` already reads the version, or reads present with no
+   `dist.integrity`, step 8 re-reads for `REGISTRY_WINDOW_SECONDS` before deciding
+   publish or tag-move, because a publish over a version npm has applied but not
+   yet served fails and rolls back a correct release. Converging to the artifact's
+   integrity takes the tag-move path; never converging exits `1` with "Nothing has
+   moved"; a different integrity is still refused as "needs a new version". A crash
+   between the platform moves and the publish leaves the same state with the
+   launcher genuinely unpublished: confirm that with `npm view
+   @opum-ai/lore@<version> dist.integrity`, then re-run with
+   `REGISTRY_WINDOW_SECONDS=0`, which decides on one read and publishes it
+   (DEC-225 a1).
+
    **Then it cuts the GitHub Release (LCLI-622, paired with quest-cli QCLI-398
    and QCLI-401).** It first deletes the private npmrc that held the npm token,
    so gh never runs while the token is on disk. If `v<version>` does not exist,

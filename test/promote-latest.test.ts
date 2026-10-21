@@ -384,6 +384,10 @@ type WorldOptions = {
   lagReads?: number;
   /** LCLI-689: this many probeVersion reads of the launcher AFTER its publish answer not-found (npm read lag). */
   lagProbes?: number;
+  /** LCLI-748: every dist-tags read of the launcher serves this latest, whatever was written (a restore that never reads back). */
+  staleLauncherLatest?: string;
+  /** LCLI-748: platform dist-tags reads past this many fail (E503): the staging read passes, a later read fails. */
+  failPlatformTagReadsAfter?: number;
   /** Runs once, when the LAST platform's latest move to V lands. */
   afterPlatforms?: (w: World) => void;
   /**
@@ -425,6 +429,7 @@ function world(options: WorldOptions = {}) {
   const calls: string[][] = [];
   let lagged = 0;
   let laggedProbes = 0;
+  let platformTagReads = 0;
   const writes: string[] = [];
   /**
    * EVERY npm call, read or write, must carry both registry pins (review F6); one that does not is
@@ -543,8 +548,16 @@ function world(options: WorldOptions = {}) {
         return { stdout: JSON.stringify([{ latest: questLatest, "release-candidate": V }]) };
       }
       if (command === "npm" && args[0] === "view" && args[2] === "dist-tags") {
+        if (
+          options.failPlatformTagReadsAfter !== undefined &&
+          args[1] !== LAUNCHER &&
+          ++platformTagReads > options.failPlatformTagReadsAfter
+        )
+          throw new Error("E503 registry unreachable");
         const t = tags[args[1] as string];
         if (!t) throw new Error("E404");
+        if (args[1] === LAUNCHER && options.staleLauncherLatest)
+          return { stdout: JSON.stringify([{ ...t, latest: options.staleLauncherLatest }]) };
         if (args[1] === LAUNCHER && state.xPublished && lagged < (options.lagReads ?? 0)) {
           lagged++;
           return { stdout: JSON.stringify([{ ...t, latest: PRIOR }]) };
@@ -3312,6 +3325,7 @@ describe("scripts/promote-latest.mjs: STEP 7 waits out registry read lag (LCLI-6
     expect(code).toBe(0);
     expect(text).not.toContain("the registry does not serve");
     expect(text).toContain("STEP 7: re-reading latest on all 7 packages for up to 30s");
+    expect(text).toContain("STEP 7: re-reading @opum-ai/lore@");
     expect(w.calls.some((c) => c[0] === "gh" && c[1] === "release" && c[2] === "create")).toBe(true);
     expect(w.calls.some((c) => c[0] === "bash" && c[1] === README_READBACK_SCRIPT)).toBe(true);
   });
@@ -3330,6 +3344,145 @@ describe("scripts/promote-latest.mjs: STEP 7 waits out registry read lag (LCLI-6
     expect(text).not.toContain("put every latest back");
     expect(w.writes.some((l) => l.includes(`@${PRIOR} latest`))).toBe(false);
     expect(w.calls.some((c) => c[0] === "gh" && c[1] === "release" && c[2] === "create")).toBe(false);
+  });
+
+  // LCLI-748 (DEC-225): a RESUME whose launcher reads absent, or present with no integrity, while a
+  // platform's latest already reads X is read lag until proven otherwise. Each case below leaves the
+  // first run's record behind (a failed publish), then resumes against a registry whose platforms
+  // already read V.
+  const resumeAt = async (options: Parameters<typeof world>[0], window: string | undefined) => {
+    const h = harness();
+    try {
+      expect(await h.go(["--record", h.record, "--promote"], world({ failPublish: true }))).toBe(1);
+      const w = world({
+        tags: { "@opum-ai/lore-darwin-arm64": { latest: V }, "@opum-ai/lore-darwin-x64": { latest: V } },
+        ...options,
+      });
+      const code = await main(["--record", h.record, "--promote", "--release-run", RUN], {
+        run: w.run,
+        env: { NPM_TOKEN: "", REGISTRY_WINDOW_SECONDS: window },
+        out: (l) => h.out.push(l),
+        err: (l) => h.err.push(l),
+        readPackageVersion: async () => V,
+        verifyOptions: NAP,
+      });
+      return { code, w, text: h.text() };
+    } finally {
+      h.cleanup();
+    }
+  };
+  const launcherBytes = () => artifact().get(X_FILE) as Buffer;
+  const publishes = (w: World) => w.writes.filter((l) => l.startsWith("publish "));
+
+  test("a resume whose launcher reads absent while a platform reads X waits, and moves the tag instead of publishing once it is served", async () => {
+    const { code, w, text } = await resumeAt({ xPublished: launcherBytes(), lagProbes: 2 }, "30");
+    expect(code).toBe(0);
+    expect(text).toContain("reads absent while a platform's latest already reads");
+    // The version is already on npm: its tag moves by dist-tag, and nothing is published over it.
+    expect(publishes(w)).toEqual([]);
+    expect(w.writes).toContain(`dist-tag add ${LAUNCHER}@${V} latest`);
+    for (const name of RELEASE_PACKAGES) expect(w.tags[name]?.latest).toBe(V);
+  });
+
+  test("a failed dist-tags read inside the gate refuses with nothing moved instead of publishing", async () => {
+    // The lagged-resume state (launcher published but not yet served, a platform at V) with the
+    // platforms' dist-tags reads failing: a fail-open read would take "no platform at X" and publish.
+    const { code, w, text } = await resumeAt(
+      { xPublished: launcherBytes(), lagProbes: 99, failPlatformTagReadsAfter: PLATFORM_PACKAGES.length },
+      "30",
+    );
+    expect(code).toBe(1);
+    expect(text).toContain("dist-tags read that decides whether it is already published failed");
+    expect(text).toContain("Nothing has moved");
+    expect(publishes(w)).toEqual([]);
+    expect(w.writes).toEqual([]);
+  });
+
+  test("a resume whose launcher is never served inside the window exits 1 with nothing moved", async () => {
+    const { code, w, text } = await resumeAt({ xPublished: launcherBytes(), lagProbes: 99 }, "30");
+    expect(code).toBe(1);
+    expect(text).toContain("Nothing has moved");
+    expect(text).toContain(`npm view ${LAUNCHER}@${V} dist.integrity`);
+    expect(w.writes).toEqual([]);
+  });
+
+  test("the refusal names the escape, and a single-read window (0, or under 15s) publishes a launcher a crash left unpublished", async () => {
+    const refused = await resumeAt({ xPublished: launcherBytes(), lagProbes: 99 }, "30");
+    expect(refused.text).toContain("re-run with REGISTRY_WINDOW_SECONDS=0");
+    // The launcher is genuinely absent (no xPublished) and a platform reads V: the crashed-resume state.
+    for (const window of ["0", "14"]) {
+      const { code, w, text } = await resumeAt({}, window);
+      expect(code).toBe(0);
+      expect(text).not.toContain("Step 8:");
+      expect(publishes(w)).toEqual([publishLine(w)]);
+    }
+    // The same state at a window that engages the gate waits and refuses: the gate cannot tell them apart.
+    const waited = await resumeAt({}, "30");
+    expect(waited.code).toBe(1);
+    expect(publishes(waited.w)).toEqual([]);
+  });
+
+  test("a present launcher with no dist.integrity is read lag at the preflight too: it waits, then refuses with nothing moved", async () => {
+    const { code, w, text } = await resumeAt({ xPublished: launcherBytes(), publishedIntegrity: "" }, "30");
+    expect(code).toBe(1);
+    expect(text).toContain("present without a dist.integrity");
+    expect(text).toContain("Nothing has moved");
+    expect(text).not.toContain("needs a new version");
+    expect(w.writes).toEqual([]);
+  });
+
+  test("a true mismatch is still refused as 'needs a new version', after the lag clears", async () => {
+    const { code, w, text } = await resumeAt(
+      { xPublished: launcherBytes(), lagProbes: 1, publishedIntegrity: "sha512-someone-else" },
+      "30",
+    );
+    expect(code).toBe(1);
+    expect(text).toContain("needs a new version, not a rerun");
+    expect(text).toContain("sha512-someone-else");
+    expect(w.writes).toEqual([]);
+  });
+
+  test("--rollback's restore check reads for the whole window, announces it, and an invalid window reads exactly as many times as the default", async () => {
+    const rollbackReads = async (window: string | undefined) => {
+      const h = harness();
+      try {
+        expect(await h.go(["--record", h.record, "--promote"], world())).toBe(0);
+        const w = world({
+          receipt: undefined,
+          pass1: undefined,
+          tags: Object.fromEntries(RELEASE_PACKAGES.map((n) => [n, { latest: V }])),
+          staleLauncherLatest: V,
+        });
+        const code = await main(["--rollback", h.record], {
+          run: w.run,
+          env: { NPM_TOKEN: "", REGISTRY_WINDOW_SECONDS: window },
+          out: (l) => h.out.push(l),
+          err: (l) => h.err.push(l),
+          readPackageVersion: async () => V,
+          verifyOptions: NAP,
+        });
+        return {
+          code,
+          reads: w.calls.filter((c) => c[0] === "npm" && c[1] === "view" && c[2] === LAUNCHER && c[3] === "dist-tags")
+            .length,
+          out: h.out.join("\n"),
+          err: h.err.join("\n"),
+        };
+      } finally {
+        h.cleanup();
+      }
+    };
+    const short = await rollbackReads("30");
+    const dflt = await rollbackReads(undefined);
+    const bad = await rollbackReads("1e12");
+    expect(short.code).toBe(1);
+    expect(dflt.code).toBe(1);
+    expect(short.out).toContain("for up to 30s (REGISTRY_WINDOW_SECONDS) to confirm the restore");
+    // 1800s at 15s apart is 121 reads, 30s is 3: the default window reads 118 more times.
+    expect(dflt.reads - short.reads).toBe(118);
+    // An invalid window falls back to the default, not to one read and not to an unbounded wait.
+    expect(bad.reads).toBe(dflt.reads);
+    expect(bad.err).toContain("the restore check uses the default 1800s");
   });
 
   test("--rollback with a window that is not a bounded whole number uses the 1800s default and says so", async () => {

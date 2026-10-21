@@ -1793,6 +1793,56 @@ export async function main(
         );
         return 1;
       }
+      // LCLI-748 (DEC-225): an unread launcher is read lag, not a mismatch. Two shapes, both needing
+      // the same wait before this run may decide publish-or-tag-move: npm answers "absent" while a
+      // platform's latest already reads X (a resume whose publish the registry has applied but not
+      // yet served, which a publish would then fail on and roll back), or answers "present" with no
+      // dist.integrity. Nothing has moved yet, so the wait is safe, and a run that never gets an
+      // answer refuses here, before anything moves.
+      const platformLatestAtX = async () => {
+        for (const entry of record.packages) {
+          if (entry.name === LAUNCHER) continue;
+          // A failed read is NOT "no platform at X": read errors arrive with read lag, and treating
+          // one as a negative would disengage the gate and publish over a launcher npm may have
+          // applied but not served. It refuses instead (the caller names the read).
+          const tags = await readTags(entry.name);
+          if (tags[PROMOTE_TAG] === version) return true;
+        }
+        return false;
+      };
+      // A window under one delay (REGISTRY_WINDOW_SECONDS=0 included) is one read, so there is nothing
+      // to wait out: the operator's escape for a launcher a crash left genuinely unpublished (DEC-225 a1).
+      let unreadLauncher;
+      try {
+        unreadLauncher =
+          (waitOptions.attempts ?? 2) > 1 &&
+          (launcherAlready.state === "present"
+            ? !launcherAlready.integrity
+            : Boolean(existing) && (await platformLatestAtX()));
+      } catch (error) {
+        err(
+          `Refusing to promote ${version}: ${LAUNCHER}@${version} reads absent and the ${PROMOTE_TAG} dist-tags read that decides whether it is already published failed (${reason(error)}). Writing over a version npm may have applied but not yet served fails and rolls back a correct release, so this run decides nothing on a failed read. Nothing has moved. Re-read npm view <name> dist-tags and re-run the same command.`,
+        );
+        return 1;
+      }
+      if (unreadLauncher) {
+        out(
+          `\nStep 8: ${LAUNCHER}@${version} reads ${launcherAlready.state === "present" ? "present without a dist.integrity" : `absent while a platform's ${PROMOTE_TAG} already reads ${version}`}; re-reading for up to ${lagWindow}s (REGISTRY_WINDOW_SECONDS) before deciding publish or tag-move. Nothing has moved; do not interrupt.`,
+        );
+        const settled = await verifyFinalLauncher({ version, final, probe, ...waitOptions });
+        if (!settled.ok && !settled.mismatch) {
+          for (const problem of settled.problems) err(`  ${problem}`);
+          err(
+            `Refusing to promote ${version}: npm never served ${LAUNCHER}@${version}'s dist.integrity within the window (REGISTRY_WINDOW_SECONDS ${lagWindow}), so whether it is already published is unknown. Nothing has moved. Re-read it with npm view ${LAUNCHER}@${version} dist.integrity (expect ${final.integrity}) and npm view <name> dist-tags, then re-run the same command. If the re-read confirms the launcher is unpublished (a crash left it so), re-run with REGISTRY_WINDOW_SECONDS=0, which decides on one read and publishes it.`,
+          );
+          return 1;
+        }
+        // Converged to the artifact's bytes: the tag-move path. A different integrity is read again
+        // so the refusal below names what npm serves.
+        launcherAlready = settled.ok
+          ? { state: "present", integrity: final.integrity }
+          : await probe(LAUNCHER, version);
+      }
       if (launcherAlready.state === "present" && launcherAlready.integrity !== final.integrity) {
         err(
           `Refusing to promote ${version}: ${LAUNCHER}@${version} is already on the registry as ${launcherAlready.integrity ?? "<no dist.integrity>"}, not the artifact's ${final.filename} (${final.integrity}). npm versions are immutable, so this needs a new version, not a rerun. Do NOT run npm unpublish. Nothing has moved.`,
@@ -1895,6 +1945,9 @@ export async function main(
         err(`NOT restored: ${outcome.failed.join(", ")}. Re-run --rollback; it is idempotent.`);
         return 1;
       }
+      out(
+        `\nRe-reading ${PROMOTE_TAG} on all ${record.packages.length} packages for up to ${lagWindow}s (REGISTRY_WINDOW_SECONDS) to confirm the restore; do not interrupt.`,
+      );
       const check = await verifyTags({
         expected: Object.fromEntries(record.packages.map((entry) => [entry.name, entry.priorLatest])),
         readTags,
@@ -1944,11 +1997,14 @@ export async function main(
     for (const line of check.wrong) err(`  ${line}`);
     if (!check.ok) {
       err(
-        `The writes returned success but the registry does not serve ${PROMOTE_TAG} = ${record.version} everywhere after ${check.attempts} reads (REGISTRY_WINDOW_SECONDS ${lagWindow}). Nothing was rolled back. This run exited before the launcher integrity check, the GitHub Release and the README read-back. Re-read with npm view <name> dist-tags; once every ${PROMOTE_TAG} reads ${record.version}, re-run node scripts/promote-latest.mjs --record ${args.recordPath} --release-run ${args.releaseRun} --promote: the record makes it a resume, which re-reaches STEP 7 and the steps after it without republishing.`,
+        `The writes returned success but the registry does not serve ${PROMOTE_TAG} = ${record.version} everywhere after ${check.attempts} reads (REGISTRY_WINDOW_SECONDS ${lagWindow}). Nothing was rolled back. This run exited before the launcher integrity check, the GitHub Release and the README read-back. Re-read with npm view <name> dist-tags and npm view ${LAUNCHER}@${record.version} dist.integrity (expect ${final.integrity}); once every ${PROMOTE_TAG} reads ${record.version} and the integrity matches, re-run node scripts/promote-latest.mjs --record ${args.recordPath} --release-run ${args.releaseRun} --promote: the record makes it a resume, which re-reaches STEP 7 and the steps after it without republishing.`,
       );
       return 1;
     }
     // ...and npm serves X as the artifact's bytes.
+    out(
+      `\nSTEP 7: re-reading ${LAUNCHER}@${record.version}'s dist.integrity for up to ${lagWindow}s (REGISTRY_WINDOW_SECONDS), a second window after the ${PROMOTE_TAG} one; do not interrupt.`,
+    );
     const bytes = await verifyFinalLauncher({ version: record.version, final, probe, ...waitOptions });
     if (!bytes.ok) {
       for (const problem of bytes.problems) err(`  ${problem}`);
