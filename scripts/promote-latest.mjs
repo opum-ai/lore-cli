@@ -1807,10 +1807,13 @@ export async function main(
         }
         return false;
       };
+      // A window under one delay (REGISTRY_WINDOW_SECONDS=0 included) is one read, so there is nothing
+      // to wait out: the operator's escape for a launcher a crash left genuinely unpublished (DEC-225 a1).
       const unreadLauncher =
-        launcherAlready.state === "present"
+        (waitOptions.attempts ?? 2) > 1 &&
+        (launcherAlready.state === "present"
           ? !launcherAlready.integrity
-          : Boolean(existing) && (await platformLatestAtX());
+          : Boolean(existing) && (await platformLatestAtX()));
       if (unreadLauncher) {
         out(
           `\nStep 8: ${LAUNCHER}@${version} reads ${launcherAlready.state === "present" ? "present without a dist.integrity" : `absent while a platform's ${PROMOTE_TAG} already reads ${version}`}; re-reading for up to ${lagWindow}s (REGISTRY_WINDOW_SECONDS) before deciding publish or tag-move. Nothing has moved; do not interrupt.`,
@@ -1819,7 +1822,7 @@ export async function main(
         if (!settled.ok && !settled.mismatch) {
           for (const problem of settled.problems) err(`  ${problem}`);
           err(
-            `Refusing to promote ${version}: npm never served ${LAUNCHER}@${version}'s dist.integrity within the window (REGISTRY_WINDOW_SECONDS ${lagWindow}), so whether it is already published is unknown. Nothing has moved. Re-read it with npm view ${LAUNCHER}@${version} dist.integrity (expect ${final.integrity}) and npm view <name> dist-tags, then re-run the same command.`,
+            `Refusing to promote ${version}: npm never served ${LAUNCHER}@${version}'s dist.integrity within the window (REGISTRY_WINDOW_SECONDS ${lagWindow}), so whether it is already published is unknown. Nothing has moved. Re-read it with npm view ${LAUNCHER}@${version} dist.integrity (expect ${final.integrity}) and npm view <name> dist-tags, then re-run the same command. If the re-read confirms the launcher is unpublished (a crash left it so), re-run with REGISTRY_WINDOW_SECONDS=0, which decides on one read and publishes it.`,
           );
           return 1;
         }

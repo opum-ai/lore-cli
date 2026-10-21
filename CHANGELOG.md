@@ -16,8 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run. A read that never converges still exits 1 and names what it read; the two read-lag exit-1
   messages say nothing was rolled back and that re-running `--promote` resumes, while the
   integrity-MISMATCH exit prescribes `--rollback`. Each wait (the `latest` re-read, the launcher
-  integrity re-read, and `--rollback`'s restore check) is announced before it starts. `--rollback`'s restore check uses the same window, falling back to 1800 on a value that
-  is not a bounded whole number rather than refusing.
+  integrity re-read, and `--rollback`'s restore check) is announced before it starts.
+  `--rollback`'s restore check uses the same window, falling back to 1800 on a value that is not a
+  bounded whole number rather than refusing.
+- **A resume no longer plans a publish over a launcher npm has applied but not yet served**
+  (LCLI-748, DEC-225). When a record exists and the launcher reads absent while a platform's
+  `latest` already reads the version, or present with no `dist.integrity`, step 8 re-reads for the
+  `REGISTRY_WINDOW_SECONDS` window before deciding, instead of publishing, failing, and restoring
+  every tag over a correct release. Never converging exits 1 with nothing moved; a different
+  integrity is still refused as "needs a new version". A launcher a crash left genuinely
+  unpublished is published by re-running with `REGISTRY_WINDOW_SECONDS=0`, which decides on one
+  read (DEC-225 a1).
 
 ## [0.14.1] - 2026-10-20
 

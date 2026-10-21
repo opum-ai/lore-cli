@@ -3383,6 +3383,22 @@ describe("scripts/promote-latest.mjs: STEP 7 waits out registry read lag (LCLI-6
     expect(w.writes).toEqual([]);
   });
 
+  test("the refusal names the escape, and a single-read window (0, or under 15s) publishes a launcher a crash left unpublished", async () => {
+    const refused = await resumeAt({ xPublished: launcherBytes(), lagProbes: 99 }, "30");
+    expect(refused.text).toContain("re-run with REGISTRY_WINDOW_SECONDS=0");
+    // The launcher is genuinely absent (no xPublished) and a platform reads V: the crashed-resume state.
+    for (const window of ["0", "14"]) {
+      const { code, w, text } = await resumeAt({}, window);
+      expect(code).toBe(0);
+      expect(text).not.toContain("Step 8:");
+      expect(publishes(w)).toEqual([publishLine(w)]);
+    }
+    // The same state at a window that engages the gate waits and refuses: the gate cannot tell them apart.
+    const waited = await resumeAt({}, "30");
+    expect(waited.code).toBe(1);
+    expect(publishes(waited.w)).toEqual([]);
+  });
+
   test("a present launcher with no dist.integrity is read lag at the preflight too: it waits, then refuses with nothing moved", async () => {
     const { code, w, text } = await resumeAt({ xPublished: launcherBytes(), publishedIntegrity: "" }, "30");
     expect(code).toBe(1);
