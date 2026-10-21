@@ -1802,18 +1802,29 @@ export async function main(
       const platformLatestAtX = async () => {
         for (const entry of record.packages) {
           if (entry.name === LAUNCHER) continue;
-          const tags = await readTags(entry.name).catch(() => ({}));
+          // A failed read is NOT "no platform at X": read errors arrive with read lag, and treating
+          // one as a negative would disengage the gate and publish over a launcher npm may have
+          // applied but not served. It refuses instead (the caller names the read).
+          const tags = await readTags(entry.name);
           if (tags[PROMOTE_TAG] === version) return true;
         }
         return false;
       };
       // A window under one delay (REGISTRY_WINDOW_SECONDS=0 included) is one read, so there is nothing
       // to wait out: the operator's escape for a launcher a crash left genuinely unpublished (DEC-225 a1).
-      const unreadLauncher =
-        (waitOptions.attempts ?? 2) > 1 &&
-        (launcherAlready.state === "present"
-          ? !launcherAlready.integrity
-          : Boolean(existing) && (await platformLatestAtX()));
+      let unreadLauncher;
+      try {
+        unreadLauncher =
+          (waitOptions.attempts ?? 2) > 1 &&
+          (launcherAlready.state === "present"
+            ? !launcherAlready.integrity
+            : Boolean(existing) && (await platformLatestAtX()));
+      } catch (error) {
+        err(
+          `Refusing to promote ${version}: ${LAUNCHER}@${version} reads absent and the ${PROMOTE_TAG} dist-tags read that decides whether it is already published failed (${reason(error)}). A publish over a version npm may have applied but not yet served fails and rolls back a correct release, so this run decides nothing on a failed read. Nothing has moved. Re-read npm view <name> dist-tags and re-run the same command.`,
+        );
+        return 1;
+      }
       if (unreadLauncher) {
         out(
           `\nStep 8: ${LAUNCHER}@${version} reads ${launcherAlready.state === "present" ? "present without a dist.integrity" : `absent while a platform's ${PROMOTE_TAG} already reads ${version}`}; re-reading for up to ${lagWindow}s (REGISTRY_WINDOW_SECONDS) before deciding publish or tag-move. Nothing has moved; do not interrupt.`,

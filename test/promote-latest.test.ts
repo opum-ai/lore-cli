@@ -386,6 +386,8 @@ type WorldOptions = {
   lagProbes?: number;
   /** LCLI-748: every dist-tags read of the launcher serves this latest, whatever was written (a restore that never reads back). */
   staleLauncherLatest?: string;
+  /** LCLI-748: platform dist-tags reads past this many fail (E503): the staging read passes, a later read fails. */
+  failPlatformTagReadsAfter?: number;
   /** Runs once, when the LAST platform's latest move to V lands. */
   afterPlatforms?: (w: World) => void;
   /**
@@ -427,6 +429,7 @@ function world(options: WorldOptions = {}) {
   const calls: string[][] = [];
   let lagged = 0;
   let laggedProbes = 0;
+  let platformTagReads = 0;
   const writes: string[] = [];
   /**
    * EVERY npm call, read or write, must carry both registry pins (review F6); one that does not is
@@ -545,6 +548,12 @@ function world(options: WorldOptions = {}) {
         return { stdout: JSON.stringify([{ latest: questLatest, "release-candidate": V }]) };
       }
       if (command === "npm" && args[0] === "view" && args[2] === "dist-tags") {
+        if (
+          options.failPlatformTagReadsAfter !== undefined &&
+          args[1] !== LAUNCHER &&
+          ++platformTagReads > options.failPlatformTagReadsAfter
+        )
+          throw new Error("E503 registry unreachable");
         const t = tags[args[1] as string];
         if (!t) throw new Error("E404");
         if (args[1] === LAUNCHER && options.staleLauncherLatest)
@@ -3373,6 +3382,20 @@ describe("scripts/promote-latest.mjs: STEP 7 waits out registry read lag (LCLI-6
     expect(publishes(w)).toEqual([]);
     expect(w.writes).toContain(`dist-tag add ${LAUNCHER}@${V} latest`);
     for (const name of RELEASE_PACKAGES) expect(w.tags[name]?.latest).toBe(V);
+  });
+
+  test("a failed dist-tags read inside the gate refuses with nothing moved instead of publishing", async () => {
+    // The lagged-resume state (launcher published but not yet served, a platform at V) with the
+    // platforms' dist-tags reads failing: a fail-open read would take "no platform at X" and publish.
+    const { code, w, text } = await resumeAt(
+      { xPublished: launcherBytes(), lagProbes: 99, failPlatformTagReadsAfter: PLATFORM_PACKAGES.length },
+      "30",
+    );
+    expect(code).toBe(1);
+    expect(text).toContain("dist-tags read that decides whether it is already published failed");
+    expect(text).toContain("Nothing has moved");
+    expect(publishes(w)).toEqual([]);
+    expect(w.writes).toEqual([]);
   });
 
   test("a resume whose launcher is never served inside the window exits 1 with nothing moved", async () => {
