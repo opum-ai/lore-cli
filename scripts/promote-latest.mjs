@@ -1821,7 +1821,7 @@ export async function main(
             : Boolean(existing) && (await platformLatestAtX()));
       } catch (error) {
         err(
-          `Refusing to promote ${version}: ${LAUNCHER}@${version} reads absent and the ${PROMOTE_TAG} dist-tags read that decides whether it is already published failed (${reason(error)}). A publish over a version npm may have applied but not yet served fails and rolls back a correct release, so this run decides nothing on a failed read. Nothing has moved. Re-read npm view <name> dist-tags and re-run the same command.`,
+          `Refusing to promote ${version}: ${LAUNCHER}@${version} reads absent and the ${PROMOTE_TAG} dist-tags read that decides whether it is already published failed (${reason(error)}). Writing over a version npm may have applied but not yet served fails and rolls back a correct release, so this run decides nothing on a failed read. Nothing has moved. Re-read npm view <name> dist-tags and re-run the same command.`,
         );
         return 1;
       }
