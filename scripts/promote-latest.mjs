@@ -1895,6 +1895,9 @@ export async function main(
         err(`NOT restored: ${outcome.failed.join(", ")}. Re-run --rollback; it is idempotent.`);
         return 1;
       }
+      out(
+        `\nRe-reading ${PROMOTE_TAG} on all ${record.packages.length} packages for up to ${lagWindow}s (REGISTRY_WINDOW_SECONDS) to confirm the restore; do not interrupt.`,
+      );
       const check = await verifyTags({
         expected: Object.fromEntries(record.packages.map((entry) => [entry.name, entry.priorLatest])),
         readTags,
@@ -1944,11 +1947,14 @@ export async function main(
     for (const line of check.wrong) err(`  ${line}`);
     if (!check.ok) {
       err(
-        `The writes returned success but the registry does not serve ${PROMOTE_TAG} = ${record.version} everywhere after ${check.attempts} reads (REGISTRY_WINDOW_SECONDS ${lagWindow}). Nothing was rolled back. This run exited before the launcher integrity check, the GitHub Release and the README read-back. Re-read with npm view <name> dist-tags; once every ${PROMOTE_TAG} reads ${record.version}, re-run node scripts/promote-latest.mjs --record ${args.recordPath} --release-run ${args.releaseRun} --promote: the record makes it a resume, which re-reaches STEP 7 and the steps after it without republishing.`,
+        `The writes returned success but the registry does not serve ${PROMOTE_TAG} = ${record.version} everywhere after ${check.attempts} reads (REGISTRY_WINDOW_SECONDS ${lagWindow}). Nothing was rolled back. This run exited before the launcher integrity check, the GitHub Release and the README read-back. Re-read with npm view <name> dist-tags and npm view ${LAUNCHER}@${record.version} dist.integrity (expect ${final.integrity}); once every ${PROMOTE_TAG} reads ${record.version} and the integrity matches, re-run node scripts/promote-latest.mjs --record ${args.recordPath} --release-run ${args.releaseRun} --promote: the record makes it a resume, which re-reaches STEP 7 and the steps after it without republishing.`,
       );
       return 1;
     }
     // ...and npm serves X as the artifact's bytes.
+    out(
+      `\nSTEP 7: re-reading ${LAUNCHER}@${record.version}'s dist.integrity for up to ${lagWindow}s (REGISTRY_WINDOW_SECONDS), a second window after the ${PROMOTE_TAG} one; do not interrupt.`,
+    );
     const bytes = await verifyFinalLauncher({ version: record.version, final, probe, ...waitOptions });
     if (!bytes.ok) {
       for (const problem of bytes.problems) err(`  ${problem}`);

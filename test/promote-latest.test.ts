@@ -384,6 +384,8 @@ type WorldOptions = {
   lagReads?: number;
   /** LCLI-689: this many probeVersion reads of the launcher AFTER its publish answer not-found (npm read lag). */
   lagProbes?: number;
+  /** LCLI-748: every dist-tags read of the launcher serves this latest, whatever was written (a restore that never reads back). */
+  staleLauncherLatest?: string;
   /** Runs once, when the LAST platform's latest move to V lands. */
   afterPlatforms?: (w: World) => void;
   /**
@@ -545,6 +547,8 @@ function world(options: WorldOptions = {}) {
       if (command === "npm" && args[0] === "view" && args[2] === "dist-tags") {
         const t = tags[args[1] as string];
         if (!t) throw new Error("E404");
+        if (args[1] === LAUNCHER && options.staleLauncherLatest)
+          return { stdout: JSON.stringify([{ ...t, latest: options.staleLauncherLatest }]) };
         if (args[1] === LAUNCHER && state.xPublished && lagged < (options.lagReads ?? 0)) {
           lagged++;
           return { stdout: JSON.stringify([{ ...t, latest: PRIOR }]) };
@@ -3312,6 +3316,7 @@ describe("scripts/promote-latest.mjs: STEP 7 waits out registry read lag (LCLI-6
     expect(code).toBe(0);
     expect(text).not.toContain("the registry does not serve");
     expect(text).toContain("STEP 7: re-reading latest on all 7 packages for up to 30s");
+    expect(text).toContain("STEP 7: re-reading @opum-ai/lore@");
     expect(w.calls.some((c) => c[0] === "gh" && c[1] === "release" && c[2] === "create")).toBe(true);
     expect(w.calls.some((c) => c[0] === "bash" && c[1] === README_READBACK_SCRIPT)).toBe(true);
   });
@@ -3330,6 +3335,49 @@ describe("scripts/promote-latest.mjs: STEP 7 waits out registry read lag (LCLI-6
     expect(text).not.toContain("put every latest back");
     expect(w.writes.some((l) => l.includes(`@${PRIOR} latest`))).toBe(false);
     expect(w.calls.some((c) => c[0] === "gh" && c[1] === "release" && c[2] === "create")).toBe(false);
+  });
+
+  test("--rollback's restore check reads for the whole window, announces it, and an invalid window reads exactly as many times as the default", async () => {
+    const rollbackReads = async (window: string | undefined) => {
+      const h = harness();
+      try {
+        expect(await h.go(["--record", h.record, "--promote"], world())).toBe(0);
+        const w = world({
+          receipt: undefined,
+          pass1: undefined,
+          tags: Object.fromEntries(RELEASE_PACKAGES.map((n) => [n, { latest: V }])),
+          staleLauncherLatest: V,
+        });
+        const code = await main(["--rollback", h.record], {
+          run: w.run,
+          env: { NPM_TOKEN: "", REGISTRY_WINDOW_SECONDS: window },
+          out: (l) => h.out.push(l),
+          err: (l) => h.err.push(l),
+          readPackageVersion: async () => V,
+          verifyOptions: NAP,
+        });
+        return {
+          code,
+          reads: w.calls.filter((c) => c[0] === "npm" && c[1] === "view" && c[2] === LAUNCHER && c[3] === "dist-tags")
+            .length,
+          out: h.out.join("\n"),
+          err: h.err.join("\n"),
+        };
+      } finally {
+        h.cleanup();
+      }
+    };
+    const short = await rollbackReads("30");
+    const dflt = await rollbackReads(undefined);
+    const bad = await rollbackReads("1e12");
+    expect(short.code).toBe(1);
+    expect(dflt.code).toBe(1);
+    expect(short.out).toContain("for up to 30s (REGISTRY_WINDOW_SECONDS) to confirm the restore");
+    // 1800s at 15s apart is 121 reads, 30s is 3: the default window reads 118 more times.
+    expect(dflt.reads - short.reads).toBe(118);
+    // An invalid window falls back to the default, not to one read and not to an unbounded wait.
+    expect(bad.reads).toBe(dflt.reads);
+    expect(bad.err).toContain("the restore check uses the default 1800s");
   });
 
   test("--rollback with a window that is not a bounded whole number uses the 1800s default and says so", async () => {
