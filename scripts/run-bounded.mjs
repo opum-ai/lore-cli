@@ -62,6 +62,8 @@ function runOnce(command, timeoutSeconds) {
     let settled = false;
     let killTimer = null;
     const killGroup = (signal) => {
+      // A spawn that failed has no pid (and no group to signal); its `error` event settles it.
+      if (child.pid === undefined) return;
       try {
         process.kill(-child.pid, signal);
       } catch {
