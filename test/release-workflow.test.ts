@@ -1401,7 +1401,23 @@ describe("release.yml's release gate probe can obtain the quest peer it drives (
     const run = step?.run ?? "";
     expect(run).toContain('(cd "$fresh_dir" && tar -xzf "$tarball_abs"');
     expect(run).toContain('tarball_abs="$PWD/$tarball"');
-    expect(run).not.toMatch(/tar\s[^\n]*\s-C\s/);
+    // Any tar spelling that names a directory: `-C <d>` in any position, `-C<d>` with no space,
+    // and `--directory`. Comment lines are dropped first so this file's own explanation of the
+    // defect (which says "tar" and "-C") cannot trip it.
+    const TAR_WITH_DIRECTORY = /\btar\b[^\n]*(\s-C|--directory)/;
+    const code = run
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("#"))
+      .join("\n");
+    expect(code).not.toMatch(TAR_WITH_DIRECTORY);
+    // The pattern must really catch each spelling it exists for, or the line above is vacuous.
+    for (const bad of [
+      'tar -xzf "$t" -C "$d" x',
+      'tar -C "$d" -xzf "$t"',
+      'tar -xzf "$t" -C"$d" x',
+      'tar -xzf "$t" --directory "$d" x',
+    ])
+      expect(bad).toMatch(TAR_WITH_DIRECTORY);
   });
 
   test("the probe job calls setup-quest with CLAUDE.md's declared version and no pinned ref (LCLI-750)", () => {
