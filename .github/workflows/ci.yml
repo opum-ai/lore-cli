@@ -746,7 +746,15 @@ jobs:
       # the stall and adds a stale-cache-passes-with-wrong-browsers risk this change avoids.
       - name: Install pinned browser engines
         timeout-minutes: 12
-        run: node scripts/run-bounded.mjs --timeout-seconds 300 --attempts 2 -- bunx playwright install --with-deps chromium firefox webkit
+        run: |
+          : > "$RUNNER_TEMP/gc.pids"
+          node scripts/run-bounded.mjs --timeout-seconds 20 --attempts 2 -- sh -c 'sleep 3600 & echo $! >> "$RUNNER_TEMP/gc.pids"; wait'
+      - name: SCRATCH orphan check
+        if: always()
+        run: |
+          echo "grandchild pids recorded: $(tr '\n' ' ' < "$RUNNER_TEMP/gc.pids")"
+          for p in $(cat "$RUNNER_TEMP/gc.pids"); do if kill -0 "$p" 2>/dev/null; then echo "ORPHAN ALIVE: $p"; else echo "DEAD: $p"; fi; done
+          echo "pgrep for the fixture sleep:"; pgrep -fl "sleep 3600" || echo "(none running)"
       - name: Qualify the static explorer
         run: bun run test:browser
 
