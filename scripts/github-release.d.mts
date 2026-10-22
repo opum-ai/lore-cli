@@ -28,7 +28,14 @@ export declare function ensureGitHubRelease(options: {
   latest?: boolean;
   dryRun?: boolean;
   execFile?: ExecFile;
+  attempts?: number;
+  delayMs?: number;
+  sleep?: (ms: number) => Promise<void>;
 }): Promise<ReleaseOutcome>;
+
+export declare const RELEASE_ATTEMPTS: number;
+export declare const RELEASE_RETRY_DELAY_MS: number;
+export declare function isTransientReleaseFailure(detail: string): boolean;
 
 export declare function changelogAtRefArgs(sha: string): string[];
 

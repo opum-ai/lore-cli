@@ -198,11 +198,11 @@ const defaultExecFile = (file, args, options = {}) => execFileAsync(file, [...ar
  * is marked latest, because that is the state a finished release must leave behind. `dryRun` reads
  * and reports, and writes nothing. Returns {ok, action, detail}; every failure is returned, never
  * thrown, so a caller that has already moved npm `latest` can report it without a stack trace that
- * reads like the promotion failed.
+ * reads like the promotion failed. One attempt; ensureGitHubRelease below repeats it on transient failure.
  * @param {{ version: string, notes: string, title?: string, latest?: boolean, dryRun?: boolean, execFile?: ExecFile }} args
  * @returns {Promise<ReleaseOutcome>}
  */
-export async function ensureGitHubRelease({
+async function ensureGitHubReleaseOnce({
   version,
   notes,
   title = releaseTitle(version),
@@ -307,6 +307,39 @@ export async function ensureGitHubRelease({
   } finally {
     if (dir) await rm(dir, { recursive: true, force: true });
   }
+}
+
+/**
+ * A failure worth another attempt: the upstream answered 5xx or the network dropped, as opposed to
+ * a refusal (draft, differing notes, missing access) that a repeat cannot change (LCLI-747).
+ * @param {string} detail
+ */
+export const isTransientReleaseFailure = (detail) =>
+  /HTTP 5\d\d|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|timed? ?out|i\/o timeout/i.test(detail);
+
+export const RELEASE_ATTEMPTS = 3;
+export const RELEASE_RETRY_DELAY_MS = 5000;
+
+/**
+ * ensureGitHubReleaseOnce, repeated up to `attempts` times while it fails transiently (LCLI-747:
+ * an upstream HTTP 500 on 0.13.0 left the Release uncut). Each attempt starts with the read, so a
+ * create that reached GitHub before the error is found as an existing release and finished, not
+ * created twice. Refusals and non-transient failures return at once; nothing here touches npm.
+ * @param {Parameters<typeof ensureGitHubReleaseOnce>[0] & { attempts?: number, delayMs?: number, sleep?: (ms: number) => Promise<void> }} args
+ * @returns {Promise<ReleaseOutcome>}
+ */
+export async function ensureGitHubRelease({
+  attempts = RELEASE_ATTEMPTS,
+  delayMs = RELEASE_RETRY_DELAY_MS,
+  sleep = (/** @type {number} */ ms) => new Promise((done) => setTimeout(done, ms)),
+  ...args
+}) {
+  let outcome = await ensureGitHubReleaseOnce(args);
+  for (let attempt = 1; attempt < attempts && !outcome.ok && isTransientReleaseFailure(outcome.detail); attempt++) {
+    await sleep(delayMs);
+    outcome = await ensureGitHubReleaseOnce(args);
+  }
+  return outcome;
 }
 
 /** The one argv a commit's CHANGELOG.md is read with. Exported so a test can pin it (LCLI-639). */
