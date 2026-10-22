@@ -746,7 +746,7 @@ jobs:
       # the stall and adds a stale-cache-passes-with-wrong-browsers risk this change avoids.
       - name: Install pinned browser engines
         timeout-minutes: 12
-        run: node scripts/run-bounded.mjs --timeout-seconds 300 --attempts 2 -- bunx playwright install --with-deps chromium firefox webkit
+        run: node scripts/run-bounded.mjs --timeout-seconds 20 --attempts 2 -- sleep 3600
       - name: Qualify the static explorer
         run: bun run test:browser
 
