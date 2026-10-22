@@ -750,14 +750,14 @@ jobs:
       #
       # No actions/cache on PLAYWRIGHT_BROWSERS_PATH: the engines are ~17 s of the install, so a
       # cache would save little and adds a stale-cache-passes-with-wrong-browsers risk.
-      - name: Install browser system deps
-        timeout-minutes: 20
-        run: |
-          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "60";\nAcquire::https::Timeout "60";\n' | sudo tee /etc/apt/apt.conf.d/80-retries
-          bunx playwright install-deps chromium firefox webkit
       - name: Install pinned browser engines
         timeout-minutes: 6
-        run: node scripts/run-bounded.mjs --timeout-seconds 120 --attempts 2 -- bunx playwright install chromium firefox webkit
+        run: node scripts/run-bounded.mjs --timeout-seconds 20 --attempts 2 -- sleep 3600
+      - name: Orphan check
+        if: always()
+        run: |
+          echo 'sleep processes after bounded step:'
+          pgrep -a -x sleep || echo 'none running'
       - name: Qualify the static explorer
         run: bun run test:browser
 
