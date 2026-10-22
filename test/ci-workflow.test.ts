@@ -117,17 +117,34 @@ describe("ci.yml exact-host LadybugDB qualification", () => {
   test("the explorer qualification installs and runs all pinned Playwright engines from a repo-local cache", () => {
     const job = loadWorkflow().jobs["explorer-browser-qualification"];
     expect(job?.env?.PLAYWRIGHT_BROWSERS_PATH).toBe(".lore/cache/ms-playwright");
-    // LCLI-753: the install is wrapped so a stall fails red in minutes instead of hanging toward
-    // the 40-minute job timeout; the command it runs is still exactly the pinned one.
+    // LCLI-753: the install is two steps. System deps run unwrapped (apt is root-owned, so a
+    // runner-user kill would orphan it and hold the dpkg lock), with apt-native retries and a
+    // native step timeout; the engines run bounded, one retry, red on failure.
+    const deps = job?.steps?.find((step) => step.name === "Install browser system deps");
+    expect(deps?.run).toContain('Acquire::Retries "3"');
+    expect(deps?.run).toContain('Acquire::http::Timeout "60"');
+    expect(deps?.run).toContain('Acquire::https::Timeout "60"');
+    expect(deps?.run).toContain("sudo tee /etc/apt/apt.conf.d/80-retries");
+    expect(deps?.run).toContain("bunx playwright install-deps chromium firefox webkit");
+    expect(deps?.run).not.toContain("run-bounded");
+    expect(deps?.run).not.toContain("kill");
+    expect(deps?.["timeout-minutes"]).toBe(20);
     const install = job?.steps?.find((step) => step.name === "Install pinned browser engines");
     expect(install?.run).toBe(
-      "node scripts/run-bounded.mjs --timeout-seconds 300 --attempts 2 -- bunx playwright install --with-deps chromium firefox webkit",
+      "node scripts/run-bounded.mjs --timeout-seconds 120 --attempts 2 -- bunx playwright install chromium firefox webkit",
     );
-    expect(install?.["timeout-minutes"]).toBe(12);
-    // A bound that is swallowed is not a bound: no `continue-on-error` on the step, and no
-    // `|| true` anywhere in what it runs.
-    expect(install?.["continue-on-error"]).toBeUndefined();
-    expect(install?.run).not.toContain("|| true");
+    expect(install?.run).not.toContain("--with-deps");
+    expect(install?.["timeout-minutes"]).toBe(6);
+    const names = job?.steps?.map((step) => step.name);
+    expect(names?.indexOf("Install browser system deps")).toBeLessThan(
+      names?.indexOf("Install pinned browser engines") ?? -1,
+    );
+    // A bound that is swallowed is not a bound: no `continue-on-error` on either step, and no
+    // `|| true` anywhere in what they run.
+    for (const step of [deps, install]) {
+      expect(step?.["continue-on-error"]).toBeUndefined();
+      expect(step?.run).not.toContain("|| true");
+    }
     expect(job?.steps?.find((step) => step.name === "Qualify the static explorer")?.run).toBe("bun run test:browser");
   });
 

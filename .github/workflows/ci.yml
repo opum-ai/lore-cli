@@ -726,27 +726,38 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/setup-bun
-      # LCLI-753. This step stalled for 20-38 minutes on four runs on 2026-10-22 (#646, #647,
-      # #648 and the push to main at 6ff69788; attempt 2 of the push run stalled too) and nothing
-      # ended it but a human cancel, because the only bound was the 40-minute JOB timeout above.
+      # LCLI-753. The old single `playwright install --with-deps` step stalled 20-38 minutes on
+      # five runs on 2026-10-22 (#646, #647, #648, the push to main at 6ff69788, and #653) and
+      # nothing ended it but a human cancel, because the only bound was the 40-minute JOB timeout
+      # above. It is now two steps, so a stall names its half and each half gets the bound that
+      # can actually work.
       #
-      # THE NUMBERS, derived from 36 passing runs of this step read from the Actions API on
-      # 2026-10-22: 42-89 s, median ~54 s. Per attempt: 300 s, 3.4x the slowest healthy install.
-      # Two attempts, so one stalled mirror or CDN connection is retried once instead of
-      # failing the run. Step: 12 minutes, which is both attempts at their cap (10 min) plus the
-      # 10 s kill grace per attempt and headroom, and a backstop if run-bounded.mjs itself hangs.
-      # A stall now costs at most ~10 minutes and then FAILS RED; it is never swallowed (no
-      # continue-on-error, no `|| true`). The old comment's cold-install-under-slow-mirrors
-      # case (~15 min, run 32296206324) is the one this tightens; if it recurs the right fix is
-      # to raise these numbers from a new measurement, not to remove the bound.
+      # 1. System deps. apt runs as ROOT through sudo, so the runner user cannot signal it: a
+      #    wrapper that kills on timeout orphans apt-get, which keeps the dpkg lock, and the retry
+      #    fails in 2 s on that lock (run 39866700524, observed on the first draft of this fix).
+      #    So no wrapper and no retry here. apt retries itself (Acquire::Retries) and gives up on
+      #    a silent connection (Timeout 60 s), and the native step timeout is the backstop.
+      #    20 minutes: ~17x the slowest healthy apt half measured below, and still well under
+      #    the 40-minute job timeout.
+      # 2. Engines. Every process is runner-owned, so scripts/run-bounded.mjs's process-group
+      #    kill works and one retry is meaningful. Per-attempt cap 120 s is derived from the
+      #    download-only time, read as first engine "Downloading" line to the next step's start
+      #    in the step logs of 11 passing runs on 2026-10-22: 13-25 s, median 17 s (the apt half
+      #    over the same runs: 25-71 s). 120 s is 4.8x the slowest. Two attempts; step timeout 6
+      #    minutes = both caps (4 min) plus the 10 s kill grace each and headroom, which also
+      #    backstops run-bounded.mjs itself hanging. A stall FAILS RED; it is never swallowed
+      #    (no continue-on-error, no `|| true`).
       #
-      # No actions/cache on PLAYWRIGHT_BROWSERS_PATH: the engine download is the minority of
-      # the time (`--with-deps` apt installs ~30 packages every run regardless), and a cache
-      # keyed to the Playwright version would still need the apt half, so it would not remove
-      # the stall and adds a stale-cache-passes-with-wrong-browsers risk this change avoids.
+      # No actions/cache on PLAYWRIGHT_BROWSERS_PATH: the engines are ~17 s of the install, so a
+      # cache would save little and adds a stale-cache-passes-with-wrong-browsers risk.
+      - name: Install browser system deps
+        timeout-minutes: 20
+        run: |
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "60";\nAcquire::https::Timeout "60";\n' | sudo tee /etc/apt/apt.conf.d/80-retries
+          bunx playwright install-deps chromium firefox webkit
       - name: Install pinned browser engines
-        timeout-minutes: 12
-        run: node scripts/run-bounded.mjs --timeout-seconds 300 --attempts 2 -- bunx playwright install --with-deps chromium firefox webkit
+        timeout-minutes: 6
+        run: node scripts/run-bounded.mjs --timeout-seconds 120 --attempts 2 -- bunx playwright install chromium firefox webkit
       - name: Qualify the static explorer
         run: bun run test:browser
 
