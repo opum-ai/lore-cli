@@ -328,14 +328,15 @@ describe("ci.yml docs gate (LCLI-504)", () => {
     // dropped this step would fail for a reason that has nothing to do with the docs.
     //
     // DEC-55 moved the resolution into .github/actions/setup-quest, so this asserts the
-    // CALL (with the derived version and the pinned source ref) and the action file
+    // CALL (with the derived version and no source ref, LCLI-750) and the action file
     // itself carries the npm-then-source behaviour, asserted below.
     const job = loadWorkflow().jobs["docs-gate"];
     const steps = job?.steps ?? [];
     const setup = steps.find((step) => step.uses === "./.github/actions/setup-quest");
     expect(setup).toBeDefined();
     expect(setup?.with?.version).toBe("${{ steps.quest.outputs.version }}");
-    expect(setup?.with?.["source-ref"]).toBe("${{ env.QUEST_SOURCE_REF }}");
+    // LCLI-750: no pinned source ref is passed any more; the published binary is what runs.
+    expect(setup?.with?.["source-ref"]).toBeUndefined();
     // Derived from CLAUDE.md's managed block rather than pinned a second time here —
     // the same rule the tracker job states, and the reason the two must stay in step.
     expect(steps.some((step) => (step.run ?? "").includes("Quest CLI \\([0-9][0-9.]*\\)"))).toBe(true);
@@ -385,20 +386,23 @@ describe("ci.yml docs gate (LCLI-504)", () => {
   }
 
   function loadSetupQuest(): {
-    inputs: Record<string, { required?: boolean } | undefined>;
+    inputs: Record<string, { required?: boolean; default?: string } | undefined>;
     runs: { steps: ActionStep[] };
   } {
     return yaml.load(readFileSync(SETUP_QUEST_PATH, "utf8"), { schema: yaml.JSON_SCHEMA }) as {
-      inputs: Record<string, { required?: boolean } | undefined>;
+      inputs: Record<string, { required?: boolean; default?: string } | undefined>;
       runs: { steps: ActionStep[] };
     };
   }
 
-  test("setup-quest takes both inputs as required, and reaches the build only from the failed install", () => {
+  test("setup-quest requires only the version, keeps source-ref as an optional escape hatch, and reaches the build only from the failed install", () => {
     const action = loadSetupQuest();
     expect(Object.keys(action.inputs).sort()).toEqual(["source-ref", "version"]);
     expect(action.inputs.version?.required).toBe(true);
-    expect(action.inputs["source-ref"]?.required).toBe(true);
+    // LCLI-750: the input stays so a future interim crossing can opt in, but it is no longer
+    // required and defaults to empty, so a caller that passes nothing gets the published binary.
+    expect(action.inputs["source-ref"]?.required).toBe(false);
+    expect(action.inputs["source-ref"]?.default).toBe("");
 
     const steps = action.runs.steps;
     expect(steps).toHaveLength(4);
@@ -417,18 +421,17 @@ describe("ci.yml docs gate (LCLI-504)", () => {
     expect(npm?.run).not.toContain("exit 1");
   });
 
-  test("exactly the three build-and-assert steps are gated on the fallback, and none can be neutralised", () => {
+  test("exactly the two build steps are gated on the fallback, the assertion is unconditional, and none can be neutralised", () => {
     const steps = loadSetupQuest().runs.steps;
-    const gated = steps.slice(1);
-    expect(gated.map((step) => step.if)).toEqual([
-      SETUP_QUEST_FALLBACK_IF,
-      SETUP_QUEST_FALLBACK_IF,
-      SETUP_QUEST_FALLBACK_IF,
-    ]);
-    // ...and in that order: the toolchain, the clone-and-build, the assertion.
+    const gated = steps.slice(1, 3);
+    expect(gated.map((step) => step.if)).toEqual([SETUP_QUEST_FALLBACK_IF, SETUP_QUEST_FALLBACK_IF]);
+    // ...in that order: the toolchain, then the clone-and-build.
     expect(gated[0]?.uses).toBe("oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6");
     expect(gated[1]?.uses).toBeUndefined();
-    expect(gated[2]?.uses).toBeUndefined();
+    // LCLI-750: the version assertion now runs on EVERY path. It used to be gated on the
+    // source fallback, which would leave the npm path (the only one left in steady state)
+    // unchecked; an `if:` here reintroduces that.
+    expect(steps[3]?.if).toBeUndefined();
     // A `continue-on-error` anywhere in this action would let a broken fallback pass
     // while the gates ran against no quest at all.
     expect(steps.every((step) => step["continue-on-error"] === undefined)).toBe(true);
@@ -456,7 +459,14 @@ describe("ci.yml docs gate (LCLI-504)", () => {
     expect(run).toContain('if [ "$RUNNER_OS" = "Windows" ]');
   });
 
-  test("the assertion step refuses a build that does not report the declared version, and can fail the job", () => {
+  test("the build step refuses to run with no source-ref instead of failing obscurely", () => {
+    const run = loadSetupQuest().runs.steps[2]?.run ?? "";
+    expect(run).toMatch(/if \[ -z "\$QUEST_SOURCE_REF" \]; then[\s\S]*?exit 1[\s\S]*?fi/);
+    // ...and the check precedes the clone, so an empty ref never reaches git.
+    expect(run.indexOf('[ -z "$QUEST_SOURCE_REF" ]')).toBeLessThan(run.indexOf("git clone"));
+  });
+
+  test("the assertion step refuses an install that does not report the declared version, and can fail the job", () => {
     const run = loadSetupQuest().runs.steps[3]?.run ?? "";
     expect(run).toContain('reported="$(quest --version)"');
     // Shape again, not vocabulary: the exit must live INSIDE the mismatch branch.
@@ -468,12 +478,16 @@ describe("ci.yml docs gate (LCLI-504)", () => {
     expect(run).toContain("command -v quest");
   });
 
-  test("DEC-55's pinned quest-cli ref is a full commit SHA, not a branch", () => {
-    // A branch here would make the build move under the workflow — the peer would be
-    // whatever that branch happened to hold on the day, which is exactly the float the
-    // action's assertion exists to catch.
-    const ref = loadWorkflow().env?.QUEST_SOURCE_REF;
-    expect(ref).toMatch(/^[0-9a-f]{40}$/);
+  test("no workflow pins a quest-cli source ref any more (LCLI-750)", () => {
+    // The pin existed only while the paired quest version was not on npm. A stale pin
+    // is invisible until a bump, so absence is pinned in BOTH files that carried it, and
+    // no call site may pass a source-ref at all. Reading the text (not the parsed `env`)
+    // also catches a pin reintroduced under a different key.
+    for (const name of ["ci.yml", "release.yml"]) {
+      const text = readFileSync(join(WORKFLOWS_DIR, name), "utf8");
+      expect(text).not.toContain("QUEST_SOURCE_REF");
+      expect(text).not.toMatch(/^\s*source-ref:/m);
+    }
   });
 
   test("the docs gate never depends on another job, so a required context cannot go absent", () => {

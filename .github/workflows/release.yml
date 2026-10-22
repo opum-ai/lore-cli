@@ -56,29 +56,6 @@ on:
 permissions:
   contents: read
 
-env:
-  # DEC-55 (operator ruling, 2026-09-29). The opum-ai/quest-cli commit that carries the Quest
-  # version CLAUDE.md's managed block declares, read by .github/actions/setup-quest ONLY when
-  # that version does not install from npm — the window between a lore bump landing and quest
-  # publishing, in which the pair lock (LCLI-650) otherwise leaves `lore check` unable to run.
-  #
-  # WHY THIS FILE CARRIES ITS OWN COPY, which looks like the drift ci.yml warns about. A
-  # workflow_dispatch run executes THIS file from the dispatch ref's tree, so it cannot read
-  # ci.yml's `env:` — the two values are necessarily two sites. What must not drift is the
-  # VALUE, so `test/release-workflow.test.ts` asserts the two files name the same commit rather
-  # than leaving "keep these in step" as a comment for the next person to trust.
-  #
-  # MOVED FOR THE 0.14.1 PAIR RELEASE (2026-10-20, LCLI-714, DEC-204 (b)). It names
-  # quest-cli's PROMOTED MAIN 053d8595f2caa34b04abc451d711e62fff5314b4, whose package.json
-  # reads 0.14.1 (verified by ref: `refs/heads/main` resolves there and its only parent is
-  # the previous 0.14.0 main). It was INTERIM at quest-cli#629's head 04db1352d while that
-  # bump was still open; this is the same crossing 0.14.0 used. setup-quest asserts the
-  # built quest reports the version CLAUDE.md declares, so a ref that does not carry 0.14.1
-  # fails loudly as a ref problem instead of quietly running the probe against the wrong
-  # peer. quest 0.14.1 is not on npm yet, so the source path — or, once quest stages it, the
-  # release-candidate path — is what runs until it is published.
-  QUEST_SOURCE_REF: 053d8595f2caa34b04abc451d711e62fff5314b4
-
 jobs:
   setup:
     name: resolve the release platform matrix
@@ -1016,7 +993,6 @@ jobs:
       - uses: ./.github/actions/setup-quest
         with:
           version: ${{ steps.quest.outputs.version }}
-          source-ref: ${{ env.QUEST_SOURCE_REF }}
       - name: Probe the qualified fresh binary and the previous release binary
         shell: bash
         env:
