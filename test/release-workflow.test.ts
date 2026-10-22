@@ -1391,6 +1391,19 @@ describe("release.yml's release gate probe can obtain the quest peer it drives (
     return parseDoc(readFileSync(path, "utf8"));
   }
 
+  test("the probe extracts the fresh binary from inside its directory, never `tar -C <runner temp>` (LCLI-751)", () => {
+    // GNU tar on Windows reads `D:\\a\\_temp` as host:path and exits 2 before the probe runs
+    // (run 39826035054, and again on dev in 39831687843). A `-C "$fresh_dir"` here puts that
+    // back, and it is invisible on the Linux and macOS legs where the same line works.
+    const step = (loadDoc(WORKFLOW_PATH).jobs["release-gate-probe"]?.steps ?? []).find((s) =>
+      (s.run ?? "").includes("release-gate-probe.mjs"),
+    );
+    const run = step?.run ?? "";
+    expect(run).toContain('(cd "$fresh_dir" && tar -xzf "$tarball_abs"');
+    expect(run).toContain('tarball_abs="$PWD/$tarball"');
+    expect(run).not.toMatch(/tar\s[^\n]*\s-C\s/);
+  });
+
   test("the probe job calls setup-quest with CLAUDE.md's declared version and no pinned ref (LCLI-750)", () => {
     const job = loadDoc(WORKFLOW_PATH).jobs["release-gate-probe"];
     const steps = job?.steps ?? [];

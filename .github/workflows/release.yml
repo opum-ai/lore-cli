@@ -1011,7 +1011,13 @@ jobs:
           fresh_dir="$RUNNER_TEMP/lore-release-gate-probe-fresh-${PLATFORM_NAME}"
           rm -rf "$fresh_dir"
           mkdir -p "$fresh_dir"
-          tar -xzf "$tarball" -C "$fresh_dir" "package/bin/${BINARY_NAME}"
+          # LCLI-751: NEVER hand tar a `-C` directory built from $RUNNER_TEMP. On Windows that
+          # variable is `D:\a\_temp`, and GNU tar reads `D:\...` as `host:path` ("tar:
+          # D\:\a\\_temp/...: Cannot open", exit 2), so every win32 leg died here before the probe
+          # ran. Extract from inside the directory instead, with the tarball named by an absolute
+          # path taken from bash's own $PWD (POSIX-style on every runner).
+          tarball_abs="$PWD/$tarball"
+          (cd "$fresh_dir" && tar -xzf "$tarball_abs" "package/bin/${BINARY_NAME}")
           fresh_binary="$fresh_dir/package/bin/${BINARY_NAME}"
           if [ ! -f "$fresh_binary" ]; then
             echo "::error::the qualified tarball $tarball does not carry package/bin/${BINARY_NAME}"
