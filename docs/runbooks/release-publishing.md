@@ -233,6 +233,28 @@ LCLI-196 and LCLI-257):
   npm performs on its own servers, which no edit to this repo's workflow
   file can influence.
 
+**Deployment branch policy IN PLACE (operator ruling DEC-234, applied
+2026-10-22 by opum-doc; LCLI-752).** The `release` Environment is now locked to
+`main` and `v*` tags. Read back for this entry from
+`gh api repos/opum-ai/lore-cli/environments/release/deployment-branch-policies`
+(2026-10-22): `custom_branch_policies: true`, `protected_branches: false`, and
+exactly two policies, branch `main` and tag `v*`. The required reviewer
+(`jeremy-newhouse`), `prevent_self_review: false` and admin bypass
+(`can_admins_bypass: true`) are unchanged. What it changes: a `publish: true`
+dispatch from any other ref is refused by GitHub before it reaches the
+reviewer. `publish: false` rehearsals from branches are unaffected, because
+only the `publish` job declares `environment: release`. It is a layer on top of
+the required reviewer, not a replacement for it: the paragraph above still
+holds that `main` itself has no branch protection, so a write-access actor can
+still push a forged `release.yml` to `main`; that is what the required
+reviewer pause is for. Re-read the policy before relying on it, because it is
+configured outside this repository.
+
+**The npm Trusted Publisher environment-claim residual risk is unchanged by
+this policy and stays the operator's.** Setting each package's Trusted
+Publisher "Environment name" to `release` is the second checklist item above;
+this branch policy does not stand in for it, and nothing here checks it.
+
 **Residual risk:** the `environment: release` declaration shipped by
 LCLI-268 is a necessary hook, not a complete mitigation on its own. Until
 **both** checklist items above are done, the exact attack this section
