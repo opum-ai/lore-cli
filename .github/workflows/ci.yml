@@ -738,12 +738,19 @@ jobs:
       #    So no wrapper and no retry here. apt retries itself (Acquire::Retries) and gives up on
       #    a silent connection (Timeout 60 s), and the native step timeout is the backstop.
       #    20 minutes: ~17x the slowest healthy apt half measured below, and still well under
-      #    the 40-minute job timeout.
+      #    the 40-minute job timeout. Where the five stalls above sat, read from their attempt-1
+      #    logs: ALL FIVE inside this apt half (last `Get:` line at index 62-177 of the package
+      #    list, none had printed an engine "Downloading" line), and apt was still printing
+      #    `Get:` lines within seconds of the cancel. So the stall is a slow-but-live mirror, not a
+      #    dead connection: Retries/Timeout will not rescue it, and a 20-minute run that is cut
+      #    fails red at the step instead of hanging toward the job timeout.
       # 2. Engines. Every process is runner-owned, so scripts/run-bounded.mjs's process-group
       #    kill works and one retry is meaningful. Per-attempt cap 120 s is derived from the
       #    download-only time, read as first engine "Downloading" line to the next step's start
-      #    in the step logs of 11 passing runs on 2026-10-22: 13-25 s, median 17 s (the apt half
-      #    over the same runs: 25-71 s). 120 s is 4.8x the slowest. Two attempts; step timeout 6
+      #    in the step logs of 11 passing runs read 2026-10-22 (runs created 2026-10-21 to
+      #    2026-10-22; three are the passing attempt 2 of a re-run stalled run): 13-25 s, median
+      #    17 s (the apt half over the same runs: 25-71 s). 120 s is 4.8x the slowest. No
+      #    stall was ever observed in this half. Two attempts; step timeout 6
       #    minutes = both caps (4 min) plus the 10 s kill grace each and headroom, which also
       #    backstops run-bounded.mjs itself hanging. A stall FAILS RED; it is never swallowed
       #    (no continue-on-error, no `|| true`).
