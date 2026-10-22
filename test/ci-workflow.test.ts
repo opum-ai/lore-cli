@@ -20,6 +20,8 @@ interface WorkflowJob {
     /** A step that calls a composite action, e.g. `./.github/actions/setup-quest` (DEC-55). */
     uses?: string;
     with?: Record<string, unknown>;
+    "timeout-minutes"?: number;
+    "continue-on-error"?: boolean;
   }>;
   strategy?: {
     matrix?: {
@@ -115,9 +117,17 @@ describe("ci.yml exact-host LadybugDB qualification", () => {
   test("the explorer qualification installs and runs all pinned Playwright engines from a repo-local cache", () => {
     const job = loadWorkflow().jobs["explorer-browser-qualification"];
     expect(job?.env?.PLAYWRIGHT_BROWSERS_PATH).toBe(".lore/cache/ms-playwright");
-    expect(job?.steps?.find((step) => step.name === "Install pinned browser engines")?.run).toBe(
-      "bunx playwright install --with-deps chromium firefox webkit",
+    // LCLI-753: the install is wrapped so a stall fails red in minutes instead of hanging toward
+    // the 40-minute job timeout; the command it runs is still exactly the pinned one.
+    const install = job?.steps?.find((step) => step.name === "Install pinned browser engines");
+    expect(install?.run).toBe(
+      "node scripts/run-bounded.mjs --timeout-seconds 300 --attempts 2 -- bunx playwright install --with-deps chromium firefox webkit",
     );
+    expect(install?.["timeout-minutes"]).toBe(12);
+    // A bound that is swallowed is not a bound: no `continue-on-error` on the step, and no
+    // `|| true` anywhere in what it runs.
+    expect(install?.["continue-on-error"]).toBeUndefined();
+    expect(install?.run).not.toContain("|| true");
     expect(job?.steps?.find((step) => step.name === "Qualify the static explorer")?.run).toBe("bun run test:browser");
   });
 

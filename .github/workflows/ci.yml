@@ -726,8 +726,27 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/setup-bun
+      # LCLI-753. This step stalled for 20-38 minutes on four runs on 2026-10-22 (#646, #647,
+      # #648 and the push to main at 6ff69788; attempt 2 of the push run stalled too) and nothing
+      # ended it but a human cancel, because the only bound was the 40-minute JOB timeout above.
+      #
+      # THE NUMBERS, derived from 36 passing runs of this step read from the Actions API on
+      # 2026-10-22: 42-89 s, median ~54 s. Per attempt: 300 s, 3.4x the slowest healthy install.
+      # Two attempts, so one stalled mirror or CDN connection is retried once instead of
+      # failing the run. Step: 12 minutes, which is both attempts at their cap (10 min) plus the
+      # 10 s kill grace per attempt and headroom, and a backstop if run-bounded.mjs itself hangs.
+      # A stall now costs at most ~10 minutes and then FAILS RED; it is never swallowed (no
+      # continue-on-error, no `|| true`). The old comment's cold-install-under-slow-mirrors
+      # case (~15 min, run 32296206324) is the one this tightens; if it recurs the right fix is
+      # to raise these numbers from a new measurement, not to remove the bound.
+      #
+      # No actions/cache on PLAYWRIGHT_BROWSERS_PATH: the engine download is the minority of
+      # the time (`--with-deps` apt installs ~30 packages every run regardless), and a cache
+      # keyed to the Playwright version would still need the apt half, so it would not remove
+      # the stall and adds a stale-cache-passes-with-wrong-browsers risk this change avoids.
       - name: Install pinned browser engines
-        run: bunx playwright install --with-deps chromium firefox webkit
+        timeout-minutes: 12
+        run: node scripts/run-bounded.mjs --timeout-seconds 300 --attempts 2 -- bunx playwright install --with-deps chromium firefox webkit
       - name: Qualify the static explorer
         run: bun run test:browser
 
