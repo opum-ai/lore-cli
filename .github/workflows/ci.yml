@@ -104,57 +104,6 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  # DEC-55 (operator ruling, 2026-09-29): the opum-ai/quest-cli commit that
-  # carries the Quest version CLAUDE.md's managed block declares. Read by
-  # .github/actions/setup-quest ONLY when that version does not install from
-  # npm — the window between lore's bump landing and quest's publish, in which
-  # lore's pair lock (LCLI-650) otherwise leaves the docs gate and compile smoke
-  # unable to run at all.
-  #
-  # Move this ref with the declaration in CLAUDE.md, never independently. The
-  # action asserts the built quest reports the declared version before any gate
-  # uses it, so a ref that has drifted from the declaration fails loudly as a
-  # ref problem rather than quietly testing the wrong peer.
-  #
-  # The ref is a commit, and a VERIFIED one — verify any replacement the same
-  # way, because a 40-character value that resolves nowhere answers identically
-  # from every query. Measured here: the ref this line first carried
-  # (b6e1da5168a3d9b1d57eb0d3d0e6f7f6c0afebf2) had its first eight characters
-  # right and the remaining thirty-two invented — it was a composed id, not a
-  # squash-merge artifact as an earlier revision of this comment claimed;
-  # GitHub retains a pull request's head ref, so even a deleted head branch's
-  # tip still resolves (both checked). ec79b543 was quest-cli's dev tip, which
-  # carried 0.12.0 in package.json, src/application/version.ts and
-  # src/contract/tracker/index.ts.
-  #
-  # MOVED FOR THE 0.13.0 PAIR RELEASE (DEC-169 step 1, opum-doc, 2026-10-07) AND
-  # RETURNED BY ITS STEP 5. During that release's window quest 0.13.0 was not on
-  # npm and quest-cli's main did not read 0.13.0 until its own bump
-  # (opum-ai/quest-cli#486) merged, so this ref named that branch's head commit
-  # (e49b62ce), which carried 0.13.0 — the only way lore's docs gate and compile
-  # smoke could build the peer the pair lock required. With 0.13.0 published and
-  # quest-cli's main promoted, this named quest-cli's dev tip again, carrying
-  # 0.13.0 in package.json.
-  #
-  # MOVED FOR THE 0.14.0 PAIR RELEASE (2026-10-19): it named quest-cli's promoted
-  # main f62ae28f6f25209e1c598e071cc765f05b118401, which carried 0.14.0, because
-  # quest 0.14.0 was not yet on npm and the pair lock requires the declared peer.
-  # 0.14.0 was tagged and never published (LCLI-714), so that window never closed
-  # on its own: quest 0.14.0 is absent from npm permanently, and this ref is what
-  # kept the three quest-consuming jobs building the peer from source.
-  #
-  # MOVED FOR THE 0.14.1 PAIR RELEASE (2026-10-20, LCLI-714). It names quest-cli's
-  # PROMOTED MAIN 053d8595f2caa34b04abc451d711e62fff5314b4, whose package.json reads
-  # 0.14.1 (verified by ref: `refs/heads/main` resolves there and its only parent
-  # is the previous 0.14.0 main f62ae28f). It was INTERIM at quest-cli#629's head
-  # 04db1352d while the bump was still open — a PR head is enough for the action,
-  # because it clones the public repository anonymously and checks out the commit —
-  # and 0.14.0 crossed the same way (92b09d28 -> 848c304f -> b39314ce -> f62ae28f).
-  # quest 0.14.1 is not on npm yet, so the source path is what runs until it is
-  # published; this is the value that went to review.
-  QUEST_SOURCE_REF: 053d8595f2caa34b04abc451d711e62fff5314b4
-
 jobs:
   check:
     # OS list is computed inline by event: pull requests verify on ubuntu + windows
@@ -427,7 +376,6 @@ jobs:
       - uses: ./.github/actions/setup-quest
         with:
           version: ${{ steps.quest.outputs.version }}
-          source-ref: ${{ env.QUEST_SOURCE_REF }}
 
       # Catches a duplicated task identity — the same id present in both
       # .quest/tasks/ and .quest/completed/ — which exits conflict/5 and makes
@@ -532,7 +480,6 @@ jobs:
       - uses: ./.github/actions/setup-quest
         with:
           version: ${{ steps.quest.outputs.version }}
-          source-ref: ${{ env.QUEST_SOURCE_REF }}
 
       # Runs lore FROM SOURCE, not the published package. In this repository that is the
       # stronger assertion of the two: a PR that breaks `lore check` fails on its own
@@ -756,7 +703,6 @@ jobs:
       - uses: ./.github/actions/setup-quest
         with:
           version: ${{ steps.quest.outputs.version }}
-          source-ref: ${{ env.QUEST_SOURCE_REF }}
       - name: README quickstart runs verbatim and its examples match real output
         run: scripts/readme-quickstart.sh dist/lore
 

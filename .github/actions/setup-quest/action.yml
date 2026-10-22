@@ -4,18 +4,26 @@ description: >
   jobs did before when the declared version is on npm — an exact
   `npm install -g "@opum-ai/quest@<version>"` — then, when it is not, the
   launcher staged under npm's `release-candidate` tag IF that tag carries the
-  declared version's base (X-rc.N for a declared X), and otherwise a build of
-  opum-ai/quest-cli at a pinned ref.
+  declared version's base (X-rc.N for a declared X), and otherwise — only when a
+  caller passes `source-ref` — a build of opum-ai/quest-cli at that ref. Whatever
+  path installed it, the resulting `quest` is asserted to report the declared
+  version.
 inputs:
   version:
     description: The Quest version CLAUDE.md's managed block declares.
     required: true
   source-ref:
     description: >
-      The opum-ai/quest-cli ref to build when `version` is not on npm. Pin it to
-      the commit that carries that version; the assertion step fails loudly if
-      the ref and the declared version disagree.
-    required: true
+      OPTIONAL escape hatch (LCLI-750). The opum-ai/quest-cli ref to build when
+      `version` is not on npm and no staged release candidate carries it. Leave it
+      unset in steady state: the published binary is what users get, and nothing
+      then needs hand-moving on a pair bump. A caller crossing an interim window
+      passes a full commit SHA that carries the declared version; the assertion step
+      fails loudly if the ref and the declared version disagree. With it unset and
+      the version unobtainable from npm, the build step fails the job.
+    required: false
+    default: ""
+
 runs:
   using: composite
   steps:
@@ -94,7 +102,7 @@ runs:
             fi
           fi
           echo "method=source" >> "$GITHUB_OUTPUT"
-          echo "::notice::quest ${{ inputs.version }} did not install from npm and no staged release-candidate carries that base; building opum-ai/quest-cli at ${{ inputs.source-ref }}"
+          echo "::notice::quest ${{ inputs.version }} did not install from npm and no staged release-candidate carries that base; source-ref is '${{ inputs.source-ref }}' (empty means no source build is possible and the build step will fail the job)"
         fi
     - if: steps.npm.outputs.method == 'source'
       uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -106,6 +114,13 @@ runs:
         QUEST_SOURCE_REF: ${{ inputs.source-ref }}
       run: |
         set -euo pipefail
+        # LCLI-750: the pin is gone from the workflows, so reaching this step with no
+        # ref means the declared version is neither on npm nor staged. Say that, rather
+        # than letting `git cat-file -e '^{commit}'` fail with a message about a ref.
+        if [ -z "$QUEST_SOURCE_REF" ]; then
+          echo "::error::quest ${{ inputs.version }} is not installable from npm (neither the exact version nor a staged release candidate carrying it as its base), and this caller passed no source-ref to build it from. Wait until quest has released or staged that version, or pass source-ref (a full commit SHA that carries it) as an interim crossing."
+          exit 1
+        fi
         # The shim this writes is a bash script with no extension, which bash and a
         # shebang-resolving lookup can run on Linux and macOS, and which a Windows
         # bare-name lookup cannot resolve at all (PATHEXT walk, and CreateProcess
@@ -147,9 +162,9 @@ runs:
         # GITHUB_PATH applies to SUBSEQUENT steps, which is why the assertion is
         # its own step below rather than part of this one.
         echo "$bin" >> "$GITHUB_PATH"
-    - if: steps.npm.outputs.method == 'source'
-      shell: bash
+    - shell: bash
       env:
+        METHOD: ${{ steps.npm.outputs.method }}
         DECLARED: ${{ inputs.version }}
       run: |
         set -euo pipefail
@@ -161,7 +176,7 @@ runs:
         # GITHUB_PATH prepends), so this is a belt on the braces, not a fix.
         resolved="$(command -v quest)"
         if [ "$reported" != "$DECLARED" ]; then
-          echo "::error::the quest built from the pinned ref reports '$reported' but CLAUDE.md declares '$DECLARED'. The source-ref input names the commit carrying the declared version; a mismatch means the ref and the declaration have drifted apart, and no gate should run against the wrong peer. Failure is named HERE, as a ref problem, rather than later as a pair-lock refusal that reads like a lore defect."
+          echo "::error::the quest installed by method '$METHOD' reports '$reported' but CLAUDE.md declares '$DECLARED'. On the source path the source-ref input must name the commit carrying the declared version; on the npm path the declared version and the published one have drifted apart. Either way no gate should run against the wrong peer, and the failure is named HERE rather than later as a pair-lock refusal that reads like a lore defect."
           exit 1
         fi
-        echo "quest --version => $reported (resolved at $resolved, built from source at the pinned ref)"
+        echo "quest --version => $reported (resolved at $resolved, method $METHOD)"
