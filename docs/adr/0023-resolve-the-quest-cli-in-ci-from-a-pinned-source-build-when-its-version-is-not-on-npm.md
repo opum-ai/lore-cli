@@ -19,6 +19,16 @@ Accepted — 2026-09-29, by the operator (DEC-55, answered first-party via
 `opum-doc`, relay `ODOC-OP-2026-09-29-21`, 18:00:08Z) and relayed by `opum-agent`.
 Scoped to this repository's CI: it changes no product surface and no lock.
 
+**Amendment — 2026-10-22 (LCLI-750).** The `QUEST_SOURCE_REF` fallback was removed once
+quest 0.14.1 was on npm: `ci.yml` and `release.yml` no longer define or pass the pinned
+ref, and `setup-quest` resolves quest from npm (the exact version, or the staged
+release-candidate carrying it as its base). `setup-quest` keeps `source-ref` as an
+OPTIONAL, default-empty input for a future interim crossing; with it unset and the
+version unobtainable, the job fails. The declared-version assertion now runs on every
+install path. Everything below describes the pin as it stood when this ADR was
+accepted and is kept as history; where it says the pinned ref is live practice, this
+amendment supersedes it.
+
 ## Context
 
 `lore` and `quest` carry one version number (constitution Article 3 clause 1),
