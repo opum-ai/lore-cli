@@ -726,8 +726,45 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/setup-bun
+      # LCLI-753. The old single `playwright install --with-deps` step stalled 20-38 minutes on
+      # five runs on 2026-10-22 (#646, #647, #648, the push to main at 6ff69788, and #653) and
+      # nothing ended it but a human cancel, because the only bound was the 40-minute JOB timeout
+      # above. It is now two steps, so a stall names its half and each half gets the bound that
+      # can actually work.
+      #
+      # 1. System deps. apt runs as ROOT through sudo, so the runner user cannot signal it: a
+      #    wrapper that kills on timeout orphans apt-get, which keeps the dpkg lock, and the retry
+      #    fails in 2 s on that lock (run 39866700524, observed on the first draft of this fix).
+      #    So no wrapper and no retry here. apt retries itself (Acquire::Retries) and gives up on
+      #    a silent connection (Timeout 60 s), and the native step timeout is the backstop.
+      #    20 minutes: ~17x the slowest healthy apt half measured below, and still well under
+      #    the 40-minute job timeout. Where the five stalls above sat, read from their attempt-1
+      #    logs: ALL FIVE inside this apt half (last `Get:` line at index 62-177 of the package
+      #    list, none had printed an engine "Downloading" line), and apt was still printing
+      #    `Get:` lines within seconds of the cancel. So the stall is a slow-but-live mirror, not a
+      #    dead connection: Retries/Timeout will not rescue it, and a 20-minute run that is cut
+      #    fails red at the step instead of hanging toward the job timeout.
+      # 2. Engines. Every process is runner-owned, so scripts/run-bounded.mjs's process-group
+      #    kill works and one retry is meaningful. Per-attempt cap 120 s is derived from the
+      #    download-only time, read as first engine "Downloading" line to the next step's start
+      #    in the step logs of 11 passing runs read 2026-10-22 (runs created 2026-10-21 to
+      #    2026-10-22; three are the passing attempt 2 of a re-run stalled run): 13-25 s, median
+      #    17 s (the apt half over the same runs: 25-71 s). 120 s is 4.8x the slowest. No
+      #    stall was ever observed in this half. Two attempts; step timeout 6
+      #    minutes = both caps (4 min) plus the 10 s kill grace each and headroom, which also
+      #    backstops run-bounded.mjs itself hanging. A stall FAILS RED; it is never swallowed
+      #    (no continue-on-error, no `|| true`).
+      #
+      # No actions/cache on PLAYWRIGHT_BROWSERS_PATH: the engines are ~17 s of the install, so a
+      # cache would save little and adds a stale-cache-passes-with-wrong-browsers risk.
+      - name: Install browser system deps
+        timeout-minutes: 20
+        run: |
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "60";\nAcquire::https::Timeout "60";\n' | sudo tee /etc/apt/apt.conf.d/80-retries
+          bunx playwright install-deps chromium firefox webkit
       - name: Install pinned browser engines
-        run: bunx playwright install --with-deps chromium firefox webkit
+        timeout-minutes: 6
+        run: node scripts/run-bounded.mjs --timeout-seconds 120 --attempts 2 -- bunx playwright install chromium firefox webkit
       - name: Qualify the static explorer
         run: bun run test:browser
 
