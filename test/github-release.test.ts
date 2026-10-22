@@ -27,6 +27,7 @@ import {
   changelogSection,
   type ExecFile,
   ensureGitHubRelease,
+  isTransientReleaseFailure,
   main,
   RELEASE_REPOSITORY,
   REPAIR_COMMAND,
@@ -609,6 +610,110 @@ describe("ensureGitHubRelease: the QCLI-401 AC6 verdict table (LCLI-622)", () =>
       execFile: draft.execFile,
     });
     expect({ ok: refused.ok, draft: refused.detail.includes("is a draft") }).toEqual({ ok: false, draft: true });
+  });
+});
+
+describe("ensureGitHubRelease: bounded retry of transient failures (LCLI-747)", () => {
+  const noSleep = async () => {};
+
+  /** A gh that answers `view` as absent, then fails the first `fails` creates with `stderr`, then succeeds. */
+  function flaky(fails: number, stderr: string, { createLands = false } = {}) {
+    let creates = 0;
+    let landed = false;
+    const calls: string[][] = [];
+    const execFile: ExecFile = async (_file, args) => {
+      calls.push([...args]);
+      if (args[1] === "view") {
+        if (landed)
+          return {
+            stdout: JSON.stringify({ tagName: "v1.2.3", body: "Notes.\n", isDraft: false, isPrerelease: false }),
+          };
+        throw Object.assign(new Error("exit 1"), { stderr: "release not found\n" });
+      }
+      if (args[1] === "create") {
+        creates++;
+        if (creates <= fails) {
+          if (createLands) landed = true;
+          throw Object.assign(new Error("exit 1"), { stderr: `${stderr}\n` });
+        }
+        return { stdout: "" };
+      }
+      return { stdout: "" };
+    };
+    return { execFile, calls, creates: () => creates };
+  }
+
+  test("an HTTP 500 on create is retried and the Release is cut", async () => {
+    const stub = flaky(1, "HTTP 500: Internal Server Error");
+    const out = await ensureGitHubRelease({
+      version: "1.2.3",
+      notes: "Notes.",
+      execFile: stub.execFile,
+      sleep: noSleep,
+    });
+    expect(out).toMatchObject({ ok: true, action: "created" });
+    expect(stub.creates()).toBe(2);
+  });
+
+  test("a create that landed before the error is found on the re-read, not created twice", async () => {
+    const stub = flaky(1, "HTTP 502: Bad gateway", { createLands: true });
+    const out = await ensureGitHubRelease({
+      version: "1.2.3",
+      notes: "Notes.",
+      execFile: stub.execFile,
+      sleep: noSleep,
+    });
+    expect(out).toMatchObject({ ok: true, action: "marked-latest" });
+    expect(stub.creates()).toBe(1);
+  });
+
+  test("the retry is bounded: attempts is the ceiling, with the delay slept between attempts only", async () => {
+    const stub = flaky(99, "HTTP 503");
+    const slept: number[] = [];
+    const out = await ensureGitHubRelease({
+      version: "1.2.3",
+      notes: "Notes.",
+      execFile: stub.execFile,
+      attempts: 3,
+      delayMs: 7,
+      sleep: async (ms) => {
+        slept.push(ms);
+      },
+    });
+    expect(out.ok).toBe(false);
+    expect(stub.creates()).toBe(3);
+    expect(slept).toEqual([7, 7]);
+  });
+
+  test("a non-transient failure is returned at once, never retried", async () => {
+    const stub = flaky(99, "HTTP 403: Resource not accessible");
+    const out = await ensureGitHubRelease({
+      version: "1.2.3",
+      notes: "Notes.",
+      execFile: stub.execFile,
+      sleep: noSleep,
+    });
+    expect(out.ok).toBe(false);
+    expect(stub.creates()).toBe(1);
+  });
+
+  test("a refusal (draft release) is never retried", async () => {
+    const stub = gh(published({ isDraft: true }));
+    await ensureGitHubRelease({ version: "1.2.3", notes: "Notes.", execFile: stub.execFile, sleep: noSleep });
+    expect(stub.calls.filter((a) => a[1] === "view")).toHaveLength(1);
+  });
+
+  test("nothing in the retry path publishes to a registry: only gh view/create/edit are issued", async () => {
+    const stub = flaky(2, "HTTP 500");
+    await ensureGitHubRelease({ version: "1.2.3", notes: "Notes.", execFile: stub.execFile, sleep: noSleep });
+    expect(new Set(stub.calls.map((a) => `${a[0]} ${a[1]}`))).toEqual(new Set(["release view", "release create"]));
+  });
+
+  test("isTransientReleaseFailure: 5xx and network drops yes, refusals no", () => {
+    for (const d of ["HTTP 500", "HTTP 502: Bad gateway", "read ECONNRESET", "i/o timeout"])
+      expect(isTransientReleaseFailure(d)).toBe(true);
+    for (const d of ["HTTP 403", "HTTP 404", "release v1 exists but is a draft", "HTTP 422: tag not found"])
+      expect(isTransientReleaseFailure(d)).toBe(false);
   });
 });
 

@@ -2038,7 +2038,13 @@ export async function main(
       await rm(npmrcDir, { recursive: true, force: true });
       npmrcDir = undefined;
     }
-    const githubRelease = await ensureGitHubRelease({ version: record.version, ...releaseNotes, execFile });
+    const githubRelease = await ensureGitHubRelease({
+      version: record.version,
+      ...releaseNotes,
+      execFile,
+      ...(lagOptions.sleep ? { sleep: lagOptions.sleep } : {}),
+      ...(lagOptions.delayMs !== undefined ? { delayMs: lagOptions.delayMs } : {}),
+    });
     if (githubRelease.ok) out(`\nGitHub Release: ${githubRelease.detail}.`);
     else
       for (const line of [
