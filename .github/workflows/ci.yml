@@ -331,6 +331,72 @@ jobs:
               fi
               echo "::warning::attempt 2 PASSED. This job's green is a RETRY-GREEN, not a clean run: attempt 1's failures were the Linux epoll runtime race, and if they were per-test hangs they are listed above."
             fi
+          elif [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+            # LCLI-760 / DEC-236. This leg wedges: the last `(pass)` prints 2-18 s into the step,
+            # then nothing for ~19.5 minutes until the 20-minute JOB timeout cancels it (13 of the
+            # last 43 main-push attempts, 9 of 20 since 2026-10-06; every one a cancel, never a test
+            # failure). macOS has no GNU `timeout`, and a wall-clock cap alone cannot bound it: the
+            # slowest healthy Test step is 579 s (28 passing runs, 283-579 s, median 428 s), so two
+            # attempts at any cap that spares it overrun the job. The wedge's signature is SILENCE,
+            # so scripts/run-hang-guarded.mjs keys on that: no output for 120 s is a hang. 120 s is
+            # 8x the largest gap between consecutive log lines in those 28 runs (14.9 s, over 5000+
+            # lines each), and a wedge never prints again. Before killing, it samples every bun in
+            # the process group into this log so each wedge leaves cause evidence.
+            #
+            # Same shape as the ubuntu arm: a HUNG run (exit 124) retries once, as does the LCLI-659
+            # classifier's "every failing test hung at the per-test budget"; any other failure is a
+            # product signal and is never retried. Exit 125 (output arriving but 660 s elapsed) is
+            # NOT a hang and is not retried either. A green after a retry is labelled RETRY-GREEN,
+            # and each one on main is to be noted on LCLI-760 with its sample (DEC-236), so the
+            # retry cannot hide a rising wedge rate.
+            #
+            # Budget, so the red lands at this step and not at the job's 20-minute cancel: pre-Test
+            # steps took 11-36 s; hang-then-pass is ~36 s + <=150 s (detect + sample + kill) + the
+            # slowest healthy run 579 s = ~765 s; hang-twice is red after ~2 x 150 s.
+            # Attempt 2's wall backstop is clipped to what is left of the job, so even the
+            # classifier arm (a full attempt 1, then a retry) cannot run into the job timeout.
+            lore_per_test_ms=10000
+            lore_silence_s=120
+            lore_wall_s=660
+            lore_job_budget_s=1100
+            lore_bun_log="${RUNNER_TEMP}/lore-bun-test.log"
+            lore_hung_log="${RUNNER_TEMP}/lore-bun-hung.log"
+            : > "${lore_hung_log}"
+            set +e
+            node scripts/run-hang-guarded.mjs --silence-seconds "${lore_silence_s}" --timeout-seconds "${lore_wall_s}" -- bun test --isolate --timeout="${lore_per_test_ms}" 2>&1 | tee "${lore_bun_log}"
+            lore_bun_status=${PIPESTATUS[0]}
+            set -e
+            if [[ "${lore_bun_status}" -eq 0 ]]; then
+              exit 0
+            fi
+            lore_hang_retry=false
+            if [[ "${lore_bun_status}" -eq 124 ]]; then
+              lore_hang_retry=true
+              echo "::warning::bun test went SILENT for ${lore_silence_s}s on attempt 1 and was sampled and killed (the macOS wedge, LCLI-760); attempt 2 follows. The sample is in this log."
+            elif [[ "${lore_bun_status}" -eq 125 ]]; then
+              echo "::error::bun test was still printing after ${lore_wall_s}s on attempt 1. That is not the silent wedge, so it is not retried."
+              exit 1
+            elif bash scripts/ci-flake-classify.sh "${lore_bun_log}" "${lore_per_test_ms}" > "${lore_hung_log}"; then
+              lore_hang_retry=true
+              echo "::warning::every failing test on attempt 1 hung at the ${lore_per_test_ms}ms per-test budget; attempt 2 follows."
+              echo "::notice::attempt 1's failures were ALL hangs at the ${lore_per_test_ms}ms per-test budget (${lore_bun_status}):"
+              sed 's/^/    /' "${lore_hung_log}"
+            else
+              exit "${lore_bun_status}"
+            fi
+            if [[ "${lore_hang_retry}" == "true" ]]; then
+              lore_wall_2_s=$(( lore_job_budget_s - SECONDS ))
+              if [[ "${lore_wall_2_s}" -gt "${lore_wall_s}" ]]; then lore_wall_2_s="${lore_wall_s}"; fi
+              if [[ "${lore_wall_2_s}" -lt 120 ]]; then
+                echo "::error::attempt 1 used ${SECONDS}s of the ${lore_job_budget_s}s budget, too little left for attempt 2."
+                exit 1
+              fi
+              if ! node scripts/run-hang-guarded.mjs --silence-seconds "${lore_silence_s}" --timeout-seconds "${lore_wall_2_s}" -- bun test --isolate --timeout="${lore_per_test_ms}"; then
+                echo "::error::attempt 2 ALSO failed after the hang retry. The retry count stays at one by design -- a run that hangs every time must still fail this job -- so this run is red and belongs to whoever can measure the wedge (LCLI-760)."
+                exit 1
+              fi
+              echo "::warning::RETRY-GREEN: attempt 2 PASSED. This job's green is NOT a clean run: attempt 1 hung or hung its failing tests. Note it on LCLI-760 with attempt 1's process sample from this log."
+            fi
           elif [[ "${{ matrix.os }}" == "ubuntu-24.04-arm" ]]; then
             bun test --isolate --max-concurrency=1 --timeout=10000
           else

@@ -14,6 +14,7 @@ interface WorkflowJob {
   if?: string;
   /** Present only when a job declares a dependency; the docs gate (LCLI-504) asserts it is absent. */
   needs?: string | string[];
+  "continue-on-error"?: boolean | string;
   steps?: Array<{
     name?: string;
     run?: string;
@@ -170,6 +171,38 @@ describe("ci.yml exact-host LadybugDB qualification", () => {
     expect(testScript).toContain("lore_bun_status=$" + "{PIPESTATUS[0]}");
     expect(testScript).toContain('exit "$' + '{lore_bun_status}"');
     expect(testScript).toContain("else\n  bun test --isolate --timeout=10000");
+  });
+
+  test("the macOS Test arm is bounded by the hang guard, retries only hangs, and labels a retried green (LCLI-760, DEC-236)", () => {
+    const testScript = loadWorkflow().jobs.check?.steps?.find((step) => step.name === "Test")?.run ?? "";
+    const start = testScript.indexOf('== "macos-latest"');
+    const end = testScript.indexOf('== "ubuntu-24.04-arm"');
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const arm = testScript.slice(start, end);
+    // The bound: both runs go through the guard, and neither is a bare `bun test`.
+    const guarded = arm.match(
+      /node scripts\/run-hang-guarded\.mjs [^\n]*-- bun test --isolate --timeout="\$\{lore_per_test_ms\}"/g,
+    );
+    expect(guarded).toHaveLength(2);
+    expect(arm).toContain("lore_silence_s=120");
+    expect(arm).toContain("lore_wall_s=660");
+    expect(arm).toContain("lore_per_test_ms=10000");
+    expect(arm.split("\n").filter((line) => /^\s*bun test /.test(line))).toEqual([]);
+    // Hung-only retry: 124 (silent) and the LCLI-659 classifier retry; 125 and any other
+    // failure do not. Real failures keep their own status.
+    expect(arm).toContain('"$' + '{lore_bun_status}" -eq 124');
+    expect(arm).toContain('"$' + '{lore_bun_status}" -eq 125');
+    expect(arm).toContain('scripts/ci-flake-classify.sh "$' + '{lore_bun_log}" "$' + '{lore_per_test_ms}"');
+    expect(arm).toContain('exit "$' + '{lore_bun_status}"');
+    // The retry is labelled with the exact token the "note every RETRY-GREEN on main" duty greps for.
+    expect(arm).toContain("::warning::RETRY-GREEN:");
+    // A bound that is swallowed is not a bound.
+    expect(arm).not.toContain("|| true");
+    expect(loadWorkflow().jobs.check?.["continue-on-error"]).toBeUndefined();
+    expect(
+      loadWorkflow().jobs.check?.steps?.find((step) => step.name === "Test")?.["continue-on-error"],
+    ).toBeUndefined();
   });
 
   test("the Bun-epoll retry (LCLI-507) triggers on the bounded-timeout exit as well as the EEXIST string", () => {
