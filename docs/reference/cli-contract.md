@@ -243,6 +243,7 @@ build. It also carries the two **meta** envelopes emitted by the `--version` /
 | `graph.export` | `lore graph` | nodes, edges, per-doc/bundle token estimates |
 | `path.result` | `lore path` | normalized typed scope, selected edge kinds, effective limits, shortest exact edge chains, endpoint and edge provenance, `shown`, `edgeVisits`, `depthBoundReached`, `truncated`, `complete`, `backend` (schema `lore-path-result/1`) |
 | `impact.result` | `lore impact` | normalized typed root, selected edge kinds, effective limits, direct/transitive impacts, exact evidence chains and provenance, `shown`, `edgeVisits`, `depthBoundReached`, `truncated`, `complete`, `backend` (schema `lore-impact-result/1`) |
+| `cache.result` | `lore cache` | `cleared` or `absent` action and the canonical `.lore/cache` path |
 | `snapshot.result` | `lore snapshot` | retained/unchanged/listed/deleted action, exact snapshot descriptors, count, maximum |
 | `changed.result` | `lore changed` | normalized filters/bounds, paired fact deltas, shown/total/scanned, truncation, completeness (schema `lore-changed-result/1`) |
 | `provenance.result` | `lore provenance` | snapshot descriptor, authored fact, complete locator-free provenance (schema `lore-provenance-result/1`) |

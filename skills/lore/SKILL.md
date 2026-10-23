@@ -89,6 +89,7 @@ detail with `lore instructions <topic>`:
 - `graph`         Emit the bundle's cross-link graph as json or dot
 - `path`          Find bounded paths across exact authored concept and task edges
 - `impact`        Expand bounded impact across exact authored concept and task edges
+- `cache`         Clear a checkout's read-only .lore/cache, which an outside recursive delete cannot remove
 - `snapshot`      Explicitly retain, list, or delete bounded projection snapshots
 - `changed`       Compare two retained snapshots with bounded authored-fact deltas
 - `provenance`    Trace one retained concept, task, or edge to exact source evidence

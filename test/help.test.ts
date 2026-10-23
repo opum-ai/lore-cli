@@ -155,6 +155,7 @@ describe("core/manifest — shape and invariants", () => {
       graph: [0, 2, 3, 4, 6],
       path: [0, 2, 3, 4, 6],
       impact: [0, 2, 3, 4, 6],
+      cache: [0, 2, 3, 4], // read seam (3/4) only: stats and removes one .lore/cache; refusals are 4
       snapshot: [0, 2, 3, 4, 5, 6],
       changed: [0, 2, 3, 4, 5, 6],
       provenance: [0, 2, 3, 4, 5, 6],
@@ -215,6 +216,7 @@ describe("core/manifest — shape and invariants", () => {
       graph: "graph.export",
       path: "path.result",
       impact: "impact.result",
+      cache: "cache.result",
       snapshot: "snapshot.result",
       changed: "changed.result",
       provenance: "provenance.result",

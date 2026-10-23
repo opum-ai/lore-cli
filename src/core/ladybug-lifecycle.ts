@@ -26,7 +26,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { hostname } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { LoreError, type WarningCollector } from "../errors";
 import {
@@ -429,6 +429,51 @@ export function disposeLadybugProjection(rootInput: string): boolean {
   } finally {
     releaseWriterLock(lock);
   }
+}
+
+export interface ClearCheckoutCacheResult {
+  readonly action: "cleared" | "absent";
+  /** The canonical `.lore/cache` path that was (or would have been) removed. */
+  readonly path: string;
+}
+
+/**
+ * Owner-invoked removal of one checkout's whole `.lore/cache` (LCLI-740, DEC-208). Generations are
+ * sealed 0555/0444 on purpose (ADR-0018), so an outside recursive delete cannot remove them; this
+ * thaws and deletes through the same {@link removeContained} path the lifecycle uses. `pathInput`
+ * names the checkout, or its `.lore/cache` directly, and need not be a git worktree: a failed
+ * `git worktree remove` strands a directory with no `.git` holding only this cache. It takes no
+ * writer lock and creates nothing, and it touches only `<checkout>/.lore/cache`: a symlinked
+ * `.lore` or `cache`, or one resolving outside the checkout, is refused before anything is removed.
+ */
+export function clearCheckoutCache(pathInput: string): ClearCheckoutCacheResult {
+  const resolved = resolve(pathInput);
+  const parts = resolved.split(sep);
+  const namesCache = parts.at(-1) === "cache" && parts.at(-2) === ".lore";
+  const checkout = namesCache ? resolve(resolved, "..", "..") : resolved;
+  const root = canonicalRepositoryRoot(checkout);
+  const loreDir = join(root, ".lore");
+  const cacheDir = join(loreDir, "cache");
+  for (const dir of [loreDir, cacheDir]) {
+    let stat: ReturnType<typeof lstatSync>;
+    try {
+      stat = lstatSync(dir);
+    } catch (cause) {
+      if (isErrno(cause, "ENOENT")) return { action: "absent", path: cacheDir };
+      throw cause;
+    }
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new LoreError(
+        "denied",
+        `refusing to clear ${dir}: it is ${stat.isSymbolicLink() ? "a symlink" : "not a directory"}`,
+        "only a real <checkout>/.lore/cache directory is cleared",
+        { path: dir },
+      );
+    }
+  }
+  assertContained(root, cacheDir);
+  removeContained(loreDir, cacheDir);
+  return { action: "cleared", path: cacheDir };
 }
 
 function hasPotentialGeneration(cacheRoot: string): boolean {
