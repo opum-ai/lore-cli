@@ -709,6 +709,22 @@ reported separately. They preserve duplicate authored edge records, never
 traverse dangling targets, infer no relationships, and expose no Cypher or
 Ladybug-native identifiers. See [Bounded path and impact](../specs/bounded-path-and-impact.md).
 
+### `cache`
+
+Clear one checkout's `.lore/cache`. Projection generations are sealed read-only on purpose
+([ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md)), so a plain recursive
+delete cannot remove them and `git worktree remove` fails partway. `cache clear` thaws and deletes
+through the lifecycle's own removal path (LCLI-740, DEC-208). It touches only
+`<path>/.lore/cache`, works on a directory that is no longer a registered worktree, takes no writer
+lock, creates nothing, and refuses a symlinked `.lore` or `cache`. Generations stay immutable while
+they live; this is an explicit owner action, never run implicitly.
+
+| | |
+|---|---|
+| **Args** | `clear <path>` (the checkout, or its `.lore/cache` directly) |
+| **Output** | `kind: cache.result` — `cleared` or `absent`, and the canonical cache path |
+| **Exit** | `0` ok (including an absent cache) · `2` invalid arguments · `3` checkout path missing · `4` a symlinked or non-directory `.lore`/`cache` refused, or read/write denied |
+
 ### `snapshot`
 
 Explicitly retain, list, or delete immutable projection history. Lore never

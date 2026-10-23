@@ -761,6 +761,16 @@ const LORE_MANIFEST: readonly ManifestCommand[] = deepFreeze([
     examples: ["lore impact LCLI-123 --kind task --direction inbound --max-depth 3"],
   },
   {
+    name: "cache",
+    summary: "Clear a checkout's read-only .lore/cache, which an outside recursive delete cannot remove",
+    args: "clear <path>",
+    flags: [],
+    json: true,
+    kind: "cache.result",
+    exitCodes: exitCodesFor(["read"]),
+    examples: ["lore cache clear .claude/worktrees/review-abc1234"],
+  },
+  {
     name: "snapshot",
     summary: "Explicitly retain, list, or delete bounded projection snapshots",
     args: "<retain|list|delete> [snapshot-key]",

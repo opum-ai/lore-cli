@@ -21,6 +21,7 @@ import { runAgent } from "./commands/agent";
 import { runAgents } from "./commands/agents";
 import { commanderOption, commanderUnknownCommand, commanderUsageError } from "./commands/args";
 import { runBacklog } from "./commands/backlog";
+import { runCache } from "./commands/cache";
 import { runChanged } from "./commands/changed";
 import { type FetchLike, type ResolveHost, runCheck } from "./commands/check";
 import { runContext } from "./commands/context";
@@ -576,6 +577,8 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
       adapter: context.adapter,
       retrieval: context.retrieval ?? loadRetrievalGraph,
     }),
+  cache: (args, context, output) =>
+    runCache({ root: context.cwd || process.cwd(), output, args, stdout: context.stdout }),
   snapshot: (args, context, output) =>
     runSnapshot({
       root: context.cwd || process.cwd(),

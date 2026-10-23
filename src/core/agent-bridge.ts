@@ -98,6 +98,10 @@ export const LORE_COMMANDS: readonly CommandSummary[] = [
   { name: "graph", summary: "Emit the bundle's cross-link graph as json or dot" },
   { name: "path", summary: "Find bounded paths across exact authored concept and task edges" },
   { name: "impact", summary: "Expand bounded impact across exact authored concept and task edges" },
+  {
+    name: "cache",
+    summary: "Clear a checkout's read-only .lore/cache, which an outside recursive delete cannot remove",
+  },
   { name: "snapshot", summary: "Explicitly retain, list, or delete bounded projection snapshots" },
   { name: "changed", summary: "Compare two retained snapshots with bounded authored-fact deltas" },
   { name: "provenance", summary: "Trace one retained concept, task, or edge to exact source evidence" },
