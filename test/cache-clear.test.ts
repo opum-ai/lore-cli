@@ -14,7 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/cli";
-import { clearCheckoutCache } from "../src/core/ladybug-lifecycle";
+import { type ClearCheckoutCacheFs, clearCheckoutCache } from "../src/core/ladybug-lifecycle";
 import { EXIT_CODES, exitCodeFor, LoreError } from "../src/errors";
 import { capture } from "./helpers";
 
@@ -231,14 +231,40 @@ function expectLoreError(type: LoreError["type"], fn: () => unknown): LoreError 
   throw new Error(`expected a ${type} LoreError`);
 }
 
+/** An errno whose message does NOT lead with its code, so only the command's own naming can supply it. */
 function errno(code: string): NodeJS.ErrnoException {
-  return Object.assign(new Error(`${code}: injected`), { code });
+  return Object.assign(new Error("injected failure"), { code });
 }
 
 function throwing(code: string): () => never {
   return () => {
     throw errno(code);
   };
+}
+
+/** The first `times` calls throw `code`; later calls run `real`. Counts every call. */
+function failingFirst<A extends unknown[], R>(
+  code: string,
+  times: number,
+  real: (...args: A) => R,
+): ((...args: A) => R) & { calls: number } {
+  const wrapped = ((...args: A): R => {
+    wrapped.calls++;
+    if (wrapped.calls <= times) throw errno(code);
+    return real(...args);
+  }) as ((...args: A) => R) & { calls: number };
+  wrapped.calls = 0;
+  return wrapped;
+}
+
+/** Fails once for every errno in `codes`, always the same way, counting calls. */
+function alwaysThrowing(code: string): (() => never) & { calls: number } {
+  const wrapped = (() => {
+    wrapped.calls++;
+    throw errno(code);
+  }) as (() => never) & { calls: number };
+  wrapped.calls = 0;
+  return wrapped;
 }
 
 describe("clearCheckoutCache errno phases (DEC-208 (a2)): nothing reaches exit 1", () => {
@@ -266,59 +292,97 @@ describe("clearCheckoutCache errno phases (DEC-208 (a2)): nothing reaches exit 1
     expect(existsSync(join(checkout, ".lore", "cache"))).toBe(true);
   });
 
-  test("RESOLUTION, other way: a permission errno in the same phase is denied (exit 4), not not_found", () => {
+  test("RESOLUTION, other way: EACCES, EPERM and EBUSY in the same phase are denied (exit 4), errno named", () => {
     const { checkout } = populatedCheckout();
-    for (const hooks of [{ realpath: throwing("EACCES") }, { stat: throwing("EPERM") }, { lstat: throwing("EBUSY") }]) {
+    const cases: [string, ClearCheckoutCacheFs][] = [
+      ["EACCES", { realpath: throwing("EACCES") }],
+      ["EPERM", { stat: throwing("EPERM") }],
+      ["EBUSY", { lstat: throwing("EBUSY") }],
+    ];
+    for (const [code, hooks] of cases) {
       const err = expectDenied(() => clearCheckoutCache(checkout, hooks));
-      expect(exitCodeFor(err)).toBe(EXIT_CODES.denied);
-    }
-  });
-
-  test("REMOVAL: an entry that vanished (ENOENT) is skipped by re-walking, and the clear succeeds", () => {
-    const { checkout } = populatedCheckout();
-    let calls = 0;
-    const result = clearCheckoutCache(checkout, {
-      remove: (_loreDir, cacheDir) => {
-        calls++;
-        if (calls === 1) throw errno("ENOENT");
-        clearCheckoutCache(cacheDir); // the real removal, through the public path
-      },
-    });
-    expect(result.action).toBe("cleared");
-    expect(calls).toBe(2);
-  });
-
-  test("REMOVAL: ENOENT that never stops is bounded and reported denied naming ENOENT", () => {
-    const { checkout } = populatedCheckout();
-    let calls = 0;
-    const err = expectDenied(() =>
-      clearCheckoutCache(checkout, {
-        remove: () => {
-          calls++;
-          throw errno("ENOENT");
-        },
-      }),
-    );
-    expect(err.message).toContain("ENOENT");
-    expect(calls).toBe(3);
-  });
-
-  test("REMOVAL: any other errno is denied (exit 4) naming the errno, with no retry", () => {
-    const { checkout } = populatedCheckout();
-    for (const code of ["ENOTEMPTY", "EIO", "EEXIST"]) {
-      let calls = 0;
-      const err = expectDenied(() =>
-        clearCheckoutCache(checkout, {
-          remove: () => {
-            calls++;
-            throw errno(code);
-          },
-        }),
-      );
       expect(err.message).toContain(code);
       expect(exitCodeFor(err)).toBe(EXIT_CODES.denied);
-      expect(calls).toBe(1);
     }
+  });
+
+  test("RESOLUTION: EROFS cannot arise from realpath, stat or lstat (all read-only), so it is not special-cased", () => {
+    const { checkout } = populatedCheckout();
+    // Were it special-cased it would be denied; it is an unclassified errno here, so not_found.
+    const err = expectLoreError("not_found", () => clearCheckoutCache(checkout, { lstat: throwing("EROFS") }));
+    expect(err.message).toContain("EROFS");
+  });
+
+  test("REMOVAL, chmod: ENOENT mid-thaw is re-walked, the cache is really gone, and only then is it cleared", () => {
+    const { checkout } = populatedCheckout();
+    const chmod = failingFirst("ENOENT", 1, chmodSync);
+    const result = clearCheckoutCache(checkout, { chmod });
+    expect(result.action).toBe("cleared");
+    expect(chmod.calls).toBeGreaterThan(1);
+    expect(existsSync(join(checkout, ".lore", "cache"))).toBe(false); // "cleared" means gone, not "returned"
+  });
+
+  test("REMOVAL, readdir: ENOENT mid-thaw is re-walked and the cache is really gone", () => {
+    const { checkout } = populatedCheckout();
+    const readdir = failingFirst("ENOENT", 1, (path: string) => readdirSync(path, { withFileTypes: true }));
+    expect(clearCheckoutCache(checkout, { readdir }).action).toBe("cleared");
+    expect(existsSync(join(checkout, ".lore", "cache"))).toBe(false);
+  });
+
+  test("REMOVAL, rm: ENOENT is re-walked and the cache is really gone", () => {
+    const { checkout } = populatedCheckout();
+    const rm = failingFirst("ENOENT", 1, rmSync);
+    expect(clearCheckoutCache(checkout, { rm }).action).toBe("cleared");
+    expect(rm.calls).toBe(2);
+    expect(existsSync(join(checkout, ".lore", "cache"))).toBe(false);
+  });
+
+  test("REMOVAL: a thaw that swallows ENOENT and leaves the cache behind is never reported cleared", () => {
+    const { checkout } = populatedCheckout();
+    const chmod = alwaysThrowing("ENOENT"); // every attempt returns quietly inside removeContained
+    const err = expectDenied(() => clearCheckoutCache(checkout, { chmod }));
+    expect(err.message).toContain("still exists");
+    expect(chmod.calls).toBe(3); // the named bound
+    expect(existsSync(join(checkout, ".lore", "cache"))).toBe(true);
+  });
+
+  test("REMOVAL: ENOENT from rm that never stops is bounded at 3 and reported denied naming ENOENT", () => {
+    const { checkout } = populatedCheckout();
+    const rm = alwaysThrowing("ENOENT");
+    const err = expectDenied(() => clearCheckoutCache(checkout, { rm }));
+    expect(err.message).toContain("ENOENT");
+    expect(rm.calls).toBe(3);
+  });
+
+  test("REMOVAL: any other errno at chmod, readdir or rm is denied (exit 4) naming it, with no retry", () => {
+    const cases: [string, (code: string) => ClearCheckoutCacheFs][] = [
+      ["chmod", (code) => ({ chmod: throwing(code) })],
+      ["readdir", (code) => ({ readdir: throwing(code) })],
+      ["rm", (code) => ({ rm: throwing(code) })],
+    ];
+    for (const [call, hooksFor] of cases) {
+      for (const code of ["ENOTEMPTY", "EIO", "EEXIST"]) {
+        const { checkout } = populatedCheckout();
+        const hooks = hooksFor(code);
+        const counted = alwaysThrowing(code);
+        const err = expectDenied(() => clearCheckoutCache(checkout, { ...hooks, [call]: counted }));
+        expect(err.message).toContain(code);
+        expect(exitCodeFor(err)).toBe(EXIT_CODES.denied);
+        expect(counted.calls).toBe(1);
+      }
+    }
+  });
+
+  test("REMOVAL: rm is called with force:false, so a vanished target is an error to handle, not silently absorbed", () => {
+    const { checkout } = populatedCheckout();
+    let seen: { recursive: boolean; force: boolean } | undefined;
+    clearCheckoutCache(checkout, {
+      rm: (path, options) => {
+        seen = options;
+        rmSync(path, options);
+      },
+    });
+    expect(seen).toEqual({ recursive: true, force: false });
   });
 
   test("an error with no errno code is still denied in removal and not_found in resolution, never uncaught", () => {
@@ -326,7 +390,7 @@ describe("clearCheckoutCache errno phases (DEC-208 (a2)): nothing reaches exit 1
     const bare = () => {
       throw new Error("no code");
     };
-    expect(exitCodeFor(expectDenied(() => clearCheckoutCache(checkout, { remove: bare })))).toBe(EXIT_CODES.denied);
+    expect(exitCodeFor(expectDenied(() => clearCheckoutCache(checkout, { rm: bare })))).toBe(EXIT_CODES.denied);
     expect(exitCodeFor(expectLoreError("not_found", () => clearCheckoutCache(checkout, { realpath: bare })))).toBe(
       EXIT_CODES.not_found,
     );

@@ -11,6 +11,7 @@ import {
   chmodSync,
   closeSync,
   createReadStream,
+  type Dirent,
   existsSync,
   fsyncSync,
   lstatSync,
@@ -445,9 +446,12 @@ export interface ClearCheckoutCacheResult {
 export interface ClearCheckoutCacheFs {
   readonly realpath?: (path: string) => string;
   readonly stat?: (path: string) => Stats;
+  /** Used for the resolution lstats and for the post-removal existence check. */
   readonly lstat?: (path: string) => Stats;
-  /** Thaw and delete `cacheDir` under `loreDir`; the real one is {@link removeContained}. */
-  readonly remove?: (loreDir: string, cacheDir: string) => void;
+  /** The three calls inside the thaw-and-delete path, injectable one at a time. */
+  readonly chmod?: (path: string, mode: number) => void;
+  readonly readdir?: (path: string) => readonly Dirent[];
+  readonly rm?: (path: string, options: { recursive: boolean; force: boolean }) => void;
 }
 
 /** A removal that keeps hitting ENOENT is re-walked this many times before it is reported. */
@@ -471,7 +475,12 @@ const CLEAR_REMOVE_ATTEMPTS = 3;
  */
 export function clearCheckoutCache(pathInput: string, fs: ClearCheckoutCacheFs = {}): ClearCheckoutCacheResult {
   const lstat = fs.lstat ?? lstatSync;
-  const remove = fs.remove ?? removeContained;
+  const ops: RemovalOps = {
+    lstat,
+    chmod: fs.chmod ?? REAL_REMOVAL_OPS.chmod,
+    readdir: fs.readdir ?? REAL_REMOVAL_OPS.readdir,
+    rm: fs.rm ?? REAL_REMOVAL_OPS.rm,
+  };
   const resolved = resolve(pathInput);
   const parts = resolved.split(sep);
   const namesCache = parts.at(-1) === "cache" && parts.at(-2) === ".lore";
@@ -498,13 +507,34 @@ export function clearCheckoutCache(pathInput: string, fs: ClearCheckoutCacheFs =
   }
   for (let attempt = 1; ; attempt++) {
     try {
-      remove(loreDir, cacheDir);
-      return { action: "cleared", path: cacheDir };
+      removeContained(loreDir, cacheDir, ops);
+      // removeContained returns quietly when an entry vanished mid-thaw, so "returned" is not
+      // "removed": report cleared only once the cache directory itself is gone, else re-walk.
+      if (cacheIsGone(cacheDir, lstat)) return { action: "cleared", path: cacheDir };
+      if (attempt >= CLEAR_REMOVE_ATTEMPTS) throw new CacheStillPresent(cacheDir);
     } catch (cause) {
       // An entry that vanished mid-walk is already gone: walk again and it is simply absent.
       if (isErrno(cause, "ENOENT") && attempt < CLEAR_REMOVE_ATTEMPTS) continue;
       throw removalError(cause, cacheDir);
     }
+  }
+}
+
+/** Raised, and reported as the removal-phase `denied`, when re-walking never makes the cache disappear. */
+class CacheStillPresent extends Error {
+  readonly code = "ECACHEPRESENT";
+  constructor(path: string) {
+    super(`${path} still exists after ${CLEAR_REMOVE_ATTEMPTS} removal attempts`);
+  }
+}
+
+function cacheIsGone(cacheDir: string, lstat: (path: string) => Stats): boolean {
+  try {
+    lstat(cacheDir);
+    return false;
+  } catch (cause) {
+    if (isErrno(cause, "ENOENT")) return true;
+    throw cause;
   }
 }
 
@@ -541,7 +571,7 @@ function notADirectory(path: string): LoreError {
   );
 }
 
-const PERMISSION_ERRNOS = ["EACCES", "EPERM", "EBUSY", "EROFS"] as const;
+const PERMISSION_ERRNOS = ["EACCES", "EPERM", "EBUSY"] as const;
 
 function errnoName(cause: unknown): string {
   return isObject(cause) && typeof cause.code === "string" ? cause.code : "an unknown error";
@@ -1131,23 +1161,42 @@ function cleanupAbandonedStaging(cacheRoot: string): void {
   }
 }
 
-function removeContained(cacheRoot: string, target: string): void {
+/**
+ * The filesystem calls the thaw-and-delete path makes. Every caller outside `clearCheckoutCache`
+ * passes none and gets the real calls, so the lifecycle's own removal is byte-for-byte what it was;
+ * the optional argument exists so `cache clear` can be proved at chmod, readdir and rm individually.
+ */
+interface RemovalOps {
+  readonly lstat: (path: string) => Stats;
+  readonly chmod: (path: string, mode: number) => void;
+  readonly readdir: (path: string) => readonly Dirent[];
+  readonly rm: (path: string, options: { recursive: boolean; force: boolean }) => void;
+}
+
+const REAL_REMOVAL_OPS: RemovalOps = {
+  lstat: lstatSync,
+  chmod: chmodSync,
+  readdir: (path) => readdirSync(path, { withFileTypes: true }),
+  rm: rmSync,
+};
+
+function removeContained(cacheRoot: string, target: string, ops: RemovalOps = REAL_REMOVAL_OPS): void {
   assertContained(cacheRoot, target);
   try {
-    const stat = lstatSync(target);
-    if (stat.isDirectory() && !stat.isSymbolicLink()) makeDirectoryTreeWritable(target);
+    const stat = ops.lstat(target);
+    if (stat.isDirectory() && !stat.isSymbolicLink()) makeDirectoryTreeWritable(target, ops);
   } catch (cause) {
     if (isErrno(cause, "ENOENT")) return;
     throw cause;
   }
-  rmSync(target, { recursive: true, force: false });
+  ops.rm(target, { recursive: true, force: false });
 }
 
-function makeDirectoryTreeWritable(path: string): void {
-  chmodSync(path, 0o700);
-  for (const entry of readdirSync(path, { withFileTypes: true })) {
+function makeDirectoryTreeWritable(path: string, ops: RemovalOps = REAL_REMOVAL_OPS): void {
+  ops.chmod(path, 0o700);
+  for (const entry of ops.readdir(path)) {
     if (entry.isDirectory() && !entry.isSymbolicLink()) {
-      makeDirectoryTreeWritable(join(path, entry.name));
+      makeDirectoryTreeWritable(join(path, entry.name), ops);
     }
   }
 }
