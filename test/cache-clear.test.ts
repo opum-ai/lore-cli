@@ -176,12 +176,13 @@ describe("clearCheckoutCache path classes (DEC-208 (a1))", () => {
     expect(existsSync(file)).toBe(true);
   });
 
-  test("a path that traverses a regular file is not_found (exit 3), whichever errno the platform reports", () => {
+  test("a path that traverses a regular file is not_found (exit 3), with the reason on POSIX", () => {
     const root = tempDir();
     writeFileSync(join(root, "file"), "keep");
-    // POSIX realpath reports ENOTDIR here, win32 reports ENOENT: the contract is the exit code,
-    // so only the type is pinned, not the wording.
-    expectLoreError("not_found", () => clearCheckoutCache(join(root, "file", "sub")));
+    const err = expectLoreError("not_found", () => clearCheckoutCache(join(root, "file", "sub")));
+    // POSIX realpath reports ENOTDIR here, so DEC-208 (a1) F1's reason applies; win32 reports ENOENT
+    // for the same path, so there the contract is the exit code only.
+    if (process.platform !== "win32") expect(err.message).toContain("not a directory");
   });
 
   test("a missing path stays not_found, and a directory with no cache stays absent naming the path it looked at", () => {
