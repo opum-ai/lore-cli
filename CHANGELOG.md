@@ -18,9 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the path it looked at); `2` usage; `3` the path is missing, exists but is not a directory, or hit any
   other unclassified errno while resolving it, with the errno named; `4` a refused symlink, a
   permission or busy failure (including EACCES on an ancestor), or any errno while removing, with
-  the errno named. An entry that vanishes mid-removal (at thaw or at delete) is skipped as already gone: the cache is
-  re-walked a bounded number of times, and `cleared` is reported only once the cache directory itself
-  is gone. Nothing exits `1`. A relative path
+  the errno named. Success is the postcondition: `cleared` (exit `0`) is reported only once the cache directory itself
+  is gone. An entry that vanishes mid-removal (at thaw or at delete) is skipped as already gone, and a
+  cache that still exists after a walk is walked again; after 3 re-walks with the cache still present
+  it exits `4`, naming `ENOENT` and saying the cache is still being written, and the caller owns the
+  retry. A stray non-directory `<path>/.lore` exits `0` as `absent`, with the reason naming it. Nothing
+  exits `1`. A relative path
   resolves against the working directory lore was started in. A clear that fails partway leaves
   generations thawed and partly deleted; rerun it to finish.
 

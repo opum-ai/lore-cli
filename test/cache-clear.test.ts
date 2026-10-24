@@ -337,21 +337,41 @@ describe("clearCheckoutCache errno phases (DEC-208 (a2)): nothing reaches exit 1
     expect(existsSync(join(checkout, ".lore", "cache"))).toBe(false);
   });
 
-  test("REMOVAL: a thaw that swallows ENOENT and leaves the cache behind is never reported cleared", () => {
+  test("POSTCONDITION, survives every walk: a cache that never goes away exits 4 naming ENOENT and the writer", () => {
     const { checkout } = populatedCheckout();
-    const chmod = alwaysThrowing("ENOENT"); // every attempt returns quietly inside removeContained
+    const chmod = alwaysThrowing("ENOENT"); // every walk returns quietly inside removeContained
     const err = expectDenied(() => clearCheckoutCache(checkout, { chmod }));
-    expect(err.message).toContain("still exists");
-    expect(chmod.calls).toBe(3); // the named bound
+    expect(err.message).toContain("ENOENT");
+    expect(err.message).toContain("still being written");
+    expect(exitCodeFor(err)).toBe(EXIT_CODES.denied);
+    expect(chmod.calls).toBe(1 + 3); // the first walk plus the named 3 re-walks
     expect(existsSync(join(checkout, ".lore", "cache"))).toBe(true);
   });
 
-  test("REMOVAL: ENOENT from rm that never stops is bounded at 3 and reported denied naming ENOENT", () => {
+  test("POSTCONDITION, gone on re-walk 2: a cache that disappears on the second walk exits 0 cleared", () => {
+    const { checkout } = populatedCheckout();
+    const chmod = failingFirst("ENOENT", 1, chmodSync); // walk 1 quietly stops early, walk 2 is real
+    const result = clearCheckoutCache(checkout, { chmod });
+    expect(result.action).toBe("cleared");
+    expect(existsSync(join(checkout, ".lore", "cache"))).toBe(false);
+  });
+
+  test("POSTCONDITION: the bound is exactly 3 re-walks (4 walks): goes on the last one, one more failure is denied", () => {
+    const { checkout } = populatedCheckout();
+    const lastChance = failingFirst("ENOENT", 3, chmodSync); // walks 1-3 stop early; walk 4 (re-walk 3) is real
+    expect(clearCheckoutCache(checkout, { chmod: lastChance }).action).toBe("cleared");
+    const again = populatedCheckout();
+    const tooMany = failingFirst("ENOENT", 4, chmodSync); // walk 4 stops early too: one re-walk too many
+    expectDenied(() => clearCheckoutCache(again.checkout, { chmod: tooMany }));
+  });
+
+  test("REMOVAL: ENOENT from rm that never stops exits 4 naming ENOENT and the writer, after the bound", () => {
     const { checkout } = populatedCheckout();
     const rm = alwaysThrowing("ENOENT");
     const err = expectDenied(() => clearCheckoutCache(checkout, { rm }));
     expect(err.message).toContain("ENOENT");
-    expect(rm.calls).toBe(3);
+    expect(err.message).toContain("still being written");
+    expect(rm.calls).toBe(1 + 3);
   });
 
   test("REMOVAL: any other errno at chmod, readdir or rm is denied (exit 4) naming it, with no retry", () => {
@@ -394,6 +414,47 @@ describe("clearCheckoutCache errno phases (DEC-208 (a2)): nothing reaches exit 1
     expect(exitCodeFor(expectLoreError("not_found", () => clearCheckoutCache(checkout, { realpath: bare })))).toBe(
       EXIT_CODES.not_found,
     );
+  });
+});
+
+describe("a stray non-directory .lore (DEC-208 (a3) Q2)", () => {
+  test("a regular file at <path>/.lore is exit 0 absent, the reason names it, and the file is untouched", () => {
+    const checkout = tempDir();
+    writeFileSync(join(checkout, ".lore"), "stray");
+    const result = clearCheckoutCache(checkout);
+    expect(result.action).toBe("absent");
+    expect(result.reason).toContain(join(realpathSync(checkout), ".lore"));
+    expect(result.reason).toContain("is not a directory");
+    expect(existsSync(join(checkout, ".lore"))).toBe(true);
+  });
+
+  test("through run() it exits 0 and the output names <path>/.lore as not a directory", async () => {
+    const checkout = tempDir();
+    writeFileSync(join(checkout, ".lore"), "stray");
+    const stdout = capture();
+    const code = await run(["bun", "lore", "cache", "clear", checkout, "--json"], {
+      cwd: tempDir(),
+      stdout,
+      stderr: capture(),
+    });
+    expect(code).toBe(0);
+    const envelope = JSON.parse(stdout.text()) as { data: { action: string; reason: string } };
+    expect(envelope.data.action).toBe("absent");
+    expect(envelope.data.reason).toContain("is not a directory");
+  });
+
+  test("other way: a SYMLINKED .lore is still refused (exit 4), because it is a refusal, not an absence", () => {
+    const checkout = tempDir();
+    const outside = tempDir();
+    symlinkSync(outside, join(checkout, ".lore"));
+    expectDenied(() => clearCheckoutCache(checkout));
+  });
+
+  test("other way: a .lore/cache that is a regular file under a real .lore is still refused", () => {
+    const checkout = tempDir();
+    mkdirSync(join(checkout, ".lore"));
+    writeFileSync(join(checkout, ".lore", "cache"), "x");
+    expectDenied(() => clearCheckoutCache(checkout));
   });
 });
 

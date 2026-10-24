@@ -30,5 +30,6 @@ export async function runCache(options: CacheCommandOptions): Promise<number> {
 }
 
 function renderCache(data: ClearCheckoutCacheResult): string {
-  return data.action === "cleared" ? `cleared ${data.path}` : `nothing to clear: ${data.path} does not exist`;
+  if (data.action === "cleared") return `cleared ${data.path}`;
+  return `nothing to clear: ${data.reason ?? `${data.path} does not exist`}`;
 }

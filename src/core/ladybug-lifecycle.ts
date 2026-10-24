@@ -437,6 +437,8 @@ export interface ClearCheckoutCacheResult {
   readonly action: "cleared" | "absent";
   /** The canonical `.lore/cache` path that was (or would have been) removed. */
   readonly path: string;
+  /** Why there was nothing to clear, when that is not simply "the cache does not exist". */
+  readonly reason?: string;
 }
 
 /**
@@ -454,8 +456,11 @@ export interface ClearCheckoutCacheFs {
   readonly rm?: (path: string, options: { recursive: boolean; force: boolean }) => void;
 }
 
-/** A removal that keeps hitting ENOENT is re-walked this many times before it is reported. */
-const CLEAR_REMOVE_ATTEMPTS = 3;
+/**
+ * DEC-208 (a3): after the first walk, a cache that still exists is re-walked this many times before
+ * the clear is reported `denied`. The caller owns any further retry.
+ */
+const CLEAR_REWALKS = 3;
 
 /**
  * Owner-invoked removal of one checkout's whole `.lore/cache` (LCLI-740, DEC-208). Generations are
@@ -496,6 +501,15 @@ export function clearCheckoutCache(pathInput: string, fs: ClearCheckoutCacheFs =
       if (isErrno(cause, "ENOENT")) return { action: "absent", path: cacheDir };
       throw resolutionError(cause, dir);
     }
+    if (dir === loreDir && !stat.isSymbolicLink() && !stat.isDirectory()) {
+      // DEC-208 (a3) Q2: a stray non-directory `.lore` under a usable checkout directory means there
+      // is no cache, so the postcondition holds and nothing was refused: exit 0, absent, with the reason.
+      return {
+        action: "absent",
+        path: cacheDir,
+        reason: `${loreDir} is not a directory, so there is no cache to clear`,
+      };
+    }
     if (stat.isSymbolicLink() || !stat.isDirectory()) {
       throw new LoreError(
         "denied",
@@ -505,27 +519,35 @@ export function clearCheckoutCache(pathInput: string, fs: ClearCheckoutCacheFs =
       );
     }
   }
-  for (let attempt = 1; ; attempt++) {
+  for (let walk = 0; ; walk++) {
     try {
       removeContained(loreDir, cacheDir, ops);
-      // removeContained returns quietly when an entry vanished mid-thaw, so "returned" is not
-      // "removed": report cleared only once the cache directory itself is gone, else re-walk.
-      if (cacheIsGone(cacheDir, lstat)) return { action: "cleared", path: cacheDir };
-      if (attempt >= CLEAR_REMOVE_ATTEMPTS) throw new CacheStillPresent(cacheDir);
     } catch (cause) {
-      // An entry that vanished mid-walk is already gone: walk again and it is simply absent.
-      if (isErrno(cause, "ENOENT") && attempt < CLEAR_REMOVE_ATTEMPTS) continue;
+      // An entry that vanished mid-walk is already gone: the existence check below decides whether
+      // the walk finished the job. Any other errno ends the clear now.
+      if (!isErrno(cause, "ENOENT")) throw removalError(cause, cacheDir);
+    }
+    // removeContained also returns quietly when an entry vanished mid-thaw, so "returned" is not
+    // "removed": success is the postcondition, reported only once the cache directory itself is gone.
+    let gone: boolean;
+    try {
+      gone = cacheIsGone(cacheDir, lstat);
+    } catch (cause) {
       throw removalError(cause, cacheDir);
     }
+    if (gone) return { action: "cleared", path: cacheDir };
+    if (walk >= CLEAR_REWALKS) throw stillBeingWritten(cacheDir);
   }
 }
 
-/** Raised, and reported as the removal-phase `denied`, when re-walking never makes the cache disappear. */
-class CacheStillPresent extends Error {
-  readonly code = "ECACHEPRESENT";
-  constructor(path: string) {
-    super(`${path} still exists after ${CLEAR_REMOVE_ATTEMPTS} removal attempts`);
-  }
+/** The cache survived the first walk and every re-walk: something is still writing it. Exit 4, caller retries. */
+function stillBeingWritten(cacheDir: string): LoreError {
+  return new LoreError(
+    "denied",
+    `cannot clear ${cacheDir}: ENOENT: entries kept vanishing across ${1 + CLEAR_REWALKS} walks and the cache still exists; it is still being written (a concurrent lore build?)`,
+    "wait for the writer to finish, then rerun; the caller owns the retry",
+    { path: cacheDir },
+  );
 }
 
 function cacheIsGone(cacheDir: string, lstat: (path: string) => Stats): boolean {
