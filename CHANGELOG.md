@@ -15,8 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<path>/.lore/cache` through the lifecycle's own removal path, needs no git and no writer lock,
   works on a directory that is no longer a registered worktree, and refuses a symlinked or
   non-directory `.lore` or `cache`. Exit codes: `0` cleared, or `absent` (idempotent; the output names
-  the path it looked at); `2` usage; `3` the path is missing, or exists but is not a directory; `4` a
-  refused symlink, or a permission or busy failure (including EACCES on an ancestor). A relative path
+  the path it looked at); `2` usage; `3` the path is missing, exists but is not a directory, or hit any
+  other unclassified errno while resolving it, with the errno named; `4` a refused symlink, a
+  permission or busy failure (including EACCES on an ancestor), or any errno while removing, with
+  the errno named. An entry that vanishes mid-removal is skipped as already gone. Nothing exits `1`. A relative path
   resolves against the working directory lore was started in. A clear that fails partway leaves
   generations thawed and partly deleted; rerun it to finish.
 

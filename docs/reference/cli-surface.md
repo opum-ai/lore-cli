@@ -721,7 +721,8 @@ they live; this is an explicit owner action, never run implicitly.
 
 It is the first step of worktree removal, so it is idempotent: a directory that is not a lore
 checkout, or has no `.lore/cache`, exits `0` with action `absent` and names the path it looked at.
-A relative `<path>` resolves against the working directory lore was started in. If a clear fails
+A relative `<path>` resolves against the working directory lore was started in. An entry that
+vanishes while the cache is being removed is skipped as already gone. If a clear fails
 partway (for example `denied` on a read-only `.lore`), generations already thawed to `0700` stay
 thawed and partly deleted; fix the permission and rerun it to finish.
 
@@ -729,7 +730,7 @@ thawed and partly deleted; fix the permission and rerun it to finish.
 |---|---|
 | **Args** | `clear <path>` (the checkout, or its `.lore/cache` directly) |
 | **Output** | `kind: cache.result` — `cleared` or `absent`, and the canonical cache path |
-| **Exit** | `0` ok (including an absent cache) · `2` invalid arguments · `3` path missing, or it exists but is not a directory · `4` a symlinked or non-directory `.lore`/`cache` refused, or permission denied (including EACCES on an ancestor) |
+| **Exit** | `0` ok (including an absent cache) · `2` invalid arguments · `3` path missing, it exists but is not a directory, or any other unclassified errno while resolving it (ELOOP, EIO, ENAMETOOLONG, a race after `realpath`), with the errno named · `4` a symlinked or non-directory `.lore`/`cache` refused, a permission or busy errno (including EACCES on an ancestor), or any errno while removing, with the errno named |
 
 ### `snapshot`
 

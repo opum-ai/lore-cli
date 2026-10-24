@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/cli";
 import { clearCheckoutCache } from "../src/core/ladybug-lifecycle";
-import { EXIT_CODES, LoreError } from "../src/errors";
+import { EXIT_CODES, exitCodeFor, LoreError } from "../src/errors";
 import { capture } from "./helpers";
 
 const scratch: string[] = [];
@@ -230,6 +230,108 @@ function expectLoreError(type: LoreError["type"], fn: () => unknown): LoreError 
   }
   throw new Error(`expected a ${type} LoreError`);
 }
+
+function errno(code: string): NodeJS.ErrnoException {
+  return Object.assign(new Error(`${code}: injected`), { code });
+}
+
+function throwing(code: string): () => never {
+  return () => {
+    throw errno(code);
+  };
+}
+
+describe("clearCheckoutCache errno phases (DEC-208 (a2)): nothing reaches exit 1", () => {
+  test("RESOLUTION: an unclassified errno from realpath is not_found (exit 3) naming the errno", () => {
+    const { checkout } = populatedCheckout();
+    for (const code of ["EIO", "ELOOP", "ENAMETOOLONG"]) {
+      const err = expectLoreError("not_found", () => clearCheckoutCache(checkout, { realpath: throwing(code) }));
+      expect(err.message).toContain(code);
+      expect(exitCodeFor(err)).toBe(EXIT_CODES.not_found);
+    }
+    expect(existsSync(join(checkout, ".lore", "cache"))).toBe(true);
+  });
+
+  test("RESOLUTION: ENOENT from stat after realpath (a race) is not_found naming ENOENT", () => {
+    const { checkout } = populatedCheckout();
+    const err = expectLoreError("not_found", () => clearCheckoutCache(checkout, { stat: throwing("ENOENT") }));
+    expect(err.message).toContain("ENOENT");
+  });
+
+  test("RESOLUTION: an unclassified errno from lstat is not_found naming the errno, and removes nothing", () => {
+    const { checkout } = populatedCheckout();
+    const err = expectLoreError("not_found", () => clearCheckoutCache(checkout, { lstat: throwing("EIO") }));
+    expect(err.message).toContain("EIO");
+    expect(exitCodeFor(err)).toBe(EXIT_CODES.not_found);
+    expect(existsSync(join(checkout, ".lore", "cache"))).toBe(true);
+  });
+
+  test("RESOLUTION, other way: a permission errno in the same phase is denied (exit 4), not not_found", () => {
+    const { checkout } = populatedCheckout();
+    for (const hooks of [{ realpath: throwing("EACCES") }, { stat: throwing("EPERM") }, { lstat: throwing("EBUSY") }]) {
+      const err = expectDenied(() => clearCheckoutCache(checkout, hooks));
+      expect(exitCodeFor(err)).toBe(EXIT_CODES.denied);
+    }
+  });
+
+  test("REMOVAL: an entry that vanished (ENOENT) is skipped by re-walking, and the clear succeeds", () => {
+    const { checkout } = populatedCheckout();
+    let calls = 0;
+    const result = clearCheckoutCache(checkout, {
+      remove: (_loreDir, cacheDir) => {
+        calls++;
+        if (calls === 1) throw errno("ENOENT");
+        clearCheckoutCache(cacheDir); // the real removal, through the public path
+      },
+    });
+    expect(result.action).toBe("cleared");
+    expect(calls).toBe(2);
+  });
+
+  test("REMOVAL: ENOENT that never stops is bounded and reported denied naming ENOENT", () => {
+    const { checkout } = populatedCheckout();
+    let calls = 0;
+    const err = expectDenied(() =>
+      clearCheckoutCache(checkout, {
+        remove: () => {
+          calls++;
+          throw errno("ENOENT");
+        },
+      }),
+    );
+    expect(err.message).toContain("ENOENT");
+    expect(calls).toBe(3);
+  });
+
+  test("REMOVAL: any other errno is denied (exit 4) naming the errno, with no retry", () => {
+    const { checkout } = populatedCheckout();
+    for (const code of ["ENOTEMPTY", "EIO", "EEXIST"]) {
+      let calls = 0;
+      const err = expectDenied(() =>
+        clearCheckoutCache(checkout, {
+          remove: () => {
+            calls++;
+            throw errno(code);
+          },
+        }),
+      );
+      expect(err.message).toContain(code);
+      expect(exitCodeFor(err)).toBe(EXIT_CODES.denied);
+      expect(calls).toBe(1);
+    }
+  });
+
+  test("an error with no errno code is still denied in removal and not_found in resolution, never uncaught", () => {
+    const { checkout } = populatedCheckout();
+    const bare = () => {
+      throw new Error("no code");
+    };
+    expect(exitCodeFor(expectDenied(() => clearCheckoutCache(checkout, { remove: bare })))).toBe(EXIT_CODES.denied);
+    expect(exitCodeFor(expectLoreError("not_found", () => clearCheckoutCache(checkout, { realpath: bare })))).toBe(
+      EXIT_CODES.not_found,
+    );
+  });
+});
 
 function expectDenied(fn: () => unknown): LoreError {
   try {
