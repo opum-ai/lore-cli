@@ -463,7 +463,6 @@ export function clearCheckoutCache(pathInput: string): ClearCheckoutCacheResult 
       stat = lstatSync(dir);
     } catch (cause) {
       if (isErrno(cause, "ENOENT")) return { action: "absent", path: cacheDir };
-      if (isErrno(cause, "ENOTDIR")) throw notADirectory(dir);
       throw deniedIfPermission(cause, dir);
     }
     if (stat.isSymbolicLink() || !stat.isDirectory()) {

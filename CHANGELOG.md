@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`lore cache clear <path>` removes a checkout's read-only `.lore/cache`** (LCLI-740, LCLI-762,
+  DEC-208). Projection generations are sealed 0555/0444 on purpose, so an outside recursive delete
+  cannot remove them and `git worktree remove` fails partway. The command thaws and deletes
+  `<path>/.lore/cache` through the lifecycle's own removal path, needs no git and no writer lock,
+  works on a directory that is no longer a registered worktree, and refuses a symlinked or
+  non-directory `.lore` or `cache`. Exit codes: `0` cleared, or `absent` (idempotent; the output names
+  the path it looked at); `2` usage; `3` the path is missing, or exists but is not a directory; `4` a
+  refused symlink, or a permission or busy failure (including EACCES on an ancestor). A relative path
+  resolves against the working directory lore was started in. A clear that fails partway leaves
+  generations thawed and partly deleted; rerun it to finish.
+
 ### Fixed
 
 - **`promote-latest.mjs` waits out npm read lag after its writes** (LCLI-689). STEP 7's post-write

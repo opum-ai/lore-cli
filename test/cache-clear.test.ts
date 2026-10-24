@@ -172,7 +172,7 @@ describe("clearCheckoutCache path classes (DEC-208 (a1))", () => {
     const file = join(root, "README.md");
     writeFileSync(file, "keep");
     const err = expectLoreError("not_found", () => clearCheckoutCache(file));
-    expect(err.message).toContain("not a directory");
+    expect(err.message).toContain("has no .lore/cache to clear"); // a phrase only notADirectory writes
     expect(existsSync(file)).toBe(true);
   });
 
@@ -182,7 +182,7 @@ describe("clearCheckoutCache path classes (DEC-208 (a1))", () => {
     const err = expectLoreError("not_found", () => clearCheckoutCache(join(root, "file", "sub")));
     // POSIX realpath reports ENOTDIR here, so DEC-208 (a1) F1's reason applies; win32 reports ENOENT
     // for the same path, so there the contract is the exit code only.
-    if (process.platform !== "win32") expect(err.message).toContain("not a directory");
+    if (process.platform !== "win32") expect(err.message).toContain("has no .lore/cache to clear");
   });
 
   test("a missing path stays not_found, and a directory with no cache stays absent naming the path it looked at", () => {
