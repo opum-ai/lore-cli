@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -164,6 +165,69 @@ test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     expect(existsSync(join(checkout, ".lore", "cache"))).toBe(true); // nothing was removed
   },
 );
+
+describe("clearCheckoutCache path classes (DEC-208 (a1))", () => {
+  test("a regular file is not_found (exit 3) naming 'not a directory', and is not touched", () => {
+    const root = tempDir();
+    const file = join(root, "README.md");
+    writeFileSync(file, "keep");
+    const err = expectLoreError("not_found", () => clearCheckoutCache(file));
+    expect(err.message).toContain("not a directory");
+    expect(existsSync(file)).toBe(true);
+  });
+
+  test("a path that traverses a regular file is not_found (ENOTDIR from realpath)", () => {
+    const root = tempDir();
+    writeFileSync(join(root, "file"), "keep");
+    const err = expectLoreError("not_found", () => clearCheckoutCache(join(root, "file", "sub")));
+    expect(err.message).toContain("not a directory");
+  });
+
+  test("a missing path stays not_found, and a directory with no cache stays absent naming the path it looked at", () => {
+    const root = tempDir();
+    expectLoreError("not_found", () => clearCheckoutCache(join(root, "nope")));
+    const result = clearCheckoutCache(root);
+    expect(result.action).toBe("absent");
+    expect(result.path).toBe(join(realpathSync(root), ".lore", "cache"));
+  });
+
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "EACCES from realpath on an ancestor is denied (exit 4), not not_found and not exit 1",
+    () => {
+      const root = tempDir();
+      mkdirSync(join(root, "locked", "checkout"), { recursive: true });
+      chmodSync(join(root, "locked"), 0o000);
+      try {
+        const err = expectDenied(() => clearCheckoutCache(join(root, "locked", "checkout")));
+        expect(err.message).toContain("cannot clear");
+      } finally {
+        chmodSync(join(root, "locked"), 0o700);
+      }
+    },
+  );
+
+  test("every outcome through run() stays in [0,2,3,4]: a regular file exits 3", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "README.md"), "keep");
+    const code = await run(["bun", "lore", "cache", "clear", "README.md", "--json"], {
+      cwd: root,
+      stdout: capture(),
+      stderr: capture(),
+    });
+    expect(code).toBe(EXIT_CODES.not_found);
+  });
+});
+
+function expectLoreError(type: LoreError["type"], fn: () => unknown): LoreError {
+  try {
+    fn();
+  } catch (err) {
+    expect(err).toBeInstanceOf(LoreError);
+    expect((err as LoreError).type).toBe(type);
+    return err as LoreError;
+  }
+  throw new Error(`expected a ${type} LoreError`);
+}
 
 function expectDenied(fn: () => unknown): LoreError {
   try {

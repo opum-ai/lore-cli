@@ -446,14 +446,15 @@ export interface ClearCheckoutCacheResult {
  * writer lock and creates nothing, and it touches only `<checkout>/.lore/cache`, which is always the
  * fixed join under the realpath'd checkout. A symlinked or non-directory `.lore` or `cache` is
  * refused by the lstat loop below before anything is removed. A permission or busy failure from
- * lstat, chmod or rm is reported as `denied` (exit 4), the code the contract promises.
+ * lstat, chmod or rm is reported as `denied` (exit 4), the code the contract promises. A failed
+ * clear can leave generations thawed (0700) and partly deleted; rerun it to finish.
  */
 export function clearCheckoutCache(pathInput: string): ClearCheckoutCacheResult {
   const resolved = resolve(pathInput);
   const parts = resolved.split(sep);
   const namesCache = parts.at(-1) === "cache" && parts.at(-2) === ".lore";
   const checkout = namesCache ? resolve(resolved, "..", "..") : resolved;
-  const root = canonicalRepositoryRoot(checkout);
+  const root = canonicalCheckoutRoot(checkout);
   const loreDir = join(root, ".lore");
   const cacheDir = join(loreDir, "cache");
   for (const dir of [loreDir, cacheDir]) {
@@ -462,6 +463,7 @@ export function clearCheckoutCache(pathInput: string): ClearCheckoutCacheResult 
       stat = lstatSync(dir);
     } catch (cause) {
       if (isErrno(cause, "ENOENT")) return { action: "absent", path: cacheDir };
+      if (isErrno(cause, "ENOTDIR")) throw notADirectory(dir);
       throw deniedIfPermission(cause, dir);
     }
     if (stat.isSymbolicLink() || !stat.isDirectory()) {
@@ -479,6 +481,46 @@ export function clearCheckoutCache(pathInput: string): ClearCheckoutCacheResult 
     throw deniedIfPermission(cause, cacheDir);
   }
   return { action: "cleared", path: cacheDir };
+}
+
+/**
+ * Resolve the named checkout for `cache clear` (DEC-208 (a1)). A missing path or one that is not a
+ * directory is `not_found` (exit 3); a permission failure resolving it, such as EACCES on an
+ * ancestor, is `denied` (exit 4); no raw errno reaches exit 1. A directory with no `.lore/cache`
+ * is not an error here: the caller reports `absent` so the command stays idempotent.
+ */
+function canonicalCheckoutRoot(checkout: string): string {
+  let real: string;
+  try {
+    real = realpathSync(checkout);
+  } catch (cause) {
+    if (isErrno(cause, "ENOTDIR")) throw notADirectory(checkout);
+    const denied = deniedIfPermission(cause, checkout);
+    if (denied !== cause) throw denied;
+    throw new LoreError(
+      "not_found",
+      `cannot resolve ${checkout}: ${errorMessage(cause)}`,
+      "name an existing checkout directory",
+      { path: checkout },
+    );
+  }
+  let stat: ReturnType<typeof statSync>;
+  try {
+    stat = statSync(real);
+  } catch (cause) {
+    throw deniedIfPermission(cause, real);
+  }
+  if (!stat.isDirectory()) throw notADirectory(real);
+  return real;
+}
+
+function notADirectory(path: string): LoreError {
+  return new LoreError(
+    "not_found",
+    `${path} is not a directory, so it has no .lore/cache to clear`,
+    "name a checkout directory (or its .lore/cache)",
+    { path },
+  );
 }
 
 /** Map a permission/busy errno to the contract's `denied`; any other failure passes through unchanged. */
