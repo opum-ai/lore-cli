@@ -150,6 +150,21 @@ describe("clearCheckoutCache (LCLI-740)", () => {
   );
 });
 
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "an lstat permission failure on .lore is `denied` (exit 4), not an uncaught crash",
+  () => {
+    const { checkout } = populatedCheckout();
+    chmodSync(checkout, 0o600); // no search bit: lstat("<checkout>/.lore") fails with EACCES
+    try {
+      const err = expectDenied(() => clearCheckoutCache(checkout));
+      expect(err.message).toContain("cannot clear");
+    } finally {
+      chmodSync(checkout, 0o700);
+    }
+    expect(existsSync(join(checkout, ".lore", "cache"))).toBe(true); // nothing was removed
+  },
+);
+
 function expectDenied(fn: () => unknown): LoreError {
   try {
     fn();
