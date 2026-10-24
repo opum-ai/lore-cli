@@ -723,20 +723,19 @@ It is the first step of worktree removal, so it is idempotent: a directory that 
 checkout, or has no `.lore/cache`, exits `0` with action `absent` and names the path it looked at.
 A relative `<path>` resolves against the working directory lore was started in. Success is the postcondition: it
 exits `0` with `cleared` only once the cache directory itself is gone. An entry that vanishes while
-the cache is being removed (at thaw or at delete) is skipped as already gone, and a cache that still
-exists after a walk is walked again; after 3 re-walks with the cache still present it exits `4`,
-naming `ENOENT` and saying the cache is still being written, and the caller owns the retry. A
-stray non-directory `<path>/.lore` means there is no cache: it exits `0` with `absent`, and the
-reason names `<path>/.lore` as not a directory (a symlinked `.lore` is still refused, `4`). If a
-clear fails
-partway (for example `denied` on a read-only `.lore`), generations already thawed to `0700` stay
-thawed and partly deleted; fix the permission and rerun it to finish.
+the cache is being removed (at thaw or at delete) ends that walk, and the cache is walked again;
+after 3 re-walks with the cache still present it exits `4`, naming `ENOENT` and saying the cache is
+still being written, and the caller owns the retry. A stray non-directory `<path>/.lore` means there
+is no cache: it exits `0` with `absent`, and the reason names `<path>/.lore` as not a directory (a
+symlinked `.lore` is still refused, `4`). If a clear fails partway (for example `denied` on a
+read-only `.lore`), generations already thawed to `0700` stay thawed and partly deleted; fix the
+permission and rerun it to finish.
 
 | | |
 |---|---|
 | **Args** | `clear <path>` (the checkout, or its `.lore/cache` directly) |
 | **Output** | `kind: cache.result` — `cleared` or `absent`, and the canonical cache path |
-| **Exit** | `0` ok (including an absent cache) · `2` invalid arguments · `3` path missing, it exists but is not a directory, or any other unclassified errno while resolving it (ELOOP, EIO, ENAMETOOLONG, a race after `realpath`), with the errno named · `4` a symlinked or non-directory `.lore`/`cache` refused, a permission or busy errno (including EACCES on an ancestor), or any errno while removing, with the errno named |
+| **Exit** | `0` ok (including an absent cache) · `2` invalid arguments · `3` path missing, it exists but is not a directory, or any other unclassified errno while resolving it (ELOOP, EIO, ENAMETOOLONG, a race after `realpath`), with the errno named · `4` a symlinked `.lore` or `cache`, or a non-directory `cache`, refused; a permission or busy errno (including EACCES on an ancestor), or any errno while removing, with the errno named |
 
 ### `snapshot`
 

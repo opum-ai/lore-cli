@@ -469,13 +469,14 @@ const CLEAR_REWALKS = 3;
  * names the checkout, or its `.lore/cache` directly, and need not be a git worktree: a failed
  * `git worktree remove` strands a directory with no `.git` holding only this cache. It takes no
  * writer lock and creates nothing, and it touches only `<checkout>/.lore/cache`, which is always the
- * fixed join under the realpath'd checkout. A symlinked or non-directory `.lore` or `cache` is
- * refused by the lstat loop below before anything is removed.
+ * fixed join under the realpath'd checkout. A symlinked `.lore` or `cache`, or a non-directory
+ * `cache`, is refused by the lstat loop below before anything is removed; a stray non-directory
+ * `.lore` is `absent` (DEC-208 (a3) Q2).
  *
  * Nothing reaches exit 1 (DEC-208 (a1), (a2)). RESOLUTION (realpath, stat, lstat): a permission or
  * busy errno is `denied` (4); any other unclassified errno is `not_found` (3) naming the errno.
- * REMOVAL (chmod, readdir, rm): an entry that vanished (ENOENT) is skipped by re-walking; any other
- * errno is `denied` (4) naming the errno. A failed clear can leave generations thawed (0700) and
+ * REMOVAL (chmod, readdir, rm): an entry that vanished (ENOENT) ends that walk and the cache is
+ * walked again, up to {@link CLEAR_REWALKS} times; any other errno is `denied` (4) naming the errno. A failed clear can leave generations thawed (0700) and
  * partly deleted; rerun it to finish.
  */
 export function clearCheckoutCache(pathInput: string, fs: ClearCheckoutCacheFs = {}): ClearCheckoutCacheResult {

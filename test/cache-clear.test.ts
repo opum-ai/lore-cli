@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -257,7 +258,7 @@ function failingFirst<A extends unknown[], R>(
   return wrapped;
 }
 
-/** Fails once for every errno in `codes`, always the same way, counting calls. */
+/** Throws `code` on every call, counting the calls. */
 function alwaysThrowing(code: string): (() => never) & { calls: number } {
   const wrapped = (() => {
     wrapped.calls++;
@@ -311,6 +312,23 @@ describe("clearCheckoutCache errno phases (DEC-208 (a2)): nothing reaches exit 1
     // Were it special-cased it would be denied; it is an unclassified errno here, so not_found.
     const err = expectLoreError("not_found", () => clearCheckoutCache(checkout, { lstat: throwing("EROFS") }));
     expect(err.message).toContain("EROFS");
+  });
+
+  test("POSTCONDITION check: an errno from the post-walk lstat is denied (exit 4), named, and the cache is still present", () => {
+    const { checkout } = populatedCheckout();
+    // lstat calls: 1 and 2 are the resolution loop (.lore, cache), 3 is inside removeContained, 4 is
+    // the post-walk existence check. Only call 4 fails, and rm is a no-op so the cache stays present.
+    let calls = 0;
+    const lstat = (path: string) => {
+      calls++;
+      if (calls === 4) throw errno("EIO");
+      return lstatSync(path);
+    };
+    const err = expectDenied(() => clearCheckoutCache(checkout, { lstat, rm: () => {} }));
+    expect(err.message).toContain("EIO");
+    expect(exitCodeFor(err)).toBe(EXIT_CODES.denied);
+    expect(calls).toBe(4);
+    expect(existsSync(join(checkout, ".lore", "cache"))).toBe(true);
   });
 
   test("REMOVAL, chmod: ENOENT mid-thaw is re-walked, the cache is really gone, and only then is it cleared", () => {
