@@ -475,9 +475,10 @@ const CLEAR_REWALKS = 3;
  *
  * Nothing reaches exit 1 (DEC-208 (a1), (a2)). RESOLUTION (realpath, stat, lstat): a permission or
  * busy errno is `denied` (4); any other unclassified errno is `not_found` (3) naming the errno.
- * REMOVAL (chmod, readdir, rm): an entry that vanished (ENOENT) ends that walk and the cache is
- * walked again, up to {@link CLEAR_REWALKS} times; any other errno is `denied` (4) naming the errno. A failed clear can leave generations thawed (0700) and
- * partly deleted; rerun it to finish.
+ * REMOVAL (chmod, readdir, rm, and the lstats inside the walk and after it): an ENOENT ends that walk;
+ * the cache is walked again, up to {@link CLEAR_REWALKS} re-walks; any other errno is `denied` (4)
+ * naming the errno. A symlinked `.lore` is refused (4) in every case. A failed clear can leave
+ * generations thawed (0700) and partly deleted; rerun it to finish.
  */
 export function clearCheckoutCache(pathInput: string, fs: ClearCheckoutCacheFs = {}): ClearCheckoutCacheResult {
   const lstat = fs.lstat ?? lstatSync;

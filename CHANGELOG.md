@@ -20,9 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unclassified errno while resolving it, with the errno named; `4` a refused symlink, a permission
   or busy failure (including EACCES on an ancestor), or any errno while removing, with the errno
   named. Success is the postcondition: `cleared` (exit `0`) is reported only once the cache
-  directory itself is gone. An entry that vanishes mid-removal (at thaw or at delete) ends that walk,
-  and the cache is walked again; after 3 re-walks with the cache still present it exits `4`, naming
-  `ENOENT` and saying the cache is still being written, and the caller owns the retry. Nothing exits
+  directory itself is gone. An `ENOENT` ends that walk; the cache is walked again, up to 3 re-walks. With the cache still
+  present after the 3 re-walks it exits `4`, naming `ENOENT` and saying the cache is still being
+  written, and the caller owns the retry. A symlinked `.lore` is refused (`4`) in every case. Nothing exits
   `1`. A relative path resolves against the working directory lore was started in. A clear that
   fails partway leaves generations thawed and partly deleted; rerun it to finish.
 

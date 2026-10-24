@@ -721,15 +721,18 @@ they live; this is an explicit owner action, never run implicitly.
 
 It is the first step of worktree removal, so it is idempotent: a directory that is not a lore
 checkout, or has no `.lore/cache`, exits `0` with action `absent` and names the path it looked at.
-A relative `<path>` resolves against the working directory lore was started in. Success is the postcondition: it
-exits `0` with `cleared` only once the cache directory itself is gone. An entry that vanishes while
-the cache is being removed (at thaw or at delete) ends that walk, and the cache is walked again;
-after 3 re-walks with the cache still present it exits `4`, naming `ENOENT` and saying the cache is
-still being written, and the caller owns the retry. A stray non-directory `<path>/.lore` means there
-is no cache: it exits `0` with `absent`, and the reason names `<path>/.lore` as not a directory (a
-symlinked `.lore` is still refused, `4`). If a clear fails partway (for example `denied` on a
-read-only `.lore`), generations already thawed to `0700` stay thawed and partly deleted; fix the
-permission and rerun it to finish.
+A relative `<path>` resolves against the working directory lore was started in.
+
+Success is the postcondition: it exits `0` with `cleared` only once the cache directory itself is
+gone (`lstat` returns `ENOENT`). An `ENOENT` ends that walk; the cache is walked again, up to 3
+re-walks. With the cache still present after the 3 re-walks it exits `4`, naming `ENOENT` and saying
+the cache is still being written, and the caller owns the retry. A stray non-directory
+`<path>/.lore` means there is no cache: it exits `0` with `absent`, and the reason names
+`<path>/.lore` as not a directory. A symlinked `<path>/.lore` is refused with `4` in every case
+(dangling, or pointing at a directory or a file), because the command never follows a symlink. An
+`lstat` inside the removal walk, and the check after it, are removal errors and exit `4`. If a clear
+fails partway (for example `denied` on a read-only `.lore`), generations already thawed to `0700`
+stay thawed and partly deleted; fix the permission and rerun it to finish.
 
 | | |
 |---|---|

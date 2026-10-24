@@ -468,6 +468,26 @@ describe("a stray non-directory .lore (DEC-208 (a3) Q2)", () => {
     expectDenied(() => clearCheckoutCache(checkout));
   });
 
+  test("DEC-208 (a4): a symlinked .lore is refused (exit 4) in every case: dangling, to a directory, to a file", () => {
+    for (const make of [
+      (checkout: string) => symlinkSync(join(checkout, "missing-target"), join(checkout, ".lore")), // dangling
+      (checkout: string) => {
+        const target = tempDir();
+        symlinkSync(target, join(checkout, ".lore")); // to a directory
+      },
+      (checkout: string) => {
+        const target = join(tempDir(), "a-file");
+        writeFileSync(target, "x");
+        symlinkSync(target, join(checkout, ".lore")); // to a non-directory
+      },
+    ]) {
+      const checkout = tempDir();
+      make(checkout);
+      const err = expectDenied(() => clearCheckoutCache(checkout));
+      expect(exitCodeFor(err)).toBe(EXIT_CODES.denied);
+    }
+  });
+
   test("other way: a .lore/cache that is a regular file under a real .lore is still refused", () => {
     const checkout = tempDir();
     mkdirSync(join(checkout, ".lore"));
