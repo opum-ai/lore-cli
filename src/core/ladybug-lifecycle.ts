@@ -11,6 +11,7 @@ import {
   chmodSync,
   closeSync,
   createReadStream,
+  type Dirent,
   existsSync,
   fsyncSync,
   lstatSync,
@@ -21,6 +22,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  type Stats,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -435,7 +437,30 @@ export interface ClearCheckoutCacheResult {
   readonly action: "cleared" | "absent";
   /** The canonical `.lore/cache` path that was (or would have been) removed. */
   readonly path: string;
+  /** Why there was nothing to clear, when that is not simply "the cache does not exist". */
+  readonly reason?: string;
 }
+
+/**
+ * The filesystem calls `clearCheckoutCache` makes, split by phase so a test can inject an errno into
+ * each (DEC-208 (a2)). Production passes none and gets the real calls.
+ */
+export interface ClearCheckoutCacheFs {
+  readonly realpath?: (path: string) => string;
+  readonly stat?: (path: string) => Stats;
+  /** Used for the resolution lstats and for the post-removal existence check. */
+  readonly lstat?: (path: string) => Stats;
+  /** The three calls inside the thaw-and-delete path, injectable one at a time. */
+  readonly chmod?: (path: string, mode: number) => void;
+  readonly readdir?: (path: string) => readonly Dirent[];
+  readonly rm?: (path: string, options: { recursive: boolean; force: boolean }) => void;
+}
+
+/**
+ * DEC-208 (a3): after the first walk, a cache that still exists is re-walked this many times before
+ * the clear is reported `denied`. The caller owns any further retry.
+ */
+const CLEAR_REWALKS = 3;
 
 /**
  * Owner-invoked removal of one checkout's whole `.lore/cache` (LCLI-740, DEC-208). Generations are
@@ -443,24 +468,49 @@ export interface ClearCheckoutCacheResult {
  * thaws and deletes through the same {@link removeContained} path the lifecycle uses. `pathInput`
  * names the checkout, or its `.lore/cache` directly, and need not be a git worktree: a failed
  * `git worktree remove` strands a directory with no `.git` holding only this cache. It takes no
- * writer lock and creates nothing, and it touches only `<checkout>/.lore/cache`: a symlinked
- * `.lore` or `cache`, or one resolving outside the checkout, is refused before anything is removed.
+ * writer lock and creates nothing, and it touches only `<checkout>/.lore/cache`, which is always the
+ * fixed join under the realpath'd checkout. A symlinked `.lore` or `cache`, or a non-directory
+ * `cache`, is refused by the lstat loop below before anything is removed; a stray non-directory
+ * `.lore` is `absent` (DEC-208 (a3) Q2).
+ *
+ * Nothing reaches exit 1 (DEC-208 (a1), (a2)). RESOLUTION (realpath, stat, lstat): a permission or
+ * busy errno is `denied` (4); any other unclassified errno is `not_found` (3) naming the errno.
+ * REMOVAL (chmod, readdir, rm, and the lstats inside the walk and after it): an ENOENT ends that walk;
+ * the cache is walked again, up to {@link CLEAR_REWALKS} re-walks; any other errno is `denied` (4)
+ * naming the errno. A symlinked `.lore` is refused (4) in every case. A failed clear can leave
+ * generations thawed (0700) and partly deleted; rerun it to finish.
  */
-export function clearCheckoutCache(pathInput: string): ClearCheckoutCacheResult {
+export function clearCheckoutCache(pathInput: string, fs: ClearCheckoutCacheFs = {}): ClearCheckoutCacheResult {
+  const lstat = fs.lstat ?? lstatSync;
+  const ops: RemovalOps = {
+    lstat,
+    chmod: fs.chmod ?? REAL_REMOVAL_OPS.chmod,
+    readdir: fs.readdir ?? REAL_REMOVAL_OPS.readdir,
+    rm: fs.rm ?? REAL_REMOVAL_OPS.rm,
+  };
   const resolved = resolve(pathInput);
   const parts = resolved.split(sep);
   const namesCache = parts.at(-1) === "cache" && parts.at(-2) === ".lore";
   const checkout = namesCache ? resolve(resolved, "..", "..") : resolved;
-  const root = canonicalRepositoryRoot(checkout);
+  const root = canonicalCheckoutRoot(checkout, fs);
   const loreDir = join(root, ".lore");
   const cacheDir = join(loreDir, "cache");
   for (const dir of [loreDir, cacheDir]) {
-    let stat: ReturnType<typeof lstatSync>;
+    let stat: Stats;
     try {
-      stat = lstatSync(dir);
+      stat = lstat(dir);
     } catch (cause) {
       if (isErrno(cause, "ENOENT")) return { action: "absent", path: cacheDir };
-      throw cause;
+      throw resolutionError(cause, dir);
+    }
+    if (dir === loreDir && !stat.isSymbolicLink() && !stat.isDirectory()) {
+      // DEC-208 (a3) Q2: a stray non-directory `.lore` under a usable checkout directory means there
+      // is no cache, so the postcondition holds and nothing was refused: exit 0, absent, with the reason.
+      return {
+        action: "absent",
+        path: cacheDir,
+        reason: `${loreDir} is not a directory, so there is no cache to clear`,
+      };
     }
     if (stat.isSymbolicLink() || !stat.isDirectory()) {
       throw new LoreError(
@@ -471,9 +521,112 @@ export function clearCheckoutCache(pathInput: string): ClearCheckoutCacheResult 
       );
     }
   }
-  assertContained(root, cacheDir);
-  removeContained(loreDir, cacheDir);
-  return { action: "cleared", path: cacheDir };
+  for (let walk = 0; ; walk++) {
+    try {
+      removeContained(loreDir, cacheDir, ops);
+    } catch (cause) {
+      // An entry that vanished mid-walk is already gone: the existence check below decides whether
+      // the walk finished the job. Any other errno ends the clear now.
+      if (!isErrno(cause, "ENOENT")) throw removalError(cause, cacheDir);
+    }
+    // removeContained also returns quietly when an entry vanished mid-thaw, so "returned" is not
+    // "removed": success is the postcondition, reported only once the cache directory itself is gone.
+    let gone: boolean;
+    try {
+      gone = cacheIsGone(cacheDir, lstat);
+    } catch (cause) {
+      throw removalError(cause, cacheDir);
+    }
+    if (gone) return { action: "cleared", path: cacheDir };
+    if (walk >= CLEAR_REWALKS) throw stillBeingWritten(cacheDir);
+  }
+}
+
+/** The cache survived the first walk and every re-walk: something is still writing it. Exit 4, caller retries. */
+function stillBeingWritten(cacheDir: string): LoreError {
+  return new LoreError(
+    "denied",
+    `cannot clear ${cacheDir}: ENOENT: entries kept vanishing across ${1 + CLEAR_REWALKS} walks and the cache still exists; it is still being written (a concurrent lore build?)`,
+    "wait for the writer to finish, then rerun; the caller owns the retry",
+    { path: cacheDir },
+  );
+}
+
+function cacheIsGone(cacheDir: string, lstat: (path: string) => Stats): boolean {
+  try {
+    lstat(cacheDir);
+    return false;
+  } catch (cause) {
+    if (isErrno(cause, "ENOENT")) return true;
+    throw cause;
+  }
+}
+
+/**
+ * Resolve the named checkout for `cache clear` (DEC-208 (a1), (a2)). A missing path or one that is
+ * not a directory is `not_found` (3); a permission failure, such as EACCES on an ancestor, is
+ * `denied` (4). A directory with no `.lore/cache` is not an error here: the caller reports `absent`
+ * so the command stays idempotent.
+ */
+function canonicalCheckoutRoot(checkout: string, fs: ClearCheckoutCacheFs): string {
+  let real: string;
+  try {
+    real = (fs.realpath ?? realpathSync)(checkout);
+  } catch (cause) {
+    if (isErrno(cause, "ENOTDIR")) throw notADirectory(checkout);
+    throw resolutionError(cause, checkout);
+  }
+  let stat: Stats;
+  try {
+    stat = (fs.stat ?? statSync)(real);
+  } catch (cause) {
+    throw resolutionError(cause, real);
+  }
+  if (!stat.isDirectory()) throw notADirectory(real);
+  return real;
+}
+
+function notADirectory(path: string): LoreError {
+  return new LoreError(
+    "not_found",
+    `${path} is not a directory, so it has no .lore/cache to clear`,
+    "name a checkout directory (or its .lore/cache)",
+    { path },
+  );
+}
+
+const PERMISSION_ERRNOS = ["EACCES", "EPERM", "EBUSY"] as const;
+
+function errnoName(cause: unknown): string {
+  return isObject(cause) && typeof cause.code === "string" ? cause.code : "an unknown error";
+}
+
+/** RESOLUTION phase (realpath, stat, lstat): permission/busy is `denied`, anything else `not_found`, errno named. */
+function resolutionError(cause: unknown, path: string): LoreError {
+  if (PERMISSION_ERRNOS.some((code) => isErrno(cause, code))) {
+    return new LoreError(
+      "denied",
+      `cannot clear ${path}: ${errnoName(cause)}: ${errorMessage(cause)}`,
+      "check the checkout's permissions and that no process holds the cache open, then retry",
+      { path },
+    );
+  }
+  return new LoreError(
+    "not_found",
+    `cannot resolve ${path}: ${errnoName(cause)}: ${errorMessage(cause)}`,
+    "name an existing checkout directory",
+    { path },
+  );
+}
+
+/** REMOVAL phase (chmod, readdir, rm): every errno is `denied`, errno named; generations may be left thawed. */
+function removalError(cause: unknown, path: string): LoreError {
+  return new LoreError(
+    "denied",
+    `cannot clear ${path}: ${errnoName(cause)}: ${errorMessage(cause)}`,
+    "generations may be left thawed and partly deleted; fix the cause (permissions, or a lore build still writing the cache) and rerun",
+    { path },
+  );
 }
 
 function hasPotentialGeneration(cacheRoot: string): boolean {
@@ -862,7 +1015,7 @@ function assertExistingCacheLayoutSafe(root: string, cacheRoot: string, cacheRel
   let current = root;
   for (const segment of segments) {
     current = join(current, segment);
-    let stat: ReturnType<typeof lstatSync>;
+    let stat: Stats;
     try {
       stat = lstatSync(current);
     } catch (cause) {
@@ -1032,23 +1185,42 @@ function cleanupAbandonedStaging(cacheRoot: string): void {
   }
 }
 
-function removeContained(cacheRoot: string, target: string): void {
+/**
+ * The filesystem calls the thaw-and-delete path makes. Every caller outside `clearCheckoutCache`
+ * passes none and gets the real calls, so the lifecycle's own removal is byte-for-byte what it was;
+ * the optional argument exists so `cache clear` can be proved at chmod, readdir and rm individually.
+ */
+interface RemovalOps {
+  readonly lstat: (path: string) => Stats;
+  readonly chmod: (path: string, mode: number) => void;
+  readonly readdir: (path: string) => readonly Dirent[];
+  readonly rm: (path: string, options: { recursive: boolean; force: boolean }) => void;
+}
+
+const REAL_REMOVAL_OPS: RemovalOps = {
+  lstat: lstatSync,
+  chmod: chmodSync,
+  readdir: (path) => readdirSync(path, { withFileTypes: true }),
+  rm: rmSync,
+};
+
+function removeContained(cacheRoot: string, target: string, ops: RemovalOps = REAL_REMOVAL_OPS): void {
   assertContained(cacheRoot, target);
   try {
-    const stat = lstatSync(target);
-    if (stat.isDirectory() && !stat.isSymbolicLink()) makeDirectoryTreeWritable(target);
+    const stat = ops.lstat(target);
+    if (stat.isDirectory() && !stat.isSymbolicLink()) makeDirectoryTreeWritable(target, ops);
   } catch (cause) {
     if (isErrno(cause, "ENOENT")) return;
     throw cause;
   }
-  rmSync(target, { recursive: true, force: false });
+  ops.rm(target, { recursive: true, force: false });
 }
 
-function makeDirectoryTreeWritable(path: string): void {
-  chmodSync(path, 0o700);
-  for (const entry of readdirSync(path, { withFileTypes: true })) {
+function makeDirectoryTreeWritable(path: string, ops: RemovalOps = REAL_REMOVAL_OPS): void {
+  ops.chmod(path, 0o700);
+  for (const entry of ops.readdir(path)) {
     if (entry.isDirectory() && !entry.isSymbolicLink()) {
-      makeDirectoryTreeWritable(join(path, entry.name));
+      makeDirectoryTreeWritable(join(path, entry.name), ops);
     }
   }
 }

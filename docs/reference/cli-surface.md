@@ -719,11 +719,26 @@ through the lifecycle's own removal path (LCLI-740, DEC-208). It touches only
 lock, creates nothing, and refuses a symlinked `.lore` or `cache`. Generations stay immutable while
 they live; this is an explicit owner action, never run implicitly.
 
+It is the first step of worktree removal, so it is idempotent: a directory that is not a lore
+checkout, or has no `.lore/cache`, exits `0` with action `absent` and names the path it looked at.
+A relative `<path>` resolves against the working directory lore was started in.
+
+Success is the postcondition: it exits `0` with `cleared` only once the cache directory itself is
+gone (`lstat` returns `ENOENT`). An `ENOENT` ends that walk; the cache is walked again, up to 3
+re-walks. With the cache still present after the 3 re-walks it exits `4`, naming `ENOENT` and saying
+the cache is still being written, and the caller owns the retry. A stray non-directory
+`<path>/.lore` means there is no cache: it exits `0` with `absent`, and the reason names
+`<path>/.lore` as not a directory. A symlinked `<path>/.lore` is refused with `4` in every case
+(dangling, or pointing at a directory or a file), because the command never follows a symlink. An
+`lstat` inside the removal walk, and the check after it, are removal errors and exit `4`. If a clear
+fails partway (for example `denied` on a read-only `.lore`), generations already thawed to `0700`
+stay thawed and partly deleted; fix the permission and rerun it to finish.
+
 | | |
 |---|---|
 | **Args** | `clear <path>` (the checkout, or its `.lore/cache` directly) |
 | **Output** | `kind: cache.result` — `cleared` or `absent`, and the canonical cache path |
-| **Exit** | `0` ok (including an absent cache) · `2` invalid arguments · `3` checkout path missing · `4` a symlinked or non-directory `.lore`/`cache` refused, or read/write denied |
+| **Exit** | `0` ok (including an absent cache) · `2` invalid arguments · `3` path missing, it exists but is not a directory, or any other unclassified errno while resolving it (ELOOP, EIO, ENAMETOOLONG, a race after `realpath`), with the errno named · `4` a symlinked `.lore` or `cache`, or a non-directory `cache`, refused; a permission or busy errno (including EACCES on an ancestor), or any errno while removing, with the errno named |
 
 ### `snapshot`
 

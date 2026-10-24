@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`lore cache clear <path>` removes a checkout's read-only `.lore/cache`** (LCLI-740, LCLI-762,
+  DEC-208). Projection generations are sealed 0555/0444 on purpose, so an outside recursive delete
+  cannot remove them and `git worktree remove` fails partway. The command thaws and deletes
+  `<path>/.lore/cache` through the lifecycle's own removal path, needs no git and no writer lock,
+  works on a directory that is no longer a registered worktree, and refuses a symlinked `.lore` or
+  `cache`, or a non-directory `cache`. Exit codes: `0` cleared, or `absent` (idempotent; the output
+  names the path it looked at, and a stray non-directory `<path>/.lore` is `absent` with the reason
+  naming it); `2` usage; `3` the path is missing, exists but is not a directory, or hit any other
+  unclassified errno while resolving it, with the errno named; `4` a refused symlink, a permission
+  or busy failure (including EACCES on an ancestor), or any errno while removing, with the errno
+  named. Success is the postcondition: `cleared` (exit `0`) is reported only once the cache
+  directory itself is gone. An `ENOENT` ends that walk; the cache is walked again, up to 3 re-walks. With the cache still
+  present after the 3 re-walks it exits `4`, naming `ENOENT` and saying the cache is still being
+  written, and the caller owns the retry. A symlinked `.lore` is refused (`4`) in every case. Nothing exits
+  `1`. A relative path resolves against the working directory lore was started in. A clear that
+  fails partway leaves generations thawed and partly deleted; rerun it to finish.
+
 ### Fixed
 
 - **`promote-latest.mjs` waits out npm read lag after its writes** (LCLI-689). STEP 7's post-write
