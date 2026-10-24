@@ -443,8 +443,10 @@ export interface ClearCheckoutCacheResult {
  * thaws and deletes through the same {@link removeContained} path the lifecycle uses. `pathInput`
  * names the checkout, or its `.lore/cache` directly, and need not be a git worktree: a failed
  * `git worktree remove` strands a directory with no `.git` holding only this cache. It takes no
- * writer lock and creates nothing, and it touches only `<checkout>/.lore/cache`: a symlinked
- * `.lore` or `cache`, or one resolving outside the checkout, is refused before anything is removed.
+ * writer lock and creates nothing, and it touches only `<checkout>/.lore/cache`, which is always the
+ * fixed join under the realpath'd checkout. A symlinked or non-directory `.lore` or `cache` is
+ * refused by the lstat loop below before anything is removed. A permission or busy failure from
+ * lstat, chmod or rm is reported as `denied` (exit 4), the code the contract promises.
  */
 export function clearCheckoutCache(pathInput: string): ClearCheckoutCacheResult {
   const resolved = resolve(pathInput);
@@ -460,7 +462,7 @@ export function clearCheckoutCache(pathInput: string): ClearCheckoutCacheResult 
       stat = lstatSync(dir);
     } catch (cause) {
       if (isErrno(cause, "ENOENT")) return { action: "absent", path: cacheDir };
-      throw cause;
+      throw deniedIfPermission(cause, dir);
     }
     if (stat.isSymbolicLink() || !stat.isDirectory()) {
       throw new LoreError(
@@ -471,9 +473,25 @@ export function clearCheckoutCache(pathInput: string): ClearCheckoutCacheResult 
       );
     }
   }
-  assertContained(root, cacheDir);
-  removeContained(loreDir, cacheDir);
+  try {
+    removeContained(loreDir, cacheDir);
+  } catch (cause) {
+    throw deniedIfPermission(cause, cacheDir);
+  }
   return { action: "cleared", path: cacheDir };
+}
+
+/** Map a permission/busy errno to the contract's `denied`; any other failure passes through unchanged. */
+function deniedIfPermission(cause: unknown, path: string): unknown {
+  if (isErrno(cause, "EACCES") || isErrno(cause, "EPERM") || isErrno(cause, "EBUSY") || isErrno(cause, "EROFS")) {
+    return new LoreError(
+      "denied",
+      `cannot clear ${path}: ${errorMessage(cause)}`,
+      "check the checkout's permissions and that no process holds the cache open, then retry",
+      { path },
+    );
+  }
+  return cause;
 }
 
 function hasPotentialGeneration(cacheRoot: string): boolean {
