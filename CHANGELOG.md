@@ -362,7 +362,11 @@ landed since the tag, and the repair below.
 - **`lore sync` logs no entry for a commit whose only bundle change is `docs/log.md`** (LCLI-711,
   DEC-172 (4bq)). The log's own file counted as a touched folder, so every sync that committed the log
   earned another entry and the log never reached a fixed point. A mixed commit (the log plus a concept)
-  is still logged by its other paths, and `index.md` still counts.
+  is still logged by its other paths, and `index.md` still counts. Entries for commits that also touched
+  `docs/log.md` therefore move from the shared parent section (for example `## docs`) to their other
+  paths' deepest common folder (for example `## docs/adr` or `## docs/reference`); the set of entries
+  is unchanged, so a sync that only moves entries between sections loses and duplicates none
+  (LCLI-763).
 
 - **`scripts/promote-latest.mjs` refuses a zero-byte promotion record** (LCLI-641). An empty record
   read as "no record", so a `--promote` reached the exclusive record write and died with an uncaught
