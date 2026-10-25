@@ -818,10 +818,10 @@ anything = true
     expect(loadConfig({ root: repoRoot(toml), env: {} })).toEqual(DEFAULTS);
   });
 
-  test("lore's own committed .lore/config.toml matches its documented cutover to Quest and skill_source (AC#1)", () => {
-    // Pinned to defaultConfig() plus exactly the two overrides this repo's committed
-    // header documents (the 2026-09-03 Backlog-to-Quest cutover, and the 2026-09-05
-    // LCLI-444 dogfood of skill_source = "plugin"): an edit that sets any further
+  test("lore's own committed .lore/config.toml matches its documented cutover to Quest (AC#1)", () => {
+    // Pinned to defaultConfig() plus exactly the one override this repo's committed
+    // header documents (the 2026-09-03 Backlog-to-Quest cutover; the 2026-09-05
+    // skill_source = "plugin" dogfood was dropped by LCLI-764, DEC-238 a1): an edit that sets any further
     // non-default value must also update the sample's header, and this makes that
     // drift loud rather than letting the shipped "documents its overrides" sample
     // silently diverge. Resolved from this file's location (not cwd) so it is
@@ -830,7 +830,6 @@ anything = true
     expect(config).toEqual({
       ...DEFAULTS,
       tracker: { ...DEFAULTS.tracker, backend: "quest" },
-      agents: { ...DEFAULTS.agents, skillSource: "plugin" },
     });
   });
 });

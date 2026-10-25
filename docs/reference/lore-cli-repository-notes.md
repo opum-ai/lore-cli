@@ -98,14 +98,15 @@ under `.claude/skills/` or `.codex/skills/` unless a future tool earns one the s
   the installed quest CLI generates. Its managed instructions block still lives in CLAUDE.md itself
   (the `quest:agent-instructions` block, kept current via `quest agents --update-instructions
   --target claude`), not a separate AGENTS.md.
-- **No project-level `.claude/skills/lore/SKILL.md`, on purpose.** `.lore/config.toml`'s
-  `[agents].skill_source = "plugin"` (LCLI-443) opts this repository into treating the `opum-lore`
-  marketplace plugin (LCLI-441 — the same repository and tag, so its skill content can never drift
-  from the CLI version installed) as the source of the `lore` skill instead of a per-repo generated
-  copy. `lore agents --check` enforces this: a leftover `SKILL.md` is `orphaned` drift, not silence,
-  and `lore agents --force` removes it only when its bytes exactly match `src/core/agent-bridge.ts`'s
-  own generated content. `CLAUDE.md`'s `lore:agents` managed block reflects this too — its "Skill:"
-  line names the plugin, not a path, whenever `skill_source` is `"plugin"` (`buildNudgeBody`).
+- **A project-level `.claude/skills/lore/SKILL.md` is expected while `opum-lore` is off in the
+  checkout (LCLI-764, DEC-238 a1).** This repository dogfooded `[agents].skill_source = "plugin"`
+  (LCLI-443, LCLI-444) from 2026-09-05, which made the `opum-lore` marketplace plugin the source of
+  the `lore` skill and a leftover per-repo copy `orphaned` drift. The plugin is off in this
+  checkout (a gitignored `.claude/settings.local.json` override), so that setting left a worker with
+  no lore skill at all; LCLI-764 dropped it and `lore agents` generates the repo-local file. The
+  `lore agents --check` line `plugin-claude disabled opum-lore@opum` is expected to remain while the
+  override stands. `CLAUDE.md`'s `lore:agents` managed block names the repo-local path accordingly
+  (`buildNudgeBody`); return to `"plugin"` only once the plugin is measured enabled in this checkout.
 - **No project-level copy of a shared skill.** `opum-sdlc` and `opum-handoff` resolve to the
   `opum-workflow` plugin at user scope. A project-level copy is a silent fork: nothing announces
   the substitution, and a partial copy — one carrying `SKILL.md` without the `scripts/` and
