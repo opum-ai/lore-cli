@@ -1769,3 +1769,149 @@ describe.skipIf(onWindows)("subprocess: the real lore against fake claude/codex 
     expect(Date.now() - started).toBeLessThan(5000);
   });
 });
+
+// ---- LCLI-765: a checkout-local override, and what `up-to-date` covers ---------------------------
+// Measured 2026-10-25 on Claude Code 2.1.309 in a scratch project: with enabledPlugins[lore] = false in
+// the project's .claude/settings.local.json, `claude plugin list --json` reports ONE row, scope "user",
+// enabled:false (the effective state, not the deciding file); `claude plugin enable <id> --scope user`
+// fails ("already enabled at user scope") and leaves it disabled, while `--scope local` flips it and
+// rewrites that file. So the row's own scope is the wrong thing to name in the remedy.
+
+function writeClaudeSettings(file: "settings.local.json" | "settings.json", body: unknown): void {
+  mkdirSync(join(root, ".claude"), { recursive: true });
+  writeFileSync(join(root, ".claude", file), typeof body === "string" ? body : `${JSON.stringify(body)}\n`);
+}
+
+const DISABLED_USER_ROW: AgentPluginListing = {
+  kind: "listed",
+  plugins: [{ id: LORE_PLUGIN_ID, enabled: false, scope: "user" }],
+};
+
+describe("LCLI-765: the file that actually disables the plugin is named, and the remedy names its scope", () => {
+  test("a local override names settings.local.json and offers --scope local; the exit code is unchanged", async () => {
+    await seedBridges();
+    writeClaudeSettings("settings.local.json", { enabledPlugins: { [LORE_PLUGIN_ID]: false } });
+    const { code, data } = await agentsCheck(fakePort({ claude: DISABLED_USER_ROW }));
+    expect(code).toBe(EXIT_OK);
+    expect(data?.plugins?.claude).toEqual({
+      runtime: "claude",
+      id: "opum-lore@opum",
+      state: "disabled",
+      scope: "user",
+      overriddenBy: { scope: "local", file: ".claude/settings.local.json" },
+      remedy: "claude plugin enable opum-lore@opum --scope local",
+    });
+  });
+
+  test("a project override names settings.json and offers --scope project; local beats project", async () => {
+    await seedBridges();
+    writeClaudeSettings("settings.json", { enabledPlugins: { [LORE_PLUGIN_ID]: false } });
+    let { data } = await agentsCheck(fakePort({ claude: DISABLED_USER_ROW }));
+    expect(data?.plugins?.claude?.overriddenBy).toEqual({ scope: "project", file: ".claude/settings.json" });
+    expect(data?.plugins?.claude?.remedy).toBe("claude plugin enable opum-lore@opum --scope project");
+    writeClaudeSettings("settings.local.json", { enabledPlugins: { [LORE_PLUGIN_ID]: false } });
+    ({ data } = await agentsCheck(fakePort({ claude: DISABLED_USER_ROW })));
+    expect(data?.plugins?.claude?.overriddenBy).toEqual({ scope: "local", file: ".claude/settings.local.json" });
+  });
+
+  test("controls: no settings file, an enabling one, another plugin's, or unreadable JSON leave the user-scope remedy", async () => {
+    await seedBridges();
+    const userRemedy = "claude plugin enable opum-lore@opum --scope user";
+    const remedyFor = async (): Promise<string | undefined> => {
+      const { data } = await agentsCheck(fakePort({ claude: DISABLED_USER_ROW }));
+      expect(data?.plugins?.claude).not.toHaveProperty("overriddenBy");
+      return data?.plugins?.claude?.remedy;
+    };
+    expect(await remedyFor()).toBe(userRemedy);
+    writeClaudeSettings("settings.local.json", { enabledPlugins: { [LORE_PLUGIN_ID]: true } });
+    expect(await remedyFor()).toBe(userRemedy);
+    writeClaudeSettings("settings.local.json", { enabledPlugins: { "other@market": false } });
+    expect(await remedyFor()).toBe(userRemedy);
+    writeClaudeSettings("settings.local.json", "{ not json");
+    expect(await remedyFor()).toBe(userRemedy);
+  });
+
+  test("an override file does not rewrite an INSTALLED plugin's report, and a managed row still decides first", async () => {
+    await seedBridges();
+    writeClaudeSettings("settings.local.json", { enabledPlugins: { [LORE_PLUGIN_ID]: false } });
+    const installed = await agentsCheck(
+      fakePort({ claude: { kind: "listed", plugins: [{ id: LORE_PLUGIN_ID, enabled: true, scope: "user" }] } }),
+    );
+    expect(installed.data?.plugins?.claude).not.toHaveProperty("overriddenBy");
+    const managed = await agentsCheck(
+      fakePort({ claude: { kind: "listed", plugins: [{ id: LORE_PLUGIN_ID, enabled: false, scope: "managed" }] } }),
+    );
+    expect(managed.data?.plugins?.claude?.remedy).toBe(MANAGED_SCOPE_REMEDY);
+    expect(managed.data?.plugins?.claude).not.toHaveProperty("overriddenBy");
+  });
+
+  test("--plain carries the override on its own record line, after the state line and before the remedy", async () => {
+    await seedBridges();
+    writeClaudeSettings("settings.local.json", { enabledPlugins: { [LORE_PLUGIN_ID]: false } });
+    const { text } = await agentsCheck(fakePort({ claude: DISABLED_USER_ROW }), PLAIN_CTX);
+    expect(text.split("\n").filter((line) => line.startsWith("plugin-"))).toEqual([
+      "plugin-claude disabled opum-lore@opum scope=user",
+      "plugin-claude-override .claude/settings.local.json (local scope) sets opum-lore@opum to disabled, and wins over the user-scope row",
+      "plugin-claude-remedy claude plugin enable opum-lore@opum --scope local",
+    ]);
+  });
+});
+
+describe("LCLI-765: `up-to-date` says what it covers, and a plugin-sourced skill that cannot be reached is said", () => {
+  const COVERAGE = "agents-coverage up-to-date covers the managed block and the skill file only, not plugin enablement";
+  const UNREACHABLE = "agents-skill-reachability no lore skill is reachable in this checkout";
+
+  function setSkillSource(value: "plugin" | "repo"): void {
+    mkdirSync(join(root, ".lore"), { recursive: true });
+    writeFileSync(join(root, ".lore", "config.toml"), `[agents]\nskill_source = "${value}"\n`);
+  }
+
+  test("--check --plain always states the coverage; a write-mode run (no plugin report) does not", async () => {
+    await seedBridges();
+    const port = fakePort({ claude: { kind: "listed", plugins: [{ id: LORE_PLUGIN_ID, enabled: true }] } });
+    const { text } = await agentsCheck(port, PLAIN_CTX);
+    expect(text.split("\n")).toContain(COVERAGE);
+    const write = capture();
+    runAgents({ root, output: PLAIN_CTX, args: [], stdout: write });
+    expect(write.text()).not.toContain("agents-coverage");
+  });
+
+  test("plugin source + disabled plugin + no skill file: says no skill is reachable, exit code identical to the reachable state", async () => {
+    setSkillSource("plugin");
+    await seedBridges();
+    expect(existsSync(join(root, ".claude", "skills", "lore", "SKILL.md"))).toBe(false);
+    const disabled = await agentsCheck(fakePort({ claude: DISABLED_USER_ROW }), PLAIN_CTX);
+    expect(disabled.text.split("\n")).toContain(UNREACHABLE);
+    const enabled = await agentsCheck(
+      fakePort({ claude: { kind: "listed", plugins: [{ id: LORE_PLUGIN_ID, enabled: true }] } }),
+      PLAIN_CTX,
+    );
+    expect(enabled.text).not.toContain("agents-skill-reachability");
+    expect(disabled.code).toBe(enabled.code);
+    const notInstalled = await agentsCheck(fakePort({ claude: { kind: "listed", plugins: [] } }), PLAIN_CTX);
+    expect(notInstalled.text.split("\n")).toContain(UNREACHABLE);
+    expect(notInstalled.code).toBe(disabled.code);
+  });
+
+  test("controls: repo source, an unreadable listing, or a present skill file never claim unreachability", async () => {
+    await seedBridges();
+    const repoSource = await agentsCheck(fakePort({ claude: DISABLED_USER_ROW }), PLAIN_CTX);
+    expect(repoSource.text).not.toContain("agents-skill-reachability");
+    setSkillSource("plugin");
+    const unavailable = await agentsCheck(
+      fakePort({ claude: { kind: "unavailable", reason: "claude is not on PATH" } }),
+      PLAIN_CTX,
+    );
+    expect(unavailable.text).not.toContain("agents-skill-reachability");
+  });
+
+  test("the pretty view states both in words", async () => {
+    setSkillSource("plugin");
+    await seedBridges();
+    writeClaudeSettings("settings.local.json", { enabledPlugins: { [LORE_PLUGIN_ID]: false } });
+    const { text } = await agentsCheck(fakePort({ claude: DISABLED_USER_ROW }), { mode: "pretty", color: false });
+    expect(text).toContain("up-to-date covers the managed block and the skill file only, not plugin enablement");
+    expect(text).toContain("no lore skill is reachable in this checkout");
+    expect(text).toContain(".claude/settings.local.json");
+  });
+});

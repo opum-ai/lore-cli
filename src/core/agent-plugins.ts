@@ -19,6 +19,8 @@
  * exactly as synchronous as it was before this feature existed.
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { stripAnsiAndControls } from "../errors";
 
 /** The agent runtimes whose marketplace plugin lore checks. Each is reached only through its own public CLI. */
@@ -95,6 +97,19 @@ export interface AgentPluginCheck {
   readonly reason?: string;
   /** What to run next. Printed, never executed, by `init` and `--check`. */
   readonly remedy?: string;
+  /**
+   * The checkout's own Claude settings file that disables the plugin over the listed row (LCLI-765).
+   * `claude plugin list --json` reports only the effective `enabled` against the install row's scope,
+   * so without this the scope in `remedy` names a row that cannot re-enable it.
+   */
+  readonly overriddenBy?: AgentPluginOverride;
+}
+
+/** A checkout-local Claude settings file that sets the plugin disabled, and the Claude scope it is. */
+export interface AgentPluginOverride {
+  readonly scope: "local" | "project";
+  /** Repository-relative, forward-slashed. */
+  readonly file: string;
 }
 
 /** Per-runtime checks, keyed by runtime — the shape of `lore init`'s `data.plugins`. */
@@ -285,6 +300,47 @@ export function checkFromListing(runtime: AgentRuntime, listing: AgentPluginList
   };
 }
 
+/** The checkout's Claude settings files, highest precedence first (local > project > user, ruling 28). */
+const CLAUDE_OVERRIDE_FILES: readonly AgentPluginOverride[] = [
+  { scope: "local", file: ".claude/settings.local.json" },
+  { scope: "project", file: ".claude/settings.json" },
+];
+
+/** Whether `root`'s settings file sets this plugin to `false`. Unreadable, unparseable or any other value is "no". */
+function disablesPlugin(root: string, file: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(join(root, file), "utf8"));
+    const enabled = (parsed as { enabledPlugins?: Record<string, unknown> } | null)?.enabledPlugins;
+    return enabled !== null && typeof enabled === "object" && enabled[LORE_PLUGIN_ID] === false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The checkout's own settings file that disables the plugin, or `undefined` (LCLI-765). Claude Code
+ * 2.1.309 reports a local or project override as ONE row at the install scope with `enabled: false`,
+ * so the file is read here. The first of local, project that disables it wins, as Claude's precedence has it.
+ */
+export function claudeSettingsOverride(root: string): AgentPluginOverride | undefined {
+  return CLAUDE_OVERRIDE_FILES.find((candidate) => disablesPlugin(root, candidate.file));
+}
+
+/**
+ * A disabled Claude check whose deciding file is the checkout's own: names that file and offers the
+ * enable command for ITS scope, since `--scope user` fails against it ("already enabled at user
+ * scope", measured 2026-10-25). Applies only to a plain, non-managed row that is disabled and whose
+ * scope the file outranks; everything else is returned unchanged.
+ */
+export function withClaudeSettingsOverride(check: AgentPluginCheck, root: string): AgentPluginCheck {
+  if (check.runtime !== "claude" || check.state !== "disabled") return check;
+  if (claudeScopeManaged(check.runtime, check.scope) || claudeScopeUnnamable(check.runtime, check.scope)) return check;
+  if (check.scope !== "user" && check.scope !== "synced") return check;
+  const overriddenBy = claudeSettingsOverride(root);
+  if (overriddenBy === undefined) return check;
+  return { ...check, overriddenBy, remedy: `claude plugin enable ${LORE_PLUGIN_ID} --scope ${overriddenBy.scope}` };
+}
+
 /**
  * Detect the opum-lore plugin for each runtime through `port`. Read-only (ruling 19). Synchronous
  * when every listing is — the off switch's case — and a `Promise` only when a runtime CLI was
@@ -293,13 +349,15 @@ export function checkFromListing(runtime: AgentRuntime, listing: AgentPluginList
 export function detectLorePlugins(
   port: AgentPluginPort,
   runtimes: readonly AgentRuntime[],
+  root?: string,
 ): AgentPluginChecks | Promise<AgentPluginChecks> {
   const unique = [...new Set(runtimes)];
   const listings = unique.map((runtime) => port.list(runtime));
   const build = (resolved: readonly AgentPluginListing[]): AgentPluginChecks => {
     const checks: AgentPluginChecks = {};
     unique.forEach((runtime, index) => {
-      checks[runtime] = checkFromListing(runtime, resolved[index] as AgentPluginListing);
+      const check = checkFromListing(runtime, resolved[index] as AgentPluginListing);
+      checks[runtime] = root === undefined ? check : withClaudeSettingsOverride(check, root);
     });
     return checks;
   };
@@ -397,6 +455,11 @@ function updateToken(report: AgentPluginUpdateReport): string {
   return report.updateOk ? "ran-ok" : "ran-failed";
 }
 
+/** What an override file says, once, for `--plain` and the human view alike. */
+function overrideSentence(override: AgentPluginOverride): string {
+  return `${override.file} (${override.scope} scope) sets ${LORE_PLUGIN_ID} to disabled, and wins over the user-scope row`;
+}
+
 /**
  * The label a plugin check renders as in `--plain`: `plugin-<runtime> <state> <id>`, plus the remedy
  * or reason on its own line, and, on a `--force` run, `plugin-<runtime>-update <outcome>` and its
@@ -404,6 +467,8 @@ function updateToken(report: AgentPluginUpdateReport): string {
  */
 export function renderPluginPlain(check: AgentPluginCheck | AgentPluginUpdateReport): string[] {
   const lines = [`plugin-${check.runtime} ${check.state} ${check.id}${check.scope ? ` scope=${check.scope}` : ""}`];
+  if (check.overriddenBy !== undefined)
+    lines.push(`plugin-${check.runtime}-override ${overrideSentence(check.overriddenBy)}`);
   if (check.remedy !== undefined) lines.push(`plugin-${check.runtime}-remedy ${check.remedy}`);
   if (check.reason !== undefined) lines.push(`plugin-${check.runtime}-reason ${check.reason}`);
   if (isUpdateReport(check)) {
@@ -420,6 +485,7 @@ export function renderPluginPretty(check: AgentPluginCheck | AgentPluginUpdateRe
   const scope = check.scope !== undefined ? ` (${check.scope} scope)` : "";
   const lines = [`${runtimeName} plugin ${check.id}: ${check.state}${version}${scope}`];
   if (check.reason !== undefined) lines.push(`  ${check.reason}`);
+  if (check.overriddenBy !== undefined) lines.push(`  ${overrideSentence(check.overriddenBy)}`);
   // Ruling 19: init/--check print the command that would update an installed plugin, too. A managed
   // row's remedy is not a command at all (ruling 28), so it is not introduced as one.
   if (check.remedy !== undefined) {

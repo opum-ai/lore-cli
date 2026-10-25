@@ -343,7 +343,7 @@ export function runAgents(options: AgentsOptions): number | Promise<number> {
   const port = options.agentPlugins ?? createAgentPluginPort(options.root);
   // Only the manual update command mutates (ruling 19): `--force`, and never together with `--check`.
   const updating = force && !check;
-  return thenMaybe(detectLorePlugins(port, runtimes), (checks) => {
+  return thenMaybe(detectLorePlugins(port, runtimes, options.root), (checks) => {
     if (target !== undefined) {
       const detected = checks[target] as AgentPluginCheck;
       if (!updating) return finish({ ...result, plugin: detected });
@@ -542,6 +542,34 @@ export function bridgeActionColor(action: BridgeAction): string {
   return BRIDGE_ACTION_COLOR[action];
 }
 
+/**
+ * What a plugin-reporting run (`--check`/`--force`) says about the limits of its own `up-to-date` (LCLI-765,
+ * DEC-238 a5). `up-to-date` covers the managed block and the skill file, never plugin enablement, and the
+ * exit code does not depend on enablement either: that belongs to the machine, not the repository. The
+ * second note is the one case where the reader would otherwise infer a skill exists: `skill_source =
+ * "plugin"`, no per-repo file, and a Claude plugin that is disabled or absent. Unreadable state says nothing.
+ */
+function coverageNotes(data: AgentsResult): Array<{ record: string; sentence: string }> {
+  const checks = pluginChecks(data);
+  if (checks.length === 0) return [];
+  const notes = [
+    {
+      record: "agents-coverage",
+      sentence: "up-to-date covers the managed block and the skill file only, not plugin enablement",
+    },
+  ];
+  const claude = checks.find((check) => check.runtime === "claude");
+  const skillAbsent = data.files.some((file) => file.path === SKILL_REL_PATH && file.action === "unchanged");
+  if (
+    data.skillSource === "plugin" &&
+    skillAbsent &&
+    (claude?.state === "disabled" || claude?.state === "not-installed")
+  ) {
+    notes.push({ record: "agents-skill-reachability", sentence: "no lore skill is reachable in this checkout" });
+  }
+  return notes;
+}
+
 /** Human view: a heading, one line per file, and an actionable trailer for stale/protected state. */
 function renderPretty(data: AgentsResult, opts: { color: boolean }): string {
   const head = data.check ? `Checking the lore agent bridge at ${data.root}` : `lore agent bridge at ${data.root}`;
@@ -558,6 +586,7 @@ function renderPretty(data: AgentsResult, opts: { color: boolean }): string {
   for (const check of pluginChecks(data)) {
     lines.push(...renderPluginPretty(check));
   }
+  lines.push(...coverageNotes(data).map((note) => `  ${note.sentence}`));
   return lines.join("\n");
 }
 
@@ -573,6 +602,7 @@ function renderPlain(data: AgentsResult): string {
   for (const check of pluginChecks(data)) {
     lines.push(...renderPluginPlain(check));
   }
+  lines.push(...coverageNotes(data).map((note) => `${note.record} ${note.sentence}`));
   return lines.join("\n");
 }
 

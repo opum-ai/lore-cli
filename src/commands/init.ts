@@ -1036,7 +1036,7 @@ function finishNonInteractive(
   const complete = (plugins: AgentPluginChecks | undefined) =>
     completeNonInteractive(options, parsed, base, clock, priorSelection, plugins, migration, verified, backlogRemoval);
   if (runtimes.length === 0) return complete(undefined);
-  return thenMaybe(detectLorePlugins(agentPluginPortFor(options), runtimes), complete);
+  return thenMaybe(detectLorePlugins(agentPluginPortFor(options), runtimes, options.root), complete);
 }
 
 /** The marketplace-plugin runtimes a bridge selection covers: `claude` for the Claude bridge, `codex` for the Codex one. */
@@ -1458,7 +1458,9 @@ async function runInteractiveWizard(
   // selection and before the first byte of this run is written. Read-only; never changes the exit.
   const pluginRuntimes = pluginRuntimesFor(wantAgents, wantCodex);
   const plugins =
-    pluginRuntimes.length > 0 ? await detectLorePlugins(agentPluginPortFor(options), pluginRuntimes) : undefined;
+    pluginRuntimes.length > 0
+      ? await detectLorePlugins(agentPluginPortFor(options), pluginRuntimes, options.root)
+      : undefined;
 
   // Every question is answered and nothing can still refuse: only now is the first byte written
   // (LCLI-358.1, AC#4). An EOF/Ctrl-D or a declined git prompt above throws out of the `try` and
