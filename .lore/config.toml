@@ -9,9 +9,11 @@
 # on disk. See docs/adr/0013-lore-state-directory.md for the full
 # tracker-backend contract.
 #
-# This file sets exactly two non-default values, and test/config.test.ts pins
-# that list so a third cannot arrive silently: tracker.backend = "quest" (the
-# 2026-09-03 cutover above) and agents.skill_source = "plugin" (LCLI-444).
+# This file sets exactly one non-default value, and test/config.test.ts pins
+# that list so a second cannot arrive silently: tracker.backend = "quest" (the
+# 2026-09-03 cutover above). It also set agents.skill_source = "plugin" (LCLI-444)
+# from 2026-09-05 until LCLI-764 dropped it (DEC-238 a1): opum-lore is off in this
+# checkout, so the lore skill is the repo-local generated .claude/skills/lore/SKILL.md.
 #
 # A third lived here for a few hours on 2026-09-15, between LCLI-504's two
 # halves: a reconcile override mapping the retired "Blocked" literal, which
@@ -45,10 +47,3 @@ promote_portability = false # the portability lint stays a warning, not an error
 # enabled, set profile / project / board / issue_type /
 # default_labels / status_flow here. jira-cli owns credentials; run
 # `jira init --yes` instead of storing any Jira credential in this file.
-
-[agents]
-# This repository opted into the opum-lore marketplace plugin (LCLI-441) owning
-# .claude/skills/lore/SKILL.md on 2026-09-05, dogfooding LCLI-443's opt-in (LCLI-444):
-# `lore agents --check` treats a leftover per-repo SKILL.md as drift, and `--force`
-# removes one only when its bytes exactly match this CLI's own generated content.
-skill_source = "plugin"

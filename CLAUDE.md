@@ -71,7 +71,7 @@ Drive docs work through `lore` (not a plain editor or `grep`) so Story <-> Task 
 blocks, and cross-links stay coherent.
 
 - **Find and read docs:** `lore query "<words>" --limit 5`, then `lore read <id>` for the best hit.
-- **Skill:** installed from the `opum-lore` Claude Code plugin, not this repository — how to drive lore.
+- **Skill:** `.claude/skills/lore/SKILL.md` — how to drive lore.
 - **Just-in-time detail:** run `lore instructions` for the canonical agent loop, then
   `lore instructions <topic>` (`retrieval`, `linking`, `sync`, `check`, `validation`, `types`, `workspace`, `agents`).
 <!-- lore:agents:end -->
