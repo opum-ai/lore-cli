@@ -1399,8 +1399,8 @@ project, so its `projectPath`, if it carries one, is never compared, and it
 decides over every other scope, a project-matching `local` row included; among
 several applicable `managed` rows, any disabled one makes the state `disabled`,
 whatever the list order. Each entry is
-`{runtime, id, state, version?, scope?, reason?, remedy?, overriddenBy?}`, the same shape
-`quest agents --check` reports for `opum-quest` plus `overriddenBy` (LCLI-765).
+`{runtime, id, state, version?, scope?, reason?, remedy?, override?}`, the same shape
+`quest agents --check` reports for `opum-quest` plus `override` (LCLI-765).
 
 **A checkout-local override is named, not hidden behind the install scope.**
 `claude plugin list --json` reports a `.claude/settings.local.json` or
@@ -1410,12 +1410,18 @@ scope is not the one that disables it, and `claude plugin enable opum-lore@opum
 --scope user` fails against it ("already enabled at user scope", measured on
 Claude Code 2.1.309). For a disabled, non-managed `user` or `synced` row, `lore
 agents --check` reads those two files itself (local before project) and, where
-one disables the plugin, reports `overriddenBy: {scope: "local" | "project", file}`,
+one disables the plugin, reports `override: {scope: "local" | "project", file}`,
 prints it as a `plugin-claude-override` record in `--plain`, and gives the enable
 command for that scope: `claude plugin enable opum-lore@opum --scope local`
 (measured to flip the effective state and rewrite that file). `scope` keeps the
 install row's value. No file, an enabling one, another plugin's entry or
 unparseable JSON leaves the report unchanged.
+
+**A protected file shows what would replace it.** In `--json`, a `protected`
+SKILL.md (Claude or Codex) carries `pending`, the exact bytes a `lore agents
+--force` would write over it, so a reader no longer needs `--force` in a scratch
+copy to see them. It is absent on every other action and never printed in
+`--plain` or the human view, and it adds no flag (DEC-238 a6).
 
 **What `up-to-date` covers.** A run that reports plugin state also prints
 `agents-coverage up-to-date covers the managed block and the skill file only,

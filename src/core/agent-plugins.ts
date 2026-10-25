@@ -102,7 +102,7 @@ export interface AgentPluginCheck {
    * `claude plugin list --json` reports only the effective `enabled` against the install row's scope,
    * so without this the scope in `remedy` names a row that cannot re-enable it.
    */
-  readonly overriddenBy?: AgentPluginOverride;
+  readonly override?: AgentPluginOverride;
 }
 
 /** A checkout-local Claude settings file that sets the plugin disabled, and the Claude scope it is. */
@@ -336,9 +336,9 @@ export function withClaudeSettingsOverride(check: AgentPluginCheck, root: string
   if (check.runtime !== "claude" || check.state !== "disabled") return check;
   if (claudeScopeManaged(check.runtime, check.scope) || claudeScopeUnnamable(check.runtime, check.scope)) return check;
   if (check.scope !== "user" && check.scope !== "synced") return check;
-  const overriddenBy = claudeSettingsOverride(root);
-  if (overriddenBy === undefined) return check;
-  return { ...check, overriddenBy, remedy: `claude plugin enable ${LORE_PLUGIN_ID} --scope ${overriddenBy.scope}` };
+  const override = claudeSettingsOverride(root);
+  if (override === undefined) return check;
+  return { ...check, override, remedy: `claude plugin enable ${LORE_PLUGIN_ID} --scope ${override.scope}` };
 }
 
 /**
@@ -467,8 +467,7 @@ function overrideSentence(override: AgentPluginOverride): string {
  */
 export function renderPluginPlain(check: AgentPluginCheck | AgentPluginUpdateReport): string[] {
   const lines = [`plugin-${check.runtime} ${check.state} ${check.id}${check.scope ? ` scope=${check.scope}` : ""}`];
-  if (check.overriddenBy !== undefined)
-    lines.push(`plugin-${check.runtime}-override ${overrideSentence(check.overriddenBy)}`);
+  if (check.override !== undefined) lines.push(`plugin-${check.runtime}-override ${overrideSentence(check.override)}`);
   if (check.remedy !== undefined) lines.push(`plugin-${check.runtime}-remedy ${check.remedy}`);
   if (check.reason !== undefined) lines.push(`plugin-${check.runtime}-reason ${check.reason}`);
   if (isUpdateReport(check)) {
@@ -485,7 +484,7 @@ export function renderPluginPretty(check: AgentPluginCheck | AgentPluginUpdateRe
   const scope = check.scope !== undefined ? ` (${check.scope} scope)` : "";
   const lines = [`${runtimeName} plugin ${check.id}: ${check.state}${version}${scope}`];
   if (check.reason !== undefined) lines.push(`  ${check.reason}`);
-  if (check.overriddenBy !== undefined) lines.push(`  ${overrideSentence(check.overriddenBy)}`);
+  if (check.override !== undefined) lines.push(`  ${overrideSentence(check.override)}`);
   // Ruling 19: init/--check print the command that would update an installed plugin, too. A managed
   // row's remedy is not a command at all (ruling 28), so it is not introduced as one.
   if (check.remedy !== undefined) {

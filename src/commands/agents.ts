@@ -80,7 +80,12 @@ export interface AgentsResult {
   /** Whether `--force` was given. */
   force: boolean;
   /** Each bridge file and what happened (or would happen, under `--check`) to it. */
-  files: ReadonlyArray<{ path: string; action: BridgeAction }>;
+  files: ReadonlyArray<{
+    path: string;
+    action: BridgeAction;
+    /** On a `protected` file only: the bytes a plain `lore agents --force` would write (LCLI-765, DEC-238 a6). JSON only. */
+    pending?: string;
+  }>;
   /** Where this run resolved `.claude/skills/lore/SKILL.md` to come from (LCLI-446). */
   skillSource: SkillSource;
   /**
@@ -253,7 +258,11 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
     root,
     check,
     force,
-    files: files.map((file) => ({ path: file.path, action: file.action })),
+    files: files.map((file) => ({
+      path: file.path,
+      action: file.action,
+      ...(file.pending !== undefined ? { pending: file.pending } : {}),
+    })),
     skillSource,
     ...(target !== undefined ? { target } : {}),
   };

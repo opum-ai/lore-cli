@@ -114,7 +114,12 @@ function planSkill(input: PlanCodexBridgeInput): BridgeFilePlan {
   if (input.skillOnDisk === null) return { path: CODEX_SKILL_REL_PATH, action: "created", contents: desired };
   if (input.skillOnDisk === desired) return { path: CODEX_SKILL_REL_PATH, action: "unchanged", contents: null };
   const action: BridgeAction = input.force && !input.check ? "updated" : "protected";
-  return { path: CODEX_SKILL_REL_PATH, action, contents: action === "updated" ? desired : null };
+  return {
+    path: CODEX_SKILL_REL_PATH,
+    action,
+    contents: action === "updated" ? desired : null,
+    ...(action === "protected" ? { pending: desired } : {}),
+  };
 }
 
 function planNudge(input: PlanCodexBridgeInput): BridgeFilePlan {

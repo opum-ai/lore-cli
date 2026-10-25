@@ -1798,7 +1798,7 @@ describe("LCLI-765: the file that actually disables the plugin is named, and the
       id: "opum-lore@opum",
       state: "disabled",
       scope: "user",
-      overriddenBy: { scope: "local", file: ".claude/settings.local.json" },
+      override: { scope: "local", file: ".claude/settings.local.json" },
       remedy: "claude plugin enable opum-lore@opum --scope local",
     });
   });
@@ -1807,11 +1807,11 @@ describe("LCLI-765: the file that actually disables the plugin is named, and the
     await seedBridges();
     writeClaudeSettings("settings.json", { enabledPlugins: { [LORE_PLUGIN_ID]: false } });
     let { data } = await agentsCheck(fakePort({ claude: DISABLED_USER_ROW }));
-    expect(data?.plugins?.claude?.overriddenBy).toEqual({ scope: "project", file: ".claude/settings.json" });
+    expect(data?.plugins?.claude?.override).toEqual({ scope: "project", file: ".claude/settings.json" });
     expect(data?.plugins?.claude?.remedy).toBe("claude plugin enable opum-lore@opum --scope project");
     writeClaudeSettings("settings.local.json", { enabledPlugins: { [LORE_PLUGIN_ID]: false } });
     ({ data } = await agentsCheck(fakePort({ claude: DISABLED_USER_ROW })));
-    expect(data?.plugins?.claude?.overriddenBy).toEqual({ scope: "local", file: ".claude/settings.local.json" });
+    expect(data?.plugins?.claude?.override).toEqual({ scope: "local", file: ".claude/settings.local.json" });
   });
 
   test("controls: no settings file, an enabling one, another plugin's, or unreadable JSON leave the user-scope remedy", async () => {
@@ -1819,7 +1819,7 @@ describe("LCLI-765: the file that actually disables the plugin is named, and the
     const userRemedy = "claude plugin enable opum-lore@opum --scope user";
     const remedyFor = async (): Promise<string | undefined> => {
       const { data } = await agentsCheck(fakePort({ claude: DISABLED_USER_ROW }));
-      expect(data?.plugins?.claude).not.toHaveProperty("overriddenBy");
+      expect(data?.plugins?.claude).not.toHaveProperty("override");
       return data?.plugins?.claude?.remedy;
     };
     expect(await remedyFor()).toBe(userRemedy);
@@ -1837,12 +1837,12 @@ describe("LCLI-765: the file that actually disables the plugin is named, and the
     const installed = await agentsCheck(
       fakePort({ claude: { kind: "listed", plugins: [{ id: LORE_PLUGIN_ID, enabled: true, scope: "user" }] } }),
     );
-    expect(installed.data?.plugins?.claude).not.toHaveProperty("overriddenBy");
+    expect(installed.data?.plugins?.claude).not.toHaveProperty("override");
     const managed = await agentsCheck(
       fakePort({ claude: { kind: "listed", plugins: [{ id: LORE_PLUGIN_ID, enabled: false, scope: "managed" }] } }),
     );
     expect(managed.data?.plugins?.claude?.remedy).toBe(MANAGED_SCOPE_REMEDY);
-    expect(managed.data?.plugins?.claude).not.toHaveProperty("overriddenBy");
+    expect(managed.data?.plugins?.claude).not.toHaveProperty("override");
   });
 
   test("--plain carries the override on its own record line, after the state line and before the remedy", async () => {

@@ -13,12 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (LCLI-765, DEC-238 a5). A `.claude/settings.local.json` or `.claude/settings.json` override reaches
   `claude plugin list --json` as a `user`-scope row with `enabled: false`, so the old remedy
   (`claude plugin enable opum-lore@opum --scope user`) could never work. A disabled `user`/`synced`
-  row now carries `overriddenBy: {scope, file}`, a `plugin-claude-override` record in `--plain`, and
-  the enable command for that scope (`--scope local` or `--scope project`). A report that includes
+  row now carries `override: {scope, file}`, a `plugin-claude-override` record in `--plain`, and
+  the enable command for the scope where the override lives (`--scope local` or `--scope project`). A report that includes
   plugin state also says that `up-to-date` covers the managed block and the skill file only, and,
   under `skill_source = "plugin"` with no skill file and a disabled or missing plugin, that no lore
   skill is reachable in this checkout. The exit code is unchanged and still does not depend on
   plugin enablement.
+
+  Also under `--json`: a `protected` SKILL.md entry in `files[]` carries `pending`, the exact bytes
+  `lore agents --force` would write over it, so the difference is visible without a scratch copy
+  (no new flag; `--plain` and the human view are unchanged).
 
 - **`lore cache clear <path>` removes a checkout's read-only `.lore/cache`** (LCLI-740, LCLI-762,
   DEC-208). Projection generations are sealed 0555/0444 on purpose, so an outside recursive delete
