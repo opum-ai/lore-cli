@@ -998,3 +998,57 @@ describe("lore agents — skill_source = plugin opts SKILL.md out of repo genera
     expect(existsSync(skillAbs())).toBe(true);
   });
 });
+
+describe("LCLI-765 / DEC-238 a6: a protected file carries the bytes a plain `lore agents` would write", () => {
+  const edited = (): string => `${buildSkillDoc()}\nhand edit`;
+
+  function seedProtectedSkill(): void {
+    mkdirSync(dirname(skillAbs()), { recursive: true });
+    writeFileSync(skillAbs(), edited());
+  }
+
+  test("--check --json: the protected SKILL.md entry carries pending = the generated doc; the file is untouched", () => {
+    seedProtectedSkill();
+    const { result } = agents(["--check"]);
+    const skill = result.files.find((file) => file.path === SKILL_REL_PATH);
+    expect(skill?.action).toBe("protected");
+    expect(skill?.pending).toBe(buildSkillDoc());
+    expect(readFileSync(skillAbs(), "utf8")).toBe(edited());
+  });
+
+  test("pending is exactly what a --force run then writes (the field is not a second opinion)", () => {
+    seedProtectedSkill();
+    const pending = agents(["--check"]).result.files.find((file) => file.path === SKILL_REL_PATH)?.pending;
+    agents(["--force"]);
+    expect(readFileSync(skillAbs(), "utf8")).toBe(pending as string);
+  });
+
+  test("controls: an unchanged, created or CLAUDE.md entry carries no pending, and neither does a clean re-run", () => {
+    const created = agents(["--check"]).result;
+    expect(created.files.some((file) => "pending" in file)).toBe(false);
+    agents();
+    const clean = agents(["--check"]).result;
+    expect(clean.files.some((file) => "pending" in file)).toBe(false);
+  });
+
+  test("human output is unchanged: neither --plain nor pretty prints the bytes", () => {
+    seedProtectedSkill();
+    const plain = capture();
+    runAgents({ root, output: PLAIN_CTX, args: ["--check"], stdout: plain });
+    expect(plain.text()).not.toContain("hand edit");
+    expect(plain.text()).not.toContain(buildSkillDoc().slice(0, 80));
+    const pretty = capture();
+    runAgents({ root, output: { mode: "pretty", color: false }, args: ["--check"], stdout: pretty });
+    expect(pretty.text()).not.toContain(buildSkillDoc().slice(0, 80));
+  });
+
+  test("the Codex SKILL.md behaves the same way", () => {
+    expect(agents().code).toBe(0);
+    mkdirSync(dirname(join(root, CODEX_SKILL_REL_PATH)), { recursive: true });
+    writeFileSync(join(root, CODEX_SKILL_REL_PATH), "stale codex skill\n");
+    const { result } = agents(["--check"]);
+    const skill = result.files.find((file) => file.path === CODEX_SKILL_REL_PATH);
+    expect(skill?.action).toBe("protected");
+    expect(skill?.pending).toBe(buildCodexSkillDoc());
+  });
+});

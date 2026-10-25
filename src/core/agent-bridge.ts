@@ -366,6 +366,11 @@ export interface BridgeFilePlan {
   readonly action: BridgeAction;
   /** The full bytes to write, or `null` when nothing should be written (`unchanged`/`protected`/`orphaned`/`removed` — `removed` means delete, not write). */
   readonly contents: string | null;
+  /**
+   * The bytes a write would produce, set ONLY on a `protected` file (LCLI-765, DEC-238 a6): `contents`
+   * is `null` there because nothing is written, which also hides what `--force` would write.
+   */
+  readonly pending?: string;
 }
 
 /** The planned next state of every bridge file, computed purely from the on-disk bytes + `--force`. */
@@ -462,7 +467,7 @@ function planSkill(input: PlanBridgeInput): BridgeFilePlan {
   if (input.force && !input.check) {
     return { path: SKILL_REL_PATH, action: "updated", contents: desired };
   }
-  return { path: SKILL_REL_PATH, action: "protected", contents: null };
+  return { path: SKILL_REL_PATH, action: "protected", contents: null, pending: desired };
 }
 
 /** Plan the CLAUDE.md nudge (managed-block, always-refresh discipline). */
