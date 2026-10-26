@@ -140,7 +140,7 @@ function makeWorkspace(
     writeFileSync(
       resolve(dir, `ladybug-package-qualification-${name}.json`),
       JSON.stringify({
-        schema: "lore.ladybug-package-qualification/4",
+        schema: "lore.ladybug-package-qualification/5",
         mode: "qualification",
         platform: { distribution: name },
         repository: { commit: COMMIT },
@@ -660,7 +660,7 @@ describeOnPosix("scripts/publish-release.sh", () => {
       writeFileSync(
         resolve(other, "ladybug-package-qualification-linux-x64.json"),
         JSON.stringify({
-          schema: "lore.ladybug-package-qualification/4",
+          schema: "lore.ladybug-package-qualification/5",
           mode: "qualification",
           platform: { distribution: "linux-x64" },
           repository: { commit: COMMIT },

@@ -813,7 +813,7 @@ jobs:
               const report = JSON.parse(readFileSync(process.env.REPORT_PATH, "utf8"));
               const digest = `sha256:${createHash("sha256").update(readFileSync(process.env.TARBALL_PATH)).digest("hex")}`;
               if (
-                report.schema !== "lore.ladybug-package-qualification/4" ||
+                report.schema !== "lore.ladybug-package-qualification/5" ||
                 report.mode !== "qualification" ||
                 report.platform?.distribution !== process.env.EXPECTED_NAME ||
                 report.repository?.commit !== process.env.EXPECTED_COMMIT ||
