@@ -36,10 +36,7 @@ import {
   NATIVE_IMPORT_STARTED_FILENAME,
 } from "./native-probe";
 
-// /5 (LCLI-768 round 2, ruled by the leader 2026-10-26): the format gained REQUIRED fields that /4 reports do not
-// carry -- package.scriptApprovalConfig with its live positive control, and the five-packument / exact-scope /
-// no-tarball evidence the validator now scores. An older /4 report no longer validates, so the id says so.
-export const LADYBUG_PACKAGE_QUALIFICATION_SCHEMA = "lore.ladybug-package-qualification/5";
+export const LADYBUG_PACKAGE_QUALIFICATION_SCHEMA = "lore.ladybug-package-qualification/4";
 const LADYBUG_VERSION = EXPECTED_LADYBUG_VERSION;
 const REPOSITORY_ROOT = resolve(import.meta.dir, "..", "..");
 
