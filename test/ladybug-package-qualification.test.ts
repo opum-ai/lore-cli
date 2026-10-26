@@ -1,12 +1,16 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as yaml from "js-yaml";
 import { packageBuildConfig, windowsReferenceOnlyLadybugPlugin } from "../benchmark/ladybug/package-build";
 import {
+  assertNoInheritedScriptApproval,
   assertNoInstallSecrets,
+  assertNpmMajor,
   assertPackageQualificationReport,
+  assertScriptApprovalConfigEmpty,
   boundedNativeProbeOutput,
   classifyWindowsProbeOutcome,
   INSTALL_SECRET_ENV_NAMES,
@@ -15,12 +19,15 @@ import {
   LADYBUG_PACKAGE_QUALIFICATION_SCHEMA,
   NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT,
   nativeIndexingProbeRefusalMessage,
+  optionalPlatformEvidence,
   packageCompileCommand,
   parsePackageQualificationArgs,
+  proveUnapprovedScriptsBlocked,
   removeQualificationScratch,
   resolveInstalledOptionalPackageJson,
   WINDOWS_ADDON_LOAD_FAILURE_MESSAGE,
   windowsAddonLoadFailurePolicyHolds,
+  withoutInheritedScriptApproval,
   withoutInstallSecrets,
 } from "../benchmark/ladybug/package-qualification";
 
@@ -501,7 +508,7 @@ describe("matching-host Ladybug package qualification", () => {
     const report = {
       schema: LADYBUG_PACKAGE_QUALIFICATION_SCHEMA,
       mode: "qualification",
-      platform: { bun: "1.3.14", os: "linux", cpu: "x64" },
+      platform: { bun: "1.3.14", os: "linux", cpu: "x64", npm: "12.2.1" },
       repository: { commit: "a".repeat(40) },
       ladybug: {
         core: "0.19.0",
@@ -511,7 +518,12 @@ describe("matching-host Ladybug package qualification", () => {
         installedCoreAbsent: true,
         embeddedNativeIndexVerified: true,
       },
-      package: { globalInstallScriptPolicyClean: true, globalLauncherSmoke: true },
+      package: {
+        globalInstallScriptPolicyClean: true,
+        globalLauncherSmoke: true,
+        scriptBlockingProof: { npm: "12.2.1", fixtureScriptRan: false, reported: true },
+        optionalPlatformPackages: { installed: ["lore", "lore-linux-x64"], registryReads: [] },
+      },
       smoke: { outputsStable: true },
       native: {
         supportClaim: "native-index",
@@ -540,10 +552,35 @@ describe("matching-host Ladybug package qualification", () => {
         cleanup: { ...report.cleanup, repositoryCachePreservedByUninstall: false },
       }),
     ).toThrow("not a conclusive cleanup pass");
+    // DEC-240 (a5): the npm on the record must be major 12 or later and the proof must agree with it.
+    expect(() =>
+      assertPackageQualificationReport({ ...report, platform: { ...report.platform, npm: "11.19.0" } }),
+    ).toThrow("below major 12");
+    expect(() =>
+      assertPackageQualificationReport({ ...report, platform: { ...report.platform, npm: undefined } }),
+    ).toThrow("not a version");
+    expect(() =>
+      assertPackageQualificationReport({
+        ...report,
+        package: {
+          ...report.package,
+          scriptBlockingProof: { ...report.package.scriptBlockingProof, fixtureScriptRan: true },
+        },
+      }),
+    ).toThrow("blocked and reported");
+    expect(() =>
+      assertPackageQualificationReport({
+        ...report,
+        package: { ...report.package, scriptBlockingProof: { ...report.package.scriptBlockingProof, npm: "12.0.0" } },
+      }),
+    ).toThrow("blocked and reported");
+    expect(() =>
+      assertPackageQualificationReport({ ...report, package: { ...report.package, scriptBlockingProof: undefined } }),
+    ).toThrow("blocked and reported");
 
     const windowsFallback = {
       ...report,
-      platform: { bun: "1.3.14", os: "win32", cpu: "x64" },
+      platform: { bun: "1.3.14", os: "win32", cpu: "x64", npm: "12.2.1" },
       ladybug: { ...report.ladybug, embeddedNativeIndexVerified: false },
       native: {
         ...report.native,
@@ -557,7 +594,7 @@ describe("matching-host Ladybug package qualification", () => {
     expect(() => assertPackageQualificationReport(windowsFallback)).not.toThrow();
     const windowsArmFallback = {
       ...windowsFallback,
-      platform: { bun: "1.3.14", os: "win32", cpu: "arm64" },
+      platform: { bun: "1.3.14", os: "win32", cpu: "arm64", npm: "12.2.1" },
       ladybug: {
         core: "0.19.0",
         optionalPackage: null,
@@ -603,7 +640,7 @@ describe("matching-host Ladybug package qualification", () => {
     expect(() =>
       assertPackageQualificationReport({
         ...windowsLoadFailure,
-        platform: { bun: "1.3.14", os: "win32", cpu: "arm64" },
+        platform: { bun: "1.3.14", os: "win32", cpu: "arm64", npm: "12.2.1" },
       }),
     ).toThrow("approved native platform verdict"); // the same shape on another platform
 
@@ -630,7 +667,7 @@ describe("matching-host Ladybug package qualification", () => {
     expect(runner).toContain("referenceFallbackDatabaseAbsent");
     expect(runner).toContain("commandOutputsStable");
     expect(runner).toContain("createFixtureBacklogEnvironment");
-    expect(runner).toContain('["install", "--global", rootTarball, platformTarball]');
+    expect(runner).toContain("flaglessGlobalInstall(npm, npmEnvironment, scratch, [rootTarball, platformTarball])");
     expect(runner).toContain("assertNoInstallScriptApproval");
     expect(runner).toContain("embeddedNativeIndexVerified");
     expect(runner).toContain("initializeFixtureGitRepository");
@@ -958,15 +995,156 @@ describe("DEC-240 (a4) condition 2: the flagless global install env carries no t
     expect(() => assertNoInstallSecrets(scrubbed)).not.toThrow();
   });
 
-  test("the install step builds its env through the scrubber and asserts before the install", () => {
+  test("the env is built through both scrubbers, and the install helper asserts both before the one install call", () => {
     const source = readFileSync(
       join(import.meta.dir, "..", "benchmark", "ladybug", "package-qualification.ts"),
       "utf8",
     );
-    expect(source).toContain("...withoutInstallSecrets(process.env)");
-    const assertAt = source.indexOf("assertNoInstallSecrets(npmEnvironment);");
-    const installAt = source.indexOf('run(npm, ["install", "--global"');
-    expect(assertAt).toBeGreaterThan(0);
-    expect(installAt).toBeGreaterThan(assertAt);
+    expect(source).toContain("...withoutInheritedScriptApproval(withoutInstallSecrets(process.env))");
+    expect(source).toContain("npm_config_userconfig: emptyUserConfig");
+    expect(source).toContain("npm_config_globalconfig: emptyGlobalConfig");
+    const secretsAt = source.indexOf("assertNoInstallSecrets(installEnv);");
+    const approvalAt = source.indexOf("assertNoInheritedScriptApproval(installEnv);");
+    const installAt = source.indexOf('run(npm, ["install", "--global", ...tarballs]');
+    expect(secretsAt).toBeGreaterThan(0);
+    expect(approvalAt).toBeGreaterThan(secretsAt);
+    expect(installAt).toBeGreaterThan(approvalAt);
+    // (a5) item 2: the major gate runs before the proof, and the proof before the real install.
+    const gateAt = source.indexOf("assertNpmMajor(npmVersion);");
+    const proofAt = source.indexOf("await proveUnapprovedScriptsBlocked(");
+    const realAt = source.indexOf("await flaglessGlobalInstall(npm, npmEnvironment, scratch, [rootTarball");
+    expect(gateAt).toBeGreaterThan(0);
+    expect(proofAt).toBeGreaterThan(gateAt);
+    // (a5) item 3: the effective config is read back between the major gate and the proof.
+    const readbackAt = source.indexOf("assertScriptApprovalConfigEmpty(\n");
+    expect(readbackAt).toBeGreaterThan(gateAt);
+    expect(proofAt).toBeGreaterThan(readbackAt);
+    expect(realAt).toBeGreaterThan(proofAt);
+  });
+
+  test("assertNpmMajor fails by name below 12 and accepts 12 or later", () => {
+    expect(() => assertNpmMajor("10.9.9")).toThrow("npm 10.9.9 is below major 12");
+    expect(() => assertNpmMajor("11.19.0\n")).toThrow("below major 12");
+    expect(() => assertNpmMajor("")).toThrow("not a version");
+    expect(() => assertNpmMajor("12.2.1\n")).not.toThrow();
+    expect(() => assertNpmMajor("13.0.0")).not.toThrow();
+  });
+
+  test("script-approval env: every spelling is caught and scrubbed, anything else is kept", () => {
+    const env = {
+      PATH: "/bin",
+      npm_config_allow_scripts: "a",
+      "npm_config_allow-scripts": "b",
+      NPM_CONFIG_ALLOW_SCRIPTS: "c",
+      npm_config_dangerously_allow_all_scripts: "true",
+      npm_config_audit: "false",
+    };
+    expect(() => assertNoInheritedScriptApproval(env)).toThrow("npm_config_allow_scripts");
+    expect(() => assertNoInheritedScriptApproval({ NPM_CONFIG_ALLOW_SCRIPTS: "" })).toThrow("NPM_CONFIG_ALLOW_SCRIPTS");
+    const clean = withoutInheritedScriptApproval(env);
+    expect(clean).toEqual({ PATH: "/bin", npm_config_audit: "false" });
+    expect(() => assertNoInheritedScriptApproval(clean)).not.toThrow();
+  });
+
+  test("the effective config must hold no allow-scripts entry and the allow-all switch off", () => {
+    for (const empty of ["", "\n", "null", "undefined", "[]", '[""]']) {
+      expect(() => assertScriptApprovalConfigEmpty(empty, "false\n")).not.toThrow();
+    }
+    expect(() => assertScriptApprovalConfigEmpty('["esbuild,protobufjs"]', "false")).toThrow("allow-scripts");
+    expect(() => assertScriptApprovalConfigEmpty("", "true")).toThrow("dangerously-allow-all-scripts");
+  });
+
+  test("optionalPlatformEvidence: only the root and own platform installed, packument reads recorded, a registry tarball refused", () => {
+    const root = mkdtempSync(join(tmpdir(), "lcli768-optional-"));
+    try {
+      const scope = join(root, "@opum-ai");
+      mkdirSync(join(scope, "lore"), { recursive: true });
+      mkdirSync(join(scope, "lore-linux-x64"), { recursive: true });
+      const reads = [
+        "npm http fetch GET 404 https://registry.npmjs.org/@opum-ai%2flore-darwin-arm64 40ms (cache skip)",
+        "npm http fetch GET 200 https://registry.npmjs.org/lodash 9ms",
+      ].join("\n");
+      const evidence = optionalPlatformEvidence(root, "@opum-ai/lore-linux-x64", { stdout: "", stderr: reads });
+      expect(evidence.installed).toEqual(["lore", "lore-linux-x64"]);
+      expect(evidence.registryReads).toEqual([
+        { status: 404, kind: "packument", url: "https://registry.npmjs.org/@opum-ai%2flore-darwin-arm64" },
+      ]);
+      const tarball =
+        "npm http fetch GET 200 https://registry.npmjs.org/@opum-ai/lore-darwin-arm64/-/lore-darwin-arm64-0.14.1.tgz 5ms";
+      expect(() => optionalPlatformEvidence(root, "@opum-ai/lore-linux-x64", { stdout: "", stderr: tarball })).toThrow(
+        "fetched @opum-ai tarballs",
+      );
+      mkdirSync(join(scope, "lore-darwin-arm64"));
+      expect(() => optionalPlatformEvidence(root, "@opum-ai/lore-linux-x64", { stdout: "", stderr: "" })).toThrow(
+        "expected exactly",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
+
+/** The npm on PATH and its major, so the real-install proofs run only where npm can block scripts at all. */
+function hostNpm(): { path: string; version: string; major: number } {
+  const path = Bun.which("npm") ?? "npm";
+  const version = spawnSync(path, ["--version"], {
+    encoding: "utf8",
+    shell: process.platform === "win32",
+  }).stdout.trim();
+  return { path, version, major: Number(version.split(".")[0]) };
+}
+const HOST_NPM = hostNpm();
+
+describe.skipIf(!(HOST_NPM.major >= 12) || process.platform === "win32")(
+  "DEC-240 (a5) item 4: a real flagless install blocks and reports an unapproved fixture script (rehearsal on the host npm)",
+  () => {
+    function proofEnv(scratch: string, userConfigText: string): Record<string, string | undefined> {
+      writeFileSync(join(scratch, "user.npmrc"), userConfigText);
+      writeFileSync(join(scratch, "global.npmrc"), "");
+      return {
+        ...withoutInheritedScriptApproval(process.env),
+        npm_config_userconfig: join(scratch, "user.npmrc"),
+        npm_config_globalconfig: join(scratch, "global.npmrc"),
+        npm_config_cache: join(scratch, "cache"),
+        npm_config_prefix: join(scratch, "prefix"),
+        npm_config_audit: "false",
+        npm_config_fund: "false",
+      };
+    }
+
+    test("with empty configs the postinstall does not run, npm reports it, and the proof records the npm version", async () => {
+      const scratch = mkdtempSync(join(tmpdir(), "lcli768-proof-"));
+      try {
+        const proof = await proveUnapprovedScriptsBlocked(
+          HOST_NPM.path,
+          proofEnv(scratch, ""),
+          scratch,
+          HOST_NPM.version,
+        );
+        expect(proof).toEqual({ npm: HOST_NPM.version, fixtureScriptRan: false, reported: true });
+      } finally {
+        rmSync(scratch, { recursive: true, force: true });
+      }
+    }, 120_000);
+
+    test("an inherited allow-scripts list approves the script silently, and the proof refuses to pass", async () => {
+      const scratch = mkdtempSync(join(tmpdir(), "lcli768-proof-"));
+      try {
+        // The hazard (a5) item 3 names: the same fixture, but the USER config approves it. Measured on npm 12.2.x:
+        // a bare or pinned allow-scripts entry did NOT approve a global tarball install, the allow-all switch does,
+        // so the rejection control uses that; the gate reads allow-scripts back too, for the shapes that do apply.
+        const env = proofEnv(scratch, "dangerously-allow-all-scripts=true\n");
+        await expect(proveUnapprovedScriptsBlocked(HOST_NPM.path, env, scratch, HOST_NPM.version)).rejects.toThrow(
+          "RAN an unapproved dependency postinstall",
+        );
+        // And a variable-borne approval never reaches npm: the install helper refuses it first.
+        const viaEnv = { ...proofEnv(scratch, ""), npm_config_dangerously_allow_all_scripts: "true" };
+        await expect(proveUnapprovedScriptsBlocked(HOST_NPM.path, viaEnv, scratch, HOST_NPM.version)).rejects.toThrow(
+          "no script approval",
+        );
+      } finally {
+        rmSync(scratch, { recursive: true, force: true });
+      }
+    }, 120_000);
+  },
+);

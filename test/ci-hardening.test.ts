@@ -180,7 +180,7 @@ function loadSources(): SourceFile[] {
  */
 const FLAGLESS_INSTALL_EXCEPTION = {
   path: "benchmark/ladybug/package-qualification.ts",
-  args: '"install", "--global", rootTarball, platformTarball',
+  args: '"install", "--global", ...tarballs',
 };
 
 /** Every npm install in a source file: a spawn-style argument list `["install", ...]` or a shell `npm install` line. */
@@ -454,6 +454,70 @@ describe("DEC-240 item 1: lore and quest install without lifecycle scripts", () 
       rmSync(work, { recursive: true, force: true });
     }
   }, 120_000);
+});
+
+describe("DEC-240 (a5) item 1: every package-qualification host pins an exact Node and an exact npm 12 first", () => {
+  const doc = yaml.load(readFileSync(join(WORKFLOWS_DIR, "release.yml"), "utf8")) as {
+    jobs: Record<string, { name?: string; steps?: Step[] }>;
+  };
+  const jobs = Object.entries(doc.jobs).filter(([, job]) =>
+    (job.name ?? "").startsWith("matching-host package qualification"),
+  );
+
+  /** The violations of one such job's step list, so the real tree and a broken copy go through the same check. */
+  function pinViolations(steps: Step[]): string[] {
+    const out: string[] = [];
+    const nodeAt = steps.findIndex((step) => (step.uses ?? "").startsWith("actions/setup-node@"));
+    const npmAt = steps.findIndex((step) => /npm install\b.*\bnpm@\S+/.test(step.run ?? ""));
+    const qualifyAt = steps.findIndex((step) => (step.run ?? "").includes("package-qualification.ts"));
+    if (nodeAt < 0) return ["no actions/setup-node step"];
+    if (!/^actions\/setup-node@[0-9a-f]{40}\b/.test(steps[nodeAt]?.uses ?? "")) {
+      out.push("setup-node is not pinned to a 40-character SHA");
+    }
+    const nodeVersion = String(steps[nodeAt]?.with?.["node-version"] ?? "");
+    const [major = 0, minor = 0, patch = 0] = nodeVersion.split(".").map(Number);
+    // npm 12's engines: ^22.22.2 || ^24.15.0 || >=26.0.0, and EXACT (three numeric parts).
+    const accepted =
+      /^\d+\.\d+\.\d+$/.test(nodeVersion) &&
+      ((major === 22 && (minor > 22 || (minor === 22 && patch >= 2))) || (major === 24 && minor >= 15) || major >= 26);
+    if (!accepted) out.push(`node-version ${JSON.stringify(nodeVersion)} is not an exact version npm 12 accepts`);
+    if (npmAt < 0 || !/npm install -g --ignore-scripts npm@12\.\d+\.\d+(\s|$)/.test(steps[npmAt]?.run ?? "")) {
+      out.push("no exact `npm install -g --ignore-scripts npm@12.x.y` step");
+    }
+    if (!(nodeAt < npmAt && npmAt < qualifyAt)) {
+      out.push("setup-node, then the npm pin, must both precede package-qualification");
+    }
+    return out;
+  }
+
+  test("the real release.yml: one job serves all six hosts, and it carries the pins in order", () => {
+    // Positive control: the job was found (a name filter that matched nothing would pass vacuously).
+    expect(jobs).toHaveLength(1);
+    expect(pinViolations(jobs[0]?.[1].steps ?? [])).toEqual([]);
+  });
+
+  test("rejects the shapes that lose the guarantee", () => {
+    const node: Step = {
+      uses: "actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0",
+      with: { "node-version": "24.21.0" },
+    };
+    const pin: Step = { run: "npm install -g --ignore-scripts npm@12.2.1\nnpm --version" };
+    const qualify: Step = { run: "bun benchmark/ladybug/package-qualification.ts --name x" };
+    expect(pinViolations([node, pin, qualify])).toEqual([]);
+    for (const version of ["24", "24.x", "lts/*", "24.14.0", "22.22.1", "20.19.0", "^24.15.0"]) {
+      expect(pinViolations([{ ...node, with: { "node-version": version } }, pin, qualify])).not.toEqual([]);
+    }
+    expect(pinViolations([{ ...node, with: { "node-version": "22.22.2" } }, pin, qualify])).toEqual([]);
+    expect(pinViolations([pin, qualify])).toEqual(["no actions/setup-node step"]);
+    expect(pinViolations([node, qualify])).not.toEqual([]);
+    expect(pinViolations([node, { run: "npm install -g npm@12.2.1" }, qualify])).not.toEqual([]);
+    expect(pinViolations([node, { run: "npm install -g --ignore-scripts npm@^12" }, qualify])).not.toEqual([]);
+    expect(pinViolations([node, { run: "npm install -g --ignore-scripts npm@11.19.0" }, qualify])).not.toEqual([]);
+    expect(pinViolations([node, qualify, pin])).not.toEqual([]);
+    expect(
+      pinViolations([{ uses: "actions/setup-node@v5", with: { "node-version": "24.21.0" } }, pin, qualify]),
+    ).not.toEqual([]);
+  });
 });
 
 describe.skipIf(onWindows)(

@@ -305,6 +305,7 @@ function packageReport(platform: (typeof LADYBUG_QUALIFICATION_PLATFORMS)[number
       cpu: platform.cpu,
       bun: "1.3.14",
       node: "v22.0.0",
+      npm: "12.2.1",
     },
     repository: { commit: COMMIT },
     ladybug: {
@@ -323,6 +324,8 @@ function packageReport(platform: (typeof LADYBUG_QUALIFICATION_PLATFORMS)[number
       standaloneBinarySha256: SHA,
       globalInstallScriptPolicyClean: true,
       globalLauncherSmoke: true,
+      scriptBlockingProof: { npm: "12.2.1", fixtureScriptRan: false, reported: true },
+      optionalPlatformPackages: { installed: ["lore", `lore-${platform.distribution}`], registryReads: [] },
     },
     smoke: { launcher: commands, standalone: commands, outputsStable: true },
     native: {

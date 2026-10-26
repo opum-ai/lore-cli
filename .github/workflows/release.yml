@@ -599,6 +599,19 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
+      # DEC-240 (a5): the flagless global install in package-qualification.ts is only safe where npm
+      # blocks and reports unapproved install scripts, which is npm 12. The runner images ship npm 10 or 11
+      # (measured from release run 37568141200), so every host pins an exact Node that npm 12's engines accept
+      # ("^22.22.2 || ^24.15.0 || >=26.0.0") and then an exact npm 12. package-qualification.ts re-checks
+      # `npm --version` before that install and records it in the report.
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.21.0
+      - name: Pin npm 12 (DEC-240 a5)
+        shell: bash
+        run: |
+          npm install -g --ignore-scripts npm@12.2.1
+          npm --version
       # The shared action is the isolated frozen install. Its Bun pin and
       # --linker=isolated flags are part of the package-qualification contract.
       # Ladybug publishes no Windows ARM64 addon, so that one host installs the
@@ -775,7 +788,7 @@ jobs:
               const report = JSON.parse(readFileSync(process.env.REPORT_PATH, "utf8"));
               const digest = `sha256:${createHash("sha256").update(readFileSync(process.env.TARBALL_PATH)).digest("hex")}`;
               if (
-                report.schema !== "lore.ladybug-package-qualification/3" ||
+                report.schema !== "lore.ladybug-package-qualification/4" ||
                 report.mode !== "qualification" ||
                 report.platform?.distribution !== process.env.EXPECTED_NAME ||
                 report.repository?.commit !== process.env.EXPECTED_COMMIT ||
