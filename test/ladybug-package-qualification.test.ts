@@ -35,6 +35,7 @@ import {
   withoutInheritedScriptApproval,
   withoutInstallSecrets,
 } from "../benchmark/ladybug/package-qualification";
+import { LADYBUG_QUALIFICATION_PLATFORMS } from "../benchmark/ladybug/qualification-evidence";
 
 const RELEASE_PATH = join(import.meta.dir, "..", ".github", "workflows", "release.yml");
 const CI_PATH = join(import.meta.dir, "..", ".github", "workflows", "ci.yml");
@@ -573,7 +574,7 @@ describe("matching-host Ladybug package qualification", () => {
         cleanup: { ...report.cleanup, repositoryCachePreservedByUninstall: false },
       }),
     ).toThrow("not a conclusive cleanup pass");
-    // DEC-240 (a5): the npm on the record must be major 12 or later and the proof must agree with it.
+    // DEC-240 (a5): the npm on the record must be exactly major 12, and the proof must agree with it.
     expect(() =>
       assertPackageQualificationReport({ ...report, platform: { ...report.platform, npm: "11.19.0" } }),
     ).toThrow("is not major 12");
@@ -1351,35 +1352,62 @@ describe("DEC-240 (a4) condition 2: the flagless global install env carries no t
 });
 
 /**
+ * DEC-240 (a5) item 4: ONE list of the six host distributions with two owners. package-qualification.ts defines
+ * QUALIFICATION_DISTRIBUTIONS so the report validator can require the other five without importing
+ * qualification-evidence.ts (which imports it), and that module holds LADYBUG_QUALIFICATION_PLATFORMS for the
+ * evidence manifest. Two hand-kept lists that must agree is exactly the shape that drifts, so they are compared as
+ * data here rather than trusted by a comment (the comment claimed this test existed before it did, rv330).
+ */
+test("the validator's distribution list IS the evidence manifest's platform list", () => {
+  const fromEvidence = LADYBUG_QUALIFICATION_PLATFORMS.map((platform) => platform.distribution).sort();
+  // Positive control: six names were read from the evidence module.
+  expect(fromEvidence).toHaveLength(6);
+  expect([...QUALIFICATION_DISTRIBUTIONS].sort()).toEqual(fromEvidence);
+});
+
+/**
  * The npm on PATH and its major, so the real-install proofs run only where npm can block scripts at all.
  *
- * A version that cannot be read is a FAILURE, never a skip. `skipIf(!(major >= 12))` is TRUE for NaN, so an npm
- * whose `--version` did not come back used to look exactly like an npm that is merely too old -- the suite went
- * green with the proof silently unrun. The intended skip is narrower than that: these proofs rehearse the
- * flagless install on a LOCAL npm 12, and on PR CI the runners carry npm 10/11, so they skip there BY DESIGN. The
- * evidence that counts is the release.yml proof on the pinned npm 12, which runs in the qualification's own
- * report. Only major 12 runs them here: a later major is a new ruling (DEC-240 a5).
+ * On a host that can run them, a version that cannot be read is a FAILURE, never a skip: `skipIf(!(major >= 12))`
+ * is TRUE for NaN, so an npm whose `--version` did not come back used to look exactly like an npm that is merely
+ * too old, and the suite went green with the proof silently unrun. Windows is the ONE named exception, decided by
+ * `process.platform` rather than by whatever the read produced (LCLI-768 r3): a win32 host skips the rehearsals
+ * with a printed reason, because these proofs are POSIX-side by construction and the release run's own report is
+ * the Windows evidence.
+ *
+ * The spawn is the reason that distinction had to be written down at all. With `shell: true` Node CONCATENATES the
+ * command and its arguments without quoting or escaping, so an absolute path holding a space -- `C:\Program
+ * Files\nodejs\npm.cmd` on a windows-latest runner -- is split by the shell and the read comes back empty with a
+ * non-zero status (measured on a stub at a path with a space: status 127, empty stdout; the same spawn with the
+ * command quoted: status 0). The command is therefore QUOTED before it is handed to the shell. Only major 12 runs
+ * the rehearsals: a later major is a new ruling (DEC-240 a5).
  */
 function hostNpm(): { path: string; version: string; major: number } {
   const path = Bun.which("npm") ?? "npm";
-  const result = spawnSync(path, ["--version"], { encoding: "utf8", shell: process.platform === "win32" });
-  if (result.error !== undefined || result.status !== 0) {
-    throw new Error(
-      `\`${path} --version\` could not be read (${result.error?.message ?? `exit ${result.status}`}), so the rehearsal's skip condition would be a silent one`,
-    );
-  }
+  const win32 = process.platform === "win32";
+  const result = spawnSync(win32 ? `"${path}"` : path, ["--version"], { encoding: "utf8", shell: win32 });
   const version = (result.stdout ?? "").trim();
-  if (!/^\d+\.\d+\.\d+$/.test(version)) {
+  const readable = result.error === undefined && result.status === 0 && /^\d+\.\d+\.\d+$/.test(version);
+  if (!readable) {
+    if (win32) return { path, version: `unreadable (${result.error?.message ?? `exit ${result.status}`})`, major: 0 };
     throw new Error(
-      `\`${path} --version\` printed ${JSON.stringify(version)}, which is not a version, so the rehearsal's skip condition would be a silent one`,
+      `\`${path} --version\` printed ${JSON.stringify(version)} with ${result.error?.message ?? `exit ${result.status}`}, which is not a version, so the rehearsal's skip condition would be a silent one`,
     );
   }
   return { path, version, major: Number(version.split(".")[0]) };
 }
 const HOST_NPM = hostNpm();
 
-describe.skipIf(HOST_NPM.major !== 12 || process.platform === "win32")(
-  "DEC-240 (a5) item 4: a real flagless install blocks and reports an unapproved fixture script (rehearsal on the host npm)",
+/** Why the real-npm rehearsals do not run here, or null when they do. Named, so a skip is never a silent one. */
+const HOST_NPM_SKIP: string | null =
+  process.platform === "win32"
+    ? "POSIX hosts only: npm.cmd cannot be spawned from this harness on Windows"
+    : HOST_NPM.major !== 12
+      ? `host npm ${HOST_NPM.version} is not major 12`
+      : null;
+
+describe.skipIf(HOST_NPM_SKIP !== null)(
+  `DEC-240 (a5) item 4: a real flagless install blocks and reports an unapproved fixture script (rehearsal on the host npm)${HOST_NPM_SKIP === null ? "" : ` -- SKIPPED: ${HOST_NPM_SKIP}`}`,
   () => {
     function proofEnv(scratch: string, userConfigText: string): Record<string, string | undefined> {
       writeFileSync(join(scratch, "user.npmrc"), userConfigText);

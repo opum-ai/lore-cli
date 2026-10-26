@@ -197,13 +197,21 @@ const FLAGLESS_INSTALL_EXCEPTION = {
  * is what stops a third caller from inheriting the exception; the helper's own guards (absolute path, existing
  * .tgz, inside its root, two allowed extras, merged-env config readback) are proved in
  * test/ladybug-package-qualification.test.ts.
+ *
+ * The count is summed over EVERY scanned source, not just the helper's own file: the helper is exported, so any
+ * file under benchmark/, scripts/ or docker/ can import it, and a third caller next door is exactly the shape a
+ * single-file count misses (rv330, item 2).
  */
 const FLAGLESS_INSTALL_CALL_SITES = 2;
 
-function flaglessInstallCallSites(text: string): number {
+function flaglessInstallCallsIn(text: string): number {
   return [...text.matchAll(/\bflaglessGlobalInstall\s*\(/g)].filter(
     (match) => !/\bfunction\s+$/.test(text.slice(Math.max(0, (match.index ?? 0) - 9), match.index ?? 0)),
   ).length;
+}
+
+function flaglessInstallCallSites(files: readonly SourceFile[]): number {
+  return files.reduce((total, file) => total + flaglessInstallCallsIn(file.text), 0);
 }
 
 /** Every npm install in a source file: a spawn-style argument list `["install", ...]` or a shell `npm install` line. */
@@ -443,16 +451,33 @@ describe("DEC-240 item 1: lore and quest install without lifecycle scripts", () 
     ).toEqual([]);
   });
 
-  test("the (a4) exception has exactly two call sites, so a third caller cannot inherit it", () => {
-    const own = loadSources().find((file) => file.path === FLAGLESS_INSTALL_EXCEPTION.path);
-    expect(own).toBeDefined();
-    expect(flaglessInstallCallSites(own?.text ?? "")).toBe(FLAGLESS_INSTALL_CALL_SITES);
-    // Mutant: the defect's own shape -- a third caller added beside the two real ones, the declaration unchanged.
-    const thirdCaller = `${own?.text ?? ""}\nasync function anotherInstaller(npm) {\n  return flaglessGlobalInstall(npm, {}, "/tmp", ["@opum-ai/lore@0.14.1"]);\n}\n`;
-    expect(flaglessInstallCallSites(thirdCaller)).toBe(FLAGLESS_INSTALL_CALL_SITES + 1);
-    // The counter itself: the declaration is not a call site, and a call in a comment or a string still counts.
-    expect(flaglessInstallCallSites("async function flaglessGlobalInstall(a, b, c, d) {}")).toBe(0);
-    expect(flaglessInstallCallSites("await flaglessGlobalInstall(npm, env, root, [a]);")).toBe(1);
+  test("the (a4) exception has exactly two call sites across every scanned source, so a third caller cannot inherit it", () => {
+    const files = loadSources();
+    // Positive control: the walk read many files and the helper's own file is one of them.
+    expect(files.length).toBeGreaterThanOrEqual(20);
+    expect(files.some((file) => file.path === FLAGLESS_INSTALL_EXCEPTION.path)).toBe(true);
+    expect(flaglessInstallCallSites(files)).toBe(FLAGLESS_INSTALL_CALL_SITES);
+    const own = files.find((file) => file.path === FLAGLESS_INSTALL_EXCEPTION.path) as SourceFile;
+    const extra =
+      '\nasync function anotherInstaller(npm) {\n  return flaglessGlobalInstall(npm, {}, "/tmp", ["@opum-ai/lore@0.14.1"]);\n}\n';
+    // Mutant A: a third caller beside the two real ones in the helper's own file.
+    expect(
+      flaglessInstallCallSites([
+        ...files.filter((file) => file.path !== own.path),
+        { path: own.path, text: `${own.text}${extra}` },
+      ]),
+    ).toBe(FLAGLESS_INSTALL_CALL_SITES + 1);
+    // Mutant B: the case a single-file count MISSES -- the helper is exported, so the third caller lives in a
+    // second file and the helper's own file is untouched.
+    expect(
+      flaglessInstallCallSites([
+        ...files,
+        { path: "scripts/third-caller.mjs", text: "await flaglessGlobalInstall(npm, env, root, [tarball]);\n" },
+      ]),
+    ).toBe(FLAGLESS_INSTALL_CALL_SITES + 1);
+    // The counter itself: the declaration is not a call site, and a call is one wherever it sits.
+    expect(flaglessInstallCallsIn("async function flaglessGlobalInstall(a, b, c, d) {}")).toBe(0);
+    expect(flaglessInstallCallsIn("await flaglessGlobalInstall(npm, env, root, [a]);")).toBe(1);
   });
 
   test("proved with a real install: a dependency whose postinstall fails still installs under --ignore-scripts, and fails without it", () => {
