@@ -1061,6 +1061,12 @@ jobs:
             echo "::error::npm view @opum-ai/lore version printed nothing, so the previous release could not be identified"
             exit 1
           fi
+          # DEC-240 item 3: what npm printed reaches an install argument below, so it must be an exact
+          # X.Y.Z, never a range, a flag or a shell fragment.
+          if ! printf '%s\n' "$previous_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::npm view @opum-ai/lore version printed $(printf '%s' "$previous_version" | head -c 80 | tr -c '[:print:]' '?'), which is not an exact X.Y.Z, so it is not installed"
+            exit 1
+          fi
           previous_dir="$RUNNER_TEMP/lore-release-gate-probe-previous-${PLATFORM_NAME}"
           rm -rf "$previous_dir"
           mkdir -p "$previous_dir"

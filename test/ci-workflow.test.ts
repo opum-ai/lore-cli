@@ -60,6 +60,9 @@ function loadWorkflow(path: string = WORKFLOW_PATH): WorkflowDoc {
   return yaml.load(readFileSync(path, "utf8"), { schema: yaml.JSON_SCHEMA }) as WorkflowDoc;
 }
 
+/** An inline quest install, flagged or not: DEC-240 added --ignore-scripts, which the old literal pin no longer matched. */
+const INLINE_QUEST_INSTALL = /npm install(\s+-\S+)*\s+"?@opum-ai\/quest@/;
+
 describe("ci.yml exact-host LadybugDB qualification", () => {
   test("the narrow manual mode is explicit and defaults off", () => {
     const input = loadWorkflow().on.workflow_dispatch?.inputs?.ladybug_exact_hosts_only;
@@ -420,8 +423,12 @@ describe("ci.yml docs gate (LCLI-504)", () => {
     for (const jobId of ["tracker", "docs-gate", "build"]) {
       expect(jobs[jobId]?.steps?.some((step) => step.uses === "./.github/actions/setup-quest")).toBe(true);
     }
+    // The pin is only as good as its pattern: it must see the hardened shape and the old one, and not a pinned reader.
+    expect(INLINE_QUEST_INSTALL.test('npm install -g --ignore-scripts "@opum-ai/quest@$V"')).toBe(true);
+    expect(INLINE_QUEST_INSTALL.test('npm install -g "@opum-ai/quest@$V"')).toBe(true);
+    expect(INLINE_QUEST_INSTALL.test("scripts/read-declared-quest-version.sh")).toBe(false);
     const inline = Object.entries(jobs).flatMap(([id, job]) =>
-      (job.steps ?? []).filter((step) => (step.run ?? "").includes('npm install -g "@opum-ai/quest@')).map(() => id),
+      (job.steps ?? []).filter((step) => INLINE_QUEST_INSTALL.test(step.run ?? "")).map(() => id),
     );
     expect(inline).toEqual([]);
   });

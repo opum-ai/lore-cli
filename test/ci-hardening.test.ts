@@ -78,21 +78,41 @@ function checkoutViolations(units: Unit[]): string[] {
 
 /** An expression in a `run:` body is allowed only when its value is static or a runner-assigned id. */
 const SAFE_RUN_EXPRESSION = /^github\.run_id$/;
-/** ci.yml's matrix is the literal os list written in that file, not computed from another job's output. */
-const STATIC_MATRIX_EXPRESSION = { file: ".github/workflows/ci.yml", expression: "matrix.os" };
+/** The `matrix.os` allowance is scoped to ONE job: ci.yml's `check`, whose matrix is the literal os list written there. */
+const STATIC_MATRIX_EXPRESSION = { where: ".github/workflows/ci.yml job check", expression: "matrix.os" };
+
+/**
+ * Every `${{ ... }}` body in a run: text. Scans to the closing `}}` outside a single-quoted string, so a
+ * function call whose literal contains a brace (`format('{0}', x)`) is read whole rather than cut short.
+ */
+function workflowExpressions(text: string): string[] {
+  const out: string[] = [];
+  let from = 0;
+  for (;;) {
+    const start = text.indexOf("${{", from);
+    if (start < 0) return out;
+    let end = start + 3;
+    let quoted = false;
+    for (; end < text.length; end++) {
+      const char = text[end];
+      if (char === "'") quoted = !quoted;
+      else if (!quoted && char === "}" && text[end + 1] === "}") break;
+    }
+    out.push(text.slice(start + 3, end).trim());
+    from = end + 2;
+  }
+}
 
 function runInterpolationViolations(units: Unit[]): string[] {
   const out: string[] = [];
   for (const unit of units) {
     unit.steps.forEach((step, index) => {
-      for (const match of (step.run ?? "").matchAll(/\$\{\{\s*([^}]*?)\s*\}\}/g)) {
-        const expression = match[1] ?? "";
+      for (const expression of workflowExpressions(step.run ?? "")) {
         const staticMatrix =
-          unit.where.startsWith(`${STATIC_MATRIX_EXPRESSION.file} `) &&
-          expression === STATIC_MATRIX_EXPRESSION.expression;
+          unit.where === STATIC_MATRIX_EXPRESSION.where && expression === STATIC_MATRIX_EXPRESSION.expression;
         if (!SAFE_RUN_EXPRESSION.test(expression) && !staticMatrix) {
           out.push(
-            `${unit.where} step ${index} (${step.name ?? step.id ?? "unnamed"}): \${{ ${match[1]} }} inside run:`,
+            `${unit.where} step ${index} (${step.name ?? step.id ?? "unnamed"}): \${{ ${expression} }} inside run:`,
           );
         }
       }
@@ -101,15 +121,24 @@ function runInterpolationViolations(units: Unit[]): string[] {
   return out;
 }
 
+/** The npm verbs that install: `install`, its aliases `i`/`add`, and `ci`. */
+const NPM_INSTALL_VERB = /\bnpm\s+(?:install|i|add|ci)\b/;
+/** What makes an install one of ours: a lore/quest/claude-code package, a `.tgz`, or any `$...TARBALL...` variable. */
+const OUR_INSTALL_TARGET = /@opum-ai\/(?:lore|quest)|@anthropic-ai\/claude-code|\.tgz\b|\$\{?\w*tarball\w*\}?/i;
+
+/** A shell body with backslash-continued lines joined, so a flag on the next line belongs to its command. */
+function joinContinuations(text: string): string[] {
+  return text.replace(/\\\r?\n\s*/g, " ").split("\n");
+}
+
 /** An `npm install` of a lore or quest package (or a lore tarball) must not run lifecycle scripts. */
 function installViolations(units: Unit[]): string[] {
   const out: string[] = [];
   for (const unit of units) {
     unit.steps.forEach((step, index) => {
-      for (const line of (step.run ?? "").split("\n")) {
+      for (const line of joinContinuations(step.run ?? "")) {
         const trimmed = line.trim();
-        if (trimmed.startsWith("#") || !/\bnpm install\b/.test(trimmed)) continue;
-        if (!/@opum-ai\/(lore|quest)|@anthropic-ai\/claude-code|\$tarball|\$LINUX_X64_TARBALL/.test(trimmed)) continue;
+        if (trimmed.startsWith("#") || !NPM_INSTALL_VERB.test(trimmed) || !OUR_INSTALL_TARGET.test(trimmed)) continue;
         if (!trimmed.includes("--ignore-scripts")) out.push(`${unit.where} step ${index}: ${trimmed}`);
       }
     });
@@ -118,7 +147,9 @@ function installViolations(units: Unit[]): string[] {
 }
 
 /** `benchmark/` and `scripts/` sources an install can hide in, besides workflow `run:` lines. */
-const SOURCE_DIRS = ["benchmark", "scripts"];
+const SOURCE_DIRS = ["benchmark", "scripts", "docker"];
+/** Under these, EVERY npm install is held to the flag; elsewhere (docker/) only an install of ours is. */
+const BLANKET_DIRS = ["benchmark/", "scripts/"];
 const SOURCE_EXTENSIONS = /\.(ts|mjs|cjs|sh)$/;
 
 interface SourceFile {
@@ -131,7 +162,7 @@ function loadSources(): SourceFile[] {
   const out: SourceFile[] = [];
   const walk = (dir: string): void => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name === "node_modules") continue;
+      if (entry.name === "node_modules" || entry.name === ".npm-cache") continue;
       const full = join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
       else if (SOURCE_EXTENSIONS.test(entry.name)) {
@@ -156,16 +187,16 @@ const FLAGLESS_INSTALL_EXCEPTION = {
 function sourceInstalls(file: SourceFile): { args: string; line: number }[] {
   const out: { args: string; line: number }[] = [];
   const lineOf = (index: number): number => file.text.slice(0, index).split("\n").length;
-  for (const match of file.text.matchAll(/\[\s*(?:"install"|'install')\s*,([^\]]*)\]/g)) {
-    out.push({ args: `"install",${match[1] ?? ""}`.replace(/,\s+/g, ", ").trim(), line: lineOf(match.index ?? 0) });
+  for (const match of file.text.matchAll(/\bnpm\w*["']?\s*,\s*\[\s*["'](install|i|add|ci)["']\s*,([^\]]*)\]/gi)) {
+    out.push({ args: `"${match[1]}",${match[2] ?? ""}`.replace(/,\s+/g, ", ").trim(), line: lineOf(match.index ?? 0) });
   }
   // A shell install is a command in a .sh file; in a script it is a string that BEGINS with `npm install`
   // (prose that merely mentions the words, like an error message, is not an install).
   const shellInstall = file.path.endsWith(".sh")
-    ? /^[ \t]*(?!#)(?:[^\n]*(?:&&|;|\|\|)[ \t]*)?npm\s+install\b[^\n]*$/gm
-    : /^[^\n]*["'`]npm\s+install\b[^\n]*$/gm;
+    ? /^[ \t]*(?!#)(?:[^\n]*(?:&&|;|\|\|)[ \t]*)?npm\s+(?:install|i|add|ci)\b(?:[^\n]|(?<=\\)\n)*/gm
+    : /^[^\n]*["'`]npm\s+(?:install|i|add|ci)\b[^\n]*$/gm;
   for (const match of file.text.matchAll(shellInstall)) {
-    out.push({ args: match[0].trim(), line: lineOf(match.index ?? 0) });
+    out.push({ args: match[0].trim().replace(/\\\r?\n\s*/g, " "), line: lineOf(match.index ?? 0) });
   }
   return out;
 }
@@ -176,6 +207,8 @@ function sourceInstallViolations(files: SourceFile[]): string[] {
     let exceptionsUsed = 0;
     for (const install of sourceInstalls(file)) {
       if (install.args.includes("--ignore-scripts")) continue;
+      // Outside benchmark/ and scripts/ (docker/) only an install of ours is held to the flag.
+      if (!BLANKET_DIRS.some((dir) => file.path.startsWith(dir)) && !OUR_INSTALL_TARGET.test(install.args)) continue;
       if (file.path === FLAGLESS_INSTALL_EXCEPTION.path && install.args === FLAGLESS_INSTALL_EXCEPTION.args) {
         exceptionsUsed += 1;
         if (exceptionsUsed === 1) continue;
@@ -246,9 +279,33 @@ describe("DEC-240 item 4: no workflow expression interpolated inside a run: body
     expect(runInterpolationViolations([bad])).toHaveLength(5);
     expect(
       runInterpolationViolations([
-        { where: ".github/workflows/ci.yml job y", steps: [{ run: 'echo "${{ matrix.os }} ${{ github.run_id }}"' }] },
+        {
+          where: ".github/workflows/ci.yml job check",
+          steps: [{ run: 'echo "${{ matrix.os }} ${{ github.run_id }}"' }],
+        },
       ]),
     ).toEqual([]);
+  });
+
+  test("rejects a function call whose literal holds a brace, and matrix.os outside ci.yml's check job (L1, L2)", () => {
+    // `format('{0}', ...)` carries a `}` inside its string, which cut a `[^}]*` scan short and read as no expression.
+    const formatted: Unit = {
+      where: "w job f",
+      steps: [{ run: "echo \"${{ format('{0}', steps.a.outputs.b) }}\"\necho \"${{ format('{{0}}', inputs.x) }}\"" }],
+    };
+    expect(runInterpolationViolations([formatted])).toHaveLength(2);
+    // The static-matrix allowance is one job, not the whole file.
+    const elsewhere: Unit = {
+      where: ".github/workflows/ci.yml job build",
+      steps: [{ run: 'echo "${{ matrix.os }}"' }],
+    };
+    expect(runInterpolationViolations([elsewhere])).toHaveLength(1);
+    // The tokenizer itself: reads each body whole, two to a line, and an unterminated one to the end.
+    expect(workflowExpressions("a ${{ format('{0}', x) }} b ${{ github.run_id }}")).toEqual([
+      "format('{0}', x)",
+      "github.run_id",
+    ]);
+    expect(workflowExpressions("${{ unterminated")).toEqual(["unterminated"]);
   });
 });
 
@@ -257,12 +314,8 @@ describe("DEC-240 item 1: lore and quest install without lifecycle scripts", () 
     const units = loadUnits();
     const installs = units
       .flatMap((unit) => unit.steps)
-      .flatMap((step) => (step.run ?? "").split("\n"))
-      .filter(
-        (line) =>
-          /\bnpm install\b/.test(line) &&
-          /@opum-ai\/(lore|quest)|@anthropic-ai\/claude-code|\$tarball|\$LINUX_X64_TARBALL/.test(line),
-      );
+      .flatMap((step) => joinContinuations(step.run ?? ""))
+      .filter((line) => NPM_INSTALL_VERB.test(line) && OUR_INSTALL_TARGET.test(line));
     // Positive control: setup-quest (two installs) and release.yml (two) were found.
     expect(installs.length).toBeGreaterThanOrEqual(4);
     expect(installViolations(units)).toEqual([]);
@@ -276,11 +329,32 @@ describe("DEC-240 item 1: lore and quest install without lifecycle scripts", () 
     expect(installViolations([old])).toHaveLength(2);
   });
 
+  test("rejects the install spellings the first scan missed: npm i, npm ci, a continued line, other tarball variables (L3)", () => {
+    for (const run of [
+      'npm i -g "@opum-ai/quest@$V"',
+      'npm add "@opum-ai/lore@$V"',
+      'npm ci "$RELEASE_TARBALL"',
+      'npm install \\\n  --prefix "$d" \\\n  "@opum-ai/lore-linux-x64@$V"',
+      'npm install "$PLATFORM_TARBALL"',
+      "npm install ./pkg/opum-ai-lore-0.14.1.tgz",
+    ]) {
+      expect(installViolations([{ where: "w job m", steps: [{ run }] }])).toHaveLength(1);
+    }
+    // Accepts: the flag on a continuation line, and an install that is not ours.
+    expect(
+      installViolations([
+        { where: "w job n", steps: [{ run: 'npm install \\\n  --ignore-scripts \\\n  "@opum-ai/lore@$V"' }] },
+        { where: "w job o", steps: [{ run: "npm install\nnpm ci" }] },
+      ]),
+    ).toEqual([]);
+  });
+
   test("benchmark/ and scripts/ sources: every npm install carries --ignore-scripts but the one DEC-240 (a4) exception", () => {
     const files = loadSources();
     // Positive control: the walk read both trees, and the exception's own file with its one install.
     expect(files.some((f) => f.path.startsWith("benchmark/"))).toBe(true);
     expect(files.some((f) => f.path.startsWith("scripts/"))).toBe(true);
+    expect(files.some((f) => f.path.startsWith("docker/"))).toBe(true);
     const own = files.find((f) => f.path === FLAGLESS_INSTALL_EXCEPTION.path);
     expect(own).toBeDefined();
     const flagless = sourceInstalls(own as SourceFile).filter((i) => !i.args.includes("--ignore-scripts"));
@@ -305,6 +379,20 @@ describe("DEC-240 item 1: lore and quest install without lifecycle scripts", () 
     expect(sourceInstallViolations([{ path: "scripts/z.mjs", text: 'sh("npm install foo");' }])).toHaveLength(1);
     expect(
       sourceInstallViolations([{ path: "scripts/z.mjs", text: "throw new Error(`the npm install failed`);" }]),
+    ).toEqual([]);
+    // L3: the other verbs, a continued shell install, a git-add array that is NOT an npm call, and docker/.
+    expect(sourceInstallViolations([{ path: "scripts/a.mjs", text: 'run(npm, ["ci", tarball]);' }])).toHaveLength(1);
+    expect(sourceInstallViolations([{ path: "scripts/a.mjs", text: 'run(npm, ["i", "-g", pkg]);' }])).toHaveLength(1);
+    expect(sourceInstallViolations([{ path: "scripts/b.sh", text: 'npm ci \\\n  --prefix "$d"\n' }])).toHaveLength(1);
+    expect(
+      sourceInstallViolations([{ path: "scripts/b.sh", text: 'npm install \\\n  --ignore-scripts "$t"\n' }]),
+    ).toEqual([]);
+    expect(sourceInstallViolations([{ path: "scripts/c.mjs", text: 'run("git", ["add", "-A"]);' }])).toEqual([]);
+    expect(
+      sourceInstallViolations([{ path: "docker/e2e/x.sh", text: 'npm install -g "@opum-ai/lore@$V"\n' }]),
+    ).toHaveLength(1);
+    expect(
+      sourceInstallViolations([{ path: "docker/e2e/x.sh", text: "cd website && npm install --prefer-offline\n" }]),
     ).toEqual([]);
     // Accepts: the hardened shapes.
     expect(
@@ -367,6 +455,74 @@ describe("DEC-240 item 1: lore and quest install without lifecycle scripts", () 
     }
   }, 120_000);
 });
+
+describe.skipIf(onWindows)(
+  "DEC-240 item 3 (L5): release.yml's previous_version is an exact X.Y.Z before it is installed",
+  () => {
+    /** The release-gate probe step's run body, cut from the assignment to the install, read as data. */
+    function probeSnippet(): string {
+      const doc = yaml.load(readFileSync(join(WORKFLOWS_DIR, "release.yml"), "utf8")) as {
+        jobs: Record<string, { steps?: Step[] }>;
+      };
+      const runs = Object.values(doc.jobs)
+        .flatMap((job) => job.steps ?? [])
+        .map((step) => step.run ?? "")
+        .filter((run) => run.includes('previous_version="$(npm view @opum-ai/lore version)"'));
+      expect(runs).toHaveLength(1);
+      const run = runs[0] ?? "";
+      const from = run.indexOf('previous_version="$(npm view');
+      const to = run.indexOf('npm install --ignore-scripts --prefix "$previous_dir"');
+      expect(from).toBeGreaterThan(-1);
+      expect(to).toBeGreaterThan(from);
+      return run.slice(from, to);
+    }
+
+    /** Runs the snippet with an `npm` stub that prints `printed`; the snippet's install is not reached. */
+    function runWith(printed: string): { status: number | null; out: string } {
+      const work = mkdtempSync(join(tmpdir(), "lcli768-prevver-"));
+      try {
+        const bin = join(work, "bin");
+        mkdirSync(bin);
+        writeFileSync(join(bin, "npm"), `#!/bin/sh\nprintf '%s' "$NPM_STUB_OUT"\n`, { mode: 0o755 });
+        const result = spawnSync("bash", ["-c", `${probeSnippet()}\necho "REACHED:$previous_version"`], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH}`,
+            NPM_STUB_OUT: printed,
+            RUNNER_TEMP: work,
+            PLATFORM_NAME: "linux-x64",
+          },
+        });
+        return { status: result.status, out: `${result.stdout}${result.stderr}` };
+      } finally {
+        rmSync(work, { recursive: true, force: true });
+      }
+    }
+
+    test("accepts an exact version, and reaches the install with it", () => {
+      const ok = runWith("0.14.1");
+      expect(ok.status).toBe(0);
+      expect(ok.out).toContain("REACHED:0.14.1");
+    });
+
+    test("refuses a range, a flag, a shell fragment, a prerelease and nothing, before the install", () => {
+      for (const printed of [
+        "^0.14.1",
+        "0.14.1 --foreground-scripts",
+        "0.14.1;touch pwned",
+        "0.14.1-rc.1",
+        "0.14",
+        "latest",
+        "",
+      ]) {
+        const bad = runWith(printed);
+        expect(`${JSON.stringify(printed)} -> ${bad.status}`).toBe(`${JSON.stringify(printed)} -> 1`);
+        expect(bad.out).not.toContain("REACHED:");
+      }
+    });
+  },
+);
 
 describe.skipIf(onWindows)("DEC-240 item 3: the Quest version is read from inside the managed block, exactly", () => {
   function read(claudeMd: string): { code: number | null; out: string; version?: string } {
