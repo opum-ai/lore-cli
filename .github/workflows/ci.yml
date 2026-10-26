@@ -122,6 +122,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-bun
       - run: bun run lint
       # Linux only, and not skipped anywhere else by accident. Verified against the
@@ -416,6 +418,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       # This repo has no .nvmrc (it is a bun project — see .bun-version), so the
       # node used to install the Quest CLI is stated explicitly rather than read
       # from a file that does not exist. 22 matches the scaffold jobs below.
@@ -431,14 +435,8 @@ jobs:
       - name: Resolve the Quest version CLAUDE.md declares
         id: quest
         run: |
-          set -euo pipefail
-          version="$(sed -n 's/.*Quest CLI \([0-9][0-9.]*\).*/\1/p' CLAUDE.md | head -1)"
-          if [ -z "$version" ]; then
-            echo "::error file=CLAUDE.md::No 'Quest CLI <version>' line found in the managed block. Tracker integrity cannot be checked against an undeclared version."
-            exit 1
-          fi
-          echo "Declared Quest version: $version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # DEC-240 item 3: read inside the managed block only, exact X.Y.Z, failing by name.
+          bash scripts/read-declared-quest-version.sh CLAUDE.md
       - uses: ./.github/actions/setup-quest
         with:
           version: ${{ steps.quest.outputs.version }}
@@ -518,6 +516,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-bun
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
@@ -535,14 +535,8 @@ jobs:
       - name: Resolve the Quest version CLAUDE.md declares
         id: quest
         run: |
-          set -euo pipefail
-          version="$(sed -n 's/.*Quest CLI \([0-9][0-9.]*\).*/\1/p' CLAUDE.md | head -1)"
-          if [ -z "$version" ]; then
-            echo "::error file=CLAUDE.md::No 'Quest CLI <version>' line found in the managed block. The docs gate cannot resolve the tracker backend it must read."
-            exit 1
-          fi
-          echo "Declared Quest version: $version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # DEC-240 item 3: read inside the managed block only, exact X.Y.Z, failing by name.
+          bash scripts/read-declared-quest-version.sh CLAUDE.md
       - uses: ./.github/actions/setup-quest
         with:
           version: ${{ steps.quest.outputs.version }}
@@ -599,6 +593,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-bun
       # The versions this proof resolved, in the log rather than inferred from the pin: a
       # reader comparing a run against their own machine needs the number, not the exit code.
@@ -664,6 +660,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: latest
@@ -680,6 +678,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-bun
       - name: Run the complete small-fixture one-repetition smoke
         shell: bash
@@ -717,6 +717,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-bun
       # Lightweight buildability smoke (host-native compile only). The
       # release-grade -baseline per-platform matrix and npm dual-artifact
@@ -758,14 +760,8 @@ jobs:
       - name: Resolve the Quest version CLAUDE.md declares
         id: quest
         run: |
-          set -euo pipefail
-          version="$(sed -n 's/.*Quest CLI \([0-9][0-9.]*\).*/\1/p' CLAUDE.md | head -1)"
-          if [ -z "$version" ]; then
-            echo "::error file=CLAUDE.md::No 'Quest CLI <version>' line found in the managed block. The README quickstart assumes Quest."
-            exit 1
-          fi
-          echo "Declared Quest version: $version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # DEC-240 item 3: read inside the managed block only, exact X.Y.Z, failing by name.
+          bash scripts/read-declared-quest-version.sh CLAUDE.md
       - uses: ./.github/actions/setup-quest
         with:
           version: ${{ steps.quest.outputs.version }}
@@ -791,6 +787,8 @@ jobs:
       PLAYWRIGHT_BROWSERS_PATH: .lore/cache/ms-playwright
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-bun
       # LCLI-753. The old single `playwright install --with-deps` step stalled 20-38 minutes on
       # five runs on 2026-10-22 (#646, #647, #648, the push to main at 6ff69788, and #653) and
@@ -841,6 +839,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-bun
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
@@ -866,6 +866,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-bun
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
@@ -905,6 +907,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       # The ~1500-line hermetic E2E harness under docker/e2e/ (LCLI-56..68) builds real `lore`
       # and `backlog` binaries and drives the full `lore` command surface against a real,
       # mutating backlog project — no mocked adapter (ADR-0002). It was previously runnable
@@ -993,6 +997,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-bun
       # Node is not used by the harness itself; it is how the Claude Code CLI is installed,
       # and the pinned setup-node + global-install pattern is the one the tracker, docs and
@@ -1003,7 +1009,9 @@ jobs:
       - name: Install the Claude Code CLI the mod's tests are run by
         run: |
           set -euo pipefail
-          npm install -g @anthropic-ai/claude-code@2.1.287
+          # DEC-240 item 1 (a3 review G): --ignore-scripts costs nothing here, because install.cjs
+          # is run explicitly below.
+          npm install -g --ignore-scripts @anthropic-ai/claude-code@2.1.287
           # The wrapper package's own postinstall copies the platform-native binary over the
           # bin/claude.exe stub, and npm may gate dependency lifecycle scripts (measured on
           # npm 12.2.0: the install prints "install scripts blocked" and leaves the stub,

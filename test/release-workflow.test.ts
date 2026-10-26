@@ -79,6 +79,9 @@ function loadWorkflow(): WorkflowDoc {
   return yaml.load(readFileSync(WORKFLOW_PATH, "utf8"), { schema: yaml.JSON_SCHEMA }) as WorkflowDoc;
 }
 
+/** An inline quest install, flagged or not: DEC-240 added --ignore-scripts, which the old literal pin no longer matched. */
+const INLINE_QUEST_INSTALL = /npm install(\s+-\S+)*\s+"?@opum-ai\/quest@/;
+
 describe("release.yml publish job stays safely gated", () => {
   test("the workflow only ever triggers on workflow_dispatch (never push/tag)", () => {
     const doc = loadWorkflow();
@@ -1429,7 +1432,7 @@ describe("release.yml's release gate probe can obtain the quest peer it drives (
     // not there. A derive step without `shell: bash` fails on those legs for a reason that has
     // nothing to do with the release — which is the defect class this whole block is about.
     expect(derive?.shell).toBe("bash");
-    expect(derive?.run ?? "").toContain("Quest CLI");
+    expect(derive?.run ?? "").toContain("scripts/read-declared-quest-version.sh");
     const setup = steps.find((step) => step.uses === "./.github/actions/setup-quest");
     expect(setup).toBeDefined();
     expect(setup?.with?.version).toBe("${{ steps.quest.outputs.version }}");
@@ -1437,6 +1440,10 @@ describe("release.yml's release gate probe can obtain the quest peer it drives (
     expect(readFileSync(WORKFLOW_PATH, "utf8")).not.toContain("QUEST_SOURCE_REF");
     // The resolution stays in the ONE action: an inline install here would skip the
     // npm-then-source fallback and red the window the action exists to cover.
-    expect(steps.filter((step) => (step.run ?? "").includes('npm install -g "@opum-ai/quest@'))).toEqual([]);
+    // The pin is only as good as its pattern: it must see the hardened shape and the old one, and not a pinned reader.
+    expect(INLINE_QUEST_INSTALL.test('npm install -g --ignore-scripts "@opum-ai/quest@$V"')).toBe(true);
+    expect(INLINE_QUEST_INSTALL.test('npm install -g "@opum-ai/quest@$V"')).toBe(true);
+    expect(INLINE_QUEST_INSTALL.test("scripts/read-declared-quest-version.sh")).toBe(false);
+    expect(steps.filter((step) => INLINE_QUEST_INSTALL.test(step.run ?? ""))).toEqual([]);
   });
 });

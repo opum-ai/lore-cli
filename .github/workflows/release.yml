@@ -229,6 +229,8 @@ jobs:
       PLATFORM_MATRIX: ${{ needs.setup.outputs.matrix }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - name: Assert the platform package SET is consistent (shared with ci.yml's package-set job, LCLI-513)
         # Cross-checks the platform SET itself, not just per-platform fields: the setup job
         # matrix literal, root package.json's optionalDependencies keys, and the directories
@@ -367,6 +369,8 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-bun
       - name: Assert the qualification host and toolchain
         shell: bash
@@ -467,6 +471,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-bun
       - name: Run the informational 1 GiB observation
         shell: bash
@@ -494,6 +500,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-bun
       - name: Run focused multi-process contention, crash, lifecycle, and indexed retrieval tests
         shell: bash
@@ -589,6 +597,46 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      # DEC-240 (a5): the flagless global install in package-qualification.ts is only safe where npm
+      # blocks and reports unapproved install scripts, which is npm 12. The runner images ship npm 10 or 11
+      # (measured from release run 37568141200), so every host pins an exact Node that npm 12's engines accept
+      # ("^22.22.2 || ^24.15.0 || >=26.0.0") and then an exact npm 12. package-qualification.ts re-checks
+      # `npm --version` before that install and records it in the report.
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.21.0
+      # TWO Windows traps, both measured (release runs 40357346933 and 40360244788). Bun's PATH walk found
+      # Node's bundled npm 11, so the step hands the qualification the exact path bash resolved. And npm.cmd
+      # looks for a newer npm in the GLOBAL PREFIX, which the qualification then isolates into a scratch
+      # directory, so a `npm install -g npm@12` into the default Windows prefix is invisible to it and the bundled
+      # 11 runs. On Windows the upgrade therefore goes into Node's own directory, which npm.cmd uses first. The
+      # probe below runs the recorded path under an isolated prefix, exactly as the qualification will.
+      - name: Pin npm 12 (DEC-240 a5)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            node_dir="$(cygpath -w "$(dirname "$(command -v node)")")"
+            npm install -g --ignore-scripts --prefix "$node_dir" npm@12.2.1
+          else
+            npm install -g --ignore-scripts npm@12.2.1
+          fi
+          npm --version
+          npm_path="$(command -v npm)"
+          if [ "$RUNNER_OS" = "Windows" ]; then npm_path="$(cygpath -w "$npm_path").cmd"; fi
+          echo "qualification npm: $npm_path"
+          probe_prefix="$RUNNER_TEMP/npm-prefix-probe"
+          mkdir -p "$probe_prefix"
+          recorded_version="$(npm_config_prefix="$probe_prefix" "$npm_path" --version)" || {
+            echo "::error::the recorded qualification npm $npm_path could not be run under an isolated prefix"
+            exit 1
+          }
+          if [ "$recorded_version" != "12.2.1" ]; then
+            echo "::error::the recorded qualification npm $npm_path reports $recorded_version under an isolated prefix, not 12.2.1"
+            exit 1
+          fi
+          echo "LORE_QUALIFICATION_NPM=$npm_path" >> "$GITHUB_ENV"
       # The shared action is the isolated frozen install. Its Bun pin and
       # --linker=isolated flags are part of the package-qualification contract.
       # Ladybug publishes no Windows ARM64 addon, so that one host installs the
@@ -598,16 +646,26 @@ jobs:
           ignore-scripts: ${{ matrix.name == 'win32-arm64' }}
       - name: Build, pack, install, smoke, uninstall, and audit ${{ matrix.name }}
         shell: bash
+        # DEC-240 item 4: the matrix is produced by needs.setup.outputs.matrix, so its values reach the
+        # shell through env:, not interpolated into the script.
+        env:
+          MATRIX_NAME: ${{ matrix.name }}
+          MATRIX_TARGET: ${{ matrix.target }}
+          MATRIX_BINARY: ${{ matrix.binary }}
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_CPU: ${{ matrix.cpu }}
+          MATRIX_LADYBUG_PACKAGE: ${{ matrix.ladybugPackage }}
+          MATRIX_LADYBUG_INTEGRITY: ${{ matrix.ladybugIntegrity }}
         run: |
           bun benchmark/ladybug/package-qualification.ts \
-            --name "${{ matrix.name }}" \
-            --target "${{ matrix.target }}" \
-            --binary "${{ matrix.binary }}" \
-            --os "${{ matrix.os }}" \
-            --cpu "${{ matrix.cpu }}" \
-            --ladybug-package "${{ matrix.ladybugPackage }}" \
-            --ladybug-integrity "${{ matrix.ladybugIntegrity }}" \
-            --output "artifacts/ladybug-package-qualification-${{ matrix.name }}.json"
+            --name "$MATRIX_NAME" \
+            --target "$MATRIX_TARGET" \
+            --binary "$MATRIX_BINARY" \
+            --os "$MATRIX_OS" \
+            --cpu "$MATRIX_CPU" \
+            --ladybug-package "$MATRIX_LADYBUG_PACKAGE" \
+            --ladybug-integrity "$MATRIX_LADYBUG_INTEGRITY" \
+            --output "artifacts/ladybug-package-qualification-${MATRIX_NAME}.json"
       - name: Assert the approved native platform verdict
         shell: bash
         env:
@@ -660,6 +718,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-bun
       - name: Download bounded benchmark evidence
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -732,6 +792,8 @@ jobs:
       PLATFORM_NAMES_SPACE: ${{ needs.setup.outputs.namesSpace }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: ladybug-package-qualification-*-${{ github.run_id }}
@@ -751,7 +813,7 @@ jobs:
               const report = JSON.parse(readFileSync(process.env.REPORT_PATH, "utf8"));
               const digest = `sha256:${createHash("sha256").update(readFileSync(process.env.TARBALL_PATH)).digest("hex")}`;
               if (
-                report.schema !== "lore.ladybug-package-qualification/3" ||
+                report.schema !== "lore.ladybug-package-qualification/4" ||
                 report.mode !== "qualification" ||
                 report.platform?.distribution !== process.env.EXPECTED_NAME ||
                 report.repository?.commit !== process.env.EXPECTED_COMMIT ||
@@ -883,7 +945,7 @@ jobs:
             (
               cd /tmp/lore-install-sanity || exit 1
               npm init -y >/dev/null
-              npm install "$GITHUB_WORKSPACE/$tarball" "$GITHUB_WORKSPACE/$LINUX_X64_TARBALL"
+              npm install --ignore-scripts "$GITHUB_WORKSPACE/$tarball" "$GITHUB_WORKSPACE/$LINUX_X64_TARBALL"
               # The ${...} below are JS template literals for `node -e`, not shell interpolation.
               # shellcheck disable=SC2016
               LAUNCHER_VERSION="$launcher_version" BINARY_VERSION="$expected" node -e '
@@ -967,6 +1029,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
@@ -982,14 +1046,8 @@ jobs:
         id: quest
         shell: bash
         run: |
-          set -euo pipefail
-          version="$(sed -n 's/.*Quest CLI \([0-9][0-9.]*\).*/\1/p' CLAUDE.md | head -1)"
-          if [ -z "$version" ]; then
-            echo "::error file=CLAUDE.md::No 'Quest CLI <version>' line found in the managed block. The release gate probe cannot run \`lore check\` against an undeclared peer, and without it neither arm measures anything."
-            exit 1
-          fi
-          echo "Declared Quest version: $version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # DEC-240 item 3: read inside the managed block only, exact X.Y.Z, failing by name.
+          bash scripts/read-declared-quest-version.sh CLAUDE.md
       - uses: ./.github/actions/setup-quest
         with:
           version: ${{ steps.quest.outputs.version }}
@@ -1041,10 +1099,18 @@ jobs:
             echo "::error::npm view @opum-ai/lore version printed nothing, so the previous release could not be identified"
             exit 1
           fi
+          # DEC-240 item 3: what npm printed reaches an install argument below, so it must be an exact X.Y.Z --
+          # the WHOLE value, not one of its lines. grep -q succeeds when ANY line matches, so a value carrying a
+          # second line rode through the old gate; a bash `=~` anchored at both ends matches the entire string
+          # or nothing (measured: "0.14.1\n;pwn" is refused here).
+          if [[ ! "$previous_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::npm view @opum-ai/lore version printed $(printf '%s' "$previous_version" | head -c 80 | tr -c '[:print:]' '?'), which is not an exact X.Y.Z, so it is not installed"
+            exit 1
+          fi
           previous_dir="$RUNNER_TEMP/lore-release-gate-probe-previous-${PLATFORM_NAME}"
           rm -rf "$previous_dir"
           mkdir -p "$previous_dir"
-          npm install --prefix "$previous_dir" "@opum-ai/lore-${PLATFORM_NAME}@${previous_version}"
+          npm install --ignore-scripts --prefix "$previous_dir" "@opum-ai/lore-${PLATFORM_NAME}@${previous_version}"
           previous_binary="$previous_dir/node_modules/@opum-ai/lore-${PLATFORM_NAME}/bin/${BINARY_NAME}"
           if [ ! -f "$previous_binary" ]; then
             echo "::error::npm installed @opum-ai/lore-${PLATFORM_NAME}@${previous_version} but $previous_binary is missing"
@@ -1087,6 +1153,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
@@ -1743,6 +1811,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
