@@ -44,11 +44,23 @@ runs:
     # CLI is asserted to report the declared version before any gate uses it.
     - id: npm
       shell: bash
+      # DEC-240 item 4: an input reaches the shell through env:, never interpolated as ${{ }} in run:.
+      env:
+        VERSION: ${{ inputs.version }}
+        SOURCE_REF: ${{ inputs.source-ref }}
       run: |
         set -euo pipefail
-        if npm install -g "@opum-ai/quest@${{ inputs.version }}"; then
+        # DEC-240 item 3, enforced again here so no caller can hand npm a range: the reader script
+        # already fails a partial or ranged declaration by name, and this covers a direct caller.
+        if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          shown="$(printf '%s' "$VERSION" | tr -cd '[:print:]' | cut -c1-40)"
+          echo "::error::setup-quest: the version input '$shown' is not an exact X.Y.Z (^[0-9]+\\.[0-9]+\\.[0-9]+\$), so it is not passed to npm as a range or a partial version."
+          exit 1
+        fi
+        # DEC-240 item 1: --ignore-scripts, so a dependency's lifecycle script never runs on the runner.
+        if npm install -g --ignore-scripts "@opum-ai/quest@${VERSION}"; then
           echo "method=npm" >> "$GITHUB_OUTPUT"
-          echo "::notice::quest ${{ inputs.version }} installed from npm, exactly as before DEC-55"
+          echo "::notice::quest ${VERSION} installed from npm, exactly as before DEC-55"
         else
           # Any npm failure takes this path, not only "no matching version":
           # an unreachable registry is indistinguishable from an absent version
@@ -89,20 +101,20 @@ runs:
           # failed read.
           echo "::notice::npm view @opum-ai/quest@release-candidate version => '${staged:-<none>}' (npm stderr: $(tr '\n' ' ' < "$staged_err" | cut -c1-400))"
           rm -f "$staged_err"
-          if [ -n "$staged" ] && [ "${staged%-rc.*}" = "${{ inputs.version }}" ]; then
+          if [ -n "$staged" ] && [ "${staged%-rc.*}" = "$VERSION" ]; then
             # INSTALL THE EXACT VERSION JUST READ, never the tag (opum-doc, DEC-182 delta on
             # #620). Naming the tag twice resolves it twice, and it can move between this
             # read and the install; the assertion below would then catch a moved tag as a
             # version mismatch, which reads as a ref problem rather than the race it is.
             # The exact spec cannot move.
-            if npm install -g "@opum-ai/quest@$staged"; then
+            if npm install -g --ignore-scripts "@opum-ai/quest@$staged"; then
               echo "method=npm" >> "$GITHUB_OUTPUT"
-              echo "::notice::quest ${{ inputs.version }} is not on npm yet; installed the staged $staged read from release-candidate, whose base is the declared version. The assertion step is unchanged and still requires the installed binary to report ${{ inputs.version }}."
+              echo "::notice::quest ${VERSION} is not on npm yet; installed the staged $staged read from release-candidate, whose base is the declared version. The assertion step is unchanged and still requires the installed binary to report ${VERSION}."
               exit 0
             fi
           fi
           echo "method=source" >> "$GITHUB_OUTPUT"
-          echo "::notice::quest ${{ inputs.version }} did not install from npm and no staged release-candidate carries that base; source-ref is '${{ inputs.source-ref }}' (empty means no source build is possible and the build step will fail the job)"
+          echo "::notice::quest ${VERSION} did not install from npm and no staged release-candidate carries that base; source-ref is '${SOURCE_REF}' (empty means no source build is possible and the build step will fail the job)"
         fi
     - if: steps.npm.outputs.method == 'source'
       uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -112,13 +124,14 @@ runs:
       shell: bash
       env:
         QUEST_SOURCE_REF: ${{ inputs.source-ref }}
+        DECLARED: ${{ inputs.version }}
       run: |
         set -euo pipefail
         # LCLI-750: the pin is gone from the workflows, so reaching this step with no
         # ref means the declared version is neither on npm nor staged. Say that, rather
         # than letting `git cat-file -e '^{commit}'` fail with a message about a ref.
         if [ -z "$QUEST_SOURCE_REF" ]; then
-          echo "::error::quest ${{ inputs.version }} is not installable from npm (neither the exact version nor a staged release candidate carrying it as its base), and this caller passed no source-ref to build it from. Wait until quest has released or staged that version, or pass source-ref (a full commit SHA that carries it) as an interim crossing."
+          echo "::error::quest ${DECLARED} is not installable from npm (neither the exact version nor a staged release candidate carrying it as its base), and this caller passed no source-ref to build it from. Wait until quest has released or staged that version, or pass source-ref (a full commit SHA that carries it) as an interim crossing."
           exit 1
         fi
         # The shim this writes is a bash script with no extension, which bash and a

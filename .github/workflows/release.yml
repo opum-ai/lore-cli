@@ -229,6 +229,8 @@ jobs:
       PLATFORM_MATRIX: ${{ needs.setup.outputs.matrix }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - name: Assert the platform package SET is consistent (shared with ci.yml's package-set job, LCLI-513)
         # Cross-checks the platform SET itself, not just per-platform fields: the setup job
         # matrix literal, root package.json's optionalDependencies keys, and the directories
@@ -367,6 +369,8 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-bun
       - name: Assert the qualification host and toolchain
         shell: bash
@@ -467,6 +471,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-bun
       - name: Run the informational 1 GiB observation
         shell: bash
@@ -494,6 +500,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-bun
       - name: Run focused multi-process contention, crash, lifecycle, and indexed retrieval tests
         shell: bash
@@ -589,6 +597,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       # The shared action is the isolated frozen install. Its Bun pin and
       # --linker=isolated flags are part of the package-qualification contract.
       # Ladybug publishes no Windows ARM64 addon, so that one host installs the
@@ -660,6 +670,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-bun
       - name: Download bounded benchmark evidence
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -732,6 +744,8 @@ jobs:
       PLATFORM_NAMES_SPACE: ${{ needs.setup.outputs.namesSpace }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: ladybug-package-qualification-*-${{ github.run_id }}
@@ -883,7 +897,7 @@ jobs:
             (
               cd /tmp/lore-install-sanity || exit 1
               npm init -y >/dev/null
-              npm install "$GITHUB_WORKSPACE/$tarball" "$GITHUB_WORKSPACE/$LINUX_X64_TARBALL"
+              npm install --ignore-scripts "$GITHUB_WORKSPACE/$tarball" "$GITHUB_WORKSPACE/$LINUX_X64_TARBALL"
               # The ${...} below are JS template literals for `node -e`, not shell interpolation.
               # shellcheck disable=SC2016
               LAUNCHER_VERSION="$launcher_version" BINARY_VERSION="$expected" node -e '
@@ -967,6 +981,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
@@ -982,14 +998,8 @@ jobs:
         id: quest
         shell: bash
         run: |
-          set -euo pipefail
-          version="$(sed -n 's/.*Quest CLI \([0-9][0-9.]*\).*/\1/p' CLAUDE.md | head -1)"
-          if [ -z "$version" ]; then
-            echo "::error file=CLAUDE.md::No 'Quest CLI <version>' line found in the managed block. The release gate probe cannot run \`lore check\` against an undeclared peer, and without it neither arm measures anything."
-            exit 1
-          fi
-          echo "Declared Quest version: $version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # DEC-240 item 3: read inside the managed block only, exact X.Y.Z, failing by name.
+          bash scripts/read-declared-quest-version.sh CLAUDE.md
       - uses: ./.github/actions/setup-quest
         with:
           version: ${{ steps.quest.outputs.version }}
@@ -1044,7 +1054,7 @@ jobs:
           previous_dir="$RUNNER_TEMP/lore-release-gate-probe-previous-${PLATFORM_NAME}"
           rm -rf "$previous_dir"
           mkdir -p "$previous_dir"
-          npm install --prefix "$previous_dir" "@opum-ai/lore-${PLATFORM_NAME}@${previous_version}"
+          npm install --ignore-scripts --prefix "$previous_dir" "@opum-ai/lore-${PLATFORM_NAME}@${previous_version}"
           previous_binary="$previous_dir/node_modules/@opum-ai/lore-${PLATFORM_NAME}/bin/${BINARY_NAME}"
           if [ ! -f "$previous_binary" ]; then
             echo "::error::npm installed @opum-ai/lore-${PLATFORM_NAME}@${previous_version} but $previous_binary is missing"
@@ -1087,6 +1097,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
@@ -1743,6 +1755,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24

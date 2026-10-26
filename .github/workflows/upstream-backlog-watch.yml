@@ -42,6 +42,8 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-bun
       - name: Run the upstream watch script
         run: bun run src/scripts/upstream-backlog-watch.ts

@@ -399,7 +399,9 @@ describe("ci.yml docs gate (LCLI-504)", () => {
     expect(setup?.with?.["source-ref"]).toBeUndefined();
     // Derived from CLAUDE.md's managed block rather than pinned a second time here —
     // the same rule the tracker job states, and the reason the two must stay in step.
-    expect(steps.some((step) => (step.run ?? "").includes("Quest CLI \\([0-9][0-9.]*\\)"))).toBe(true);
+    // DEC-240 item 3: the read lives in scripts/read-declared-quest-version.sh (inside the managed
+    // block's markers, exact X.Y.Z), which test/ci-hardening.test.ts exercises both ways.
+    expect(steps.some((step) => (step.run ?? "").includes("scripts/read-declared-quest-version.sh"))).toBe(true);
   });
 
   test("compile smoke runs the README quickstart against the binary it just built", () => {
@@ -469,16 +471,21 @@ describe("ci.yml docs gate (LCLI-504)", () => {
     const npm = steps[0];
     expect(npm?.id).toBe("npm");
     // Today's exact install, unchanged.
-    expect(npm?.run).toContain('npm install -g "@opum-ai/quest@${{ inputs.version }}"');
+    // DEC-240: the same install, now without lifecycle scripts and with the input reached through env:.
+    expect(npm?.run).toContain('npm install -g --ignore-scripts "@opum-ai/quest@${VERSION}"');
     // The fallback is entered by the FAILED INSTALL, not by aborting the job, and a
     // plain `toContain` cannot tell those two apart: it passes for a branch that is
     // present but unreachable (measured — an `else` turned into `elif true` left the
     // line in place and every assertion green). So this pins the SHAPE: one
     // if/then/else/fi whose failing branch is the one that records `method=source`.
     expect(npm?.run).toMatch(
-      /if npm install -g "@opum-ai\/quest@\$\{\{ inputs\.version \}\}"; then[\s\S]*?method=npm[\s\S]*?else[\s\S]*?method=source[\s\S]*?fi/,
+      /if npm install -g --ignore-scripts "@opum-ai\/quest@\$\{VERSION\}"; then[\s\S]*?method=npm[\s\S]*?else[\s\S]*?method=source[\s\S]*?fi/,
     );
-    expect(npm?.run).not.toContain("exit 1");
+    // The only `exit 1` is DEC-240 item 3's refusal of a non-exact version, BEFORE the install; the
+    // failed-install branch itself never aborts the job.
+    const installAt = (npm?.run ?? "").indexOf("if npm install");
+    expect(installAt).toBeGreaterThan(-1);
+    expect((npm?.run ?? "").slice(installAt)).not.toContain("exit 1");
   });
 
   test("exactly the two build steps are gated on the fallback, the assertion is unconditional, and none can be neutralised", () => {
@@ -593,16 +600,14 @@ describePosixSetupQuest("setup-quest installs the staged release candidate (LCLI
     log: string;
   }
 
-  /** The npm step's script, with its `${{ inputs.* }}` expressions substituted as GitHub does. */
-  function npmStepScript(declared: string): string {
+  /** The npm step's script. Its inputs arrive through env: (DEC-240 item 4), set by runNpmStep. */
+  function npmStepScript(): string {
     const action = yaml.load(readFileSync(SETUP_QUEST_PATH, "utf8"), { schema: yaml.JSON_SCHEMA }) as {
       runs: { steps: Array<{ id?: string; run?: string }> };
     };
     const run = action.runs.steps.find((step) => step.id === "npm")?.run;
     if (run === undefined) throw new Error("setup-quest's npm step has no run block");
-    return run
-      .replace(/\$\{\{\s*inputs\.version\s*\}\}/g, declared)
-      .replace(/\$\{\{\s*inputs\.source-ref\s*\}\}/g, "0123456789abcdef0123456789abcdef01234567");
+    return run;
   }
 
   function runNpmStep(declared: string, behaviour: StubBehaviour): Outcome {
@@ -620,8 +625,10 @@ describePosixSetupQuest("setup-quest installs the staged release candidate (LCLI
           "#!/usr/bin/env bash",
           'printf "%s\\n" "$*" >> "$NPM_LOG"',
           'if [ "$1" = "install" ]; then',
-          '  if [ -n "$EXACT_AVAILABLE" ] && [ "$3" = "@opum-ai/quest@$EXACT_AVAILABLE" ]; then exit 0; fi',
-          '  if [ "$STAGED_INSTALLABLE" = "1" ] && [ "$3" = "@opum-ai/quest@$STAGED" ]; then exit 0; fi',
+          // The spec is the LAST argument: `install -g --ignore-scripts <spec>` (DEC-240 item 1).
+          '  last="${!#}"',
+          '  if [ -n "$EXACT_AVAILABLE" ] && [ "$last" = "@opum-ai/quest@$EXACT_AVAILABLE" ]; then exit 0; fi',
+          '  if [ "$STAGED_INSTALLABLE" = "1" ] && [ "$last" = "@opum-ai/quest@$STAGED" ]; then exit 0; fi',
           '  echo "npm error code E404 no such version" >&2',
           "  exit 1",
           "fi",
@@ -636,10 +643,12 @@ describePosixSetupQuest("setup-quest installs the staged release candidate (LCLI
         { mode: 0o755 },
       );
 
-      const result = spawnSync("bash", ["-c", npmStepScript(declared)], {
+      const result = spawnSync("bash", ["-c", npmStepScript()], {
         encoding: "utf8",
         env: {
           ...process.env,
+          VERSION: declared,
+          SOURCE_REF: "0123456789abcdef0123456789abcdef01234567",
           PATH: `${bin}:${process.env.PATH ?? ""}`,
           GITHUB_OUTPUT: outputPath,
           NPM_LOG: logPath,
@@ -661,7 +670,7 @@ describePosixSetupQuest("setup-quest installs the staged release candidate (LCLI
         installs: log
           .split("\n")
           .filter((line) => line.startsWith("install "))
-          .map((line) => line.slice("install -g ".length)),
+          .map((line) => line.slice("install -g --ignore-scripts ".length)),
         log: `${result.stdout ?? ""}${result.stderr ?? ""}`,
       };
     } finally {

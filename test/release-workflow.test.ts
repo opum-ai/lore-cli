@@ -1429,7 +1429,7 @@ describe("release.yml's release gate probe can obtain the quest peer it drives (
     // not there. A derive step without `shell: bash` fails on those legs for a reason that has
     // nothing to do with the release — which is the defect class this whole block is about.
     expect(derive?.shell).toBe("bash");
-    expect(derive?.run ?? "").toContain("Quest CLI");
+    expect(derive?.run ?? "").toContain("scripts/read-declared-quest-version.sh");
     const setup = steps.find((step) => step.uses === "./.github/actions/setup-quest");
     expect(setup).toBeDefined();
     expect(setup?.with?.version).toBe("${{ steps.quest.outputs.version }}");
