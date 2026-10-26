@@ -347,12 +347,7 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
     npm_config_fund: "false",
     npm_config_prefix: join(scratch, "npm-global"),
   };
-  // DEC-240 (a5): the release workflow pins npm 12 and names that exact executable here, because Bun's own PATH
-  // walk found Node's bundled npm 11 on the Windows hosts. Unset (local runs), the PATH walk still applies; the
-  // `npm --version` gate below judges whichever one this is.
-  const npm = process.env.LORE_QUALIFICATION_NPM
-    ? requireFile(process.env.LORE_QUALIFICATION_NPM)
-    : requireExecutable("npm");
+  const npm = resolveQualificationNpm(process.env);
   const node = requireExecutable("node");
   const rootPackage = readJson(join(REPOSITORY_ROOT, "package.json"));
   const expectedVersion = stringField(rootPackage, "version", "root package");
@@ -1258,9 +1253,24 @@ async function runSynchronously(
   return { stdout, stderr };
 }
 
-function requireFile(path: string): string {
-  if (!existsSync(path)) throw new Error(`LORE_QUALIFICATION_NPM names ${path}, which does not exist`);
-  return path;
+/**
+ * DEC-240 (a5): which npm runs every install. The release workflow pins npm 12 and names that exact executable
+ * in LORE_QUALIFICATION_NPM, because Bun's own PATH walk found Node's bundled npm 11 on the Windows hosts. In CI
+ * there is NO fallback to that walk: an unset or missing path fails by name, so the 11.19.0 read cannot recur
+ * silently. Local runs (CI unset) keep the PATH walk, and the `npm --version` gate judges whichever is used.
+ */
+export function resolveQualificationNpm(env: Record<string, string | undefined>): string {
+  const named = env.LORE_QUALIFICATION_NPM;
+  if (named) {
+    if (!existsSync(named)) throw new Error(`LORE_QUALIFICATION_NPM names ${named}, which does not exist`);
+    return named;
+  }
+  if (env.CI) {
+    throw new Error(
+      "LORE_QUALIFICATION_NPM is unset in CI: the pinned npm 12 must be named, never found on PATH (DEC-240 a5)",
+    );
+  }
+  return requireExecutable("npm");
 }
 
 function requireExecutable(name: string): string {

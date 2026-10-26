@@ -618,9 +618,18 @@ jobs:
           npm --version
           npm_path="$(command -v npm)"
           if [ "$RUNNER_OS" = "Windows" ]; then npm_path="$(cygpath -w "$npm_path").cmd"; fi
-          echo "LORE_QUALIFICATION_NPM=$npm_path" >> "$GITHUB_ENV"
           echo "qualification npm: $npm_path"
           type -a npm npm.cmd || true
+          # Run the recorded path itself, so a wrong `.cmd` assumption fails HERE, in the step that made it.
+          recorded_version="$("$npm_path" --version)" || {
+            echo "::error::the recorded qualification npm $npm_path could not be run"
+            exit 1
+          }
+          if [ "$recorded_version" != "12.2.1" ]; then
+            echo "::error::the recorded qualification npm $npm_path reports $recorded_version, not 12.2.1"
+            exit 1
+          fi
+          echo "LORE_QUALIFICATION_NPM=$npm_path" >> "$GITHUB_ENV"
       # The shared action is the isolated frozen install. Its Bun pin and
       # --linker=isolated flags are part of the package-qualification contract.
       # Ladybug publishes no Windows ARM64 addon, so that one host installs the

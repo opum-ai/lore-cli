@@ -25,6 +25,7 @@ import {
   proveUnapprovedScriptsBlocked,
   removeQualificationScratch,
   resolveInstalledOptionalPackageJson,
+  resolveQualificationNpm,
   WINDOWS_ADDON_LOAD_FAILURE_MESSAGE,
   windowsAddonLoadFailurePolicyHolds,
   withoutInheritedScriptApproval,
@@ -1002,9 +1003,13 @@ describe("DEC-240 (a4) condition 2: the flagless global install env carries no t
     );
     expect(source).toContain("...withoutInheritedScriptApproval(withoutInstallSecrets(process.env))");
     expect(source).toContain("npm_config_userconfig: emptyUserConfig");
-    expect(source).toContain("process.env.LORE_QUALIFICATION_NPM");
+    expect(source).toContain("resolveQualificationNpm(process.env)");
     const releaseYml = readFileSync(join(import.meta.dir, "..", ".github", "workflows", "release.yml"), "utf8");
-    expect(releaseYml).toContain('echo "LORE_QUALIFICATION_NPM=$npm_path" >> "$GITHUB_ENV"');
+    // The recorded path is run before it is exported, so a wrong shim fails in the step that made it.
+    const ranAt = releaseYml.indexOf('recorded_version="$("$npm_path" --version)"');
+    const exportedAt = releaseYml.indexOf('echo "LORE_QUALIFICATION_NPM=$npm_path" >> "$GITHUB_ENV"');
+    expect(ranAt).toBeGreaterThan(0);
+    expect(exportedAt).toBeGreaterThan(ranAt);
     expect(source).toContain("npm_config_globalconfig: emptyGlobalConfig");
     const secretsAt = source.indexOf("assertNoInstallSecrets(installEnv);");
     const approvalAt = source.indexOf("assertNoInheritedScriptApproval(installEnv);");
@@ -1023,6 +1028,26 @@ describe("DEC-240 (a4) condition 2: the flagless global install env carries no t
     expect(readbackAt).toBeGreaterThan(gateAt);
     expect(proofAt).toBeGreaterThan(readbackAt);
     expect(realAt).toBeGreaterThan(proofAt);
+  });
+
+  test("resolveQualificationNpm: CI never falls back to the PATH walk; local runs may", () => {
+    const real = join(tmpdir(), `lcli768-npm-${process.pid}`);
+    writeFileSync(real, "");
+    try {
+      expect(resolveQualificationNpm({ LORE_QUALIFICATION_NPM: real, CI: "true" })).toBe(real);
+      expect(resolveQualificationNpm({ LORE_QUALIFICATION_NPM: real })).toBe(real);
+      // The CI branch refuses: unset, empty, and a path that does not exist.
+      expect(() => resolveQualificationNpm({ CI: "true" })).toThrow("LORE_QUALIFICATION_NPM is unset in CI");
+      expect(() => resolveQualificationNpm({ CI: "true", LORE_QUALIFICATION_NPM: "" })).toThrow("unset in CI");
+      expect(() => resolveQualificationNpm({ CI: "true", LORE_QUALIFICATION_NPM: `${real}.missing` })).toThrow(
+        "does not exist",
+      );
+      expect(() => resolveQualificationNpm({ LORE_QUALIFICATION_NPM: `${real}.missing` })).toThrow("does not exist");
+      // Local, unset: the PATH walk (this host has an npm, or the walk names its absence).
+      expect(typeof resolveQualificationNpm({})).toBe("string");
+    } finally {
+      rmSync(real, { force: true });
+    }
   });
 
   test("assertNpmMajor fails by name below 12 and accepts 12 or later", () => {
