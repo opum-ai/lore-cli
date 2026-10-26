@@ -295,11 +295,17 @@ describe("DEC-240 item 1: lore and quest install without lifecycle scripts", () 
     // Mutants: each is the defect's own shape and must go red.
     expect(sourceInstallViolations([{ path: home, text: exceptionLine + exceptionLine }])).toHaveLength(1);
     expect(sourceInstallViolations([{ path: "benchmark/x.ts", text: exceptionLine }])).toHaveLength(1);
-    expect(sourceInstallViolations([{ path: home, text: 'run(npm, ["install", "--global", other]);' }])).toHaveLength(1);
+    expect(sourceInstallViolations([{ path: home, text: 'run(npm, ["install", "--global", other]);' }])).toHaveLength(
+      1,
+    );
     expect(sourceInstallViolations([{ path: "scripts/x.sh", text: 'npm install "$tarball"\n' }])).toHaveLength(1);
-    expect(sourceInstallViolations([{ path: "scripts/y.mjs", text: 'run("npm", ["install", "lodash"]);' }])).toHaveLength(1);
+    expect(
+      sourceInstallViolations([{ path: "scripts/y.mjs", text: 'run("npm", ["install", "lodash"]);' }]),
+    ).toHaveLength(1);
     expect(sourceInstallViolations([{ path: "scripts/z.mjs", text: 'sh("npm install foo");' }])).toHaveLength(1);
-    expect(sourceInstallViolations([{ path: "scripts/z.mjs", text: 'throw new Error(`the npm install failed`);' }])).toEqual([]);
+    expect(
+      sourceInstallViolations([{ path: "scripts/z.mjs", text: "throw new Error(`the npm install failed`);" }]),
+    ).toEqual([]);
     // Accepts: the hardened shapes.
     expect(
       sourceInstallViolations([

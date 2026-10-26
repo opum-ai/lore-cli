@@ -9,8 +9,8 @@ import {
   assertPackageQualificationReport,
   boundedNativeProbeOutput,
   classifyWindowsProbeOutcome,
-  isKnownNativeCrash,
   INSTALL_SECRET_ENV_NAMES,
+  isKnownNativeCrash,
   isProvenAbruptWindowsImportCrash,
   LADYBUG_PACKAGE_QUALIFICATION_SCHEMA,
   NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT,
@@ -959,7 +959,10 @@ describe("DEC-240 (a4) condition 2: the flagless global install env carries no t
   });
 
   test("the install step builds its env through the scrubber and asserts before the install", () => {
-    const source = readFileSync(join(import.meta.dir, "..", "benchmark", "ladybug", "package-qualification.ts"), "utf8");
+    const source = readFileSync(
+      join(import.meta.dir, "..", "benchmark", "ladybug", "package-qualification.ts"),
+      "utf8",
+    );
     expect(source).toContain("...withoutInstallSecrets(process.env)");
     const assertAt = source.indexOf("assertNoInstallSecrets(npmEnvironment);");
     const installAt = source.indexOf('run(npm, ["install", "--global"');
