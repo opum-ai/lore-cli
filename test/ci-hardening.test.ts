@@ -481,7 +481,13 @@ describe("DEC-240 (a5) item 1: every package-qualification host pins an exact No
       /^\d+\.\d+\.\d+$/.test(nodeVersion) &&
       ((major === 22 && (minor > 22 || (minor === 22 && patch >= 2))) || (major === 24 && minor >= 15) || major >= 26);
     if (!accepted) out.push(`node-version ${JSON.stringify(nodeVersion)} is not an exact version npm 12 accepts`);
-    if (npmAt < 0 || !/npm install -g --ignore-scripts npm@12\.\d+\.\d+(\s|$)/.test(steps[npmAt]?.run ?? "")) {
+    // EVERY npm-self-install line (the Windows branch takes --prefix) is exact npm 12 and carries the flag.
+    const installs = (steps[npmAt]?.run ?? "").split("\n").filter((line) => /npm install\b.*\bnpm@/.test(line));
+    if (
+      npmAt < 0 ||
+      installs.length === 0 ||
+      !installs.every((line) => /npm install -g --ignore-scripts\b.* npm@12\.\d+\.\d+\s*$/.test(line))
+    ) {
       out.push("no exact `npm install -g --ignore-scripts npm@12.x.y` step");
     }
     if (!(nodeAt < npmAt && npmAt < qualifyAt)) {
@@ -512,6 +518,25 @@ describe("DEC-240 (a5) item 1: every package-qualification host pins an exact No
     expect(pinViolations([node, qualify])).not.toEqual([]);
     expect(pinViolations([node, { run: "npm install -g npm@12.2.1" }, qualify])).not.toEqual([]);
     expect(pinViolations([node, { run: "npm install -g --ignore-scripts npm@^12" }, qualify])).not.toEqual([]);
+    // The Windows branch counts too: a flagless or ranged second install line is a violation.
+    expect(
+      pinViolations([
+        node,
+        {
+          run: "if w; then\n  npm install -g --ignore-scripts --prefix x npm@12.2.1\nelse\n  npm install -g --ignore-scripts npm@12.2.1\nfi",
+        },
+        qualify,
+      ]),
+    ).toEqual([]);
+    expect(
+      pinViolations([
+        node,
+        {
+          run: "if w; then\n  npm install -g --prefix x npm@12.2.1\nelse\n  npm install -g --ignore-scripts npm@12.2.1\nfi",
+        },
+        qualify,
+      ]),
+    ).not.toEqual([]);
     expect(pinViolations([node, { run: "npm install -g --ignore-scripts npm@11.19.0" }, qualify])).not.toEqual([]);
     expect(pinViolations([node, qualify, pin])).not.toEqual([]);
     expect(

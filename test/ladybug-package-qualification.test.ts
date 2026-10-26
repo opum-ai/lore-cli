@@ -1005,8 +1005,11 @@ describe("DEC-240 (a4) condition 2: the flagless global install env carries no t
     expect(source).toContain("npm_config_userconfig: emptyUserConfig");
     expect(source).toContain("resolveQualificationNpm(process.env)");
     const releaseYml = readFileSync(join(import.meta.dir, "..", ".github", "workflows", "release.yml"), "utf8");
+    // Windows: the upgrade goes into Node's own directory, and the probe runs under an isolated prefix.
+    expect(releaseYml).toContain('npm install -g --ignore-scripts --prefix "$node_dir" npm@12.2.1');
+    expect(releaseYml).toContain('npm_config_prefix="$probe_prefix" "$npm_path" --version');
     // The recorded path is run before it is exported, so a wrong shim fails in the step that made it.
-    const ranAt = releaseYml.indexOf('recorded_version="$("$npm_path" --version)"');
+    const ranAt = releaseYml.indexOf('recorded_version="$(npm_config_prefix=');
     const exportedAt = releaseYml.indexOf('echo "LORE_QUALIFICATION_NPM=$npm_path" >> "$GITHUB_ENV"');
     expect(ranAt).toBeGreaterThan(0);
     expect(exportedAt).toBeGreaterThan(ranAt);

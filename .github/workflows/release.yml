@@ -607,26 +607,33 @@ jobs:
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.21.0
-      # Bun resolves `npm` by its own PATH walk, and on the Windows hosts that walk found the Node
-      # install's bundled npm 11 (release run 40357346933: bash printed 12.2.1, the qualification read
-      # 11.19.0 and its major gate refused). So the step hands the qualification the exact path bash resolved;
-      # the gate still re-reads `npm --version` from whatever it is given.
+      # TWO Windows traps, both measured (release runs 40357346933 and 40360244788). Bun's PATH walk found
+      # Node's bundled npm 11, so the step hands the qualification the exact path bash resolved. And npm.cmd
+      # looks for a newer npm in the GLOBAL PREFIX, which the qualification then isolates into a scratch
+      # directory, so a `npm install -g npm@12` into the default Windows prefix is invisible to it and the bundled
+      # 11 runs. On Windows the upgrade therefore goes into Node's own directory, which npm.cmd uses first. The
+      # probe below runs the recorded path under an isolated prefix, exactly as the qualification will.
       - name: Pin npm 12 (DEC-240 a5)
         shell: bash
         run: |
-          npm install -g --ignore-scripts npm@12.2.1
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            node_dir="$(cygpath -w "$(dirname "$(command -v node)")")"
+            npm install -g --ignore-scripts --prefix "$node_dir" npm@12.2.1
+          else
+            npm install -g --ignore-scripts npm@12.2.1
+          fi
           npm --version
           npm_path="$(command -v npm)"
           if [ "$RUNNER_OS" = "Windows" ]; then npm_path="$(cygpath -w "$npm_path").cmd"; fi
           echo "qualification npm: $npm_path"
-          type -a npm npm.cmd || true
-          # Run the recorded path itself, so a wrong `.cmd` assumption fails HERE, in the step that made it.
-          recorded_version="$("$npm_path" --version)" || {
-            echo "::error::the recorded qualification npm $npm_path could not be run"
+          probe_prefix="$RUNNER_TEMP/npm-prefix-probe"
+          mkdir -p "$probe_prefix"
+          recorded_version="$(npm_config_prefix="$probe_prefix" "$npm_path" --version)" || {
+            echo "::error::the recorded qualification npm $npm_path could not be run under an isolated prefix"
             exit 1
           }
           if [ "$recorded_version" != "12.2.1" ]; then
-            echo "::error::the recorded qualification npm $npm_path reports $recorded_version, not 12.2.1"
+            echo "::error::the recorded qualification npm $npm_path reports $recorded_version under an isolated prefix, not 12.2.1"
             exit 1
           fi
           echo "LORE_QUALIFICATION_NPM=$npm_path" >> "$GITHUB_ENV"
