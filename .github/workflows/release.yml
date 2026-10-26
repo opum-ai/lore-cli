@@ -607,11 +607,20 @@ jobs:
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.21.0
+      # Bun resolves `npm` by its own PATH walk, and on the Windows hosts that walk found the Node
+      # install's bundled npm 11 (release run 40357346933: bash printed 12.2.1, the qualification read
+      # 11.19.0 and its major gate refused). So the step hands the qualification the exact path bash resolved;
+      # the gate still re-reads `npm --version` from whatever it is given.
       - name: Pin npm 12 (DEC-240 a5)
         shell: bash
         run: |
           npm install -g --ignore-scripts npm@12.2.1
           npm --version
+          npm_path="$(command -v npm)"
+          if [ "$RUNNER_OS" = "Windows" ]; then npm_path="$(cygpath -w "$npm_path").cmd"; fi
+          echo "LORE_QUALIFICATION_NPM=$npm_path" >> "$GITHUB_ENV"
+          echo "qualification npm: $npm_path"
+          type -a npm npm.cmd || true
       # The shared action is the isolated frozen install. Its Bun pin and
       # --linker=isolated flags are part of the package-qualification contract.
       # Ladybug publishes no Windows ARM64 addon, so that one host installs the

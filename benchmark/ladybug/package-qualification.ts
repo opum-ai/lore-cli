@@ -347,7 +347,12 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
     npm_config_fund: "false",
     npm_config_prefix: join(scratch, "npm-global"),
   };
-  const npm = requireExecutable("npm");
+  // DEC-240 (a5): the release workflow pins npm 12 and names that exact executable here, because Bun's own PATH
+  // walk found Node's bundled npm 11 on the Windows hosts. Unset (local runs), the PATH walk still applies; the
+  // `npm --version` gate below judges whichever one this is.
+  const npm = process.env.LORE_QUALIFICATION_NPM
+    ? requireFile(process.env.LORE_QUALIFICATION_NPM)
+    : requireExecutable("npm");
   const node = requireExecutable("node");
   const rootPackage = readJson(join(REPOSITORY_ROOT, "package.json"));
   const expectedVersion = stringField(rootPackage, "version", "root package");
@@ -1251,6 +1256,11 @@ async function runSynchronously(
     );
   }
   return { stdout, stderr };
+}
+
+function requireFile(path: string): string {
+  if (!existsSync(path)) throw new Error(`LORE_QUALIFICATION_NPM names ${path}, which does not exist`);
+  return path;
 }
 
 function requireExecutable(name: string): string {

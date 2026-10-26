@@ -1002,6 +1002,9 @@ describe("DEC-240 (a4) condition 2: the flagless global install env carries no t
     );
     expect(source).toContain("...withoutInheritedScriptApproval(withoutInstallSecrets(process.env))");
     expect(source).toContain("npm_config_userconfig: emptyUserConfig");
+    expect(source).toContain("process.env.LORE_QUALIFICATION_NPM");
+    const releaseYml = readFileSync(join(import.meta.dir, "..", ".github", "workflows", "release.yml"), "utf8");
+    expect(releaseYml).toContain('echo "LORE_QUALIFICATION_NPM=$npm_path" >> "$GITHUB_ENV"');
     expect(source).toContain("npm_config_globalconfig: emptyGlobalConfig");
     const secretsAt = source.indexOf("assertNoInstallSecrets(installEnv);");
     const approvalAt = source.indexOf("assertNoInheritedScriptApproval(installEnv);");
