@@ -1009,7 +1009,9 @@ jobs:
       - name: Install the Claude Code CLI the mod's tests are run by
         run: |
           set -euo pipefail
-          npm install -g @anthropic-ai/claude-code@2.1.287
+          # DEC-240 item 1 (a3 review G): --ignore-scripts costs nothing here, because install.cjs
+          # is run explicitly below.
+          npm install -g --ignore-scripts @anthropic-ai/claude-code@2.1.287
           # The wrapper package's own postinstall copies the platform-native binary over the
           # bin/claude.exe stub, and npm may gate dependency lifecycle scripts (measured on
           # npm 12.2.0: the install prints "install scripts blocked" and leaves the stub,

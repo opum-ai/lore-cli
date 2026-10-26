@@ -35,7 +35,7 @@ jobs:
     permissions:
       # Job-level `permissions:` REPLACES the workflow-level block, not extends it — every
       # scope not listed here is set to `none` for this job's token. `contents: read` must be
-      # restated so `actions/checkout` (this job's first step, on a private repo) can still
+      # restated so `actions/checkout` (this job's first step; the repo is public, measured 2026-10-26, but the job-level block still zeroes every unlisted scope) can still
       # clone; `issues: write` is for opening/labeling the tracking issue this job's whole
       # purpose is to surface.
       contents: read

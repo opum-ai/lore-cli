@@ -77,14 +77,20 @@ function checkoutViolations(units: Unit[]): string[] {
 }
 
 /** An expression in a `run:` body is allowed only when its value is static or a runner-assigned id. */
-const SAFE_RUN_EXPRESSION = /^(matrix\.[A-Za-z0-9_]+|github\.run_id)$/;
+const SAFE_RUN_EXPRESSION = /^github\.run_id$/;
+/** ci.yml's matrix is the literal os list written in that file, not computed from another job's output. */
+const STATIC_MATRIX_EXPRESSION = { file: ".github/workflows/ci.yml", expression: "matrix.os" };
 
 function runInterpolationViolations(units: Unit[]): string[] {
   const out: string[] = [];
   for (const unit of units) {
     unit.steps.forEach((step, index) => {
       for (const match of (step.run ?? "").matchAll(/\$\{\{\s*([^}]*?)\s*\}\}/g)) {
-        if (!SAFE_RUN_EXPRESSION.test(match[1] ?? "")) {
+        const expression = match[1] ?? "";
+        const staticMatrix =
+          unit.where.startsWith(`${STATIC_MATRIX_EXPRESSION.file} `) &&
+          expression === STATIC_MATRIX_EXPRESSION.expression;
+        if (!SAFE_RUN_EXPRESSION.test(expression) && !staticMatrix) {
           out.push(
             `${unit.where} step ${index} (${step.name ?? step.id ?? "unnamed"}): \${{ ${match[1]} }} inside run:`,
           );
@@ -103,7 +109,7 @@ function installViolations(units: Unit[]): string[] {
       for (const line of (step.run ?? "").split("\n")) {
         const trimmed = line.trim();
         if (trimmed.startsWith("#") || !/\bnpm install\b/.test(trimmed)) continue;
-        if (!/@opum-ai\/(lore|quest)|\$tarball|\$LINUX_X64_TARBALL/.test(trimmed)) continue;
+        if (!/@opum-ai\/(lore|quest)|@anthropic-ai\/claude-code|\$tarball|\$LINUX_X64_TARBALL/.test(trimmed)) continue;
         if (!trimmed.includes("--ignore-scripts")) out.push(`${unit.where} step ${index}: ${trimmed}`);
       }
     });
@@ -164,12 +170,14 @@ describe("DEC-240 item 4: no workflow expression interpolated inside a run: body
         { run: 'echo "${{ inputs.version }}"' },
         { run: 'echo "${{ needs.a.outputs.b }}"' },
         { run: 'echo "${{ github.event.pull_request.title }}"' },
+        // A matrix value is only static in ci.yml; anywhere else it may come from another job's output.
+        { run: 'bun x --name "${{ matrix.name }}"' },
       ],
     };
-    expect(runInterpolationViolations([bad])).toHaveLength(4);
+    expect(runInterpolationViolations([bad])).toHaveLength(5);
     expect(
       runInterpolationViolations([
-        { where: "w job y", steps: [{ run: 'echo "${{ matrix.os }} ${{ github.run_id }}"' }] },
+        { where: ".github/workflows/ci.yml job y", steps: [{ run: 'echo "${{ matrix.os }} ${{ github.run_id }}"' }] },
       ]),
     ).toEqual([]);
   });
@@ -182,7 +190,9 @@ describe("DEC-240 item 1: lore and quest install without lifecycle scripts", () 
       .flatMap((unit) => unit.steps)
       .flatMap((step) => (step.run ?? "").split("\n"))
       .filter(
-        (line) => /\bnpm install\b/.test(line) && /@opum-ai\/(lore|quest)|\$tarball|\$LINUX_X64_TARBALL/.test(line),
+        (line) =>
+          /\bnpm install\b/.test(line) &&
+          /@opum-ai\/(lore|quest)|@anthropic-ai\/claude-code|\$tarball|\$LINUX_X64_TARBALL/.test(line),
       );
     // Positive control: setup-quest (two installs) and release.yml (two) were found.
     expect(installs.length).toBeGreaterThanOrEqual(4);
@@ -207,7 +217,11 @@ describe("DEC-240 item 1: lore and quest install without lifecycle scripts", () 
         JSON.stringify({
           name: "failing-postinstall-dep",
           version: "1.0.0",
-          scripts: { postinstall: 'node -e "process.exit(7)"' },
+          // Writes a sentinel (path from the environment) and then fails: the sentinel is the proof
+          // that THIS script ran, so the control cannot pass on a name match or a different failure.
+          scripts: {
+            postinstall: "node -e \"require('fs').writeFileSync(process.env.LCLI768_SENTINEL,'ran');process.exit(7)\"",
+          },
         }),
       );
       const pack = spawnSync("npm", ["pack", "--silent", "--pack-destination", work], {
@@ -217,7 +231,8 @@ describe("DEC-240 item 1: lore and quest install without lifecycle scripts", () 
       });
       expect(pack.status).toBe(0);
       const tarball = join(work, pack.stdout.trim().split("\n").pop() ?? "");
-      const install = (extra: string[]): { status: number | null; err: string } => {
+      const install = (extra: string[]): { status: number | null; err: string; sentinel: string } => {
+        const sentinel = join(work, `sentinel-${extra.length}-${Math.random().toString(36).slice(2)}`);
         const project = mkdtempSync(join(work, "project-"));
         writeFileSync(join(project, "package.json"), JSON.stringify({ name: "consumer", version: "1.0.0" }));
         // npm 12 blocks a dependency's install script unless allowed (allowScripts), so the control forces
@@ -227,15 +242,18 @@ describe("DEC-240 item 1: lore and quest install without lifecycle scripts", () 
           cwd: project,
           encoding: "utf8",
           shell: onWindows,
+          env: { ...process.env, LCLI768_SENTINEL: sentinel },
         });
-        return { status: result.status, err: result.stderr };
+        return { status: result.status, err: result.stderr, sentinel };
       };
       // Control: without the flag the failing script runs and the install fails.
       const without = install(["--dangerously-allow-all-scripts"]);
       expect(without.status).not.toBe(0);
-      expect(without.err).toContain("postinstall");
-      // The hardened form: the script never runs, and the install succeeds.
-      expect(install(["--ignore-scripts", "--dangerously-allow-all-scripts"]).status).toBe(0);
+      expect(existsSync(without.sentinel)).toBe(true);
+      // The hardened form: the script never runs (no sentinel), and the install succeeds.
+      const hardened = install(["--ignore-scripts", "--dangerously-allow-all-scripts"]);
+      expect(hardened.status).toBe(0);
+      expect(existsSync(hardened.sentinel)).toBe(false);
     } finally {
       rmSync(work, { recursive: true, force: true });
     }
@@ -306,9 +324,38 @@ describe.skipIf(onWindows)("DEC-240 item 3: the Quest version is read from insid
     expect(outside.out).toContain("has no 'Quest CLI <version>' line");
     const noBlock = read("This project uses Quest CLI 0.14.1 for tracker operations.\n");
     expect(noBlock.code).toBe(1);
-    expect(noBlock.out).toContain("no managed Quest block");
+    expect(noBlock.out).toContain("exactly one");
     const empty = read("<!-- quest:agent-instructions:begin -->\n<!-- quest:agent-instructions:end -->\n");
     expect(empty.code).toBe(1);
+  });
+
+  test.each([
+    [
+      "an unclosed block",
+      "<!-- quest:agent-instructions:begin -->\nThis project uses Quest CLI 0.14.1 for tracker operations.\n",
+      "found 1 begin and 0 end",
+    ],
+    [
+      "a duplicated block",
+      `${block("This project uses Quest CLI 0.14.1 for tracker operations.")}${block("This project uses Quest CLI 0.14.2 for tracker operations.")}`,
+      "found 2 begin and 2 end",
+    ],
+    [
+      "reversed markers",
+      "<!-- quest:agent-instructions:end -->\nThis project uses Quest CLI 0.14.1 for tracker operations.\n<!-- quest:agent-instructions:begin -->\n",
+      "are reversed",
+    ],
+    [
+      "a stray extra end marker",
+      `${block("This project uses Quest CLI 0.14.1 for tracker operations.")}<!-- quest:agent-instructions:end -->\n`,
+      "found 1 begin and 2 end",
+    ],
+  ])("fails by name on %s, and writes no version", (_label, text, expected) => {
+    const result = read(text);
+    expect(result.code).toBe(1);
+    expect(result.version).toBeUndefined();
+    expect(result.out).toContain("::error file=");
+    expect(result.out).toContain(expected);
   });
 
   test("a missing file fails by name", () => {

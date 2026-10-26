@@ -608,16 +608,26 @@ jobs:
           ignore-scripts: ${{ matrix.name == 'win32-arm64' }}
       - name: Build, pack, install, smoke, uninstall, and audit ${{ matrix.name }}
         shell: bash
+        # DEC-240 item 4: the matrix is produced by needs.setup.outputs.matrix, so its values reach the
+        # shell through env:, not interpolated into the script.
+        env:
+          MATRIX_NAME: ${{ matrix.name }}
+          MATRIX_TARGET: ${{ matrix.target }}
+          MATRIX_BINARY: ${{ matrix.binary }}
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_CPU: ${{ matrix.cpu }}
+          MATRIX_LADYBUG_PACKAGE: ${{ matrix.ladybugPackage }}
+          MATRIX_LADYBUG_INTEGRITY: ${{ matrix.ladybugIntegrity }}
         run: |
           bun benchmark/ladybug/package-qualification.ts \
-            --name "${{ matrix.name }}" \
-            --target "${{ matrix.target }}" \
-            --binary "${{ matrix.binary }}" \
-            --os "${{ matrix.os }}" \
-            --cpu "${{ matrix.cpu }}" \
-            --ladybug-package "${{ matrix.ladybugPackage }}" \
-            --ladybug-integrity "${{ matrix.ladybugIntegrity }}" \
-            --output "artifacts/ladybug-package-qualification-${{ matrix.name }}.json"
+            --name "$MATRIX_NAME" \
+            --target "$MATRIX_TARGET" \
+            --binary "$MATRIX_BINARY" \
+            --os "$MATRIX_OS" \
+            --cpu "$MATRIX_CPU" \
+            --ladybug-package "$MATRIX_LADYBUG_PACKAGE" \
+            --ladybug-integrity "$MATRIX_LADYBUG_INTEGRITY" \
+            --output "artifacts/ladybug-package-qualification-${MATRIX_NAME}.json"
       - name: Assert the approved native platform verdict
         shell: bash
         env:

@@ -24,9 +24,22 @@ fail() {
 
 [ -f "$file" ] || fail "cannot read the declared Quest version: $file does not exist."
 
-# Only the bytes between the markers, with CR stripped so a CRLF checkout reads the same.
-block="$(tr -d '\r' < "$file" | awk -v b="$begin" -v e="$end" '$0 == b { inside = 1; next } $0 == e { inside = 0 } inside')"
-[ -n "$block" ] || fail "no managed Quest block ($begin ... $end) with content in $file, so the declared Quest version cannot be read. The version is read only from inside those markers."
+# The markers must be exactly one begin line and one end line, begin first. An unclosed block would
+# read to the end of the file, a duplicated one hides which block the version came from, and reversed
+# markers bound nothing, so each fails by name rather than being read leniently.
+normalised="$(tr -d '\r' < "$file")"
+begins="$(printf '%s\n' "$normalised" | grep -cxF -- "$begin" || true)"
+ends="$(printf '%s\n' "$normalised" | grep -cxF -- "$end" || true)"
+if [ "$begins" -ne 1 ] || [ "$ends" -ne 1 ]; then
+  fail "$file must contain exactly one '$begin' line and one '$end' line, found $begins begin and $ends end, so the declared Quest version is not read."
+fi
+begin_line="$(printf '%s\n' "$normalised" | grep -nxF -- "$begin" | cut -d: -f1)"
+end_line="$(printf '%s\n' "$normalised" | grep -nxF -- "$end" | cut -d: -f1)"
+[ "$begin_line" -lt "$end_line" ] || fail "the managed Quest block markers in $file are reversed (end on line $end_line, begin on line $begin_line), so the declared Quest version is not read."
+
+# Only the bytes between the markers.
+block="$(printf '%s\n' "$normalised" | awk -v b="$begin" -v e="$end" '$0 == b { inside = 1; next } $0 == e { inside = 0 } inside')"
+[ -n "$block" ] || fail "the managed Quest block ($begin ... $end) in $file is empty, so the declared Quest version cannot be read. The version is read only from inside those markers."
 
 # The word after `Quest CLI `, up to whitespace. A partial version ('0.14'), a range ('^0.14.1'), a
 # pre-release ('0.14.1-rc.1') or trailing punctuation all survive this step intact so the check below
