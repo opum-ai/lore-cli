@@ -20,6 +20,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import * as yaml from "js-yaml";
+import { QUALIFICATION_DISTRIBUTIONS } from "../benchmark/ladybug/package-qualification";
 
 const ROOT = join(import.meta.dir, "..");
 const WORKFLOWS_DIR = join(ROOT, ".github", "workflows");
@@ -121,8 +122,15 @@ function runInterpolationViolations(units: Unit[]): string[] {
   return out;
 }
 
-/** The npm verbs that install: `install`, its aliases `i`/`add`, and `ci`. */
-const NPM_INSTALL_VERB = /\bnpm\s+(?:install|i|add|ci)\b/;
+/**
+ * The npm verbs that install: `install`, its aliases `i`/`add`, and `ci`, with any run of `-`/`--` options
+ * allowed BEFORE the verb, each with an optional value: `npm --prefix "$d" install`, `npm -g i`. Without that the
+ * scan missed exactly the spellings a helper reaches for, so `npm --prefix x install "@opum-ai/lore@$V"` read as
+ * no install at all (the L3 residual in rv329-lcli685).
+ */
+const NPM_OPTIONS = String.raw`(?:\s+-{1,2}[^\s]+(?:\s+[^-\s][^\s]*)?)*`;
+const NPM_INSTALL_SHELL = String.raw`npm\b${NPM_OPTIONS}\s+(?:install|i|add|ci)\b`;
+const NPM_INSTALL_VERB = new RegExp(String.raw`\b${NPM_INSTALL_SHELL}`);
 /** What makes an install one of ours: a lore/quest/claude-code package, a `.tgz`, or any `$...TARBALL...` variable. */
 const OUR_INSTALL_TARGET = /@opum-ai\/(?:lore|quest)|@anthropic-ai\/claude-code|\.tgz\b|\$\{?\w*tarball\w*\}?/i;
 
@@ -180,8 +188,23 @@ function loadSources(): SourceFile[] {
  */
 const FLAGLESS_INSTALL_EXCEPTION = {
   path: "benchmark/ladybug/package-qualification.ts",
-  args: '"install", "--global", ...tarballs',
+  args: '"install", "--global", ...installTarballs',
 };
+
+/**
+ * The (a4) exception is ONE helper, and the helper may be called from exactly two places: the (a5) fixture install
+ * that proves npm blocks an unapproved script, and the qualification's own global install. Counting the call sites
+ * is what stops a third caller from inheriting the exception; the helper's own guards (absolute path, existing
+ * .tgz, inside its root, two allowed extras, merged-env config readback) are proved in
+ * test/ladybug-package-qualification.test.ts.
+ */
+const FLAGLESS_INSTALL_CALL_SITES = 2;
+
+function flaglessInstallCallSites(text: string): number {
+  return [...text.matchAll(/\bflaglessGlobalInstall\s*\(/g)].filter(
+    (match) => !/\bfunction\s+$/.test(text.slice(Math.max(0, (match.index ?? 0) - 9), match.index ?? 0)),
+  ).length;
+}
 
 /** Every npm install in a source file: a spawn-style argument list `["install", ...]` or a shell `npm install` line. */
 function sourceInstalls(file: SourceFile): { args: string; line: number }[] {
@@ -193,8 +216,8 @@ function sourceInstalls(file: SourceFile): { args: string; line: number }[] {
   // A shell install is a command in a .sh file; in a script it is a string that BEGINS with `npm install`
   // (prose that merely mentions the words, like an error message, is not an install).
   const shellInstall = file.path.endsWith(".sh")
-    ? /^[ \t]*(?!#)(?:[^\n]*(?:&&|;|\|\|)[ \t]*)?npm\s+(?:install|i|add|ci)\b(?:[^\n]|(?<=\\)\n)*/gm
-    : /^[^\n]*["'`]npm\s+(?:install|i|add|ci)\b[^\n]*$/gm;
+    ? new RegExp(String.raw`^[ \t]*(?!#)(?:[^\n]*(?:&&|;|\|\|)[ \t]*)?${NPM_INSTALL_SHELL}(?:[^\n]|(?<=\\)\n)*`, "gm")
+    : new RegExp(String.raw`^[^\n]*["'\`]${NPM_INSTALL_SHELL}[^\n]*$`, "gm");
   for (const match of file.text.matchAll(shellInstall)) {
     out.push({ args: match[0].trim().replace(/\\\r?\n\s*/g, " "), line: lineOf(match.index ?? 0) });
   }
@@ -337,9 +360,21 @@ describe("DEC-240 item 1: lore and quest install without lifecycle scripts", () 
       'npm install \\\n  --prefix "$d" \\\n  "@opum-ai/lore-linux-x64@$V"',
       'npm install "$PLATFORM_TARBALL"',
       "npm install ./pkg/opum-ai-lore-0.14.1.tgz",
+      // An option BEFORE the verb is still an install (rv329-lcli685's L3 residual): both the long and short form.
+      'npm --prefix "$d" install "@opum-ai/lore@$V"',
+      'npm -g i "@opum-ai/quest@$V"',
+      'npm --prefix="$d" i "@opum-ai/lore@$V"',
     ]) {
       expect(installViolations([{ where: "w job m", steps: [{ run }] }])).toHaveLength(1);
     }
+    // And the other direction: a flagged install is accepted in that shape too, and an npm that is not installing
+    // anything is not an install just because it has an option before a word.
+    expect(
+      installViolations([
+        { where: "w job p", steps: [{ run: 'npm --prefix "$d" install --ignore-scripts "@opum-ai/lore@$V"' }] },
+        { where: "w job q", steps: [{ run: 'npm --prefix "$d" run build' }] },
+      ]),
+    ).toEqual([]);
     // Accepts: the flag on a continuation line, and an install that is not ours.
     expect(
       installViolations([
@@ -373,6 +408,11 @@ describe("DEC-240 item 1: lore and quest install without lifecycle scripts", () 
       1,
     );
     expect(sourceInstallViolations([{ path: "scripts/x.sh", text: 'npm install "$tarball"\n' }])).toHaveLength(1);
+    // The same residual in a shell source: the option sits before the verb.
+    expect(
+      sourceInstallViolations([{ path: "scripts/x.sh", text: 'npm --prefix "$d" install "$tarball"\n' }]),
+    ).toHaveLength(1);
+    expect(sourceInstallViolations([{ path: "scripts/x.sh", text: 'npm -g i "$tarball"\n' }])).toHaveLength(1);
     expect(
       sourceInstallViolations([{ path: "scripts/y.mjs", text: 'run("npm", ["install", "lodash"]);' }]),
     ).toHaveLength(1);
@@ -401,6 +441,18 @@ describe("DEC-240 item 1: lore and quest install without lifecycle scripts", () 
         { path: home, text: 'run(npm, ["install", "--ignore-scripts", a, b]);' },
       ]),
     ).toEqual([]);
+  });
+
+  test("the (a4) exception has exactly two call sites, so a third caller cannot inherit it", () => {
+    const own = loadSources().find((file) => file.path === FLAGLESS_INSTALL_EXCEPTION.path);
+    expect(own).toBeDefined();
+    expect(flaglessInstallCallSites(own?.text ?? "")).toBe(FLAGLESS_INSTALL_CALL_SITES);
+    // Mutant: the defect's own shape -- a third caller added beside the two real ones, the declaration unchanged.
+    const thirdCaller = `${own?.text ?? ""}\nasync function anotherInstaller(npm) {\n  return flaglessGlobalInstall(npm, {}, "/tmp", ["@opum-ai/lore@0.14.1"]);\n}\n`;
+    expect(flaglessInstallCallSites(thirdCaller)).toBe(FLAGLESS_INSTALL_CALL_SITES + 1);
+    // The counter itself: the declaration is not a call site, and a call in a comment or a string still counts.
+    expect(flaglessInstallCallSites("async function flaglessGlobalInstall(a, b, c, d) {}")).toBe(0);
+    expect(flaglessInstallCallSites("await flaglessGlobalInstall(npm, env, root, [a]);")).toBe(1);
   });
 
   test("proved with a real install: a dependency whose postinstall fails still installs under --ignore-scripts, and fails without it", () => {
@@ -500,6 +552,19 @@ describe("DEC-240 (a5) item 1: every package-qualification host pins an exact No
     // Positive control: the job was found (a name filter that matched nothing would pass vacuously).
     expect(jobs).toHaveLength(1);
     expect(pinViolations(jobs[0]?.[1].steps ?? [])).toEqual([]);
+  });
+
+  test("the distributions the report validator scores are exactly the six the release matrix qualifies", () => {
+    // The matrix is a JSON literal the setup job writes to $GITHUB_OUTPUT; the qualification jobs consume it.
+    const literal = Object.values(doc.jobs)
+      .flatMap((job) => job.steps ?? [])
+      .map((step) => /^\s*matrix='(\[.*\])'$/m.exec(step.run ?? "")?.[1])
+      .find((value) => value !== undefined);
+    expect(literal).toBeDefined();
+    const names = (JSON.parse(literal as string) as { name: string }[]).map((entry) => entry.name).sort();
+    // Positive control: six names were read, so a shape change here cannot pass vacuously.
+    expect(names).toHaveLength(6);
+    expect(names).toEqual([...QUALIFICATION_DISTRIBUTIONS].sort());
   });
 
   test("rejects the shapes that lose the guarantee", () => {
@@ -604,6 +669,9 @@ describe.skipIf(onWindows)(
         "0.14",
         "latest",
         "",
+        // MULTI-LINE: the old gate was `printf '%s\n' | grep -Eq '^...$'`, which succeeds when ANY line matches,
+        // so this value passed it and carried its second line into the install argument below.
+        "0.14.1\n;pwned",
       ]) {
         const bad = runWith(printed);
         expect(`${JSON.stringify(printed)} -> ${bad.status}`).toBe(`${JSON.stringify(printed)} -> 1`);

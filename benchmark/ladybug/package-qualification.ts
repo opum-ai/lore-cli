@@ -10,6 +10,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -17,7 +18,7 @@ import {
 } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { basename, delimiter, dirname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { disposeLadybugProjection } from "../../src/core/ladybug-lifecycle";
 import { EXPECTED_LADYBUG_STORAGE_VERSION, EXPECTED_LADYBUG_VERSION } from "../../src/core/ladybug-native";
 import {
@@ -38,6 +39,22 @@ import {
 export const LADYBUG_PACKAGE_QUALIFICATION_SCHEMA = "lore.ladybug-package-qualification/4";
 const LADYBUG_VERSION = EXPECTED_LADYBUG_VERSION;
 const REPOSITORY_ROOT = resolve(import.meta.dir, "..", "..");
+
+/**
+ * The six host distributions release.yml qualifies. DEC-240 (a5) item 4 reads them: an install on one host must
+ * READ the other five optional platform packages from the registry and install none of them, and a report that
+ * shows fewer than five reads measured a narrower install than the shipped one. Defined here rather than imported
+ * from qualification-evidence.ts, which imports this module; test/ladybug-package-qualification.test.ts pins the
+ * two lists equal as data.
+ */
+export const QUALIFICATION_DISTRIBUTIONS = [
+  "darwin-arm64",
+  "darwin-x64",
+  "linux-arm64",
+  "linux-x64",
+  "win32-arm64",
+  "win32-x64",
+] as const;
 
 export interface PackageQualificationInput {
   readonly mode: "qualification" | "smoke";
@@ -128,6 +145,18 @@ export interface ScriptBlockingProof {
   readonly reported: true;
 }
 
+/**
+ * DEC-240 (a5) item 3: npm's effective script-approval config as this run read it back, verbatim rather than as a
+ * verdict, so the report shows what was measured. `positiveControl` is the readback after the same npm is pointed
+ * at a config that sets `allow-scripts=x`: it must come back `x`, which is what makes "undefined" from an empty
+ * config mean "no entry" rather than "this npm does not read that key at all".
+ */
+export interface ScriptApprovalConfigEvidence {
+  readonly allowScripts: string;
+  readonly dangerouslyAllowAllScripts: string;
+  readonly positiveControl: string;
+}
+
 /** DEC-240 (a5) item 4: what the global install did with the other platform packages in optionalDependencies. */
 export interface OptionalPlatformPackageEvidence {
   /** Directory names under the global `@opum-ai/` scope after the install: exactly the root and its own platform. */
@@ -149,7 +178,7 @@ export interface PackageQualificationReport {
     readonly cpu: string;
     readonly bun: string;
     readonly node: string;
-    /** `npm --version` of the npm that ran every install here: DEC-240 (a5) requires major 12 or later. */
+    /** `npm --version` of the npm that ran every install here: DEC-240 (a5) requires major 12, exactly. */
     readonly npm: string;
   };
   readonly repository: { readonly commit: string | null };
@@ -170,6 +199,7 @@ export interface PackageQualificationReport {
     readonly globalInstallScriptPolicyClean: true;
     readonly globalLauncherSmoke: true;
     readonly scriptBlockingProof: ScriptBlockingProof;
+    readonly scriptApprovalConfig: ScriptApprovalConfigEvidence;
     readonly optionalPlatformPackages: OptionalPlatformPackageEvidence;
   };
   readonly smoke: SmokeEvidence;
@@ -255,18 +285,25 @@ export function assertPackageQualificationReport(value: unknown): asserts value 
   if (report.mode === "qualification" && report.platform?.bun !== "1.3.14") {
     throw new Error("package qualification report does not use the pinned Bun runtime");
   }
-  // DEC-240 (a5): the npm that ran the flagless install is on the record, is major 12 or later, and the run
-  // proved it blocks and reports an unapproved fixture script. A report without them proves nothing about that.
+  // DEC-240 (a5): the npm that ran the flagless install is on the record and is major 12 EXACTLY, the run proved
+  // it blocks and reports an unapproved fixture script, its effective config was read back with a live positive
+  // control, and that install read the other five platform packuments without fetching a tarball.
   assertNpmMajor(report.platform?.npm ?? "");
   const proof = report.package?.scriptBlockingProof;
-  if (
-    proof?.npm !== report.platform?.npm ||
-    proof?.fixtureScriptRan !== false ||
-    proof?.reported !== true ||
-    !Array.isArray(report.package?.optionalPlatformPackages?.installed)
-  ) {
+  if (proof?.npm !== report.platform?.npm || proof?.fixtureScriptRan !== false || proof?.reported !== true) {
     throw new Error("package qualification report carries no proof that npm blocked and reported an unapproved script");
   }
+  const scriptApprovalConfig = report.package?.scriptApprovalConfig;
+  if (scriptApprovalConfig === undefined) {
+    throw new Error("package qualification report carries no script-approval config readback (DEC-240 a5)");
+  }
+  assertScriptApprovalConfigEmpty(scriptApprovalConfig.allowScripts, scriptApprovalConfig.dangerouslyAllowAllScripts);
+  if (scriptApprovalConfig.positiveControl !== POSITIVE_CONTROL_ALLOW_SCRIPTS) {
+    throw new Error(
+      `the script-approval readback's positive control came back ${JSON.stringify(scriptApprovalConfig.positiveControl)}, not ${JSON.stringify(POSITIVE_CONTROL_ALLOW_SCRIPTS)}, so the readback cannot tell an unset key from an unread one (DEC-240 a5)`,
+    );
+  }
+  assertOptionalPlatformPackages(report);
   if (!/^[0-9a-f]{40}$/.test(report.repository?.commit ?? "")) {
     throw new Error("package qualification report has no repository commit provenance");
   }
@@ -325,6 +362,50 @@ export function assertPackageQualificationReport(value: unknown): asserts value 
   }
 }
 
+/**
+ * DEC-240 (a5) item 4, scored on the RECORD rather than on the run that wrote it: the install must have put
+ * exactly the root and this host's platform package in the global scope, fetched no tarball from the registry,
+ * and read the packument of every one of the other five platform packages. A report whose evidence names fewer
+ * than five read a narrower install than the one the release ships.
+ */
+function assertOptionalPlatformPackages(report: Partial<PackageQualificationReport>): void {
+  const distribution = report.platform?.distribution ?? "";
+  const others = QUALIFICATION_DISTRIBUTIONS.filter((name) => name !== distribution);
+  if (others.length !== QUALIFICATION_DISTRIBUTIONS.length - 1) {
+    throw new Error(
+      `the report names distribution ${JSON.stringify(distribution)}, which is not one of the six host distributions this report format qualifies`,
+    );
+  }
+  const evidence = report.package?.optionalPlatformPackages;
+  if (evidence === undefined || !Array.isArray(evidence.installed) || !Array.isArray(evidence.registryReads)) {
+    throw new Error("package qualification report carries no global-install package evidence (DEC-240 a5)");
+  }
+  const expected = ["lore", `lore-${distribution}`].sort();
+  const installed = [...evidence.installed].sort();
+  if (installed.join(",") !== expected.join(",")) {
+    throw new Error(
+      `the report's global @opum-ai scope holds ${JSON.stringify(installed)}, expected exactly ${JSON.stringify(expected)}`,
+    );
+  }
+  const tarballs = evidence.registryReads.filter((read) => read?.kind === "tarball");
+  if (tarballs.length > 0) {
+    throw new Error(
+      `the reported global install fetched @opum-ai tarballs from the registry: ${tarballs.map((read) => read.url).join(", ")}`,
+    );
+  }
+  const packuments = evidence.registryReads
+    .filter((read) => read?.kind === "packument")
+    .map((read) => String(read.url ?? ""));
+  const missing = others.filter(
+    (name) => !packuments.some((url) => new RegExp(`@opum-ai(?:/|%2f)lore-${name}(?:$|[^A-Za-z0-9-])`, "i").test(url)),
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `the reported global install read no packument for ${missing.join(", ")}, so it did not resolve every other platform package (DEC-240 a5)`,
+    );
+  }
+}
+
 async function qualify(input: PackageQualificationInput): Promise<PackageQualificationReport> {
   assertHost(input);
   const ladybug = assertFrozenLadybugInstall(input);
@@ -378,22 +459,41 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
     const platformTarball = join(artifactRoot, `opum-ai-lore-${input.name}-${expectedVersion}.tgz`);
     assertRegularFile(rootTarball, "root launcher tarball");
     assertRegularFile(platformTarball, "platform tarball");
+    // The flagless helper refuses any tarball that is not a file under its own scratch root, so the two packed
+    // artifacts are copied there first. artifacts/ keeps the originals because the job uploads them; the copies
+    // are byte-for-byte, so the hashes recorded below describe what was installed as well as what was uploaded.
+    const installTarballs = join(scratch, "tarballs");
+    mkdirSync(installTarballs, { recursive: true });
+    const installedRootTarball = join(installTarballs, basename(rootTarball));
+    const installedPlatformTarball = join(installTarballs, basename(platformTarball));
+    cpSync(rootTarball, installedRootTarball);
+    cpSync(platformTarball, installedPlatformTarball);
 
     progress("gating npm, its script-approval config, and the blocking of unapproved scripts");
-    // DEC-240 (a5) items 2-4, in this order, before the only flagless install: the npm is major 12 or later, no
+    // DEC-240 (a5) items 2-4, in this order, before the only flagless install: the npm is major 12 exactly, no
     // allow-scripts list reaches it, and a fixture dependency's postinstall is blocked and reported by THIS npm.
     const npmVersion = (await run(npm, ["--version"], { cwd: scratch, env: npmEnvironment })).stdout.trim();
     assertNpmMajor(npmVersion);
     assertNoInheritedScriptApproval(npmEnvironment);
-    assertScriptApprovalConfigEmpty(
-      (await run(npm, ["config", "get", "allow-scripts"], { cwd: scratch, env: npmEnvironment })).stdout,
-      (await run(npm, ["config", "get", "dangerously-allow-all-scripts"], { cwd: scratch, env: npmEnvironment }))
-        .stdout,
-    );
+    const allowScriptsReadback = (
+      await run(npm, ["config", "get", "allow-scripts"], { cwd: scratch, env: npmEnvironment })
+    ).stdout;
+    const dangerouslyAllowAllReadback = (
+      await run(npm, ["config", "get", "dangerously-allow-all-scripts"], { cwd: scratch, env: npmEnvironment })
+    ).stdout;
+    assertScriptApprovalConfigEmpty(allowScriptsReadback, dangerouslyAllowAllReadback);
+    const scriptApprovalConfig: ScriptApprovalConfigEvidence = {
+      allowScripts: allowScriptsReadback.trim(),
+      dangerouslyAllowAllScripts: dangerouslyAllowAllReadback.trim(),
+      positiveControl: await readBackScriptApprovalPositiveControl(npm, npmEnvironment, scratch),
+    };
     const scriptBlockingProof = await proveUnapprovedScriptsBlocked(npm, npmEnvironment, scratch, npmVersion);
 
     progress("installing both tarballs into an isolated global npm prefix without script approval");
-    const globalInstall = await flaglessGlobalInstall(npm, npmEnvironment, scratch, [rootTarball, platformTarball]);
+    const globalInstall = await flaglessGlobalInstall(npm, npmEnvironment, scratch, [
+      installedRootTarball,
+      installedPlatformTarball,
+    ]);
     assertNoInstallScriptApproval(globalInstall);
     const globalRoot = globalPackageRoot(join(scratch, "npm-global"), input.os);
     const globalLauncher = join(globalRoot, "@opum-ai", "lore", "bin", "lore.cjs");
@@ -531,6 +631,7 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
         globalInstallScriptPolicyClean: true,
         globalLauncherSmoke: true,
         scriptBlockingProof,
+        scriptApprovalConfig,
         optionalPlatformPackages,
       },
       smoke: { launcher: launcherSmoke, standalone: standaloneSmoke, outputsStable: commandOutputsStable },
@@ -1370,13 +1471,18 @@ export function assertNoInstallSecrets(env: Record<string, string | undefined>):
 
 export const REQUIRED_NPM_MAJOR = 12;
 
-/** DEC-240 (a5) item 2: fail by name below the npm major that blocks and reports unapproved install scripts. */
+/**
+ * DEC-240 (a5) item 2: fail by name on any npm that is not MAJOR 12. Not "12 or later": the decision qualified
+ * npm 12, whose behaviour was measured, so a later major is a new ruling and red here until one is recorded. The
+ * version must be one whole X.Y.Z: a prefix match would accept whatever a wrapper appended to it.
+ */
 export function assertNpmMajor(version: string): void {
-  const major = /^(\d+)\.\d+\.\d+/.exec(version.trim())?.[1];
-  if (major === undefined) throw new Error(`npm --version printed ${JSON.stringify(version)}, which is not a version`);
-  if (Number(major) < REQUIRED_NPM_MAJOR) {
+  const text = version.trim();
+  if (!/^\d+\.\d+\.\d+$/.test(text))
+    throw new Error(`npm --version printed ${JSON.stringify(version)}, which is not a version`);
+  if (Number(text.split(".")[0]) !== REQUIRED_NPM_MAJOR) {
     throw new Error(
-      `npm ${version.trim()} is below major ${REQUIRED_NPM_MAJOR}: the flagless global install is only safe where npm blocks and reports unapproved install scripts (DEC-240 a5)`,
+      `npm ${text} is not major ${REQUIRED_NPM_MAJOR}: the flagless global install is qualified on npm ${REQUIRED_NPM_MAJOR} exactly, whose blocking and reporting of unapproved install scripts was measured (DEC-240 a5); any other major needs its own ruling`,
     );
   }
 }
@@ -1401,6 +1507,36 @@ export function assertNoInheritedScriptApproval(env: Record<string, string | und
   }
 }
 
+/** The value the readback's positive control sets; the only readback that proves the gate can see a set key. */
+export const POSITIVE_CONTROL_ALLOW_SCRIPTS = "x";
+
+/**
+ * DEC-240 (a5) item 3's positive control. `assertScriptApprovalConfigEmpty` accepts "undefined", which is what npm
+ * prints for a key with no entry -- and also what it prints for a key it cannot read at all. Pointing the SAME npm
+ * at a userconfig that sets allow-scripts=x separates the two: unless the readback is x, the empty readback proves
+ * nothing about this npm. The control gets its own file, so the empty user config is never written to.
+ */
+export async function readBackScriptApprovalPositiveControl(
+  npm: string,
+  env: Record<string, string | undefined>,
+  scratch: string,
+): Promise<string> {
+  const controlConfig = join(scratch, "npm-allow-scripts-control.npmrc");
+  writeFileSync(controlConfig, `allow-scripts=${POSITIVE_CONTROL_ALLOW_SCRIPTS}\n`);
+  const readback = (
+    await run(npm, ["config", "get", "allow-scripts"], {
+      cwd: scratch,
+      env: { ...env, npm_config_userconfig: controlConfig },
+    })
+  ).stdout.trim();
+  if (readback !== POSITIVE_CONTROL_ALLOW_SCRIPTS) {
+    throw new Error(
+      `npm read allow-scripts back as ${JSON.stringify(readback)} from a config that sets it to ${JSON.stringify(POSITIVE_CONTROL_ALLOW_SCRIPTS)}, so the empty-config readback cannot tell an unset key from an unread one (DEC-240 a5)`,
+    );
+  }
+  return readback;
+}
+
 /** The EFFECTIVE config, read back from npm: no allow-scripts entry and the allow-all switch off. */
 export function assertScriptApprovalConfigEmpty(allowScripts: string, dangerouslyAllowAll: string): void {
   const allow = allowScripts.trim();
@@ -1421,21 +1557,85 @@ export function assertScriptApprovalConfigEmpty(allowScripts: string, dangerousl
  * site: the qualification's own global install, and the (a5) fixture install that proves it blocks. It installs
  * only locally built tarballs, by path, into a scratch prefix, with no token in its env (asserted here, before
  * the install). assertNoInstallScriptApproval keeps it safe where npm blocks and reports unapproved scripts
- * rather than running them: the (a5) gates above guarantee that npm is major 12 or later. If release hosts
- * ever run an npm that runs unapproved dependency scripts by default, the exception lapses and goes back to
- * opum-doc. test/ci-hardening.test.ts keys this call as the single exception.
+ * rather than running them: the (a5) gates guarantee that npm is major 12 exactly. If release hosts ever run an
+ * npm that runs unapproved dependency scripts by default, the exception lapses and goes back to opum-doc.
+ * test/ci-hardening.test.ts keys this call as the single exception.
+ *
+ * The helper itself holds the line rather than trusting its callers: every spec must be an absolute path to an
+ * existing non-empty .tgz that resolves inside `root`, the caller may add only the two variables
+ * FLAGLESS_INSTALL_EXTRA_ENV names, and the effective script-approval config is read back through the MERGED env
+ * before npm runs. A third caller that hands it a registry spec, a path outside its root, or a config that
+ * approves scripts therefore fails here, wherever it lives.
  */
-async function flaglessGlobalInstall(
+export async function flaglessGlobalInstall(
   npm: string,
   env: Record<string, string | undefined>,
-  cwd: string,
+  root: string,
   tarballs: readonly string[],
   extraEnv: Record<string, string> = {},
 ): Promise<CommandResult> {
+  // The helper is not a general installer. Its caller may add ONLY these two variables, compared case-insensitively
+  // because npm's env keys are; anything else -- a userconfig, a globalconfig, another registry, a script approval
+  // under a spelling the scrubbers do not enumerate -- is refused before npm starts.
+  for (const name of Object.keys(extraEnv)) {
+    if (!FLAGLESS_INSTALL_EXTRA_ENV.includes(name.toLowerCase() as (typeof FLAGLESS_INSTALL_EXTRA_ENV)[number])) {
+      throw new Error(
+        `the flagless global install may be handed only ${FLAGLESS_INSTALL_EXTRA_ENV.join(" and ")} by its caller (DEC-240 a4); got ${name}`,
+      );
+    }
+  }
+  const installTarballs = tarballs.map((tarball) => assertTarballUnderRoot(root, tarball));
   const installEnv = { ...env, ...extraEnv, npm_config_loglevel: "http" };
   assertNoInstallSecrets(installEnv);
   assertNoInheritedScriptApproval(installEnv);
-  return run(npm, ["install", "--global", ...tarballs], { cwd, env: installEnv, timeoutMs: 600_000 });
+  // The MERGED env is what npm reads, so the effective config is read back through it here as well, where a caller
+  // cannot route around it. Scrubbers catch the spellings they enumerate; this catches any config a caller supplies.
+  const allowScripts = (await run(npm, ["config", "get", "allow-scripts"], { cwd: root, env: installEnv })).stdout;
+  const dangerouslyAllowAll = (
+    await run(npm, ["config", "get", "dangerously-allow-all-scripts"], { cwd: root, env: installEnv })
+  ).stdout;
+  assertScriptApprovalConfigEmpty(allowScripts, dangerouslyAllowAll);
+  return run(npm, ["install", "--global", ...installTarballs], { cwd: root, env: installEnv, timeoutMs: 600_000 });
+}
+
+/** The only keys a caller may add to the flagless install's env: the proof's sentinel path, and npm's prefix. */
+const FLAGLESS_INSTALL_EXTRA_ENV = ["lore_script_proof_sentinel", "npm_config_prefix"] as const;
+
+/**
+ * DEC-240 (a4): the flagless install may name only a LOCAL tarball, by absolute path, that really is a non-empty
+ * regular file ending .tgz under the run's own scratch root. A registry spec, a relative path, a directory, an
+ * empty file, and a symlink resolving out of the root are each refused by name before npm is started. Real paths
+ * are compared, not the strings a caller passed, so neither `..` nor a link can walk out of the root.
+ */
+function assertTarballUnderRoot(root: string, tarball: string): string {
+  if (!isAbsolute(tarball)) {
+    throw new Error(
+      `the flagless global install takes only a local .tgz by absolute path (DEC-240 a4); ${JSON.stringify(tarball)} is a registry spec or a relative path`,
+    );
+  }
+  if (!existsSync(root) || !existsSync(tarball)) {
+    throw new Error(
+      `the flagless global install requires an existing tarball under ${root}; ${tarball} does not exist`,
+    );
+  }
+  const base = realpathSync(resolve(root));
+  const resolved = realpathSync(resolve(tarball));
+  if (!resolved.startsWith(`${base}${sep}`)) {
+    throw new Error(
+      `the flagless global install takes only a tarball under the scratch root ${base} (DEC-240 a4); ${resolved} is outside it`,
+    );
+  }
+  if (!resolved.endsWith(".tgz")) {
+    throw new Error(`the flagless global install takes only a .tgz (DEC-240 a4); ${resolved} is not one`);
+  }
+  if (!statSync(resolved).isFile() || statSync(resolved).size === 0) {
+    throw new Error(
+      `the flagless global install requires a non-empty regular file (DEC-240 a4); ${resolved} is not one`,
+    );
+  }
+  // The path is handed to npm as the caller wrote it; only the CONTAINMENT test above uses real paths, so a
+  // platform whose tmpdir is itself a symlink (macOS /var -> /private/var) installs from the path it was given.
+  return resolve(tarball);
 }
 
 /**
@@ -1509,7 +1709,16 @@ export function optionalPlatformEvidence(
       `the global @opum-ai scope holds ${JSON.stringify(installed)}, expected exactly ${JSON.stringify(expected)}`,
     );
   }
-  const registryReads = [...`${result.stdout}\n${result.stderr}`.matchAll(REGISTRY_READ)]
+  const fetchLines = [...`${result.stdout}\n${result.stderr}`.matchAll(REGISTRY_READ)];
+  // The parse is the measurement. Zero lines means the install's http log reached this function in no shape the
+  // parser recognizes -- a loglevel change, a renamed format -- and every statement below would be vacuous while
+  // reading exactly like a clean install. Fail, and say which log produced nothing.
+  if (fetchLines.length === 0) {
+    throw new Error(
+      `the global install's http log carried no fetch line, so the registry-read evidence measures nothing (DEC-240 a5):\n${result.stdout}\n${result.stderr}`,
+    );
+  }
+  const registryReads = fetchLines
     .map((match) => ({ status: Number(match[1]), url: match[2] ?? "" }))
     .filter((read) => /@opum-ai(?:\/|%2f)/i.test(read.url))
     .map((read) => ({ ...read, kind: read.url.endsWith(".tgz") ? ("tarball" as const) : ("packument" as const) }));

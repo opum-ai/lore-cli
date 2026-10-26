@@ -13,6 +13,7 @@ import {
   assertScriptApprovalConfigEmpty,
   boundedNativeProbeOutput,
   classifyWindowsProbeOutcome,
+  flaglessGlobalInstall,
   INSTALL_SECRET_ENV_NAMES,
   isKnownNativeCrash,
   isProvenAbruptWindowsImportCrash,
@@ -20,9 +21,12 @@ import {
   NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT,
   nativeIndexingProbeRefusalMessage,
   optionalPlatformEvidence,
+  POSITIVE_CONTROL_ALLOW_SCRIPTS,
   packageCompileCommand,
   parsePackageQualificationArgs,
   proveUnapprovedScriptsBlocked,
+  QUALIFICATION_DISTRIBUTIONS,
+  readBackScriptApprovalPositiveControl,
   removeQualificationScratch,
   resolveInstalledOptionalPackageJson,
   resolveQualificationNpm,
@@ -505,11 +509,26 @@ describe("matching-host Ladybug package qualification", () => {
     ).toThrow("sha512 SRI");
   });
 
+  /** DEC-240 (a5) item 4: the report's evidence for an install on one host: five packuments, no tarball. */
+  const platformEvidence = (distribution: string) => ({
+    installed: ["lore", `lore-${distribution}`],
+    registryReads: QUALIFICATION_DISTRIBUTIONS.filter((name) => name !== distribution).map((name) => ({
+      status: 200,
+      kind: "packument" as const,
+      url: `https://registry.npmjs.org/@opum-ai%2flore-${name}`,
+    })),
+  });
+  const scriptApprovalConfig = {
+    allowScripts: "undefined",
+    dangerouslyAllowAllScripts: "false",
+    positiveControl: POSITIVE_CONTROL_ALLOW_SCRIPTS,
+  };
+
   test("only a report with every cleanup and preservation assertion passes", () => {
     const report = {
       schema: LADYBUG_PACKAGE_QUALIFICATION_SCHEMA,
       mode: "qualification",
-      platform: { bun: "1.3.14", os: "linux", cpu: "x64", npm: "12.2.1" },
+      platform: { bun: "1.3.14", os: "linux", cpu: "x64", distribution: "linux-x64", npm: "12.2.1" },
       repository: { commit: "a".repeat(40) },
       ladybug: {
         core: "0.19.0",
@@ -523,7 +542,8 @@ describe("matching-host Ladybug package qualification", () => {
         globalInstallScriptPolicyClean: true,
         globalLauncherSmoke: true,
         scriptBlockingProof: { npm: "12.2.1", fixtureScriptRan: false, reported: true },
-        optionalPlatformPackages: { installed: ["lore", "lore-linux-x64"], registryReads: [] },
+        scriptApprovalConfig,
+        optionalPlatformPackages: platformEvidence("linux-x64"),
       },
       smoke: { outputsStable: true },
       native: {
@@ -556,7 +576,7 @@ describe("matching-host Ladybug package qualification", () => {
     // DEC-240 (a5): the npm on the record must be major 12 or later and the proof must agree with it.
     expect(() =>
       assertPackageQualificationReport({ ...report, platform: { ...report.platform, npm: "11.19.0" } }),
-    ).toThrow("below major 12");
+    ).toThrow("is not major 12");
     expect(() =>
       assertPackageQualificationReport({ ...report, platform: { ...report.platform, npm: undefined } }),
     ).toThrow("not a version");
@@ -578,10 +598,83 @@ describe("matching-host Ladybug package qualification", () => {
     expect(() =>
       assertPackageQualificationReport({ ...report, package: { ...report.package, scriptBlockingProof: undefined } }),
     ).toThrow("blocked and reported");
+    // DEC-240 (a5) item 2 is npm-12, not "12 or later": a later major is a new ruling, so the record refuses it.
+    expect(() =>
+      assertPackageQualificationReport({ ...report, platform: { ...report.platform, npm: "13.0.0" } }),
+    ).toThrow("is not major 12");
+    // DEC-240 (a5) item 3: the readback is only meaningful with a live positive control.
+    expect(() =>
+      assertPackageQualificationReport({
+        ...report,
+        package: {
+          ...report.package,
+          scriptApprovalConfig: { ...scriptApprovalConfig, positiveControl: "undefined" },
+        },
+      }),
+    ).toThrow("positive control came back");
+    expect(() =>
+      assertPackageQualificationReport({ ...report, package: { ...report.package, scriptApprovalConfig: undefined } }),
+    ).toThrow("script-approval config readback");
+    expect(() =>
+      assertPackageQualificationReport({
+        ...report,
+        package: {
+          ...report.package,
+          scriptApprovalConfig: { ...scriptApprovalConfig, allowScripts: '["esbuild"]' },
+        },
+      }),
+    ).toThrow("allow-scripts");
+    // DEC-240 (a5) item 4: the global scope, the tarballs, and the five packuments, each scored on the record.
+    expect(() =>
+      assertPackageQualificationReport({
+        ...report,
+        package: {
+          ...report.package,
+          optionalPlatformPackages: { ...platformEvidence("linux-x64"), installed: ["lore", "lore-linux-arm64"] },
+        },
+      }),
+    ).toThrow("expected exactly");
+    expect(() =>
+      assertPackageQualificationReport({
+        ...report,
+        package: {
+          ...report.package,
+          optionalPlatformPackages: {
+            ...platformEvidence("linux-x64"),
+            registryReads: [
+              ...platformEvidence("linux-x64").registryReads,
+              {
+                status: 200,
+                kind: "tarball" as const,
+                url: "https://registry.npmjs.org/@opum-ai/lore-darwin-x64/-/x.tgz",
+              },
+            ],
+          },
+        },
+      }),
+    ).toThrow("fetched @opum-ai tarballs");
+    expect(() =>
+      assertPackageQualificationReport({
+        ...report,
+        package: {
+          ...report.package,
+          optionalPlatformPackages: {
+            ...platformEvidence("linux-x64"),
+            registryReads: platformEvidence("linux-x64").registryReads.filter(
+              (read) => !read.url.includes("lore-darwin-x64"),
+            ),
+          },
+        },
+      }),
+    ).toThrow("read no packument for darwin-x64");
+    expect(() =>
+      assertPackageQualificationReport({ ...report, platform: { ...report.platform, distribution: undefined } }),
+    ).toThrow("not one of the six host distributions");
 
     const windowsFallback = {
       ...report,
-      platform: { bun: "1.3.14", os: "win32", cpu: "x64", npm: "12.2.1" },
+      platform: { bun: "1.3.14", os: "win32", cpu: "x64", distribution: "win32-x64", npm: "12.2.1" },
+      package: { ...report.package, optionalPlatformPackages: platformEvidence("win32-x64") },
       ladybug: { ...report.ladybug, embeddedNativeIndexVerified: false },
       native: {
         ...report.native,
@@ -595,7 +688,11 @@ describe("matching-host Ladybug package qualification", () => {
     expect(() => assertPackageQualificationReport(windowsFallback)).not.toThrow();
     const windowsArmFallback = {
       ...windowsFallback,
-      platform: { bun: "1.3.14", os: "win32", cpu: "arm64", npm: "12.2.1" },
+      platform: { bun: "1.3.14", os: "win32", cpu: "arm64", distribution: "win32-arm64", npm: "12.2.1" },
+      package: {
+        ...windowsFallback.package,
+        optionalPlatformPackages: platformEvidence("win32-arm64"),
+      },
       ladybug: {
         core: "0.19.0",
         optionalPackage: null,
@@ -641,7 +738,8 @@ describe("matching-host Ladybug package qualification", () => {
     expect(() =>
       assertPackageQualificationReport({
         ...windowsLoadFailure,
-        platform: { bun: "1.3.14", os: "win32", cpu: "arm64", npm: "12.2.1" },
+        platform: { bun: "1.3.14", os: "win32", cpu: "arm64", distribution: "win32-arm64", npm: "12.2.1" },
+        package: { ...windowsLoadFailure.package, optionalPlatformPackages: platformEvidence("win32-arm64") },
       }),
     ).toThrow("approved native platform verdict"); // the same shape on another platform
 
@@ -668,7 +766,9 @@ describe("matching-host Ladybug package qualification", () => {
     expect(runner).toContain("referenceFallbackDatabaseAbsent");
     expect(runner).toContain("commandOutputsStable");
     expect(runner).toContain("createFixtureBacklogEnvironment");
-    expect(runner).toContain("flaglessGlobalInstall(npm, npmEnvironment, scratch, [rootTarball, platformTarball])");
+    expect(runner).toContain("flaglessGlobalInstall(npm, npmEnvironment, scratch, [");
+    expect(runner).toContain("installedRootTarball");
+    expect(runner).toContain("assertTarballUnderRoot(root, tarball)");
     expect(runner).toContain("assertNoInstallScriptApproval");
     expect(runner).toContain("embeddedNativeIndexVerified");
     expect(runner).toContain("initializeFixtureGitRepository");
@@ -1016,20 +1116,25 @@ describe("DEC-240 (a4) condition 2: the flagless global install env carries no t
     expect(source).toContain("npm_config_globalconfig: emptyGlobalConfig");
     const secretsAt = source.indexOf("assertNoInstallSecrets(installEnv);");
     const approvalAt = source.indexOf("assertNoInheritedScriptApproval(installEnv);");
-    const installAt = source.indexOf('run(npm, ["install", "--global", ...tarballs]');
+    const installAt = source.indexOf('run(npm, ["install", "--global", ...installTarballs]');
     expect(secretsAt).toBeGreaterThan(0);
     expect(approvalAt).toBeGreaterThan(secretsAt);
     expect(installAt).toBeGreaterThan(approvalAt);
     // (a5) item 2: the major gate runs before the proof, and the proof before the real install.
     const gateAt = source.indexOf("assertNpmMajor(npmVersion);");
     const proofAt = source.indexOf("await proveUnapprovedScriptsBlocked(");
-    const realAt = source.indexOf("await flaglessGlobalInstall(npm, npmEnvironment, scratch, [rootTarball");
+    const realAt = source.indexOf("const globalInstall = await flaglessGlobalInstall(npm, npmEnvironment, scratch, [");
     expect(gateAt).toBeGreaterThan(0);
     expect(proofAt).toBeGreaterThan(gateAt);
-    // (a5) item 3: the effective config is read back between the major gate and the proof.
-    const readbackAt = source.indexOf("assertScriptApprovalConfigEmpty(\n");
+    // (a5) item 3: the effective config is read back between the major gate and the proof, and its positive
+    // control runs beside it, so an "undefined" readback is only accepted from an npm shown to read the key.
+    const readbackAt = source.indexOf(
+      "assertScriptApprovalConfigEmpty(allowScriptsReadback, dangerouslyAllowAllReadback)",
+    );
+    const controlAt = source.indexOf("readBackScriptApprovalPositiveControl(npm, npmEnvironment, scratch)");
     expect(readbackAt).toBeGreaterThan(gateAt);
-    expect(proofAt).toBeGreaterThan(readbackAt);
+    expect(controlAt).toBeGreaterThan(readbackAt);
+    expect(proofAt).toBeGreaterThan(controlAt);
     expect(realAt).toBeGreaterThan(proofAt);
   });
 
@@ -1053,12 +1158,115 @@ describe("DEC-240 (a4) condition 2: the flagless global install env carries no t
     }
   });
 
-  test("assertNpmMajor fails by name below 12 and accepts 12 or later", () => {
-    expect(() => assertNpmMajor("10.9.9")).toThrow("npm 10.9.9 is below major 12");
-    expect(() => assertNpmMajor("11.19.0\n")).toThrow("below major 12");
+  describe.skipIf(process.platform === "win32")("the flagless install helper holds the line itself", () => {
+    /** A stub npm: it answers the two config reads from env, and echoes any install's argv instead of installing. */
+    function stub(dir: string): string {
+      const path = join(dir, "npm");
+      writeFileSync(
+        path,
+        [
+          "#!/bin/sh",
+          'case "$*" in',
+          '  "config get allow-scripts") printf "%s\\n" "$STUB_ALLOW_SCRIPTS" ;;',
+          '  "config get dangerously-allow-all-scripts") printf "%s\\n" "false" ;;',
+          '  *) printf "INSTALL:%s\\n" "$*" ;;',
+          "esac",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      return path;
+    }
+    const env = (allowScripts: string): Record<string, string | undefined> => ({
+      PATH: process.env.PATH,
+      STUB_ALLOW_SCRIPTS: allowScripts,
+    });
+    const tarballUnder = (root: string, name = "lore-linux-x64-0.14.1.tgz"): string => {
+      const path = join(root, name);
+      writeFileSync(path, "tarball-bytes");
+      return path;
+    };
+
+    test("accepts a local .tgz under the root with the two allowed extras, and installs exactly that path", async () => {
+      const root = mkdtempSync(join(tmpdir(), "lcli768-helper-"));
+      try {
+        const tarball = tarballUnder(root);
+        const prefix = join(root, "prefix");
+        const result = await flaglessGlobalInstall(stub(root), env("undefined"), root, [tarball], {
+          npm_config_prefix: prefix,
+        });
+        expect(result.stdout.trim()).toBe(`INSTALL:install --global ${tarball}`);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }, 30_000);
+
+    test("refuses a registry spec, a relative path, a path outside the root, a non-.tgz, an empty file and a directory", async () => {
+      const root = mkdtempSync(join(tmpdir(), "lcli768-helper-"));
+      const outside = mkdtempSync(join(tmpdir(), "lcli768-outside-"));
+      try {
+        const npm = stub(root);
+        const cases: [string, string][] = [
+          ["@opum-ai/lore-linux-x64@0.14.1", "registry spec or a relative path"],
+          ["./lore-linux-x64-0.14.1.tgz", "registry spec or a relative path"],
+          [tarballUnder(outside), "is outside it"],
+          [join(root, "notes.txt"), "is not one"],
+          [join(root, "empty.tgz"), "non-empty regular file"],
+          [join(root, "a-directory.tgz"), "non-empty regular file"],
+        ];
+        writeFileSync(join(root, "notes.txt"), "x");
+        writeFileSync(join(root, "empty.tgz"), "");
+        mkdirSync(join(root, "a-directory.tgz"));
+        for (const [spec, message] of cases) {
+          await expect(flaglessGlobalInstall(npm, env("undefined"), root, [spec])).rejects.toThrow(message);
+        }
+        // A symlink inside the root that RESOLVES outside it is refused too: the guard compares real paths, so a
+        // link cannot walk out of the root the way a string prefix check would let it.
+        const link = join(root, "link.tgz");
+        spawnSync("ln", ["-s", tarballUnder(outside, "target.tgz"), link]);
+        await expect(flaglessGlobalInstall(npm, env("undefined"), root, [link])).rejects.toThrow("is outside it");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        rmSync(outside, { recursive: true, force: true });
+      }
+    }, 30_000);
+
+    test("refuses any extra env key but the proof's sentinel and npm's prefix, and refuses a config that approves scripts", async () => {
+      const root = mkdtempSync(join(tmpdir(), "lcli768-helper-"));
+      try {
+        const npm = stub(root);
+        const tarball = tarballUnder(root);
+        // The userconfig override was the measured gap: it is not a token and not a script-approval spelling, so
+        // the scrubbers passed it through, and it could point the install at a config that approves scripts.
+        await expect(
+          flaglessGlobalInstall(npm, env("undefined"), root, [tarball], {
+            npm_config_userconfig: "/tmp/approve.npmrc",
+          }),
+        ).rejects.toThrow("may be handed only lore_script_proof_sentinel and npm_config_prefix");
+        // The sentinel is allowed even in another case: npm reads these keys case-insensitively.
+        const allowed = await flaglessGlobalInstall(npm, env("undefined"), root, [tarball], {
+          LORE_SCRIPT_PROOF_SENTINEL: join(root, "sentinel"),
+        });
+        expect(allowed.stdout).toContain("INSTALL:install --global");
+        // And the merged env is read back before the install: a config that DOES approve a script never installs.
+        await expect(flaglessGlobalInstall(npm, env("x"), root, [tarball])).rejects.toThrow("allow-scripts");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }, 30_000);
+  });
+
+  test("assertNpmMajor accepts npm 12 exactly, and fails by name on every other major and on a non-version", () => {
+    expect(() => assertNpmMajor("10.9.9")).toThrow("npm 10.9.9 is not major 12");
+    expect(() => assertNpmMajor("11.19.0\n")).toThrow("is not major 12");
+    // A later major is a new ruling (DEC-240 a5 qualified npm 12), not an acceptable upgrade.
+    expect(() => assertNpmMajor("13.0.0")).toThrow("is not major 12");
+    expect(() => assertNpmMajor("12.0.0-next.1")).toThrow("not a version");
+    expect(() => assertNpmMajor("12.2.1 --foreground-scripts")).toThrow("not a version");
     expect(() => assertNpmMajor("")).toThrow("not a version");
-    expect(() => assertNpmMajor("12.2.1\n")).not.toThrow();
-    expect(() => assertNpmMajor("13.0.0")).not.toThrow();
+    for (const version of ["12.0.0", "12.2.0", "12.2.1\n"]) {
+      expect(() => assertNpmMajor(version)).not.toThrow();
+    }
   });
 
   test("script-approval env: every spelling is caught and scrubbed, anything else is kept", () => {
@@ -1085,6 +1293,28 @@ describe("DEC-240 (a4) condition 2: the flagless global install env carries no t
     expect(() => assertScriptApprovalConfigEmpty("", "true")).toThrow("dangerously-allow-all-scripts");
   });
 
+  test.skipIf(process.platform === "win32")(
+    "the readback's positive control requires the value it set, so an unread key cannot pass as an unset one",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "lcli768-control-"));
+      try {
+        const npm = join(root, "npm");
+        writeFileSync(npm, '#!/bin/sh\nprintf "%s\\n" "$STUB_READBACK"\n', { mode: 0o755 });
+        const readBack = (value: string) =>
+          readBackScriptApprovalPositiveControl(npm, { PATH: process.env.PATH, STUB_READBACK: value }, root);
+        await expect(readBack(POSITIVE_CONTROL_ALLOW_SCRIPTS)).resolves.toBe(POSITIVE_CONTROL_ALLOW_SCRIPTS);
+        await expect(readBack("undefined")).rejects.toThrow("cannot tell an unset key from an unread one");
+        // The control writes its OWN config: the file it sets the key in is not the empty user config.
+        expect(readFileSync(join(root, "npm-allow-scripts-control.npmrc"), "utf8")).toBe(
+          `allow-scripts=${POSITIVE_CONTROL_ALLOW_SCRIPTS}\n`,
+        );
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
   test("optionalPlatformEvidence: only the root and own platform installed, packument reads recorded, a registry tarball refused", () => {
     const root = mkdtempSync(join(tmpdir(), "lcli768-optional-"));
     try {
@@ -1105,8 +1335,13 @@ describe("DEC-240 (a4) condition 2: the flagless global install env carries no t
       expect(() => optionalPlatformEvidence(root, "@opum-ai/lore-linux-x64", { stdout: "", stderr: tarball })).toThrow(
         "fetched @opum-ai tarballs",
       );
-      mkdirSync(join(scope, "lore-darwin-arm64"));
+      // A log with no fetch line at all means the parser saw nothing: that install's evidence is unmeasured, and
+      // every statement it could support would be vacuous. It is a failure, not a clean install.
       expect(() => optionalPlatformEvidence(root, "@opum-ai/lore-linux-x64", { stdout: "", stderr: "" })).toThrow(
+        "no fetch line",
+      );
+      mkdirSync(join(scope, "lore-darwin-arm64"));
+      expect(() => optionalPlatformEvidence(root, "@opum-ai/lore-linux-x64", { stdout: "", stderr: reads })).toThrow(
         "expected exactly",
       );
     } finally {
@@ -1115,18 +1350,35 @@ describe("DEC-240 (a4) condition 2: the flagless global install env carries no t
   });
 });
 
-/** The npm on PATH and its major, so the real-install proofs run only where npm can block scripts at all. */
+/**
+ * The npm on PATH and its major, so the real-install proofs run only where npm can block scripts at all.
+ *
+ * A version that cannot be read is a FAILURE, never a skip. `skipIf(!(major >= 12))` is TRUE for NaN, so an npm
+ * whose `--version` did not come back used to look exactly like an npm that is merely too old -- the suite went
+ * green with the proof silently unrun. The intended skip is narrower than that: these proofs rehearse the
+ * flagless install on a LOCAL npm 12, and on PR CI the runners carry npm 10/11, so they skip there BY DESIGN. The
+ * evidence that counts is the release.yml proof on the pinned npm 12, which runs in the qualification's own
+ * report. Only major 12 runs them here: a later major is a new ruling (DEC-240 a5).
+ */
 function hostNpm(): { path: string; version: string; major: number } {
   const path = Bun.which("npm") ?? "npm";
-  const version = spawnSync(path, ["--version"], {
-    encoding: "utf8",
-    shell: process.platform === "win32",
-  }).stdout.trim();
+  const result = spawnSync(path, ["--version"], { encoding: "utf8", shell: process.platform === "win32" });
+  if (result.error !== undefined || result.status !== 0) {
+    throw new Error(
+      `\`${path} --version\` could not be read (${result.error?.message ?? `exit ${result.status}`}), so the rehearsal's skip condition would be a silent one`,
+    );
+  }
+  const version = (result.stdout ?? "").trim();
+  if (!/^\d+\.\d+\.\d+$/.test(version)) {
+    throw new Error(
+      `\`${path} --version\` printed ${JSON.stringify(version)}, which is not a version, so the rehearsal's skip condition would be a silent one`,
+    );
+  }
   return { path, version, major: Number(version.split(".")[0]) };
 }
 const HOST_NPM = hostNpm();
 
-describe.skipIf(!(HOST_NPM.major >= 12) || process.platform === "win32")(
+describe.skipIf(HOST_NPM.major !== 12 || process.platform === "win32")(
   "DEC-240 (a5) item 4: a real flagless install blocks and reports an unapproved fixture script (rehearsal on the host npm)",
   () => {
     function proofEnv(scratch: string, userConfigText: string): Record<string, string | undefined> {
@@ -1158,17 +1410,20 @@ describe.skipIf(!(HOST_NPM.major >= 12) || process.platform === "win32")(
       }
     }, 120_000);
 
-    test("an inherited allow-scripts list approves the script silently, and the proof refuses to pass", async () => {
+    test("an inherited approval never reaches npm: the helper's own readback refuses it before anything installs", async () => {
       const scratch = mkdtempSync(join(tmpdir(), "lcli768-proof-"));
       try {
         // The hazard (a5) item 3 names: the same fixture, but the USER config approves it. Measured on npm 12.2.x:
-        // a bare or pinned allow-scripts entry did NOT approve a global tarball install, the allow-all switch does,
-        // so the rejection control uses that; the gate reads allow-scripts back too, for the shapes that do apply.
+        // a bare or pinned allow-scripts entry did NOT approve a global tarball install, the allow-all switch does.
+        // That is why the install helper reads the effective config back through its MERGED env: a config a caller
+        // supplies is refused there, before npm runs, so the fixture script cannot execute at all. (The companion
+        // control -- that the same approval really does run such a script, so the refusal is load-bearing -- is the
+        // real-install test in test/ci-hardening.test.ts, which runs on npm 10/11/12 rather than only npm 12.)
         const env = proofEnv(scratch, "dangerously-allow-all-scripts=true\n");
         await expect(proveUnapprovedScriptsBlocked(HOST_NPM.path, env, scratch, HOST_NPM.version)).rejects.toThrow(
-          "RAN an unapproved dependency postinstall",
+          'dangerously-allow-all-scripts is "true", not false',
         );
-        // And a variable-borne approval never reaches npm: the install helper refuses it first.
+        // And a variable-borne approval never reaches npm either: the scrubber refuses it first.
         const viaEnv = { ...proofEnv(scratch, ""), npm_config_dangerously_allow_all_scripts: "true" };
         await expect(proveUnapprovedScriptsBlocked(HOST_NPM.path, viaEnv, scratch, HOST_NPM.version)).rejects.toThrow(
           "no script approval",

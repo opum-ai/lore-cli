@@ -325,7 +325,21 @@ function packageReport(platform: (typeof LADYBUG_QUALIFICATION_PLATFORMS)[number
       globalInstallScriptPolicyClean: true,
       globalLauncherSmoke: true,
       scriptBlockingProof: { npm: "12.2.1", fixtureScriptRan: false, reported: true },
-      optionalPlatformPackages: { installed: ["lore", `lore-${platform.distribution}`], registryReads: [] },
+      scriptApprovalConfig: { allowScripts: "undefined", dangerouslyAllowAllScripts: "false", positiveControl: "x" },
+      // DEC-240 (a5) item 4: the install reads the packument of every platform package it does not install.
+      optionalPlatformPackages: {
+        installed: ["lore", `lore-${platform.distribution}`],
+        registryReads: [
+          { status: 200, kind: "packument", url: "https://registry.npmjs.org/@opum-ai%2flore" },
+          ...LADYBUG_QUALIFICATION_PLATFORMS.filter((other) => other.distribution !== platform.distribution).map(
+            (other) => ({
+              status: 200,
+              kind: "packument" as const,
+              url: `https://registry.npmjs.org/@opum-ai%2flore-${other.distribution}`,
+            }),
+          ),
+        ],
+      },
     },
     smoke: { launcher: commands, standalone: commands, outputsStable: true },
     native: {
