@@ -297,7 +297,7 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
   const artifactRoot = dirname(input.output);
   mkdirSync(artifactRoot, { recursive: true });
   const npmEnvironment = {
-    ...process.env,
+    ...withoutInstallSecrets(process.env),
     npm_config_audit: "false",
     npm_config_cache: join(scratch, "npm-cache"),
     npm_config_fund: "false",
@@ -336,6 +336,12 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
     assertRegularFile(platformTarball, "platform tarball");
 
     progress("installing both tarballs into an isolated global npm prefix without script approval");
+    // DEC-240 (a4): the ONE ruled exception to "npm install carries --ignore-scripts". It installs only the
+    // locally built tarballs, by path, into a scratch prefix, with no token in its env (asserted below), and
+    // assertNoInstallScriptApproval keeps it safe: npm 12 blocks and reports unapproved scripts rather than
+    // running them. If release hosts ever run an npm that runs unapproved scripts by default, the exception
+    // lapses and goes back to opum-doc. test/ci-hardening.test.ts lists this line as the single exception.
+    assertNoInstallSecrets(npmEnvironment);
     const globalInstall = await run(npm, ["install", "--global", rootTarball, platformTarball], {
       cwd: scratch,
       env: npmEnvironment,
@@ -371,7 +377,7 @@ async function qualify(input: PackageQualificationInput): Promise<PackageQualifi
     mkdirSync(installRoot, { recursive: true });
     progress("installing both tarballs into an isolated Node project");
     await run(npm, ["init", "-y"], { cwd: installRoot, env: npmEnvironment });
-    await run(npm, ["install", rootTarball, platformTarball], {
+    await run(npm, ["install", "--ignore-scripts", rootTarball, platformTarball], {
       cwd: installRoot,
       env: npmEnvironment,
       timeoutMs: 600_000,
@@ -1272,6 +1278,23 @@ function makeTreeWritable(path: string): void {
 
 function globalPackageRoot(prefix: string, platform: NodeJS.Platform): string {
   return platform === "win32" ? join(prefix, "node_modules") : join(prefix, "lib", "node_modules");
+}
+
+/** DEC-240 (a4) condition 2: tokens that must never be in the env of the flagless global install. */
+export const INSTALL_SECRET_ENV_NAMES = ["GITHUB_TOKEN", "GH_TOKEN", "NODE_AUTH_TOKEN", "NPM_TOKEN"] as const;
+
+export function withoutInstallSecrets(env: Record<string, string | undefined>): Record<string, string | undefined> {
+  const out = { ...env };
+  for (const name of INSTALL_SECRET_ENV_NAMES) delete out[name];
+  return out;
+}
+
+/** Presence, not value: a token set to the empty string is still a token variable in the install's env. */
+export function assertNoInstallSecrets(env: Record<string, string | undefined>): void {
+  const present = INSTALL_SECRET_ENV_NAMES.filter((name) => Object.hasOwn(env, name));
+  if (present.length > 0) {
+    throw new Error(`the global npm install env must carry no token (DEC-240 a4); found ${present.join(", ")}`);
+  }
 }
 
 function assertNoInstallScriptApproval(result: CommandResult): void {

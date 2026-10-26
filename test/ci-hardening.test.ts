@@ -18,7 +18,7 @@ import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import * as yaml from "js-yaml";
 
 const ROOT = join(import.meta.dir, "..");
@@ -117,6 +117,75 @@ function installViolations(units: Unit[]): string[] {
   return out;
 }
 
+/** `benchmark/` and `scripts/` sources an install can hide in, besides workflow `run:` lines. */
+const SOURCE_DIRS = ["benchmark", "scripts"];
+const SOURCE_EXTENSIONS = /\.(ts|mjs|cjs|sh)$/;
+
+interface SourceFile {
+  /** Repo-relative path, forward slashes. */
+  path: string;
+  text: string;
+}
+
+function loadSources(): SourceFile[] {
+  const out: SourceFile[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === "node_modules") continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (SOURCE_EXTENSIONS.test(entry.name)) {
+        out.push({ path: relative(ROOT, full).split("\\").join("/"), text: readFileSync(full, "utf8") });
+      }
+    }
+  };
+  for (const dir of SOURCE_DIRS) walk(join(ROOT, dir));
+  return out;
+}
+
+/**
+ * DEC-240 (a4): the ONE ruled exception to item 1. Keyed by file and by the exact argument list, with a
+ * count of one, so a second flagless install in that file (even a copy of this one) is a violation.
+ */
+const FLAGLESS_INSTALL_EXCEPTION = {
+  path: "benchmark/ladybug/package-qualification.ts",
+  args: '"install", "--global", rootTarball, platformTarball',
+};
+
+/** Every npm install in a source file: a spawn-style argument list `["install", ...]` or a shell `npm install` line. */
+function sourceInstalls(file: SourceFile): { args: string; line: number }[] {
+  const out: { args: string; line: number }[] = [];
+  const lineOf = (index: number): number => file.text.slice(0, index).split("\n").length;
+  for (const match of file.text.matchAll(/\[\s*(?:"install"|'install')\s*,([^\]]*)\]/g)) {
+    out.push({ args: `"install",${match[1] ?? ""}`.replace(/,\s+/g, ", ").trim(), line: lineOf(match.index ?? 0) });
+  }
+  // A shell install is a command in a .sh file; in a script it is a string that BEGINS with `npm install`
+  // (prose that merely mentions the words, like an error message, is not an install).
+  const shellInstall = file.path.endsWith(".sh")
+    ? /^[ \t]*(?!#)(?:[^\n]*(?:&&|;|\|\|)[ \t]*)?npm\s+install\b[^\n]*$/gm
+    : /^[^\n]*["'`]npm\s+install\b[^\n]*$/gm;
+  for (const match of file.text.matchAll(shellInstall)) {
+    out.push({ args: match[0].trim(), line: lineOf(match.index ?? 0) });
+  }
+  return out;
+}
+
+function sourceInstallViolations(files: SourceFile[]): string[] {
+  const out: string[] = [];
+  for (const file of files) {
+    let exceptionsUsed = 0;
+    for (const install of sourceInstalls(file)) {
+      if (install.args.includes("--ignore-scripts")) continue;
+      if (file.path === FLAGLESS_INSTALL_EXCEPTION.path && install.args === FLAGLESS_INSTALL_EXCEPTION.args) {
+        exceptionsUsed += 1;
+        if (exceptionsUsed === 1) continue;
+      }
+      out.push(`${file.path}:${install.line}: npm install without --ignore-scripts: ${install.args}`);
+    }
+  }
+  return out;
+}
+
 describe("DEC-240 item 2: persist-credentials", () => {
   test("every actions/checkout step in every workflow and action sets persist-credentials: false", () => {
     const units = loadUnits();
@@ -205,6 +274,39 @@ describe("DEC-240 item 1: lore and quest install without lifecycle scripts", () 
       steps: [{ run: 'npm install -g "@opum-ai/quest@$VERSION"\nnpm install "$GITHUB_WORKSPACE/$tarball"' }],
     };
     expect(installViolations([old])).toHaveLength(2);
+  });
+
+  test("benchmark/ and scripts/ sources: every npm install carries --ignore-scripts but the one DEC-240 (a4) exception", () => {
+    const files = loadSources();
+    // Positive control: the walk read both trees, and the exception's own file with its one install.
+    expect(files.some((f) => f.path.startsWith("benchmark/"))).toBe(true);
+    expect(files.some((f) => f.path.startsWith("scripts/"))).toBe(true);
+    const own = files.find((f) => f.path === FLAGLESS_INSTALL_EXCEPTION.path);
+    expect(own).toBeDefined();
+    const flagless = sourceInstalls(own as SourceFile).filter((i) => !i.args.includes("--ignore-scripts"));
+    expect(flagless.map((i) => i.args)).toEqual([FLAGLESS_INSTALL_EXCEPTION.args]);
+    expect(sourceInstallViolations(files)).toEqual([]);
+  });
+
+  test("source scan rejects an unflagged install, a second copy of the exception, and a shell install; accepts the flagged one", () => {
+    const exceptionLine = `await run(npm, [${FLAGLESS_INSTALL_EXCEPTION.args}], {});\n`;
+    const home = FLAGLESS_INSTALL_EXCEPTION.path;
+    expect(sourceInstallViolations([{ path: home, text: exceptionLine }])).toEqual([]);
+    // Mutants: each is the defect's own shape and must go red.
+    expect(sourceInstallViolations([{ path: home, text: exceptionLine + exceptionLine }])).toHaveLength(1);
+    expect(sourceInstallViolations([{ path: "benchmark/x.ts", text: exceptionLine }])).toHaveLength(1);
+    expect(sourceInstallViolations([{ path: home, text: 'run(npm, ["install", "--global", other]);' }])).toHaveLength(1);
+    expect(sourceInstallViolations([{ path: "scripts/x.sh", text: 'npm install "$tarball"\n' }])).toHaveLength(1);
+    expect(sourceInstallViolations([{ path: "scripts/y.mjs", text: 'run("npm", ["install", "lodash"]);' }])).toHaveLength(1);
+    expect(sourceInstallViolations([{ path: "scripts/z.mjs", text: 'sh("npm install foo");' }])).toHaveLength(1);
+    expect(sourceInstallViolations([{ path: "scripts/z.mjs", text: 'throw new Error(`the npm install failed`);' }])).toEqual([]);
+    // Accepts: the hardened shapes.
+    expect(
+      sourceInstallViolations([
+        { path: "scripts/x.sh", text: 'npm install --ignore-scripts "$tarball"\n# npm install "$tarball"\n' },
+        { path: home, text: 'run(npm, ["install", "--ignore-scripts", a, b]);' },
+      ]),
+    ).toEqual([]);
   });
 
   test("proved with a real install: a dependency whose postinstall fails still installs under --ignore-scripts, and fails without it", () => {

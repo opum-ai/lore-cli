@@ -5,10 +5,12 @@ import { join } from "node:path";
 import * as yaml from "js-yaml";
 import { packageBuildConfig, windowsReferenceOnlyLadybugPlugin } from "../benchmark/ladybug/package-build";
 import {
+  assertNoInstallSecrets,
   assertPackageQualificationReport,
   boundedNativeProbeOutput,
   classifyWindowsProbeOutcome,
   isKnownNativeCrash,
+  INSTALL_SECRET_ENV_NAMES,
   isProvenAbruptWindowsImportCrash,
   LADYBUG_PACKAGE_QUALIFICATION_SCHEMA,
   NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT,
@@ -19,6 +21,7 @@ import {
   resolveInstalledOptionalPackageJson,
   WINDOWS_ADDON_LOAD_FAILURE_MESSAGE,
   windowsAddonLoadFailurePolicyHolds,
+  withoutInstallSecrets,
 } from "../benchmark/ladybug/package-qualification";
 
 const RELEASE_PATH = join(import.meta.dir, "..", ".github", "workflows", "release.yml");
@@ -929,5 +932,38 @@ describe("matching-host Ladybug package qualification", () => {
     expect(boundedNativeProbeOutput(long, Number.NaN)).toHaveLength(
       NATIVE_PROBE_OUTPUT_EXCERPT_LIMIT + "...[1000 UTF-16 code units elided]...".length,
     );
+  });
+});
+
+describe("DEC-240 (a4) condition 2: the flagless global install env carries no token", () => {
+  test("each of the four token names present fails the assertion, and an env without them passes", () => {
+    expect([...INSTALL_SECRET_ENV_NAMES]).toEqual(["GITHUB_TOKEN", "GH_TOKEN", "NODE_AUTH_TOKEN", "NPM_TOKEN"]);
+    for (const name of INSTALL_SECRET_ENV_NAMES) {
+      expect(() => assertNoInstallSecrets({ PATH: "/bin", [name]: "x" })).toThrow(name);
+      // Presence, not truthiness: an empty value is still a token variable in that env.
+      expect(() => assertNoInstallSecrets({ [name]: "" })).toThrow(name);
+    }
+    expect(() => assertNoInstallSecrets({ PATH: "/bin", npm_config_audit: "false" })).not.toThrow();
+  });
+
+  test("withoutInstallSecrets removes all four and keeps everything else", () => {
+    const scrubbed = withoutInstallSecrets({
+      PATH: "/bin",
+      GITHUB_TOKEN: "a",
+      GH_TOKEN: "b",
+      NODE_AUTH_TOKEN: "c",
+      NPM_TOKEN: "d",
+    });
+    expect(scrubbed).toEqual({ PATH: "/bin" });
+    expect(() => assertNoInstallSecrets(scrubbed)).not.toThrow();
+  });
+
+  test("the install step builds its env through the scrubber and asserts before the install", () => {
+    const source = readFileSync(join(import.meta.dir, "..", "benchmark", "ladybug", "package-qualification.ts"), "utf8");
+    expect(source).toContain("...withoutInstallSecrets(process.env)");
+    const assertAt = source.indexOf("assertNoInstallSecrets(npmEnvironment);");
+    const installAt = source.indexOf('run(npm, ["install", "--global"');
+    expect(assertAt).toBeGreaterThan(0);
+    expect(installAt).toBeGreaterThan(assertAt);
   });
 });
