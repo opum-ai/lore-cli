@@ -292,6 +292,9 @@
 - 2026-10-11T23:55:09-05:00 a6806b83ee7cdbeaa9f19405fa59e13de1ee8d82 fix(LCLI-701): flag angle-bracket autolinks in the MDX portability scan (#555)
 - 2026-10-12T02:54:16-05:00 dd59c65f736f8db4fd0a62c9ac7eaa4d8d21c8ad feat(LCLI-702): fail lore check when a shared source leaves a pinning profile over capacity (#557)
 - 2026-10-13T21:27:25-05:00 238ae22b11b11679847fd2cb95bfb49b19c4bba6 feat(LCLI-682): role profiles declare context budgets the compiler measures and reports
+- 2026-10-13T22:38:38-05:00 5f92b35e218e51419a101cfe66761dba8feba4ea feat(LCLI-682): role profiles declare context budgets the compiler measures and reports [DRAFT: provider-usage + ADR held] (#577)
+- 2026-10-14T03:57:05-05:00 08414ef93ed6a7d650c1268863088c9f5a3264fe feat(LCLI-669): enforce the ADR lifecycle status enum on both OKF versions; supersede writes deprecated (DEC-192) (#579)
+- 2026-10-14T17:43:44-05:00 f1b775b37260afe2cd419b41a7c7fd234aa19f33 feat(LCLI-722): the budget report attributes each omitted ranked section (AC4, Piece B) (#600)
 
 ## docs/adr
 
@@ -307,6 +310,7 @@
 - 2026-09-29T21:16:09-05:00 5781f7ba13f9f894fc3e4c28f8b3620c166d4517 chore(LCLI-653, LCLI-654): bump lore to 0.12.0, and resolve quest from a pinned source build when its version is not on npm (DEC-55) (#433)
 - 2026-10-08T16:47:49-05:00 eae8f5959250cc0430c592e580b80446eb264eea feat(LCLI-691): check reports the frontmatter lint; retrieval stops emitting it (#525)
 - 2026-10-11T22:41:32-05:00 9ca945ad31acffc792d7c9511994058f0864c36f chore(LCLI-693): drop hard-coded bundle-derived counts from test docstrings, a src comment and an ADR (#553)
+- 2026-10-22T13:37:11-05:00 222ecb1bd8364772e78e69ec6229f7484cc92a35 chore(LCLI-750): drop the QUEST_SOURCE_REF source-build pin (#646)
 
 ## docs/reference
 
@@ -420,6 +424,17 @@
 - 2026-10-12T07:34:48-05:00 1975b4f9f9b803bb03530517d0523ff4fb78144c fix(LCLI-706): the MDX autolink remedy reads 'use [text](url)' only (DEC-172 (4bi)) (#559)
 - 2026-10-12T07:57:20-05:00 92022b8be2f929e7337a3307542a8e7205b1f23b fix(LCLI-707): coalesce a person's in-flight refresh and reset both guards at session.end (#560)
 - 2026-10-12T09:09:13-05:00 5ad46ad54db77d6b2f2d9e2de4d65d99c112039f fix(LCLI-709): generation-token the refresh guards at session.end, and correct the tick-skip wording (#563)
+- 2026-10-14T04:14:06-05:00 350dba1c9a4fb7581e8594dfca14a876099f10d4 docs(LCLI-669): the three review follow-ups, and the record correction F1 (#583)
+- 2026-10-14T04:38:03-05:00 6ab1e32bc0b20be4d206dd5f5ad55b550783acf9 feat(LCLI-670): link a decision id the way a task id is linked (DEC-192 (2), (5)) (#581)
+- 2026-10-14T05:38:43-05:00 524e102fe5b709e7f711333b3153f752fd248695 feat(LCLI-723): the profile's declared status enum is the effective one (#586)
+- 2026-10-14T06:18:18-05:00 e9568455a0fda82436916a311e30687c977f5c49 fix(LCLI-727): the qualifier is a name at every arm; the label guards skip the doc-side arm (#588)
+- 2026-10-19T21:17:59-05:00 85d583c8c4338df6da65b57f9f4230c99ecea10e chore(LCLI-714): bump lore to 0.14.1 and repair the release gate probe (#620)
+- 2026-10-20T14:21:16-05:00 810815f2514d890c98fddd8d70ce2b5c976eeec7 docs(LCLI-714): release truth records 0.14.1 as released; promote output not captured (#629)
+- 2026-10-20T14:39:11-05:00 f1525d6a62ff19da6621d0ae8b15d76fdbb1f2a2 chore(LCLI-714): closing pass: round-3 verdict, AC scorecard, wording, retitle to 0.14.1 (#630)
+- 2026-10-23T08:50:37-05:00 13f844cc424d704a52cc3d4aad2d8dae6c7c59ed ` feat(LCLI-740): lore cache clear <path> removes a checkout's read-only .lore/cache (DEC-208) (#666) `
+- 2026-10-24T10:05:08-05:00 503c725169dfad8cce04079242fa43c434a45cb4 fix(LCLI-762): cache clear review follow-ups (denied exit, run-root resolution, tests) (#668)
+- 2026-10-25T08:15:17-05:00 0c712d768c5fb1cae36abaaea4670eddc0e21f72 chore(LCLI-764): drop skill_source=plugin so the lore skill is repo-local while opum-lore is off (DEC-238 a1) (#677)
+- 2026-10-25T08:50:03-05:00 93943e000bb97e6d1352bedef0d73b2a98f64f70 feat(LCLI-765): name the override that disables opum-lore, what up-to-date covers, pending bytes on protected files (DEC-238 a5/a6) (#678)
 
 ## docs/runbooks
 
@@ -473,11 +488,17 @@
 - 2026-09-29T12:02:42-05:00 10274f641a9e5e6408772eeede1780a8a9bef9a2 fix(LCLI-544): assert bun.lock's platform pins against package.json (#431)
 - 2026-10-02T18:29:42-05:00 8702c08f3d28082ee40c5e580d8eeb45cffa0e4c chore(LCLI-665): apply ruling A, and file the full-screen toggle task (#475)
 - 2026-10-11T18:22:23-05:00 acca9ff20a865743db0621a5f755b4c66a008890 docs(LCLI-690): name the schema regeneration in the LCLI-469 pin-bump handshake (#552)
+- 2026-10-20T04:51:21-05:00 d434a27344eaf6ac83683caa4aa6108651847552 feat(LCLI-744): promote-latest accepts a failed run only under the DEC-204 (a4) Windows-probe excuse (#625)
+- 2026-10-20T15:59:40-05:00 fae2617b951d791f994ca272c7a9dbc4e99108ca fix(LCLI-689): promote-latest waits out npm read lag in its post-write verification (#633)
+- 2026-10-21T12:26:59-05:00 a1840ade82a717ef166f46a79f9df142c92fbe41 fix(LCLI-748): promote-latest resume-path read-lag gate (DEC-225) and wait announcements (#639)
+- 2026-10-22T16:54:36-05:00 ec4178dbd28135e1d842bb545cba619323e6eb25 docs(LCLI-752): record the release Environment's main + v* branch policy (DEC-234) (#652)
 
 ## docs/specs
 
 - 2026-06-23T19:50:34-05:00 b7395b168c68393bee89d437b33c92daf224e53b feat(LORE-10): .lore/config.toml loader (native TOML + env overlay) (#10)
 - 2026-09-20T23:27:18-05:00 90abf91826a84a2739977f0b3268c0e01fbecfba docs(LCLI-563): specify the committed-schema generator stamp (#219)
+- 2026-10-14T09:23:31-05:00 63140e3e075ed197e2214997755127e7233ebc76 feat(LCLI-722): a declared task_evidence CAPS evidence selection, and budgets name their sections (#592)
+- 2026-10-14T11:04:12-05:00 8145c1f76060b425537ee640f04cfcc88fccc349 feat(LCLI-722): the four role profiles pin the DEC-194 (8) anchor sets (#596)
 
 ## docs/stories
 
