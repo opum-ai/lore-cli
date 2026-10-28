@@ -8,7 +8,7 @@ tags:
   - library
 summary: Keep explicitly deferred MCP, Confluence, and importable-library capabilities visible without activating them.
 timestamp: 2026-08-03T16:05:06.747Z
-status: todo
+status: in-progress
 tasks:
   - lcli-42
   - lcli-43
@@ -38,10 +38,10 @@ authorization to reactivate it.
 <!-- lore:tasks:begin -->
 | Task | Title | Status |
 |---|---|---|
-| [LCLI-42](../../.quest/tasks/LCLI-42.json) | Local lore MCP server (on hold) | To Do |
-| [LCLI-43](../../.quest/tasks/LCLI-43.json) | Confluence one-way publish adapter (deferred) | To Do |
+| [LCLI-42](../../.quest/tasks/LCLI-42.json) | Local lore MCP server (on hold) | Paused |
+| [LCLI-43](../../.quest/tasks/LCLI-43.json) | Confluence one-way publish adapter (deferred) | Paused |
 | [LCLI-44](../../.quest/tasks/LCLI-44.json) | Confluence production mirror (deferred) | To Do |
-| [LCLI-45](../../.quest/tasks/LCLI-45.json) | [Deferred] Typed importable library build (.d.ts + subpath exports) | To Do |
+| [LCLI-45](../../.quest/tasks/LCLI-45.json) | [Deferred] Typed importable library build (.d.ts + subpath exports) | Paused |
 <!-- lore:tasks:end -->
 
 ## Notes
