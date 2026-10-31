@@ -291,7 +291,7 @@ describe("matching-host Ladybug package qualification", () => {
   test("all supported distributions map to their approved matching hosts", () => {
     const matrix = releaseMatrix(loadWorkflow());
     expect(matrix.map(({ name, runner, os, cpu }) => ({ name, runner, os, cpu }))).toEqual([
-      { name: "darwin-arm64", runner: "macos-latest", os: "darwin", cpu: "arm64" },
+      { name: "darwin-arm64", runner: "macos-15", os: "darwin", cpu: "arm64" },
       { name: "darwin-x64", runner: "macos-15-intel", os: "darwin", cpu: "x64" },
       { name: "linux-arm64", runner: "ubuntu-24.04-arm", os: "linux", cpu: "arm64" },
       { name: "linux-x64", runner: "ubuntu-24.04", os: "linux", cpu: "x64" },
