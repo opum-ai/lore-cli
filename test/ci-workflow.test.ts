@@ -78,7 +78,7 @@ describe("ci.yml exact-host LadybugDB qualification", () => {
     expect(matrix).toContain("inputs.ladybug_exact_hosts_only == true");
     expect(matrix).toContain('["macos-15-intel","ubuntu-24.04-arm"]');
     expect(matrix).toContain('["ubuntu-latest","windows-latest"]');
-    expect(matrix).toContain('["ubuntu-latest","windows-latest","macos-latest"]');
+    expect(matrix).toContain('["ubuntu-latest","windows-latest","macos-15"]');
   });
 
   test("the narrow mode skips every unrelated CI job", () => {
@@ -178,7 +178,7 @@ describe("ci.yml exact-host LadybugDB qualification", () => {
 
   test("the macOS Test arm is bounded by the hang guard, retries only hangs, and labels a retried green (LCLI-760, DEC-236)", () => {
     const testScript = loadWorkflow().jobs.check?.steps?.find((step) => step.name === "Test")?.run ?? "";
-    const start = testScript.indexOf('== "macos-latest"');
+    const start = testScript.indexOf('== "macos-15"');
     const end = testScript.indexOf('== "ubuntu-24.04-arm"');
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
