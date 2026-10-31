@@ -1953,18 +1953,6 @@ function selectedBackendFor(parsed: InitArgs, priorSelection: () => TrackerSelec
   return parsed.tracker ?? priorSelection().backend;
 }
 
-/**
- * Whether any of `lore init`'s own flags was passed — the signal that overrides a bare-TTY
- * invocation into the non-interactive path (LORE-260 AC#2).
- *
- * **`--allow-no-git` is deliberately absent from this set** (LCLI-358.1). ADR-0017's rule is that
- * any flag skips the wizard, and it holds because every other flag *answers a wizard question*, so
- * passing one means the caller already decided what the wizard would have asked. `--allow-no-git`
- * answers a **preflight gate** instead: it waives a requirement rather than choosing a consumer.
- * Including it would make `lore init --allow-no-git` scaffold-and-exit, which leaves no way to
- * reach the wizard at all from a non-git directory — the exact situation the flag exists for. It
- * still suppresses its own prompt, so the 1:1 flag-to-question mapping is preserved.
- */
 /** The inputs of the wizard's gate, all already-resolved booleans (LCLI-771). */
 export interface WizardGateInputs {
   readonly stdinIsTTY: boolean;
@@ -1995,6 +1983,18 @@ export function wizardSkippedNotice(stdinIsTTY: boolean, stderrIsTTY: boolean): 
   return `lore init: no interactive terminal was detected (stdin is a TTY: ${stdinIsTTY}, stderr is a TTY: ${stderrIsTTY}), so the wizard did not run and no agent instructions or skill were written. Re-run in a terminal, or pass the flags: --codex --agents --yes --tracker <quest|backlog|jira>.\n`;
 }
 
+/**
+ * Whether any of `lore init`'s own flags was passed — the signal that overrides a bare-TTY
+ * invocation into the non-interactive path (LORE-260 AC#2).
+ *
+ * **`--allow-no-git` is deliberately absent from this set** (LCLI-358.1). ADR-0017's rule is that
+ * any flag skips the wizard, and it holds because every other flag *answers a wizard question*, so
+ * passing one means the caller already decided what the wizard would have asked. `--allow-no-git`
+ * answers a **preflight gate** instead: it waives a requirement rather than choosing a consumer.
+ * Including it would make `lore init --allow-no-git` scaffold-and-exit, which leaves no way to
+ * reach the wizard at all from a non-git directory — the exact situation the flag exists for. It
+ * still suppresses its own prompt, so the 1:1 flag-to-question mapping is preserved.
+ */
 function anyFlagGiven(parsed: InitArgs): boolean {
   return (
     parsed.yes ||

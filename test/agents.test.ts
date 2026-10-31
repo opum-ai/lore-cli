@@ -27,7 +27,13 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { commandHandlerNames, run } from "../src/cli";
-import { type AgentsResult, applyAgentsBridge, bridgeActionColor, runAgents } from "../src/commands/agents";
+import {
+  type AgentsResult,
+  applyAgentsBridge,
+  bridgeActionColor,
+  renderTrailer,
+  runAgents,
+} from "../src/commands/agents";
 import {
   buildNudgeBody,
   buildSkillDoc,
@@ -712,6 +718,19 @@ describe("lore agents — the codex bridge is covered too, but only where one al
     const forced = agents(["--force"]);
     expect(actionFor(forced.result, CODEX_LEGACY_SKILL_REL_PATH)).toBe("orphaned");
     expect(readFileSync(legacyAbs, "utf8")).toBe(buildCodexSkillDoc());
+  });
+
+  test("LCLI-771: a leftover plus a hand-edited skill keeps the --force remedy for the skill", () => {
+    agents();
+    withCodexBridge();
+    writeFileSync(codexSkillAbs(), "hand-edited\n");
+    const legacyAbs = join(root, CODEX_LEGACY_SKILL_REL_PATH);
+    mkdirSync(dirname(legacyAbs), { recursive: true });
+    writeFileSync(legacyAbs, "old\n");
+    const { result } = agents(["--check"]);
+    const trailer = renderTrailer(result) ?? "";
+    expect(trailer).toContain("lore agents --force");
+    expect(trailer).toContain("is a leftover");
   });
 
   test("LCLI-771: a legacy-only repository arms the codex half so --check reports the leftover rather than staying silent", () => {

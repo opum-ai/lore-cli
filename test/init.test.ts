@@ -808,13 +808,28 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
     expect(stderr).toContain("stdin is a TTY: false, stderr is a TTY: false");
     expect(existsSync(join(root, ".agents"))).toBe(false);
     expect(existsSync(join(root, "AGENTS.md"))).toBe(false);
+    expect(existsSync(join(root, ".claude"))).toBe(false);
+    expect(existsSync(join(root, "CLAUDE.md"))).toBe(false);
+  });
+
+  test("LCLI-771: --agents --codex lands both skills, each at its own path, and touches neither's directory", async () => {
+    const { result } = await init({ args: ["--agents", "--codex"], adapter: fakeAdapter([], { probe: "ok" }) });
+    expect(existsSync(join(root, ".claude/skills/lore/SKILL.md"))).toBe(true);
+    expect(existsSync(join(root, ".agents/skills/lore/SKILL.md"))).toBe(true);
+    expect(existsSync(join(root, ".codex"))).toBe(false);
+    expect(result.agents?.files.map((f) => f.path)).toContain(".claude/skills/lore/SKILL.md");
+    expect(result.codex?.files.map((f) => f.path)).toContain(".agents/skills/lore/SKILL.md");
+    expect(result.agents?.files.some((f) => f.path.startsWith(".agents/"))).toBe(false);
+    expect(result.codex?.files.some((f) => f.path.startsWith(".claude/"))).toBe(false);
   });
 
   test("LCLI-771: a flagged run and a --json run stay quiet", async () => {
     const flagged = await init({ args: ["--yes"], adapter: fakeAdapter([], { probe: "ok" }) });
-    expect(flagged.stderr).not.toContain("no interactive terminal detected");
+    expect(flagged.stderr).not.toContain(wizardSkippedNotice(false, false));
+    expect(flagged.stderr).toBe("");
     const json = await init({ jsonRequested: true });
-    expect(json.stderr).not.toContain("no interactive terminal detected");
+    expect(json.stderr).not.toContain(wizardSkippedNotice(false, false));
+    expect(json.stderr).toBe("");
   });
 
   test("--tracker jira persists the choice without prompting", async () => {

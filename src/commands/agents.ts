@@ -278,14 +278,14 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
  * codex half of `lore agents` (LCLI-364).
  *
  * The conditional is the load-bearing part, not an optimization. Before this, `--check` gated only
- * the Claude bridge and no workflow referenced codex at all, so `.codex/skills/lore/SKILL.md` and
+ * the Claude bridge and no workflow referenced codex at all, so `.agents/skills/lore/SKILL.md` and
  * AGENTS.md's managed block could drift from their generators indefinitely — and did: AGENTS.md was
  * found missing the `workspace` topic while CLAUDE.md, which has a gate, was current (LCLI-362).
  * One artifact enumerated and checked, its twin not, and the green check on the first reading as
  * coverage of both.
  *
  * But checking UNCONDITIONALLY would be its own defect. A repository that never opted into Codex has
- * no `.codex/` tree and no `lore:agents` block in AGENTS.md; planning the codex bridge there reports
+ * no `.agents/skills/lore` skill and no `lore:agents` block in AGENTS.md; planning the codex bridge there reports
  * `created` — drift — and turns every Claude-only repository permanently red. A gate everybody has
  * to disable protects nothing. So presence arms it: `lore init --codex` is what opts a repository in,
  * and from then on its codex bridge is held to the same standard as its Claude one.
@@ -300,7 +300,7 @@ function hasCodexBridge(
 ): boolean {
   // `readFileIfPresent` signals "absent" with `undefined`, not `null` -- a `!== null` test here is
   // true for a MISSING file and silently arms the codex half in every Claude-only repository,
-  // creating the very `.codex/` tree whose absence was supposed to disarm it.
+  // creating the very `.agents/` tree whose absence was supposed to disarm it.
   if (codexSkillRaw !== undefined) return true;
   // A skill an older lore left at the pre-LCLI-771 path is still proof the repository opted in, and
   // arming on it is what lets `--check` report the leftover instead of staying silent about it.
@@ -495,6 +495,9 @@ function agentsRenderable(data: AgentsResult): Renderable<AgentsResult> {
   return { kind: "agents.result", data, pretty: renderPretty, plain: renderPlain };
 }
 
+/** One template shared with quest (QCLI-543): only the tool name and paths vary. */
+const LEGACY_LEFTOVER_MESSAGE = `${CODEX_LEGACY_SKILL_REL_PATH} is a leftover: lore now writes its Codex skill to ${CODEX_SKILL_REL_PATH}. Move or delete it by hand; lore never deletes it.`;
+
 /**
  * The per-action verb shown for a file: the drift status (`--check`) or the applied action (write
  * path). `path`/`skillSource` exist only to catch one specific case (LCLI-446): under
@@ -503,9 +506,6 @@ function agentsRenderable(data: AgentsResult): Renderable<AgentsResult> {
  * there, never `"unchanged"`), so the generic "up to date" label would otherwise claim a
  * maintained, matching file where none is meant to exist at all.
  */
-/** One template shared with quest (QCLI-543): only the tool name and paths vary. */
-const LEGACY_LEFTOVER_MESSAGE = `${CODEX_LEGACY_SKILL_REL_PATH} is a leftover: lore now writes its Codex skill to ${CODEX_SKILL_REL_PATH}. Move or delete it by hand; lore never deletes it.`;
-
 function actionLabel(path: string, action: BridgeAction, check: boolean, skillSource: SkillSource): string {
   if (action === "unchanged" && path === SKILL_REL_PATH && skillSource === "plugin") {
     return check ? "correctly absent (skill source: plugin)" : "absent (skill source: plugin)";
@@ -647,12 +647,19 @@ function renderPlain(data: AgentsResult): string {
  * `init`'s own rendering must not regress it just because it's a second, thinner caller.
  */
 export function renderTrailer(data: AgentsResult): string | undefined {
+  // The legacy-path leftover is reported ALONGSIDE whatever else the run found, never instead of it:
+  // a leftover plus a hand-edited skill must keep the `--force` remedy for the skill (LCLI-771).
+  const isLegacy = (file: { path: string; action: string }): boolean =>
+    file.path === CODEX_LEGACY_SKILL_REL_PATH && file.action === "orphaned";
+  const base = renderBaseTrailer({ ...data, files: data.files.filter((file) => !isLegacy(file)) });
+  if (!data.files.some(isLegacy)) return base;
+  const note = data.check ? `${LEGACY_LEFTOVER_MESSAGE} (exit 6)` : LEGACY_LEFTOVER_MESSAGE;
+  return base === undefined ? note : `${base}\n${note}`;
+}
+
+function renderBaseTrailer(data: AgentsResult): string | undefined {
   const hasProtected = data.files.some((file) => file.action === "protected");
-  const hasOrphaned = data.files.some(
-    (file) => file.action === "orphaned" && file.path !== CODEX_LEGACY_SKILL_REL_PATH,
-  );
-  const hasLegacy = data.files.some((file) => file.action === "orphaned" && file.path === CODEX_LEGACY_SKILL_REL_PATH);
-  const legacyNote = LEGACY_LEFTOVER_MESSAGE;
+  const hasOrphaned = data.files.some((file) => file.action === "orphaned");
   if (data.check) {
     const stale = data.files.some((file) => file.action !== "unchanged");
     if (!stale) {
@@ -661,23 +668,12 @@ export function renderTrailer(data: AgentsResult): string | undefined {
     if (hasOrphaned) {
       return "bridge carries a file config says should not exist — delete it, or run `lore agents --force` to remove it (exit 6)";
     }
-    if (
-      hasLegacy &&
-      data.files.every((file) => file.action === "unchanged" || file.path === CODEX_LEGACY_SKILL_REL_PATH)
-    ) {
-      return `${legacyNote} (exit 6)`;
-    }
     return hasProtected
       ? "bridge is out of date — a hand-edited file needs `lore agents --force` to regenerate (exit 6)"
       : "bridge is out of date — run `lore agents` to regenerate (exit 6)";
   }
-  if (hasLegacy && !hasOrphaned) {
-    return legacyNote;
-  }
   if (hasOrphaned) {
-    const count = data.files.filter(
-      (file) => file.action === "orphaned" && file.path !== CODEX_LEGACY_SKILL_REL_PATH,
-    ).length;
+    const count = data.files.filter((file) => file.action === "orphaned").length;
     return `${count} file(s) should not exist per agents.skill_source = "plugin" and were left in place — delete by hand, or run \`lore agents --force\` to remove a lore-generated one`;
   }
   if (!hasProtected) {
