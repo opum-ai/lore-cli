@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-10-31
+
 ### Fixed
+
+- **CI and the release's darwin-arm64 build leg run on a pinned `macos-15` runner, not `macos-latest` (LCLI-776, #700)**
+  `macos-latest` resolved to `macos-26-arm64` 20261026.0455.2, where `bun test` repeatedly went silent on the macOS leg. The leg and the release build's `darwin-arm64` runner now name `macos-15` (`macos-15-arm64` 20261028.0489.1); `darwin-x64` stays on `macos-15-intel`. This is a mitigation, not a fix for the wedge: the pinned leg was green on 4 of 8 dispatches, and the `bun` runtime wedge and the return to `macos-latest` stay open under LCLI-776. macOS 26 is no longer exercised by CI or the release build meanwhile.
 
 - **The bare-`lore init` notice names Codex-only flags (LCLI-774, ODOC-556)**
   The stderr notice added in LCLI-771 told an operator to "pass the flags: --codex --agents --yes --tracker ...", but `--agents` is an alias of `--claude`, so following it literally also wrote `.claude/skills/lore/SKILL.md` and `CLAUDE.md`. It now reads `--codex --yes --tracker <quest|backlog|jira|none> (add --claude for the Claude bridge)`, and a test runs the notice's own flags in a scratch repo and asserts nothing is written for Claude.
