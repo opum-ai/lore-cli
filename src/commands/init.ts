@@ -1978,9 +1978,11 @@ export function resolveWizardGate(inputs: WizardGateInputs): { interactive: bool
  * The stderr notice for a bare `lore init` that could not detect an interactive terminal. One
  * template shared with `quest init` (QCLI-543): the tool name and its own gate streams and flag list
  * are the only variables. lore's gate reads stdin and stderr, so those are the two it reports.
+ * The flag line must reproduce a CODEX-ONLY init when followed literally: `--agents` is an alias of
+ * `--claude` (LCLI-358.2), so naming it here wrote `.claude/` and `CLAUDE.md` too (LCLI-774).
  */
 export function wizardSkippedNotice(stdinIsTTY: boolean, stderrIsTTY: boolean): string {
-  return `lore init: no interactive terminal was detected (stdin is a TTY: ${stdinIsTTY}, stderr is a TTY: ${stderrIsTTY}), so the wizard did not run and no agent instructions or skill were written. Re-run in a terminal, or pass the flags: --codex --agents --yes --tracker <quest|backlog|jira>.\n`;
+  return `lore init: no interactive terminal was detected (stdin is a TTY: ${stdinIsTTY}, stderr is a TTY: ${stderrIsTTY}), so the wizard did not run and no agent instructions or skill were written. Re-run in a terminal, or pass the flags: --codex --yes --tracker <quest|backlog|jira|none> (add --claude for the Claude bridge).\n`;
 }
 
 /**
