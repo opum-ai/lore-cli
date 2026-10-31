@@ -820,7 +820,7 @@ describe("lore agents --target scopes the bridge and reports data.plugin (ruling
     const { code, data } = await agents(["--target", "codex"], port);
     expect(code).toBe(EXIT_OK);
     expect(data.files).toEqual([
-      { path: ".codex/skills/lore/SKILL.md", action: "created" },
+      { path: ".agents/skills/lore/SKILL.md", action: "created" },
       { path: "AGENTS.md", action: "created" },
     ]);
     expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toBe(claudeBefore);

@@ -334,6 +334,15 @@ non-interactively (ADR-0024's N1/N2/N5/N6).
   → `lore-setup.sh` sequence, just consolidated into more flags to read about
   in `--help`.
 
+## Amendment (LCLI-771, ODOC-556): a skipped wizard says so
+
+The gate above is unchanged. What changes is that it is no longer silent for a BARE invocation: a
+`lore init` with no flag and no `--json` that did not engage the wizard (stdin or stderr not a
+terminal, as an operator on a Windows host saw) writes a notice to stderr only, naming the flags
+(`--codex`, `--agents`, `--yes`, `--tracker`) and stating that no agent bridge was written. Stdout
+stays exclusively the envelope, the exit code is unchanged, and a flagged or `--json` run stays
+quiet. The decision is the pure function `resolveWizardGate` in `src/commands/init.ts`.
+
 ## Related
 
 - [ADR-0004: CLI-first; SKILL.md bridge; MCP deferred](0004-cli-first-skill-bridge-mcp-deferred.md) — the non-CLI-surface, agent/CI-safe stance this ADR carves one gated exception into.

@@ -479,7 +479,8 @@ export function runInit(options: InitOptions): number | Promise<number> {
   // machine-readable run must never prompt even at a genuinely interactive terminal.
   const stderrIsTTY = options.stderrIsTTY ?? false;
   const jsonRequested = options.jsonRequested ?? false;
-  const interactive = stdinIsTTY && stderrIsTTY && !jsonRequested && !anyFlagGiven(parsed);
+  const gate = resolveWizardGate({ stdinIsTTY, stderrIsTTY, jsonRequested, flagGiven: anyFlagGiven(parsed) });
+  const interactive = gate.interactive;
 
   const clock = options.clock ?? (() => new Date());
   // Build the scaffold plan and refuse a structurally blocked bundle FIRST (LCLI-358.1 review):
@@ -527,6 +528,13 @@ export function runInit(options: InitOptions): number | Promise<number> {
   assertBacklogProjectChoice(parsed, options.root);
 
   const git = options.git ?? realGitPreflight(options.root);
+
+  // LCLI-771 (ODOC-556): a BARE run that could not engage the wizard says so, on stderr only (a
+  // `--json` run's stdout stays the envelope), instead of scaffolding the base bundle and writing no
+  // bridge without a word -- what an operator on a Windows host saw.
+  if (gate.notice) {
+    (options.stderr ?? process.stderr).write(wizardSkippedNotice());
+  }
 
   if (interactive) {
     // No `priorSelection()` here any more (LCLI-358.5): the wizard asks the tracker question
@@ -1957,6 +1965,37 @@ function selectedBackendFor(parsed: InitArgs, priorSelection: () => TrackerSelec
  * reach the wizard at all from a non-git directory — the exact situation the flag exists for. It
  * still suppresses its own prompt, so the 1:1 flag-to-question mapping is preserved.
  */
+/** The inputs of the wizard's gate, all already-resolved booleans (LCLI-771). */
+export interface WizardGateInputs {
+  readonly stdinIsTTY: boolean;
+  readonly stderrIsTTY: boolean;
+  readonly jsonRequested: boolean;
+  /** Whether any init flag at all was passed. */
+  readonly flagGiven: boolean;
+}
+
+/**
+ * Whether the guided wizard engages, and whether a skipped wizard owes the operator a notice. Pure
+ * so the gate is testable with Windows-shaped stream properties (a runner has no TTY at all, so CI
+ * cannot show a real PowerShell/cmd/Windows Terminal). BOTH streams must be terminals and `--json`
+ * and any flag veto it (LORE-260, ADR-0017). `notice` is set only for a BARE, non-JSON run that
+ * did not get the wizard: a flagged run chose its own path and a `--json` run must stay quiet.
+ */
+export function resolveWizardGate(inputs: WizardGateInputs): { interactive: boolean; notice: boolean } {
+  const interactive = inputs.stdinIsTTY && inputs.stderrIsTTY && !inputs.jsonRequested && !inputs.flagGiven;
+  return { interactive, notice: !interactive && !inputs.flagGiven && !inputs.jsonRequested };
+}
+
+/** The stderr notice for a bare `lore init` that could not detect an interactive terminal. */
+export function wizardSkippedNotice(): string {
+  return [
+    "lore init: no interactive terminal detected (both stdin and stderr must be a terminal), so the guided wizard was skipped.",
+    "Only the base docs bundle was scaffolded; no agent skill or AGENTS.md/CLAUDE.md block was written.",
+    "To choose without prompts, pass flags, e.g. `lore init --codex --tracker quest --yes` (also --agents for Claude, --hermes, --antigravity).",
+    "",
+  ].join("\n");
+}
+
 function anyFlagGiven(parsed: InitArgs): boolean {
   return (
     parsed.yes ||

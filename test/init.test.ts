@@ -36,7 +36,9 @@ import {
   type InitOptions,
   type InitPrompter,
   type InitResult,
+  resolveWizardGate,
   runInit,
+  wizardSkippedNotice,
 } from "../src/commands/init";
 import { loadConfig } from "../src/config";
 import { buildGeminiContextDoc, GEMINI_MD_REL_PATH } from "../src/core/antigravity-bridge";
@@ -792,7 +794,26 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
     expect(result.tracker).toBeUndefined();
     expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).toEndWith('[tracker]\nbackend = "quest"\n');
     expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
-    expect(stderr).toBe("");
+    expect(stderr).toBe(wizardSkippedNotice());
+  });
+
+  test("LCLI-771: a bare run that could not engage the wizard says so on stderr, naming the flags, exit 0, no bridge", async () => {
+    const { code, result, stderr } = await init({ stdinIsTTY: false, stderrIsTTY: false });
+    expect(code).toBe(0);
+    expect(result.interactive).toBe(false);
+    expect(result.codex).toBeUndefined();
+    expect(result.agents).toBeUndefined();
+    expect(stderr).toBe(wizardSkippedNotice());
+    for (const flag of ["--codex", "--agents", "--yes", "--tracker"]) expect(stderr).toContain(flag);
+    expect(existsSync(join(root, ".agents"))).toBe(false);
+    expect(existsSync(join(root, "AGENTS.md"))).toBe(false);
+  });
+
+  test("LCLI-771: a flagged run and a --json run stay quiet", async () => {
+    const flagged = await init({ args: ["--yes"], adapter: fakeAdapter([], { probe: "ok" }) });
+    expect(flagged.stderr).not.toContain("no interactive terminal detected");
+    const json = await init({ jsonRequested: true });
+    expect(json.stderr).not.toContain("no interactive terminal detected");
   });
 
   test("--tracker jira persists the choice without prompting", async () => {
@@ -905,9 +926,9 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
   test("--codex sets up the Codex bridge without prompting", async () => {
     const { result } = await init({ args: ["--codex"], adapter: fakeAdapter([], { probe: "ok" }) });
     expect(result.codex?.files.map((file) => file.path).sort()).toEqual(
-      [".codex/skills/lore/SKILL.md", "AGENTS.md"].sort(),
+      [".agents/skills/lore/SKILL.md", "AGENTS.md"].sort(),
     );
-    expect(existsSync(join(root, ".codex/skills/lore/SKILL.md"))).toBe(true);
+    expect(existsSync(join(root, ".agents/skills/lore/SKILL.md"))).toBe(true);
     expect(existsSync(join(root, "AGENTS.md"))).toBe(true);
   });
 
@@ -1225,10 +1246,10 @@ describe("lore init — idempotent re-run with flags (AC#3)", () => {
     const second = await init({ args: ["--codex"], adapter: okAdapter() });
     expect(second.result.codex?.files.every((file) => file.action === "unchanged")).toBe(true);
 
-    writeFileSync(join(root, ".codex/skills/lore/SKILL.md"), "hand-edited\n");
+    writeFileSync(join(root, ".agents/skills/lore/SKILL.md"), "hand-edited\n");
     const protectedRun = await init({ args: ["--codex"], adapter: okAdapter() });
     expect(protectedRun.result.codex?.files.find((file) => file.path.endsWith("SKILL.md"))?.action).toBe("protected");
-    expect(readFileSync(join(root, ".codex/skills/lore/SKILL.md"), "utf8")).toBe("hand-edited\n");
+    expect(readFileSync(join(root, ".agents/skills/lore/SKILL.md"), "utf8")).toBe("hand-edited\n");
   });
 
   test("--codex preserves hand-authored AGENTS.md prose while refreshing Lore's managed block", async () => {
@@ -2597,7 +2618,7 @@ describe("lore init — the capability probe follows the selected tracker (LCLI-
       adapter: fakeAdapter([], { probe: new LoreError("not_found", "should never be reached", "") }),
     });
     expect(result.trackerCheck).toBeUndefined();
-    expect(stderr).toBe("");
+    expect(stderr).toBe(wizardSkippedNotice());
     expect(recordingRoot().spawned).toEqual([]);
   });
 
@@ -3839,5 +3860,44 @@ describe("lore init — the LCLI-700 repro: a completed no-removal migration sti
     expect(second.result.backlogRemoval?.removed).toBe(true);
     expect(existsSync(join(root, "backlog"))).toBe(false);
     expect(readdirSync(join(root, ".lore", "archive")).some((f) => f.endsWith(".zip"))).toBe(true);
+  });
+});
+
+describe("lore init — the wizard gate as a pure function (LCLI-771, ODOC-556)", () => {
+  // A GitHub Windows runner has no TTY, so CI cannot show the wizard in a real PowerShell, cmd or
+  // Windows Terminal. These pin the gate against the stream states those hosts can report, and the
+  // last test logs what Bun reports on THIS host so the windows-latest leg records its baseline.
+  const base = { stdinIsTTY: true, stderrIsTTY: true, jsonRequested: false, flagGiven: false };
+
+  test("both streams a terminal, bare, not --json: the wizard engages and no notice is owed", () => {
+    expect(resolveWizardGate(base)).toEqual({ interactive: true, notice: false });
+  });
+
+  test.each([
+    ["stdin not a terminal (piped, or a console Bun reports as non-TTY)", { stdinIsTTY: false }],
+    ["stderr not a terminal (redirected, or a Windows console Bun reports as non-TTY)", { stderrIsTTY: false }],
+    ["neither a terminal", { stdinIsTTY: false, stderrIsTTY: false }],
+  ])("%s: no wizard, and a bare run owes the operator a notice", (_name, over) => {
+    expect(resolveWizardGate({ ...base, ...over })).toEqual({ interactive: false, notice: true });
+  });
+
+  test("a flag or --json vetoes the wizard and owes no notice even at a terminal", () => {
+    expect(resolveWizardGate({ ...base, flagGiven: true })).toEqual({ interactive: false, notice: false });
+    expect(resolveWizardGate({ ...base, jsonRequested: true })).toEqual({ interactive: false, notice: false });
+    expect(resolveWizardGate({ ...base, flagGiven: true, stdinIsTTY: false })).toEqual({
+      interactive: false,
+      notice: false,
+    });
+  });
+
+  test("baseline: what this host's Bun reports for the three streams", () => {
+    const report = {
+      platform: process.platform,
+      stdin: process.stdin.isTTY,
+      stdout: process.stdout.isTTY,
+      stderr: process.stderr.isTTY,
+    };
+    console.log(`tty-baseline ${JSON.stringify(report)}`);
+    expect(typeof report.platform).toBe("string");
   });
 });

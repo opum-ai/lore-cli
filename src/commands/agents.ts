@@ -43,6 +43,7 @@ import {
 import {
   AGENTS_MD_REL_PATH,
   CODEX_AGENT_BLOCK_LABEL,
+  CODEX_LEGACY_SKILL_REL_PATH,
   CODEX_SKILL_REL_PATH,
   planCodexBridge,
 } from "../core/codex-bridge";
@@ -167,6 +168,7 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
   // The codex bridge is planned alongside, but ONLY where one already exists (LCLI-364). See
   // {@link hasCodexBridge} for why presence, not absence, is what arms it.
   const codexSkillRaw = readFileIfPresent(join(root, CODEX_SKILL_REL_PATH), CODEX_SKILL_REL_PATH);
+  const codexLegacyRaw = readFileIfPresent(join(root, CODEX_LEGACY_SKILL_REL_PATH), CODEX_LEGACY_SKILL_REL_PATH);
   const agentsRaw = readFileIfPresent(join(root, AGENTS_MD_REL_PATH), AGENTS_MD_REL_PATH);
   const agentsStyle = detectDiskStyle(agentsRaw);
 
@@ -187,9 +189,11 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
   const claudeArmed =
     target !== undefined
       ? target === "claude"
-      : !includeCodex || hasClaudeBridge(skillOnDisk, claudeRaw, codexSkillRaw, agentsRaw);
+      : !includeCodex || hasClaudeBridge(skillOnDisk, claudeRaw, codexSkillRaw, agentsRaw, codexLegacyRaw);
   const codexArmed =
-    target !== undefined ? target === "codex" : includeCodex && hasCodexBridge(codexSkillRaw, agentsRaw);
+    target !== undefined
+      ? target === "codex"
+      : includeCodex && hasCodexBridge(codexSkillRaw, agentsRaw, codexLegacyRaw);
   // Explicit beats config, same rule as claudeArmed above: a SCOPED request (`lore init
   // --claude`/`--agents`) always materializes SKILL.md regardless of `agents.skillSource` — only
   // the bare `lore agents` call ("keep whatever's selected current") is scoped to the persisted
@@ -208,6 +212,7 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
     ? planCodexBridge({
         skillOnDisk: normalizeOnDisk(codexSkillRaw),
         agentsOnDisk: normalizeOnDisk(agentsRaw),
+        legacySkillOnDisk: normalizeOnDisk(codexLegacyRaw),
         force,
         check,
         governance,
@@ -288,11 +293,18 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
  * Either artifact alone counts. A repository whose AGENTS.md carries the block but whose SKILL.md was
  * deleted is exactly the drift worth catching, and so is the reverse.
  */
-function hasCodexBridge(codexSkillRaw: string | undefined, agentsRaw: string | undefined): boolean {
+function hasCodexBridge(
+  codexSkillRaw: string | undefined,
+  agentsRaw: string | undefined,
+  codexLegacyRaw?: string | undefined,
+): boolean {
   // `readFileIfPresent` signals "absent" with `undefined`, not `null` -- a `!== null` test here is
   // true for a MISSING file and silently arms the codex half in every Claude-only repository,
   // creating the very `.codex/` tree whose absence was supposed to disarm it.
   if (codexSkillRaw !== undefined) return true;
+  // A skill an older lore left at the pre-LCLI-771 path is still proof the repository opted in, and
+  // arming on it is what lets `--check` report the leftover instead of staying silent about it.
+  if (codexLegacyRaw !== undefined) return true;
   return agentsRaw !== undefined && agentsRaw.includes(CODEX_AGENT_BLOCK_LABEL);
 }
 
@@ -315,10 +327,11 @@ function hasClaudeBridge(
   claudeRaw: string | undefined,
   codexSkillRaw: string | undefined,
   agentsRaw: string | undefined,
+  codexLegacyRaw?: string | undefined,
 ): boolean {
   if (skillOnDisk !== null) return true;
   if (claudeRaw?.includes(AGENT_BLOCK_LABEL)) return true;
-  return !hasCodexBridge(codexSkillRaw, agentsRaw);
+  return !hasCodexBridge(codexSkillRaw, agentsRaw, codexLegacyRaw);
 }
 
 /**
@@ -494,6 +507,11 @@ function actionLabel(path: string, action: BridgeAction, check: boolean, skillSo
   if (action === "unchanged" && path === SKILL_REL_PATH && skillSource === "plugin") {
     return check ? "correctly absent (skill source: plugin)" : "absent (skill source: plugin)";
   }
+  if (path === CODEX_LEGACY_SKILL_REL_PATH && action === "orphaned") {
+    return check
+      ? "orphaned (left by an older lore; Codex reads .agents/skills, so delete this file by hand -- lore never deletes it)"
+      : "orphaned";
+  }
   if (check) {
     if (action === "protected") {
       return "out of date (protected; needs --force)";
@@ -629,7 +647,11 @@ function renderPlain(data: AgentsResult): string {
  */
 export function renderTrailer(data: AgentsResult): string | undefined {
   const hasProtected = data.files.some((file) => file.action === "protected");
-  const hasOrphaned = data.files.some((file) => file.action === "orphaned");
+  const hasOrphaned = data.files.some(
+    (file) => file.action === "orphaned" && file.path !== CODEX_LEGACY_SKILL_REL_PATH,
+  );
+  const hasLegacy = data.files.some((file) => file.action === "orphaned" && file.path === CODEX_LEGACY_SKILL_REL_PATH);
+  const legacyNote = `${CODEX_LEGACY_SKILL_REL_PATH} was left by an older lore and Codex does not read it — delete it by hand; lore never deletes it, even with \`--force\``;
   if (data.check) {
     const stale = data.files.some((file) => file.action !== "unchanged");
     if (!stale) {
@@ -638,12 +660,23 @@ export function renderTrailer(data: AgentsResult): string | undefined {
     if (hasOrphaned) {
       return "bridge carries a file config says should not exist — delete it, or run `lore agents --force` to remove it (exit 6)";
     }
+    if (
+      hasLegacy &&
+      data.files.every((file) => file.action === "unchanged" || file.path === CODEX_LEGACY_SKILL_REL_PATH)
+    ) {
+      return `${legacyNote} (exit 6)`;
+    }
     return hasProtected
       ? "bridge is out of date — a hand-edited file needs `lore agents --force` to regenerate (exit 6)"
       : "bridge is out of date — run `lore agents` to regenerate (exit 6)";
   }
+  if (hasLegacy && !hasOrphaned) {
+    return legacyNote;
+  }
   if (hasOrphaned) {
-    const count = data.files.filter((file) => file.action === "orphaned").length;
+    const count = data.files.filter(
+      (file) => file.action === "orphaned" && file.path !== CODEX_LEGACY_SKILL_REL_PATH,
+    ).length;
     return `${count} file(s) should not exist per agents.skill_source = "plugin" and were left in place — delete by hand, or run \`lore agents --force\` to remove a lore-generated one`;
   }
   if (!hasProtected) {
