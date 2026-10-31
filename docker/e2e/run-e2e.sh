@@ -300,23 +300,23 @@ cp AGENTS.md /tmp/lcli-298-agents-baseline.md
 LCLI298_AGENTS_BASELINE_HASH="$(sha256sum AGENTS.md)"
 step_json "LCLI-298 AC1: lore init --codex creates both Codex bridge files on a fresh bundle" \
   '.kind == "init.result"
-   and ((.data.codex.files | map(.path) | sort) == [".codex/skills/lore/SKILL.md", "AGENTS.md"])
-   and ([.data.codex.files[] | select(.path == ".codex/skills/lore/SKILL.md")][0].action == "created")
+   and ((.data.codex.files | map(.path) | sort) == [".agents/skills/lore/SKILL.md", "AGENTS.md"])
+   and ([.data.codex.files[] | select(.path == ".agents/skills/lore/SKILL.md")][0].action == "created")
    and ([.data.codex.files[] | select(.path == "AGENTS.md")][0].action == "updated")' \
   -- lore init --codex --json
 check "LCLI-298 AC1: Codex SKILL.md and AGENTS.md managed block exist on disk" \
-  '[ -f .codex/skills/lore/SKILL.md ] \
-   && grep -q "^name: lore$" .codex/skills/lore/SKILL.md \
+  '[ -f .agents/skills/lore/SKILL.md ] \
+   && grep -q "^name: lore$" .agents/skills/lore/SKILL.md \
    && grep -q "<!-- lore:agents:begin -->" AGENTS.md \
    && grep -q "<!-- lore:agents:end -->" AGENTS.md'
 
-CODEX_BRIDGE_HASH_BEFORE="$(sha256sum .codex/skills/lore/SKILL.md AGENTS.md)"
+CODEX_BRIDGE_HASH_BEFORE="$(sha256sum .agents/skills/lore/SKILL.md AGENTS.md)"
 step_json "LCLI-298 AC2: a second lore init --codex reports a complete no-op" \
   '(.data.created | length) == 0
    and (.data.codex.files | length == 2)
    and (.data.codex.files | all(.action == "unchanged"))' \
   -- lore init --codex --json
-CODEX_BRIDGE_HASH_AFTER="$(sha256sum .codex/skills/lore/SKILL.md AGENTS.md)"
+CODEX_BRIDGE_HASH_AFTER="$(sha256sum .agents/skills/lore/SKILL.md AGENTS.md)"
 check "LCLI-298 AC2: the idempotent Codex re-run left both files byte-identical" \
   '[ "$CODEX_BRIDGE_HASH_BEFORE" = "$CODEX_BRIDGE_HASH_AFTER" ]'
 
@@ -341,7 +341,7 @@ check "LCLI-298 AC4: seeded custom prose around a deliberately stale Codex manag
    && grep -q "CORRUPTED-CODEX-SKILL-LABEL:" AGENTS.md'
 step_json "LCLI-298 AC4: lore init --codex refreshes only the stale AGENTS.md block" \
   '([.data.codex.files[] | select(.path == "AGENTS.md")][0].action == "updated")
-   and ([.data.codex.files[] | select(.path == ".codex/skills/lore/SKILL.md")][0].action == "unchanged")' \
+   and ([.data.codex.files[] | select(.path == ".agents/skills/lore/SKILL.md")][0].action == "unchanged")' \
   -- lore init --codex --json
 check "LCLI-298 AC4: custom AGENTS.md prose survived and managed content was healed" \
   'grep -q "LCLI-298-CUSTOM-PROSE-BEFORE-THE-BLOCK" AGENTS.md \
@@ -350,14 +350,14 @@ check "LCLI-298 AC4: custom AGENTS.md prose survived and managed content was hea
    && grep -q "Skill:" AGENTS.md'
 
 step "LCLI-298 AC5: remove only the bridge artifacts created by the isolated probe" 0 \
-  -- bash -c 'rm -f CLAUDE.md .codex/skills/lore/SKILL.md .claude/skills/lore/SKILL.md &&
+  -- bash -c 'rm -f CLAUDE.md .agents/skills/lore/SKILL.md .claude/skills/lore/SKILL.md &&
                cp /tmp/lcli-298-agents-baseline.md AGENTS.md &&
                rm -f /tmp/lcli-298-agents-baseline.md &&
-               rmdir .codex/skills/lore .codex/skills .codex &&
+               rmdir .agents/skills/lore .agents/skills .agents &&
                rmdir .claude/skills/lore .claude/skills .claude'
 check "LCLI-298 AC5: bridge probe teardown left no generated agent artifacts" \
   '[ "$(sha256sum AGENTS.md)" = "$LCLI298_AGENTS_BASELINE_HASH" ] \
-   && [ ! -e CLAUDE.md ] && [ ! -e .codex ] && [ ! -e .claude ]'
+   && [ ! -e CLAUDE.md ] && [ ! -e .agents ] && [ ! -e .claude ]'
 
 # ── Phase 2: seed real backlog tasks ─────────────────────────────────────────
 TASK1="$(backlog task create "Design the archive endpoint" 2>&1 | grep -oE 'Created task [^ ]+' | awk '{print $3}')"
