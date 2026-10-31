@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The bare-`lore init` notice names Codex-only flags (LCLI-774, ODOC-556)**
+  The stderr notice added in LCLI-771 told an operator to "pass the flags: --codex --agents --yes --tracker ...", but `--agents` is an alias of `--claude`, so following it literally also wrote `.claude/skills/lore/SKILL.md` and `CLAUDE.md`. It now reads `--codex --yes --tracker <quest|backlog|jira|none> (add --claude for the Claude bridge)`, and a test runs the notice's own flags in a scratch repo and asserts nothing is written for Claude.
+
 - **The release gate probe measures a shipped feature again, and its negative control is whole-line** (LCLI-751, ruling A).
   The probe's old feature (`[targets]`) was accepted by `0.14.1`, so the control could not fail. It now has the fresh binary write a Codex bridge into a scratch directory and checks it with each binary (`agents --check --target codex`): the fresh one exits 0, and `0.14.1`, which expects the skill at `.codex/skills/lore/SKILL.md`, exits 6 carrying the whole line `out-of-date .codex/skills/lore/SKILL.md`. Each arm now asserts the layout the fresh binary wrote (`.agents/skills/lore/SKILL.md` present, `.codex/skills/lore/SKILL.md` absent) before it measures, and the signature is matched as a whole line (CRLF-aware) rather than a substring. The probe goes red by design for the release after the one that ships LCLI-771; `docs/runbooks/release-publishing.md` now says to re-base it before dispatching. The `setup-quest` step in that job is likely dead weight now (tracked as LCLI-773).
 

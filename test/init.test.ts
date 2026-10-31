@@ -804,10 +804,27 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
     expect(result.codex).toBeUndefined();
     expect(result.agents).toBeUndefined();
     expect(stderr).toBe(wizardSkippedNotice(false, false));
-    for (const flag of ["--codex", "--agents", "--yes", "--tracker"]) expect(stderr).toContain(flag);
+    for (const flag of ["--codex", "--yes", "--tracker"]) expect(stderr).toContain(flag);
     expect(stderr).toContain("stdin is a TTY: false, stderr is a TTY: false");
     expect(existsSync(join(root, ".agents"))).toBe(false);
     expect(existsSync(join(root, "AGENTS.md"))).toBe(false);
+    expect(existsSync(join(root, ".claude"))).toBe(false);
+    expect(existsSync(join(root, "CLAUDE.md"))).toBe(false);
+  });
+
+  test("LCLI-774: the notice's flags are Codex-only: it never names --agents, and following them writes nothing for Claude", async () => {
+    const notice = wizardSkippedNotice(false, false);
+    expect(notice).not.toContain("--agents");
+    // The flag line, read back out of the notice itself, with its tracker placeholder filled in.
+    const line = /pass the flags: (.+?) \(/.exec(notice)?.[1];
+    expect(line).toBe("--codex --yes --tracker <quest|backlog|jira|none>");
+    const args = (line ?? "").replace("<quest|backlog|jira|none>", "none").split(" ");
+    expect(args).not.toContain("--claude");
+    const { result } = await init({ args, adapter: fakeAdapter([], { probe: "ok" }) });
+    expect(result.agents).toBeUndefined();
+    expect(result.codex?.files.map((f) => f.path)).toContain(".agents/skills/lore/SKILL.md");
+    expect(existsSync(join(root, ".agents/skills/lore/SKILL.md"))).toBe(true);
+    expect(existsSync(join(root, "AGENTS.md"))).toBe(true);
     expect(existsSync(join(root, ".claude"))).toBe(false);
     expect(existsSync(join(root, "CLAUDE.md"))).toBe(false);
   });
