@@ -3894,9 +3894,9 @@ describe("lore init — the wizard gate as a pure function (LCLI-771, ODOC-556)"
   test("baseline: what this host's Bun reports for the three streams", () => {
     const report = {
       platform: process.platform,
-      stdin: process.stdin.isTTY,
-      stdout: process.stdout.isTTY,
-      stderr: process.stderr.isTTY,
+      stdin: String(process.stdin.isTTY),
+      stdout: String(process.stdout.isTTY),
+      stderr: String(process.stderr.isTTY),
     };
     console.log(`tty-baseline ${JSON.stringify(report)}`);
     expect(typeof report.platform).toBe("string");
