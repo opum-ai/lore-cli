@@ -705,7 +705,7 @@ describe("lore agents — the codex bridge is covered too, but only where one al
     expect(CODEX_LEGACY_SKILL_REL_PATH).toBe(".codex/skills/lore/SKILL.md");
   });
 
-  test("LCLI-771: a skill left at the pre-0.14.2 .codex path is drift at exit 6, and lore never deletes it", () => {
+  test("LCLI-771: a skill left at the pre-0.15.0 .codex path is drift at exit 6, and lore never deletes it", () => {
     agents();
     withCodexBridge();
     const legacyAbs = join(root, CODEX_LEGACY_SKILL_REL_PATH);

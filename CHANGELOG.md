@@ -7,16 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-31
+
+### Changed (breaking)
+
+- **`lore init --codex` writes the Codex skill where Codex reads it, and `lore agents --check` now exits `6` for a skill left at the old path (LCLI-771, ODOC-556)**
+  The skill moves from `.codex/skills/lore/SKILL.md` to `.agents/skills/lore/SKILL.md`, the repository skill path Codex documents. Marked breaking because a workspace an older lore initialized with `--codex` and left unchanged goes from `lore agents --check` exit `0` to exit `6` (`orphaned` drift on the old-path file), which fails a CI job that runs the check. lore never deletes the old file. **Upgrade:** run `lore agents` to write the skill at the new path, then delete `.codex/skills/lore/SKILL.md` by hand. A bare `lore init` that does not engage the wizard (stdin or stderr not a terminal) now also prints a stderr notice naming the flags (`--codex`, `--agents`, `--yes`, `--tracker`) instead of silently writing no bridge. The generated plugin skill text does not name the path, so `skills/` is unchanged.
+
 ### Fixed
+
+- **CI and the release's darwin-arm64 build leg run on a pinned `macos-15` runner, not `macos-latest` (LCLI-776, #700)**
+  `macos-latest` resolved to `macos-26-arm64` 20261026.0455.2, where `bun test` repeatedly went silent on the macOS leg. The leg and the release build's `darwin-arm64` runner now name `macos-15` (`macos-15-arm64` 20261028.0489.1); `darwin-x64` stays on `macos-15-intel`. This is a mitigation, not a fix for the wedge: the pinned leg was green on 4 of 8 dispatches, and the `bun` runtime wedge and the return to `macos-latest` stay open under LCLI-776. macOS 26 is no longer exercised by CI or the release build meanwhile.
 
 - **The bare-`lore init` notice names Codex-only flags (LCLI-774, ODOC-556)**
   The stderr notice added in LCLI-771 told an operator to "pass the flags: --codex --agents --yes --tracker ...", but `--agents` is an alias of `--claude`, so following it literally also wrote `.claude/skills/lore/SKILL.md` and `CLAUDE.md`. It now reads `--codex --yes --tracker <quest|backlog|jira|none> (add --claude for the Claude bridge)`, and a test runs the notice's own flags in a scratch repo and asserts nothing is written for Claude.
 
 - **The release gate probe measures a shipped feature again, and its negative control is whole-line** (LCLI-751, ruling A).
   The probe's old feature (`[targets]`) was accepted by `0.14.1`, so the control could not fail. It now has the fresh binary write a Codex bridge into a scratch directory and checks it with each binary (`agents --check --target codex`): the fresh one exits 0, and `0.14.1`, which expects the skill at `.codex/skills/lore/SKILL.md`, exits 6 carrying the whole line `out-of-date .codex/skills/lore/SKILL.md`. Each arm now asserts the layout the fresh binary wrote (`.agents/skills/lore/SKILL.md` present, `.codex/skills/lore/SKILL.md` absent) before it measures, and the signature is matched as a whole line (CRLF-aware) rather than a substring. The probe goes red by design for the release after the one that ships LCLI-771; `docs/runbooks/release-publishing.md` now says to re-base it before dispatching. The `setup-quest` step in that job is likely dead weight now (tracked as LCLI-773).
-
-- **`lore init --codex` writes the Codex skill where Codex reads it, and a bare `lore init` that cannot find a terminal says so (LCLI-771, ODOC-556)**
-  The skill moves from `.codex/skills/lore/SKILL.md` to `.agents/skills/lore/SKILL.md`, the repository skill path Codex documents. A skill an older lore left at the old path is reported as `orphaned` drift by `lore agents --check` and is never deleted. A bare `lore init` that does not engage the wizard (stdin or stderr not a terminal) now prints a stderr notice naming the flags (`--codex`, `--agents`, `--yes`, `--tracker`) instead of silently writing no bridge. The generated plugin skill text does not name the path, so `skills/` is unchanged.
 
 ### Added
 
