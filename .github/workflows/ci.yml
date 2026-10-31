@@ -118,7 +118,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","windows-latest"]' || github.event_name == 'workflow_dispatch' && inputs.ladybug_exact_hosts_only == true && '["macos-15-intel","ubuntu-24.04-arm"]' || '["ubuntu-latest","windows-latest","macos-latest"]') }}
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","windows-latest"]' || github.event_name == 'workflow_dispatch' && inputs.ladybug_exact_hosts_only == true && '["macos-15-intel","ubuntu-24.04-arm"]' || '["ubuntu-latest","windows-latest","macos-15"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -331,7 +331,7 @@ jobs:
               fi
               echo "::warning::attempt 2 PASSED. This job's green is a RETRY-GREEN, not a clean run: attempt 1's failures were the Linux epoll runtime race, and if they were per-test hangs they are listed above."
             fi
-          elif [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+          elif [[ "${{ matrix.os }}" == "macos-15" ]]; then
             # LCLI-760 / DEC-236. This leg wedges: the last `(pass)` prints 2-18 s into the step,
             # then nothing for ~19.5 minutes until the 20-minute JOB timeout cancels it (13 of the
             # last 43 main-push attempts, 9 of 20 since 2026-10-06; every one a cancel, never a test
