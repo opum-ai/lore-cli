@@ -14,7 +14,7 @@ name: Release
 # setup for every package;
 # see docs/runbooks/release-publishing.md's First-release checklist for the full
 # mechanical sequence (version bump, the bin.lore flip, tag, dispatch).
-# Before dispatching, re-base scripts/release-gate-probe.mjs onto the new binary behaviour of the
+# Before TAGGING, re-base scripts/release-gate-probe.mjs onto the new binary behaviour of the
 # release being cut: the probe goes red BY DESIGN for the release after LCLI-771's (LCLI-751).
 on:
   workflow_dispatch:

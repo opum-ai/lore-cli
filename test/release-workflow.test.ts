@@ -1387,7 +1387,7 @@ describe("release.yml publish is gated by the release gate probe (LCLI-738)", ()
  * refusal, and LCLI-773 tracks removing both together. They assert the WIRING rather than the prose
  * that describes it.
  */
-describe("release.yml's release gate probe can obtain the quest peer it drives (LCLI-714)", () => {
+describe("release.yml's release gate probe can obtain the quest peer it once drove (LCLI-714)", () => {
   function parseDoc(text: string): WorkflowDoc {
     return yaml.load(text, { schema: yaml.JSON_SCHEMA }) as WorkflowDoc;
   }

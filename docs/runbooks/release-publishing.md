@@ -777,6 +777,20 @@ the promotion half, item 7. It is not part of staging.
    sweep with `/usr/bin/grep`, not a shell `grep` that may be a shim skipping
    gitignored files. Both returned 11 on 2026-09-22, but a shim is not the
    command this list was measured with.
+   **Before tagging, re-base the release gate probe (LCLI-751, ruling A: a precondition of
+   the release cut, not of the dispatch).** `scripts/release-gate-probe.mjs` proves the
+   staged binary does something npm's `latest` cannot; today that is the Codex skill path
+   LCLI-771 moved to `.agents/skills/lore/SKILL.md`. It goes RED BY DESIGN for the release
+   AFTER the one that ships LCLI-771, because once `latest` itself writes that path the
+   control can no longer fail for the asserted reason. By step 4 a tag is already pushed
+   and announced to `opum-marketplace`, so a re-base found at dispatch costs a dev PR, a
+   promotion and a NEW tag. Do it in the bump PR: check whether `latest` already carries
+   LCLI-771 and, if it does, move the probe onto a behaviour new in THIS release. That means
+   `ABSENT_SIGNATURE`, the feature text, the generate/check argv and the hard-coded layout
+   paths in `runProbe` (`release-gate-probe.mjs`), the tests, and the job name and its
+   matches in `promote-latest.mjs`. Then prove it BEFORE the tag: a `publish: false`
+   dispatch on the untagged `dev`/`main` ref must show `latest` exiting 6 with the exact
+   line. Do not rediscover this as a red dispatch.
 4. Merge to `dev`, promote to `main`, and wait for the full `main` CI matrix.
    Tag that verified commit and push the tag — nothing triggers automatically
    from the tag.
@@ -832,16 +846,7 @@ the promotion half, item 7. It is not part of staging.
    ```
    git diff --stat <previous-tag> v<version> -- skills/
    ```
-5. **Before the first dispatch, re-base the release gate probe (LCLI-751, ruling A).**
-   `scripts/release-gate-probe.mjs` proves the staged binary does something npm's `latest`
-   cannot, and today that is the Codex skill path LCLI-771 moved to
-   `.agents/skills/lore/SKILL.md`. It goes RED BY DESIGN for the release AFTER the one that
-   ships LCLI-771: once `latest` itself writes that path, the control can no longer fail
-   for the asserted reason. Check whether the version on `latest` already carries LCLI-771; if
-   it does, move the probe (`ABSENT_SIGNATURE`, the feature text and its tests) onto a
-   behaviour new in THIS release, and show `latest` rejecting it with the exact line in a
-   `publish: false` dispatch log, before you dispatch for real. Do not rediscover this as a
-   red dispatch. Until LCLI-278 supplies an effective external approval control, dispatch
+5. **Dispatch and stage.** Until LCLI-278 supplies an effective external approval control, dispatch
    `Release` with `publish: false` on that tag, setting `launcher_rc` (see "The
    launcher stages as `X-rc.N`" above). Download only its `npm-packages`
    artifact, list and checksum the eight `.tgz` files, then stage seven of

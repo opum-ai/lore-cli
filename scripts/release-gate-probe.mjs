@@ -45,8 +45,9 @@
 //   1  it did not: the fresh binary failed `agents --check`, the previous binary passed it, or
 //      the previous binary failed without the exact signature
 //   2  usage error, a binary could not be run at all, the fresh binary could not write the
-//      bridge, or a process ended without an exit status (killed by a signal) — nothing was
-//      measured, which is never a pass
+//      bridge or wrote it in the wrong layout (not `.agents/skills/lore/SKILL.md` alone), or a
+//      process ended without an exit status (killed by a signal) — nothing was measured, which
+//      is never a pass
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
@@ -249,7 +250,7 @@ export function main(argv, { out = console.log, err = console.error, ...seams } 
 
   if (result.kind === "fixture-error") {
     err(
-      `::error::release gate probe: the fresh binary ${args.expect === "present" ? args.binary : args.freshBinary} could not write the Codex bridge it was asked to (exit ${result.exitCode ?? "none"}; a wrong bridge layout reports exit 0). Nothing was measured — a probe without a bridge to check cannot satisfy either expectation, so this is never a pass.`,
+      `::error::release gate probe: the fresh binary ${args.expect === "present" ? args.binary : args.freshBinary} could not write the Codex bridge it was asked to, or wrote it in the wrong layout (exit ${result.exitCode ?? "none"}). Nothing was measured — a probe without a bridge to check cannot satisfy either expectation, so this is never a pass.`,
     );
     if (result.output !== "") err(result.output);
     return 2;
