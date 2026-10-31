@@ -533,7 +533,7 @@ export function runInit(options: InitOptions): number | Promise<number> {
   // `--json` run's stdout stays the envelope), instead of scaffolding the base bundle and writing no
   // bridge without a word -- what an operator on a Windows host saw.
   if (gate.notice) {
-    (options.stderr ?? process.stderr).write(wizardSkippedNotice());
+    (options.stderr ?? process.stderr).write(wizardSkippedNotice(stdinIsTTY, stderrIsTTY));
   }
 
   if (interactive) {
@@ -1986,14 +1986,13 @@ export function resolveWizardGate(inputs: WizardGateInputs): { interactive: bool
   return { interactive, notice: !interactive && !inputs.flagGiven && !inputs.jsonRequested };
 }
 
-/** The stderr notice for a bare `lore init` that could not detect an interactive terminal. */
-export function wizardSkippedNotice(): string {
-  return [
-    "lore init: no interactive terminal detected (both stdin and stderr must be a terminal), so the guided wizard was skipped.",
-    "Only the base docs bundle was scaffolded; no agent skill or AGENTS.md/CLAUDE.md block was written.",
-    "To choose without prompts, pass flags, e.g. `lore init --codex --tracker quest --yes` (also --agents for Claude, --hermes, --antigravity).",
-    "",
-  ].join("\n");
+/**
+ * The stderr notice for a bare `lore init` that could not detect an interactive terminal. One
+ * template shared with `quest init` (QCLI-543): the tool name and its own gate streams and flag list
+ * are the only variables. lore's gate reads stdin and stderr, so those are the two it reports.
+ */
+export function wizardSkippedNotice(stdinIsTTY: boolean, stderrIsTTY: boolean): string {
+  return `lore init: no interactive terminal was detected (stdin is a TTY: ${stdinIsTTY}, stderr is a TTY: ${stderrIsTTY}), so the wizard did not run and no agent instructions or skill were written. Re-run in a terminal, or pass the flags: --codex --agents --yes --tracker <quest|backlog|jira>.\n`;
 }
 
 function anyFlagGiven(parsed: InitArgs): boolean {

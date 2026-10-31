@@ -725,6 +725,18 @@ describe("lore agents — the codex bridge is covered too, but only where one al
     expect(actionFor(result, CODEX_SKILL_REL_PATH)).toBe("created");
   });
 
+  test("LCLI-771: a repository with BOTH targets keeps both skills, and the .claude one is never called a leftover", () => {
+    agents();
+    withCodexBridge();
+    expect(existsSync(join(root, SKILL_REL_PATH))).toBe(true);
+    expect(existsSync(codexSkillAbs())).toBe(true);
+    const { code, result } = agents(["--check"]);
+    expect(code).toBe(0);
+    expect(actionFor(result, SKILL_REL_PATH)).toBe("unchanged");
+    expect(actionFor(result, CODEX_SKILL_REL_PATH)).toBe("unchanged");
+    expect(result.files.some((f) => f.action === "orphaned")).toBe(false);
+  });
+
   test("LCLI-771: a repository with no leftover reports no legacy entry", () => {
     agents();
     withCodexBridge();

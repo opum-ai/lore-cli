@@ -503,14 +503,15 @@ function agentsRenderable(data: AgentsResult): Renderable<AgentsResult> {
  * there, never `"unchanged"`), so the generic "up to date" label would otherwise claim a
  * maintained, matching file where none is meant to exist at all.
  */
+/** One template shared with quest (QCLI-543): only the tool name and paths vary. */
+const LEGACY_LEFTOVER_MESSAGE = `${CODEX_LEGACY_SKILL_REL_PATH} is a leftover: lore now writes its Codex skill to ${CODEX_SKILL_REL_PATH}. Move or delete it by hand; lore never deletes it.`;
+
 function actionLabel(path: string, action: BridgeAction, check: boolean, skillSource: SkillSource): string {
   if (action === "unchanged" && path === SKILL_REL_PATH && skillSource === "plugin") {
     return check ? "correctly absent (skill source: plugin)" : "absent (skill source: plugin)";
   }
   if (path === CODEX_LEGACY_SKILL_REL_PATH && action === "orphaned") {
-    return check
-      ? "orphaned (left by an older lore; Codex reads .agents/skills, so delete this file by hand -- lore never deletes it)"
-      : "orphaned";
+    return check ? `orphaned (${LEGACY_LEFTOVER_MESSAGE})` : "orphaned";
   }
   if (check) {
     if (action === "protected") {
@@ -651,7 +652,7 @@ export function renderTrailer(data: AgentsResult): string | undefined {
     (file) => file.action === "orphaned" && file.path !== CODEX_LEGACY_SKILL_REL_PATH,
   );
   const hasLegacy = data.files.some((file) => file.action === "orphaned" && file.path === CODEX_LEGACY_SKILL_REL_PATH);
-  const legacyNote = `${CODEX_LEGACY_SKILL_REL_PATH} was left by an older lore and Codex does not read it — delete it by hand; lore never deletes it, even with \`--force\``;
+  const legacyNote = LEGACY_LEFTOVER_MESSAGE;
   if (data.check) {
     const stale = data.files.some((file) => file.action !== "unchanged");
     if (!stale) {

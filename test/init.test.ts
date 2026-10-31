@@ -794,7 +794,7 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
     expect(result.tracker).toBeUndefined();
     expect(readFileSync(join(root, ".lore/config.toml"), "utf8")).toEndWith('[tracker]\nbackend = "quest"\n');
     expect(loadConfig({ root, env: {} }).tracker.backend).toBe("quest");
-    expect(stderr).toBe(wizardSkippedNotice());
+    expect(stderr).toBe(wizardSkippedNotice(false, false));
   });
 
   test("LCLI-771: a bare run that could not engage the wizard says so on stderr, naming the flags, exit 0, no bridge", async () => {
@@ -803,8 +803,9 @@ describe("lore init — flags run non-interactively with zero prompts (AC#2/AC#4
     expect(result.interactive).toBe(false);
     expect(result.codex).toBeUndefined();
     expect(result.agents).toBeUndefined();
-    expect(stderr).toBe(wizardSkippedNotice());
+    expect(stderr).toBe(wizardSkippedNotice(false, false));
     for (const flag of ["--codex", "--agents", "--yes", "--tracker"]) expect(stderr).toContain(flag);
+    expect(stderr).toContain("stdin is a TTY: false, stderr is a TTY: false");
     expect(existsSync(join(root, ".agents"))).toBe(false);
     expect(existsSync(join(root, "AGENTS.md"))).toBe(false);
   });
@@ -2618,7 +2619,7 @@ describe("lore init — the capability probe follows the selected tracker (LCLI-
       adapter: fakeAdapter([], { probe: new LoreError("not_found", "should never be reached", "") }),
     });
     expect(result.trackerCheck).toBeUndefined();
-    expect(stderr).toBe(wizardSkippedNotice());
+    expect(stderr).toBe(wizardSkippedNotice(false, false));
     expect(recordingRoot().spawned).toEqual([]);
   });
 
