@@ -988,12 +988,15 @@ jobs:
           overwrite: true
 
   # LCLI-738, DEC-204 (b). Prove that the host binary this release QUALIFIED can do something the
-  # previous published release cannot, on every platform in the matrix. The probe feature is the
-  # `[targets]` key in `.lore/agents/*.toml` (agent-profile budget targets, added after v0.13.0 by
-  # LCLI-682/LCLI-722). It is observable as an exit status: `lore check` exits 0 under a binary
-  # built from this tree, and 0.13.0 exits 6 with
-  # `Unrecognized key: "targets"`. scripts/release-gate-probe.mjs owns both expectations and the
-  # failure messages; this job only supplies the two binaries and the checkout to run them in.
+  # previous published release cannot, on every platform in the matrix. The probe feature is where
+  # the Codex skill lives (LCLI-771, re-based by LCLI-751): a bridge a binary from this tree writes
+  # (`lore agents --target codex`) puts it at `.agents/skills/lore/SKILL.md`, so
+  # `lore agents --check --target codex` exits 0 under that binary and under 0.14.1 exits 6 with
+  # the exact line `out-of-date .codex/skills/lore/SKILL.md`. The job NAME below still says
+  # `[targets]` because scripts/promote-latest.mjs and its tests match job names; it is a label,
+  # not the feature. scripts/release-gate-probe.mjs owns both expectations and the failure
+  # messages and writes the bridge into its own scratch directory; this job only supplies the two
+  # binaries.
   #
   # THE FRESH BINARY IS THE QUALIFIED ARTIFACT, never a rebuild: it is unpacked from the matching
   # platform tarball that package-qualification produced for THIS run. The previous binary comes
@@ -1128,8 +1131,8 @@ jobs:
           # `absent` runs the previous release and requires a nonzero exit whose output carries
           # the exact rejection `Unrecognized key: "targets"`, so neither an unrelated breakage
           # nor output that merely mentions the word can stand in for the control.
-          node scripts/release-gate-probe.mjs --binary "$fresh_binary" --expect present --cwd "$PWD"
-          node scripts/release-gate-probe.mjs --binary "$previous_binary" --expect absent --cwd "$PWD"
+          node scripts/release-gate-probe.mjs --binary "$fresh_binary" --expect present
+          node scripts/release-gate-probe.mjs --binary "$previous_binary" --expect absent --fresh-binary "$fresh_binary"
 
   provenance-pre:
     name: re-verify published provenance still resolves (LCLI-481)
