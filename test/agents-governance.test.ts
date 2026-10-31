@@ -100,7 +100,7 @@ When working on documentation, drive it through \`lore\` (not a plain editor) so
 coupling, managed blocks, and cross-links stay coherent.
 
 - **Find and read docs:** \`lore query "<words>" --limit 5\`, then \`lore read <id>\` for the best hit.
-- **Skill:** \`.codex/skills/lore/SKILL.md\` — how to drive lore.
+- **Skill:** \`.agents/skills/lore/SKILL.md\` — how to drive lore.
 - **Just-in-time detail:** run \`lore instructions\` for the canonical agent loop, then
   \`lore instructions <topic>\` (${instructionTopicKeys()}).`;
 

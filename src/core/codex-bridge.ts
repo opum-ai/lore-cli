@@ -7,7 +7,17 @@ import {
 } from "./agent-bridge";
 import { upsertManagedBlock } from "./managed-block";
 
-export const CODEX_SKILL_REL_PATH = ".codex/skills/lore/SKILL.md";
+/**
+ * Where Codex reads repository skills (LCLI-771, ODOC-556): `$REPO_ROOT/.agents/skills`, per
+ * https://learn.chatgpt.com/docs/build-skills (the target of developers.openai.com/codex/skills),
+ * which never mentions `.codex/skills`. quest writes its own skill under the same root.
+ */
+export const CODEX_SKILL_REL_PATH = ".agents/skills/lore/SKILL.md";
+/**
+ * Where lore <= 0.14.1 wrote the Codex skill, a directory Codex does not read. A file left there is
+ * reported as drift (`orphaned`) and NEVER deleted or rewritten, with or without `--force`.
+ */
+export const CODEX_LEGACY_SKILL_REL_PATH = ".codex/skills/lore/SKILL.md";
 export const AGENTS_MD_REL_PATH = "AGENTS.md";
 export const CODEX_AGENT_BLOCK_LABEL = "lore:agents";
 
@@ -99,6 +109,8 @@ coupling, managed blocks, and cross-links stay coherent.
 export interface PlanCodexBridgeInput {
   readonly skillOnDisk: string | null;
   readonly agentsOnDisk: string | null;
+  /** The leftover {@link CODEX_LEGACY_SKILL_REL_PATH} bytes, `null` when absent; omitted means "not read". */
+  readonly legacySkillOnDisk?: string | null;
   readonly force: boolean;
   readonly check: boolean;
   /** The Constitution core and Constants pointer lines (LCLI-597); see {@link buildCodexNudgeBody}. */
@@ -106,7 +118,11 @@ export interface PlanCodexBridgeInput {
 }
 
 export function planCodexBridge(input: PlanCodexBridgeInput): BridgePlan {
-  return { files: [planSkill(input), planNudge(input)] };
+  const legacy: BridgeFilePlan[] =
+    input.legacySkillOnDisk === undefined || input.legacySkillOnDisk === null
+      ? []
+      : [{ path: CODEX_LEGACY_SKILL_REL_PATH, action: "orphaned", contents: null }];
+  return { files: [planSkill(input), planNudge(input), ...legacy] };
 }
 
 function planSkill(input: PlanCodexBridgeInput): BridgeFilePlan {

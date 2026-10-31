@@ -299,7 +299,7 @@ not bespoke:
 - `lore agents` emits `.claude/skills/lore/SKILL.md` — a skill that teaches
   Claude Code when and how to drive `lore` (always with `--json` for
   structured results).
-- `lore init --codex` emits `.codex/skills/lore/SKILL.md`; a managed block in
+- `lore init --codex` emits `.agents/skills/lore/SKILL.md` (the repository skill path Codex reads); a managed block in
   `AGENTS.md` points Codex at that skill without overwriting repository guidance.
 - A tiny managed block in `CLAUDE.md` points Claude Code at its skill.
 - `lore instructions` prints task-shaped guidance on demand for any agent or

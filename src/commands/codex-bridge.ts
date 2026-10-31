@@ -1,6 +1,11 @@
 import { dirname, join } from "node:path";
 import type { BridgeAction } from "../core/agent-bridge";
-import { AGENTS_MD_REL_PATH, CODEX_SKILL_REL_PATH, planCodexBridge } from "../core/codex-bridge";
+import {
+  AGENTS_MD_REL_PATH,
+  CODEX_LEGACY_SKILL_REL_PATH,
+  CODEX_SKILL_REL_PATH,
+  planCodexBridge,
+} from "../core/codex-bridge";
 import { readFileIfPresent } from "../errors";
 import { readAgentGovernance } from "./agent-governance";
 import { assertNoSymlinkInAnyPath, ensureDir, writeFileAtomic } from "./fswrite";
@@ -12,6 +17,7 @@ export interface CodexBridgeResult {
 
 export function applyCodexBridge(options: { root: string; force: boolean; check: boolean }): CodexBridgeResult {
   const skillRaw = readFileIfPresent(join(options.root, CODEX_SKILL_REL_PATH), CODEX_SKILL_REL_PATH);
+  const legacyRaw = readFileIfPresent(join(options.root, CODEX_LEGACY_SKILL_REL_PATH), CODEX_LEGACY_SKILL_REL_PATH);
   const agentsRaw = readFileIfPresent(join(options.root, AGENTS_MD_REL_PATH), AGENTS_MD_REL_PATH);
   const skillOnDisk = normalize(skillRaw);
   const agentsOnDisk = normalize(agentsRaw);
@@ -21,6 +27,7 @@ export function applyCodexBridge(options: { root: string; force: boolean; check:
   const plan = planCodexBridge({
     skillOnDisk,
     agentsOnDisk,
+    legacySkillOnDisk: normalize(legacyRaw),
     force: options.force,
     check: options.check,
     governance: readAgentGovernance(options.root),

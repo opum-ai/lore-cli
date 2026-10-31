@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`lore init --codex` writes the Codex skill where Codex reads it, and a bare `lore init` that cannot find a terminal says so (LCLI-771, ODOC-556)**
+  The skill moves from `.codex/skills/lore/SKILL.md` to `.agents/skills/lore/SKILL.md`, the repository skill path Codex documents. A skill an older lore left at the old path is reported as `orphaned` drift by `lore agents --check` and is never deleted. A bare `lore init` that does not engage the wizard (stdin or stderr not a terminal) now prints a stderr notice naming the flags (`--codex`, `--agents`, `--yes`, `--tracker`) instead of silently writing no bridge. The generated plugin skill text does not name the path, so `skills/` is unchanged.
+
 ### Added
 
 - **`lore agents --check` names the file that disables the `opum-lore` plugin, and what `up-to-date` covers**

@@ -27,7 +27,13 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { commandHandlerNames, run } from "../src/cli";
-import { type AgentsResult, applyAgentsBridge, bridgeActionColor, runAgents } from "../src/commands/agents";
+import {
+  type AgentsResult,
+  applyAgentsBridge,
+  bridgeActionColor,
+  renderTrailer,
+  runAgents,
+} from "../src/commands/agents";
 import {
   buildNudgeBody,
   buildSkillDoc,
@@ -41,6 +47,7 @@ import {
   buildCodexNudgeBody,
   buildCodexSkillDoc,
   CODEX_AGENT_BLOCK_LABEL,
+  CODEX_LEGACY_SKILL_REL_PATH,
   CODEX_SKILL_REL_PATH,
 } from "../src/core/codex-bridge";
 import { upsertManagedBlock } from "../src/core/managed-block";
@@ -693,6 +700,70 @@ describe("lore agents — the codex bridge is covered too, but only where one al
     expect(agents(["--check"]).result.files.length).toBe(4);
   });
 
+  test("LCLI-771: Codex's skill lives under .agents/skills, the path Codex documents, never .codex", () => {
+    expect(CODEX_SKILL_REL_PATH).toBe(".agents/skills/lore/SKILL.md");
+    expect(CODEX_LEGACY_SKILL_REL_PATH).toBe(".codex/skills/lore/SKILL.md");
+  });
+
+  test("LCLI-771: a skill left at the pre-0.14.2 .codex path is drift at exit 6, and lore never deletes it", () => {
+    agents();
+    withCodexBridge();
+    const legacyAbs = join(root, CODEX_LEGACY_SKILL_REL_PATH);
+    mkdirSync(dirname(legacyAbs), { recursive: true });
+    writeFileSync(legacyAbs, buildCodexSkillDoc());
+    const checked = agents(["--check"]);
+    expect(checked.code).toBe(6);
+    expect(actionFor(checked.result, CODEX_LEGACY_SKILL_REL_PATH)).toBe("orphaned");
+    // Not even `--force` removes it, and the file's bytes are untouched.
+    const forced = agents(["--force"]);
+    expect(actionFor(forced.result, CODEX_LEGACY_SKILL_REL_PATH)).toBe("orphaned");
+    expect(readFileSync(legacyAbs, "utf8")).toBe(buildCodexSkillDoc());
+  });
+
+  test("LCLI-771: a leftover plus a hand-edited skill keeps the --force remedy for the skill", () => {
+    agents();
+    withCodexBridge();
+    writeFileSync(codexSkillAbs(), "hand-edited\n");
+    const legacyAbs = join(root, CODEX_LEGACY_SKILL_REL_PATH);
+    mkdirSync(dirname(legacyAbs), { recursive: true });
+    writeFileSync(legacyAbs, "old\n");
+    const { result } = agents(["--check"]);
+    const trailer = renderTrailer(result) ?? "";
+    expect(trailer).toContain("lore agents --force");
+    expect(trailer).toContain("is a leftover");
+  });
+
+  test("LCLI-771: a legacy-only repository arms the codex half so --check reports the leftover rather than staying silent", () => {
+    agents();
+    const legacyAbs = join(root, CODEX_LEGACY_SKILL_REL_PATH);
+    mkdirSync(dirname(legacyAbs), { recursive: true });
+    writeFileSync(legacyAbs, "anything\n");
+    const { code, result } = agents(["--check"]);
+    expect(code).toBe(6);
+    expect(actionFor(result, CODEX_LEGACY_SKILL_REL_PATH)).toBe("orphaned");
+    expect(actionFor(result, CODEX_SKILL_REL_PATH)).toBe("created");
+  });
+
+  test("LCLI-771: a repository with BOTH targets keeps both skills, and the .claude one is never called a leftover", () => {
+    agents();
+    withCodexBridge();
+    expect(existsSync(join(root, SKILL_REL_PATH))).toBe(true);
+    expect(existsSync(codexSkillAbs())).toBe(true);
+    const { code, result } = agents(["--check"]);
+    expect(code).toBe(0);
+    expect(actionFor(result, SKILL_REL_PATH)).toBe("unchanged");
+    expect(actionFor(result, CODEX_SKILL_REL_PATH)).toBe("unchanged");
+    expect(result.files.some((f) => f.action === "orphaned")).toBe(false);
+  });
+
+  test("LCLI-771: a repository with no leftover reports no legacy entry", () => {
+    agents();
+    withCodexBridge();
+    const { code, result } = agents(["--check"]);
+    expect(code).toBe(0);
+    expect(result.files.some((f) => f.path === CODEX_LEGACY_SKILL_REL_PATH)).toBe(false);
+  });
+
   test("a current codex bridge is reported unchanged and the run stays at exit 0", () => {
     agents();
     withCodexBridge();
@@ -716,7 +787,7 @@ describe("lore agents — the codex bridge is covered too, but only where one al
     expect(readFileSync(agentsMdAbs(), "utf8")).toBe(drifted);
   });
 
-  test("a drifted .codex SKILL.md fails the gate at exit 6 and names that file", () => {
+  test("a drifted .agents SKILL.md fails the gate at exit 6 and names that file", () => {
     agents();
     withCodexBridge();
     writeFileSync(codexSkillAbs(), `${buildCodexSkillDoc()}\ndrifted`);
@@ -741,9 +812,9 @@ describe("lore agents — the codex bridge is covered too, but only where one al
     // was laid down -- the check adds nothing.
     agents();
     withCodexBridge();
-    const before = readdirSync(join(root, ".codex/skills/lore")).sort();
+    const before = readdirSync(join(root, ".agents/skills/lore")).sort();
     agents(["--check"]);
-    expect(readdirSync(join(root, ".codex/skills/lore")).sort()).toEqual(before);
+    expect(readdirSync(join(root, ".agents/skills/lore")).sort()).toEqual(before);
     expect(existsSync(join(root, ".lore/profile.toml"))).toBe(false);
   });
 });

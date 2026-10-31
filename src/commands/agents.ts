@@ -43,6 +43,7 @@ import {
 import {
   AGENTS_MD_REL_PATH,
   CODEX_AGENT_BLOCK_LABEL,
+  CODEX_LEGACY_SKILL_REL_PATH,
   CODEX_SKILL_REL_PATH,
   planCodexBridge,
 } from "../core/codex-bridge";
@@ -167,6 +168,7 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
   // The codex bridge is planned alongside, but ONLY where one already exists (LCLI-364). See
   // {@link hasCodexBridge} for why presence, not absence, is what arms it.
   const codexSkillRaw = readFileIfPresent(join(root, CODEX_SKILL_REL_PATH), CODEX_SKILL_REL_PATH);
+  const codexLegacyRaw = readFileIfPresent(join(root, CODEX_LEGACY_SKILL_REL_PATH), CODEX_LEGACY_SKILL_REL_PATH);
   const agentsRaw = readFileIfPresent(join(root, AGENTS_MD_REL_PATH), AGENTS_MD_REL_PATH);
   const agentsStyle = detectDiskStyle(agentsRaw);
 
@@ -187,9 +189,11 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
   const claudeArmed =
     target !== undefined
       ? target === "claude"
-      : !includeCodex || hasClaudeBridge(skillOnDisk, claudeRaw, codexSkillRaw, agentsRaw);
+      : !includeCodex || hasClaudeBridge(skillOnDisk, claudeRaw, codexSkillRaw, agentsRaw, codexLegacyRaw);
   const codexArmed =
-    target !== undefined ? target === "codex" : includeCodex && hasCodexBridge(codexSkillRaw, agentsRaw);
+    target !== undefined
+      ? target === "codex"
+      : includeCodex && hasCodexBridge(codexSkillRaw, agentsRaw, codexLegacyRaw);
   // Explicit beats config, same rule as claudeArmed above: a SCOPED request (`lore init
   // --claude`/`--agents`) always materializes SKILL.md regardless of `agents.skillSource` — only
   // the bare `lore agents` call ("keep whatever's selected current") is scoped to the persisted
@@ -208,6 +212,7 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
     ? planCodexBridge({
         skillOnDisk: normalizeOnDisk(codexSkillRaw),
         agentsOnDisk: normalizeOnDisk(agentsRaw),
+        legacySkillOnDisk: normalizeOnDisk(codexLegacyRaw),
         force,
         check,
         governance,
@@ -273,14 +278,14 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
  * codex half of `lore agents` (LCLI-364).
  *
  * The conditional is the load-bearing part, not an optimization. Before this, `--check` gated only
- * the Claude bridge and no workflow referenced codex at all, so `.codex/skills/lore/SKILL.md` and
+ * the Claude bridge and no workflow referenced codex at all, so `.agents/skills/lore/SKILL.md` and
  * AGENTS.md's managed block could drift from their generators indefinitely — and did: AGENTS.md was
  * found missing the `workspace` topic while CLAUDE.md, which has a gate, was current (LCLI-362).
  * One artifact enumerated and checked, its twin not, and the green check on the first reading as
  * coverage of both.
  *
  * But checking UNCONDITIONALLY would be its own defect. A repository that never opted into Codex has
- * no `.codex/` tree and no `lore:agents` block in AGENTS.md; planning the codex bridge there reports
+ * no `.agents/skills/lore` skill and no `lore:agents` block in AGENTS.md; planning the codex bridge there reports
  * `created` — drift — and turns every Claude-only repository permanently red. A gate everybody has
  * to disable protects nothing. So presence arms it: `lore init --codex` is what opts a repository in,
  * and from then on its codex bridge is held to the same standard as its Claude one.
@@ -288,11 +293,18 @@ export function applyAgentsBridge(options: ApplyAgentsOptions): AgentsResult {
  * Either artifact alone counts. A repository whose AGENTS.md carries the block but whose SKILL.md was
  * deleted is exactly the drift worth catching, and so is the reverse.
  */
-function hasCodexBridge(codexSkillRaw: string | undefined, agentsRaw: string | undefined): boolean {
+function hasCodexBridge(
+  codexSkillRaw: string | undefined,
+  agentsRaw: string | undefined,
+  codexLegacyRaw?: string | undefined,
+): boolean {
   // `readFileIfPresent` signals "absent" with `undefined`, not `null` -- a `!== null` test here is
   // true for a MISSING file and silently arms the codex half in every Claude-only repository,
-  // creating the very `.codex/` tree whose absence was supposed to disarm it.
+  // creating the very `.agents/` tree whose absence was supposed to disarm it.
   if (codexSkillRaw !== undefined) return true;
+  // A skill an older lore left at the pre-LCLI-771 path is still proof the repository opted in, and
+  // arming on it is what lets `--check` report the leftover instead of staying silent about it.
+  if (codexLegacyRaw !== undefined) return true;
   return agentsRaw !== undefined && agentsRaw.includes(CODEX_AGENT_BLOCK_LABEL);
 }
 
@@ -315,10 +327,11 @@ function hasClaudeBridge(
   claudeRaw: string | undefined,
   codexSkillRaw: string | undefined,
   agentsRaw: string | undefined,
+  codexLegacyRaw?: string | undefined,
 ): boolean {
   if (skillOnDisk !== null) return true;
   if (claudeRaw?.includes(AGENT_BLOCK_LABEL)) return true;
-  return !hasCodexBridge(codexSkillRaw, agentsRaw);
+  return !hasCodexBridge(codexSkillRaw, agentsRaw, codexLegacyRaw);
 }
 
 /**
@@ -482,6 +495,9 @@ function agentsRenderable(data: AgentsResult): Renderable<AgentsResult> {
   return { kind: "agents.result", data, pretty: renderPretty, plain: renderPlain };
 }
 
+/** One template shared with quest (QCLI-543): only the tool name and paths vary. */
+const LEGACY_LEFTOVER_MESSAGE = `${CODEX_LEGACY_SKILL_REL_PATH} is a leftover: lore now writes its Codex skill to ${CODEX_SKILL_REL_PATH}. Move or delete it by hand; lore never deletes it.`;
+
 /**
  * The per-action verb shown for a file: the drift status (`--check`) or the applied action (write
  * path). `path`/`skillSource` exist only to catch one specific case (LCLI-446): under
@@ -493,6 +509,9 @@ function agentsRenderable(data: AgentsResult): Renderable<AgentsResult> {
 function actionLabel(path: string, action: BridgeAction, check: boolean, skillSource: SkillSource): string {
   if (action === "unchanged" && path === SKILL_REL_PATH && skillSource === "plugin") {
     return check ? "correctly absent (skill source: plugin)" : "absent (skill source: plugin)";
+  }
+  if (path === CODEX_LEGACY_SKILL_REL_PATH && action === "orphaned") {
+    return check ? `orphaned (${LEGACY_LEFTOVER_MESSAGE})` : "orphaned";
   }
   if (check) {
     if (action === "protected") {
@@ -628,6 +647,17 @@ function renderPlain(data: AgentsResult): string {
  * `init`'s own rendering must not regress it just because it's a second, thinner caller.
  */
 export function renderTrailer(data: AgentsResult): string | undefined {
+  // The legacy-path leftover is reported ALONGSIDE whatever else the run found, never instead of it:
+  // a leftover plus a hand-edited skill must keep the `--force` remedy for the skill (LCLI-771).
+  const isLegacy = (file: { path: string; action: string }): boolean =>
+    file.path === CODEX_LEGACY_SKILL_REL_PATH && file.action === "orphaned";
+  const base = renderBaseTrailer({ ...data, files: data.files.filter((file) => !isLegacy(file)) });
+  if (!data.files.some(isLegacy)) return base;
+  const note = data.check ? `${LEGACY_LEFTOVER_MESSAGE} (exit 6)` : LEGACY_LEFTOVER_MESSAGE;
+  return base === undefined ? note : `${base}\n${note}`;
+}
+
+function renderBaseTrailer(data: AgentsResult): string | undefined {
   const hasProtected = data.files.some((file) => file.action === "protected");
   const hasOrphaned = data.files.some((file) => file.action === "orphaned");
   if (data.check) {

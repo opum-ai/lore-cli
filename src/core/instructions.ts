@@ -338,14 +338,16 @@ const AGENTS: InstructionTopic = {
   body: `\`lore agents\` (write) and \`lore agents --check\` (the CI drift gate,
 exit 6 on stale/missing files, exit 0 otherwise) regenerate or verify the
 Claude bridge (\`.claude/skills/lore/SKILL.md\` plus a managed nudge block in
-\`CLAUDE.md\`) and/or the Codex bridge (\`.codex/skills/lore/SKILL.md\` plus a
+\`CLAUDE.md\`) and/or the Codex bridge (\`.agents/skills/lore/SKILL.md\` plus a
 managed nudge block in \`AGENTS.md\`). A BARE \`lore agents\` call means "keep
 whatever this repository already selected current" -- it does not always
 cover both bridges, and which one(s) it covers is presence-based, not a flag
 you pass to it:
 
   - The Codex half is covered ONLY when this repository already opted in --
-    either \`.codex/skills/lore/SKILL.md\` exists, or \`AGENTS.md\` carries the
+    either \`.agents/skills/lore/SKILL.md\` exists (a leftover
+    \`.codex/skills/lore/SKILL.md\` from lore <= 0.14.1 counts and is reported as
+    orphaned drift, never deleted), or \`AGENTS.md\` carries the
     managed \`lore:agents\` block. Neither present means the repository never
     ran \`lore init --codex\`, and covering it anyway would report a Codex
     bridge nobody asked for as \`created\` -- permanent drift with no real
