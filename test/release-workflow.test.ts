@@ -1378,14 +1378,16 @@ describe("release.yml publish is gated by the release gate probe (LCLI-738)", ()
 });
 
 /**
- * LCLI-714. The probe job's FRESH arm runs `lore check`, which drives the `quest` binary and
- * exits 3 when it is not on PATH — before the `[targets]` feature is ever reached. That is how
- * the v0.14.0 dispatch (run 39347496150) reddened all six probe jobs while the artifact itself
- * was clean: the gate failed closed on a missing peer, not on the thing it measures. So
- * "the job can obtain quest" is a property of the gate, and these assert the WIRING rather
- * than the prose that describes it.
+ * LCLI-714, re-based by LCLI-751. The probe job's FRESH arm USED to run `lore check`, which drives
+ * the `quest` binary and exits 3 when it is not on PATH — before the `[targets]` feature was ever
+ * reached. That is how the v0.14.0 dispatch (run 39347496150) reddened all six probe jobs while the
+ * artifact itself was clean. The probe now runs `lore agents --check --target codex`, which never
+ * reaches quest (no quest adapter on its import path), so the step is probably dead weight; these
+ * pins stay on purpose because promote-latest.mjs's DEC-204 (a4) Windows excuse keys on the step's
+ * refusal, and LCLI-773 tracks removing both together. They assert the WIRING rather than the prose
+ * that describes it.
  */
-describe("release.yml's release gate probe can obtain the quest peer it drives (LCLI-714)", () => {
+describe("release.yml's release gate probe can obtain the quest peer it once drove (LCLI-714)", () => {
   function parseDoc(text: string): WorkflowDoc {
     return yaml.load(text, { schema: yaml.JSON_SCHEMA }) as WorkflowDoc;
   }

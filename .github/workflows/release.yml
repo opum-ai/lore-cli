@@ -14,6 +14,8 @@ name: Release
 # setup for every package;
 # see docs/runbooks/release-publishing.md's First-release checklist for the full
 # mechanical sequence (version bump, the bin.lore flip, tag, dispatch).
+# Before TAGGING, re-base scripts/release-gate-probe.mjs onto the new binary behaviour of the
+# release being cut: the probe goes red BY DESIGN for the release after LCLI-771's (LCLI-751).
 on:
   workflow_dispatch:
     inputs:
@@ -988,12 +990,15 @@ jobs:
           overwrite: true
 
   # LCLI-738, DEC-204 (b). Prove that the host binary this release QUALIFIED can do something the
-  # previous published release cannot, on every platform in the matrix. The probe feature is the
-  # `[targets]` key in `.lore/agents/*.toml` (agent-profile budget targets, added after v0.13.0 by
-  # LCLI-682/LCLI-722). It is observable as an exit status: `lore check` exits 0 under a binary
-  # built from this tree, and 0.13.0 exits 6 with
-  # `Unrecognized key: "targets"`. scripts/release-gate-probe.mjs owns both expectations and the
-  # failure messages; this job only supplies the two binaries and the checkout to run them in.
+  # previous published release cannot, on every platform in the matrix. The probe feature is where
+  # the Codex skill lives (LCLI-771, re-based by LCLI-751): a bridge a binary from this tree writes
+  # (`lore agents --target codex`) puts it at `.agents/skills/lore/SKILL.md`, so
+  # `lore agents --check --target codex` exits 0 under that binary and under 0.14.1 exits 6 with
+  # the exact line `out-of-date .codex/skills/lore/SKILL.md`. The job NAME below still says
+  # `[targets]` because scripts/promote-latest.mjs and its tests match job names; it is a label,
+  # not the feature. scripts/release-gate-probe.mjs owns both expectations and the failure
+  # messages and writes the bridge into its own scratch directory; this job only supplies the two
+  # binaries.
   #
   # THE FRESH BINARY IS THE QUALIFIED ARTIFACT, never a rebuild: it is unpacked from the matching
   # platform tarball that package-qualification produced for THIS run. The previous binary comes
@@ -1004,13 +1009,16 @@ jobs:
   # binary accepts the feature and the previous one rejects it with the exact rejection it prints.
   # The job itself has no `if:`, so a publish:false rehearsal runs it too.
   #
-  # THE JOB MUST CARRY `quest`, which `lore check` drives (LCLI-714, DEC-204 (b)). Without it
-  # neither arm measures anything: `check` exits 3 with "the `quest` CLI is not installed or not
-  # on PATH" before the `[targets]` schema is reached, so the FRESH arm fails and the gate goes
-  # red for a reason that has nothing to do with the artifact. That is exactly what happened to
-  # all six jobs on the v0.14.0 dispatch (run 39347496150). The step below is the same composite
-  # action the tracker, docs-gate and build jobs use, so the npm-then-source resolution — and its
-  # assertion that the built quest reports CLAUDE.md's declared version — is the ONE
+  # THE JOB STILL CARRIES `quest`, but the probe no longer needs it (LCLI-714, re-based by
+  # LCLI-751). The probe used to run `lore check`, which drives `quest` and exits 3 ("the `quest`
+  # CLI is not installed or not on PATH") before the `[targets]` schema was reached; that is what
+  # reddened all six jobs on the v0.14.0 dispatch (run 39347496150). It now runs
+  # `lore agents --check --target codex`, and `agents` imports no quest adapter and the CLI start-up
+  # does not touch quest, so the step is probably dead weight here. It stays because
+  # test/release-workflow.test.ts pins it and promote-latest.mjs's DEC-204 (a4) Windows excuse
+  # keys on its refusal; the follow-up removal is tracked as LCLI-773. The step is the same
+  # composite action the tracker, docs-gate and build jobs use, so the npm-then-source resolution
+  # -- and its assertion that the built quest reports CLAUDE.md's declared version -- is the ONE
   # implementation, not a fourth inline install that bypasses the source fallback.
   #
   # The version is DERIVED from CLAUDE.md rather than pinned a second time here, and the derive
@@ -1126,10 +1134,11 @@ jobs:
 
           # BOTH ARMS IN THE SAME JOB AND CHECKOUT. `present` runs the fresh, qualified binary;
           # `absent` runs the previous release and requires a nonzero exit whose output carries
-          # the exact rejection `Unrecognized key: "targets"`, so neither an unrelated breakage
-          # nor output that merely mentions the word can stand in for the control.
-          node scripts/release-gate-probe.mjs --binary "$fresh_binary" --expect present --cwd "$PWD"
-          node scripts/release-gate-probe.mjs --binary "$previous_binary" --expect absent --cwd "$PWD"
+          # the exact line `out-of-date .codex/skills/lore/SKILL.md` (release-gate-probe.mjs
+          # ABSENT_SIGNATURE), so neither an unrelated breakage nor output that merely mentions the
+          # word can stand in for the control.
+          node scripts/release-gate-probe.mjs --binary "$fresh_binary" --expect present
+          node scripts/release-gate-probe.mjs --binary "$previous_binary" --expect absent --fresh-binary "$fresh_binary"
 
   provenance-pre:
     name: re-verify published provenance still resolves (LCLI-481)
