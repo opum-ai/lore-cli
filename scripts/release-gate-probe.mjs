@@ -14,7 +14,7 @@
 //   PREVIOUS — the platform package at npm's `latest` (deliberately NOT the release-candidate
 //              dist-tag), run with --expect absent against a bridge the FRESH binary wrote
 //              (--fresh-binary): `lore agents --check --target codex` must exit NONZERO and
-//              carry the exact line `out-of-date .codex/skills/lore/SKILL.md`.
+//              carry a whole output line equal to `out-of-date .codex/skills/lore/SKILL.md`.
 //
 // THE PROBE FEATURE (LCLI-771, ODOC-556, re-based by LCLI-751) is where the Codex skill lives.
 // A binary from this tree writes it to `.agents/skills/lore/SKILL.md`, the repository skill path
@@ -49,7 +49,7 @@
 //      measured, which is never a pass
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { isMain } from "./is-main.mjs";
@@ -59,8 +59,8 @@ const PROBED_FEATURE = "the Codex skill at .agents/skills/lore/SKILL.md";
 
 /**
  * The EXACT line lore <= 0.14.1 prints for a Codex bridge this tree wrote:
- * `out-of-date .codex/skills/lore/SKILL.md`. Matched as one literal with a plain `includes()`,
- * never a regular expression built from a variable — a pattern can silently widen, and this
+ * `out-of-date .codex/skills/lore/SKILL.md`. Matched as a WHOLE LINE (output split on LF or CRLF, each line trimmed), never as a substring and
+ * never as a regular expression built from a variable — a pattern can silently widen, and this
  * string cannot. If the previous release starts saying something else, the absence arm goes
  * red for the operator to look at, which is the self-obsolescence this gate is meant to
  * surface rather than paper over.
@@ -116,6 +116,11 @@ function streamsOf(result) {
     .trim();
 }
 
+/** True when some whole line of `output` equals `line`. Split CRLF-aware: win32 binaries print `\r\n`. */
+export function hasLine(output, line) {
+  return output.split(/\r?\n/).some((candidate) => candidate.trim() === line);
+}
+
 /** The argv every measured and generating call shares: no shell, plugin detection off. */
 const SPAWN_OPTIONS = (cwd) => ({
   cwd,
@@ -135,7 +140,7 @@ const SPAWN_OPTIONS = (cwd) => ({
  *
  * `spawn` is the child_process.spawnSync seam, so every arm is testable on every platform and
  * the real previous release's captured output can stand in for a binary that is no longer built.
- * `makeDir`/`removeDir` are the scratch-directory seam.
+ * `makeDir`/`removeDir` are the scratch-directory seam; `exists` is the file-presence seam.
  */
 export function runProbe({
   binary,
@@ -144,6 +149,7 @@ export function runProbe({
   spawn = spawnSync,
   makeDir = () => mkdtempSync(join(tmpdir(), "lore-release-gate-probe-")),
   removeDir = (dir) => rmSync(dir, { recursive: true, force: true }),
+  exists = (path) => existsSync(path),
 }) {
   const dir = makeDir();
   try {
@@ -171,6 +177,19 @@ export function runProbe({
         output: streamsOf(written),
       };
     }
+    // Each arm proves itself: the fresh binary must have written the NEW path and not the old one,
+    // else the bridge is not the one this probe reasons about and nothing below means anything.
+    const wroteNew = exists(join(dir, ".agents", "skills", "lore", "SKILL.md"));
+    const wroteOld = exists(join(dir, ".codex", "skills", "lore", "SKILL.md"));
+    if (!wroteNew || wroteOld) {
+      return {
+        ok: false,
+        kind: "fixture-error",
+        exitCode: 0,
+        signature: false,
+        output: `the fresh binary's bridge layout is wrong: .agents/skills/lore/SKILL.md ${wroteNew ? "exists" : "is MISSING"}, .codex/skills/lore/SKILL.md ${wroteOld ? "EXISTS (must not)" : "is absent"}`,
+      };
+    }
     const result = spawn(binary, ["agents", "--check", "--target", "codex"], SPAWN_OPTIONS(dir));
     const output = streamsOf(result);
     if (result.error) {
@@ -184,7 +203,7 @@ export function runProbe({
       };
     }
     const exitCode = result.status;
-    const signature = output.includes(ABSENT_SIGNATURE);
+    const signature = hasLine(output, ABSENT_SIGNATURE);
     if (!Number.isInteger(exitCode)) {
       // Killed by a signal, or otherwise ended without a status. NOT a nonzero exit: the
       // process may well have printed the signature before it died, and accepting that would
@@ -230,7 +249,7 @@ export function main(argv, { out = console.log, err = console.error, ...seams } 
 
   if (result.kind === "fixture-error") {
     err(
-      `::error::release gate probe: the fresh binary ${args.expect === "present" ? args.binary : args.freshBinary} could not write the Codex bridge it was asked to (exit ${result.exitCode ?? "none"}). Nothing was measured — a probe without a bridge to check cannot satisfy either expectation, so this is never a pass.`,
+      `::error::release gate probe: the fresh binary ${args.expect === "present" ? args.binary : args.freshBinary} could not write the Codex bridge it was asked to (exit ${result.exitCode ?? "none"}; a wrong bridge layout reports exit 0). Nothing was measured — a probe without a bridge to check cannot satisfy either expectation, so this is never a pass.`,
     );
     if (result.output !== "") err(result.output);
     return 2;

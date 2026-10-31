@@ -24,7 +24,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SpawnLike, SpawnResult } from "../scripts/release-gate-probe.mjs";
@@ -56,11 +56,22 @@ const WROTE: SpawnResult = {
 };
 
 /** A seam that answers the generating call with `written` and the checking call with `checked`. */
-function seam(checked: SpawnResult, written: SpawnResult = WROTE): { spawn: SpawnLike; calls: Call[] } {
+function seam(
+  checked: SpawnResult,
+  written: SpawnResult = WROTE,
+  layout: string[] = [".agents/skills/lore/SKILL.md"],
+): { spawn: SpawnLike; calls: Call[] } {
   const calls: Call[] = [];
   const spawn: SpawnLike = (binary, args, options) => {
     calls.push({ binary, args, cwd: options.cwd, env: options.env });
-    return args.includes("--check") ? checked : written;
+    if (args.includes("--check")) return checked;
+    // The generating call: lay the named files down in the scratch directory, as the real binary does.
+    for (const rel of written.status === 0 ? layout : []) {
+      const file = join(options.cwd as string, rel);
+      mkdirSync(join(file, ".."), { recursive: true });
+      writeFileSync(file, "x");
+    }
+    return written;
   };
   return { spawn, calls };
 }
@@ -72,10 +83,13 @@ function invoke(args: string[], io: { spawn: SpawnLike }): RunResult {
   return { code, out, err };
 }
 
-const present = (checked: SpawnResult, written?: SpawnResult): RunResult =>
-  invoke(["--binary", "/fresh/lore", "--expect", "present"], seam(checked, written));
-const absent = (checked: SpawnResult, written?: SpawnResult): RunResult =>
-  invoke(["--binary", "/previous/lore", "--expect", "absent", "--fresh-binary", "/fresh/lore"], seam(checked, written));
+const present = (checked: SpawnResult, written?: SpawnResult, layout?: string[]): RunResult =>
+  invoke(["--binary", "/fresh/lore", "--expect", "present"], seam(checked, written, layout));
+const absent = (checked: SpawnResult, written?: SpawnResult, layout?: string[]): RunResult =>
+  invoke(
+    ["--binary", "/previous/lore", "--expect", "absent", "--fresh-binary", "/fresh/lore"],
+    seam(checked, written, layout),
+  );
 
 describe("release gate probe: --expect present", () => {
   test("a fresh binary whose own bridge checks clean passes", () => {
@@ -133,6 +147,31 @@ describe("release gate probe: the absent signature is anchored on the exact line
     ["a near-miss spelling", "out-of-date .codex/skills/lore/SKILL.MD\n"],
   ])("%s with a nonzero exit FAILS the absent arm", (_name, text) => {
     expect(absent({ status: 6, stdout: text, stderr: "" }).code).toBe(1);
+  });
+});
+
+describe("release gate probe: the signature is a WHOLE line, and each arm proves its own fixture (LCLI-751)", () => {
+  test.each([
+    ["a line that merely CONTAINS the signature", "note: out-of-date .codex/skills/lore/SKILL.md is mentioned here\n"],
+    ["a longer path sharing the prefix", "out-of-date .codex/skills/lore/SKILL.md.bak\n"],
+  ])("%s FAILS the absent arm", (_name, text) => {
+    expect(absent({ status: 6, stdout: text, stderr: "" }).code).toBe(1);
+  });
+
+  test("CRLF output (a win32 binary) still carries the whole line", () => {
+    expect(absent({ status: 6, stdout: V0_14_1_OUTPUT.replace(/\n/g, "\r\n"), stderr: "" }).code).toBe(0);
+  });
+
+  test.each([
+    ["the new skill path is missing", []],
+    ["the old skill path is also written", [".agents/skills/lore/SKILL.md", ".codex/skills/lore/SKILL.md"]],
+    ["only the old skill path is written", [".codex/skills/lore/SKILL.md"]],
+  ])("a bridge layout where %s is a fixture error (exit 2) on both arms, even if the check would pass", (_name, layout) => {
+    const checked: SpawnResult = { status: 6, stdout: V0_14_1_OUTPUT, stderr: "" };
+    for (const run of [absent(checked, WROTE, layout), present({ status: 0, stdout: "", stderr: "" }, WROTE, layout)]) {
+      expect(run.code).toBe(2);
+      expect(run.err.join("\n")).toContain("could not write the Codex bridge");
+    }
   });
 });
 

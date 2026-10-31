@@ -832,7 +832,16 @@ the promotion half, item 7. It is not part of staging.
    ```
    git diff --stat <previous-tag> v<version> -- skills/
    ```
-5. Until LCLI-278 supplies an effective external approval control, dispatch
+5. **Before the first dispatch, re-base the release gate probe (LCLI-751, ruling A).**
+   `scripts/release-gate-probe.mjs` proves the staged binary does something npm's `latest`
+   cannot, and today that is the Codex skill path LCLI-771 moved to
+   `.agents/skills/lore/SKILL.md`. It goes RED BY DESIGN for the release AFTER the one that
+   ships LCLI-771: once `latest` itself writes that path, the control can no longer fail
+   for the asserted reason. Check whether the version on `latest` already carries LCLI-771; if
+   it does, move the probe (`ABSENT_SIGNATURE`, the feature text and its tests) onto a
+   behaviour new in THIS release, and show `latest` rejecting it with the exact line in a
+   `publish: false` dispatch log, before you dispatch for real. Do not rediscover this as a
+   red dispatch. Until LCLI-278 supplies an effective external approval control, dispatch
    `Release` with `publish: false` on that tag, setting `launcher_rc` (see "The
    launcher stages as `X-rc.N`" above). Download only its `npm-packages`
    artifact, list and checksum the eight `.tgz` files, then stage seven of

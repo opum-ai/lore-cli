@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The release gate probe measures a shipped feature again, and its negative control is whole-line** (LCLI-751, ruling A).
+  The probe's old feature (`[targets]`) was accepted by `0.14.1`, so the control could not fail. It now has the fresh binary write a Codex bridge into a scratch directory and checks it with each binary (`agents --check --target codex`): the fresh one exits 0, and `0.14.1`, which expects the skill at `.codex/skills/lore/SKILL.md`, exits 6 carrying the whole line `out-of-date .codex/skills/lore/SKILL.md`. Each arm now asserts the layout the fresh binary wrote (`.agents/skills/lore/SKILL.md` present, `.codex/skills/lore/SKILL.md` absent) before it measures, and the signature is matched as a whole line (CRLF-aware) rather than a substring. The probe goes red by design for the release after the one that ships LCLI-771; `docs/runbooks/release-publishing.md` now says to re-base it before dispatching. The `setup-quest` step in that job is likely dead weight now (tracked as LCLI-773).
+
 - **`lore init --codex` writes the Codex skill where Codex reads it, and a bare `lore init` that cannot find a terminal says so (LCLI-771, ODOC-556)**
   The skill moves from `.codex/skills/lore/SKILL.md` to `.agents/skills/lore/SKILL.md`, the repository skill path Codex documents. A skill an older lore left at the old path is reported as `orphaned` drift by `lore agents --check` and is never deleted. A bare `lore init` that does not engage the wizard (stdin or stderr not a terminal) now prints a stderr notice naming the flags (`--codex`, `--agents`, `--yes`, `--tracker`) instead of silently writing no bridge. The generated plugin skill text does not name the path, so `skills/` is unchanged.
 
