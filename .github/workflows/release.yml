@@ -58,6 +58,28 @@ on:
 permissions:
   contents: read
 
+env:
+  # LCLI-784, DEC-55 (ODOC-556, the 0.15.0 pair cut). The opum-ai/quest-cli commit that carries the
+  # Quest version CLAUDE.md's managed block declares, read by .github/actions/setup-quest ONLY when
+  # that version is neither on npm nor staged as a release candidate.
+  #
+  # WHY THE PROBE NEEDS IT AT DISPATCH TIME. The release-gate probe installs quest at the declared
+  # version before any lore publish. quest's own staging hard-refuses without opum-cli-e2e's quest
+  # receipt, whose pair lock needs a lore binary from a lore release run, and this run is that run:
+  # without a source build the cycle never closes. (Measured: run 41314948217 failed all six probe
+  # legs at setup-quest with notarget @opum-ai/quest@0.15.0.) 0.14.1 crossed the same way (LCLI-714)
+  # and LCLI-750 dropped the pin afterwards; LCLI-781 drops this one, with ci.yml's, once quest 0.15.0
+  # is on npm latest.
+  #
+  # This file carries its own copy because a workflow_dispatch run executes THIS file from the
+  # dispatch ref's tree and cannot read ci.yml's env. The two may name different commits; both must
+  # carry the declared version, and setup-quest asserts the built quest reports it, so a ref that
+  # does not fails loudly as a ref problem.
+  #
+  # It names quest-cli's main f86d343c, whose package.json reads 0.15.0 (verified against the remote
+  # before it was written here: a composed 40-hex id answers like a real one from every query).
+  QUEST_SOURCE_REF: f86d343cde21ca36641b554f65bfcb2add761e41
+
 jobs:
   setup:
     name: resolve the release platform matrix
@@ -1049,7 +1071,8 @@ jobs:
           pattern: ladybug-package-qualification-*-${{ github.run_id }}
           path: qualified-packages
       # The Quest version is DERIVED from the managed block in CLAUDE.md, exactly as ci.yml's
-      # tracker job does it — a second pin would drift from the block that already declares it.
+      # tracker job does it — a second VERSION pin would drift from the block that already declares it.
+      # (The source ref above is a commit, not a version, and is the one pin this file carries.)
       - name: Resolve the Quest version CLAUDE.md declares
         id: quest
         shell: bash
@@ -1059,6 +1082,7 @@ jobs:
       - uses: ./.github/actions/setup-quest
         with:
           version: ${{ steps.quest.outputs.version }}
+          source-ref: ${{ env.QUEST_SOURCE_REF }}
       - name: Probe the qualified fresh binary and the previous release binary
         shell: bash
         env:
