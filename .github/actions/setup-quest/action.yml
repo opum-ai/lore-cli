@@ -127,8 +127,8 @@ runs:
         DECLARED: ${{ inputs.version }}
       run: |
         set -euo pipefail
-        # LCLI-750: a caller may pass no ref (release.yml never does, and ci.yml passes
-        # one only while LCLI-775's pin stands), so reaching this step with no ref means
+        # LCLI-750: a caller may pass no ref (ci.yml and release.yml pass one only while
+        # LCLI-775's and LCLI-784's pins stand), so reaching this step with no ref means
         # the declared version is neither on npm nor staged. Say that, rather
         # than letting `git cat-file -e '^{commit}'` fail with a message about a ref.
         if [ -z "$QUEST_SOURCE_REF" ]; then
@@ -138,9 +138,10 @@ runs:
         # The shim this writes is a bash script with no extension, which bash and a
         # shebang-resolving lookup can run on Linux and macOS, and which a Windows
         # bare-name lookup cannot resolve at all (PATHEXT walk, and CreateProcess
-        # will not run a script without a shell). Every caller today is ubuntu; a
-        # future Windows caller would otherwise get a silent no-op instead of a
-        # quest, so refuse THERE — and only there, since a wider guard would refuse
+        # will not run a script without a shell). The probe job in release.yml also
+        # runs Windows legs, which reach this refusal by design (promote-latest.mjs
+        # excuses exactly that, DEC-204 (a4)); a Windows caller would otherwise get a
+        # silent no-op instead of a quest, so refuse THERE — and only there, since a wider guard would refuse
         # a runner this actually works on.
         if [ "$RUNNER_OS" = "Windows" ]; then
           echo "::error::setup-quest's source fallback does not support Windows runners (this runner is $RUNNER_OS): its shim is an extensionless bash script, which a bare-name lookup cannot resolve there. A Windows caller needs a different mechanism — see ADR-0023 and DEC-55."

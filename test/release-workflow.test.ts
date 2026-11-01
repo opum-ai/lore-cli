@@ -49,6 +49,7 @@ interface WorkflowStep {
 
 interface WorkflowJob {
   if?: string;
+  env?: Record<string, string>;
   needs?: string[] | string;
   permissions?: Record<string, string>;
   environment?: string;
@@ -1425,7 +1426,7 @@ describe("release.yml's release gate probe can obtain the quest peer it once dro
       expect(bad).toMatch(TAR_WITH_DIRECTORY);
   });
 
-  test("the probe job calls setup-quest with CLAUDE.md's declared version and no pinned ref (LCLI-750)", () => {
+  test("the probe job calls setup-quest with CLAUDE.md's declared version and the one pinned source ref this file carries (LCLI-784)", () => {
     const job = loadDoc(WORKFLOW_PATH).jobs["release-gate-probe"];
     const steps = job?.steps ?? [];
     const derive = steps.find((step) => step.id === "quest");
@@ -1438,8 +1439,26 @@ describe("release.yml's release gate probe can obtain the quest peer it once dro
     const setup = steps.find((step) => step.uses === "./.github/actions/setup-quest");
     expect(setup).toBeDefined();
     expect(setup?.with?.version).toBe("${{ steps.quest.outputs.version }}");
-    expect(setup?.with?.["source-ref"]).toBeUndefined();
-    expect(readFileSync(WORKFLOW_PATH, "utf8")).not.toContain("QUEST_SOURCE_REF");
+    // LCLI-784: the probe needs quest installable at dispatch time, before quest can stage (its
+    // staging needs a receipt that needs this run), so the call carries a source ref. The guard is
+    // the PARSED tree first (a flow mapping, a trailing comment or a job-level override all parse the
+    // same as the block form), with the text count as a second net that is deliberately unanchored.
+    expect(setup?.with?.["source-ref"]).toBe("${{ env.QUEST_SOURCE_REF }}");
+    const doc = loadDoc(WORKFLOW_PATH);
+    expect(doc.env?.QUEST_SOURCE_REF).toMatch(/^[0-9a-f]{40}$/);
+    expect(Object.keys(doc.env ?? {})).toEqual(["QUEST_SOURCE_REF"]);
+    for (const job of Object.values(doc.jobs)) {
+      expect(job.env?.QUEST_SOURCE_REF).toBeUndefined();
+      for (const step of job.steps ?? []) expect(step.env?.QUEST_SOURCE_REF).toBeUndefined();
+    }
+    // Only the probe's setup-quest step passes a source-ref, anywhere in the file.
+    const passing = Object.entries(doc.jobs).flatMap(([id, job]) =>
+      (job.steps ?? []).filter((step) => step.with?.["source-ref"] !== undefined).map(() => id),
+    );
+    expect(passing).toEqual(["release-gate-probe"]);
+    const text = readFileSync(WORKFLOW_PATH, "utf8");
+    expect([...text.matchAll(/QUEST_SOURCE_REF\s*:/g)]).toHaveLength(1);
+    expect([...text.matchAll(/source-ref\s*:/g)]).toHaveLength(1);
     // The resolution stays in the ONE action: an inline install here would skip the
     // npm-then-source fallback and red the window the action exists to cover.
     // The pin is only as good as its pattern: it must see the hardened shape and the old one, and not a pinned reader.
