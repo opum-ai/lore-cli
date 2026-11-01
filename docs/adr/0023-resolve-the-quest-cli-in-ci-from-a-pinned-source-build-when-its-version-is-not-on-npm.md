@@ -29,6 +29,14 @@ install path. Everything below describes the pin as it stood when this ADR was
 accepted and is kept as history; where it says the pinned ref is live practice, this
 amendment supersedes it.
 
+**Amendment — 2026-11-01 (LCLI-775, LCLI-781).** The pin returned for the 0.15.0 pair
+release (ODOC-556): quest 0.15.0 was not on npm, and lore 0.15.0's pair lock requires it,
+so `ci.yml` again defines `QUEST_SOURCE_REF` (quest-cli's dev squash of #709) and passes it as
+`source-ref` at its three `setup-quest` call sites. `release.yml` still defines and passes
+none. The 2026-10-22 amendment above describes the state between the two releases; this
+one supersedes it for as long as the pin is present. LCLI-781 removes it once quest 0.15.0
+is on npm.
+
 ## Context
 
 `lore` and `quest` carry one version number (constitution Article 3 clause 1),

@@ -21,6 +21,7 @@ interface WorkflowJob {
     /** A step that calls a composite action, e.g. `./.github/actions/setup-quest` (DEC-55). */
     uses?: string;
     with?: Record<string, unknown>;
+    env?: Record<string, string>;
     "timeout-minutes"?: number;
     "continue-on-error"?: boolean;
   }>;
@@ -391,15 +392,15 @@ describe("ci.yml docs gate (LCLI-504)", () => {
     // dropped this step would fail for a reason that has nothing to do with the docs.
     //
     // DEC-55 moved the resolution into .github/actions/setup-quest, so this asserts the
-    // CALL (with the derived version and no source ref, LCLI-750) and the action file
+    // CALL (with the derived version and, while LCLI-775's pin stands, the pinned source ref) and the action file
     // itself carries the npm-then-source behaviour, asserted below.
     const job = loadWorkflow().jobs["docs-gate"];
     const steps = job?.steps ?? [];
     const setup = steps.find((step) => step.uses === "./.github/actions/setup-quest");
     expect(setup).toBeDefined();
     expect(setup?.with?.version).toBe("${{ steps.quest.outputs.version }}");
-    // LCLI-750: no pinned source ref is passed any more; the published binary is what runs.
-    expect(setup?.with?.["source-ref"]).toBeUndefined();
+    // LCLI-775: while quest 0.15.0 is off npm the call carries the pinned source ref.
+    expect(setup?.with?.["source-ref"]).toBe("${{ env.QUEST_SOURCE_REF }}");
     // Derived from CLAUDE.md's managed block rather than pinned a second time here —
     // the same rule the tracker job states, and the reason the two must stay in step.
     // DEC-240 item 3: the read lives in scripts/read-declared-quest-version.sh (inside the managed
@@ -552,16 +553,32 @@ describe("ci.yml docs gate (LCLI-504)", () => {
     expect(run).toContain("command -v quest");
   });
 
-  test("no workflow pins a quest-cli source ref any more (LCLI-750)", () => {
-    // The pin existed only while the paired quest version was not on npm. A stale pin
-    // is invisible until a bump, so absence is pinned in BOTH files that carried it, and
-    // no call site may pass a source-ref at all. Reading the text (not the parsed `env`)
-    // also catches a pin reintroduced under a different key.
-    for (const name of ["ci.yml", "release.yml"]) {
-      const text = readFileSync(join(WORKFLOWS_DIR, name), "utf8");
-      expect(text).not.toContain("QUEST_SOURCE_REF");
-      expect(text).not.toMatch(/^\s*source-ref:/m);
+  test("only ci.yml pins a quest-cli source ref, it is a full commit SHA, and each caller is bound to its job (LCLI-775, LCLI-750)", () => {
+    // The pin exists only while the paired quest version is not on npm; LCLI-781 removes it.
+    // release.yml never carries one (its probe runs after quest publishes). A pin that is
+    // not a full 40-hex commit is a branch or an abbreviation, and the action's cat-file
+    // check would only reject it at run time, inside a release window.
+    const doc = loadWorkflow();
+    expect(doc.env?.QUEST_SOURCE_REF).toMatch(/^[0-9a-f]{40}$/);
+    // The parsed tree names the callers by job; the text read catches a definition at any
+    // indent (a job-level or step-level override of the pin would sit deeper than two spaces).
+    const text = readFileSync(WORKFLOW_PATH, "utf8");
+    expect([...text.matchAll(/^\s*QUEST_SOURCE_REF:/gm)]).toHaveLength(1);
+    const callers = Object.entries(doc.jobs).flatMap(([id, job]) =>
+      (job.steps ?? [])
+        .filter((step) => step.uses === "./.github/actions/setup-quest")
+        .map((step) => ({ id, job, step })),
+    );
+    // Exactly the three quest-consuming jobs call it, once each, and each passes the pin.
+    expect(callers.map((c) => c.id).sort()).toEqual(["build", "docs-gate", "tracker"]);
+    for (const { job, step } of callers) {
+      expect(step.with?.["source-ref"]).toBe("${{ env.QUEST_SOURCE_REF }}");
+      expect(job.env?.QUEST_SOURCE_REF).toBeUndefined();
+      expect(step.env?.QUEST_SOURCE_REF).toBeUndefined();
     }
+    const release = readFileSync(join(WORKFLOWS_DIR, "release.yml"), "utf8");
+    expect(release).not.toContain("QUEST_SOURCE_REF");
+    expect(release).not.toMatch(/^\s*source-ref:/m);
   });
 
   test("the docs gate never depends on another job, so a required context cannot go absent", () => {

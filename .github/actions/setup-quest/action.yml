@@ -127,8 +127,9 @@ runs:
         DECLARED: ${{ inputs.version }}
       run: |
         set -euo pipefail
-        # LCLI-750: the pin is gone from the workflows, so reaching this step with no
-        # ref means the declared version is neither on npm nor staged. Say that, rather
+        # LCLI-750: a caller may pass no ref (release.yml never does, and ci.yml passes
+        # one only while LCLI-775's pin stands), so reaching this step with no ref means
+        # the declared version is neither on npm nor staged. Say that, rather
         # than letting `git cat-file -e '^{commit}'` fail with a message about a ref.
         if [ -z "$QUEST_SOURCE_REF" ]; then
           echo "::error::quest ${DECLARED} is not installable from npm (neither the exact version nor a staged release candidate carrying it as its base), and this caller passed no source-ref to build it from. Wait until quest has released or staged that version, or pass source-ref (a full commit SHA that carries it) as an interim crossing."
