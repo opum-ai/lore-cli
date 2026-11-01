@@ -1425,7 +1425,7 @@ describe("release.yml's release gate probe can obtain the quest peer it once dro
       expect(bad).toMatch(TAR_WITH_DIRECTORY);
   });
 
-  test("the probe job calls setup-quest with CLAUDE.md's declared version and no pinned ref (LCLI-750)", () => {
+  test("the probe job calls setup-quest with CLAUDE.md's declared version and the one pinned source ref this file carries (LCLI-784)", () => {
     const job = loadDoc(WORKFLOW_PATH).jobs["release-gate-probe"];
     const steps = job?.steps ?? [];
     const derive = steps.find((step) => step.id === "quest");
@@ -1438,8 +1438,16 @@ describe("release.yml's release gate probe can obtain the quest peer it once dro
     const setup = steps.find((step) => step.uses === "./.github/actions/setup-quest");
     expect(setup).toBeDefined();
     expect(setup?.with?.version).toBe("${{ steps.quest.outputs.version }}");
-    expect(setup?.with?.["source-ref"]).toBeUndefined();
-    expect(readFileSync(WORKFLOW_PATH, "utf8")).not.toContain("QUEST_SOURCE_REF");
+    // LCLI-784: the probe needs quest installable at dispatch time, before quest can stage (its
+    // staging needs a receipt that needs this run), so the call carries a source ref. Exactly one
+    // definition of the pin, at any indent, a full 40-hex commit, and exactly one call site passing it.
+    expect(setup?.with?.["source-ref"]).toBe("${{ env.QUEST_SOURCE_REF }}");
+    const text = readFileSync(WORKFLOW_PATH, "utf8");
+    const pins = [...text.matchAll(/^\s*QUEST_SOURCE_REF:\s*(\S+)\s*$/gm)].map((m) => m[1]);
+    expect(pins).toHaveLength(1);
+    expect(pins[0]).toMatch(/^[0-9a-f]{40}$/);
+    expect(loadDoc(WORKFLOW_PATH).env?.QUEST_SOURCE_REF).toBe(pins[0]);
+    expect([...text.matchAll(/^\s*source-ref:/gm)]).toHaveLength(1);
     // The resolution stays in the ONE action: an inline install here would skip the
     // npm-then-source fallback and red the window the action exists to cover.
     // The pin is only as good as its pattern: it must see the hardened shape and the old one, and not a pinned reader.
