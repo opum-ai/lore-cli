@@ -25,6 +25,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The release gate probe measures a shipped feature again, and its negative control is whole-line** (LCLI-751, ruling A).
   The probe's old feature (`[targets]`) was accepted by `0.14.1`, so the control could not fail. It now has the fresh binary write a Codex bridge into a scratch directory and checks it with each binary (`agents --check --target codex`): the fresh one exits 0, and `0.14.1`, which expects the skill at `.codex/skills/lore/SKILL.md`, exits 6 carrying the whole line `out-of-date .codex/skills/lore/SKILL.md`. Each arm now asserts the layout the fresh binary wrote (`.agents/skills/lore/SKILL.md` present, `.codex/skills/lore/SKILL.md` absent) before it measures, and the signature is matched as a whole line (CRLF-aware) rather than a substring. The probe goes red by design for the release after the one that ships LCLI-771; `docs/runbooks/release-publishing.md` now says to re-base it before dispatching. The `setup-quest` step in that job is likely dead weight now (tracked as LCLI-773).
 
+- **`promote-latest.mjs` waits out npm read lag after its writes** (LCLI-689). STEP 7's post-write
+  reads (every `latest`, then the launcher's integrity) now run for the `REGISTRY_WINDOW_SECONDS`
+  window (default 1800s, one read per 15s) instead of a fixed 10 reads, so a promotion whose writes
+  all succeeded no longer exits 1 on a lagging read before the GitHub Release and README read-back
+  run. A read that never converges still exits 1 and names what it read; the two read-lag exit-1
+  messages say nothing was rolled back and that re-running `--promote` resumes, while the
+  integrity-MISMATCH exit prescribes `--rollback`. Each wait (the `latest` re-read, the launcher
+  integrity re-read, and `--rollback`'s restore check) is announced before it starts.
+  `--rollback`'s restore check uses the same window, falling back to 1800 on a value that is not a
+  bounded whole number rather than refusing.
+- **A resume no longer plans a publish over a launcher npm has applied but not yet served**
+  (LCLI-748, DEC-225). When a record exists and the launcher reads absent while a platform's
+  `latest` already reads the version, or present with no `dist.integrity`, step 8 re-reads for the
+  `REGISTRY_WINDOW_SECONDS` window before deciding, instead of publishing, failing, and restoring
+  every tag over a correct release. Never converging exits 1 with nothing moved; a different
+  integrity is still refused as "needs a new version". A launcher a crash left genuinely
+  unpublished is published by re-running with `REGISTRY_WINDOW_SECONDS=0`, which decides on one
+  read (DEC-225 a1).
+
 ### Added
 
 - **`lore agents --check` names the file that disables the `opum-lore` plugin, and what `up-to-date` covers**
@@ -58,27 +77,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   written, and the caller owns the retry. A symlinked `.lore` is refused (`4`) in every case. Nothing exits
   `1`. A relative path resolves against the working directory lore was started in. A clear that
   fails partway leaves generations thawed and partly deleted; rerun it to finish.
-
-### Fixed
-
-- **`promote-latest.mjs` waits out npm read lag after its writes** (LCLI-689). STEP 7's post-write
-  reads (every `latest`, then the launcher's integrity) now run for the `REGISTRY_WINDOW_SECONDS`
-  window (default 1800s, one read per 15s) instead of a fixed 10 reads, so a promotion whose writes
-  all succeeded no longer exits 1 on a lagging read before the GitHub Release and README read-back
-  run. A read that never converges still exits 1 and names what it read; the two read-lag exit-1
-  messages say nothing was rolled back and that re-running `--promote` resumes, while the
-  integrity-MISMATCH exit prescribes `--rollback`. Each wait (the `latest` re-read, the launcher
-  integrity re-read, and `--rollback`'s restore check) is announced before it starts.
-  `--rollback`'s restore check uses the same window, falling back to 1800 on a value that is not a
-  bounded whole number rather than refusing.
-- **A resume no longer plans a publish over a launcher npm has applied but not yet served**
-  (LCLI-748, DEC-225). When a record exists and the launcher reads absent while a platform's
-  `latest` already reads the version, or present with no `dist.integrity`, step 8 re-reads for the
-  `REGISTRY_WINDOW_SECONDS` window before deciding, instead of publishing, failing, and restoring
-  every tag over a correct release. Never converging exits 1 with nothing moved; a different
-  integrity is still refused as "needs a new version". A launcher a crash left genuinely
-  unpublished is published by re-running with `REGISTRY_WINDOW_SECONDS=0`, which decides on one
-  read (DEC-225 a1).
 
 ## [0.14.1] - 2026-10-20
 

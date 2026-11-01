@@ -402,6 +402,8 @@ test("the real CHANGELOG: --next checks the named version's own section when it 
   // unchanged workspace, ODOC-556), so it reads `breaking: true` and the
   // 0.14.1 -> 0.15.0 minor bump satisfies it. package.json names 0.15.0, so
   // the CLI with no flag selects the same section.
+  // The literals below are this release's; if package.json moves without them, say so here.
+  expect(version).toBe("0.15.0");
   const next = breakingBumpProblems(real, "0.15.0");
   expect(next).toMatchObject({
     source: "## [0.15.0] - 2026-10-31",
