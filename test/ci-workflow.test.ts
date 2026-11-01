@@ -398,8 +398,8 @@ describe("ci.yml docs gate (LCLI-504)", () => {
     const setup = steps.find((step) => step.uses === "./.github/actions/setup-quest");
     expect(setup).toBeDefined();
     expect(setup?.with?.version).toBe("${{ steps.quest.outputs.version }}");
-    // LCLI-750: no pinned source ref is passed any more; the published binary is what runs.
-    expect(setup?.with?.["source-ref"]).toBeUndefined();
+    // LCLI-775: while quest 0.15.0 is off npm the call carries the pinned source ref.
+    expect(setup?.with?.["source-ref"]).toBe("${{ env.QUEST_SOURCE_REF }}");
     // Derived from CLAUDE.md's managed block rather than pinned a second time here —
     // the same rule the tracker job states, and the reason the two must stay in step.
     // DEC-240 item 3: the read lives in scripts/read-declared-quest-version.sh (inside the managed
@@ -552,16 +552,22 @@ describe("ci.yml docs gate (LCLI-504)", () => {
     expect(run).toContain("command -v quest");
   });
 
-  test("no workflow pins a quest-cli source ref any more (LCLI-750)", () => {
-    // The pin existed only while the paired quest version was not on npm. A stale pin
-    // is invisible until a bump, so absence is pinned in BOTH files that carried it, and
-    // no call site may pass a source-ref at all. Reading the text (not the parsed `env`)
-    // also catches a pin reintroduced under a different key.
-    for (const name of ["ci.yml", "release.yml"]) {
-      const text = readFileSync(join(WORKFLOWS_DIR, name), "utf8");
-      expect(text).not.toContain("QUEST_SOURCE_REF");
-      expect(text).not.toMatch(/^\s*source-ref:/m);
-    }
+  test("only ci.yml pins a quest-cli source ref, and it is a full commit SHA (LCLI-775, LCLI-750)", () => {
+    // The pin exists only while the paired quest version is not on npm; LCLI-781 removes it.
+    // release.yml never carries one (its probe runs after quest publishes). A pin that is
+    // not a full 40-hex commit is a branch or an abbreviation, and the action's cat-file
+    // check would only reject it at run time, inside a release window.
+    const ci = readFileSync(join(WORKFLOWS_DIR, "ci.yml"), "utf8");
+    const pins = [...ci.matchAll(/^ {2}QUEST_SOURCE_REF: (\S+)$/gm)].map((m) => m[1]);
+    expect(pins).toHaveLength(1);
+    expect(pins[0]).toMatch(/^[0-9a-f]{40}$/);
+    // Every call site passes it, and nothing else is passed as a source-ref.
+    const refs = [...ci.matchAll(/^\s*source-ref:\s*(.+)$/gm)].map((m) => m[1]?.trim());
+    expect(refs).toHaveLength(3);
+    for (const ref of refs) expect(ref).toBe("${{ env.QUEST_SOURCE_REF }}");
+    const release = readFileSync(join(WORKFLOWS_DIR, "release.yml"), "utf8");
+    expect(release).not.toContain("QUEST_SOURCE_REF");
+    expect(release).not.toMatch(/^\s*source-ref:/m);
   });
 
   test("the docs gate never depends on another job, so a required context cannot go absent", () => {

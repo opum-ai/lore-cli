@@ -104,6 +104,19 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # LCLI-775, DEC-55 (ODOC-556 pair release 0.15.0): the opum-ai/quest-cli commit that
+  # carries the Quest version CLAUDE.md's managed block declares. Read by
+  # .github/actions/setup-quest ONLY when that version does not install from npm,
+  # which is the window between this bump landing and quest's publish: lore's pair
+  # lock otherwise leaves the docs gate and compile smoke unable to run at all.
+  #
+  # This is quest-cli's dev squash of #709 (QCLI-551, 0.15.0), resolved against the
+  # remote before it was written here. Remove this pin, and the three `source-ref`
+  # lines below, once quest 0.15.0 is on npm (LCLI-781); the action asserts the built
+  # quest reports the declared version, so a drifted ref fails by name.
+  QUEST_SOURCE_REF: 81645e558d2548aaabd542080d00c6718e43a9d1
+
 jobs:
   check:
     # OS list is computed inline by event: pull requests verify on ubuntu + windows
@@ -440,6 +453,7 @@ jobs:
       - uses: ./.github/actions/setup-quest
         with:
           version: ${{ steps.quest.outputs.version }}
+          source-ref: ${{ env.QUEST_SOURCE_REF }}
 
       # Catches a duplicated task identity — the same id present in both
       # .quest/tasks/ and .quest/completed/ — which exits conflict/5 and makes
@@ -540,6 +554,7 @@ jobs:
       - uses: ./.github/actions/setup-quest
         with:
           version: ${{ steps.quest.outputs.version }}
+          source-ref: ${{ env.QUEST_SOURCE_REF }}
 
       # Runs lore FROM SOURCE, not the published package. In this repository that is the
       # stronger assertion of the two: a PR that breaks `lore check` fails on its own
@@ -765,6 +780,7 @@ jobs:
       - uses: ./.github/actions/setup-quest
         with:
           version: ${{ steps.quest.outputs.version }}
+          source-ref: ${{ env.QUEST_SOURCE_REF }}
       - name: README quickstart runs verbatim and its examples match real output
         run: scripts/readme-quickstart.sh dist/lore
 
