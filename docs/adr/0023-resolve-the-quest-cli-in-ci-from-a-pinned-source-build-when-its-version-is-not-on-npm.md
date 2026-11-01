@@ -32,10 +32,12 @@ amendment supersedes it.
 **Amendment — 2026-11-01 (LCLI-775, LCLI-781).** The pin returned for the 0.15.0 pair
 release (ODOC-556): quest 0.15.0 was not on npm, and lore 0.15.0's pair lock requires it,
 so `ci.yml` again defines `QUEST_SOURCE_REF` (quest-cli's dev squash of #709) and passes it as
-`source-ref` at its three `setup-quest` call sites. `release.yml` still defines and passes
-none. The 2026-10-22 amendment above describes the state between the two releases; this
-one supersedes it for as long as the pin is present. LCLI-781 removes it once quest 0.15.0
-is on npm.
+`source-ref` at its three `setup-quest` call sites. `release.yml` carries its own single pin
+for the release-gate probe, added under LCLI-784 (quest-cli's main at the 0.15.0 bump) and
+passed at the probe's one `setup-quest` call, because the probe needs quest installable at
+dispatch time and quest cannot stage first. The 2026-10-22 amendment above describes the
+state between the two releases; this one supersedes it for as long as the pins are present.
+LCLI-781 removes both once quest 0.15.0 is on npm.
 
 ## Context
 

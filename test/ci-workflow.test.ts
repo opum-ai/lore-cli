@@ -563,7 +563,8 @@ describe("ci.yml docs gate (LCLI-504)", () => {
     // The parsed tree names the callers by job; the text read catches a definition at any
     // indent (a job-level or step-level override of the pin would sit deeper than two spaces).
     const text = readFileSync(WORKFLOW_PATH, "utf8");
-    expect([...text.matchAll(/^\s*QUEST_SOURCE_REF:/gm)]).toHaveLength(1);
+    expect(Object.keys(doc.env ?? {})).toEqual(["QUEST_SOURCE_REF"]);
+    expect([...text.matchAll(/QUEST_SOURCE_REF\s*:/g)]).toHaveLength(1);
     const callers = Object.entries(doc.jobs).flatMap(([id, job]) =>
       (job.steps ?? [])
         .filter((step) => step.uses === "./.github/actions/setup-quest")
@@ -580,7 +581,7 @@ describe("ci.yml docs gate (LCLI-504)", () => {
     // test/release-workflow.test.ts); a dispatch runs that file from its own tree, so the two
     // files cannot share one value and are not required to name the same commit.
     const release = readFileSync(join(WORKFLOWS_DIR, "release.yml"), "utf8");
-    expect([...release.matchAll(/^\s*QUEST_SOURCE_REF:\s*(\S+)\s*$/gm)].map((m) => m[1])).toHaveLength(1);
+    expect([...release.matchAll(/QUEST_SOURCE_REF\s*:/g)]).toHaveLength(1);
   });
 
   test("the docs gate never depends on another job, so a required context cannot go absent", () => {
