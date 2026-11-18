@@ -392,7 +392,8 @@ nativeDescribe("Ladybug real-process concurrency and crash recovery", () => {
       expect(readdirSync(cacheRoot).filter((name) => name.startsWith(".stale-lock-"))).toHaveLength(1);
       expect(readdirSync(join(cacheRoot, "generations"))).toHaveLength(1);
       const generation = requireGeneration(recovered);
-      expect(lstatSync(generation.generationPath).mode & 0o222).toBe(0);
+      // DEC-281 (a3): the directory is owner-writable by design; the files stay immutable.
+      expect(lstatSync(generation.generationPath).mode & 0o222).not.toBe(0);
       expect(lstatSync(generation.databasePath).mode & 0o222).toBe(0);
       expect(lstatSync(generation.controlPath).mode & 0o222).toBe(0);
 

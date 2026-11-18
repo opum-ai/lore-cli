@@ -257,7 +257,9 @@ nativeDescribe("Ladybug projection lifecycle", () => {
     expect(generation.generationPath).toContain(join(LADYBUG_CACHE_REL_ROOT, "generations"));
     expect(statSync(generation.databasePath).mode & 0o222).toBe(0);
     expect(statSync(generation.controlPath).mode & 0o222).toBe(0);
-    expect(statSync(generation.generationPath).mode & 0o222).toBe(0);
+    // DEC-281 (a3): immutability lives on the files; the directory stays owner-writable
+    // so a plain rm -rf and git worktree remove can delete the checkout.
+    expect(statSync(generation.generationPath).mode & 0o777).toBe(0o755);
 
     const records = await readLadybugSourceRecords(generation.databasePath);
     expect(records.size).toBe(source.counts.concepts + source.counts.tasks + source.counts.authoredEdges);
@@ -282,6 +284,81 @@ nativeDescribe("Ladybug projection lifecycle", () => {
 
     expect(readFileSync(join(root, "docs/source-marker.txt"))).toEqual(beforeDocs);
     expect(readFileSync(join(root, ".lore/profile.toml"))).toEqual(beforeProfile);
+  });
+
+  // DEC-281 (a3): running lore in an isolation worktree is legitimate, and the harness
+  // removes its own worktrees without ever calling `lore cache clear`. So a generation
+  // the session created must leave the checkout deletable by its owner.
+
+  test("DEC-281 (a3): a fresh generation's tree is removed by plain rm -rf as its owner", async () => {
+    const root = tempRepository();
+    const source = fixtureSource();
+    const built = await reconcileLadybugProjection({ root, loadSource: async () => source });
+    const generation = requireGeneration(built);
+    // Positive control for the object this rule changes: the directory is 0755 and
+    // the file immutability is unchanged.
+    expect(statSync(generation.generationPath).mode & 0o777).toBe(0o755);
+    expect(statSync(generation.databasePath).mode & 0o222).toBe(0);
+    expect(statSync(generation.controlPath).mode & 0o222).toBe(0);
+
+    // The generation must still be judged VALID on reuse before deletability means
+    // anything: a directory the inspector rejected would be rebuilt, not removed.
+    const reused = await reconcileLadybugProjection({ root, loadSource: async () => source });
+    expect(reused.outcome).toBe("reused");
+
+    // No chmod, no thaw, no `lore cache clear`: exactly what the harness does.
+    const cacheRoot = join(root, LADYBUG_CACHE_REL_ROOT);
+    expect(() => rmSync(cacheRoot, { recursive: true, force: false })).not.toThrow();
+    expect(existsSync(cacheRoot)).toBe(false);
+  });
+
+  test("DEC-281 (a3): a writable database or manifest still classifies corrupt", async () => {
+    for (const writable of ["database", "manifest"] as const) {
+      const root = tempRepository();
+      const source = fixtureSource();
+      const first = await reconcileLadybugProjection({ root, loadSource: async () => source });
+      const generation = requireGeneration(first);
+      // The directory is owner-writable by design, so the file can be opened without
+      // chmodding the directory first -- the shortcut the old 0555 directory prevented.
+      chmodSync(writable === "database" ? generation.databasePath : generation.controlPath, 0o644);
+
+      const recovered = await reconcileLadybugProjection({ root, loadSource: async () => source });
+      expect({ writable, classification: recovered.classification }).toEqual({
+        writable,
+        classification: "corrupt",
+      });
+      expect(recovered.outcome).toBe("built");
+      disposeLadybugProjection(root);
+    }
+  });
+
+  test("DEC-281 (a3): an old 0555 generation still reads valid and is not quarantined", async () => {
+    const root = tempRepository();
+    const source = fixtureSource();
+    const first = await reconcileLadybugProjection({ root, loadSource: async () => source });
+    const generation = requireGeneration(first);
+    chmodSync(generation.generationPath, 0o555); // a generation published before (a3)
+
+    const reused = await reconcileLadybugProjection({ root, loadSource: async () => source });
+    expect(reused.classification).toBe("reusable");
+    expect(reused.outcome).toBe("reused");
+    expect(reused.generation?.generationPath).toBe(generation.generationPath);
+    expect(readdirSync(join(root, LADYBUG_CACHE_REL_ROOT)).some((name) => name.startsWith(".corrupt-"))).toBe(false);
+    chmodSync(generation.generationPath, 0o755); // leave the fixture deletable for teardown
+  });
+
+  test("DEC-281 (a3): the inspector checks the directory file set against the manifest", async () => {
+    const root = tempRepository();
+    const source = fixtureSource();
+    const first = await reconcileLadybugProjection({ root, loadSource: async () => source });
+    const generation = requireGeneration(first);
+    // The directory is owner-writable, so an extra entry needs no chmod. The manifest
+    // lists the files, so anything else on disk is a disagreement about what it built.
+    writeFileSync(join(generation.generationPath, "stray.tmp"), "not part of the generation\n");
+
+    const recovered = await reconcileLadybugProjection({ root, loadSource: async () => source });
+    expect(recovered.classification).toBe("corrupt");
+    expect(recovered.outcome).toBe("built");
   });
 
   test("changed and deleted records publish a replacement generation without stale nodes or edges", async () => {
@@ -346,7 +423,8 @@ nativeDescribe("Ladybug projection lifecycle", () => {
     ).rejects.toThrow("simulated publication interruption");
 
     expect(publishedPath).not.toBe("");
-    expect(statSync(publishedPath).mode & 0o222).toBe(0);
+    // DEC-281 (a3): the directory is owner-writable; the files stay immutable.
+    expect(statSync(publishedPath).mode & 0o222).not.toBe(0);
     expect(statSync(join(publishedPath, "projection.lbdb")).mode & 0o222).toBe(0);
     expect(statSync(join(publishedPath, "index.json")).mode & 0o222).toBe(0);
 

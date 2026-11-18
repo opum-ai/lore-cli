@@ -370,7 +370,14 @@ export async function reconcileLadybugProjection(
       }
       chmodSync(databasePath, 0o444);
       renameSync(stagingPath, generationPath);
-      chmodSync(generationPath, 0o555);
+      // The DIRECTORY stays writable by its owner (DEC-281 (a3)). Immutability is
+      // the files' property: the database is 0444 and the manifest 0400. A 0555
+      // directory makes an ordinary `rm -rf` and `git worktree remove` fail, and the
+      // harness removes its own isolation worktrees without ever calling
+      // `lore cache clear`, so any lore run in a worktree must leave it deletable.
+      // The write bit on this directory is therefore NOT evidence of corruption; the
+      // inspector checks the files instead, and the file set against the manifest.
+      chmodSync(generationPath, 0o755);
       await options.hooks?.afterPublication?.(generationPath);
       fsyncDirectory(join(cacheRoot, "generations"));
       if (options.retainOnlyCurrent === true) pruneOtherGenerations(cacheRoot, source.generationKey);
@@ -688,12 +695,22 @@ async function inspectFreshGeneration(
         controlStat.isSymbolicLink() ||
         !databaseStat.isFile() ||
         databaseStat.isSymbolicLink() ||
-        (generationStat.mode & 0o222) !== 0 ||
+        // DEC-281 (a3): the generation DIRECTORY is owner-writable by design; only the
+        // files carry immutability. Testing the directory's write bit here classified
+        // every fresh 0755 generation corrupt and silently lost the fast path.
         (controlStat.mode & 0o222) !== 0 ||
         (databaseStat.mode & 0o222) !== 0 ||
         databaseStat.size !== control.database.byteLength
       ) {
         return { classification: "corrupt", reason: "generation files or permissions differ" };
+      }
+      const expectedEntries = [LADYBUG_CONTROL_FILENAME, control.database.file].sort();
+      const actualEntries = readdirSync(generationPath).sort();
+      if (
+        actualEntries.length !== expectedEntries.length ||
+        actualEntries.some((name, index) => name !== expectedEntries[index])
+      ) {
+        return { classification: "corrupt", reason: "generation directory file set differs from the manifest" };
       }
       if ((await hashFile(databasePath)).digest !== control.database.digest) {
         return { classification: "corrupt", reason: "projection database digest differs" };
@@ -810,14 +827,22 @@ async function inspectGeneration(
     // different publication permissions, so preserve it before applying this
     // version's immutable-generation checks.
     if (compatibility.classification === "unsupported") return compatibility;
-    if ((generationStat.mode & 0o222) !== 0) {
-      return { classification: "corrupt", reason: "generation directory is not immutable" };
-    }
+    // DEC-281 (a3): the directory is intentionally owner-writable, so its write bit
+    // is not a corruption signal. Immutability is checked on the files below, and the
+    // directory's file SET is checked against the manifest.
     if ((controlStat.mode & 0o222) !== 0) {
       return { classification: "corrupt", reason: "control manifest is not immutable" };
     }
     if (compatibility.classification !== "reusable") return compatibility;
     const control = parsed as LadybugControlManifest;
+    const expectedEntries = [LADYBUG_CONTROL_FILENAME, control.database.file].sort();
+    const actualEntries = readdirSync(generationPath).sort();
+    if (
+      actualEntries.length !== expectedEntries.length ||
+      actualEntries.some((name, index) => name !== expectedEntries[index])
+    ) {
+      return { classification: "corrupt", reason: "generation directory file set differs from the manifest" };
+    }
     const databaseStat = lstatSync(databasePath);
     if (!databaseStat.isFile() || databaseStat.isSymbolicLink()) {
       return { classification: "corrupt", reason: "projection database is missing or symlinked" };
