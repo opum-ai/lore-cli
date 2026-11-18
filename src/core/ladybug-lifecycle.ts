@@ -470,9 +470,12 @@ export interface ClearCheckoutCacheFs {
 const CLEAR_REWALKS = 3;
 
 /**
- * Owner-invoked removal of one checkout's whole `.lore/cache` (LCLI-740, DEC-208). Generations are
- * sealed 0555/0444 on purpose (ADR-0018), so an outside recursive delete cannot remove them; this
- * thaws and deletes through the same {@link removeContained} path the lifecycle uses. `pathInput`
+ * Owner-invoked removal of one checkout's whole `.lore/cache` (LCLI-740, DEC-208). A generation
+ * published before DEC-281 (a3) is sealed 0555/0444 (ADR-0018), and a mixed-version checkout can
+ * still hold one, so an outside recursive delete cannot remove it; this
+ * thaws and deletes through the same {@link removeContained} path the lifecycle uses. A generation
+ * published by (a3) or later has an owner-writable directory and needs no thaw, and this still
+ * clears it. `pathInput`
  * names the checkout, or its `.lore/cache` directly, and need not be a git worktree: a failed
  * `git worktree remove` strands a directory with no `.git` holding only this cache. It takes no
  * writer lock and creates nothing, and it touches only `<checkout>/.lore/cache`, which is always the

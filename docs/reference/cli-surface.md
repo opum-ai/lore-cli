@@ -711,9 +711,12 @@ Ladybug-native identifiers. See [Bounded path and impact](../specs/bounded-path-
 
 ### `cache`
 
-Clear one checkout's `.lore/cache`. Projection generations are sealed read-only on purpose
+Clear one checkout's `.lore/cache`. Projection generations published before LCLI-718 (DEC-281 (a3))
+are sealed read-only (0555), and a mixed-version checkout can still hold one of those
 ([ADR-0018](../adr/0018-persistent-local-graph-projection-with-ladybugdb.md)), so a plain recursive
-delete cannot remove them and `git worktree remove` fails partway. `cache clear` thaws and deletes
+delete cannot remove them and `git worktree remove` fails partway. A generation published by (a3) or
+later keeps its directory owner-writable and seals only its files, so it needs no clearing. `cache
+clear` thaws and deletes
 through the lifecycle's own removal path (LCLI-740, DEC-208). It touches only
 `<path>/.lore/cache`, works on a directory that is no longer a registered worktree, takes no writer
 lock, creates nothing, and refuses a symlinked `.lore` or `cache`. Generations stay immutable while
