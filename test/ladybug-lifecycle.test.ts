@@ -364,9 +364,7 @@ nativeDescribe("Ladybug projection lifecycle", () => {
       // The fast path answers without loading the source at all; the slow inspector is
       // handed a source by the caller, so it loads exactly once.
       expect({ mode, sourceLoads }).toEqual({ mode, sourceLoads: mode === "fast" ? 0 : 1 });
-      expect(readdirSync(join(root, LADYBUG_CACHE_REL_ROOT)).some((name) => name.startsWith(".corrupt-"))).toBe(
-        false,
-      );
+      expect(readdirSync(join(root, LADYBUG_CACHE_REL_ROOT)).some((name) => name.startsWith(".corrupt-"))).toBe(false);
       chmodSync(generation.generationPath, 0o755); // leave the fixture deletable for teardown
     }
   });
