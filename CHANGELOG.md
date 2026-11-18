@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A generation directory is owner-writable, so a lore run in a git worktree leaves that worktree deletable (LCLI-718, DEC-281 (a3))**
+  `.lore/cache/graph/ladybug/1/generations/<hash>` is published `0755` instead of `0555`. Immutability stays on the files — the database `0444` and the control manifest `0400` — and the inspector keeps both file tests, drops the directory write-bit test, and now also checks that the files on disk are exactly the set the manifest lists. A `0555` directory can be read but not unlinked from, so a plain `rm -rf` and `git worktree remove` both failed on it, stranding any isolation worktree a session had run lore in. Two limits are accepted (DEC-281 (a4)): (i) the fast path does not hash a control manifest swapped in by rename, since the file is `0400`, so this is accidental-edit protection rather than tamper detection; (ii) a lore older than this change quarantines a `0755` generation and republishes it at `0555`, so a mixed-version checkout stays undeletable until `lore cache clear` (LCLI-740).
+
 ## [0.15.0] - 2026-10-31
 
 ### Changed (breaking)
