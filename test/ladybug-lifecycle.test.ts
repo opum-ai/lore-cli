@@ -335,30 +335,69 @@ nativeDescribe("Ladybug projection lifecycle", () => {
   test("DEC-281 (a3): an old 0555 generation still reads valid and is not quarantined", async () => {
     const root = tempRepository();
     const source = fixtureSource();
-    const first = await reconcileLadybugProjection({ root, loadSource: async () => source });
+    let sourceLoads = 0;
+    const loadSource = async () => {
+      sourceLoads++;
+      return source;
+    };
+    // loadFreshness is what selects inspectFreshGeneration, the fast path production
+    // actually uses. Without it this test only ever reached the slow inspector.
+    const loadFreshness = async () => ({ inputFingerprint: source.inputFingerprint });
+    const first = await reconcileLadybugProjection({ root, loadSource, loadFreshness });
     const generation = requireGeneration(first);
     chmodSync(generation.generationPath, 0o555); // a generation published before (a3)
 
-    const reused = await reconcileLadybugProjection({ root, loadSource: async () => source });
+    sourceLoads = 0; // the reuse below must be served by the fast path, not a reload
+    const reused = await reconcileLadybugProjection({ root, loadSource, loadFreshness });
     expect(reused.classification).toBe("reusable");
     expect(reused.outcome).toBe("reused");
     expect(reused.generation?.generationPath).toBe(generation.generationPath);
+    expect(sourceLoads).toBe(0);
     expect(readdirSync(join(root, LADYBUG_CACHE_REL_ROOT)).some((name) => name.startsWith(".corrupt-"))).toBe(false);
     chmodSync(generation.generationPath, 0o755); // leave the fixture deletable for teardown
   });
 
-  test("DEC-281 (a3): the inspector checks the directory file set against the manifest", async () => {
+  test("DEC-281 (a3): the fast path checks the directory file set against the manifest", async () => {
     const root = tempRepository();
     const source = fixtureSource();
-    const first = await reconcileLadybugProjection({ root, loadSource: async () => source });
+    const loadFreshness = async () => ({ inputFingerprint: source.inputFingerprint });
+    const first = await reconcileLadybugProjection({ root, loadSource: async () => source, loadFreshness });
     const generation = requireGeneration(first);
     // The directory is owner-writable, so an extra entry needs no chmod. The manifest
     // lists the files, so anything else on disk is a disagreement about what it built.
     writeFileSync(join(generation.generationPath, "stray.tmp"), "not part of the generation\n");
 
-    const recovered = await reconcileLadybugProjection({ root, loadSource: async () => source });
+    // With loadFreshness the fast path runs FIRST and would otherwise return reusable
+    // for this tree, so the corrupt/rebuilt outcome is what pins its file-set check.
+    const recovered = await reconcileLadybugProjection({ root, loadSource: async () => source, loadFreshness });
     expect(recovered.classification).toBe("corrupt");
     expect(recovered.outcome).toBe("built");
+  });
+
+  test("DEC-281 (a3): a reader held open on the generation does not block reuse or quarantine it", async () => {
+    const root = tempRepository();
+    const source = fixtureSource();
+    let sourceLoads = 0;
+    const loadSource = async () => {
+      sourceLoads++;
+      return source;
+    };
+    const loadFreshness = async () => ({ inputFingerprint: source.inputFingerprint });
+    const built = await reconcileLadybugProjection({ root, loadSource, loadFreshness });
+    const generation = requireGeneration(built);
+    if (nativeDriver === null) throw new Error("native Ladybug lifecycle is unavailable on this host");
+    const reader = nativeDriver.openLadybugIndexedReader(generation.databasePath, source);
+    try {
+      sourceLoads = 0;
+      const reused = await reconcileLadybugProjection({ root, loadSource, loadFreshness });
+      expect(reused.classification).toBe("reusable");
+      expect(reused.outcome).toBe("reused");
+      expect(reused.generation?.generationPath).toBe(generation.generationPath);
+      expect(sourceLoads).toBe(0);
+      expect(readdirSync(join(root, LADYBUG_CACHE_REL_ROOT)).some((name) => name.startsWith(".corrupt-"))).toBe(false);
+    } finally {
+      await reader.close();
+    }
   });
 
   test("changed and deleted records publish a replacement generation without stale nodes or edges", async () => {
