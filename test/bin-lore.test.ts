@@ -71,7 +71,10 @@ function installFakePackageWithRestrictedExports(): void {
  * semantics instead, which could diverge from real Node's without this suite ever noticing. CI
  * (`ci.yml`) runs on GitHub-hosted runners, which ship Node preinstalled on `PATH`.
  */
-function runLauncher(args: readonly string[]): {
+function runLauncher(
+  args: readonly string[],
+  nodeArgs: readonly string[] = [],
+): {
   stdout: string;
   stderr: string;
   code: number;
@@ -90,7 +93,7 @@ function runLauncher(args: readonly string[]): {
   // so resolution finds the stub for the same reason a real install finds the real package.
   const launcher = join(nodePathDir, "lore.cjs");
   copyFileSync(LAUNCHER, launcher);
-  const result = Bun.spawnSync(["node", launcher, ...args], {
+  const result = Bun.spawnSync(["node", ...nodeArgs, launcher, ...args], {
     env: { ...process.env, NODE_PATH: nodePathDir },
     stdout: "pipe",
     stderr: "pipe",
@@ -262,11 +265,14 @@ describe.skipIf(process.platform === "win32")("bin/lore.cjs — never orphans th
   }
 
   test("positive control: the liveness detector reports a killed child as dead", async () => {
-    const { wrapper, childPid } = await startLauncher();
+    const { wrapper, childPid, grandchildPid } = await startLauncher();
     process.kill(childPid, "SIGKILL");
     expect(await waitFor(() => !alive(childPid), 15000)).toBe(true);
     forget(childPid);
     await wrapper.exited;
+    // The wrapper's exit sweeps the child's group, which takes the grandchild with it.
+    expect(await waitFor(() => !alive(grandchildPid), 15000)).toBe(true);
+    forget(grandchildPid);
   }, 60000);
 
   // Off a terminal the child runs in its own group, so forwarding reaches it AND the sweep after it
@@ -338,6 +344,7 @@ describe.skipIf(process.platform === "win32")("bin/lore.cjs — never orphans th
           number,
         ];
         spawned.push(childPid, grandchildPid);
+        expect(pgidOf(childPid)).toBeGreaterThan(0); // a vanished process would read 0 and pass on 0 === 0
         expect(pgidOf(childPid)).toBe(pgidOf(wrapperPid));
       } finally {
         if (wrapperPid > 0) {
@@ -350,4 +357,62 @@ describe.skipIf(process.platform === "win32")("bin/lore.cjs — never orphans th
     },
     60000,
   );
+
+  // DEC-282 (a2) round 4. A child that dies of a signal Node leaves at its default (or reserves)
+  // must not be re-raised on the wrapper: SIGUSR1 would start Node's inspector (a debugger on
+  // 127.0.0.1:9229) and SIGPIPE is ignored by Node. The wrapper exits 128+n instead.
+  test("a child dying of SIGUSR1 gives exit 138 and never starts the wrapper's inspector", () => {
+    installFakePlatformPackage("#!/bin/sh\nkill -USR1 $$\nsleep 5\n");
+    const { code, signal, stderr } = runLauncher([]);
+    expect(signal).toBeNull();
+    expect(code).toBe(138);
+    expect(stderr).not.toContain("Debugger listening");
+  });
+
+  test("a child dying of SIGPIPE gives exit 141", () => {
+    installFakePlatformPackage("#!/bin/sh\nkill -PIPE $$\nsleep 5\n");
+    const { code, signal } = runLauncher([]);
+    expect(signal).toBeNull();
+    expect(code).toBe(141);
+  });
+
+  // The group is swept at most once. A second SIGKILL to the same group id, sent after the first
+  // swept it empty, can only ever hit a reused id. A preload records every negative-pid kill.
+  test("the child's group is swept exactly once on a path that does not kill the wrapper", () => {
+    installFakePlatformPackage("#!/bin/sh\nkill -PIPE $$\nsleep 5\n");
+    const log = join(nodePathDir, "kills.log");
+    const preload = join(nodePathDir, "kills.cjs");
+    writeFileSync(
+      preload,
+      `const fs = require("node:fs");\nconst real = process.kill.bind(process);\nprocess.kill = (pid, sig) => { if (pid < 0) fs.appendFileSync(${JSON.stringify(log)}, pid + " " + sig + "\\n"); return real(pid, sig); };\n`,
+    );
+    runLauncher([], ["--require", preload]);
+    const sweeps = readFileSync(log, "utf8")
+      .split("\n")
+      .filter((line) => line.endsWith(" SIGKILL"));
+    expect(sweeps).toHaveLength(1);
+  });
+
+  // A synchronous throw from spawn() (E2BIG on a long argv is the realistic one) used to reach the
+  // caller as an uncaught stack trace; it now takes the same "failed to run" message and exit 1.
+  test("a spawn() that throws synchronously is reported as 'failed to run' with exit 1", () => {
+    installFakePlatformPackage("#!/bin/sh\nexit 0\n");
+    const preload = join(nodePathDir, "throwing-spawn.cjs");
+    writeFileSync(
+      preload,
+      'const cp = require("node:child_process");\ncp.spawn = () => { throw Object.assign(new Error("spawn E2BIG"), { code: "E2BIG" }); };\n',
+    );
+    const { code, stderr } = runLauncher([], ["--require", preload]);
+    expect(code).toBe(1);
+    expect(stderr).toContain("lore: failed to run the compiled binary");
+    expect(stderr).toContain("E2BIG");
+  });
+
+  test("a binary that cannot be executed (mode 0644) is reported as 'failed to run' with exit 1", () => {
+    installFakePlatformPackage("#!/bin/sh\nexit 0\n");
+    chmodSync(join(nodePathDir, PKG_NAME, "bin", "lore"), 0o644);
+    const { code, stderr } = runLauncher([]);
+    expect(code).toBe(1);
+    expect(stderr).toContain("lore: failed to run the compiled binary");
+  });
 });
