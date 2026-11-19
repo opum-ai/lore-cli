@@ -518,7 +518,7 @@ describe("tracker persistence — backend-owned commit seam (LCLI-333.1)", () =>
       spawn: scriptedQuest((argv) => {
         if (argv.join(" ").startsWith("task view")) return okQuest("task.view", equivalentQuestTask());
         // The rollup read (LCLI-791): check and sync resolve their rows from one task list.
-        if (argv.join(" ") === "task list --json") return okQuest("task.list", [equivalentQuestTask()]);
+        if (argv.slice(0, 2).join(" ") === "task list") return okQuest("task.list", [equivalentQuestTask()]);
         throw new Error(`no script for ${JSON.stringify(argv)}`);
       }),
       workspaceInitialized: () => true,

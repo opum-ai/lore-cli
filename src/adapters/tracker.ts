@@ -32,8 +32,16 @@ export interface TaskRollupRow {
   readonly title: string;
   readonly status: string;
   readonly file: string | null;
-  /** Other ids that resolve to this task (a linked `tasks:` id may be one, as `viewTask` accepts it). */
-  readonly aliases: readonly string[];
+}
+
+/**
+ * A rollup read, queryable by the id a concept links. `lookup` resolves a canonical id or an alias
+ * (as `viewTask` does), returns `undefined` for an id the tracker does not hold, and throws what
+ * `viewTask` would throw for an id it refuses or a record it cannot parse. Only the looked-up
+ * records are validated, so one malformed record that nothing links does not fail the rollup.
+ */
+export interface TaskRollupIndex {
+  lookup(id: string): TaskRollupRow | undefined;
 }
 
 /**
@@ -116,7 +124,7 @@ export interface TrackerAdapter {
    * DEC-282 item 1). Optional: a backend without it is read with one `viewTask` per linked task.
    * An implementation may cache across runs, but only under a key that changes when the data does.
    */
-  taskRollup?(): Promise<readonly TaskRollupRow[]>;
+  taskRollup?(): Promise<TaskRollupIndex>;
   listTasks(opts?: ListTasksOptions): Promise<BacklogTask[]>;
   viewTask(id: string): Promise<BacklogTaskDetail | null>;
   searchByLabel(label: string): Promise<BacklogTask[]>;

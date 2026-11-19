@@ -14,6 +14,7 @@
 
 import { posix } from "node:path";
 import type { BacklogAdapter, BacklogTaskDetail } from "../adapters/backlog";
+import type { TaskRollupIndex } from "../adapters/tracker";
 import { loadConfig } from "../config";
 import { toRefList } from "../core/bundle";
 import type { Concept } from "../core/concept";
@@ -261,37 +262,39 @@ export async function resolveRollupDetails(
 ): Promise<Map<string, RollupResolution>> {
   if (adapter.taskRollup === undefined) return resolveTaskDetails(adapter, taskIds);
   const resolved = new Map<string, RollupResolution>();
-  let rows: Map<string, RollupDetail>;
+  let index: TaskRollupIndex;
   try {
-    const read = await adapter.taskRollup();
-    rows = new Map();
-    // A canonical id always wins over an alias, and the first holder of an alias keeps it.
-    for (const row of read) rows.set(row.id.toLowerCase(), row);
-    for (const row of read)
-      for (const alias of row.aliases) if (!rows.has(alias.toLowerCase())) rows.set(alias.toLowerCase(), row);
+    index = await adapter.taskRollup();
   } catch (cause) {
     const error = cause instanceof Error ? cause : new Error(String(cause));
     for (const taskId of taskIds) resolved.set(taskId.toLowerCase(), { ok: false, error });
     return resolved;
   }
   for (const taskId of taskIds) {
-    const detail = rows.get(taskId.toLowerCase());
-    resolved.set(
-      taskId.toLowerCase(),
-      detail === undefined
-        ? {
-            ok: false,
-            error: new LoreError(
-              "not_found",
-              `task "${taskId}" does not exist`,
-              "a linked concept's tasks: list must reference only live Backlog tasks — check the id, or unlink it",
-              { taskId },
-            ),
-          }
-        : { ok: true, detail },
-    );
+    try {
+      const detail = index.lookup(taskId);
+      resolved.set(
+        taskId.toLowerCase(),
+        detail === undefined ? { ok: false, error: taskNotFound(taskId) } : { ok: true, detail },
+      );
+    } catch (cause) {
+      resolved.set(taskId.toLowerCase(), {
+        ok: false,
+        error: cause instanceof Error ? cause : new Error(String(cause)),
+      });
+    }
   }
   return resolved;
+}
+
+/** The one `not_found` a linked task id that the tracker does not hold raises, on either read path. */
+function taskNotFound(taskId: string): LoreError {
+  return new LoreError(
+    "not_found",
+    `task "${taskId}" does not exist`,
+    "a linked concept's tasks: list must reference only live Backlog tasks — check the id, or unlink it",
+    { taskId },
+  );
 }
 
 /**
@@ -322,15 +325,7 @@ export async function resolveTaskDetails(
     try {
       const detail = await verifiedViewTask(adapter, taskId);
       if (detail === null) {
-        resolved.set(taskId.toLowerCase(), {
-          ok: false,
-          error: new LoreError(
-            "not_found",
-            `task "${taskId}" does not exist`,
-            "a linked concept's tasks: list must reference only live Backlog tasks — check the id, or unlink it",
-            { taskId },
-          ),
-        });
+        resolved.set(taskId.toLowerCase(), { ok: false, error: taskNotFound(taskId) });
       } else {
         resolved.set(taskId.toLowerCase(), { ok: true, detail });
       }
