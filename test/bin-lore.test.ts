@@ -7,7 +7,7 @@
  * (`@opum-ai/lore-<platform>-<arch>/{package.json,bin/lore}`) — the same resolution
  * mechanism `require.resolve` uses for a real npm install, without needing an actual
  * compiled binary or a real `npm install`. POSIX-only: the stub "binary" here is a
- * shebang script, which Windows cannot exec directly the way `spawnSync` execs a real
+ * shebang script, which Windows cannot exec directly the way the launcher execs a real
  * `lore.exe` (see the module docstring's win32 handling) — the real end-to-end proof for
  * every platform, including Windows, is `.github/workflows/release.yml`'s install-sanity
  * step (a real `npm pack` + `npm install` + run).
@@ -176,6 +176,11 @@ describe.skipIf(process.platform === "win32")("bin/lore.cjs — never orphans th
   }
 
   const spawned: number[] = [];
+  /** Stop tracking a pid once it is confirmed dead, so the cleanup can never SIGKILL a reused pid. */
+  function forget(pid: number): void {
+    const at = spawned.indexOf(pid);
+    if (at >= 0) spawned.splice(at, 1);
+  }
   afterEach(() => {
     // An unpatched launcher leaves the stub running for its full timer; never leak it from a test.
     for (const pid of spawned.splice(0)) {
@@ -190,31 +195,55 @@ describe.skipIf(process.platform === "win32")("bin/lore.cjs — never orphans th
    * the long-running process (a node script, not a shell wrapping a sleep), so there is no
    * grandchild to measure instead of the child.
    */
-  async function startLauncher() {
+  async function startLauncher(nodeArgs: readonly string[] = [], expectLive = true) {
     const pidFile = join(nodePathDir, "child.pid");
     installFakePlatformPackage(
       `#!/usr/bin/env node\nrequire("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));\nsetTimeout(() => {}, 60000);\n`,
     );
     const launcher = join(nodePathDir, "lore.cjs");
     copyFileSync(LAUNCHER, launcher);
-    const wrapper = Bun.spawn(["node", launcher], {
+    const wrapper = Bun.spawn(["node", ...nodeArgs, launcher], {
       env: { ...process.env, NODE_PATH: nodePathDir },
       stdout: "ignore",
       stderr: "ignore",
     });
-    expect(await waitFor(() => existsSync(pidFile) && readFileSync(pidFile, "utf8").length > 0, 15000)).toBe(true);
-    const childPid = Number(readFileSync(pidFile, "utf8"));
-    spawned.push(childPid);
-    expect(alive(childPid)).toBe(true);
-    return { wrapper, childPid };
+    try {
+      expect(await waitFor(() => existsSync(pidFile) && readFileSync(pidFile, "utf8").length > 0, 15000)).toBe(true);
+      const childPid = Number(readFileSync(pidFile, "utf8"));
+      spawned.push(childPid);
+      // The exit-path test reaps the child the instant it starts, so it cannot assert liveness here;
+      // the pid file proves the stub ran.
+      if (expectLive) expect(alive(childPid)).toBe(true);
+      return { wrapper, childPid, pidFile };
+    } catch (error) {
+      wrapper.kill("SIGKILL"); // never leave the wrapper behind when the fixture itself failed
+      throw error;
+    }
   }
 
   test("positive control: the liveness detector reports a killed child as dead", async () => {
     const { wrapper, childPid } = await startLauncher();
     process.kill(childPid, "SIGKILL");
     expect(await waitFor(() => !alive(childPid), 15000)).toBe(true);
+    forget(childPid);
     await wrapper.exited;
-  });
+  }, 60000);
+
+  // The wrapper's own `exit` handler (F3): the one path no forwarded signal reaches. A preload makes
+  // the wrapper die of an uncaught exception once the child is up, with no signal sent at all, so
+  // only the exit-time kill can reap the child. A mutant removing just that handler leaves it alive.
+  test("an uncaught exception in the wrapper leaves no surviving child (the exit-time kill)", async () => {
+    const preload = join(nodePathDir, "boom.cjs");
+    writeFileSync(
+      preload,
+      `const fs = require("node:fs");\nconst pidFile = ${JSON.stringify(join(nodePathDir, "child.pid"))};\nconst t = setInterval(() => { if (fs.existsSync(pidFile) && fs.readFileSync(pidFile, "utf8").length > 0) { clearInterval(t); throw new Error("boom"); } }, 10);\n`,
+    );
+    const { wrapper, childPid } = await startLauncher(["--require", preload], false);
+    await wrapper.exited;
+    expect(wrapper.exitCode).not.toBe(0);
+    expect(await waitFor(() => !alive(childPid), 15000)).toBe(true);
+    forget(childPid);
+  }, 60000);
 
   for (const [signal, code] of [
     ["SIGTERM", 143],
@@ -226,6 +255,7 @@ describe.skipIf(process.platform === "win32")("bin/lore.cjs — never orphans th
       process.kill(wrapper.pid, signal); // the WRAPPER's pid, never a group: a group kill would hide the bug
       await wrapper.exited; // judge the child only once the wrapper is gone
       expect(await waitFor(() => !alive(childPid), 15000)).toBe(true);
+      forget(childPid);
       expect(wrapper.exitCode).toBe(code);
     }, 60000);
   }
