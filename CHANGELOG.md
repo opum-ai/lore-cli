@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bin/lore.cjs` no longer orphans the native binary when the wrapper is killed (LCLI-797, DEC-282 item 7)**
+  The POSIX launcher was a blocking `spawnSync`, so a caller that timed out and killed only the wrapper left the compiled `lore` running. It now runs the binary asynchronously, forwards `SIGTERM`, `SIGINT` and `SIGHUP` to it, exits with the child's own status (`128+signal` when it died of one, unchanged), and kills the child if the wrapper exits while it still runs. The child stays in the wrapper's process group, so argv, stdio, terminal behaviour and group signalling are unchanged. Not covered: `SIGKILL` of the wrapper (unhandleable), the Windows path (unchanged), and a terminal Ctrl-C can reach the child twice.
+
 - **A generation directory is owner-writable, so a lore run in a git worktree leaves that worktree deletable (LCLI-718, DEC-281 (a3))**
   `.lore/cache/graph/ladybug/1/generations/<hash>` is published `0755` instead of `0555`. Immutability stays on the files — the database `0444` and the control manifest `0400` — and the inspector keeps both file tests, drops the directory write-bit test, and now also checks that the files on disk are exactly the set the manifest lists. A `0555` directory can be read but not unlinked from, so a plain `rm -rf` and `git worktree remove` both failed on it, stranding any isolation worktree a session had run lore in. Two limits are accepted (DEC-281 (a4)): (i) the fast path does not hash the control manifest, so one swapped in by rename at `0400` passes — the mode check is accidental-edit protection, not tamper detection; (ii) a lore older than this change quarantines a `0755` generation and republishes it at `0555`, so a mixed-version checkout stays undeletable until `lore cache clear` (LCLI-740).
 

@@ -23,7 +23,7 @@
  * never imports `src/`.
  */
 
-const { spawn, spawnSync } = require("node:child_process");
+const { spawn } = require("node:child_process");
 const os = require("node:os");
 const path = require("node:path");
 
@@ -100,6 +100,44 @@ function spawnWindowsBinary(binaryPath) {
   });
 }
 
+/**
+ * POSIX path (LCLI-797, DEC-282 item 7): run the binary asynchronously so the event loop stays free
+ * to relay signals, and never let the child outlive this wrapper. A caller that times out and
+ * kills only this wrapper (a status daemon, `timeout`, a harness) used to leave the native child
+ * running, because a blocking `spawnSync` registers no handler and nothing tore the child down.
+ *
+ * The child stays in the wrapper's own process group, deliberately: a caller that signals the group
+ * keeps reaching it, and it keeps its terminal/session (interactive commands such as `lore init`).
+ * SIGTERM, SIGINT and SIGHUP are forwarded to it and the wrapper then exits with the child's own
+ * status (128+signal when the child died of a signal, as before); if the wrapper exits for any
+ * other reason while the child is still running, the child is killed. A repeated SIGINT is
+ * possible on a terminal Ctrl-C (the tty signals the whole foreground group, then this forwards
+ * it again). Not covered: SIGKILL of the wrapper, which no process can handle.
+ */
+function spawnPosixBinary(binaryPath) {
+  const child = spawn(binaryPath, process.argv.slice(2), { stdio: "inherit" });
+
+  let spawnFailed = false;
+  child.once("error", (err) => {
+    spawnFailed = true;
+    process.stderr.write(`lore: failed to run the compiled binary at ${binaryPath}: ${err.message}\n`);
+    process.exit(1);
+  });
+
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+    process.on(signal, () => {
+      if (child.exitCode === null && child.signalCode === null) child.kill(signal);
+    });
+  }
+  process.on("exit", () => {
+    if (!spawnFailed && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  });
+
+  child.once("close", (status, signal) => {
+    if (!spawnFailed) process.exit(status === null ? exitCodeForSignal(signal) : status);
+  });
+}
+
 function main() {
   let binaryPath;
   try {
@@ -126,12 +164,7 @@ function main() {
     return;
   }
 
-  const result = spawnSync(binaryPath, process.argv.slice(2), { stdio: "inherit" });
-  if (result.error) {
-    process.stderr.write(`lore: failed to run the compiled binary at ${binaryPath}: ${result.error.message}\n`);
-    process.exit(1);
-  }
-  process.exit(result.status === null ? exitCodeForSignal(result.signal) : result.status);
+  spawnPosixBinary(binaryPath);
 }
 
 main();
