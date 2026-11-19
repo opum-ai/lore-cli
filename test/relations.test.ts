@@ -37,7 +37,8 @@ beforeEach(() => {
   gitRun(root, ["init", "-q"]);
 });
 afterEach(() => {
-  // A ladybug generation is sealed read-only, so the tree cannot be removed until it is not.
+  // Only a generation published before DEC-281 (a3) is sealed read-only; a (a3) or later one has an
+  // owner-writable directory. The helper keeps this teardown valid for either shape.
   makeDirectoriesWritable(root);
   rmSync(root, { recursive: true, force: true });
 });
