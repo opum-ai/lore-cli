@@ -14,7 +14,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -140,4 +140,84 @@ describe('bin/lore.cjs — a resolution error that is NOT "package missing"', ()
     expect(stderr).toContain("unexpected error");
     expect(stderr).not.toContain("not yet supported");
   });
+});
+
+// LCLI-797 (DEC-282 item 7): the wrapper must never orphan the native child. POSIX-only: Windows
+// delivers process.kill(pid, "SIGTERM") as an unconditional TerminateProcess to the wrapper with no
+// handler run, so this proof cannot be made there; the Windows path is a recorded residual on
+// LCLI-797, not covered by this test.
+describe.skipIf(process.platform === "win32")("bin/lore.cjs — never orphans the native child (LCLI-797)", () => {
+  /** True while `pid` is a live process (signal 0 probes without delivering anything). */
+  function alive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (predicate()) return true;
+      await Bun.sleep(25);
+    }
+    return predicate();
+  }
+
+  const spawned: number[] = [];
+  afterEach(() => {
+    // An unpatched launcher leaves the stub running for its full timer; never leak it from a test.
+    for (const pid of spawned.splice(0)) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {}
+    }
+  });
+
+  /**
+   * Start the launcher over a stub "binary" that records its own pid and then idles. The stub IS
+   * the long-running process (a node script, not a shell wrapping a sleep), so there is no
+   * grandchild to measure instead of the child.
+   */
+  async function startLauncher() {
+    const pidFile = join(nodePathDir, "child.pid");
+    installFakePlatformPackage(
+      `#!/usr/bin/env node\nrequire("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));\nsetTimeout(() => {}, 60000);\n`,
+    );
+    const launcher = join(nodePathDir, "lore.cjs");
+    copyFileSync(LAUNCHER, launcher);
+    const wrapper = Bun.spawn(["node", launcher], {
+      env: { ...process.env, NODE_PATH: nodePathDir },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    expect(await waitFor(() => existsSync(pidFile) && readFileSync(pidFile, "utf8").length > 0, 15000)).toBe(true);
+    const childPid = Number(readFileSync(pidFile, "utf8"));
+    spawned.push(childPid);
+    expect(alive(childPid)).toBe(true);
+    return { wrapper, childPid };
+  }
+
+  test("positive control: the liveness detector reports a killed child as dead", async () => {
+    const { wrapper, childPid } = await startLauncher();
+    process.kill(childPid, "SIGKILL");
+    expect(await waitFor(() => !alive(childPid), 15000)).toBe(true);
+    await wrapper.exited;
+  });
+
+  for (const [signal, code] of [
+    ["SIGTERM", 143],
+    ["SIGINT", 130],
+    ["SIGHUP", 129],
+  ] as const) {
+    test(`${signal} to the wrapper leaves no surviving child and exits ${code} (the child's status)`, async () => {
+      const { wrapper, childPid } = await startLauncher();
+      process.kill(wrapper.pid, signal); // the WRAPPER's pid, never a group: a group kill would hide the bug
+      await wrapper.exited; // judge the child only once the wrapper is gone
+      expect(await waitFor(() => !alive(childPid), 15000)).toBe(true);
+      expect(wrapper.exitCode).toBe(code);
+    }, 60000);
+  }
 });
