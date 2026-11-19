@@ -1011,11 +1011,22 @@ function rollupIndex(items: readonly Record<string, unknown>[]): TaskRollupIndex
  * lands during the list would otherwise leave post-write records under the pre-write key, to be
  * served as current if `.quest` later returns byte for byte to the old tree (a git restore).
  */
+/** The cache key: it names lore's version, quest's version and the `.quest` tree digest. Exported for its test. */
+export function questListCacheKey(parts: {
+  readonly loreVersion: string;
+  readonly questVersion: string;
+  readonly treeDigest: string;
+}): string {
+  return createHash("sha256")
+    .update(`lore ${parts.loreVersion} quest ${parts.questVersion}\0${parts.treeDigest}`)
+    .digest("hex");
+}
+
 function questListCache(root: string, questVersion: string) {
   const file = join(root, ".lore", "cache", "quest", "task-list.json");
   function treeKey(): string | undefined {
     try {
-      const hash = createHash("sha256").update(`lore ${VERSION} quest ${questVersion}\0`);
+      const hash = createHash("sha256");
       const tree = join(root, ".quest");
       const files = (readdirSync(tree, { recursive: true, withFileTypes: true }) as Dirent[])
         .filter((entry) => entry.isFile())
@@ -1026,7 +1037,7 @@ function questListCache(root: string, questVersion: string) {
           .update(`${path.slice(tree.length)}\0`)
           .update(readFileSync(path))
           .update("\0");
-      return hash.digest("hex");
+      return questListCacheKey({ loreVersion: VERSION, questVersion, treeDigest: hash.digest("hex") });
     } catch {
       return undefined;
     }

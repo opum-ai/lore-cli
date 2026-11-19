@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createQuestAdapter, type QuestSpawn, type QuestSpawnResult } from "../src/adapters/quest";
+import { createQuestAdapter, type QuestSpawn, type QuestSpawnResult, questListCacheKey } from "../src/adapters/quest";
 import { gatherReconciliation, resolveRollupDetails, resolveTaskDetails } from "../src/commands/reconcile-shared";
 import type { LoreError } from "../src/errors";
 import { VERSION } from "../src/meta";
@@ -51,6 +51,10 @@ interface FakeOptions {
   malformed?: boolean;
   /** Runs inside the list call, after the tree was hashed: a quest write landing mid-read. */
   onList?: () => void;
+  /** `alias`: an archived record shares T-2's alias; `id`: a completed record carries T-1's id as an alias. */
+  collide?: "alias" | "id";
+  /** T-3's `aliases` is not an array of strings, which the per-task path rejects as drift. */
+  badAliases?: boolean;
   /** Make the list itself fail. */
   failList?: "exit" | "text" | "object";
 }
@@ -85,6 +89,17 @@ function fakeQuest(n: number, counts: Counts, options: FakeOptions = {}): QuestS
       if (options.failList === "text") return { exitCode: 0, stdout: "not json", stderr: "" };
       if (options.failList === "object") return ok("task.list", { not: "an array" });
       const rows: Record<string, unknown>[] = Array.from({ length: n }, (_, k) => row(k + 1));
+      if (options.badAliases) rows[2] = { ...rows[2], aliases: 5 };
+      if (options.collide === "alias")
+        rows.push({
+          id: "Z-9",
+          title: "Z",
+          status: "Done",
+          path: ".quest/archive/tasks/Z-9.json",
+          aliases: ["OLD-2.1"],
+        });
+      if (options.collide === "id")
+        rows.push({ id: "Z-8", title: "Z", status: "Done", path: ".quest/completed/Z-8.json", aliases: ["T-1"] });
       if (options.malformed) rows.push({ id: "BAD-1", title: "", status: "To Do", path: ".quest/tasks/BAD-1.json" });
       if (options.archived && args.includes("--include-archived")) rows.push(ARCHIVED);
       return ok("task.list", rows);
@@ -219,6 +234,44 @@ describe("the rollup read is one task list, not a view per task", () => {
   });
 });
 
+describe("the rollup index keeps the per-task path's loud failures (review F1, F2)", () => {
+  test("a linked record with malformed aliases raises drift, as the per-task path does", async () => {
+    const resolved = await resolveRollupDetails(adapterFor(4, { list: 0, view: 0, total: 0 }, { badAliases: true }), [
+      "T-1",
+      "T-3",
+    ]);
+    expect(resolved.get("t-1")?.ok).toBe(true);
+    const bad = resolved.get("t-3") as { ok: false; error: LoreError };
+    expect(bad.ok).toBe(false);
+    expect(bad.error.type).toBe("drift");
+  });
+
+  for (const collide of ["alias", "id"] as const) {
+    test(`a reference matching more than one record (${collide} collision, across tasks/, completed/ and archive/) is ambiguous, not resolved`, async () => {
+      const resolved = await resolveRollupDetails(
+        adapterFor(3, { list: 0, view: 0, total: 0 }, { collide }),
+        collide === "alias" ? ["OLD-2.1", "T-3"] : ["T-1", "T-3"],
+      );
+      const ambiguous = resolved.get(collide === "alias" ? "old-2.1" : "t-1") as { ok: false; error: LoreError };
+      expect(ambiguous.ok).toBe(false);
+      expect(ambiguous.error.type).toBe("conflict");
+      expect(ambiguous.error.message).toContain("task_reference_ambiguous");
+      expect(resolved.get("t-3")?.ok).toBe(true); // an unrelated linked id is unaffected
+    });
+  }
+});
+
+describe("the cache key names both versions (review F4)", () => {
+  const base = { loreVersion: "1.0.0", questVersion: "1.0.0", treeDigest: "abc" };
+  test("a changed lore version, quest version or tree is a different key; the same inputs are the same key", () => {
+    const key = questListCacheKey(base);
+    expect(questListCacheKey({ ...base })).toBe(key);
+    expect(questListCacheKey({ ...base, loreVersion: "1.0.1" })).not.toBe(key);
+    expect(questListCacheKey({ ...base, questVersion: "1.0.1" })).not.toBe(key);
+    expect(questListCacheKey({ ...base, treeDigest: "abd" })).not.toBe(key);
+  });
+});
+
 describe("a failing list is never read as clean", () => {
   for (const failList of ["exit", "text", "object"] as const) {
     test(`a list that fails as "${failList}" is an error for every requested id`, async () => {
@@ -227,7 +280,11 @@ describe("a failing list is never read as clean", () => {
         "T-2",
       ]);
       expect(resolved.size).toBe(2);
-      for (const resolution of resolved.values()) expect(resolution.ok).toBe(false);
+      for (const resolution of resolved.values()) {
+        expect(resolution.ok).toBe(false);
+        // Swallowing the list error into an empty index would answer not_found for every id.
+        expect((resolution as { error: LoreError }).error.type).not.toBe("not_found");
+      }
     });
   }
 });
