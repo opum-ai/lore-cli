@@ -24,7 +24,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { constants as osConstants, tmpdir } from "node:os";
 import { join } from "node:path";
 
 const LAUNCHER = join(import.meta.dir, "..", "bin", "lore.cjs");
@@ -361,19 +361,19 @@ describe.skipIf(process.platform === "win32")("bin/lore.cjs — never orphans th
   // DEC-282 (a2) round 4. A child that dies of a signal Node leaves at its default (or reserves)
   // must not be re-raised on the wrapper: SIGUSR1 would start Node's inspector (a debugger on
   // 127.0.0.1:9229) and SIGPIPE is ignored by Node. The wrapper exits 128+n instead.
-  test("a child dying of SIGUSR1 gives exit 138 and never starts the wrapper's inspector", () => {
+  test("a child dying of SIGUSR1 gives exit 128+SIGUSR1 and never starts the wrapper's inspector", () => {
     installFakePlatformPackage("#!/bin/sh\nkill -USR1 $$\nsleep 5\n");
     const { code, signal, stderr } = runLauncher([]);
     expect(signal).toBeNull();
-    expect(code).toBe(138);
+    expect(code).toBe(128 + osConstants.signals.SIGUSR1);
     expect(stderr).not.toContain("Debugger listening");
   });
 
-  test("a child dying of SIGPIPE gives exit 141", () => {
+  test("a child dying of SIGPIPE gives exit 128+SIGPIPE", () => {
     installFakePlatformPackage("#!/bin/sh\nkill -PIPE $$\nsleep 5\n");
     const { code, signal } = runLauncher([]);
     expect(signal).toBeNull();
-    expect(code).toBe(141);
+    expect(code).toBe(128 + osConstants.signals.SIGPIPE);
   });
 
   // The group is swept at most once. A second SIGKILL to the same group id, sent after the first

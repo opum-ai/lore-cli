@@ -136,9 +136,8 @@ function spawnPosixBinary(binaryPath) {
   const ownGroup = !isatty(0);
   /** @type {import("node:child_process").ChildProcess | undefined} */
   let child;
-  /** @type {NodeJS.Signals | undefined} */
-  let pendingSignal;
   let spawnFailed = false;
+  let swept = false;
 
   const childRunning = () => child !== undefined && child.exitCode === null && child.signalCode === null;
 
@@ -153,9 +152,13 @@ function spawnPosixBinary(binaryPath) {
     }
   }
 
-  /** SIGKILL whatever is left: the whole group off a terminal, the child itself on one. */
+  /**
+   * SIGKILL whatever is left: the whole group off a terminal, the child itself on one. At most once:
+   * after the first sweep the group is empty, so a second one could only ever hit a reused group id.
+   */
   function sweep() {
-    if (child === undefined) return;
+    if (swept || child === undefined) return;
+    swept = true;
     try {
       if (ownGroup && typeof child.pid === "number") process.kill(-child.pid, "SIGKILL");
       else if (childRunning()) child.kill("SIGKILL");
@@ -164,27 +167,28 @@ function spawnPosixBinary(binaryPath) {
     }
   }
 
-  // Registered BEFORE the spawn, so a signal landing between fork and handler takes no default action.
-  /** @type {NodeJS.Signals[]} */
-  const forwarded = ["SIGTERM", "SIGINT", "SIGHUP"];
-  for (const signal of forwarded) {
-    process.on(signal, () => {
-      if (child === undefined) pendingSignal ??= signal;
-      else signalChild(signal);
-    });
-  }
+  // Registered BEFORE the spawn, which is what closes the window in which a signal would take its
+  // default action while the child is already running (a handler cannot run inside the synchronous
+  // tick that holds spawn(), so no "signal arrived before the child existed" case remains).
+  for (const signal of FORWARDED_SIGNALS) process.on(signal, () => signalChild(signal));
   process.on("exit", () => {
     if (!spawnFailed) sweep();
   });
 
-  child = spawn(binaryPath, process.argv.slice(2), { stdio: "inherit", detached: ownGroup });
-  if (pendingSignal !== undefined) signalChild(pendingSignal);
-
-  child.once("error", (err) => {
+  function failed(/** @type {Error} */ err) {
     spawnFailed = true;
     process.stderr.write(`lore: failed to run the compiled binary at ${binaryPath}: ${err.message}\n`);
     process.exit(1);
-  });
+  }
+  try {
+    // Node throws from spawn() itself for errors outside EACCES/EAGAIN/EMFILE/ENFILE/ENOENT (E2BIG
+    // on a very long argv is the realistic one); the old spawnSync path reported all of them cleanly.
+    child = spawn(binaryPath, process.argv.slice(2), { stdio: "inherit", detached: ownGroup });
+  } catch (/** @type {any} */ err) {
+    failed(err);
+    return;
+  }
+  child.once("error", failed);
 
   child.once("close", (status, signal) => {
     if (spawnFailed) return;
@@ -194,16 +198,32 @@ function spawnPosixBinary(binaryPath) {
   });
 }
 
+/** The signals forwarded to the child; also the handlers dropped when the wrapper dies of one. */
+const FORWARDED_SIGNALS = /** @type {NodeJS.Signals[]} */ (["SIGTERM", "SIGINT", "SIGHUP"]);
+
 /**
- * Die of `signal` ourselves, as the child did: drop every handler so the default disposition is back,
- * then raise it on this process. If the signal is ignored in this process (inherited SIG_IGN) the
- * raise does nothing, so fall back to the conventional `128 + signal` exit.
+ * Signals Node leaves at, or reserves from, their default action: SIGPIPE and SIGXFSZ are ignored by
+ * Node, and SIGUSR1 starts its inspector (a debugger on 127.0.0.1:9229). Raising one of these on
+ * ourselves would do nothing or open the inspector, so the wrapper exits `128 + signal` instead.
+ */
+const NOT_RERAISED = new Set(["SIGPIPE", "SIGXFSZ", "SIGUSR1"]);
+
+/**
+ * Die of `signal` ourselves, as the child did (foreground-child and tini do the same): drop every
+ * forwarded-signal handler so the default disposition is back, then raise it on this process. The
+ * exit code is set first, so a signal that is ignored in this process (inherited SIG_IGN) leaves the
+ * event loop to drain and the wrapper to exit with the conventional `128 + signal`.
  */
 function reraise(signal) {
-  if (signal === null || os.constants.signals[signal] === undefined) process.exit(1);
+  if (signal === null || os.constants.signals[signal] === undefined) {
+    process.exitCode = 1;
+    return;
+  }
+  process.exitCode = exitCodeForSignal(signal);
+  if (NOT_RERAISED.has(signal)) return;
+  for (const forwarded of FORWARDED_SIGNALS) process.removeAllListeners(forwarded);
   process.removeAllListeners(signal);
   process.kill(process.pid, signal);
-  setTimeout(() => process.exit(exitCodeForSignal(signal)), 200);
 }
 
 function main() {
