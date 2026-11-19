@@ -952,6 +952,7 @@ function rollupRow(value: unknown): TaskRollupRow {
     title: string(task.title, "task title"),
     status: string(task.status, "task status"),
     file: nullableString(task.file ?? task.path, "task file"),
+    aliases: strings(task.aliases ?? [], "task aliases"),
   };
 }
 
@@ -967,7 +968,7 @@ function questListCache(root: string, version: string) {
   const file = join(root, ".lore", "cache", "quest", "task-list.json");
   let key: string | undefined;
   try {
-    const hash = createHash("sha256").update(`quest ${version}\0`);
+    const hash = createHash("sha256").update(`rollup-v2 quest ${version}\0`);
     const tree = join(root, ".quest");
     const files = (readdirSync(tree, { recursive: true, withFileTypes: true }) as Dirent[])
       .filter((entry) => entry.isFile())

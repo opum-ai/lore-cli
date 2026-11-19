@@ -50,6 +50,7 @@ function fakeQuest(n: number, counts: Counts): QuestSpawn {
     title: `Task ${i}`,
     status: i % 2 === 0 ? "Done" : "To Do",
     path: `.quest/tasks/T-${i}.json`,
+    aliases: i === 2 ? ["OLD-2.1"] : [],
   });
   return async (args) => {
     counts.total++;
@@ -118,6 +119,15 @@ describe("the rollup read is one task list, not a view per task", () => {
     ]);
     expect(counts.view).toBe(0);
     expect(counts.list).toBe(1);
+  });
+
+  test("a linked ALIAS resolves to its canonical task, as the per-task view does (the docs gate hit this)", async () => {
+    const counts: Counts = { list: 0, view: 0, total: 0 };
+    const resolved = await resolveRollupDetails(adapterFor(3, counts), ["OLD-2.1"]);
+    const hit = resolved.get("old-2.1");
+    expect(hit?.ok).toBe(true);
+    expect((hit as { detail: { id: string } }).detail.id).toBe("T-2");
+    expect(counts.view).toBe(0);
   });
 
   test("a linked id absent from the list fails as the same not_found the view path raises", async () => {

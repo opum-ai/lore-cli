@@ -32,6 +32,8 @@ export interface TaskRollupRow {
   readonly title: string;
   readonly status: string;
   readonly file: string | null;
+  /** Other ids that resolve to this task (a linked `tasks:` id may be one, as `viewTask` accepts it). */
+  readonly aliases: readonly string[];
 }
 
 /**

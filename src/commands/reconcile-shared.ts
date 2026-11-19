@@ -263,7 +263,12 @@ export async function resolveRollupDetails(
   const resolved = new Map<string, RollupResolution>();
   let rows: Map<string, RollupDetail>;
   try {
-    rows = new Map((await adapter.taskRollup()).map((row) => [row.id.toLowerCase(), row]));
+    const read = await adapter.taskRollup();
+    rows = new Map();
+    // A canonical id always wins over an alias, and the first holder of an alias keeps it.
+    for (const row of read) rows.set(row.id.toLowerCase(), row);
+    for (const row of read)
+      for (const alias of row.aliases) if (!rows.has(alias.toLowerCase())) rows.set(alias.toLowerCase(), row);
   } catch (cause) {
     const error = cause instanceof Error ? cause : new Error(String(cause));
     for (const taskId of taskIds) resolved.set(taskId.toLowerCase(), { ok: false, error });
