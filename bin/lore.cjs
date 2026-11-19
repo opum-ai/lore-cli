@@ -124,7 +124,9 @@ function spawnPosixBinary(binaryPath) {
     process.exit(1);
   });
 
-  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+  /** @type {NodeJS.Signals[]} */
+  const forwarded = ["SIGTERM", "SIGINT", "SIGHUP"];
+  for (const signal of forwarded) {
     process.on(signal, () => {
       if (child.exitCode === null && child.signalCode === null) child.kill(signal);
     });
