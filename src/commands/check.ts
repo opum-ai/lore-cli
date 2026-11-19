@@ -109,9 +109,9 @@ import {
   linkedConcepts,
   mapWithConcurrency,
   type ReconcileConfig,
+  type RollupResolution,
   resolveReconcileConfig,
-  resolveTaskDetails,
-  type TaskResolution,
+  resolveRollupDetails,
   taskBlockConcepts,
 } from "./reconcile-shared";
 
@@ -1022,7 +1022,7 @@ interface DriftResult {
  */
 interface PooledReconciliation {
   readonly config: ReconcileConfig | undefined;
-  readonly details: ReadonlyMap<string, TaskResolution> | undefined;
+  readonly details: ReadonlyMap<string, RollupResolution> | undefined;
   readonly configError: Error | null;
 }
 
@@ -1066,9 +1066,9 @@ async function resolveSharedReconciliation(
   }
 
   const allTaskIds = dedupeTaskIds(allEligible.flatMap((e) => e.linked));
-  let details: ReadonlyMap<string, TaskResolution> | undefined;
+  let details: ReadonlyMap<string, RollupResolution> | undefined;
   try {
-    details = await resolveTaskDetails(adapter, allTaskIds);
+    details = await resolveRollupDetails(adapter, allTaskIds);
   } catch {
     details = undefined;
   }

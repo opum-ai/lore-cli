@@ -1,13 +1,23 @@
 /** Quest 0.2 tracker adapter. Quest owns task storage; Lore consumes its pinned JSON CLI contract. */
 
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import {
+  type Dirent,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import { QUEST_STATUS_FLOW_HINTS } from "../core/reconcile";
 import { type ErrorType, errnoCode, LoreError } from "../errors";
 import { VERSION } from "../meta";
 import type { BacklogComment, BacklogCriterion, BacklogTask, BacklogTaskDetail, ListTasksOptions } from "./backlog";
 import { compareSemver, parseSemver } from "./semver";
-import type { TrackerAdapter, TrackerCapability } from "./tracker";
+import type { TaskRollupIndex, TaskRollupRow, TrackerAdapter, TrackerCapability } from "./tracker";
 
 export const QUEST_SCHEMA_VERSION = 1;
 export const QUEST_TIMEOUT_ENV_VAR = "LORE_QUEST_TIMEOUT_MS";
@@ -427,6 +437,23 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
       throw drift(operation, `returned kind ${JSON.stringify(envelope.kind)}, expected ${JSON.stringify(kind)}`);
     return envelope.data;
   }
+  async function taskRollup(): Promise<TaskRollupIndex> {
+    const { version } = await ensure();
+    const cache = questListCache(root, version);
+    const hit = cache.read();
+    if (hit !== undefined) return rollupIndex(hit);
+    // `--include-archived`: `task view` resolves archived records, so the list must too, or a link to
+    // an archived task would render before this change and fail not_found after it.
+    const value = await data(
+      ["task", "list", "--include-archived", "--json"],
+      "task list --include-archived --json",
+      "task.list",
+    );
+    if (!Array.isArray(value)) throw new LoreError("drift", "Quest returned invalid task list", QUEST_VERSION_SET_HINT);
+    const items = value.map(rollupItem);
+    cache.write(items);
+    return rollupIndex(items);
+  }
   async function listTasks(opts?: ListTasksOptions): Promise<BacklogTask[]> {
     return list(await data(["task", "list", "--json"], "task list --json", "task.list"), opts);
   }
@@ -447,6 +474,7 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
         await data(["task", "status-flow", "--json"], "task status-flow --json", "task.status-flow"),
       );
     },
+    taskRollup,
     async listTasks(opts) {
       return listTasks(opts);
     },
@@ -930,6 +958,104 @@ function summary(value: unknown): BacklogTask {
     // edge, export and traversal downstream, which is why lore saw parenthood and never ordering.
     dependencies: strings(task.dependencies ?? [], "dependencies"),
     documentation: strings(task.documentation ?? [], "documentation"),
+  };
+}
+/** The five fields the rollup reads of a listed record, unvalidated (validation is per looked-up id). */
+function rollupItem(value: unknown): Record<string, unknown> {
+  const task = record(value) ? value : {};
+  return { id: task.id, title: task.title, status: task.status, file: task.file ?? task.path, aliases: task.aliases };
+}
+function rollupRow(task: Record<string, unknown>): TaskRollupRow {
+  return {
+    id: string(task.id, "task id"),
+    title: string(task.title, "task title"),
+    status: string(task.status, "task status"),
+    file: nullableString(task.file, "task file"),
+  };
+}
+/**
+ * Index listed records by canonical id and by alias, mirroring how `viewTask` resolves an id.
+ * Collisions, which tracker integrity already rejects, resolve deterministically but may differ from
+ * quest's own lookup: two records with the same canonical id (the stacked-branch `tasks/X` plus
+ * `completed/X` state) keep the LAST one, and an alias held by two records stays with the FIRST. A
+ * canonical id always wins over an alias.
+ */
+function rollupIndex(items: readonly Record<string, unknown>[]): TaskRollupIndex {
+  const byId = new Map<string, Record<string, unknown>>();
+  const byAlias = new Map<string, Record<string, unknown>>();
+  for (const item of items) if (typeof item.id === "string") byId.set(item.id.toLowerCase(), item);
+  for (const item of items) {
+    if (!Array.isArray(item.aliases)) continue;
+    for (const alias of item.aliases)
+      if (typeof alias === "string" && !byAlias.has(alias.toLowerCase())) byAlias.set(alias.toLowerCase(), item);
+  }
+  return {
+    lookup(id) {
+      const key = safe(id).toLowerCase(); // the same refusal a per-task read of a "-"-led id raised
+      const item = byId.get(key) ?? byAlias.get(key);
+      return item === undefined ? undefined : rollupRow(item);
+    },
+  };
+}
+
+/**
+ * The cross-run cache for the rollup list (LCLI-791): `<root>/.lore/cache/quest/task-list.json`,
+ * holding the listed records and the key they were read under. The key is a hash of lore's version,
+ * quest's version and every file under `<root>/.quest` (path and bytes), so any task edit, add, move
+ * or removal is a different key, and so is a different lore or quest. Reading the tree costs file
+ * reads but no spawn, which is the cost this exists to remove. Every failure here (unreadable tree,
+ * missing, corrupt or unwritable cache) is a miss, never an error: the cache may only ever make a
+ * run cheaper.
+ *
+ * A write is skipped unless the tree still hashes to the key it was read under: a quest write that
+ * lands during the list would otherwise leave post-write records under the pre-write key, to be
+ * served as current if `.quest` later returns byte for byte to the old tree (a git restore).
+ */
+function questListCache(root: string, questVersion: string) {
+  const file = join(root, ".lore", "cache", "quest", "task-list.json");
+  function treeKey(): string | undefined {
+    try {
+      const hash = createHash("sha256").update(`lore ${VERSION} quest ${questVersion}\0`);
+      const tree = join(root, ".quest");
+      const files = (readdirSync(tree, { recursive: true, withFileTypes: true }) as Dirent[])
+        .filter((entry) => entry.isFile())
+        .map((entry) => join(entry.parentPath, entry.name))
+        .sort();
+      for (const path of files)
+        hash
+          .update(`${path.slice(tree.length)}\0`)
+          .update(readFileSync(path))
+          .update("\0");
+      return hash.digest("hex");
+    } catch {
+      return undefined;
+    }
+  }
+  const key = treeKey();
+  return {
+    read(): readonly Record<string, unknown>[] | undefined {
+      if (key === undefined) return undefined;
+      try {
+        const cached: unknown = JSON.parse(readFileSync(file, "utf8"));
+        if (!record(cached) || cached.key !== key || !Array.isArray(cached.items)) return undefined;
+        return cached.items.map(rollupItem);
+      } catch {
+        return undefined;
+      }
+    },
+    write(items: readonly Record<string, unknown>[]): void {
+      if (key === undefined || treeKey() !== key) return;
+      const tmp = `${file}.${process.pid}.tmp`;
+      try {
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(tmp, JSON.stringify({ key, items }));
+        renameSync(tmp, file);
+      } catch {
+        try {
+          unlinkSync(tmp);
+        } catch {}
+      }
+    },
   };
 }
 function list(value: unknown, opts?: ListTasksOptions): BacklogTask[] {
