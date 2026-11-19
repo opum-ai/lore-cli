@@ -974,26 +974,41 @@ function rollupRow(task: Record<string, unknown>): TaskRollupRow {
   };
 }
 /**
- * Index listed records by canonical id and by alias, mirroring how `viewTask` resolves an id.
- * Collisions, which tracker integrity already rejects, resolve deterministically but may differ from
- * quest's own lookup: two records with the same canonical id (the stacked-branch `tasks/X` plus
- * `completed/X` state) keep the LAST one, and an alias held by two records stays with the FIRST. A
- * canonical id always wins over an alias.
+ * Index listed records by every id they answer to, mirroring how `viewTask` resolves a reference.
+ * Quest's own `findTask` refuses a reference that matches the id or an alias of MORE than one record
+ * (`task_reference_ambiguous`), and `task list` runs no uniqueness validation, so the index does the
+ * same instead of choosing a winner: a lookup that matches two records throws, even across `tasks/`,
+ * `completed/` and `archive/`. Records the rollup never looks up are never validated.
  */
 function rollupIndex(items: readonly Record<string, unknown>[]): TaskRollupIndex {
-  const byId = new Map<string, Record<string, unknown>>();
-  const byAlias = new Map<string, Record<string, unknown>>();
-  for (const item of items) if (typeof item.id === "string") byId.set(item.id.toLowerCase(), item);
+  const byReference = new Map<string, Record<string, unknown>[]>();
+  const add = (reference: string, item: Record<string, unknown>) => {
+    const key = reference.toLowerCase();
+    const held = byReference.get(key);
+    if (held === undefined) byReference.set(key, [item]);
+    else if (!held.includes(item)) held.push(item);
+  };
   for (const item of items) {
-    if (!Array.isArray(item.aliases)) continue;
-    for (const alias of item.aliases)
-      if (typeof alias === "string" && !byAlias.has(alias.toLowerCase())) byAlias.set(alias.toLowerCase(), item);
+    if (typeof item.id === "string") add(item.id, item);
+    if (Array.isArray(item.aliases)) for (const alias of item.aliases) if (typeof alias === "string") add(alias, item);
   }
   return {
     lookup(id) {
       const key = safe(id).toLowerCase(); // the same refusal a per-task read of a "-"-led id raised
-      const item = byId.get(key) ?? byAlias.get(key);
-      return item === undefined ? undefined : rollupRow(item);
+      const matches = byReference.get(key) ?? [];
+      if (matches.length > 1)
+        throw new LoreError(
+          "conflict",
+          `task reference "${id}" is ambiguous (task_reference_ambiguous): it matches ${matches.length} records`,
+          "reference the task by a unique id; quest reports the same refusal for `task view`",
+          { taskId: id, matches: matches.map((match) => match.id) },
+        );
+      const item = matches[0];
+      if (item === undefined) return undefined;
+      // The per-task path validated aliases too (summary()), so a linked record with a malformed
+      // aliases field raises the same drift here.
+      strings(item.aliases ?? [], "task aliases");
+      return rollupRow(item);
     },
   };
 }
@@ -1004,8 +1019,9 @@ function rollupIndex(items: readonly Record<string, unknown>[]): TaskRollupIndex
  * quest's version and every file under `<root>/.quest` (path and bytes), so any task edit, add, move
  * or removal is a different key, and so is a different lore or quest. Reading the tree costs file
  * reads but no spawn, which is the cost this exists to remove. Every failure here (unreadable tree,
- * missing, corrupt or unwritable cache) is a miss, never an error: the cache may only ever make a
- * run cheaper.
+ * missing, corrupt or unwritable cache file) is a miss, never an error. A cache that parses and holds
+ * the matching key but a malformed record for a LINKED id raises the same drift the uncached read
+ * would, since records are validated lazily; only tampering reaches it.
  *
  * A write is skipped unless the tree still hashes to the key it was read under: a quest write that
  * lands during the list would otherwise leave post-write records under the pre-write key, to be
