@@ -71,7 +71,12 @@ function installFakePackageWithRestrictedExports(): void {
  * semantics instead, which could diverge from real Node's without this suite ever noticing. CI
  * (`ci.yml`) runs on GitHub-hosted runners, which ship Node preinstalled on `PATH`.
  */
-function runLauncher(args: readonly string[]): { stdout: string; stderr: string; code: number } {
+function runLauncher(args: readonly string[]): {
+  stdout: string;
+  stderr: string;
+  code: number;
+  signal: string | null;
+} {
   // Run a COPY of the launcher from inside the fixture directory, not the repository's own
   // bin/lore.cjs (LCLI-369). NODE_PATH is only a FALLBACK: Node first walks up from the script's
   // own location looking for node_modules, and the repository is an ancestor of bin/lore.cjs.
@@ -94,6 +99,7 @@ function runLauncher(args: readonly string[]): { stdout: string; stderr: string;
     stdout: result.stdout.toString("utf8"),
     stderr: result.stderr.toString("utf8"),
     code: result.exitCode,
+    signal: result.signalCode ?? null,
   };
 }
 
@@ -119,13 +125,14 @@ describe.skipIf(process.platform === "win32")("bin/lore.cjs — resolves and exe
     expect(stderr).toContain("err-line");
   });
 
-  test("a signal-terminated binary reports the conventional 128+signal exit code, not a generic 1", () => {
-    // SIGTERM (15) -> 143. The binary sends itself SIGTERM and then busy-waits, so it is the
-    // signal — not a self-inflicted process.exit — that actually ends the process.
+  test("a signal-terminated binary makes the wrapper die by that same signal, not exit 128+n or a generic 1", () => {
+    // DEC-282 (a2) item 5 (it replaced the earlier 128+signal convention): a caller sees death by
+    // SIGTERM, so a shell loop breaks on Ctrl-C and Python reports -15. The binary sends itself
+    // SIGTERM and then busy-waits, so it is the signal, not a self-inflicted process.exit, that ends it.
     installFakePlatformPackage(
       "#!/usr/bin/env node\nprocess.kill(process.pid, 'SIGTERM');\nconst start = Date.now();\nwhile (Date.now() - start < 5000) {}\n",
     );
-    expect(runLauncher([]).code).toBe(143);
+    expect(runLauncher([]).signal).toBe("SIGTERM");
   });
 });
 

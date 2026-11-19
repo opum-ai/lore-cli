@@ -25,6 +25,7 @@
 
 const { spawn } = require("node:child_process");
 const os = require("node:os");
+const { isatty } = require("node:tty");
 const path = require("node:path");
 
 /** The compiled binary's name inside its platform package (`.exe` on Windows). */
@@ -101,31 +102,67 @@ function spawnWindowsBinary(binaryPath) {
 }
 
 /**
- * POSIX path (LCLI-797, DEC-282 item 7): run the binary asynchronously so the event loop stays free
- * to relay signals, and never let the child outlive this wrapper. A caller that times out and
- * kills only this wrapper (a status daemon, `timeout`, a harness) used to leave the native child
- * running, because a blocking `spawnSync` registers no handler and nothing tore the child down.
+ * POSIX path (LCLI-797, DEC-282 item 7 and (a2)): run the binary asynchronously so the event loop
+ * stays free to relay signals, and never let the child, or anything it spawned, outlive this
+ * wrapper. A caller that times out and kills only this wrapper (a status daemon, `timeout`, a
+ * harness) used to leave the native binary running, because a blocking `spawnSync` registers no
+ * handler and nothing tore the child down. This is the same shape as `bin/quest.cjs` (QCLI-567).
  *
- * The child stays in the wrapper's own process group, deliberately: a caller that signals the group
- * keeps reaching it, and it keeps its terminal/session (interactive commands such as `lore init`).
- * SIGTERM, SIGINT and SIGHUP are forwarded to it (a signal that lands before the child exists is
- * held and forwarded right after the spawn) and the wrapper then exits with the child's own
- * status: `128 + signal` when the child died of a signal. That is an ordinary exit, no longer the
- * wrapper dying BY the signal, so a caller that distinguishes the two sees a different wait status.
- * The wrapper's `exit` handler kills a still-running child with SIGKILL, but only on the exits that
- * run it: an uncaught exception and `process.exit`. A fatal signal that is not forwarded (SIGQUIT,
- * SIGALRM, SIGUSR2, ...) kills Node without running it. A repeated SIGINT is possible on a terminal
- * Ctrl-C (the tty signals the whole foreground group, then this forwards it again).
+ * Off a terminal (stdin is not a tty) the child gets its own session and process group
+ * (`detached`), so a forwarded signal goes to the whole group (`-pid`) and the wrapper sweeps the
+ * group with SIGKILL when it is done, which also reaps a grandchild that ignored the signal (the
+ * native lore spawns quest, git, gh, backlog and jira). On a terminal the child stays in the
+ * caller's foreground group: a background group is stopped by SIGTTIN/SIGTTOU on terminal I/O, and
+ * Ctrl-C must keep reaching it.
  *
- * Not covered: SIGKILL of the wrapper, which no process can handle, and anything the native child
- * itself spawns, since only the direct child is signalled.
+ * SIGTERM, SIGINT and SIGHUP are forwarded (a signal that lands before the child exists is held
+ * and forwarded right after the spawn). When the child dies of a signal the wrapper dies of the
+ * same one (default disposition restored, then re-raised on itself, as foreground-child and tini
+ * do), so a caller sees death by that signal and a shell loop still breaks on Ctrl-C; otherwise it
+ * exits with the child's own status. The `exit` handler sweeps on an uncaught exception and
+ * `process.exit`. A fatal signal that is not forwarded (SIGQUIT, SIGALRM, SIGUSR2, ...) kills Node
+ * without running it. A repeated SIGINT is possible on a terminal Ctrl-C (the tty signals the
+ * whole foreground group, then this forwards it again).
+ *
+ * Caller remedy for a runaway lore: send SIGTERM to the wrapper (or to a group you created for
+ * it), wait a few seconds, then SIGKILL. A plain SIGTERM is fully handled here.
+ *
+ * Not covered: SIGKILL of the wrapper, which no handler can intercept (a lifeline pipe is the
+ * follow-up, DEC-282 (a2) item 2), and, off a terminal, a caller's group-wide SIGKILL, because the
+ * child has left that group. The group sweep names a process group id that could in principle be
+ * reused once every member is gone; the window is the time between the child's exit and the sweep.
  */
 function spawnPosixBinary(binaryPath) {
+  const ownGroup = !isatty(0);
   /** @type {import("node:child_process").ChildProcess | undefined} */
   let child;
   /** @type {NodeJS.Signals | undefined} */
   let pendingSignal;
   let spawnFailed = false;
+
+  const childRunning = () => child !== undefined && child.exitCode === null && child.signalCode === null;
+
+  /** @param {NodeJS.Signals} signal */
+  function signalChild(signal) {
+    if (child === undefined || !childRunning()) return;
+    try {
+      if (ownGroup && typeof child.pid === "number") process.kill(-child.pid, signal);
+      else child.kill(signal);
+    } catch {
+      // The child is already gone.
+    }
+  }
+
+  /** SIGKILL whatever is left: the whole group off a terminal, the child itself on one. */
+  function sweep() {
+    if (child === undefined) return;
+    try {
+      if (ownGroup && typeof child.pid === "number") process.kill(-child.pid, "SIGKILL");
+      else if (childRunning()) child.kill("SIGKILL");
+    } catch {
+      // Nothing left to kill (ESRCH is the normal answer for an empty group).
+    }
+  }
 
   // Registered BEFORE the spawn, so a signal landing between fork and handler takes no default action.
   /** @type {NodeJS.Signals[]} */
@@ -133,16 +170,15 @@ function spawnPosixBinary(binaryPath) {
   for (const signal of forwarded) {
     process.on(signal, () => {
       if (child === undefined) pendingSignal ??= signal;
-      else if (child.exitCode === null && child.signalCode === null) child.kill(signal);
+      else signalChild(signal);
     });
   }
   process.on("exit", () => {
-    if (!spawnFailed && child !== undefined && child.exitCode === null && child.signalCode === null)
-      child.kill("SIGKILL");
+    if (!spawnFailed) sweep();
   });
 
-  child = spawn(binaryPath, process.argv.slice(2), { stdio: "inherit" });
-  if (pendingSignal !== undefined) child.kill(pendingSignal);
+  child = spawn(binaryPath, process.argv.slice(2), { stdio: "inherit", detached: ownGroup });
+  if (pendingSignal !== undefined) signalChild(pendingSignal);
 
   child.once("error", (err) => {
     spawnFailed = true;
@@ -151,8 +187,23 @@ function spawnPosixBinary(binaryPath) {
   });
 
   child.once("close", (status, signal) => {
-    if (!spawnFailed) process.exit(status === null ? exitCodeForSignal(signal) : status);
+    if (spawnFailed) return;
+    if (status !== null) process.exit(status);
+    sweep(); // dying by a signal skips the exit handler, so reap the group first
+    reraise(signal);
   });
+}
+
+/**
+ * Die of `signal` ourselves, as the child did: drop every handler so the default disposition is back,
+ * then raise it on this process. If the signal is ignored in this process (inherited SIG_IGN) the
+ * raise does nothing, so fall back to the conventional `128 + signal` exit.
+ */
+function reraise(signal) {
+  if (signal === null || os.constants.signals[signal] === undefined) process.exit(1);
+  process.removeAllListeners(signal);
+  process.kill(process.pid, signal);
+  setTimeout(() => process.exit(exitCodeForSignal(signal)), 200);
 }
 
 function main() {
