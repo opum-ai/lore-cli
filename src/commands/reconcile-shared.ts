@@ -41,6 +41,15 @@ export type TaskResolution =
   | { readonly ok: true; readonly detail: BacklogTaskDetail }
   | { readonly ok: false; readonly error: unknown };
 
+/**
+ * What the managed rollup reads of a linked task (LCLI-791): a {@link TaskResolution} whose detail
+ * carries only the four fields a rollup row and the status reconciliation use. Every
+ * {@link TaskResolution} is one, so the per-task path stays a valid source.
+ */
+export type RollupResolution =
+  | { readonly ok: true; readonly detail: Pick<BacklogTaskDetail, "id" | "title" | "status" | "file"> }
+  | { readonly ok: false; readonly error: unknown };
+
 /** One concept's resolved reconciliation: its recomputed status and live managed-block rows. */
 export interface ReconcileTarget {
   /** The concept as loaded (unmodified) — its version-selected task rollup field is unchanged. */
@@ -189,7 +198,7 @@ export async function gatherReconciliation(
   concepts: Iterable<Concept>,
   adapterOverride?: BacklogAdapter,
   configOverride?: ReconcileConfig,
-  detailsOverride?: ReadonlyMap<string, TaskResolution>,
+  detailsOverride?: ReadonlyMap<string, RollupResolution>,
   configErrorOverride?: unknown,
 ): Promise<ReconcileTarget[]> {
   const targets = taskBlockConcepts(concepts);
@@ -211,13 +220,13 @@ export async function gatherReconciliation(
   const allTaskIds = dedupeTaskIds(eligible.flatMap((e) => e.linked));
   const details = detailsOverride
     ? pickResolved(detailsOverride, allTaskIds)
-    : await resolveAllTasks(adapterOverride ?? defaultAdapter(root), allTaskIds);
+    : pickResolved(await resolveRollupDetails(adapterOverride ?? defaultAdapter(root), allTaskIds), allTaskIds);
 
   return targets.map(({ concept, linked }) => {
     if (linked.length === 0) {
       return { concept, newTaskStatus: null, rows: [] };
     }
-    const detailList = linked.map((id) => details.get(id.toLowerCase()) as BacklogTaskDetail);
+    const detailList = linked.map((id) => details.get(id.toLowerCase()) as RollupDetail);
     const newTaskStatus = reconcileStatus(
       detailList.map((d) => d.status),
       flow,
@@ -234,6 +243,50 @@ export async function gatherReconciliation(
     }));
     return { concept, newTaskStatus, rows };
   });
+}
+
+type RollupDetail = Pick<BacklogTaskDetail, "id" | "title" | "status" | "file">;
+
+/**
+ * Resolve every task id for the managed rollup (`lore check`, `lore sync`) from ONE backend read
+ * when the adapter offers {@link TrackerAdapter.taskRollup} (LCLI-791, DEC-282 item 1): the spawn
+ * count no longer grows with the number of linked tasks. A backend without it falls back to
+ * {@link resolveTaskDetails}. An id the read does not list is the same `not_found` the per-task
+ * path raises, and like it this never throws on a missing id; a failure of the single read itself
+ * is stored against every requested id, so each group still decides for itself.
+ */
+export async function resolveRollupDetails(
+  adapter: BacklogAdapter,
+  taskIds: readonly string[],
+): Promise<Map<string, RollupResolution>> {
+  if (adapter.taskRollup === undefined) return resolveTaskDetails(adapter, taskIds);
+  const resolved = new Map<string, RollupResolution>();
+  let rows: Map<string, RollupDetail>;
+  try {
+    rows = new Map((await adapter.taskRollup()).map((row) => [row.id.toLowerCase(), row]));
+  } catch (cause) {
+    const error = cause instanceof Error ? cause : new Error(String(cause));
+    for (const taskId of taskIds) resolved.set(taskId.toLowerCase(), { ok: false, error });
+    return resolved;
+  }
+  for (const taskId of taskIds) {
+    const detail = rows.get(taskId.toLowerCase());
+    resolved.set(
+      taskId.toLowerCase(),
+      detail === undefined
+        ? {
+            ok: false,
+            error: new LoreError(
+              "not_found",
+              `task "${taskId}" does not exist`,
+              "a linked concept's tasks: list must reference only live Backlog tasks — check the id, or unlink it",
+              { taskId },
+            ),
+          }
+        : { ok: true, detail },
+    );
+  }
+  return resolved;
 }
 
 /**
@@ -287,22 +340,6 @@ export async function resolveTaskDetails(
 }
 
 /**
- * Resolve every task id to its live {@link BacklogTaskDetail}, keyed by lowercase id. Every id is
- * validated to exist BEFORE any concept's status/managed-block is computed — mirrors
- * `commands/link.ts`'s up-front validation exactly, including running the reads concurrently
- * (`allSettled`) but reporting the first not-found/failure in argument order.
- *
- * @throws LoreError `not_found` (exit 3) naming the first missing task id, in `taskIds` order.
- */
-async function resolveAllTasks(
-  adapter: BacklogAdapter,
-  taskIds: readonly string[],
-): Promise<Map<string, BacklogTaskDetail>> {
-  const resolved = await resolveTaskDetails(adapter, taskIds);
-  return pickResolved(resolved, taskIds);
-}
-
-/**
  * Extract `taskIds` from an already-resolved {@link TaskResolution} map, throwing the FIRST (in
  * `taskIds` order) unresolved id's own error — the same contract {@link resolveAllTasks} always
  * had, now shared by a caller (`lore check`, LORE-50) that resolved the map once, up front, for a
@@ -312,10 +349,10 @@ async function resolveAllTasks(
  * than silently treating it as resolved.
  */
 function pickResolved(
-  resolved: ReadonlyMap<string, TaskResolution>,
+  resolved: ReadonlyMap<string, RollupResolution>,
   taskIds: readonly string[],
-): Map<string, BacklogTaskDetail> {
-  const details = new Map<string, BacklogTaskDetail>();
+): Map<string, RollupDetail> {
+  const details = new Map<string, RollupDetail>();
   for (const taskId of taskIds) {
     const r = resolved.get(taskId.toLowerCase());
     if (r === undefined) {

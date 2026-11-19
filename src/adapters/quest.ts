@@ -1,13 +1,14 @@
 /** Quest 0.2 tracker adapter. Quest owns task storage; Lore consumes its pinned JSON CLI contract. */
 
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { type Dirent, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { QUEST_STATUS_FLOW_HINTS } from "../core/reconcile";
 import { type ErrorType, errnoCode, LoreError } from "../errors";
 import { VERSION } from "../meta";
 import type { BacklogComment, BacklogCriterion, BacklogTask, BacklogTaskDetail, ListTasksOptions } from "./backlog";
 import { compareSemver, parseSemver } from "./semver";
-import type { TrackerAdapter, TrackerCapability } from "./tracker";
+import type { TaskRollupRow, TrackerAdapter, TrackerCapability } from "./tracker";
 
 export const QUEST_SCHEMA_VERSION = 1;
 export const QUEST_TIMEOUT_ENV_VAR = "LORE_QUEST_TIMEOUT_MS";
@@ -427,6 +428,17 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
       throw drift(operation, `returned kind ${JSON.stringify(envelope.kind)}, expected ${JSON.stringify(kind)}`);
     return envelope.data;
   }
+  async function taskRollup(): Promise<readonly TaskRollupRow[]> {
+    const { version } = await ensure();
+    const cache = questListCache(root, version);
+    const hit = cache.read();
+    if (hit !== undefined) return hit;
+    const value = await data(["task", "list", "--json"], "task list --json", "task.list");
+    if (!Array.isArray(value)) throw new LoreError("drift", "Quest returned invalid task list", QUEST_VERSION_SET_HINT);
+    const rows = value.map(rollupRow);
+    cache.write(rows);
+    return rows;
+  }
   async function listTasks(opts?: ListTasksOptions): Promise<BacklogTask[]> {
     return list(await data(["task", "list", "--json"], "task list --json", "task.list"), opts);
   }
@@ -447,6 +459,7 @@ export function createQuestAdapter(root: string, options: QuestAdapterOptions = 
         await data(["task", "status-flow", "--json"], "task status-flow --json", "task.status-flow"),
       );
     },
+    taskRollup,
     async listTasks(opts) {
       return listTasks(opts);
     },
@@ -930,6 +943,65 @@ function summary(value: unknown): BacklogTask {
     // edge, export and traversal downstream, which is why lore saw parenthood and never ordering.
     dependencies: strings(task.dependencies ?? [], "dependencies"),
     documentation: strings(task.documentation ?? [], "documentation"),
+  };
+}
+function rollupRow(value: unknown): TaskRollupRow {
+  const task = record(value) ? value : {};
+  return {
+    id: string(task.id, "task id"),
+    title: string(task.title, "task title"),
+    status: string(task.status, "task status"),
+    file: nullableString(task.file ?? task.path, "task file"),
+  };
+}
+
+/**
+ * The cross-run cache for the rollup list (LCLI-791): `<root>/.lore/cache/quest/task-list.json`,
+ * holding the rows and the key they were read under. The key is a hash of the quest version and of
+ * every file under `<root>/.quest` (path and bytes), so any task edit, add, move or removal is a
+ * different key, and a changed quest binary is too. Reading the tree costs file reads but no spawn,
+ * which is the cost this exists to remove. Every failure here (unreadable tree, missing, corrupt
+ * or unwritable cache) is a miss, never an error: the cache may only ever make a run cheaper.
+ */
+function questListCache(root: string, version: string) {
+  const file = join(root, ".lore", "cache", "quest", "task-list.json");
+  let key: string | undefined;
+  try {
+    const hash = createHash("sha256").update(`quest ${version}\0`);
+    const tree = join(root, ".quest");
+    const files = (readdirSync(tree, { recursive: true, withFileTypes: true }) as Dirent[])
+      .filter((entry) => entry.isFile())
+      .map((entry) => join(entry.parentPath, entry.name))
+      .sort();
+    for (const path of files)
+      hash
+        .update(`${path.slice(tree.length)}\0`)
+        .update(readFileSync(path))
+        .update("\0");
+    key = hash.digest("hex");
+  } catch {
+    key = undefined;
+  }
+  return {
+    read(): readonly TaskRollupRow[] | undefined {
+      if (key === undefined) return undefined;
+      try {
+        const cached: unknown = JSON.parse(readFileSync(file, "utf8"));
+        if (!record(cached) || cached.key !== key || !Array.isArray(cached.rows)) return undefined;
+        return cached.rows.map(rollupRow);
+      } catch {
+        return undefined;
+      }
+    },
+    write(rows: readonly TaskRollupRow[]): void {
+      if (key === undefined) return;
+      try {
+        mkdirSync(dirname(file), { recursive: true });
+        const tmp = `${file}.${process.pid}.tmp`;
+        writeFileSync(tmp, JSON.stringify({ key, rows }));
+        renameSync(tmp, file);
+      } catch {}
+    },
   };
 }
 function list(value: unknown, opts?: ListTasksOptions): BacklogTask[] {

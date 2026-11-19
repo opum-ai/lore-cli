@@ -24,6 +24,17 @@ export interface TrackerCapability {
 }
 
 /**
+ * The four fields the `lore:tasks` managed rollup renders for a linked task (LCLI-791).
+ * `file` is the task record's repo-relative path, or null when the backend reports none.
+ */
+export interface TaskRollupRow {
+  readonly id: string;
+  readonly title: string;
+  readonly status: string;
+  readonly file: string | null;
+}
+
+/**
  * The behavior every tracker backend must provide.
  *
  * Implementations fail loud on capability and transport errors. Callers preserve bounded
@@ -98,6 +109,12 @@ export interface TrackerAdapter {
    * adapter already knows. Optional: a backend whose writes need no such declaration omits it.
    */
   assertWriteReady?(): void;
+  /**
+   * Every task's rollup fields from ONE backend read, for `lore check` and `lore sync` (LCLI-791,
+   * DEC-282 item 1). Optional: a backend without it is read with one `viewTask` per linked task.
+   * An implementation may cache across runs, but only under a key that changes when the data does.
+   */
+  taskRollup?(): Promise<readonly TaskRollupRow[]>;
   listTasks(opts?: ListTasksOptions): Promise<BacklogTask[]>;
   viewTask(id: string): Promise<BacklogTaskDetail | null>;
   searchByLabel(label: string): Promise<BacklogTask[]>;

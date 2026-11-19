@@ -21,9 +21,17 @@ function ok(kind: string, data: unknown): QuestSpawnResult {
 const MANIFEST = {
   commands: [
     ["manifest", "manifest.registry", false],
+    ["version", null, false],
+    ["init", "workspace.initialized", true],
+    ["migration backlog preview", "migration.backlog-preview", false],
+    ["migration backlog apply", "migration.backlog-applied", true],
+    ["migration backlog status", "migration.backlog-status", false],
+    ["migration backlog rollback", "migration.backlog-rolled-back", true],
     ["task status-flow", "task.status-flow", false],
     ["task list", "task.list", false],
     ["task view", "task.view", false],
+    ["search", "task.search", false],
+    ["task create", "task.created", true],
     ["task edit", "task.updated", true],
   ].map(([name, kind, mutates]) => ({ name, schemaVersion: 1, kind, mutates })),
 };
