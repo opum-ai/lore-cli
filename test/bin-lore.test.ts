@@ -307,53 +307,74 @@ describe.skipIf(process.platform === "win32")("bin/lore.cjs — never orphans th
     forget(grandchildPid);
   }, 60000);
 
-  // On a terminal the child must stay in the caller's foreground group, or Ctrl-C and terminal I/O
-  // stop working (a background group is stopped by SIGTTIN/SIGTTOU). A pty is needed for stdin, so
-  // python3's pty module provides one; the property asserted is the group relationship itself.
+  // (a3) item 2: the child stays in the caller's group when ANY of fds 0, 1 or 2 is a terminal, not
+  // only stdin, so `cat x | lore` on a terminal keeps Ctrl-\\, Ctrl-Z and /dev/tty prompts working.
+  // A pty is needed for the terminal fd, so python3's pty module provides one; the property asserted
+  // is the group relationship itself. Under CI a missing python3 FAILS the test rather than skipping.
   const hasPython = Bun.spawnSync(["python3", "-c", "import pty"]).exitCode === 0;
-  test.skipIf(!hasPython)(
-    "on a terminal the child stays in the wrapper's own process group",
-    async () => {
-      const pidFile = join(nodePathDir, "child.pid");
-      installFakePlatformPackage(stubScript(pidFile));
-      const launcher = join(nodePathDir, "lore.cjs");
-      copyFileSync(LAUNCHER, launcher);
-      const helper = [
-        "import os, pty, subprocess, sys",
-        "master, slave = pty.openpty()",
-        "p = subprocess.Popen(['node', sys.argv[1]], stdin=slave, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)",
-        "print(p.pid, flush=True)",
-        "p.wait()",
-      ].join("\n");
-      const holder = Bun.spawn(["python3", "-c", helper, launcher], {
-        env: { ...process.env, NODE_PATH: nodePathDir },
-        stdout: "pipe",
-        stderr: "ignore",
-      });
-      let wrapperPid = 0;
-      try {
-        const reader = holder.stdout.getReader();
-        const first = await reader.read();
-        wrapperPid = Number(new TextDecoder().decode(first.value).trim());
-        expect(wrapperPid).toBeGreaterThan(0);
-        const ready = () =>
-          existsSync(pidFile) && readFileSync(pidFile, "utf8").split("\n").filter(Boolean).length === 2;
-        expect(await waitFor(ready, 15000)).toBe(true);
-        const [childPid, grandchildPid] = readFileSync(pidFile, "utf8").split("\n").filter(Boolean).map(Number) as [
-          number,
-          number,
-        ];
-        spawned.push(childPid, grandchildPid);
-        expect(pgidOf(childPid)).toBeGreaterThan(0); // a vanished process would read 0 and pass on 0 === 0
-        expect(pgidOf(childPid)).toBe(pgidOf(wrapperPid));
-      } finally {
-        if (wrapperPid > 0) {
-          try {
-            process.kill(wrapperPid, "SIGKILL");
-          } catch {}
-        }
-        holder.kill("SIGKILL");
+  /** Run the wrapper with exactly `ttyFd` (0, 1, 2, or null for none) on a pty and the others piped. */
+  async function groupsWith(ttyFd: 0 | 1 | 2 | null) {
+    const pidFile = join(nodePathDir, "child.pid");
+    installFakePlatformPackage(stubScript(pidFile));
+    const launcher = join(nodePathDir, "lore.cjs");
+    copyFileSync(LAUNCHER, launcher);
+    const helper = [
+      "import os, pty, subprocess, sys",
+      "master, slave = pty.openpty()",
+      "tty = None if sys.argv[2] == 'none' else int(sys.argv[2])",
+      "fd = lambda n, quiet: slave if tty == n else (subprocess.PIPE if n == 0 else subprocess.DEVNULL)",
+      "p = subprocess.Popen(['node', sys.argv[1]], stdin=fd(0, 0), stdout=fd(1, 1), stderr=fd(2, 1))",
+      "print(p.pid, flush=True)",
+      "p.wait()",
+    ].join("\n");
+    const holder = Bun.spawn(["python3", "-c", helper, launcher, ttyFd === null ? "none" : String(ttyFd)], {
+      env: { ...process.env, NODE_PATH: nodePathDir },
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    let wrapperPid = 0;
+    try {
+      const reader = holder.stdout.getReader();
+      const first = await reader.read();
+      wrapperPid = Number(new TextDecoder().decode(first.value).trim());
+      expect(wrapperPid).toBeGreaterThan(0);
+      const ready = () => existsSync(pidFile) && readFileSync(pidFile, "utf8").split("\n").filter(Boolean).length === 2;
+      expect(await waitFor(ready, 15000)).toBe(true);
+      const [childPid, grandchildPid] = readFileSync(pidFile, "utf8").split("\n").filter(Boolean).map(Number) as [
+        number,
+        number,
+      ];
+      spawned.push(childPid, grandchildPid);
+      const child = pgidOf(childPid);
+      const wrapper = pgidOf(wrapperPid);
+      expect(child).toBeGreaterThan(0); // a vanished process would read 0 and pass on 0 === 0
+      expect(wrapper).toBeGreaterThan(0);
+      return { child, wrapper };
+    } finally {
+      if (wrapperPid > 0) {
+        try {
+          process.kill(wrapperPid, "SIGKILL");
+        } catch {}
       }
+      holder.kill("SIGKILL");
+    }
+  }
+  const runPty = test.skipIf(!hasPython && !process.env.CI);
+  for (const fd of [0, 1, 2] as const) {
+    runPty(
+      `with fd ${fd} on a terminal the child stays in the wrapper's own process group`,
+      async () => {
+        const { child, wrapper } = await groupsWith(fd);
+        expect(child).toBe(wrapper);
+      },
+      60000,
+    );
+  }
+  runPty(
+    "with no fd on a terminal the child gets its own process group",
+    async () => {
+      const { child, wrapper } = await groupsWith(null);
+      expect(child).not.toBe(wrapper);
     },
     60000,
   );
