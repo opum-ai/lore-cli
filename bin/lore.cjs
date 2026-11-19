@@ -108,21 +108,24 @@ function spawnWindowsBinary(binaryPath) {
  * harness) used to leave the native binary running, because a blocking `spawnSync` registers no
  * handler and nothing tore the child down. This is the same shape as `bin/quest.cjs` (QCLI-567).
  *
- * Off a terminal (stdin is not a tty) the child gets its own session and process group
- * (`detached`), so a forwarded signal goes to the whole group (`-pid`) and the wrapper sweeps the
- * group with SIGKILL when it is done, which also reaps a grandchild that ignored the signal (the
- * native lore spawns quest, git, gh, backlog and jira). On a terminal the child stays in the
- * caller's foreground group: a background group is stopped by SIGTTIN/SIGTTOU on terminal I/O, and
- * Ctrl-C must keep reaching it.
+ * When none of fds 0, 1 and 2 is a terminal (every daemon and supervisor caller) the child gets its
+ * own session and process group (`detached`), so a forwarded signal goes to the whole group
+ * (`-pid`) and the wrapper sweeps the group with SIGKILL when it is done, which also reaps a
+ * grandchild that ignored the signal (the native lore spawns quest, git, gh, backlog and jira). When
+ * ANY of the three is a terminal (DEC-282 (a3): `cat x | lore` with output on a terminal counts) the
+ * child stays in the caller's group, so Ctrl-C, Ctrl-\\, Ctrl-Z and /dev/tty prompts (an ssh
+ * passphrase during lore's `git fetch`) keep working; there a signal sent to the wrapper alone
+ * reaches only the direct child, not what it spawned. A job started from a shell with `&` is in the
+ * caller's group too, where the caller's own group kill already reaches it.
  *
- * SIGTERM, SIGINT and SIGHUP are forwarded (a signal that lands before the child exists is held
- * and forwarded right after the spawn). When the child dies of a signal the wrapper dies of the
- * same one (default disposition restored, then re-raised on itself, as foreground-child and tini
- * do), so a caller sees death by that signal and a shell loop still breaks on Ctrl-C; otherwise it
- * exits with the child's own status. The `exit` handler sweeps on an uncaught exception and
- * `process.exit`. A fatal signal that is not forwarded (SIGQUIT, SIGALRM, SIGUSR2, ...) kills Node
- * without running it. A repeated SIGINT is possible on a terminal Ctrl-C (the tty signals the
- * whole foreground group, then this forwards it again).
+ * SIGTERM, SIGINT and SIGHUP are forwarded. When the child dies of a signal the wrapper dies of the
+ * same one (listeners dropped, then raised on itself, as foreground-child and tini do), so a caller
+ * sees death by that signal and a shell loop still breaks on Ctrl-C; except SIGPIPE and SIGXFSZ
+ * (Node ignores them) and SIGUSR1 (a self-kill would open Node's inspector), which give exit
+ * `128 + signal`. Otherwise it exits with the child's own status. The `exit` handler sweeps on an
+ * uncaught exception and `process.exit`. A fatal signal that is not forwarded (SIGQUIT, SIGALRM,
+ * SIGUSR2, ...) kills Node without running it. A repeated SIGINT is possible on a terminal Ctrl-C
+ * (the tty signals the whole foreground group, then this forwards it again).
  *
  * Caller remedy for a runaway lore: send SIGTERM to the wrapper (or to a group you created for
  * it), wait a few seconds, then SIGKILL. A plain SIGTERM is fully handled here.
@@ -133,7 +136,7 @@ function spawnWindowsBinary(binaryPath) {
  * reused once every member is gone; the window is the time between the child's exit and the sweep.
  */
 function spawnPosixBinary(binaryPath) {
-  const ownGroup = !isatty(0);
+  const ownGroup = ![0, 1, 2].some((fd) => isatty(fd));
   /** @type {import("node:child_process").ChildProcess | undefined} */
   let child;
   let spawnFailed = false;
