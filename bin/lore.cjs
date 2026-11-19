@@ -64,8 +64,8 @@ function resolveBinaryPath() {
 }
 
 /**
- * The exit code to forward for a `spawnSync` result with no exit `status` (i.e. the child was
- * terminated by a signal, `result.signal` set). Uses the conventional `128 + signal number`
+ * The exit code to forward for a child that reports no exit `status` (i.e. it was terminated by a
+ * signal, `signal` set). Uses the conventional `128 + signal number`
  * (matching a POSIX shell) so a caller inspecting `$?` — e.g. to tell a user's Ctrl-C (SIGINT,
  * conventionally 130) apart from a genuine tool failure — sees the real signal, not a generic 1.
  * Falls back to `1` only if the signal name is somehow unrecognized (`os.constants.signals` has
@@ -108,31 +108,46 @@ function spawnWindowsBinary(binaryPath) {
  *
  * The child stays in the wrapper's own process group, deliberately: a caller that signals the group
  * keeps reaching it, and it keeps its terminal/session (interactive commands such as `lore init`).
- * SIGTERM, SIGINT and SIGHUP are forwarded to it and the wrapper then exits with the child's own
- * status (128+signal when the child died of a signal, as before); if the wrapper exits for any
- * other reason while the child is still running, the child is killed. A repeated SIGINT is
- * possible on a terminal Ctrl-C (the tty signals the whole foreground group, then this forwards
- * it again). Not covered: SIGKILL of the wrapper, which no process can handle.
+ * SIGTERM, SIGINT and SIGHUP are forwarded to it (a signal that lands before the child exists is
+ * held and forwarded right after the spawn) and the wrapper then exits with the child's own
+ * status: `128 + signal` when the child died of a signal. That is an ordinary exit, no longer the
+ * wrapper dying BY the signal, so a caller that distinguishes the two sees a different wait status.
+ * The wrapper's `exit` handler kills a still-running child with SIGKILL, but only on the exits that
+ * run it: an uncaught exception and `process.exit`. A fatal signal that is not forwarded (SIGQUIT,
+ * SIGALRM, SIGUSR2, ...) kills Node without running it. A repeated SIGINT is possible on a terminal
+ * Ctrl-C (the tty signals the whole foreground group, then this forwards it again).
+ *
+ * Not covered: SIGKILL of the wrapper, which no process can handle, and anything the native child
+ * itself spawns, since only the direct child is signalled.
  */
 function spawnPosixBinary(binaryPath) {
-  const child = spawn(binaryPath, process.argv.slice(2), { stdio: "inherit" });
-
+  /** @type {import("node:child_process").ChildProcess | undefined} */
+  let child;
+  /** @type {NodeJS.Signals | undefined} */
+  let pendingSignal;
   let spawnFailed = false;
-  child.once("error", (err) => {
-    spawnFailed = true;
-    process.stderr.write(`lore: failed to run the compiled binary at ${binaryPath}: ${err.message}\n`);
-    process.exit(1);
-  });
 
+  // Registered BEFORE the spawn, so a signal landing between fork and handler takes no default action.
   /** @type {NodeJS.Signals[]} */
   const forwarded = ["SIGTERM", "SIGINT", "SIGHUP"];
   for (const signal of forwarded) {
     process.on(signal, () => {
-      if (child.exitCode === null && child.signalCode === null) child.kill(signal);
+      if (child === undefined) pendingSignal ??= signal;
+      else if (child.exitCode === null && child.signalCode === null) child.kill(signal);
     });
   }
   process.on("exit", () => {
-    if (!spawnFailed && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    if (!spawnFailed && child !== undefined && child.exitCode === null && child.signalCode === null)
+      child.kill("SIGKILL");
+  });
+
+  child = spawn(binaryPath, process.argv.slice(2), { stdio: "inherit" });
+  if (pendingSignal !== undefined) child.kill(pendingSignal);
+
+  child.once("error", (err) => {
+    spawnFailed = true;
+    process.stderr.write(`lore: failed to run the compiled binary at ${binaryPath}: ${err.message}\n`);
+    process.exit(1);
   });
 
   child.once("close", (status, signal) => {
