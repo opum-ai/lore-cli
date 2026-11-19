@@ -151,7 +151,8 @@ describe('bin/lore.cjs — a resolution error that is NOT "package missing"', ()
   });
 });
 
-// LCLI-797 (DEC-282 item 7): the wrapper must never orphan the native child. POSIX-only: Windows
+// LCLI-797 (DEC-282 item 7, (a2)): the wrapper must never orphan the native child or what it spawns,
+// and a caller must see the child's death by signal as the wrapper's own. POSIX-only: Windows
 // delivers process.kill(pid, "SIGTERM") as an unconditional TerminateProcess to the wrapper with no
 // handler run, so this proof cannot be made there; the Windows path is a recorded residual on
 // LCLI-797, not covered by this test.
@@ -175,6 +176,14 @@ describe.skipIf(process.platform === "win32")("bin/lore.cjs — never orphans th
     return predicate();
   }
 
+  /** The process group id of `pid`, read with ps (the group relationship is what is under test). */
+  function pgidOf(pid: number): number {
+    const out = Bun.spawnSync(["ps", "-o", "pgid=", "-p", String(pid)])
+      .stdout.toString()
+      .trim();
+    return Number(out);
+  }
+
   const spawned: number[] = [];
   /** Stop tracking a pid once it is confirmed dead, so the cleanup can never SIGKILL a reused pid. */
   function forget(pid: number): void {
@@ -191,30 +200,54 @@ describe.skipIf(process.platform === "win32")("bin/lore.cjs — never orphans th
   });
 
   /**
-   * Start the launcher over a stub "binary" that records its own pid and then idles. The stub IS
-   * the long-running process (a node script, not a shell wrapping a sleep), so there is no
-   * grandchild to measure instead of the child.
+   * The stub "binary": records its own pid, then spawns a GRANDCHILD that ignores SIGTERM, SIGINT
+   * and SIGHUP (so only a group sweep can end it) and records that pid too, then idles. The stub IS
+   * the long-running process (a node script, not a shell wrapping a sleep).
+   */
+  function stubScript(pidFile: string): string {
+    const grandchild =
+      'for (const s of ["SIGTERM","SIGINT","SIGHUP"]) process.on(s, () => {}); setInterval(() => {}, 1000);';
+    return [
+      "#!/usr/bin/env node",
+      'const fs = require("node:fs");',
+      'const { spawn } = require("node:child_process");',
+      `const gc = spawn(process.execPath, ["-e", ${JSON.stringify(grandchild)}], { stdio: "ignore" });`,
+      `fs.writeFileSync(${JSON.stringify(pidFile)}, process.pid + "\\n" + gc.pid + "\\n");`,
+      "setInterval(() => {}, 1000);",
+      "",
+    ].join("\n");
+  }
+
+  /**
+   * Start the launcher over the stub, with stdin NOT a terminal (so the wrapper puts the child in its
+   * own group). Returns once both the child and its grandchild are recorded and live.
    */
   async function startLauncher(nodeArgs: readonly string[] = [], expectLive = true) {
     const pidFile = join(nodePathDir, "child.pid");
-    installFakePlatformPackage(
-      `#!/usr/bin/env node\nrequire("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));\nsetTimeout(() => {}, 60000);\n`,
-    );
+    installFakePlatformPackage(stubScript(pidFile));
     const launcher = join(nodePathDir, "lore.cjs");
     copyFileSync(LAUNCHER, launcher);
     const wrapper = Bun.spawn(["node", ...nodeArgs, launcher], {
       env: { ...process.env, NODE_PATH: nodePathDir },
+      stdin: "ignore",
       stdout: "ignore",
       stderr: "ignore",
     });
     try {
-      expect(await waitFor(() => existsSync(pidFile) && readFileSync(pidFile, "utf8").length > 0, 15000)).toBe(true);
-      const childPid = Number(readFileSync(pidFile, "utf8"));
-      spawned.push(childPid);
-      // The exit-path test reaps the child the instant it starts, so it cannot assert liveness here;
+      const ready = () => existsSync(pidFile) && readFileSync(pidFile, "utf8").split("\n").filter(Boolean).length === 2;
+      expect(await waitFor(ready, 15000)).toBe(true);
+      const [childPid, grandchildPid] = readFileSync(pidFile, "utf8").split("\n").filter(Boolean).map(Number) as [
+        number,
+        number,
+      ];
+      spawned.push(childPid, grandchildPid);
+      // The exit-path test reaps everything the instant it starts, so it cannot assert liveness here;
       // the pid file proves the stub ran.
-      if (expectLive) expect(alive(childPid)).toBe(true);
-      return { wrapper, childPid, pidFile };
+      if (expectLive) {
+        expect(alive(childPid)).toBe(true);
+        expect(alive(grandchildPid)).toBe(true);
+      }
+      return { wrapper, childPid, grandchildPid };
     } catch (error) {
       wrapper.kill("SIGKILL"); // never leave the wrapper behind when the fixture itself failed
       throw error;
@@ -229,34 +262,85 @@ describe.skipIf(process.platform === "win32")("bin/lore.cjs — never orphans th
     await wrapper.exited;
   }, 60000);
 
-  // The wrapper's own `exit` handler (F3): the one path no forwarded signal reaches. A preload makes
-  // the wrapper die of an uncaught exception once the child is up, with no signal sent at all, so
-  // only the exit-time kill can reap the child. A mutant removing just that handler leaves it alive.
-  test("an uncaught exception in the wrapper leaves no surviving child (the exit-time kill)", async () => {
+  // Off a terminal the child runs in its own group, so forwarding reaches it AND the sweep after it
+  // exits reaps a grandchild that ignores the signal. The wrapper then DIES BY the signal (item 5):
+  // a caller sees signalCode, not exit 128+n.
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    test(`${signal} to the wrapper reaps the child and its signal-ignoring grandchild, and the wrapper dies by ${signal}`, async () => {
+      const { wrapper, childPid, grandchildPid } = await startLauncher();
+      process.kill(wrapper.pid, signal); // the WRAPPER's pid, never a group: a group kill would hide the bug
+      await wrapper.exited; // judge the others only once the wrapper is gone
+      expect(await waitFor(() => !alive(childPid) && !alive(grandchildPid), 15000)).toBe(true);
+      forget(childPid);
+      forget(grandchildPid);
+      expect(wrapper.signalCode).toBe(signal);
+    }, 60000);
+  }
+
+  // The wrapper's own `exit` handler: the one path no forwarded signal reaches. A preload makes the
+  // wrapper die of an uncaught exception once the child is up, with no signal sent at all, so only the
+  // exit-time sweep can reap them. A mutant removing just that handler leaves the grandchild alive.
+  test("an uncaught exception in the wrapper leaves no surviving child or grandchild (the exit-time sweep)", async () => {
     const preload = join(nodePathDir, "boom.cjs");
     writeFileSync(
       preload,
-      `const fs = require("node:fs");\nconst pidFile = ${JSON.stringify(join(nodePathDir, "child.pid"))};\nconst t = setInterval(() => { if (fs.existsSync(pidFile) && fs.readFileSync(pidFile, "utf8").length > 0) { clearInterval(t); throw new Error("boom"); } }, 10);\n`,
+      `const fs = require("node:fs");\nconst pidFile = ${JSON.stringify(join(nodePathDir, "child.pid"))};\nconst t = setInterval(() => { if (fs.existsSync(pidFile) && fs.readFileSync(pidFile, "utf8").split("\\n").filter(Boolean).length === 2) { clearInterval(t); throw new Error("boom"); } }, 10);\n`,
     );
-    const { wrapper, childPid } = await startLauncher(["--require", preload], false);
+    const { wrapper, childPid, grandchildPid } = await startLauncher(["--require", preload], false);
     await wrapper.exited;
     expect(wrapper.exitCode).not.toBe(0);
-    expect(await waitFor(() => !alive(childPid), 15000)).toBe(true);
+    expect(await waitFor(() => !alive(childPid) && !alive(grandchildPid), 15000)).toBe(true);
     forget(childPid);
+    forget(grandchildPid);
   }, 60000);
 
-  for (const [signal, code] of [
-    ["SIGTERM", 143],
-    ["SIGINT", 130],
-    ["SIGHUP", 129],
-  ] as const) {
-    test(`${signal} to the wrapper leaves no surviving child and exits ${code} (the child's status)`, async () => {
-      const { wrapper, childPid } = await startLauncher();
-      process.kill(wrapper.pid, signal); // the WRAPPER's pid, never a group: a group kill would hide the bug
-      await wrapper.exited; // judge the child only once the wrapper is gone
-      expect(await waitFor(() => !alive(childPid), 15000)).toBe(true);
-      forget(childPid);
-      expect(wrapper.exitCode).toBe(code);
-    }, 60000);
-  }
+  // On a terminal the child must stay in the caller's foreground group, or Ctrl-C and terminal I/O
+  // stop working (a background group is stopped by SIGTTIN/SIGTTOU). A pty is needed for stdin, so
+  // python3's pty module provides one; the property asserted is the group relationship itself.
+  const hasPython = Bun.spawnSync(["python3", "-c", "import pty"]).exitCode === 0;
+  test.skipIf(!hasPython)(
+    "on a terminal the child stays in the wrapper's own process group",
+    async () => {
+      const pidFile = join(nodePathDir, "child.pid");
+      installFakePlatformPackage(stubScript(pidFile));
+      const launcher = join(nodePathDir, "lore.cjs");
+      copyFileSync(LAUNCHER, launcher);
+      const helper = [
+        "import os, pty, subprocess, sys",
+        "master, slave = pty.openpty()",
+        "p = subprocess.Popen(['node', sys.argv[1]], stdin=slave, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)",
+        "print(p.pid, flush=True)",
+        "p.wait()",
+      ].join("\n");
+      const holder = Bun.spawn(["python3", "-c", helper, launcher], {
+        env: { ...process.env, NODE_PATH: nodePathDir },
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      let wrapperPid = 0;
+      try {
+        const reader = holder.stdout.getReader();
+        const first = await reader.read();
+        wrapperPid = Number(new TextDecoder().decode(first.value).trim());
+        expect(wrapperPid).toBeGreaterThan(0);
+        const ready = () =>
+          existsSync(pidFile) && readFileSync(pidFile, "utf8").split("\n").filter(Boolean).length === 2;
+        expect(await waitFor(ready, 15000)).toBe(true);
+        const [childPid, grandchildPid] = readFileSync(pidFile, "utf8").split("\n").filter(Boolean).map(Number) as [
+          number,
+          number,
+        ];
+        spawned.push(childPid, grandchildPid);
+        expect(pgidOf(childPid)).toBe(pgidOf(wrapperPid));
+      } finally {
+        if (wrapperPid > 0) {
+          try {
+            process.kill(wrapperPid, "SIGKILL");
+          } catch {}
+        }
+        holder.kill("SIGKILL");
+      }
+    },
+    60000,
+  );
 });
