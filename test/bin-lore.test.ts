@@ -423,7 +423,7 @@ describe.skipIf(process.platform === "win32")("bin/lore.cjs — never orphans th
   // leaves no native behind. Against a SIGKILL-only sweep the wrapper dies unable to forward.
   test("an exit sweep with a quest child in flight leaves no surviving native quest (DEC-282 (a4))", async () => {
     const questPids = join(nodePathDir, "quest.pid");
-    const native = 'setInterval(() => {}, 1000);';
+    const native = "setInterval(() => {}, 1000);";
     const wrapperSrc = [
       'const fs = require("node:fs");',
       'const { spawn } = require("node:child_process");',
@@ -458,8 +458,16 @@ describe.skipIf(process.platform === "win32")("bin/lore.cjs — never orphans th
       stderr: "ignore",
     });
     try {
-      expect(await waitFor(() => existsSync(questPids) && readFileSync(questPids, "utf8").split("\n").filter(Boolean).length === 2, 15000)).toBe(true);
-      const [questWrapperPid, nativePid] = readFileSync(questPids, "utf8").split("\n").filter(Boolean).map(Number) as [number, number];
+      expect(
+        await waitFor(
+          () => existsSync(questPids) && readFileSync(questPids, "utf8").split("\n").filter(Boolean).length === 2,
+          15000,
+        ),
+      ).toBe(true);
+      const [questWrapperPid, nativePid] = readFileSync(questPids, "utf8").split("\n").filter(Boolean).map(Number) as [
+        number,
+        number,
+      ];
       spawned.push(questWrapperPid, nativePid);
       await wrapper.exited;
       expect(wrapper.exitCode).not.toBe(0);
