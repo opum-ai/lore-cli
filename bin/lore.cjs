@@ -110,7 +110,7 @@ function spawnWindowsBinary(binaryPath) {
  *
  * When none of fds 0, 1 and 2 is a terminal (every daemon and supervisor caller) the child gets its
  * own session and process group (`detached`), so a forwarded signal goes to the whole group
- * (`-pid`) and the wrapper sweeps the group with SIGKILL when it is done, which also reaps a
+ * (`-pid`) and the wrapper sweeps the group when it is done (SIGTERM, up to 2 s of grace, then SIGKILL, DEC-282 (a4)), which also reaps a
  * grandchild that ignored the signal (the native lore spawns quest, git, gh, backlog and jira). When
  * ANY of the three is a terminal (DEC-282 (a3): `cat x | lore` with output on a terminal counts) the
  * child stays in the caller's group, so Ctrl-C, Ctrl-\\, Ctrl-Z and /dev/tty prompts (an ssh
@@ -129,6 +129,14 @@ function spawnWindowsBinary(binaryPath) {
  *
  * Caller remedy for a runaway lore: send SIGTERM to the wrapper (or to a group you created for
  * it), wait a few seconds, then SIGKILL. A plain SIGTERM is fully handled here.
+ *
+ * Stated residual (DEC-282 (a4), until quest's lifeline QCLI-571 ships): native lore spawns quest's
+ * npm wrapper with piped output, so off a terminal that wrapper puts native quest in its OWN group,
+ * outside this sweep. The TERM-then-KILL sweep lets the quest wrapper forward and sweep its own group,
+ * which closes the uncaught-exception path and most of the SIGTERM race; a SIGKILL or OOM kill of
+ * native lore itself, where nothing sweeps, can still leave native quest running, and so
+ * "grandchildren die with it" does not hold for quest. The lifeline (native quest exits when its
+ * wrapper's pipe closes) closes it.
  *
  * Not covered: SIGKILL of the wrapper, which no handler can intercept (a lifeline pipe is the
  * follow-up, DEC-282 (a2) item 2), and, off a terminal, a caller's group-wide SIGKILL, because the
@@ -155,16 +163,35 @@ function spawnPosixBinary(binaryPath) {
     }
   }
 
+  /** True while any process is left in the child's group (signal 0 probes without delivering). */
+  function groupAlive() {
+    try {
+      process.kill(-child.pid, 0);
+      return true;
+    } catch (/** @type {any} */ err) {
+      return err.code === "EPERM"; // ESRCH is the normal answer for an empty group
+    }
+  }
+
   /**
-   * SIGKILL whatever is left: the whole group off a terminal, the child itself on one. At most once:
-   * after the first sweep the group is empty, so a second one could only ever hit a reused group id.
+   * End whatever is left, at most once (after the first sweep the group is empty, so a second one
+   * could only ever hit a reused group id). Off a terminal the group gets SIGTERM first, then up to
+   * SWEEP_GRACE_MS for its members to leave on their own (a nested quest wrapper forwards the signal
+   * and sweeps the group it made for its native child, which a SIGKILL would strand, DEC-282 (a4)),
+   * then SIGKILL for whatever remains. An empty group costs nothing: the first probe finds it. The
+   * wait is synchronous because this also runs from the `exit` handler, where no timer can fire. On
+   * a terminal the child shares the caller's group, so only the child itself is killed, at once.
    */
   function sweep() {
     if (swept || child === undefined) return;
     swept = true;
     try {
-      if (ownGroup && typeof child.pid === "number") process.kill(-child.pid, "SIGKILL");
-      else if (childRunning()) child.kill("SIGKILL");
+      if (ownGroup && typeof child.pid === "number") {
+        process.kill(-child.pid, "SIGTERM");
+        const deadline = Date.now() + SWEEP_GRACE_MS;
+        while (groupAlive() && Date.now() < deadline) Atomics.wait(SLEEP, 0, 0, 20);
+        if (groupAlive()) process.kill(-child.pid, "SIGKILL");
+      } else if (childRunning()) child.kill("SIGKILL");
     } catch {
       // Nothing left to kill (ESRCH is the normal answer for an empty group).
     }
@@ -200,6 +227,11 @@ function spawnPosixBinary(binaryPath) {
     reraise(signal);
   });
 }
+
+/** How long the exit sweep waits after SIGTERM before SIGKILL (DEC-282 (a4) item 3). */
+const SWEEP_GRACE_MS = 2000;
+/** A cell nothing ever writes, so Atomics.wait on it is a synchronous sleep. */
+const SLEEP = new Int32Array(new SharedArrayBuffer(4));
 
 /** The signals forwarded to the child; also the handlers dropped when the wrapper dies of one. */
 const FORWARDED_SIGNALS = /** @type {NodeJS.Signals[]} */ (["SIGTERM", "SIGINT", "SIGHUP"]);
