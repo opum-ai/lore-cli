@@ -164,9 +164,9 @@ function spawnPosixBinary(binaryPath) {
   }
 
   /** True while any process is left in the child's group (signal 0 probes without delivering). */
-  function groupAlive() {
+  function groupAlive(/** @type {number} */ pgid) {
     try {
-      process.kill(-child.pid, 0);
+      process.kill(-pgid, 0);
       return true;
     } catch (/** @type {any} */ err) {
       return err.code === "EPERM"; // ESRCH is the normal answer for an empty group
@@ -187,10 +187,11 @@ function spawnPosixBinary(binaryPath) {
     swept = true;
     try {
       if (ownGroup && typeof child.pid === "number") {
-        process.kill(-child.pid, "SIGTERM");
+        const pgid = child.pid;
+        process.kill(-pgid, "SIGTERM");
         const deadline = Date.now() + SWEEP_GRACE_MS;
-        while (groupAlive() && Date.now() < deadline) Atomics.wait(SLEEP, 0, 0, 20);
-        if (groupAlive()) process.kill(-child.pid, "SIGKILL");
+        while (groupAlive(pgid) && Date.now() < deadline) Atomics.wait(SLEEP, 0, 0, 20);
+        if (groupAlive(pgid)) process.kill(-pgid, "SIGKILL");
       } else if (childRunning()) child.kill("SIGKILL");
     } catch {
       // Nothing left to kill (ESRCH is the normal answer for an empty group).
