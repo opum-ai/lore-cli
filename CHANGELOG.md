@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`lore check` and `lore sync` take an advisory lock per git common directory, and a concurrent run with the same inputs replays the finished result (LCLI-792, DEC-282 item 2)**
+  Four or five concurrent runs on a large tracker made about 45 quest processes and a load of about 128. The runs now serialise on one lock under `<git-common-dir>/lore/advisory/`, so every worktree of one clone contends on the same lock, and `check` and `sync` share it so a check never reads a half-written tree. A run that had to wait, and whose input hash matches the holder's finished result, replays that result's stdout, stderr and exit code instead of recomputing. The hash covers the command and arguments, the output mode and colour, the root relative to the repository top level, `HEAD`, the tracked diff and every untracked, non-ignored file's path and bytes, so any changed input recomputes; a later, non-waiting run never reuses. Reuse is off for `check --external` and when a test seam is injected, and the lock is still taken. A stale holder never blocks forever: a dead process on the same host is recovered on the next poll (50 ms), a live holder refreshes a heartbeat every 2 s and is treated as stale after 15 s without one, and a wedged live holder is waited for at most 120 s before the waiter computes unlocked. If the lock directory cannot be created (a read-only `.git`), the run computes without coordination. **Behaviour change:** in a git repository the command's output is now emitted when the run finishes rather than progressively, and `lore check` now writes a small lock file under the git common directory.
+
 ### Fixed
 
 - **`bin/lore.cjs` no longer leaves the native binary, or what it spawned, running when the wrapper is stopped, and now dies by the child's signal (LCLI-797, DEC-282 item 7 and (a2))**
