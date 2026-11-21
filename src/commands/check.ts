@@ -27,7 +27,10 @@
  * Task-progress reconciliation and managed-block drift (LORE-27) reuse the exact pure
  * engines `lore sync` writes with ({@link reconcileStatus}, {@link regenerateTaskBlock}, via the
  * `commands/reconcile-shared.ts` gather shared with `sync`) but only diff against disk — this
- * command never writes. Both are **errors**, always gating (unlike the warn-only portability lint).
+ * command never writes. Status drift is **always an error**; drift confined to a lone
+ * `<!-- lore:tasks -->` block is a **warning** by default and gates under `--strict` (DEC-282
+ * item 3, LCLI-793): a tracker write can stale that region and the tracker cannot rewrite it, so
+ * only drift confined to it softens — every other drift rule stays an error in both modes.
  * Finally, the **opt-in** `--external` URL liveness probe: the one non-deterministic, network-
  * touching path, kept out of the gate entirely (advisory only, never changes the exit code — not
  * even under `--strict`, ADR-0007) with its IO living here, never in pure `core/` (ADR-0014).
@@ -184,8 +187,10 @@ interface CheckArgs {
  * existing caller and test relies on). Otherwise it returns a `Promise<number>` — the same gate
  * exit code, resolved only after status/managed-block reconciliation (LORE-27) and/or the
  * **non-deterministic** liveness probe have finished. Liveness results **never** change the exit
- * code (not even under `--strict`); reconciliation drift **is** part of the gate (like broken
- * links/anchors, always an error). The network IO for liveness lives here, never in core
+ * code (not even under `--strict`); **status** drift is part of the gate (like broken
+ * links/anchors, always an error), while drift confined to a lone `lore:tasks` block is a warning
+ * that gates only under `--strict` (DEC-282 item 3, LCLI-793). The network IO for liveness lives
+ * here, never in core
  * (ADR-0014). All gate throws (`usage`/`not_found`/`denied`/`validation`) happen either on the
  * synchronous path or propagate through the returned promise's rejection, so the router's one
  * error seam still catches them either way.

@@ -132,6 +132,22 @@ landed, a fleet-wide measurement by ref found no error-tier `quote-safety` findi
 files across 11 repositories, with a positive control. `lore validate` previews what `check` will
 now fail on.
 
+Amended — 2026-11-21 (LCLI-793, DEC-282 item 3): **drift confined to `<!-- lore:tasks -->` managed
+blocks is a warning by default and an error under `--strict`; every other drift rule stays an
+error in both modes.** The status-drift pass above is unchanged: a Story whose authored `status`
+disagrees with the tracker is still an error and always gates. What changes is the *managed-block*
+finding only. Any tracker write can stale a `lore:tasks` region — a title or note edit, not just a
+status change — and **the tracker never rewrites a lore block**; only `lore sync` writes the
+managed region, and `check` only reads it. Treating that inevitable staleness as a hard failure
+meant every tracker write cost a defensive `sync` + `check` round trip (the process storm the
+decision records). The softening reuses `--strict`'s existing meaning — "treat deterministic
+warnings as failures for the exit code" — rather than adding a second flag: the finding's own
+`severity` stays `warning`, and under `--strict` it counts toward the failing exit. The confinement
+is load-bearing and is pinned by tests: a report carrying `lore:tasks` drift **plus** any other
+drift (status drift, `index-drift` on a `<!-- lore:index -->` block, `schema-drift`, a broken
+link/anchor) still exits `6`, because those rules remain error-tier. Only a report whose drift is
+confined to `lore:tasks` exits `0` by default and `6` under `--strict`.
+
 ## Context
 
 lore must answer two distinct questions about a docs bundle, and conflating
