@@ -494,8 +494,11 @@ export interface AdvisoryResultOptions<T> {
    * tree the prior holder changed, so the result must be keyed by the tree it is actually computed
    * against, not by the one it entered on. Defaults to reusing {@link inputHash} (correct when the
    * caller acquired immediately). Used for the result key and the post-acquire reuse check; the
-   * while-waiting reuse check always uses the entry hash. Called ONLY when this caller actually
-   * waited; a caller that acquired on its first try is keyed by {@link inputHash} (round-2 nit 6).
+   * while-waiting reuse check always uses the entry hash. Called ONCE whenever the lock is held
+   * and `rehash` is supplied, even by a caller that acquired on its first try: the entry hash is
+   * taken BEFORE this call (git spawns), so a holder can write and release between it and the first
+   * create attempt, and a result keyed by the stale entry hash could be replayed to a waiter still
+   * on the pre-write tree (round-3 verdict on #758, SF1; supersedes the round-2 nit 6 narrowing).
    */
   readonly rehash?: () => string | null;
   /**
@@ -668,14 +671,11 @@ export async function withAdvisoryResult<T>(options: AdvisoryResultOptions<T>): 
     }
     if (created.kind === "created") {
       // Keyed by the tree the work is actually done against. If this caller had to wait, a prior
-      // holder may have changed the tree since it entered, so rehash while the lock is held.
-      // Rehash only after an ACTUAL wait: a caller that acquired on its first poll computed its
-      // entry hash against the tree it is about to read (round-2 nit 6).
-      const keyHash = reusable
-        ? options.rehash === undefined || !waited
-          ? options.inputHash
-          : options.rehash()
-        : null;
+      // holder may have changed the tree since it entered, so rehash while the lock is held. ALWAYS,
+      // even on a first-try acquire: the entry hash is computed before this call, so a holder can have
+      // written and released in between (the cost, a few git spawns per locked run, is accepted for
+      // correctness; the round-3 ruling amends the earlier "only after a wait").
+      const keyHash = reusable ? (options.rehash === undefined ? options.inputHash : options.rehash()) : null;
       const heartbeat = startHeartbeat(ctx, owner);
       try {
         const found = candidate ?? readReusable(keyHash);

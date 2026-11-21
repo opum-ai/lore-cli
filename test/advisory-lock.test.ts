@@ -1299,7 +1299,7 @@ describe("round-3 fixes (LCLI-792, DEC-282 (a14))", () => {
     expect(outcome.value).toBe("computed");
   });
 
-  test("nit 6: a caller that never waited does not rehash; one that waited does", async () => {
+  test("SF1 (#758): a caller ALWAYS rehashes once it holds the lock, even on a first-try acquire", async () => {
     let rehashes = 0;
     const immediate = await withAdvisoryResult({
       ...reader(),
@@ -1312,7 +1312,12 @@ describe("round-3 fixes (LCLI-792, DEC-282 (a14))", () => {
       compute: () => "v",
     });
     expect(immediate.waited).toBe(false);
-    expect(rehashes).toBe(0);
+    // The entry hash is taken BEFORE the call, so a holder can write and release between it and the
+    // first create attempt: the result must be keyed by the post-lock hash, not the stale entry one.
+    expect(rehashes).toBe(1);
+    expect(
+      (JSON.parse(readFileSync(advisoryResultPath(root, "check"), "utf8")) as { inputHash: string }).inputHash,
+    ).toBe("h2");
 
     const path = seedLock(lockRecord({ owner: "live", updatedAt: 1_000_000 }));
     const waiter = withAdvisoryResult({
@@ -1334,7 +1339,7 @@ describe("round-3 fixes (LCLI-792, DEC-282 (a14))", () => {
     rmSync(path, { force: true });
     const outcome = await waiter;
     expect(outcome.waited).toBe(true);
-    expect(rehashes).toBe(1);
+    expect(rehashes).toBe(2);
   });
 
   test("Q1: a waiter whose adopt() refuses abandons reuse and computes under the lock; one that accepts reuses", async () => {
@@ -1345,6 +1350,7 @@ describe("round-3 fixes (LCLI-792, DEC-282 (a14))", () => {
       let computes = 0;
       let adopted = 0;
       let holderOwner = "";
+      let adoptSawOwner: string | undefined;
       const { now } = clockFrom();
       const holder = withAdvisoryResult({
         ...reader(),
@@ -1371,12 +1377,10 @@ describe("round-3 fixes (LCLI-792, DEC-282 (a14))", () => {
           adopted += 1;
           // Adopted only once the holder has released: the lock is OWNED BY THIS CALLER here (not the
           // holder's leftover, which a release-before-adopt mutant would leave on disk).
-          const lock = JSON.parse(readFileSync(advisoryLockPath(root, "check-sync"), "utf8")) as {
-            owner: string;
-            pid: number;
-          };
-          expect(lock.pid).toBe(process.pid);
-          expect(lock.owner).not.toBe(holderOwner);
+          // Recorded, and asserted AFTER the call: an expect that throws in here is swallowed by the
+          // adopt-throw guard (N3) and would read as a refusal rather than failing the test.
+          adoptSawOwner = (JSON.parse(readFileSync(advisoryLockPath(root, "check-sync"), "utf8")) as { owner: string })
+            .owner;
           return accept;
         },
         compute: () => {
@@ -1388,39 +1392,44 @@ describe("round-3 fixes (LCLI-792, DEC-282 (a14))", () => {
       release.resolve();
       const [, outcome] = await Promise.all([holder, waiter]);
       expect(adopted).toBe(1);
+      expect(adoptSawOwner).toBeDefined();
+      expect(adoptSawOwner).not.toBe(holderOwner);
       expect(outcome.reused).toBe(accept);
       expect(outcome.value).toBe(accept ? "holder-value" : "waiter-value");
       expect(computes).toBe(accept ? 1 : 2);
     }
   });
 
-  test("S1: a caller that finds the lock vanished after EEXIST still rehashes once it owns it", async () => {
-    if (process.platform === "win32" || process.getuid?.() === 0) return; // needs an unreadable lock file
-    const path = seedLock(lockRecord({ owner: "gone-soon", updatedAt: 1_000_000 }));
-    chmodSync(path, 0o000); // exists (EEXIST) but its read fails, i.e. the "snapshot === null" branch
-    let rehashes = 0;
-    const outcome = await withAdvisoryResult({
-      ...reader(),
-      inputHash: "entry",
-      reusable: true,
-      now: () => 1_000_000,
-      isProcessAlive: () => true,
-      bounds: { pollMs: 1, maxWaitMs: 10_000 },
-      rehash: () => {
-        rehashes += 1;
-        return "after-the-holder";
-      },
-      compute: () => "v",
-      // The holder "releases" while we sleep: the next pass takes the lock.
-      sleep: async () => {
-        rmSync(path, { force: true });
-      },
-    });
-    expect(outcome.reused).toBe(false);
-    expect(rehashes).toBe(1);
-    const slot = JSON.parse(readFileSync(advisoryResultPath(root, "check"), "utf8")) as { inputHash: string };
-    expect(slot.inputHash).toBe("after-the-holder");
-  });
+  // Needs an unreadable lock file, which neither Windows nor root can make: skipped VISIBLY.
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "S1: a caller that finds the lock vanished after EEXIST still rehashes once it owns it",
+    async () => {
+      const path = seedLock(lockRecord({ owner: "gone-soon", updatedAt: 1_000_000 }));
+      chmodSync(path, 0o000); // exists (EEXIST) but its read fails, i.e. the "snapshot === null" branch
+      let rehashes = 0;
+      const outcome = await withAdvisoryResult({
+        ...reader(),
+        inputHash: "entry",
+        reusable: true,
+        now: () => 1_000_000,
+        isProcessAlive: () => true,
+        bounds: { pollMs: 1, maxWaitMs: 10_000 },
+        rehash: () => {
+          rehashes += 1;
+          return "after-the-holder";
+        },
+        compute: () => "v",
+        // The holder "releases" while we sleep: the next pass takes the lock.
+        sleep: async () => {
+          rmSync(path, { force: true });
+        },
+      });
+      expect(outcome.reused).toBe(false);
+      expect(rehashes).toBe(1);
+      const slot = JSON.parse(readFileSync(advisoryResultPath(root, "check"), "utf8")) as { inputHash: string };
+      expect(slot.inputHash).toBe("after-the-holder");
+    },
+  );
 
   test("N3: an adopt() that THROWS abandons reuse and the caller computes", async () => {
     const entered = deferred<void>();

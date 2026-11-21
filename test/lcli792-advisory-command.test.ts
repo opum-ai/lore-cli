@@ -323,7 +323,7 @@ describe("sync reuses the COMPUTATION and applies it to the waiter's own checkou
     // A second checkout of the same PRE-RUN tree receives the computation's bytes.
     const other = join(root, "other");
     seedDocs(other);
-    await applySyncWritePlan(other, plans[0] as SyncWritePlan);
+    expect(await applySyncWritePlan(other, plans[0] as SyncWritePlan)).toBe(true);
     for (const write of writes) {
       expect(readFileSync(join(other, "docs", write.path), "utf8")).toBe(
         readFileSync(join(main, "docs", write.path), "utf8"),

@@ -446,8 +446,11 @@ export async function runSync(options: SyncOptions): Promise<number> {
  * slightly stale if a concept it summarises was edited during the wait (a retitled concept keeps its
  * old title in `index.md`); the next sync corrects it. No hand-written edit is ever overwritten.
  *
- * A throw here (a symlinked ancestor, an unreadable file) is treated by the caller as "abandon and
- * recompute", so a fresh run reports the real error in its own shape.
+ * A throw before the first write (a symlinked ancestor, an unreadable file) is treated by the caller
+ * as "abandon and recompute", so a fresh run reports the real error in its own shape. A throw AFTER
+ * the writes (the tracker sweep below) can leave the docs writes landed; the recompute then runs on
+ * that tree and any later reuse is re-gated by the pre-image check, so it fails safe, exactly as an
+ * uncontended `runSync` does when its own sweep fails.
  *
  * The holder's run also swept tracker storage, which is a repository-side effect; the waiter runs
  * its own sweep, so a Backlog bundle's `backlog/` is committed in the waiter's worktree too. For a
