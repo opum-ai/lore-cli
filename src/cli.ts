@@ -17,6 +17,7 @@
 import { Command } from "commander";
 import type { BacklogAdapter } from "./adapters/backlog";
 import type { TrackerEnvironment } from "./adapters/tracker-environment";
+import { runLockedCommand } from "./commands/advisory-run";
 import { runAgent } from "./commands/agent";
 import { runAgents } from "./commands/agents";
 import { commanderOption, commanderUnknownCommand, commanderUsageError } from "./commands/args";
@@ -460,16 +461,34 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
       stderr: context.stderr,
     }),
   check: (args, context, output) =>
-    runCheck({
+    runLockedCommand({
       root: context.cwd || process.cwd(),
-      output,
+      command: "check",
       args,
+      output,
       stdout: context.stdout,
       stderr: context.stderr,
-      fetch: context.fetch,
-      resolveHost: context.resolveHost,
-      adapter: context.adapter,
-      headCommitDate: context.headCommitDate,
+      // Every injected seam makes the output a function of the harness rather than of the on-disk
+      // tree, which is the premise result reuse rests on; `--external` is non-deterministic by
+      // definition. Either way the run still takes the lock (it just never reuses a result).
+      reusable:
+        !args.includes("--external") &&
+        context.adapter === undefined &&
+        context.fetch === undefined &&
+        context.resolveHost === undefined &&
+        context.headCommitDate === undefined,
+      run: (stdout, stderr) =>
+        runCheck({
+          root: context.cwd || process.cwd(),
+          output,
+          args,
+          stdout,
+          stderr,
+          fetch: context.fetch,
+          resolveHost: context.resolveHost,
+          adapter: context.adapter,
+          headCommitDate: context.headCommitDate,
+        }),
     }),
   replace: (args, context, output) =>
     runReplace({
@@ -515,13 +534,25 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
       adapter: context.adapter,
     }),
   sync: (args, context, output) =>
-    runSync({
+    runLockedCommand({
       root: context.cwd || process.cwd(),
-      output,
+      command: "sync",
       args,
+      output,
       stdout: context.stdout,
       stderr: context.stderr,
-      adapter: context.adapter,
+      // As for `check`: an injected adapter makes the result a harness artifact, not a function of
+      // the tree. `sync` keeps its lock either way; writes still run on every non-reused call.
+      reusable: context.adapter === undefined,
+      run: (stdout, stderr) =>
+        runSync({
+          root: context.cwd || process.cwd(),
+          output,
+          args,
+          stdout,
+          stderr,
+          adapter: context.adapter,
+        }),
     }),
   tasks: (args, context, output) =>
     runTasks({
