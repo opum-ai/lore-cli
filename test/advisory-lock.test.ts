@@ -955,8 +955,8 @@ describe("a broken mechanism runs unlocked with exactly one line (DEC-282 (a8) r
   });
 });
 
-describe("the wait lines are distinct (F4 + DEC-282 (a8) rule 3)", () => {
-  test("one waiting line while waiting, and none when the holder releases", async () => {
+describe("a routine wait is silent; only expiry or a broken mechanism writes a line (F4, (a8), (a14) Q3)", () => {
+  test("a wait that ends when the holder releases prints NOTHING", async () => {
     const path = seedLock(lockRecord({ owner: "live", updatedAt: 1_000_000 }));
     const notices: AdvisoryNotice[] = [];
     const waiter = withAdvisoryResult({
@@ -976,8 +976,7 @@ describe("the wait lines are distinct (F4 + DEC-282 (a8) rule 3)", () => {
     const outcome = await waiter;
     expect(outcome.forced).toBe(false);
     expect(outcome.waited).toBe(true);
-    expect(notices.filter((notice) => notice.kind === "waiting")).toHaveLength(1);
-    expect(notices.filter((notice) => notice.kind === "unlocked")).toHaveLength(0);
+    expect(notices).toHaveLength(0);
   });
 
   test("an expired wait emits exactly ONE unlocked line and proceeds", async () => {
@@ -1254,4 +1253,134 @@ describe("real processes (F8)", () => {
     expect(outcome.forced).toBe(false);
     expect(elapsed).toBeLessThan(1_000);
   }, 20_000);
+});
+
+describe("round-3 fixes (LCLI-792, DEC-282 (a14))", () => {
+  test("SF1: two clearers race for an aged .break; the loser's ENOENT is a wait, not a broken mechanism", async () => {
+    const frozenNow = 1_700_000_000_000;
+    seedLock(
+      lockRecord({
+        owner: "dead-holder",
+        pid: 999_999,
+        processStartIdentity: VALID_IDENTITY(999_999),
+        updatedAt: frozenNow - 120_000,
+      }),
+    );
+    const breakPath = advisoryBreakPath(root, "check-sync");
+    writeFileSync(
+      breakPath,
+      JSON.stringify(lockRecord({ owner: "dead-breaker", pid: 888_888, updatedAt: frozenNow - 60_000 })),
+    );
+    const notices: AdvisoryNotice[] = [];
+    let raced = false;
+    const outcome = await withAdvisoryResult({
+      ...reader(),
+      inputHash: "h",
+      reusable: false,
+      now: () => frozenNow,
+      // The break file's staleness judgement probes the breaker's pid, which is the instant between
+      // "read it" and "unlink it": the competing clearer removes the file exactly there.
+      isProcessAlive: (pid) => {
+        if (pid === 888_888 && !raced) {
+          raced = true;
+          rmSync(breakPath, { force: true });
+        }
+        return false;
+      },
+      bounds: { staleMs: 120_000, breakStaleMs: 10_000, maxWaitMs: 10_000 },
+      onNotice: (notice) => notices.push(notice),
+      compute: () => "computed",
+      sleep: yieldTurn,
+    });
+    expect(raced).toBe(true);
+    expect(notices).toHaveLength(0);
+    expect(outcome.forced).toBe(false);
+    expect(outcome.value).toBe("computed");
+  });
+
+  test("nit 6: a caller that never waited does not rehash; one that waited does", async () => {
+    let rehashes = 0;
+    const immediate = await withAdvisoryResult({
+      ...reader(),
+      inputHash: "h",
+      reusable: true,
+      rehash: () => {
+        rehashes += 1;
+        return "h2";
+      },
+      compute: () => "v",
+    });
+    expect(immediate.waited).toBe(false);
+    expect(rehashes).toBe(0);
+
+    const path = seedLock(lockRecord({ owner: "live", updatedAt: 1_000_000 }));
+    const waiter = withAdvisoryResult({
+      ...reader(),
+      inputHash: "h3",
+      reusable: true,
+      now: () => 1_000_000,
+      isProcessAlive: () => true,
+      bounds: { pollMs: 1, maxWaitMs: 10_000 },
+      rehash: () => {
+        rehashes += 1;
+        return "h4";
+      },
+      compute: () => "v2",
+      sleep: yieldTurn,
+    });
+    await yieldTurn();
+    await yieldTurn();
+    rmSync(path, { force: true });
+    const outcome = await waiter;
+    expect(outcome.waited).toBe(true);
+    expect(rehashes).toBe(1);
+  });
+
+  test("Q1: a waiter whose adopt() refuses abandons reuse and computes under the lock; one that accepts reuses", async () => {
+    for (const accept of [true, false]) {
+      rmSync(advisoryDir(root), { recursive: true, force: true });
+      const entered = deferred<void>();
+      const release = deferred<void>();
+      let computes = 0;
+      let adopted = 0;
+      const { now } = clockFrom();
+      const holder = withAdvisoryResult({
+        ...reader(),
+        now,
+        inputHash: "same",
+        reusable: true,
+        compute: async () => {
+          computes += 1;
+          entered.resolve();
+          await release.promise;
+          return "holder-value";
+        },
+        sleep: yieldTurn,
+      });
+      await entered.promise;
+      const waiter = withAdvisoryResult({
+        ...reader(),
+        now,
+        inputHash: "same",
+        reusable: true,
+        adopt: () => {
+          adopted += 1;
+          // Adopted only once the holder has released: the lock is ours here.
+          expect(existsSync(advisoryLockPath(root, "check-sync"))).toBe(true);
+          return accept;
+        },
+        compute: () => {
+          computes += 1;
+          return "waiter-value";
+        },
+        sleep: yieldTurn,
+      });
+      release.resolve();
+      const [, outcome] = await Promise.all([holder, waiter]);
+      expect(adopted).toBe(1);
+      expect(outcome.reused).toBe(accept);
+      expect(outcome.value).toBe(accept ? "holder-value" : "waiter-value");
+      expect(computes).toBe(accept ? 1 : 2);
+    }
+  });
 });

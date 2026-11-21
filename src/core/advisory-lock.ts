@@ -75,11 +75,18 @@
  *   age is past this, is cleared by the next breaker.
  * - {@link ADVISORY_PID_GONE_FLOOR_MS} = 30 s — the dead-pid rule needs the file to be at least this
  *   old, so a create interrupted before its body lands is treated as mid-write, not abandoned.
- * - {@link ADVISORY_STALE_MS} = 10 min — a lock from ANOTHER host, or one whose owner cannot be
- *   read, is stale past this age alone. It is quest-cli's `staleAfterMs`, kept equal on purpose.
- * - {@link ADVISORY_MAX_WAIT_MS} = stale + 60 s (11 min) — the wait is deliberately sized PAST the
- *   stale backstop, so a holder is released or broken before any waiter's wait ends and expiry is
- *   reachable only in a pathological state.
+ * - {@link ADVISORY_STALE_MS} = 10 min — a lock from ANOTHER host, or one whose owner this host
+ *   cannot prove anything about (an unprovable pid), is stale past this age alone. It is
+ *   quest-cli's `staleAfterMs`, kept equal on purpose. A lock whose body cannot be READ at all is
+ *   judged sooner, by its mtime against the 30 s floor above.
+ * - {@link ADVISORY_MAX_WAIT_MS} = stale + 60 s (11 min) — the longest a waiter waits on ONE
+ *   holder before it runs unlocked. The invariant it serves (DEC-282 (a14) Q2): **a waiter never
+ *   runs unlocked against a holder that is alive and making progress.** It expires only against a
+ *   holder with no sign of progress. That is NOT guaranteed by the number alone: a same-host live
+ *   holder is never broken by age (see below), so a SINGLE healthy holder that runs past this bound
+ *   expires its waiters too, and so does a queue of holders each under it (the deadline resets
+ *   whenever the holder changes, F4, which bounds each holder rather than the queue). Expiry is the
+ *   documented cost of an advisory lock: one stderr line and one duplicated computation.
  *
  * Dead-pid detection is the common case and needs none of that: a same-host lock whose recorded
  * `pid` is not alive (and which is past the floor) is broken on the next poll.
@@ -140,8 +147,8 @@
  * - a broken mechanism — an uncreatable/unwritable lock directory, or any errno other than `EEXIST`
  *   from the lock or break file (`EACCES`, `EISDIR`, `ENOSPC`, …).
  *
- * A separate, distinct line is emitted once while waiting, so a long silent wait never reads as a
- * hang.
+ * A routine wait prints nothing: a contended run that is released or broken in time looks exactly
+ * like an uncontended one (DEC-282 (a14) Q3).
  *
  * ## Portability (the repo's CI has a windows-latest leg)
  *
@@ -228,8 +235,11 @@ export const ADVISORY_ENV_INPUTS: readonly string[] = Object.freeze([
 
 /** An advisory line the mechanism wants the caller to write to stderr. */
 export interface AdvisoryNotice {
-  /** `"waiting"` is emitted once while waiting; `"unlocked"` once when coordination is abandoned. */
-  readonly kind: "waiting" | "unlocked";
+  /**
+   * `"unlocked"`, emitted at most once, when coordination is abandoned (DEC-282 (a8)). There is no
+   * "waiting" kind: a routine wait prints nothing ((a14) Q3).
+   */
+  readonly kind: "unlocked";
   /** A complete, single-line sentence (no trailing newline). */
   readonly message: string;
 }
@@ -238,6 +248,11 @@ export interface AdvisoryNotice {
 export interface GitResult {
   readonly ok: boolean;
   readonly stdout: string;
+  /**
+   * What git wrote to stderr, when the transport captured it. Only {@link resolveGitCommonDirChecked}
+   * reads it, to tell "not a repository" (silent) from a failure inside one (the (a8) line).
+   */
+  readonly stderr?: string;
 }
 
 /** The injectable `git` seam: run `args` with `cwd` set to `root`. */
@@ -251,7 +266,7 @@ export type GitRunner = (root: string, args: readonly string[]) => GitResult;
 export const realGitRunner: GitRunner = (root, args) => {
   try {
     const proc = Bun.spawnSync(["git", ...args], { cwd: root, stdout: "pipe", stderr: "pipe" });
-    return { ok: (proc.exitCode ?? 1) === 0, stdout: proc.stdout.toString() };
+    return { ok: (proc.exitCode ?? 1) === 0, stdout: proc.stdout.toString(), stderr: proc.stderr.toString() };
   } catch {
     return { ok: false, stdout: "" };
   }
@@ -264,14 +279,38 @@ export const realGitRunner: GitRunner = (root, args) => {
  * without a lock/reuse.
  */
 export function resolveGitCommonDir(root: string, git: GitRunner = realGitRunner): string | null {
+  const resolved = resolveGitCommonDirChecked(root, git);
+  return resolved.kind === "dir" ? resolved.dir : null;
+}
+
+/** What {@link resolveGitCommonDirChecked} found. */
+export type CommonDirResolution =
+  | { readonly kind: "dir"; readonly dir: string }
+  /** `root` is not in a repository (or git is unavailable): nothing clone-wide to coordinate. */
+  | { readonly kind: "none" }
+  /** `git rev-parse` failed for a reason other than "not a repository" (permissions, safe.directory). */
+  | { readonly kind: "error"; readonly detail: string };
+
+/**
+ * {@link resolveGitCommonDir}, but a failure INSIDE a repository is reported rather than collapsed
+ * into "no repository": a `safe.directory` ("dubious ownership") refusal or a permission error would
+ * otherwise run silently unlocked, against (a8)'s "a run that cannot coordinate says so" (round-2
+ * finding 4). "Not a git repository" stays silent. A transport that captured no stderr (git missing,
+ * or a test seam) cannot prove it was inside a repository, so it stays silent too.
+ */
+export function resolveGitCommonDirChecked(root: string, git: GitRunner = realGitRunner): CommonDirResolution {
   const result = git(root, ["rev-parse", "--git-common-dir"]);
-  if (!result.ok) return null;
+  if (!result.ok) {
+    const stderr = (result.stderr ?? "").trim();
+    if (stderr === "" || /not a git repository/i.test(stderr)) return { kind: "none" };
+    return { kind: "error", detail: stderr.split("\n")[0] ?? stderr };
+  }
   const dir = result.stdout.trim();
-  if (dir === "") return null;
+  if (dir === "") return { kind: "none" };
   // Canonicalize: git reports a worktree's common dir as an absolute real path while a plain
   // checkout gets `.git` relative to the (possibly symlinked) root. Realpath makes every worktree
   // of one clone resolve to the SAME string, which is what sharing the lock depends on.
-  return canonicalPath(isAbsolute(dir) ? resolve(dir) : resolve(root, dir));
+  return { kind: "dir", dir: canonicalPath(isAbsolute(dir) ? resolve(dir) : resolve(root, dir)) };
 }
 
 /**
@@ -455,17 +494,27 @@ export interface AdvisoryResultOptions<T> {
    * tree the prior holder changed, so the result must be keyed by the tree it is actually computed
    * against, not by the one it entered on. Defaults to reusing {@link inputHash} (correct when the
    * caller acquired immediately). Used for the result key and the post-acquire reuse check; the
-   * while-waiting reuse check always uses the entry hash.
+   * while-waiting reuse check always uses the entry hash. Called ONLY when this caller actually
+   * waited; a caller that acquired on its first try is keyed by {@link inputHash} (round-2 nit 6).
    */
   readonly rehash?: () => string | null;
+  /**
+   * Take a reusable result's side effects UNDER THE LOCK, before it is returned (DEC-282 (a14) Q1).
+   * When set, a waiter that finds a matching result does not return it straight away: it keeps
+   * waiting until it holds the lock, then calls `adopt(value)`. `true` means the result is now
+   * reflected in this caller's checkout (applied, or already equal) and is returned as reused;
+   * `false` abandons reuse and this caller computes, still under the lock. Unset (a read-only
+   * command) keeps the original behaviour: the matching result is returned without taking the lock.
+   */
+  readonly adopt?: (value: T) => boolean | Promise<boolean>;
   /** When false the lock still serializes, but no result is read or written. */
   readonly reusable: boolean;
   /** The work to do while holding the lock. */
   readonly compute: () => Promise<T> | T;
   /**
-   * Advisory lines the mechanism wants written to stderr. `"waiting"` fires at most once, when the
-   * caller starts waiting; `"unlocked"` fires at most once, when the caller abandons coordination
-   * (DEC-282 (a8)). Never written to stdout.
+   * Advisory lines the mechanism wants written to stderr. `"unlocked"` fires at most once, when the
+   * caller abandons coordination (DEC-282 (a8)). A routine wait writes nothing. Never written to
+   * stdout.
    */
   readonly onNotice?: (notice: AdvisoryNotice) => void;
   /** Overrides for the bounds. */
@@ -588,10 +637,18 @@ export async function withAdvisoryResult<T>(options: AdvisoryResultOptions<T>): 
     return slot.inputHash === hash && slot.finishedAt > startedAt ? slot.value : undefined;
   };
 
+  const adopt = options.adopt;
+  // A matching result seen while waiting that still has to be adopted under the lock.
+  let candidate: T | undefined;
+
   for (;;) {
-    const reuse = readReusable(options.inputHash);
-    if (reuse !== undefined) {
-      return { value: reuse, reused: true, waited, forced: false };
+    if (candidate === undefined) {
+      const reuse = readReusable(options.inputHash);
+      if (reuse !== undefined) {
+        // Nothing to take: a read-only result is returned without the lock, as it always was.
+        if (adopt === undefined) return { value: reuse, reused: true, waited, forced: false };
+        candidate = reuse;
+      }
     }
 
     const created = tryCreateLock(ctx, {
@@ -612,12 +669,21 @@ export async function withAdvisoryResult<T>(options: AdvisoryResultOptions<T>): 
     if (created.kind === "created") {
       // Keyed by the tree the work is actually done against. If this caller had to wait, a prior
       // holder may have changed the tree since it entered, so rehash while the lock is held.
-      const keyHash = reusable ? (options.rehash === undefined ? options.inputHash : options.rehash()) : null;
+      // Rehash only after an ACTUAL wait: a caller that acquired on its first poll computed its
+      // entry hash against the tree it is about to read (round-2 nit 6).
+      const keyHash = reusable
+        ? options.rehash === undefined || !waited
+          ? options.inputHash
+          : options.rehash()
+        : null;
       const heartbeat = startHeartbeat(ctx, owner);
       try {
-        const late = readReusable(keyHash);
-        if (late !== undefined) {
-          return { value: late, reused: true, waited, forced: false };
+        const found = candidate ?? readReusable(keyHash);
+        // Adopted UNDER the lock (the heartbeat is running and nobody else is computing), so an
+        // apply can neither interleave with another holder's writes nor be seen half-done by a
+        // `check` holder in this checkout. A refusal falls through to computing below.
+        if (found !== undefined && (adopt === undefined || (await adopt(found)))) {
+          return { value: found, reused: true, waited, forced: false };
         }
         const value = await options.compute();
         if (reusable && keyHash !== null) {
@@ -637,6 +703,11 @@ export async function withAdvisoryResult<T>(options: AdvisoryResultOptions<T>): 
       await ctx.sleep(bounds.pollMs);
       continue;
     }
+
+    // The lock was held when we arrived, so this caller contended even if it takes the lock on the
+    // very next pass (a holder it broke, or one that released between polls): whatever that holder
+    // did may have changed the tree, so the caller must rehash once it owns the lock.
+    waited = true;
 
     // F4: reset the deadline when the holder's owner changes, so the bound applies per wedged
     // holder rather than to a queue position.
@@ -665,10 +736,7 @@ export async function withAdvisoryResult<T>(options: AdvisoryResultOptions<T>): 
       return unlock(ctx, undefined, expiryCause(ctx, snapshot), () => options.compute(), waited);
     }
 
-    if (!waited) {
-      waited = true;
-      ctx.notice({ kind: "waiting", message: waitingMessage(ctx, snapshot) });
-    }
+    // A routine wait is silent ((a14) Q3): only expiry and a broken mechanism write a line.
     await ctx.sleep(bounds.pollMs);
   }
 }
@@ -691,12 +759,14 @@ async function unlock<T>(
   compute: () => Promise<T> | T,
   waited: boolean,
 ): Promise<AdvisoryResultOutcome<T>> {
-  const code = cause === undefined ? "" : ` (${describeCause(cause)})`;
-  ctx.notice({
-    kind: "unlocked",
-    message: `${what}${code}: continuing without the check/sync lock and running unlocked; concurrent runs may duplicate work`,
-  });
+  ctx.notice({ kind: "unlocked", message: unlockedMessage(what, cause) });
   return { value: await compute(), reused: false, waited, forced: true };
+}
+
+/** The one advisory line every unlocked path writes (DEC-282 (a8) rule 3). */
+export function unlockedMessage(what: string, cause?: unknown): string {
+  const code = cause === undefined ? "" : ` (${describeCause(cause)})`;
+  return `${what}${code}: continuing without the check/sync lock and running unlocked; concurrent runs may duplicate work`;
 }
 
 /** A short, single-line description of an errno-shaped failure. */
@@ -704,12 +774,6 @@ function describeCause(cause: unknown): string {
   const code = errnoCode(cause);
   const message = cause instanceof Error ? cause.message : String(cause);
   return code === undefined ? message : `${code}: ${message}`;
-}
-
-/** The line emitted once when a caller starts waiting (distinct from the unlocked line, a8). */
-function waitingMessage(ctx: CallContext, snapshot: LockSnapshot): string {
-  const holder = describeHolder(snapshot, ctx);
-  return `waiting for another lore check/sync run to finish (${holder}); this run proceeds without the lock if that run is not released or broken within ${seconds(ctx.bounds.maxWaitMs)}`;
 }
 
 /** The cause named by the expiry line, including the break file's state and the remedy. */
@@ -936,7 +1000,13 @@ function takeBreakFile(ctx: CallContext): BreakHandle | null {
     if (existing !== null && isBreakSnapshotStale(existing, ctx)) {
       // Check-then-unlink residual, recorded not closed (as in quest-cli's own lock): two clearers
       // can race for an aged breaker's file and a loser's unlink can hit the winner's fresh file.
-      unlinkSync(ctx.breakPath);
+      try {
+        unlinkSync(ctx.breakPath);
+      } catch (cause) {
+        // Two waiters cross the age bound together and both unlink: the loser's ENOENT is a lost
+        // race, not a broken mechanism, so it waits (quest-cli's `unlinkIfPresent` shape).
+        if (errnoCode(cause) !== "ENOENT") throw cause;
+      }
     }
     return null;
   }

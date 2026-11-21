@@ -37,7 +37,8 @@ import {
   commandInputHash,
   type GitRunner,
   realGitRunner,
-  resolveGitCommonDir,
+  resolveGitCommonDirChecked,
+  unlockedMessage,
   withAdvisoryResult,
 } from "../core/advisory-lock";
 import type { Writer } from "../errors";
@@ -49,12 +50,15 @@ const SHARED_LOCK_NAME = "check-sync";
 /** The captured, replayable result of one command run. */
 interface Captured<P> {
   readonly code: number;
-  /** What the run wrote to stdout, recorded as it streamed; empty when the run was not reusable. */
-  readonly stdout: string;
-  /** What the run wrote to stderr, recorded as it streamed; empty when the run was not reusable. */
-  readonly stderr: string;
   /**
-   * A serialisable plan a reusing waiter must apply to its own checkout before replaying `stdout`.
+   * Everything the run wrote, in the order it wrote it, as `[stream, chunk]` pairs; empty when the
+   * run was not reusable. One ordered list rather than a stdout string and a stderr string, so a
+   * replay interleaves the two streams exactly as the holder did (round-2 finding 3: `sync` emits
+   * advisories on stderr before its stdout report, and `2>&1` shows the order).
+   */
+  readonly chunks: readonly (readonly [stream: "stdout" | "stderr", chunk: string])[];
+  /**
+   * A serialisable plan a reusing waiter must apply to its own checkout before replaying `chunks`.
    * Present only for a write command (`sync`) and only when it was reusable; a read-only command
    * needs none.
    */
@@ -90,9 +94,12 @@ export interface LockedCommandOptions<P = never> {
   readonly reusable: boolean;
   /**
    * Apply a reused result's side effects to THIS checkout, before its recorded output is replayed.
-   * Only a write command needs it.
+   * Only a write command needs it. It runs UNDER the lock (DEC-282 (a14) Q1) and answers `true` when
+   * the checkout now reflects the plan (written, or already equal) and `false` when it does not —
+   * a file changed since the holder planned it — in which case reuse is abandoned and this run
+   * computes for itself rather than overwrite what is there.
    */
-  readonly applyPlan?: (plan: P) => void | Promise<void>;
+  readonly applyPlan?: (plan: P) => boolean | Promise<boolean>;
   /** The git seam; defaults to {@link realGitRunner}. */
   readonly git?: GitRunner;
   /** Bound overrides (tests move the clock rather than sleeping). */
@@ -114,11 +121,17 @@ export function runLockedCommand<P = never>(options: LockedCommandOptions<P>): n
   const stderr = options.stderr ?? process.stderr;
   const git = options.git ?? realGitRunner;
 
-  const commonDir = resolveGitCommonDir(options.root, git);
-  if (commonDir === null) {
+  const resolved = resolveGitCommonDirChecked(options.root, git);
+  if (resolved.kind === "none") {
     return options.run(stdout, stderr, () => undefined);
   }
-  return runAgainstLock(options, commonDir, stdout, stderr, git);
+  if (resolved.kind === "error") {
+    // Inside a repository but unable to find its common dir (permissions, `safe.directory`): the
+    // run still goes ahead, but says so, exactly as every other unlocked path does (a8 rule 3).
+    stderr.write(`${unlockedMessage("cannot resolve the git common directory", new Error(resolved.detail))}\n`);
+    return options.run(stdout, stderr, () => undefined);
+  }
+  return runAgainstLock(options, resolved.dir, stdout, stderr, git);
 }
 
 /** The asynchronous half: take the lock, reuse or compute, replay. See {@link runLockedCommand}. */
@@ -152,6 +165,14 @@ async function runAgainstLock<P>(
     // mechanism rehash once it holds the lock so the result names the tree it was computed against.
     ...(record ? { rehash: hash } : {}),
     compute: () => capture(options.run, stdout, stderr, record),
+    // A reused write result is applied here, UNDER the lock, and only if this checkout still holds
+    // what the holder planned against; a refusal makes this run compute (DEC-282 (a14) Q1).
+    ...(options.applyPlan === undefined
+      ? {}
+      : {
+          adopt: (captured: Captured<P>) =>
+            captured.plan === undefined || options.applyPlan === undefined ? true : options.applyPlan(captured.plan),
+        }),
     // Exactly the mechanism's advisory lines, and never anything on stdout (DEC-282 (a8) rule 3).
     onNotice: (notice: AdvisoryNotice) => stderr.write(`${notice.message}\n`),
     ...(options.bounds === undefined ? {} : { bounds: options.bounds }),
@@ -160,11 +181,6 @@ async function runAgainstLock<P>(
   });
 
   const captured = outcome.value;
-  // A reused write result must land its side effects in THIS checkout before its bytes are shown;
-  // skipping this is round 1's F3 defect (a waiter replaying `sync` that wrote nothing).
-  if (outcome.reused && captured.plan !== undefined && options.applyPlan !== undefined) {
-    await options.applyPlan(captured.plan);
-  }
   // Only a REPLAY is written here: a run this process executed already streamed its output to the
   // real sinks (DEC-282 (a7) item 1), and writing the recording again would duplicate every line.
   if (outcome.reused) flush(captured, stdout, stderr);
@@ -188,29 +204,25 @@ async function capture<P>(
 ): Promise<Captured<P>> {
   if (!record) {
     const code = await run(stdout, stderr, () => undefined);
-    return { code, stdout: "", stderr: "" };
+    return { code, chunks: [] };
   }
-  let out = "";
-  let err = "";
+  const chunks: [stream: "stdout" | "stderr", chunk: string][] = [];
   let plan: P | undefined;
-  const tee = (sink: Writer, append: (chunk: string) => void): Writer => ({
+  const tee = (sink: Writer, stream: "stdout" | "stderr"): Writer => ({
     write: (chunk) => {
-      append(chunk);
+      chunks.push([stream, chunk]);
       sink.write(chunk);
     },
   });
-  const code = await run(
-    tee(stdout, (chunk) => (out += chunk)),
-    tee(stderr, (chunk) => (err += chunk)),
-    (recorded) => {
-      plan = recorded;
-    },
-  );
-  return { code, stdout: out, stderr: err, ...(plan === undefined ? {} : { plan }) };
+  const code = await run(tee(stdout, "stdout"), tee(stderr, "stderr"), (recorded) => {
+    plan = recorded;
+  });
+  return { code, chunks, ...(plan === undefined ? {} : { plan }) };
 }
 
-/** Write a replayed result to the real sinks, preserving the original stream split. */
+/** Write a replayed result to the real sinks, chunk by chunk, in the order the holder wrote it. */
 function flush(captured: Captured<unknown>, stdout: Writer, stderr: Writer): void {
-  if (captured.stdout !== "") stdout.write(captured.stdout);
-  if (captured.stderr !== "") stderr.write(captured.stderr);
+  for (const [stream, chunk] of captured.chunks) {
+    (stream === "stdout" ? stdout : stderr).write(chunk);
+  }
 }

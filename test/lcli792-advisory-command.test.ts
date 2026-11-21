@@ -7,6 +7,7 @@
  * each callback is the expensive work, so counting its invocations is counting computes.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -94,6 +95,9 @@ function clockFrom(start = 1_000_000) {
 
 const yieldTurn = () => new Promise<void>((done) => setTimeout(done, 0));
 const PLAIN: OutputContext = { mode: "plain", color: false };
+const ROOT_INDEX = "# Docs\n\nRoot.\n";
+const ROOT_INDEX_DIGEST = createHash("sha256").update(ROOT_INDEX, "utf8").digest("hex");
+const REWRITTEN_INDEX = "# Docs\n\nRewritten.\n";
 
 describe("the holder streams its output and a waiter replays the recording (DEC-282 (a7) item 1)", () => {
   test("the holder's output reaches its sinks as it runs, and the waiter replays the same bytes and code", async () => {
@@ -154,13 +158,11 @@ describe("the holder streams its output and a waiter replays the recording (DEC-
     expect(holderCode).toBe(7);
     expect(waiterCode).toBe(7);
     expect(holderOut.text()).toBe("first line\nsecond line\n");
-    // The holder emits no advisory of its own; the waiter emits exactly one waiting line and then
-    // replays the holder's recorded stderr byte-for-byte.
+    // The holder emits no advisory of its own, and neither does a routine wait ((a14) Q3): the
+    // waiter's stderr is exactly the holder's recorded stderr, byte for byte.
     expect(holderErr.text()).toBe("advisory line\n");
     expect(waiterOut.text()).toBe("first line\nsecond line\n");
-    expect(waiterErr.lines().filter((line) => line.includes("waiting for another lore check/sync run"))).toHaveLength(
-      1,
-    );
+    expect(waiterErr.text()).toBe("advisory line\n");
     expect(waiterErr.text().endsWith("advisory line\n")).toBe(true);
   });
 
@@ -365,7 +367,9 @@ describe("sync reuses the COMPUTATION and applies it to the waiter's own checkou
       sleep: yieldTurn,
       run: async (stdout, _stderr, recordPlan) => {
         computes += 1;
-        recordPlan({ writes: [{ path: "index.md", after: "# Docs\n\nRewritten.\n" }] });
+        recordPlan({
+          writes: [{ path: "index.md", after: "# Docs\n\nRewritten.\n", beforeDigest: ROOT_INDEX_DIGEST }],
+        });
         entered.resolve();
         await release.promise;
         writeFileSync(join(main, "docs", "index.md"), "# Docs\n\nRewritten.\n");
@@ -386,7 +390,7 @@ describe("sync reuses the COMPUTATION and applies it to the waiter's own checkou
       sleep: yieldTurn,
       applyPlan: async (plan) => {
         applied += 1;
-        await applySyncWritePlan(worktree, plan);
+        return applySyncWritePlan(worktree, plan);
       },
       run: async () => {
         computes += 1;
@@ -402,6 +406,170 @@ describe("sync reuses the COMPUTATION and applies it to the waiter's own checkou
     expect(waiterCode).toBe(0);
     expect(waiterOut.text()).toBe("updated docs/index.md\n");
     expect(readFileSync(join(worktree, "docs", "index.md"), "utf8")).toBe("# Docs\n\nRewritten.\n");
+  });
+});
+
+/**
+ * A holder in `holderRoot` that plans one `docs/index.md` write, parks until `release`, then applies
+ * it; and a waiter in `waiterRoot` that reuses it through the REAL {@link applySyncWritePlan}.
+ */
+async function holderAndWaiter(
+  holderRoot: string,
+  waiterRoot: string,
+  duringWait: () => void,
+  streams?: { holder?: Writer; waiter?: Writer; holderErr?: Writer; waiterErr?: Writer },
+): Promise<{ computes: number; waiterCode: number }> {
+  const { now } = clockFrom();
+  const entered = deferred<void>();
+  const release = deferred<void>();
+  let computes = 0;
+  const holder = runLockedCommand<SyncWritePlan>({
+    root: holderRoot,
+    command: "sync",
+    args: [],
+    output: PLAIN,
+    stdout: streams?.holder ?? sink().writer,
+    stderr: streams?.holderErr ?? sink().writer,
+    reusable: true,
+    now,
+    sleep: yieldTurn,
+    run: async (stdout, stderr, recordPlan) => {
+      computes += 1;
+      recordPlan({ writes: [{ path: "index.md", after: REWRITTEN_INDEX, beforeDigest: ROOT_INDEX_DIGEST }] });
+      entered.resolve();
+      await release.promise;
+      writeFileSync(join(holderRoot, "docs", "index.md"), REWRITTEN_INDEX);
+      stderr.write("advisory first\n");
+      stdout.write("updated docs/index.md\n");
+      stderr.write("advisory last\n");
+      return 0;
+    },
+  });
+  await entered.promise;
+  const waiter = runLockedCommand<SyncWritePlan>({
+    root: waiterRoot,
+    command: "sync",
+    args: [],
+    output: PLAIN,
+    stdout: streams?.waiter ?? sink().writer,
+    stderr: streams?.waiterErr ?? sink().writer,
+    reusable: true,
+    now,
+    sleep: yieldTurn,
+    applyPlan: (plan) => applySyncWritePlan(waiterRoot, plan),
+    run: async (stdout) => {
+      computes += 1;
+      stdout.write("recomputed\n");
+      return 0;
+    },
+  });
+  duringWait();
+  release.resolve();
+  const [, waiterCode] = await Promise.all([holder, waiter]);
+  return { computes, waiterCode };
+}
+
+describe("a reused sync plan is applied under the lock and only over what the holder planned against (DEC-282 (a14) Q1)", () => {
+  test("a SAME-worktree sync waiter reuses (computes === 1): the holder's writes are already there", async () => {
+    gitRepoWithDocs(root);
+    const { computes, waiterCode } = await holderAndWaiter(root, root, () => {});
+    expect(computes).toBe(1);
+    expect(waiterCode).toBe(0);
+    expect(readFileSync(join(root, "docs", "index.md"), "utf8")).toBe(REWRITTEN_INDEX);
+  });
+
+  test("an edit made to a plan file DURING the wait survives: reuse is abandoned and the waiter recomputes", async () => {
+    const main = join(root, "main");
+    gitRepoWithDocs(main);
+    const worktree = join(root, "wt");
+    expect(git(main, "worktree", "add", "--detach", worktree, "HEAD").exitCode).toBe(0);
+    const edited = "# Docs\n\nA human edit made while the holder was running.\n";
+    const out = sink();
+    const { computes } = await holderAndWaiter(
+      main,
+      worktree,
+      () => writeFileSync(join(worktree, "docs", "index.md"), edited),
+      { waiter: out.writer },
+    );
+    expect(computes).toBe(2); // the plan was refused, so the waiter ran its own computation
+    expect(out.text()).toBe("recomputed\n"); // ... and replayed nothing of the holder's
+    expect(readFileSync(join(worktree, "docs", "index.md"), "utf8")).toBe(edited);
+  });
+
+  test("a clean ANOTHER-worktree waiter still takes the plan (the control for the refusal above)", async () => {
+    const main = join(root, "main");
+    gitRepoWithDocs(main);
+    const worktree = join(root, "wt");
+    expect(git(main, "worktree", "add", "--detach", worktree, "HEAD").exitCode).toBe(0);
+    const { computes } = await holderAndWaiter(main, worktree, () => {});
+    expect(computes).toBe(1);
+    expect(readFileSync(join(worktree, "docs", "index.md"), "utf8")).toBe(REWRITTEN_INDEX);
+  });
+});
+
+describe("a replay interleaves stdout and stderr exactly as the holder wrote them (round-2 finding 3)", () => {
+  test("under one combined sink the waiter's order equals the holder's", async () => {
+    gitRepoWithDocs(root);
+    const holderLog: string[] = [];
+    const waiterLog: string[] = [];
+    const tag = (log: string[], stream: string): Writer => ({ write: (chunk) => void log.push(`${stream}:${chunk}`) });
+    await holderAndWaiter(root, root, () => {}, {
+      holder: tag(holderLog, "out"),
+      holderErr: tag(holderLog, "err"),
+      waiter: tag(waiterLog, "out"),
+      waiterErr: tag(waiterLog, "err"),
+    });
+    expect(holderLog).toEqual(["err:advisory first\n", "out:updated docs/index.md\n", "err:advisory last\n"]);
+    expect(waiterLog).toEqual(holderLog);
+  });
+});
+
+describe("a failure to find the common dir INSIDE a repository is not silent (round-2 finding 4)", () => {
+  const failing = (stderr: string) => (): { ok: false; stdout: string; stderr: string } => ({
+    ok: false,
+    stdout: "",
+    stderr,
+  });
+
+  test("a safe.directory refusal writes the one unlocked line and still runs the command", async () => {
+    const err = sink();
+    let ran = 0;
+    const code = await runLockedCommand({
+      root,
+      command: "check",
+      args: [],
+      output: PLAIN,
+      stdout: sink().writer,
+      stderr: err.writer,
+      reusable: true,
+      git: failing("fatal: detected dubious ownership in repository at '/x'"),
+      run: () => {
+        ran += 1;
+        return 3;
+      },
+    });
+    expect(code).toBe(3);
+    expect(ran).toBe(1);
+    expect(err.lines()).toHaveLength(1);
+    expect(err.text()).toContain("dubious ownership");
+    expect(err.text()).toContain("running unlocked");
+  });
+
+  test("'not a git repository' stays silent", async () => {
+    const err = sink();
+    const code = await runLockedCommand({
+      root,
+      command: "check",
+      args: [],
+      output: PLAIN,
+      stdout: sink().writer,
+      stderr: err.writer,
+      reusable: true,
+      git: failing("fatal: not a git repository (or any of the parent directories): .git"),
+      run: () => 0,
+    });
+    expect(code).toBe(0);
+    expect(err.text()).toBe("");
   });
 });
 
