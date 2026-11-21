@@ -59,7 +59,7 @@ permissions:
   contents: read
 
 env:
-  # LCLI-784, DEC-55 (ODOC-556, the 0.15.0 pair cut). The opum-ai/quest-cli commit that carries the
+  # LCLI-784, DEC-55 (ODOC-556, the 0.15.1 pair cut). The opum-ai/quest-cli commit that carries the
   # Quest version CLAUDE.md's managed block declares, read by .github/actions/setup-quest ONLY when
   # that version is neither on npm nor staged as a release candidate.
   #
@@ -76,9 +76,9 @@ env:
   # carry the declared version, and setup-quest asserts the built quest reports it, so a ref that
   # does not fails loudly as a ref problem.
   #
-  # It names quest-cli's main f86d343c, whose package.json reads 0.15.0 (verified against the remote
+  # It names quest-cli's dev squash 7f6ab548 (#782), whose package.json reads 0.15.1 (verified against the remote
   # before it was written here: a composed 40-hex id answers like a real one from every query).
-  QUEST_SOURCE_REF: f86d343cde21ca36641b554f65bfcb2add761e41
+  QUEST_SOURCE_REF: 7f6ab5480eb37571d419d3f6e447f102d5c2e13e
 
 jobs:
   setup:
