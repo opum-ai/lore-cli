@@ -961,12 +961,15 @@ step "lore check: clean again after healing" 0 -- lore check
 sed -i 's/In Progress/CORRUPTED-STATUS/' "$STORY_PATH" || true
 # DEC-282 item 3 (LCLI-793): drift confined to a lore:tasks block is a WARNING by default (exit 0)
 # and gates only under --strict (exit 6); every other drift stays an error in both modes.
-step "lore check: managed-block BODY drift is a warning by default (distinct from frontmatter status drift)" 0 \
-  -- lore check
+step_json "lore check: managed-block BODY drift is a warning by default (exit 0, finding present)" \
+  '.data.errorCount == 0 and any(.data.findings[]; .rule == "managed-block-drift" and .severity == "warning")' \
+  -- lore check --json
 step "lore check --strict: the same managed-block BODY drift gates" 6 \
   -- lore check --strict
 step "lore sync: heals the managed-block body drift" 0 -- lore sync "$STORY_ID"
-step "lore check: clean again after healing the block-body drift" 0 -- lore check
+step_json "lore check: clean again after healing the block-body drift" \
+  '[.data.findings[] | select(.rule == "managed-block-drift")] | length == 0' \
+  -- lore check --json
 
 # ── Phase 9b: check --json F2 dual-stream (validation half), --external, multi-root (LORE-66 AC3/AC4) ──
 # AC3: the F2 dual-stream shape (check.report on stdout PLUS an ErrorEnvelope on stderr, src/commands/
