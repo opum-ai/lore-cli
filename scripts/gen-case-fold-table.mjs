@@ -40,11 +40,6 @@
 // REPRODUCIBILITY: unicode-case-folding@1.1.1 tarball shasum 644d22adc0eb8ff806d6e34640f2ce6241853fcd,
 // integrity sha512-ZAYziAnMTBisO2dT5tyGvBFMNsIfonOS/BZTd3UZaKWtXMOZqK8s8HRUCrlKxGCTeCxCuCjS/6HW+4a6G+rbzw==.
 // Assert the bytes you run against by checking that shasum before trusting the output.
-//
-// Beyond the table, every mode prints the RUNNING engine's lowercase-mapping digest and its
-// `process.versions.icu`/`process.versions.unicode`. The table is a delta against that fallback, so
-// regenerating on a different ICU can change the fallback; the digest is pinned per OS by
-// test/lcli791-quest-rollup.test.ts, and a differing per-OS value is reported, never resolved here.
 
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -124,38 +119,6 @@ function sha256(text) {
   return createHash("sha256").update(text).digest("hex");
 }
 
-/**
- * sha256 of the UTF-8 encoding of the concatenation, in ascending code-point order, of
- * `String.fromCodePoint(cp).toLowerCase()` for cp = U+0000..U+10FFFF.
- *
- * This pins the RUNNING engine's lowercase mapping -- the fallback `referenceKey` uses for every code
- * point absent from the table -- which can move with the platform's ICU/Unicode version even though
- * the table itself is fixed. Unpaired surrogates (U+D800..U+DFFF) are lone surrogates in the JS
- * string, and UTF-8 encoding maps each to U+FFFD, so all 2048 of them contribute the same three
- * bytes; that is deliberate, and it is what makes the digest well-defined on every platform.
- *
- * test/lcli791-quest-rollup.test.ts computes this SAME digest and pins it on every CI OS. Keep the
- * two definitions byte-for-byte identical.
- */
-function lowercaseDigest() {
-  const parts = [];
-  for (let codePoint = 0; codePoint <= 0x10ffff; codePoint++) {
-    parts.push(String.fromCodePoint(codePoint).toLowerCase());
-  }
-  return sha256(parts.join(""));
-}
-
-/** The engine identity and lowercase digest, printed with every mode so a regenerated table's provenance is visible. */
-function runtimeSummary() {
-  const runtime = process.versions.bun === undefined ? `node ${process.version}` : `bun ${process.versions.bun}`;
-  return (
-    `lowercase digest: ${lowercaseDigest()}\n` +
-    `icu: ${process.versions.icu ?? "(unreported)"}\n` +
-    `unicode: ${process.versions.unicode ?? "(unreported)"}\n` +
-    `runtime: ${runtime}\n`
-  );
-}
-
 function argument(args, name) {
   const index = args.indexOf(name);
   if (index === -1) return undefined;
@@ -175,7 +138,7 @@ function main() {
   const tsPath = argument(args, "--ts");
 
   if (tsPath === undefined) {
-    process.stdout.write(`${block}\n\n// entries: ${entries.length}\n// sha256: ${digest}\n` + runtimeSummary());
+    process.stdout.write(`${block}\n\n// entries: ${entries.length}\n// sha256: ${digest}\n`);
     return;
   }
 
@@ -187,7 +150,7 @@ function main() {
 
   if (args.includes("--write")) {
     writeFileSync(tsPath, committed.source.slice(0, committed.start) + block + committed.source.slice(committed.end));
-    process.stdout.write(`wrote ${entries.length} entries (sha256 ${digest}) to ${tsPath}\n` + runtimeSummary());
+    process.stdout.write(`wrote ${entries.length} entries (sha256 ${digest}) to ${tsPath}\n`);
     return;
   }
 
@@ -201,7 +164,6 @@ function main() {
     process.exitCode = 1;
     process.stdout.write("the committed table disagrees with unicode-case-folding; re-run with --write\n");
   }
-  process.stdout.write(runtimeSummary());
 }
 
 main();
