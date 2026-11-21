@@ -274,10 +274,21 @@ export function resolveGitCommonDir(root: string, git: GitRunner = realGitRunner
   return canonicalPath(isAbsolute(dir) ? resolve(dir) : resolve(root, dir));
 }
 
-/** `realpathSync`, falling back to the input when the path does not exist (or is unreadable). */
+/**
+ * `realpathSync.native`, falling back to the input when the path does not exist (or is unreadable).
+ *
+ * `native` is load-bearing on Windows. `git rev-parse --git-common-dir` can hand back the SAME
+ * directory under two spellings — an 8.3 short name (`C:\Users\RUNNER~1\…`) from one worktree and
+ * the long name (`C:\Users\runneradmin\…`) from another. The JS `realpathSync` leaves the short
+ * spelling alone, so the two worktrees would compute different lock keys and take different locks,
+ * which is exactly what the clone-wide lock exists to prevent (LCLI-792's CI run found it).
+ * `realpathSync.native` uses the OS's own realpath (`GetFinalPathNameByHandle` on Windows) and
+ * expands the short name, so both spellings canonicalize to one key. On error the unresolved path
+ * is returned rather than a second, differently-canonicalized spelling.
+ */
 function canonicalPath(path: string): string {
   try {
-    return realpathSync(path);
+    return typeof realpathSync.native === "function" ? realpathSync.native(path) : realpathSync(path);
   } catch {
     return path;
   }

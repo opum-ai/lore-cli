@@ -59,6 +59,13 @@ import {
   withAdvisoryResult,
 } from "../src/core/advisory-lock";
 
+/**
+ * The module under test as a `file://` URL — the specifier a spawned Bun child imports on EVERY
+ * platform. A URL's `pathname` is `/D:/…/advisory-lock.ts` on Windows, an absolute POSIX path that
+ * does not exist there, so a child script importing the pathname exits 1 before running a line.
+ */
+const MODULE_URL = new URL("../src/core/advisory-lock.ts", import.meta.url).href;
+
 let root: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "lore-792-lock-"));
@@ -104,6 +111,11 @@ function clockFrom(start = 1_000_000) {
 
 /** Give other microtasks/timers a turn without burning a real poll interval. */
 const yieldTurn = () => new Promise<void>((done) => setTimeout(done, 0));
+
+/** Read a piped child stream to EOF; empty when the spawn did not pipe it. */
+async function drain(stream: ReadableStream<Uint8Array> | undefined): Promise<string> {
+  return stream === undefined ? "" : await new Response(stream).text();
+}
 
 const VALID_IDENTITY = (pid: number) => `pid:${pid}:started:1`;
 
@@ -159,12 +171,91 @@ describe("the lock lives in the git COMMON dir, so worktrees share it", () => {
     const commonMain = resolveGitCommonDir(main);
     const commonWorktree = resolveGitCommonDir(worktree);
     expect(commonMain).not.toBeNull();
+    // The canonical key: two spellings that reach ONE common dir must be one string, or the two
+    // worktrees take two different locks (the windows-latest 8.3-short-name defect below).
     expect(commonWorktree).toBe(commonMain);
     const lock = advisoryLockPath(commonMain as string, "check-sync");
+    // Positive control: the lock IS under the one shared common dir.
     expect(lock.startsWith(advisoryDir(commonMain as string))).toBe(true);
-    expect(lock.startsWith(main)).toBe(false);
+    // The intent: the lock is NOT inside the linked worktree. The first version of this test also
+    // asserted `!lock.startsWith(main)`, which is false BY DESIGN — the shared common dir is
+    // main/.git — and so failed on every platform.
     expect(lock.startsWith(worktree)).toBe(false);
   });
+
+  test("win32: an 8.3 short name and the long name of ONE common dir canonicalize to one key", async () => {
+    // The windows-latest failure: `git rev-parse --git-common-dir` reported
+    // `C:\Users\RUNNER~1\…\main\.git` from the main checkout and
+    // `C:\Users\runneradmin\…\main\.git` from the linked worktree. Windows' JS `realpathSync`
+    // leaves the short name alone; only `realpathSync.native` expands it, so the two worktrees
+    // took different locks. Emulated with a Bun preload that replaces `fs.realpathSync` with one
+    // that returns its input and gives it a `.native` that maps the short segment to the long one
+    // — the measured Windows behaviour, not a guess. Run against the pre-fix source the two
+    // results DIFFER (red); with the fix they are one string.
+    const shortRoot = join(root, "RUNNER~1", "main");
+    const longRoot = join(root, "runneradmin", "main");
+    const brokenRoot = join(root, "BROKEN", "main");
+    for (const dir of [shortRoot, longRoot, brokenRoot]) mkdirSync(dir, { recursive: true });
+    const shortDir = join(shortRoot, "shared");
+    const longDir = join(longRoot, "shared");
+    const brokenDir = join(brokenRoot, "shared");
+
+    const preload = join(root, "fake-win32-fs.ts");
+    writeFileSync(
+      preload,
+      [
+        `const fs = require("node:fs");`,
+        `const short = process.env.LORE_FAKE_8_3_SHORT ?? "";`,
+        `const long = process.env.LORE_FAKE_8_3_LONG ?? "";`,
+        "const jsRealpath = (p) => p;",
+        "jsRealpath.native = (p) => {",
+        `  if (p.includes("BROKEN")) throw new Error("EACCES: emulated unopenable handle");`,
+        `  return short !== "" && p.includes(short) ? p.split(short).join(long) : p;`,
+        "};",
+        "fs.realpathSync = jsRealpath;",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const probe = join(root, "win32-probe.ts");
+    writeFileSync(
+      probe,
+      [
+        `import { resolveGitCommonDir } from ${JSON.stringify(MODULE_URL)};`,
+        "const [, , shortRoot, shortDir, longRoot, longDir, brokenRoot, brokenDir] = process.argv;",
+        "const run = (dir) => () => ({ ok: true, stdout: dir + '\\n' });",
+        "process.stdout.write(JSON.stringify({",
+        "  a: resolveGitCommonDir(shortRoot, run(shortDir)),",
+        "  b: resolveGitCommonDir(longRoot, run(longDir)),",
+        "  fallback: resolveGitCommonDir(brokenRoot, run(brokenDir)),",
+        "}));",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const child = Bun.spawn(
+      [process.execPath, "--preload", preload, probe, shortRoot, shortDir, longRoot, longDir, brokenRoot, brokenDir],
+      {
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...process.env, LORE_FAKE_8_3_SHORT: "RUNNER~1", LORE_FAKE_8_3_LONG: "runneradmin" },
+      },
+    );
+    const [code, stdout, stderr] = await Promise.all([child.exited, drain(child.stdout), drain(child.stderr)]);
+    if (code !== 0) throw new Error(`win32 probe exited ${code}; stderr: ${stderr}`);
+    const { a, b, fallback } = JSON.parse(stdout) as {
+      a: string | null;
+      b: string | null;
+      fallback: string | null;
+    };
+    expect(a).not.toBeNull();
+    expect(a).toBe(join(longRoot, "shared"));
+    expect(b).toBe(a);
+    // The documented fallback: a native realpath that cannot resolve leaves the path unresolved,
+    // rather than throwing or returning a second spelling.
+    expect(fallback).toBe(brokenDir);
+  }, 20_000);
 
   test("a non-repository root has no common dir (callers then run unlocked)", () => {
     expect(resolveGitCommonDir(root)).toBeNull();
@@ -1015,7 +1106,17 @@ describe("abandonment residue is swept, not accumulated (F7)", () => {
 });
 
 describe("real processes (F8)", () => {
-  const modulePath = new URL("../src/core/advisory-lock.ts", import.meta.url).pathname;
+  test("the child import specifier is a file: URL, not a pathname a Windows host cannot import", () => {
+    // THE WINDOWS DEFECT these children hit: `new URL(..., import.meta.url).pathname` of a file URL
+    // is `/D:/a/lore-cli/src/core/advisory-lock.ts` on Windows — a path with a leading slash and a
+    // drive letter, which Bun resolves against the CURRENT DRIVE, finds nothing at, and the child
+    // exits 1 before running a line (both F8 tests failed that way). `.href` keeps the `file:`
+    // scheme on every platform. Reverting MODULE_URL to `.pathname` reds this on macOS too.
+    expect(MODULE_URL.startsWith("file:")).toBe(true);
+    const windows = new URL("file:///D:/a/lore-cli/src/core/advisory-lock.ts");
+    expect(windows.pathname).toBe("/D:/a/lore-cli/src/core/advisory-lock.ts");
+    expect(windows.href).toBe("file:///D:/a/lore-cli/src/core/advisory-lock.ts");
+  });
 
   test("two real processes never hold the lock at once", async () => {
     const log = join(root, "events.log");
@@ -1024,7 +1125,7 @@ describe("real processes (F8)", () => {
       script,
       [
         `import { appendFileSync } from "node:fs";`,
-        `import { withAdvisoryResult } from ${JSON.stringify(modulePath)};`,
+        `import { withAdvisoryResult } from ${JSON.stringify(MODULE_URL)};`,
         "const [commonDir, logPath] = process.argv.slice(2);",
         "await withAdvisoryResult({",
         "  commonDir, lockName: 'probe', resultName: 'probe', inputHash: null, reusable: false,",
@@ -1043,7 +1144,17 @@ describe("real processes (F8)", () => {
     const spawnChild = () => Bun.spawn([process.execPath, script, root, log], { stdout: "pipe", stderr: "pipe" });
     const first = spawnChild();
     const second = spawnChild();
-    const [a, b] = await Promise.all([first.exited, second.exited]);
+    // Drain every stream alongside `exited`; a child that dies before running a line reports why on
+    // stderr, and without this the assertion said only "expected 0, received 1".
+    const [[a, aOut, aErr], [b, bOut, bErr]] = await Promise.all([
+      Promise.all([first.exited, drain(first.stdout), drain(first.stderr)]),
+      Promise.all([second.exited, drain(second.stdout), drain(second.stderr)]),
+    ]);
+    if (a !== 0 || b !== 0) {
+      throw new Error(
+        `children exited ${a}/${b}; first stdout: ${JSON.stringify(aOut)}; first stderr: ${JSON.stringify(aErr)}; second stdout: ${JSON.stringify(bOut)}; second stderr: ${JSON.stringify(bErr)}`,
+      );
+    }
     expect(a).toBe(0);
     expect(b).toBe(0);
     const events = readFileSync(log, "utf8").trim().split("\n");
@@ -1055,7 +1166,7 @@ describe("real processes (F8)", () => {
     writeFileSync(
       script,
       [
-        `import { withAdvisoryResult } from ${JSON.stringify(modulePath)};`,
+        `import { withAdvisoryResult } from ${JSON.stringify(MODULE_URL)};`,
         "const commonDir = process.argv[2];",
         "await withAdvisoryResult({",
         "  commonDir, lockName: 'probe', resultName: 'probe', inputHash: null, reusable: false,",
@@ -1078,13 +1189,19 @@ describe("real processes (F8)", () => {
     while (!output.includes("held")) {
       if (Date.now() > readyBy) {
         child.kill(9);
-        throw new Error("child never printed held");
+        throw new Error(`child never printed held; stderr: ${await drain(child.stderr)}`);
       }
       const { value, done } = await reader.read();
       if (done) break;
       output += decoder.decode(value, { stream: true });
     }
     reader.releaseLock();
+    // A child that died before printing "held" leaves its reason on stderr; name it.
+    if (!output.includes("held")) {
+      throw new Error(
+        `child exited without printing held (stdout ${JSON.stringify(output)}); stderr: ${await drain(child.stderr)}`,
+      );
+    }
     expect(output).toContain("held");
 
     const lockPath = advisoryLockPath(root, "probe");
