@@ -1,26 +1,55 @@
 /**
- * LCLI-792 (DEC-282 item 2): the clone-wide advisory lock in `core/advisory-lock.ts`.
+ * LCLI-792 (DEC-282 items 1-4, (a7) and (a8)): the clone-wide advisory lock in
+ * `core/advisory-lock.ts`.
  *
- * Every test here is about the MECHANISM, not wall time:
- * - the lock lives in the git COMMON dir, so a main checkout and a linked worktree share it;
- * - two concurrent callers with the same tree hash produce ONE compute and ONE reuse;
- * - a changed tree hash does not reuse;
- * - a stale holder (dead pid, or a stale heartbeat) is recovered rather than hanging;
- * - a live-but-wedged holder is bounded by the hard maximum wait;
- * - `commandInputHash` changes when any input that decides a check/sync result changes.
+ * Every test here is about the MECHANISM, not wall time: the lock lives in the git COMMON dir; two
+ * concurrent callers with the same tree hash produce ONE compute and ONE reuse; a stale holder is
+ * recovered and a same-host live one never is; recovery is serialised through an exclusive
+ * `<lock>.break`; a broken mechanism or an expired wait runs unlocked with exactly one advisory
+ * line; and the hash changes with every input that decides a check/sync result.
  *
- * No test sleeps on a real bound: the clock and the sleep seam are injected, so the recovery
- * numbers are asserted as behaviour rather than waited out.
+ * The clock, the wait deadline (a separate monotonic seam) and the sleep are injected, so recovery
+ * numbers are asserted as behaviour without waiting them out — except the two tests that
+ * deliberately use REAL child processes (exclusion, and a real `kill -9`).
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
+import { BACKLOG_TIMEOUT_ENV_VAR } from "../src/adapters/backlog";
 import {
+  QUEST_ACCOUNTABLE_HUMAN_ENV_VAR,
+  QUEST_ACTOR_ENV_VAR,
+  QUEST_ACTOR_KIND_ENV_VAR,
+  QUEST_TIMEOUT_ENV_VAR,
+} from "../src/adapters/quest";
+import {
+  ADVISORY_BACKLOG_TIMEOUT_ENV,
+  ADVISORY_BOUNDS,
+  ADVISORY_BREAK_STALE_MS,
+  ADVISORY_ENV_INPUTS,
   ADVISORY_HEARTBEAT_MS,
   ADVISORY_MAX_WAIT_MS,
+  ADVISORY_PID_GONE_FLOOR_MS,
   ADVISORY_POLL_MS,
+  ADVISORY_QUEST_ACCOUNTABLE_HUMAN_ENV,
+  ADVISORY_QUEST_ACTOR_ENV,
+  ADVISORY_QUEST_ACTOR_KIND_ENV,
+  ADVISORY_QUEST_TIMEOUT_ENV,
   ADVISORY_STALE_MS,
+  ADVISORY_WAIT_MARGIN_MS,
+  type AdvisoryNotice,
+  advisoryBreakPath,
   advisoryDir,
   advisoryLockPath,
   advisoryResultPath,
@@ -76,11 +105,46 @@ function clockFrom(start = 1_000_000) {
 /** Give other microtasks/timers a turn without burning a real poll interval. */
 const yieldTurn = () => new Promise<void>((done) => setTimeout(done, 0));
 
-describe("the bounds are explicit and coherent", () => {
-  test("recovery numbers: poll < heartbeat < stale < max wait", () => {
+const VALID_IDENTITY = (pid: number) => `pid:${pid}:started:1`;
+
+function seedLock(record: Record<string, unknown>): string {
+  const dir = advisoryDir(root);
+  mkdirSync(dir, { recursive: true });
+  const path = advisoryLockPath(root, "check-sync");
+  writeFileSync(path, JSON.stringify(record));
+  return path;
+}
+
+/** A well-formed same-host record with the given overrides. */
+function lockRecord(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    schema: 1,
+    owner: "seeded-owner",
+    pid: process.pid,
+    hostname: hostname(),
+    processStartIdentity: VALID_IDENTITY(process.pid),
+    acquiredAt: 1_000_000,
+    updatedAt: 1_000_000,
+    ...over,
+  };
+}
+
+/** The shared lock/result names for this file; `root` is assigned per test, so it must be lazy. */
+const reader = () => ({ commonDir: root, lockName: "check-sync", resultName: "check" }) as const;
+
+describe("the bounds are explicit and coherent (DEC-282 (a8))", () => {
+  test("poll < heartbeat < break-stale < pid-floor < stale < max wait", () => {
     expect(ADVISORY_POLL_MS).toBeLessThan(ADVISORY_HEARTBEAT_MS);
-    expect(ADVISORY_HEARTBEAT_MS).toBeLessThan(ADVISORY_STALE_MS);
+    expect(ADVISORY_HEARTBEAT_MS).toBeLessThan(ADVISORY_BREAK_STALE_MS);
+    expect(ADVISORY_BREAK_STALE_MS).toBeLessThan(ADVISORY_PID_GONE_FLOOR_MS);
+    expect(ADVISORY_PID_GONE_FLOOR_MS).toBeLessThan(ADVISORY_STALE_MS);
     expect(ADVISORY_STALE_MS).toBeLessThan(ADVISORY_MAX_WAIT_MS);
+  });
+
+  test("the wait is sized PAST the stale backstop by the documented margin, not a short cap", () => {
+    expect(ADVISORY_MAX_WAIT_MS).toBe(ADVISORY_STALE_MS + ADVISORY_WAIT_MARGIN_MS);
+    expect(ADVISORY_WAIT_MARGIN_MS).toBeGreaterThan(0);
+    expect(ADVISORY_BOUNDS.maxWaitMs).toBe(ADVISORY_MAX_WAIT_MS);
   });
 });
 
@@ -96,7 +160,6 @@ describe("the lock lives in the git COMMON dir, so worktrees share it", () => {
     const commonWorktree = resolveGitCommonDir(worktree);
     expect(commonMain).not.toBeNull();
     expect(commonWorktree).toBe(commonMain);
-    // The lock is under the COMMON dir, not under either checkout.
     const lock = advisoryLockPath(commonMain as string, "check-sync");
     expect(lock.startsWith(advisoryDir(commonMain as string))).toBe(true);
     expect(lock.startsWith(main)).toBe(false);
@@ -166,9 +229,7 @@ describe("a concurrent waiter reuses a finished result; a changed input does not
     const release = deferred<void>();
     let computes = 0;
     const base = {
-      commonDir: root,
-      lockName: "check-sync",
-      resultName: "check",
+      ...reader(),
       reusable: true,
       now: shared.now,
       sleep: yieldTurn,
@@ -219,11 +280,8 @@ describe("a concurrent waiter reuses a finished result; a changed input does not
   });
 
   test("a result slot whose hash matches but which finished BEFORE the caller started is not reused", async () => {
-    // Sequential, not concurrent: the caller is not a waiter, so it must recompute.
     const first = await withAdvisoryResult({
-      commonDir: root,
-      lockName: "check-sync",
-      resultName: "check",
+      ...reader(),
       inputHash: "hash-a",
       reusable: true,
       compute: () => "first",
@@ -231,9 +289,7 @@ describe("a concurrent waiter reuses a finished result; a changed input does not
     expect(first.reused).toBe(false);
     let secondComputes = 0;
     const second = await withAdvisoryResult({
-      commonDir: root,
-      lockName: "check-sync",
-      resultName: "check",
+      ...reader(),
       inputHash: "hash-a",
       reusable: true,
       compute: () => {
@@ -247,19 +303,10 @@ describe("a concurrent waiter reuses a finished result; a changed input does not
   });
 
   test("reusable:false still takes the lock but never reads or writes a result slot", async () => {
-    const first = await withAdvisoryResult({
-      commonDir: root,
-      lockName: "check-sync",
-      resultName: "check",
-      inputHash: "hash-a",
-      reusable: false,
-      compute: () => "one",
-    });
+    const first = await withAdvisoryResult({ ...reader(), inputHash: "hash-a", reusable: false, compute: () => "one" });
     expect(first.value).toBe("one");
     const second = await withAdvisoryResult({
-      commonDir: root,
-      lockName: "check-sync",
-      resultName: "check",
+      ...reader(),
       inputHash: "hash-a",
       reusable: false,
       compute: () => "two",
@@ -269,35 +316,21 @@ describe("a concurrent waiter reuses a finished result; a changed input does not
   });
 });
 
-describe("a stale holder never blocks a waiter forever", () => {
-  function writeLock(record: Record<string, unknown>): string {
-    const dir = advisoryDir(root);
-    mkdirSync(dir, { recursive: true });
-    const path = advisoryLockPath(root, "check-sync");
-    writeFileSync(path, JSON.stringify(record));
-    return path;
-  }
-
-  const validIdentity = (pid: number) => `pid:${pid}:started:1`;
-
-  test("a dead pid is recovered on the next poll", async () => {
+describe("stale-holder recovery (F2, DEC-282 (a8))", () => {
+  test("a same-host pid that is gone is recovered once past the dead-pid floor", async () => {
     const deadPid = 2_147_483_000;
-    writeLock({
-      schema: 1,
-      owner: "dead",
-      pid: deadPid,
-      hostname: hostname(),
-      processStartIdentity: validIdentity(deadPid),
-      acquiredAt: 1_000_000,
-      updatedAt: 1_000_000,
-    });
+    seedLock(
+      lockRecord({
+        owner: "dead",
+        pid: deadPid,
+        processStartIdentity: VALID_IDENTITY(deadPid),
+        updatedAt: 1_000_000 - 60_000,
+      }),
+    );
     const outcome = await withAdvisoryResult({
-      commonDir: root,
-      lockName: "check-sync",
-      resultName: "check",
+      ...reader(),
       inputHash: "h",
       reusable: false,
-      // Proves the DEAD-PID branch, not the age branch: the heartbeat is fresh.
       now: () => 1_000_000,
       isProcessAlive: () => false,
       compute: () => "recovered",
@@ -307,23 +340,94 @@ describe("a stale holder never blocks a waiter forever", () => {
     expect(outcome.forced).toBe(false);
   });
 
-  test("a live pid with a stale heartbeat is recovered by the staleness bound", async () => {
-    writeLock({
-      schema: 1,
-      owner: "stale",
-      pid: process.pid,
-      hostname: hostname(),
-      processStartIdentity: validIdentity(process.pid),
-      acquiredAt: 0,
-      updatedAt: 0,
-    });
+  test("a dead pid inside the floor is treated as mid-write, not abandoned", async () => {
+    const deadPid = 2_147_483_000;
+    const path = seedLock(
+      lockRecord({
+        owner: "fresh-dead",
+        pid: deadPid,
+        processStartIdentity: VALID_IDENTITY(deadPid),
+        updatedAt: 1_000_000,
+      }),
+    );
     const outcome = await withAdvisoryResult({
-      commonDir: root,
-      lockName: "check-sync",
-      resultName: "check",
+      ...reader(),
       inputHash: "h",
       reusable: false,
-      now: () => ADVISORY_STALE_MS + 1,
+      now: () => 1_000_000,
+      isProcessAlive: () => false,
+      bounds: { maxWaitMs: 0 },
+      compute: () => "computed-unlocked",
+      sleep: yieldTurn,
+    });
+    expect(outcome.forced).toBe(true);
+    expect(JSON.parse(readFileSync(path, "utf8")).owner).toBe("fresh-dead");
+  });
+
+  test("a same-host LIVE pid is never stolen by age, however stale its heartbeat (F2)", async () => {
+    const path = seedLock(lockRecord({ owner: "live-but-starved", updatedAt: 1_000_000 - 10 * ADVISORY_STALE_MS }));
+    const notices: AdvisoryNotice[] = [];
+    const outcome = await withAdvisoryResult({
+      ...reader(),
+      inputHash: "h",
+      reusable: false,
+      now: () => 1_000_000,
+      isProcessAlive: () => true,
+      bounds: { maxWaitMs: 0 },
+      onNotice: (notice) => notices.push(notice),
+      compute: () => "computed-unlocked",
+      sleep: yieldTurn,
+    });
+    // It waited out the bound instead of stealing: forced, and the holder's file is untouched.
+    expect(outcome.forced).toBe(true);
+    expect(outcome.value).toBe("computed-unlocked");
+    expect(JSON.parse(readFileSync(path, "utf8")).owner).toBe("live-but-starved");
+    expect(notices.filter((notice) => notice.kind === "unlocked")).toHaveLength(1);
+  });
+
+  test("a heartbeat starved by a synchronous compute is not stolen, and a waiter still reuses the result", async () => {
+    const path = seedLock(lockRecord({ owner: "starved", updatedAt: 1_000_000 - 10 * ADVISORY_STALE_MS }));
+    const clock = clockFrom(1_000_000);
+    const finishedAfter = clock.value() + 10;
+    let computes = 0;
+    const waiter = withAdvisoryResult({
+      ...reader(),
+      inputHash: "h",
+      reusable: true,
+      now: clock.now,
+      isProcessAlive: () => true,
+      bounds: { maxWaitMs: 10_000 },
+      compute: () => {
+        computes += 1;
+        return "recomputed";
+      },
+      sleep: yieldTurn,
+    });
+    // The holder finishes while this caller is still waiting.
+    await yieldTurn();
+    await yieldTurn();
+    mkdirSync(advisoryDir(root), { recursive: true });
+    writeFileSync(
+      advisoryResultPath(root, "check"),
+      JSON.stringify({ schema: 1, inputHash: "h", finishedAt: finishedAfter, value: "holder-result" }),
+    );
+    const outcome = await waiter;
+    expect(computes).toBe(0);
+    expect(outcome.reused).toBe(true);
+    expect(outcome.value).toBe("holder-result");
+    // The starved holder's lock was never moved aside or replaced.
+    expect(JSON.parse(readFileSync(path, "utf8")).owner).toBe("starved");
+  });
+
+  test("a lock from ANOTHER host is recovered by age alone", async () => {
+    seedLock(
+      lockRecord({ owner: "other-host", hostname: "elsewhere.example", updatedAt: 1_000_000 - ADVISORY_STALE_MS - 1 }),
+    );
+    const outcome = await withAdvisoryResult({
+      ...reader(),
+      inputHash: "h",
+      reusable: false,
+      now: () => 1_000_000,
       isProcessAlive: () => true,
       compute: () => "recovered-by-age",
       sleep: yieldTurn,
@@ -332,24 +436,22 @@ describe("a stale holder never blocks a waiter forever", () => {
     expect(outcome.forced).toBe(false);
   });
 
-  test("a live, fresh, wedged holder is bounded by maxWaitMs instead of hanging", async () => {
-    writeLock({
-      schema: 1,
-      owner: "alive",
-      pid: process.pid,
-      hostname: hostname(),
-      processStartIdentity: validIdentity(process.pid),
-      acquiredAt: 0,
-      updatedAt: 1_000_000,
-    });
+  test("an unreadable lock is judged by its mtime against the dead-pid floor", () => {
+    mkdirSync(advisoryDir(root), { recursive: true });
+    const path = advisoryLockPath(root, "check-sync");
+    writeFileSync(path, "{not json");
+    const base = { hostname: hostname(), isAlive: () => true, staleMs: ADVISORY_STALE_MS };
+    expect(inspectLock(path, { ...base, now: Date.now() })).toBe("active");
+    expect(inspectLock(path, { ...base, now: Date.now() + ADVISORY_PID_GONE_FLOOR_MS + 1 })).toBe("stale");
+  });
+
+  test("a live, fresh, wedged holder is bounded by the wait bound instead of hanging", async () => {
+    seedLock(lockRecord({ owner: "alive", updatedAt: 1_000_000 }));
     let forcedComputes = 0;
     const outcome = await withAdvisoryResult({
-      commonDir: root,
-      lockName: "check-sync",
-      resultName: "check",
+      ...reader(),
       inputHash: "h",
       reusable: false,
-      // A clock that is already past any deadline, with zero patience.
       now: () => 1_000_000,
       isProcessAlive: () => true,
       bounds: { maxWaitMs: 0 },
@@ -364,17 +466,422 @@ describe("a stale holder never blocks a waiter forever", () => {
     expect(outcome.value).toBe("computed-unlocked");
   });
 
-  test("a corrupt lock file is judged by its mtime, so an old one is recovered", () => {
-    const dir = advisoryDir(root);
-    mkdirSync(dir, { recursive: true });
-    const path = advisoryLockPath(root, "check-sync");
-    writeFileSync(path, "{not json");
-    expect(inspectLock(path, { now: Date.now(), hostname: hostname(), isAlive: () => true, staleMs: 15_000 })).toBe(
-      "active",
-    );
+  test("a missing lock reports none", () => {
     expect(
-      inspectLock(path, { now: Date.now() + 20_000, hostname: hostname(), isAlive: () => true, staleMs: 15_000 }),
-    ).toBe("stale");
+      inspectLock(join(root, "nope.lock"), { now: 0, hostname: hostname(), isAlive: () => false, staleMs: 1 }),
+    ).toBe("none");
+  });
+});
+
+describe("breaking a stale lock is serialised (F1, ported from quest-cli#760)", () => {
+  test("two concurrent waiters recovering one stale lock still serialise", async () => {
+    seedLock(
+      lockRecord({
+        owner: "stale-holder",
+        pid: 999_999,
+        processStartIdentity: VALID_IDENTITY(999_999),
+        updatedAt: Date.now() - 60_000,
+      }),
+    );
+    let inside = 0;
+    let overlapped = false;
+    const run = () =>
+      withAdvisoryResult({
+        ...reader(),
+        inputHash: "h",
+        reusable: false,
+        isProcessAlive: (pid) => pid === process.pid,
+        bounds: { pollMs: 5, maxWaitMs: 5_000 },
+        sleep: (ms) => new Promise<void>((done) => setTimeout(done, Math.min(ms, 5))),
+        compute: async () => {
+          inside += 1;
+          if (inside > 1) overlapped = true;
+          await new Promise<void>((done) => setTimeout(done, 15));
+          inside -= 1;
+          return "done";
+        },
+      });
+    await Promise.all([run(), run()]);
+    expect(overlapped).toBe(false);
+  });
+
+  test("a lock replaced after the stale judgement is never removed, and no contender can create mid-recovery", async () => {
+    const frozenNow = 1_700_000_000_000;
+    const path = seedLock(
+      lockRecord({
+        owner: "judged-stale",
+        pid: 999_999,
+        processStartIdentity: VALID_IDENTITY(999_999),
+        updatedAt: frozenNow - 120_000,
+      }),
+    );
+    let midRecoveryCreateSucceeded = false;
+    let midRecoveryAttempts = 0;
+
+    const error = await withAdvisoryResult({
+      ...reader(),
+      inputHash: "h",
+      reusable: false,
+      isProcessAlive: (pid) => pid === process.pid,
+      now: () => frozenNow,
+      bounds: { staleMs: 600_000, pidGoneFloorMs: 30_000, pollMs: 5, maxWaitMs: 0 },
+      sleep: yieldTurn,
+      afterStaleJudgement: async () => {
+        // A competing breaker removes the judged-stale lock and a new holder acquires before this
+        // caller acts on its stale reading.
+        rmSync(path, { force: true });
+        writeFileSync(path, JSON.stringify(lockRecord({ owner: "contender", updatedAt: frozenNow })));
+      },
+      afterLockedReread: async () => {
+        // If recovery had emptied the path, a third contender would create here. In a correct
+        // recovery the path is still occupied by whatever the re-read matched.
+        midRecoveryAttempts += 1;
+        midRecoveryCreateSucceeded = true;
+      },
+      compute: () => "should-not-compute-under-a-live-contender",
+    });
+    // The contender is live, so this caller can only wait out the bound.
+    expect(error.forced).toBe(true);
+    expect(error.reused).toBe(false);
+    // The locked re-read never ran against a vanished path, and the contender's record survived.
+    expect(midRecoveryAttempts).toBe(0);
+    expect(midRecoveryCreateSucceeded).toBe(false);
+    expect(JSON.parse(readFileSync(path, "utf8")).owner).toBe("contender");
+  });
+
+  test("the locked re-read runs with the lock path still occupied", async () => {
+    const frozenNow = 1_700_000_000_000;
+    const path = seedLock(
+      lockRecord({
+        owner: "judged-stale",
+        pid: 999_999,
+        processStartIdentity: VALID_IDENTITY(999_999),
+        updatedAt: frozenNow - 120_000,
+      }),
+    );
+    let hookRuns = 0;
+    let probeSawEexist = false;
+    const outcome = await withAdvisoryResult({
+      ...reader(),
+      inputHash: "h",
+      reusable: false,
+      isProcessAlive: (pid) => pid === process.pid,
+      now: () => frozenNow,
+      bounds: { staleMs: 600_000, pidGoneFloorMs: 30_000, pollMs: 5, maxWaitMs: 1_000 },
+      sleep: yieldTurn,
+      afterLockedReread: () => {
+        hookRuns += 1;
+        // The judged lock must still occupy the path here: recovery removes it only after this.
+        try {
+          writeFileSync(path, "{third}", { flag: "wx" });
+        } catch (thrown) {
+          if ((thrown as { readonly code?: string }).code === "EEXIST") probeSawEexist = true;
+          else throw thrown;
+        }
+      },
+      compute: () => "recovered",
+    });
+    expect(outcome.value).toBe("recovered");
+    expect(hookRuns).toBe(1);
+    expect(probeSawEexist).toBe(true);
+  });
+});
+
+describe("the .break file cannot wedge recovery forever (N1, R3-2)", () => {
+  const frozenNow = 1_700_000_000_000;
+  const staleLock = () =>
+    seedLock(
+      lockRecord({
+        owner: "dead-holder",
+        pid: 999_999,
+        processStartIdentity: VALID_IDENTITY(999_999),
+        updatedAt: frozenNow - 120_000,
+      }),
+    );
+
+  function breakPathFor(): string {
+    return advisoryBreakPath(root, "check-sync");
+  }
+
+  /** Age a file 60 s back: the middle band for staleMs=120 s and breakStaleMs=10 s (R3-2). */
+  function backdateSixtySeconds(path: string): void {
+    const at = new Date(frozenNow - 60_000);
+    utimesSync(path, at, at);
+  }
+
+  const middleBandBounds = { staleMs: 120_000, breakStaleMs: 10_000, maxWaitMs: 0 };
+
+  test("the middle band: an UNREADABLE break file older than breakStaleMs but younger than staleMs is KEPT", async () => {
+    staleLock();
+    const breakPath = breakPathFor();
+    writeFileSync(breakPath, "");
+    backdateSixtySeconds(breakPath);
+    const outcome = await withAdvisoryResult({
+      ...reader(),
+      inputHash: "h",
+      reusable: false,
+      isProcessAlive: (pid) => pid === process.pid,
+      now: () => frozenNow,
+      bounds: middleBandBounds,
+      compute: () => "unlocked",
+      sleep: yieldTurn,
+    });
+    expect(outcome.forced).toBe(true);
+    expect(existsSync(breakPath)).toBe(true);
+  });
+
+  test("the middle band: a LIVE-PID break file older than breakStaleMs but younger than staleMs is KEPT", async () => {
+    staleLock();
+    const breakPath = breakPathFor();
+    writeFileSync(breakPath, JSON.stringify(lockRecord({ owner: "live-breaker", updatedAt: frozenNow - 60_000 })));
+    backdateSixtySeconds(breakPath);
+    const outcome = await withAdvisoryResult({
+      ...reader(),
+      inputHash: "h",
+      reusable: false,
+      isProcessAlive: (pid) => pid === process.pid,
+      now: () => frozenNow,
+      bounds: middleBandBounds,
+      compute: () => "unlocked",
+      sleep: yieldTurn,
+    });
+    expect(outcome.forced).toBe(true);
+    expect(existsSync(breakPath)).toBe(true);
+    expect(JSON.parse(readFileSync(breakPath, "utf8")).owner).toBe("live-breaker");
+  });
+
+  test("past staleMs an unreadable break file is cleared by age alone", async () => {
+    staleLock();
+    const breakPath = breakPathFor();
+    writeFileSync(breakPath, "");
+    const at = new Date(frozenNow - 200_000);
+    utimesSync(breakPath, at, at);
+    const outcome = await withAdvisoryResult({
+      ...reader(),
+      inputHash: "h",
+      reusable: false,
+      isProcessAlive: (pid) => pid === process.pid,
+      now: () => frozenNow,
+      bounds: { staleMs: 120_000, maxWaitMs: 1_000 },
+      compute: () => "recovered",
+      sleep: yieldTurn,
+    });
+    expect(outcome.forced).toBe(false);
+    expect(outcome.value).toBe("recovered");
+    expect(existsSync(breakPath)).toBe(false);
+  });
+
+  test("past staleMs a live-pid break file is cleared by age alone", async () => {
+    staleLock();
+    const breakPath = breakPathFor();
+    writeFileSync(breakPath, JSON.stringify(lockRecord({ owner: "live-but-aged", updatedAt: frozenNow - 200_000 })));
+    const outcome = await withAdvisoryResult({
+      ...reader(),
+      inputHash: "h",
+      reusable: false,
+      isProcessAlive: (pid) => pid === process.pid,
+      now: () => frozenNow,
+      bounds: { staleMs: 120_000, maxWaitMs: 1_000 },
+      compute: () => "recovered",
+      sleep: yieldTurn,
+    });
+    expect(outcome.forced).toBe(false);
+    expect(outcome.value).toBe("recovered");
+    expect(existsSync(breakPath)).toBe(false);
+  });
+
+  test("a fresh unreadable break file is not cleared", async () => {
+    staleLock();
+    const breakPath = breakPathFor();
+    writeFileSync(breakPath, "");
+    const outcome = await withAdvisoryResult({
+      ...reader(),
+      inputHash: "h",
+      reusable: false,
+      isProcessAlive: (pid) => pid === process.pid,
+      bounds: { maxWaitMs: 0 },
+      compute: () => "unlocked",
+      sleep: yieldTurn,
+    });
+    expect(outcome.forced).toBe(true);
+    expect(existsSync(breakPath)).toBe(true);
+  });
+
+  test("a stale break file from a killed breaker (old, pid gone) is cleared", async () => {
+    staleLock();
+    const breakPath = breakPathFor();
+    writeFileSync(
+      breakPath,
+      JSON.stringify(
+        lockRecord({
+          owner: "dead-breaker",
+          pid: 999_998,
+          processStartIdentity: VALID_IDENTITY(999_998),
+          updatedAt: Date.now() - 60_000,
+        }),
+      ),
+    );
+    const outcome = await withAdvisoryResult({
+      ...reader(),
+      inputHash: "h",
+      reusable: false,
+      isProcessAlive: (pid) => pid === process.pid,
+      bounds: { pollMs: 5, maxWaitMs: 1_000 },
+      compute: () => "recovered",
+      sleep: yieldTurn,
+    });
+    expect(outcome.forced).toBe(false);
+    expect(existsSync(breakPath)).toBe(false);
+  });
+
+  test("the expiry line reports the .break state and the remedy", async () => {
+    staleLock();
+    const breakPath = breakPathFor();
+    writeFileSync(breakPath, JSON.stringify(lockRecord({ owner: "live-breaker", updatedAt: frozenNow - 60_000 })));
+    const notices: AdvisoryNotice[] = [];
+    await withAdvisoryResult({
+      ...reader(),
+      inputHash: "h",
+      reusable: false,
+      isProcessAlive: (pid) => pid === process.pid,
+      now: () => frozenNow,
+      bounds: middleBandBounds,
+      onNotice: (notice) => notices.push(notice),
+      compute: () => "unlocked",
+      sleep: yieldTurn,
+    });
+    const unlocked = notices.filter((notice) => notice.kind === "unlocked");
+    expect(unlocked).toHaveLength(1);
+    expect(unlocked[0]?.message).toContain(breakPath);
+    expect(unlocked[0]?.message).toContain("live pid");
+    expect(unlocked[0]?.message).toContain("unlocked");
+  });
+});
+
+describe("a broken mechanism runs unlocked with exactly one line (DEC-282 (a8) rule 2)", () => {
+  function collect() {
+    const notices: AdvisoryNotice[] = [];
+    return { notices, onNotice: (notice: AdvisoryNotice) => notices.push(notice) };
+  }
+
+  test("an uncreatable lock directory (a file at its path) proceeds unlocked", async () => {
+    mkdirSync(join(root, "lore"), { recursive: true });
+    writeFileSync(advisoryDir(root), "");
+    const { notices, onNotice } = collect();
+    let computes = 0;
+    const outcome = await withAdvisoryResult({
+      ...reader(),
+      inputHash: "h",
+      reusable: false,
+      onNotice,
+      compute: () => {
+        computes += 1;
+        return "computed";
+      },
+    });
+    expect(computes).toBe(1);
+    expect(outcome.forced).toBe(true);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.kind).toBe("unlocked");
+    expect(notices[0]?.message).toContain("unlocked");
+  });
+
+  test("a lock path that is a directory proceeds unlocked, not thrown", async () => {
+    mkdirSync(advisoryDir(root), { recursive: true });
+    mkdirSync(advisoryLockPath(root, "check-sync"));
+    const { notices, onNotice } = collect();
+    const outcome = await withAdvisoryResult({
+      ...reader(),
+      inputHash: "h",
+      reusable: false,
+      onNotice,
+      compute: () => "computed",
+    });
+    expect(outcome.forced).toBe(true);
+    expect(outcome.value).toBe("computed");
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.kind).toBe("unlocked");
+    expect(notices[0]?.message).toContain("unlocked");
+  });
+
+  test("a .break path that is a directory proceeds unlocked, not thrown", async () => {
+    const deadPid = 2_147_483_000;
+    seedLock(
+      lockRecord({
+        owner: "dead",
+        pid: deadPid,
+        processStartIdentity: VALID_IDENTITY(deadPid),
+        updatedAt: 1_000_000 - 60_000,
+      }),
+    );
+    mkdirSync(advisoryBreakPath(root, "check-sync"));
+    const { notices, onNotice } = collect();
+    const outcome = await withAdvisoryResult({
+      ...reader(),
+      inputHash: "h",
+      reusable: false,
+      now: () => 1_000_000,
+      isProcessAlive: () => false,
+      onNotice,
+      bounds: { maxWaitMs: 0 },
+      compute: () => "computed",
+      sleep: yieldTurn,
+    });
+    expect(outcome.forced).toBe(true);
+    expect(outcome.value).toBe("computed");
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.kind).toBe("unlocked");
+    expect(notices[0]?.message).toContain("unlocked");
+  });
+});
+
+describe("the wait lines are distinct (F4 + DEC-282 (a8) rule 3)", () => {
+  test("one waiting line while waiting, and none when the holder releases", async () => {
+    const path = seedLock(lockRecord({ owner: "live", updatedAt: 1_000_000 }));
+    const notices: AdvisoryNotice[] = [];
+    const waiter = withAdvisoryResult({
+      ...reader(),
+      inputHash: "h",
+      reusable: false,
+      now: () => 1_000_000,
+      isProcessAlive: () => true,
+      bounds: { pollMs: 1, maxWaitMs: 10_000 },
+      onNotice: (notice) => notices.push(notice),
+      compute: () => "computed",
+      sleep: yieldTurn,
+    });
+    await yieldTurn();
+    await yieldTurn();
+    rmSync(path, { force: true });
+    const outcome = await waiter;
+    expect(outcome.forced).toBe(false);
+    expect(outcome.waited).toBe(true);
+    expect(notices.filter((notice) => notice.kind === "waiting")).toHaveLength(1);
+    expect(notices.filter((notice) => notice.kind === "unlocked")).toHaveLength(0);
+  });
+
+  test("an expired wait emits exactly ONE unlocked line and proceeds", async () => {
+    seedLock(lockRecord({ owner: "live", updatedAt: 1_000_000 }));
+    const notices: AdvisoryNotice[] = [];
+    let elapsedValue = 0;
+    const outcome = await withAdvisoryResult({
+      ...reader(),
+      inputHash: "h",
+      reusable: false,
+      now: () => 1_000_000,
+      elapsed: () => elapsedValue++,
+      isProcessAlive: () => true,
+      bounds: { maxWaitMs: 2 },
+      onNotice: (notice) => notices.push(notice),
+      compute: () => "computed",
+      sleep: yieldTurn,
+    });
+    expect(outcome.forced).toBe(true);
+    expect(outcome.value).toBe("computed");
+    const unlocked = notices.filter((notice) => notice.kind === "unlocked");
+    expect(unlocked).toHaveLength(1);
+    expect(unlocked[0]?.message).toContain("unlocked");
+    expect(unlocked[0]?.message).toContain("waited");
   });
 });
 
@@ -386,6 +893,7 @@ describe("commandInputHash covers the inputs that decide a check/sync result", (
     mode: "plain",
     stdoutColor: false,
     stderrColor: false,
+    env: {} as Record<string, string | undefined>,
     ...over,
   });
 
@@ -428,51 +936,52 @@ describe("commandInputHash covers the inputs that decide a check/sync result", (
     writeFileSync(join(root, "README.md"), "hello\n");
     expect(commandInputHash(base())).toBe(initial);
   });
+
+  test("every environment input the adapters read changes the hash (F6)", () => {
+    gitRepo(root);
+    const initial = commandInputHash(base()) as string;
+    for (const name of ADVISORY_ENV_INPUTS) {
+      expect(commandInputHash(base({ env: { [name]: "changed" } }))).not.toBe(initial);
+    }
+  });
+
+  test("the hashed env names are the adapters' own constants, not copies that can drift", () => {
+    expect(ADVISORY_QUEST_TIMEOUT_ENV).toBe(QUEST_TIMEOUT_ENV_VAR);
+    expect(ADVISORY_QUEST_ACTOR_ENV).toBe(QUEST_ACTOR_ENV_VAR);
+    expect(ADVISORY_QUEST_ACTOR_KIND_ENV).toBe(QUEST_ACTOR_KIND_ENV_VAR);
+    expect(ADVISORY_QUEST_ACCOUNTABLE_HUMAN_ENV).toBe(QUEST_ACCOUNTABLE_HUMAN_ENV_VAR);
+    expect(ADVISORY_BACKLOG_TIMEOUT_ENV).toBe(BACKLOG_TIMEOUT_ENV_VAR);
+  });
 });
 
 describe("the result slot is stored under the common dir", () => {
-  test("a computed result is readable at the documented slot path", async () => {
-    gitRepo(root);
-    const common = resolveGitCommonDir(root) as string;
+  test("a computed result is readable at the documented slot path, private to the user", async () => {
     await withAdvisoryResult({
-      commonDir: common,
-      lockName: "check-sync",
-      resultName: "check",
+      ...reader(),
       inputHash: "abc",
       reusable: true,
       compute: () => ({ answer: 42 }),
     });
-    const slot = JSON.parse(readFileSync(advisoryResultPath(common, "check"), "utf8")) as {
-      inputHash: string;
-      value: { answer: number };
-    };
+    const path = advisoryResultPath(root, "check");
+    const slot = JSON.parse(readFileSync(path, "utf8")) as { inputHash: string; value: { answer: number } };
     expect(slot.inputHash).toBe("abc");
     expect(slot.value).toEqual({ answer: 42 });
+    // Windows emulates file modes; the private-mode guarantee is a POSIX one.
+    if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600);
   });
 
   test("a holder that waited keys its result by the tree it actually computed against", async () => {
-    // A dead lock forces this caller to steal and acquire; meanwhile `rehash` reports a newer tree
-    // (what a prior `sync` holder would have produced). The slot must name the newer tree, not the
-    // one this caller entered on — otherwise a later run on the old tree could reuse a stale result.
-    const dir = advisoryDir(root);
-    mkdirSync(dir, { recursive: true });
     const deadPid = 2_147_483_000;
-    writeFileSync(
-      advisoryLockPath(root, "check-sync"),
-      JSON.stringify({
-        schema: 1,
+    seedLock(
+      lockRecord({
         owner: "dead",
         pid: deadPid,
-        hostname: hostname(),
-        processStartIdentity: `pid:${deadPid}:started:1`,
-        acquiredAt: 1_000_000,
-        updatedAt: 1_000_000,
+        processStartIdentity: VALID_IDENTITY(deadPid),
+        updatedAt: 1_000_000 - 60_000,
       }),
     );
     await withAdvisoryResult({
-      commonDir: root,
-      lockName: "check-sync",
-      resultName: "check",
+      ...reader(),
       inputHash: "entry-tree",
       rehash: () => "post-wait-tree",
       reusable: true,
@@ -483,4 +992,120 @@ describe("the result slot is stored under the common dir", () => {
     const slot = JSON.parse(readFileSync(advisoryResultPath(root, "check"), "utf8")) as { inputHash: string };
     expect(slot.inputHash).toBe("post-wait-tree");
   });
+});
+
+describe("abandonment residue is swept, not accumulated (F7)", () => {
+  test("temp files and pre-(a7) .stale asides older than the stale bound are removed", async () => {
+    mkdirSync(advisoryDir(root), { recursive: true });
+    const tmp = join(advisoryDir(root), "check.result.json.abc.tmp");
+    const aside = join(advisoryDir(root), "check-sync.lock.stale.dead");
+    const fresh = join(advisoryDir(root), "fresh.tmp");
+    for (const path of [tmp, aside, fresh]) writeFileSync(path, "x");
+    const old = new Date(Date.now() - ADVISORY_STALE_MS - 60_000);
+    utimesSync(tmp, old, old);
+    utimesSync(aside, old, old);
+
+    await withAdvisoryResult({ ...reader(), inputHash: null, reusable: false, compute: () => "done" });
+
+    const left = readdirSync(advisoryDir(root));
+    expect(left).not.toContain("check.result.json.abc.tmp");
+    expect(left).not.toContain("check-sync.lock.stale.dead");
+    expect(left).toContain("fresh.tmp");
+  });
+});
+
+describe("real processes (F8)", () => {
+  const modulePath = new URL("../src/core/advisory-lock.ts", import.meta.url).pathname;
+
+  test("two real processes never hold the lock at once", async () => {
+    const log = join(root, "events.log");
+    const script = join(root, "holder.ts");
+    writeFileSync(
+      script,
+      [
+        `import { appendFileSync } from "node:fs";`,
+        `import { withAdvisoryResult } from ${JSON.stringify(modulePath)};`,
+        "const [commonDir, logPath] = process.argv.slice(2);",
+        "await withAdvisoryResult({",
+        "  commonDir, lockName: 'probe', resultName: 'probe', inputHash: null, reusable: false,",
+        "  bounds: { pollMs: 5, maxWaitMs: 10000 },",
+        "  compute: async () => {",
+        "    appendFileSync(logPath, 'enter\\n');",
+        "    await new Promise((done) => setTimeout(done, 120));",
+        "    appendFileSync(logPath, 'exit\\n');",
+        "    return 0;",
+        "  },",
+        "});",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const spawnChild = () => Bun.spawn([process.execPath, script, root, log], { stdout: "pipe", stderr: "pipe" });
+    const first = spawnChild();
+    const second = spawnChild();
+    const [a, b] = await Promise.all([first.exited, second.exited]);
+    expect(a).toBe(0);
+    expect(b).toBe(0);
+    const events = readFileSync(log, "utf8").trim().split("\n");
+    expect(events).toEqual(["enter", "exit", "enter", "exit"]);
+  }, 20_000);
+
+  test("a holder killed with SIGKILL is recovered by the real dead-pid probe", async () => {
+    const script = join(root, "kill-holder.ts");
+    writeFileSync(
+      script,
+      [
+        `import { withAdvisoryResult } from ${JSON.stringify(modulePath)};`,
+        "const commonDir = process.argv[2];",
+        "await withAdvisoryResult({",
+        "  commonDir, lockName: 'probe', resultName: 'probe', inputHash: null, reusable: false,",
+        "  compute: async () => {",
+        '    process.stdout.write("held\\n");',
+        "    await new Promise(() => {});",
+        "  },",
+        "});",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const child = Bun.spawn([process.execPath, script, root], { stdout: "pipe", stderr: "pipe" });
+    const stdout = child.stdout;
+    if (!stdout) throw new Error("child stdout was not piped");
+    const reader = stdout.getReader();
+    const decoder = new TextDecoder();
+    let output = "";
+    const readyBy = Date.now() + 5_000;
+    while (!output.includes("held")) {
+      if (Date.now() > readyBy) {
+        child.kill(9);
+        throw new Error("child never printed held");
+      }
+      const { value, done } = await reader.read();
+      if (done) break;
+      output += decoder.decode(value, { stream: true });
+    }
+    reader.releaseLock();
+    expect(output).toContain("held");
+
+    const lockPath = advisoryLockPath(root, "probe");
+    const childOwner = JSON.parse(readFileSync(lockPath, "utf8"));
+    expect(childOwner.pid).toBe(child.pid);
+    child.kill(9);
+    await child.exited;
+
+    const started = performance.now();
+    const outcome = await withAdvisoryResult({
+      commonDir: root,
+      lockName: "probe",
+      resultName: "probe",
+      inputHash: null,
+      reusable: false,
+      bounds: { pidGoneFloorMs: 100, staleMs: 60_000, pollMs: 10, maxWaitMs: 5_000 },
+      compute: () => "recovered",
+    });
+    const elapsed = performance.now() - started;
+    expect(outcome.value).toBe("recovered");
+    expect(outcome.forced).toBe(false);
+    expect(elapsed).toBeLessThan(1_000);
+  }, 20_000);
 });

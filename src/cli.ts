@@ -46,7 +46,7 @@ import { runScaffold } from "./commands/scaffold";
 import { runSchema } from "./commands/schema";
 import { runSnapshot } from "./commands/snapshot";
 import { runSupersede } from "./commands/supersede";
-import { runSync } from "./commands/sync";
+import { applySyncWritePlan, runSync, type SyncWritePlan } from "./commands/sync";
 import { runTasks } from "./commands/tasks";
 import { runTypes } from "./commands/types";
 import { runValidate } from "./commands/validate";
@@ -533,9 +533,10 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
       stderr: context.stderr,
       adapter: context.adapter,
     }),
-  sync: (args, context, output) =>
-    runLockedCommand({
-      root: context.cwd || process.cwd(),
+  sync: (args, context, output) => {
+    const root = context.cwd || process.cwd();
+    return runLockedCommand<SyncWritePlan>({
+      root,
       command: "sync",
       args,
       output,
@@ -544,16 +545,22 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
       // As for `check`: an injected adapter makes the result a harness artifact, not a function of
       // the tree. `sync` keeps its lock either way; writes still run on every non-reused call.
       reusable: context.adapter === undefined,
-      run: (stdout, stderr) =>
+      // A waiter reuses the holder's COMPUTATION (the batched task read and rendered blocks) but
+      // applies it to its OWN checkout — never replaying "updated N files" over a tree nothing
+      // wrote (LCLI-792 round 2, DEC-282 (a7) item 2).
+      applyPlan: (plan) => applySyncWritePlan(root, plan),
+      run: (stdout, stderr, recordPlan) =>
         runSync({
-          root: context.cwd || process.cwd(),
+          root,
           output,
           args,
           stdout,
           stderr,
           adapter: context.adapter,
+          planSink: recordPlan,
         }),
-    }),
+    });
+  },
   tasks: (args, context, output) =>
     runTasks({
       root: context.cwd || process.cwd(),
