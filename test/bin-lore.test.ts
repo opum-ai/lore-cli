@@ -408,11 +408,81 @@ describe.skipIf(process.platform === "win32")("bin/lore.cjs — never orphans th
       `const fs = require("node:fs");\nconst real = process.kill.bind(process);\nprocess.kill = (pid, sig) => { if (pid < 0) fs.appendFileSync(${JSON.stringify(log)}, pid + " " + sig + "\\n"); return real(pid, sig); };\n`,
     );
     runLauncher([], ["--require", preload]);
-    const sweeps = readFileSync(log, "utf8")
-      .split("\n")
-      .filter((line) => line.endsWith(" SIGKILL"));
-    expect(sweeps).toHaveLength(1);
+    // TERM first, then KILL only if the group outlives the grace. Here `kill -PIPE $$` ends the shell
+    // before `sleep` runs, so the group is already empty: the TERM throws ESRCH (it is logged because
+    // the preload records before delegating) and the KILL is never sent. At most one of each.
+    const lines = readFileSync(log, "utf8").split("\n");
+    expect(lines.filter((line) => line.endsWith(" SIGTERM"))).toHaveLength(1);
+    expect(lines.filter((line) => line.endsWith(" SIGKILL")).length).toBeLessThanOrEqual(1);
   });
+
+  // DEC-282 (a4) item 3. lore's launcher spawns quest's npm wrapper, which off a terminal puts native
+  // quest in its OWN group, so a SIGKILL of lore's group reaches the wrapper but strands native quest.
+  // The fake quest wrapper mimics that shape: it is a member of the child's group, it makes a detached
+  // native, and it forwards SIGTERM to the native's group then exits, as bin/quest.cjs does. An
+  // uncaught exception in the launcher fires only the exit-time sweep, so only a TERM-then-KILL sweep
+  // leaves no native behind. Against a SIGKILL-only sweep the wrapper dies unable to forward.
+  test("an exit sweep with a quest child in flight leaves no surviving native quest (DEC-282 (a4))", async () => {
+    const questPids = join(nodePathDir, "quest.pid");
+    const native = "setInterval(() => {}, 1000);";
+    const wrapperSrc = [
+      'const fs = require("node:fs");',
+      'const { spawn } = require("node:child_process");',
+      `const nat = spawn(process.execPath, ["-e", ${JSON.stringify(native)}], { stdio: "ignore", detached: true });`,
+      'process.on("SIGTERM", () => { try { process.kill(-nat.pid, "SIGTERM"); } catch {} process.exit(143); });',
+      `fs.writeFileSync(${JSON.stringify(questPids)}, process.pid + "\\n" + nat.pid + "\\n");`,
+      "setInterval(() => {}, 1000);",
+    ].join("\n");
+    const pidFile = join(nodePathDir, "child.pid");
+    installFakePlatformPackage(
+      [
+        "#!/usr/bin/env node",
+        'const fs = require("node:fs");',
+        'const { spawn } = require("node:child_process");',
+        `const q = spawn(process.execPath, ["-e", ${JSON.stringify(wrapperSrc)}], { stdio: "ignore" });`,
+        `fs.writeFileSync(${JSON.stringify(pidFile)}, process.pid + "\\n" + q.pid + "\\n");`,
+        "setInterval(() => {}, 1000);",
+        "",
+      ].join("\n"),
+    );
+    const launcher = join(nodePathDir, "lore.cjs");
+    copyFileSync(LAUNCHER, launcher);
+    const preload = join(nodePathDir, "boom.cjs");
+    writeFileSync(
+      preload,
+      `const fs = require("node:fs");\nconst f = ${JSON.stringify(questPids)};\nconst t = setInterval(() => { if (fs.existsSync(f) && fs.readFileSync(f, "utf8").split("\\n").filter(Boolean).length === 2) { clearInterval(t); throw new Error("boom"); } }, 10);\n`,
+    );
+    const wrapper = Bun.spawn(["node", "--require", preload, launcher], {
+      env: { ...process.env, NODE_PATH: nodePathDir },
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    try {
+      expect(
+        await waitFor(
+          () => existsSync(questPids) && readFileSync(questPids, "utf8").split("\n").filter(Boolean).length === 2,
+          15000,
+        ),
+      ).toBe(true);
+      const [questWrapperPid, nativePid] = readFileSync(questPids, "utf8").split("\n").filter(Boolean).map(Number) as [
+        number,
+        number,
+      ];
+      // The native-lore stub wrote its own pid before it spawned the quest wrapper's node; track it so
+      // a red run cannot leak it, and assert the sweep took it too.
+      const [lorePid] = readFileSync(pidFile, "utf8").split("\n").filter(Boolean).map(Number) as [number];
+      spawned.push(questWrapperPid, nativePid, lorePid);
+      await wrapper.exited;
+      expect(wrapper.exitCode).not.toBe(0);
+      expect(await waitFor(() => !alive(questWrapperPid) && !alive(nativePid) && !alive(lorePid), 15000)).toBe(true);
+      forget(questWrapperPid);
+      forget(nativePid);
+      forget(lorePid);
+    } finally {
+      wrapper.kill("SIGKILL");
+    }
+  }, 60000);
 
   // A synchronous throw from spawn() (E2BIG on a long argv is the realistic one) used to reach the
   // caller as an uncaught stack trace; it now takes the same "failed to run" message and exit 1.

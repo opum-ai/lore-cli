@@ -349,9 +349,18 @@ The **drift gate** — read-only, never writes. Aggregates:
 - **Status reconciliation drift** — recomputes each `Story`/`Spec` status from
   its linked tasks (via `backlog … --json`) and reports any file whose
   authored `status` differs from the computed one (the write side is
-  [`sync`](#sync)). See [ADR-0009](../adr/0009-story-task-coupling-reconciliation.md).
+  [`sync`](#sync)) → **error** in both modes. See [ADR-0009](../adr/0009-story-task-coupling-reconciliation.md).
 - **Managed-block drift** — reports any `<!-- lore:tasks -->` region that
-  `sync` would change.
+  `sync` would change → **warning** by default, **error under `--strict`**
+  (DEC-282 item 3, LCLI-793). A tracker write of any kind can stale this
+  region, and **the tracker never rewrites a lore block** — only [`sync`](#sync)
+  writes the managed region (`check` only reads) — so a bare `lore:tasks`
+  drift is advisory and gates under `--strict`'s ordinary "warnings fail the
+  exit code" meaning. Only drift **confined** to `lore:tasks` softens: every
+  other drift rule below — status drift, `index-drift` on a `<!-- lore:index -->`
+  block, `schema-drift`, broken links/anchors — stays an **error** in both
+  modes, so a report carrying `lore:tasks` drift *plus* any other drift still
+  exits `6`.
 - **Unknown active-profile type** — a concept's `type` not declared by the
   active profile → **warning** by default (OKF tolerance, matching
   `validate`'s own unknown-type finding) — **unless** the active profile sets
@@ -421,7 +430,7 @@ The **drift gate** — read-only, never writes. Aggregates:
 | **Args** | optional `[paths…]` (default: whole bundle) |
 | **Key flags** | `--strict` (treat deterministic warnings as failures for the exit code) · `--as-of YYYY-MM-DD` (pin date-sensitive rules; default HEAD commit date) · `--external` (also probe external-URL liveness — advisory, never gates) |
 | **Output** | `kind: check.report` — `findings`, `errorCount`, `warningCount`, `fileCount`, `skippedOutOfBundleLinkCount`, `complete`; plus optional `externalFindings` when `--external` ran, and optional `readCounts` when the bundle holds a Constants document (per type: `entries`, `comparableSources`, `notComparableSources`, `references`; LCLI-596). The skipped and read counts are informational and never affect severity counts or exit status. |
-| **Exit** | `0` no broken bundle-scoped links/anchors, no status/managed-block drift, and no error-tier `required-section`, `frontmatter` or `quote-safety` finding · `2` invalid/non-calendar `--as-of` · `3` a linked task id no longer exists, or a date-sensitive rule needs the absent HEAD commit date · `6` any broken bundle-scoped link/anchor, any status/managed-block drift, any `required-section` or error-tier `frontmatter` or `quote-safety` finding (or any deterministic warning under `--strict`, or an unknown type under `strict_types`), or any `missing`/`stale`/`orphaned` committed schema · `7` an `unattributable` committed schema (indeterminate — never auto-repair); a run with both `6`- and `7`-class findings exits `7` and still reports every finding. Skipped out-of-bundle links and external-liveness results never affect the exit. |
+| **Exit** | `0` no broken bundle-scoped links/anchors, no status drift and no non-`lore:tasks` drift, and no error-tier `required-section`, `frontmatter` or `quote-safety` finding — a bare `<!-- lore:tasks -->` block drift alone is a **warning** and exits `0` · `2` invalid/non-calendar `--as-of` · `3` a linked task id no longer exists, or a date-sensitive rule needs the absent HEAD commit date · `6` any broken bundle-scoped link/anchor, any status drift, any `lore:tasks` block drift under `--strict`, any `<!-- lore:index -->` block drift (`index-drift`), any `required-section` or error-tier `frontmatter` or `quote-safety` finding (or any deterministic warning under `--strict`, or an unknown type under `strict_types`), or any `missing`/`stale`/`orphaned` committed schema · `7` an `unattributable` committed schema (indeterminate — never auto-repair); a run with both `6`- and `7`-class findings exits `7` and still reports every finding. Skipped out-of-bundle links and external-liveness results never affect the exit. |
 
 ---
 
