@@ -14,6 +14,7 @@
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -1343,6 +1344,7 @@ describe("round-3 fixes (LCLI-792, DEC-282 (a14))", () => {
       const release = deferred<void>();
       let computes = 0;
       let adopted = 0;
+      let holderOwner = "";
       const { now } = clockFrom();
       const holder = withAdvisoryResult({
         ...reader(),
@@ -1351,6 +1353,8 @@ describe("round-3 fixes (LCLI-792, DEC-282 (a14))", () => {
         reusable: true,
         compute: async () => {
           computes += 1;
+          holderOwner = (JSON.parse(readFileSync(advisoryLockPath(root, "check-sync"), "utf8")) as { owner: string })
+            .owner;
           entered.resolve();
           await release.promise;
           return "holder-value";
@@ -1365,8 +1369,14 @@ describe("round-3 fixes (LCLI-792, DEC-282 (a14))", () => {
         reusable: true,
         adopt: () => {
           adopted += 1;
-          // Adopted only once the holder has released: the lock is ours here.
-          expect(existsSync(advisoryLockPath(root, "check-sync"))).toBe(true);
+          // Adopted only once the holder has released: the lock is OWNED BY THIS CALLER here (not the
+          // holder's leftover, which a release-before-adopt mutant would leave on disk).
+          const lock = JSON.parse(readFileSync(advisoryLockPath(root, "check-sync"), "utf8")) as {
+            owner: string;
+            pid: number;
+          };
+          expect(lock.pid).toBe(process.pid);
+          expect(lock.owner).not.toBe(holderOwner);
           return accept;
         },
         compute: () => {
@@ -1382,5 +1392,73 @@ describe("round-3 fixes (LCLI-792, DEC-282 (a14))", () => {
       expect(outcome.value).toBe(accept ? "holder-value" : "waiter-value");
       expect(computes).toBe(accept ? 1 : 2);
     }
+  });
+
+  test("S1: a caller that finds the lock vanished after EEXIST still rehashes once it owns it", async () => {
+    if (process.platform === "win32" || process.getuid?.() === 0) return; // needs an unreadable lock file
+    const path = seedLock(lockRecord({ owner: "gone-soon", updatedAt: 1_000_000 }));
+    chmodSync(path, 0o000); // exists (EEXIST) but its read fails, i.e. the "snapshot === null" branch
+    let rehashes = 0;
+    const outcome = await withAdvisoryResult({
+      ...reader(),
+      inputHash: "entry",
+      reusable: true,
+      now: () => 1_000_000,
+      isProcessAlive: () => true,
+      bounds: { pollMs: 1, maxWaitMs: 10_000 },
+      rehash: () => {
+        rehashes += 1;
+        return "after-the-holder";
+      },
+      compute: () => "v",
+      // The holder "releases" while we sleep: the next pass takes the lock.
+      sleep: async () => {
+        rmSync(path, { force: true });
+      },
+    });
+    expect(outcome.reused).toBe(false);
+    expect(rehashes).toBe(1);
+    const slot = JSON.parse(readFileSync(advisoryResultPath(root, "check"), "utf8")) as { inputHash: string };
+    expect(slot.inputHash).toBe("after-the-holder");
+  });
+
+  test("N3: an adopt() that THROWS abandons reuse and the caller computes", async () => {
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const { now } = clockFrom();
+    let computes = 0;
+    const holder = withAdvisoryResult({
+      ...reader(),
+      now,
+      inputHash: "same",
+      reusable: true,
+      compute: async () => {
+        computes += 1;
+        entered.resolve();
+        await release.promise;
+        return "holder-value";
+      },
+      sleep: yieldTurn,
+    });
+    await entered.promise;
+    const waiter = withAdvisoryResult({
+      ...reader(),
+      now,
+      inputHash: "same",
+      reusable: true,
+      adopt: () => {
+        throw new Error("EACCES: simulated apply failure");
+      },
+      compute: () => {
+        computes += 1;
+        return "waiter-value";
+      },
+      sleep: yieldTurn,
+    });
+    release.resolve();
+    const [, outcome] = await Promise.all([holder, waiter]);
+    expect(outcome.reused).toBe(false);
+    expect(outcome.value).toBe("waiter-value");
+    expect(computes).toBe(2);
   });
 });

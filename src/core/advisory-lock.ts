@@ -682,7 +682,7 @@ export async function withAdvisoryResult<T>(options: AdvisoryResultOptions<T>): 
         // Adopted UNDER the lock (the heartbeat is running and nobody else is computing), so an
         // apply can neither interleave with another holder's writes nor be seen half-done by a
         // `check` holder in this checkout. A refusal falls through to computing below.
-        if (found !== undefined && (adopt === undefined || (await adopt(found)))) {
+        if (found !== undefined && (adopt === undefined || (await adoptOrAbandon(adopt, found)))) {
           return { value: found, reused: true, waited, forced: false };
         }
         const value = await options.compute();
@@ -696,6 +696,11 @@ export async function withAdvisoryResult<T>(options: AdvisoryResultOptions<T>): 
       }
     }
 
+    // The lock exists, so this caller contends from here on, whatever the read below finds: if the
+    // holder released between our create attempt and our read, whatever it did may have changed the
+    // tree, and the next pass (which will own the lock) must rehash rather than key by the entry hash.
+    waited = true;
+
     const snapshot = readLockSnapshot(ctx.lockPath);
     if (snapshot === null) {
       // The lock vanished between our create attempt and our read; whoever removed it may be about
@@ -703,11 +708,6 @@ export async function withAdvisoryResult<T>(options: AdvisoryResultOptions<T>): 
       await ctx.sleep(bounds.pollMs);
       continue;
     }
-
-    // The lock was held when we arrived, so this caller contended even if it takes the lock on the
-    // very next pass (a holder it broke, or one that released between polls): whatever that holder
-    // did may have changed the tree, so the caller must rehash once it owns the lock.
-    waited = true;
 
     // F4: reset the deadline when the holder's owner changes, so the bound applies per wedged
     // holder rather than to a queue position.
@@ -738,6 +738,19 @@ export async function withAdvisoryResult<T>(options: AdvisoryResultOptions<T>): 
 
     // A routine wait is silent ((a14) Q3): only expiry and a broken mechanism write a line.
     await ctx.sleep(bounds.pollMs);
+  }
+}
+
+/**
+ * Run `adopt`, treating a throw as a refusal: the caller then computes for itself, so a failure to
+ * apply a reused result surfaces from a fresh run in its own error shape instead of escaping from
+ * the reuse path (round-3 N3).
+ */
+async function adoptOrAbandon<T>(adopt: (value: T) => boolean | Promise<boolean>, value: T): Promise<boolean> {
+  try {
+    return await adopt(value);
+  } catch {
+    return false;
   }
 }
 

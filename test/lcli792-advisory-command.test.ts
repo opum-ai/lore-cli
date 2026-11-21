@@ -356,6 +356,7 @@ describe("sync reuses the COMPUTATION and applies it to the waiter's own checkou
     const release = deferred<void>();
     let computes = 0;
     let applied = 0;
+    let appliedOk: boolean | undefined;
     const waiterOut = sink();
 
     const holder = runLockedCommand<SyncWritePlan>({
@@ -393,7 +394,8 @@ describe("sync reuses the COMPUTATION and applies it to the waiter's own checkou
       sleep: yieldTurn,
       applyPlan: async (plan) => {
         applied += 1;
-        return applySyncWritePlan(worktree, plan);
+        appliedOk = await applySyncWritePlan(worktree, plan);
+        return appliedOk;
       },
       run: async () => {
         computes += 1;
@@ -405,6 +407,7 @@ describe("sync reuses the COMPUTATION and applies it to the waiter's own checkou
 
     expect(computes).toBe(1); // the task read ran once
     expect(applied).toBe(1); // ... and its result landed in the WAITER's tree
+    expect(appliedOk).toBe(true); // ... because the apply ACCEPTED the plan, not because it was skipped
     expect(holderCode).toBe(0);
     expect(waiterCode).toBe(0);
     expect(waiterOut.text()).toBe("updated docs/index.md\n");
@@ -507,6 +510,42 @@ describe("a reused sync plan is applied under the lock and only over what the ho
     const { computes } = await holderAndWaiter(main, worktree, () => {});
     expect(computes).toBe(1);
     expect(readFileSync(join(worktree, "docs", "index.md"), "utf8")).toBe(REWRITTEN_INDEX);
+  });
+});
+
+describe("applySyncWritePlan judges each file by its RAW bytes (round-3 S2a, N1)", () => {
+  const sha = (bytes: Buffer | string) => createHash("sha256").update(bytes).digest("hex");
+
+  test("an ABSENT pre-image: written when the file is still absent, refused when it appeared meanwhile", async () => {
+    gitRepoWithDocs(root);
+    const plan: SyncWritePlan = { writes: [{ path: "fresh.md", after: "# Fresh\n", beforeDigest: null }] };
+    // Absent -> the pre-image holds -> written.
+    expect(await applySyncWritePlan(root, plan)).toBe(true);
+    expect(readFileSync(join(root, "docs", "fresh.md"), "utf8")).toBe("# Fresh\n");
+    // Already equal to `after` -> skipped, still true.
+    expect(await applySyncWritePlan(root, plan)).toBe(true);
+    // Appeared with DIFFERENT bytes during the wait -> refused, and nothing is overwritten.
+    writeFileSync(join(root, "docs", "fresh.md"), "# A human wrote this first\n");
+    expect(await applySyncWritePlan(root, plan)).toBe(false);
+    expect(readFileSync(join(root, "docs", "fresh.md"), "utf8")).toBe("# A human wrote this first\n");
+  });
+
+  test("invalid UTF-8 that decodes to the SAME text as the pre-image is still a different file", async () => {
+    gitRepoWithDocs(root);
+    const planned = Buffer.from([0x23, 0x20, 0xff, 0x0a]); // "# \xff\n": decodes to "# \uFFFD\n"
+    const edited = Buffer.from([0x23, 0x20, 0xfe, 0x0a]); // a different byte, the same decoded text
+    expect(planned.toString("utf8")).toBe(edited.toString("utf8"));
+    writeFileSync(join(root, "docs", "raw.md"), edited);
+    const plan: SyncWritePlan = {
+      writes: [{ path: "raw.md", after: "# fixed\n", beforeDigest: sha(planned) }],
+    };
+    expect(await applySyncWritePlan(root, plan)).toBe(false);
+    expect(readFileSync(join(root, "docs", "raw.md"))).toEqual(edited);
+
+    // The control: the file still holds EXACTLY the planned raw bytes, so the plan applies.
+    writeFileSync(join(root, "docs", "raw.md"), planned);
+    expect(await applySyncWritePlan(root, plan)).toBe(true);
+    expect(readFileSync(join(root, "docs", "raw.md"), "utf8")).toBe("# fixed\n");
   });
 });
 
