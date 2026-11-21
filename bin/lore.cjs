@@ -128,7 +128,10 @@ function spawnWindowsBinary(binaryPath) {
  * (the tty signals the whole foreground group, then this forwards it again).
  *
  * Caller remedy for a runaway lore: send SIGTERM to the wrapper (or to a group you created for
- * it), wait a few seconds, then SIGKILL. A plain SIGTERM is fully handled here.
+ * it), wait MORE than 2 s plus the child's own exit time (the sweep's grace, below), then SIGKILL:
+ * a SIGKILL inside that window stops the sweep before its own SIGKILL leg and can orphan a member
+ * that ignores SIGTERM. A plain SIGTERM is fully handled within lore's own group; for a nested quest
+ * see the stated residual below.
  *
  * Stated residual (DEC-282 (a4), until quest's lifeline QCLI-571 ships): native lore spawns quest's
  * npm wrapper with piped output, so off a terminal that wrapper puts native quest in its OWN group,
@@ -178,7 +181,9 @@ function spawnPosixBinary(binaryPath) {
    * could only ever hit a reused group id). Off a terminal the group gets SIGTERM first, then up to
    * SWEEP_GRACE_MS for its members to leave on their own (a nested quest wrapper forwards the signal
    * and sweeps the group it made for its native child, which a SIGKILL would strand, DEC-282 (a4)),
-   * then SIGKILL for whatever remains. An empty group costs nothing: the first probe finds it. The
+   * then SIGKILL for whatever remains. On the close path an empty group costs nothing: Node has already reaped the child, so the first
+   * probe finds the group gone. On the exit-handler path (an uncaught exception) the child is still
+   * the wrapper's unreaped child, so a group holding only it can use the whole grace. The
    * wait is synchronous because this also runs from the `exit` handler, where no timer can fire. On
    * a terminal the child shares the caller's group, so only the child itself is killed, at once.
    */
