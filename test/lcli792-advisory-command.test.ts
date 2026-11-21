@@ -43,6 +43,9 @@ function gitRepoWithDocs(dir: string): void {
     "---\ntype: Story\ntitle: A story\ndescription: Example story\n---\n\nBody.\n",
   );
   expect(git(dir, "init", "--initial-branch=main").exitCode).toBe(0);
+  // A linked worktree is checked out through this config; with Git for Windows' default autocrlf the
+  // second worktree would hold CRLF bytes, and a plan's pre-image digest (correctly) would not match.
+  expect(git(dir, "config", "core.autocrlf", "false").exitCode).toBe(0);
   expect(git(dir, "add", "-A").exitCode).toBe(0);
   expect(git(dir, "commit", "-m", "init").exitCode).toBe(0);
 }
