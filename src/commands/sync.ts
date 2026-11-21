@@ -79,6 +79,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { realGitAdapter, resolveHeadSha } from "../adapters/git";
@@ -157,9 +158,23 @@ export interface SyncWritePlan {
   }[];
 }
 
+/**
+ * The RAW bytes at `abs`, or `undefined` when the file is absent. Plan digests are taken over these,
+ * never over a decoded string: two different invalid-UTF-8 byte sequences decode to the same U+FFFD
+ * text and would hash equal, which is exactly the false match a pre-image check must not allow.
+ */
+function rawBytesIfPresent(abs: string): Buffer | undefined {
+  try {
+    return readFileSync(abs);
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw cause;
+  }
+}
+
 /** sha256 hex of `bytes`; `undefined` stands for an absent file. */
-function digestOf(bytes: string | undefined): string | null {
-  return bytes === undefined ? null : createHash("sha256").update(bytes, "utf8").digest("hex");
+function digestOf(bytes: Buffer | undefined): string | null {
+  return bytes === undefined ? null : createHash("sha256").update(bytes).digest("hex");
 }
 
 /** The parsed form of `lore sync`'s arguments. */
@@ -355,7 +370,12 @@ export async function runSync(options: SyncOptions): Promise<number> {
     // computation in its own checkout (LCLI-792, DEC-282 (a7) item 2). A failure below throws out of
     // the run, so nothing is ever cached for a plan that did not apply here.
     options.planSink?.({
-      writes: [...writes].map(([path, { before, after }]) => ({ path, after, beforeDigest: digestOf(before) })),
+      writes: [...writes].map(([path, { after }]) => ({
+        path,
+        after,
+        // The bytes ON DISK now, immediately before the write, hashed raw (nit N1).
+        beforeDigest: digestOf(rawBytesIfPresent(join(docsRoot, path))),
+      })),
     });
     writeManyAtomicOrRollback(rollbackWrites);
   }
@@ -418,6 +438,20 @@ export async function runSync(options: SyncOptions): Promise<number> {
  * own worktree the holder's writes change the tree, so it would always mismatch and silently
  * degrade every same-worktree waiter to a serial recompute.
  *
+ * The comparison is over the files' RAW bytes, so a CRLF checkout (Windows autocrlf) or an invalid
+ * UTF-8 sequence can only fail to match, which abandons reuse and recomputes; it never writes.
+ *
+ * **Accepted residual: derived files.** Only the plan's own files are checked. A file the plan
+ * writes but that is DERIVED from other files (`index.md`, `log.md`) can therefore be written
+ * slightly stale if a concept it summarises was edited during the wait (a retitled concept keeps its
+ * old title in `index.md`); the next sync corrects it. No hand-written edit is ever overwritten.
+ *
+ * A throw before the first write (a symlinked ancestor, an unreadable file) is treated by the caller
+ * as "abandon and recompute", so a fresh run reports the real error in its own shape. A throw AFTER
+ * the writes (the tracker sweep below) can leave the docs writes landed; the caller then recomputes on
+ * that changed tree and stores NO result for reuse (the abandon path never writes a slot), because a
+ * plan computed there would omit the files this apply already wrote and carry no pre-image for them.
+ *
  * The holder's run also swept tracker storage, which is a repository-side effect; the waiter runs
  * its own sweep, so a Backlog bundle's `backlog/` is committed in the waiter's worktree too. For a
  * Quest bundle that sweep is a git-free no-op.
@@ -439,10 +473,10 @@ export async function applySyncWritePlan(root: string, plan: SyncWritePlan): Pro
   for (const write of plan.writes) {
     const relPath = `${DOCS_DIR}/${write.path}`;
     const abs = join(docsRoot, write.path);
-    const current = readFileIfPresent(abs, relPath);
-    if (current === write.after) continue;
-    if (digestOf(current) !== write.beforeDigest) return false;
-    pending.push({ write, abs, relPath, before: current });
+    const raw = rawBytesIfPresent(abs);
+    if (raw !== undefined && raw.equals(Buffer.from(write.after, "utf8"))) continue;
+    if (digestOf(raw) !== write.beforeDigest) return false;
+    pending.push({ write, abs, relPath, before: raw === undefined ? undefined : readFileIfPresent(abs, relPath) });
   }
   const rollbackWrites: AtomicRollbackWrite[] = [];
   for (const { write, abs, relPath, before } of pending) {

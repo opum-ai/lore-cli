@@ -490,12 +490,17 @@ export interface AdvisoryResultOptions<T> {
   /** The tree hash at entry (see {@link commandInputHash}); `null` disables reuse but still takes the lock. */
   readonly inputHash: string | null;
   /**
-   * Recompute the tree hash once the lock is held. A holder that had to WAIT may be looking at a
-   * tree the prior holder changed, so the result must be keyed by the tree it is actually computed
-   * against, not by the one it entered on. Defaults to reusing {@link inputHash} (correct when the
-   * caller acquired immediately). Used for the result key and the post-acquire reuse check; the
-   * while-waiting reuse check always uses the entry hash. Called ONLY when this caller actually
-   * waited; a caller that acquired on its first try is keyed by {@link inputHash} (round-2 nit 6).
+   * Recompute the tree hash once the lock is held. Whoever acquires may be looking at a tree a prior
+   * holder changed (including one that wrote and released before this caller's first create attempt),
+   * so the result must be keyed by the tree it is actually computed against, not by the one it
+   * entered on. Without it the result is keyed by {@link inputHash}, the ENTRY hash, which can already
+   * be stale for the reason given below even on a first-try acquire, so any caller whose command can
+   * change the tree should supply `rehash`. Used for the result key and the post-acquire reuse check; the
+   * while-waiting reuse check always uses the entry hash. Called ONCE whenever the lock is held
+   * and `rehash` is supplied, even by a caller that acquired on its first try: the entry hash is
+   * taken BEFORE this call (git spawns), so a holder can write and release between it and the first
+   * create attempt, and a result keyed by the stale entry hash could be replayed to a waiter still
+   * on the pre-write tree (round-3 verdict on #758, SF1; supersedes the round-2 nit 6 narrowing).
    */
   readonly rehash?: () => string | null;
   /**
@@ -503,7 +508,8 @@ export interface AdvisoryResultOptions<T> {
    * When set, a waiter that finds a matching result does not return it straight away: it keeps
    * waiting until it holds the lock, then calls `adopt(value)`. `true` means the result is now
    * reflected in this caller's checkout (applied, or already equal) and is returned as reused;
-   * `false` abandons reuse and this caller computes, still under the lock. Unset (a read-only
+   * `false` abandons reuse and this caller computes, still under the lock. A throw counts as `false`, and
+   * an abandoned caller stores NO result for reuse (its tree may have changed during the adopt). Unset (a read-only
    * command) keeps the original behaviour: the matching result is returned without taking the lock.
    */
   readonly adopt?: (value: T) => boolean | Promise<boolean>;
@@ -584,7 +590,7 @@ interface CallContext {
  * waiter reuse the holder's finished result instead of recomputing it.
  *
  * The call returns `{ value, reused, waited, forced }`; it never throws for lock contention (only
- * what `compute` itself throws). A crashed holder is recovered by dead-pid detection; a holder on
+ * what `compute` or a supplied `rehash` throws; a throwing `rehash` still releases the lock). A crashed holder is recovered by dead-pid detection; a holder on
  * another host (or one whose record cannot be read) by the age backstop; a same-host live holder is
  * never stolen from and is left to the wait bound, after which this caller computes unlocked
  * (DEC-282 (a8)). A broken lock mechanism likewise proceeds unlocked.
@@ -668,25 +674,32 @@ export async function withAdvisoryResult<T>(options: AdvisoryResultOptions<T>): 
     }
     if (created.kind === "created") {
       // Keyed by the tree the work is actually done against. If this caller had to wait, a prior
-      // holder may have changed the tree since it entered, so rehash while the lock is held.
-      // Rehash only after an ACTUAL wait: a caller that acquired on its first poll computed its
-      // entry hash against the tree it is about to read (round-2 nit 6).
-      const keyHash = reusable
-        ? options.rehash === undefined || !waited
-          ? options.inputHash
-          : options.rehash()
-        : null;
+      // holder may have changed the tree since it entered, so rehash while the lock is held. ALWAYS,
+      // even on a first-try acquire: the entry hash is computed before this call, so a holder can have
+      // written and released in between (the cost, a few git spawns per locked run, is accepted for
+      // correctness; the round-3 ruling amends the earlier "only after a wait").
       const heartbeat = startHeartbeat(ctx, owner);
       try {
+        // Inside the try so a throwing rehasher releases the lock instead of leaving it behind.
+        const keyHash = reusable ? (options.rehash === undefined ? options.inputHash : options.rehash()) : null;
         const found = candidate ?? readReusable(keyHash);
         // Adopted UNDER the lock (the heartbeat is running and nobody else is computing), so an
         // apply can neither interleave with another holder's writes nor be seen half-done by a
         // `check` holder in this checkout. A refusal falls through to computing below.
-        if (found !== undefined && (adopt === undefined || (await adopt(found)))) {
-          return { value: found, reused: true, waited, forced: false };
+        let abandoned = false;
+        if (found !== undefined) {
+          if (adopt === undefined || (await adoptOrAbandon(adopt, found))) {
+            return { value: found, reused: true, waited, forced: false };
+          }
+          abandoned = true;
         }
         const value = await options.compute();
-        if (reusable && keyHash !== null) {
+        // NO slot after an abandon: an adopt that was attempted and did not accept (it refused, or
+        // threw after writing) may have changed this tree, so `keyHash` — taken before the adopt —
+        // no longer names the tree `compute` ran against. Storing under it could hand a waiter in
+        // another worktree a result computed from different inputs (round-2 verdict on #758, B2).
+        // The caller still gets its own result; it just is not offered for reuse.
+        if (reusable && keyHash !== null && !abandoned) {
           writeResult(resultPath, { schema: 1, inputHash: keyHash, finishedAt: ctx.now(), value });
         }
         return { value, reused: false, waited, forced: false };
@@ -696,6 +709,11 @@ export async function withAdvisoryResult<T>(options: AdvisoryResultOptions<T>): 
       }
     }
 
+    // The lock exists, so this caller contends from here on, whatever the read below finds: if the
+    // holder released between our create attempt and our read, whatever it did may have changed the
+    // tree, and the next pass (which will own the lock) must rehash rather than key by the entry hash.
+    waited = true;
+
     const snapshot = readLockSnapshot(ctx.lockPath);
     if (snapshot === null) {
       // The lock vanished between our create attempt and our read; whoever removed it may be about
@@ -703,11 +721,6 @@ export async function withAdvisoryResult<T>(options: AdvisoryResultOptions<T>): 
       await ctx.sleep(bounds.pollMs);
       continue;
     }
-
-    // The lock was held when we arrived, so this caller contended even if it takes the lock on the
-    // very next pass (a holder it broke, or one that released between polls): whatever that holder
-    // did may have changed the tree, so the caller must rehash once it owns the lock.
-    waited = true;
 
     // F4: reset the deadline when the holder's owner changes, so the bound applies per wedged
     // holder rather than to a queue position.
@@ -738,6 +751,19 @@ export async function withAdvisoryResult<T>(options: AdvisoryResultOptions<T>): 
 
     // A routine wait is silent ((a14) Q3): only expiry and a broken mechanism write a line.
     await ctx.sleep(bounds.pollMs);
+  }
+}
+
+/**
+ * Run `adopt`, treating a throw as a refusal: the caller then computes for itself, so a failure to
+ * apply a reused result surfaces from a fresh run in its own error shape instead of escaping from
+ * the reuse path (round-3 N3).
+ */
+async function adoptOrAbandon<T>(adopt: (value: T) => boolean | Promise<boolean>, value: T): Promise<boolean> {
+  try {
+    return await adopt(value);
+  } catch {
+    return false;
   }
 }
 

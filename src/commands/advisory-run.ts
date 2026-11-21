@@ -161,8 +161,9 @@ async function runAgainstLock<P>(
     resultName: options.command,
     inputHash,
     reusable: record,
-    // A holder that waited behind `sync` may be keying a tree those writes changed; let the
-    // mechanism rehash once it holds the lock so the result names the tree it was computed against.
+    // Whoever takes the lock may be looking at a tree a `sync` just changed (the entry hash above is
+    // taken before the lock); let the mechanism rehash once it holds the lock so the result names the
+    // tree it was computed against.
     ...(record ? { rehash: hash } : {}),
     compute: () => capture(options.run, stdout, stderr, record),
     // A reused write result is applied here, UNDER the lock, and only if this checkout still holds
