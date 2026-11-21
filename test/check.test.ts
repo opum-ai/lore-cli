@@ -2356,17 +2356,75 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     expect(drift.message).not.toContain("null");
   });
 
-  test("a stale managed block is a managed-block-drift error (exit 6)", async () => {
+  test("DEC-282 item 3 (LCLI-793): a stale lore:tasks block ALONE is a warning, exit 0 by default", async () => {
     // Frontmatter status already matches; the block itself (still the storyDoc default, empty) is stale.
+    // Drift confined to this managed region is advisory by default: a tracker write stales it, the
+    // tracker cannot rewrite it, and only `lore sync` can, so it must not gate every tracker write.
     writeDoc("stories/x.md", storyDoc("X", ["lore-1"], "done"));
     const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
 
     const o = opts([], adapter);
     const code = await runCheck(o);
     const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
-    expect(code).toBe(EXIT_CODES.validation);
+    expect(code).toBe(EXIT_OK);
+    expect(parsed.data).toMatchObject({ errorCount: 0, warningCount: 1 });
     expect(parsed.data.findings).toHaveLength(1);
-    expect(parsed.data.findings[0].rule).toBe("managed-block-drift");
+    expect(parsed.data.findings[0]).toMatchObject({
+      severity: "warning",
+      rule: "managed-block-drift",
+      file: "stories/x.md",
+    });
+  });
+
+  test("DEC-282 item 3 (LCLI-793): the SAME lore:tasks block drift errors under --strict (exit 6)", async () => {
+    writeDoc("stories/x.md", storyDoc("X", ["lore-1"], "done"));
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const o = opts(["--strict"], adapter);
+    const code = await runCheck(o);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    // --strict keeps its existing meaning: the finding's own severity stays "warning", the warning is
+    // simply promoted to a failing exit code (the same contract every other warn-tier finding has).
+    expect(code).toBe(EXIT_CODES.validation);
+    expect(parsed.data).toMatchObject({ errorCount: 0, warningCount: 1 });
+    expect(parsed.data.findings[0]).toMatchObject({ severity: "warning", rule: "managed-block-drift" });
+  });
+
+  test("DEC-282 item 3 (LCLI-793): lore:tasks block drift + other drift is an error in BOTH modes — only confined drift softens", async () => {
+    // Status drift (error) AND a stale lore:tasks block (warning) in the same report. The block's own
+    // severity is warning, but the report as a whole is not confined to lore:tasks drift, so it gates.
+    writeDoc("stories/x.md", storyDoc("X", ["lore-1"], "todo"));
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    for (const args of [[], ["--strict"]]) {
+      const o = opts(args, adapter);
+      expect(await runCheck(o)).toBe(EXIT_CODES.validation);
+      const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+      expect(parsed.data.errorCount).toBeGreaterThan(0);
+      expect(parsed.data.findings).toContainEqual(
+        expect.objectContaining({ severity: "error", rule: "status-drift", file: "stories/x.md" }),
+      );
+      expect(parsed.data.findings).toContainEqual(
+        expect.objectContaining({ severity: "warning", rule: "managed-block-drift", file: "stories/x.md" }),
+      );
+    }
+  });
+
+  test("DEC-282 item 3 (LCLI-793): `lore check` never rewrites a stale lore:tasks block — only `lore sync` writes it", async () => {
+    // The boundary behind the softening: the tracker owns task records and lore owns the region. A
+    // tracker-side change leaves the block stale; `check` reads that data and must NOT heal the block
+    // as a side effect, and the tracker read path has no route to it either. Pinned by bytes: the doc
+    // is byte-identical before and after a check that reports the drift.
+    writeDoc("stories/x.md", storyDoc("X", ["lore-1"], "done"));
+    const docPath = join(root, "docs", "stories", "x.md");
+    const before = readFileSync(docPath, "utf8");
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    const o = opts([], adapter);
+    expect(await runCheck(o)).toBe(EXIT_OK);
+    const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
+    expect(parsed.data.findings.some((f: { rule: string }) => f.rule === "managed-block-drift")).toBe(true);
+    expect(readFileSync(docPath, "utf8")).toBe(before);
   });
 
   test("an empty tasks: list with a stale final-task row is managed-block drift without Backlog IO", async () => {
@@ -2914,9 +2972,11 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     const o = { root, output: JSON_CTX, args: ["a", "b"], adapter, stdout: capture(), stderr: capture() };
     const code = await runCheck(o);
     const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
-    expect(code).toBe(EXIT_CODES.validation);
+    // Only lore:tasks block drift here (status already matches), so by default this is a warning and
+    // the gate passes -- the finding still has to be found and labeled correctly (DEC-282 item 3).
+    expect(code).toBe(EXIT_OK);
     expect(parsed.data.findings).toHaveLength(1);
-    expect(parsed.data.findings[0].rule).toBe("managed-block-drift");
+    expect(parsed.data.findings[0]).toMatchObject({ severity: "warning", rule: "managed-block-drift" });
     expect(parsed.data.findings[0].file).toBe("a/x.md"); // labeled by its root, same convention as link/anchor findings
     expect(calls).toBe(1); // one adapter instance shared across both roots -- its capability probe runs once
   });
@@ -2941,10 +3001,17 @@ describe("runCheck — status + managed-block drift (LORE-27)", () => {
     const o = { root, output: JSON_CTX, args: ["a", "b"], adapter, stdout: capture(), stderr: capture() };
     const code = await runCheck(o);
     const parsed = JSON.parse((o.stdout as ReturnType<typeof capture>).text());
-    expect(code).toBe(EXIT_CODES.validation);
+    // Both roots carry only lore:tasks block drift (status matches), so the gate passes by default
+    // (DEC-282 item 3); the deduplication this test is about is in the findings, not the exit code.
+    expect(code).toBe(EXIT_OK);
     // Both roots' own stale managed-block is still found independently...
     const files = parsed.data.findings.map((f: { file: string }) => f.file).sort();
     expect(files).toEqual(["a/x.md", "b/x.md"]);
+    expect(
+      parsed.data.findings.every(
+        (f: { severity: string; rule: string }) => f.severity === "warning" && f.rule === "managed-block-drift",
+      ),
+    ).toBe(true);
     // ...but the shared task id is fetched from Backlog exactly once for the whole run, not once per root.
     expect(calls).toBe(1);
   });
@@ -3150,6 +3217,99 @@ describe("runCheck — index-drift (LCLI-377)", () => {
 
   afterEach(() => {
     rmSync(root, { recursive: true, force: true });
+  });
+
+  /** Establish a genuinely-synced reference index, then stale it with a second `lore new` (no sync). */
+  async function staleReferenceIndex(): Promise<void> {
+    runNew({
+      root,
+      output: JSON_CTX,
+      args: ["reference", "First Doc"],
+      clock: FIXED_CLOCK,
+      stdout: capture(),
+      stderr: capture(),
+    });
+    expect(
+      await runSync({
+        root,
+        output: JSON_CTX,
+        args: [],
+        stdout: capture(),
+        stderr: capture(),
+        resolveHead: () => null,
+      }),
+    ).toBe(EXIT_OK);
+    runNew({
+      root,
+      output: JSON_CTX,
+      args: ["reference", "Second Doc"],
+      clock: FIXED_CLOCK,
+      stdout: capture(),
+      stderr: capture(),
+    });
+  }
+
+  /** A 0.2 Story whose `lore_task_status` matches but whose `lore:tasks` block is still the empty scaffold. */
+  const STALE_BLOCK_STORY =
+    "---\ntype: Story\ntitle: X\nsummary: X.\nstatus: stable\nlore_task_status: done\ntasks:\n  - lore-1\n---\n" +
+    "# X\n\n## Acceptance criteria\n\n- It works.\n\n<!-- lore:tasks:begin -->\n<!-- lore:tasks:end -->\n";
+
+  test("an index-drift alone is an error in BOTH modes — --strict has no bearing on it (DEC-282 item 3)", async () => {
+    await staleReferenceIndex();
+    for (const args of [[], ["--strict"]]) {
+      const stdout = capture();
+      const code = await runCheck({
+        root,
+        output: JSON_CTX,
+        args,
+        stdout,
+        stderr: capture(),
+        headCommitDate: () => "2026-06-25",
+      });
+      expect(code).toBe(EXIT_CODES.validation);
+      const envelope = JSON.parse(stdout.text()) as {
+        data: { errorCount: number; findings: Array<{ rule: string; file: string; severity: string }> };
+      };
+      expect(envelope.data.errorCount).toBeGreaterThan(0);
+      expect(envelope.data.findings).toContainEqual(
+        expect.objectContaining({ severity: "error", rule: "index-drift", file: "reference/index.md" }),
+      );
+    }
+  });
+
+  test("a report with BOTH index-drift and lore:tasks block drift exits 6 in BOTH modes — only confined drift softens", async () => {
+    await staleReferenceIndex();
+    // A stale lore:tasks block (warning) in the SAME run as the stale lore:index block (error).
+    mkdirSync(join(root, "docs", "stories"), { recursive: true });
+    writeFileSync(join(root, "docs", "stories", "x.md"), STALE_BLOCK_STORY);
+    const adapter = fakeAdapter([makeTask("LORE-1", { status: "Done" })]);
+
+    for (const args of [[], ["--strict"]]) {
+      const stdout = capture();
+      const code = await runCheck({
+        root,
+        output: JSON_CTX,
+        args,
+        stdout,
+        stderr: capture(),
+        headCommitDate: () => "2026-06-25",
+        adapter,
+      });
+      expect(code).toBe(EXIT_CODES.validation);
+      const findings = (
+        JSON.parse(stdout.text()) as {
+          data: { findings: Array<{ rule: string; file: string; severity: string }> };
+        }
+      ).data.findings;
+      // The lore:tasks drift is still only a warning...
+      expect(findings).toContainEqual(
+        expect.objectContaining({ severity: "warning", rule: "managed-block-drift", file: "stories/x.md" }),
+      );
+      // ...but the index drift is an error, so the report is not confined to lore:tasks and gates.
+      expect(findings).toContainEqual(
+        expect.objectContaining({ severity: "error", rule: "index-drift", file: "reference/index.md" }),
+      );
+    }
   });
 
   test("a doc scaffolded via `lore new` after the last `lore sync` leaves its directory's index stale, and `lore check` flags it", async () => {

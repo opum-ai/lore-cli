@@ -12,17 +12,22 @@
  *   {@link validateLink} classifier) plus a body-text scan for Obsidian-isms (wikilinks,
  *   embeds, callouts, highlights, `%%`-comments). Every such finding is a **warning** that
  *   never fails the gate on its own (ADR-0007, portable-markdown.md).
- * - **Task-progress reconciliation + managed-block drift** (LORE-27, the gate, exit `6`): a concept
- *   whose version-selected task rollup (`status` in OKF 0.1, `lore_task_status` in OKF 0.2) no
- *   longer matches its live Backlog rollup, or whose
+ * - **Task-progress reconciliation + managed-block drift** (LORE-27; status drift gates, `lore:tasks`
+ *   block drift is advisory by default): a concept whose version-selected task rollup (`status` in
+ *   OKF 0.1, `lore_task_status` in OKF 0.2) no longer matches its live Backlog rollup, or whose
  *   `<!-- lore:tasks -->` region no longer matches what {@link regenerateTaskBlock} would
  *   produce from current task data, is drift — the same condition `lore sync` would fix by
  *   writing. {@link reconcileDriftFindings} is the pure judgment; resolving each linked task's
  *   live status (the Backlog JSON adapter) and reading each concept's on-disk bytes are
  *   command-layer IO (`commands/check.ts`, via the shared `commands/reconcile-shared.ts`
- *   gather it also feeds to `lore sync`) — ADR-0014 keeps that IO out of core. Both findings
- *   are **errors**: unlike the portability lint, drift always gates (ADR-0007), never merely
- *   advisory under `--strict`.
+ *   gather it also feeds to `lore sync`) — ADR-0014 keeps that IO out of core. The two findings
+ *   carry DIFFERENT severities (DEC-282 item 3, LCLI-793): **status drift is an error** that always
+ *   gates, while **`lore:tasks` block drift is a warning** by default (it gates under `--strict`).
+ *   Any tracker write can stale the block, and the tracker cannot rewrite it — only `lore sync`
+ *   writes the region — so a hard failure on block drift alone made every tracker write cost a
+ *   `sync` + `check` round trip. Only drift CONFINED to `lore:tasks` softens: every other drift rule
+ *   (`index-drift`, `schema-drift`, `status-drift`, broken links/anchors) stays an error in both
+ *   modes, so a mixed report still exits `6`.
  * - **OKF staleness** (advisory): an OKF 0.2 concept whose `stale_after` date is today or earlier
  *   produces a warning. The command layer supplies the UTC date, preserving this module's purity.
  *
@@ -76,8 +81,10 @@ export type CheckSeverity = Severity;
 
 /**
  * Which check produced a {@link CheckFinding}. `broken-link`/`broken-anchor` and
- * `status-drift`/`managed-block-drift`/`unsupported-task-coupling`/`index-drift`/`schema-drift`
- * are all error-tier gate findings; `unknown-type`/`portability` are warn-tier lints; `external-link`
+ * `status-drift`/`unsupported-task-coupling`/`index-drift`/`schema-drift`
+ * are all error-tier gate findings; `managed-block-drift` (a stale lone `<!-- lore:tasks -->`
+ * region) is **warn**-tier — advisory by default, gated under `--strict` (DEC-282 item 3,
+ * LCLI-793) — as are `unknown-type`/`portability`; `external-link`
  * is the opt-in, non-deterministic liveness advisory (`--external`) that never fails the gate
  * (ADR-0007). `double-frontmatter` (LCLI-372) is error-tier defense-in-depth: a file whose body
  * itself opens with a second, parseable `---` frontmatter fence -- the shape `lore new` already
@@ -843,10 +850,21 @@ export interface ReconcileDriftInput {
 
 /**
  * The drift findings for one already-reconciled concept: a **status-drift** error when the
- * recomputed status differs from what is persisted, and a **managed-block-drift** error when
+ * recomputed status differs from what is persisted, and a **managed-block-drift** **warning** when
  * re-rendering the `<!-- lore:tasks -->` region from `rows` would change the file's bytes. Both
- * are independent — a concept can have one, both, or neither — and both are `error` severity
- * (ADR-0007: this gate is not a `--strict`-only advisory, unlike the portability lint).
+ * are independent — a concept can have one, both, or neither.
+ *
+ * The two severities differ deliberately (DEC-282 item 3, LCLI-793). **Task-rollup status drift is
+ * an `error`**, always gating: the Story's own authored value disagrees with the tracker, which is a
+ * real incoherence. **`lore:tasks` block drift is a `warning`** by default and gates only under
+ * `--strict`: any tracker write can stale the block (a title or note edit, not just a status
+ * change), and the tracker **cannot** rewrite it — only `lore sync` writes the region — so treating
+ * it as a hard failure made every tracker write cost a `sync` + `check` round trip. A report whose
+ * drift is *confined* to `lore:tasks` blocks therefore exits `0` by default and `6` under `--strict`
+ * (the flag's ordinary "warnings fail the exit code" meaning, not a new one). **Every other drift
+ * rule stays `error` in both modes** — `index-drift` (`lore:index`), `schema-drift`, `status-drift`,
+ * broken links/anchors — so a report carrying `lore:tasks` drift *plus* any other drift still exits
+ * `6`: only drift confined to `lore:tasks` softens.
  *
  * Reuses the exact pure engines `lore sync` writes with ({@link reconcileStatus},
  * {@link regenerateTaskBlock}) so drift can never differ from what a `sync` run would fix.
@@ -854,7 +872,8 @@ export interface ReconcileDriftInput {
  * @throws LoreError `validation` (exit 6) — {@link regenerateTaskBlock}'s own contract — when the
  *   concept's managed-block markers are missing, duplicated, crossed, or a collapsed same-line
  *   begin/end pair; `check` refuses to guess at a corrupted region rather than reporting a soft
- *   finding for it, the read-time mirror of `sync`'s "never writes a partial block."
+ *   finding for it, the read-time mirror of `sync`'s "never writes a partial block." A corrupted
+ *   region is a thrown error, never the soft `managed-block-drift` warning above.
  */
 export function reconcileDriftFindings(input: ReconcileDriftInput): CheckFinding[] {
   const fixable = input.fixable;
@@ -880,9 +899,13 @@ export function reconcileDriftFindings(input: ReconcileDriftInput): CheckFinding
   }
   const regenerated = regenerateTaskBlock(input.original, input.rows, { docPath: input.docPath });
   if (regenerated !== input.original) {
+    // WARNING, not error (DEC-282 item 3, LCLI-793): a tracker write of any kind can stale this
+    // region, the tracker cannot rewrite it, and only `lore sync` can. Confined-to-lore:tasks drift
+    // therefore exits 0 by default and 6 under `--strict` (the flag's ordinary warning escalation).
+    // Every OTHER drift rule stays error, so a mixed report still exits 6 — only this region softens.
     const hint = fixable ? " — run `lore sync` to regenerate it from live task data" : "";
     findings.push({
-      severity: "error",
+      severity: "warning",
       rule: "managed-block-drift",
       file: input.path,
       message: `the <!-- lore:tasks --> block is stale${hint}`,

@@ -250,10 +250,14 @@ lore check          # plain auto-selected when non-TTY (e.g. in CI)
 ```
 
 `lore check` is **read-only** and is the gate. It reports drift (a Story whose
-written status no longer matches its tasks, or a stale managed block), broken
-internal links, missing heading anchors, and portability-lint findings, and it
-surfaces per-doc/bundle token **estimates**. On any failing condition it exits
-**`6`** (`error_type` `drift`); the fix is to run `lore sync` and commit. When it
+written status no longer matches its tasks is an **error**; a stale
+`lore:tasks` managed block is a **warning** by default, gated only under
+`--strict`, because a tracker write stales it and only `lore sync` can rewrite
+it — DEC-282 item 3), broken internal links, missing heading anchors, and
+portability-lint findings, and it surfaces per-doc/bundle token **estimates**.
+On any failing condition it exits **`6`** (`error_type` `drift`); the fix is to
+run `lore sync` and commit. A run whose only drift is a stale `lore:tasks`
+block exits **`0`** and offers the same fix. When it
 finds a committed schema it cannot attribute it exits **`7`** instead, which is
 never fixed by a sync or an export. Because
 `check` writes nothing, it is safe to run in CI on every merge — and because the
