@@ -55,7 +55,7 @@
 
 import { join } from "node:path";
 import type { BacklogAdapter, BacklogTaskDetail, EditTaskPatch } from "../adapters/backlog";
-import { isQuestActorContextFailure } from "../adapters/quest";
+import { isQuestActorContextFailure, referenceKey } from "../adapters/quest";
 import { createConfiguredTrackerAdapter } from "../adapters/tracker";
 import type { TrackerBackend } from "../config";
 import { type BundleGraph, conceptNotInBundle, loadBundle, toRefList } from "../core/bundle";
@@ -859,9 +859,13 @@ export function defaultAdapter(root: string): BacklogAdapter {
 
 /**
  * Call `adapter.viewTask(taskId)` and verify the returned detail's own `id` matches the requested
- * `taskId` case-insensitively before trusting it (originally introduced alongside
- * `reconcile-shared.ts`'s `resolveTaskDetails`, LORE-122). A misbehaving or ambiguous adapter
- * handing back a DIFFERENT task's detail must never be trusted to decide a label/`--doc` edit or
+ * `taskId` by its reference key before trusting it (originally introduced alongside
+ * `reconcile-shared.ts`'s `resolveTaskDetails`, LORE-122; LCLI-807 widened the comparison from
+ * `.toLowerCase()` to {@link referenceKey}, so this read path folds a non-ASCII id or alias exactly
+ * as the rollup's `rollupIndex` and Quest's own `findTask` do — `straße` resolves as `STRASSE`, an
+ * NFC alias resolves in NFD — instead of throwing `not_found` where `lore check`/`sync` match). A
+ * misbehaving or ambiguous adapter handing back a DIFFERENT task's detail must never be trusted to
+ * decide a label/`--doc` edit or
  * the `tasks:` pre-write check: every one of this module's `viewTask` consumers — the pre-write
  * existence check, the back-reference edit's fresh re-read, `unlink`'s removal read, and
  * `moveBackRefs`'s move read (LORE-183; the last of these was an unguarded gap until then) — uses
@@ -881,8 +885,9 @@ export async function verifiedViewTask(adapter: BacklogAdapter, taskId: string):
   if (detail === null) {
     return null;
   }
-  const resolvesAlias = detail.aliases?.some((alias) => alias.toLowerCase() === taskId.toLowerCase()) ?? false;
-  if (detail.id.toLowerCase() !== taskId.toLowerCase() && !resolvesAlias) {
+  const wanted = referenceKey(taskId);
+  const resolvesAlias = detail.aliases?.some((alias) => referenceKey(alias) === wanted) ?? false;
+  if (referenceKey(detail.id) !== wanted && !resolvesAlias) {
     throw new LoreError(
       "not_found",
       `task "${taskId}" resolved to a different task ("${detail.id}") — refusing to use it`,

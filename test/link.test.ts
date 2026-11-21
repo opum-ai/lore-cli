@@ -167,6 +167,48 @@ describe("verified task aliases", () => {
     const adapter: BacklogAdapter = { ...fakeAdapter([]), viewTask: async () => canonical };
     await expect(verifiedViewTask(adapter, "LCLI-1")).rejects.toMatchObject({ type: "not_found" });
   });
+
+  // LCLI-807: the guard folds by referenceKey like the rollup, so a non-ASCII id or alias resolves
+  // here exactly as it already did in `lore check`/`sync` instead of throwing not_found.
+  test("LCLI-807: accepts a canonical id of straße when referenced as STRASSE", async () => {
+    const canonical = makeTask("straße");
+    const adapter: BacklogAdapter = { ...fakeAdapter([]), viewTask: async () => canonical };
+    await expect(verifiedViewTask(adapter, "STRASSE")).resolves.toBe(canonical);
+  });
+
+  test("LCLI-807: accepts an NFC alias when the reference is NFD", async () => {
+    const nfc = "café"; // e + combining acute, composed
+    const nfd = "café"; // e + combining acute, decomposed
+    expect(nfc).not.toBe(nfd);
+    const canonical = { ...makeTask("T-1"), aliases: [nfc] };
+    const adapter: BacklogAdapter = { ...fakeAdapter([]), viewTask: async () => canonical };
+    await expect(verifiedViewTask(adapter, nfd)).resolves.toBe(canonical);
+  });
+});
+
+describe("lore link — the read path folds like the rollup (LCLI-807)", () => {
+  test("a task whose id is straße links when referenced as STRASSE", async () => {
+    writeDoc("stories/fold.md", "---\ntype: Story\ntitle: Fold\n---\nBody.\n");
+    const canonical = makeTask("straße");
+    const adapter: BacklogAdapter = { ...fakeAdapter([]), viewTask: async () => canonical };
+    const { code, report } = await linkCmd(["stories/fold", "STRASSE", "--no-back-ref"], adapter);
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks).toEqual([{ task: "STRASSE", status: "added", backRef: "skipped" }]);
+    const concept = parseConcept("stories/fold.md", readDoc("stories/fold.md"));
+    expect(concept.frontmatter.tasks).toEqual(["strasse"]);
+  });
+
+  test("a task with an NFC alias links when referenced in NFD", async () => {
+    writeDoc("stories/fold2.md", "---\ntype: Story\ntitle: Fold2\n---\nBody.\n");
+    const nfd = "café";
+    const canonical = { ...makeTask("T-1"), aliases: ["café"] };
+    const adapter: BacklogAdapter = { ...fakeAdapter([]), viewTask: async () => canonical };
+    const { code, report } = await linkCmd(["stories/fold2", nfd, "--no-back-ref"], adapter);
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks).toEqual([{ task: nfd, status: "added", backRef: "skipped" }]);
+    const concept = parseConcept("stories/fold2.md", readDoc("stories/fold2.md"));
+    expect(concept.frontmatter.tasks).toEqual([nfd.toLowerCase()]);
+  });
 });
 
 // ── AC#1: link wires tasks: + doc: label + --doc ──────────────────────────────────

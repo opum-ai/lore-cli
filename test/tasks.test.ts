@@ -482,3 +482,24 @@ describe("cli — tasks wiring (end-to-end through the router)", () => {
     expect(code).toBe(2);
   });
 });
+
+describe("lore tasks — the read path folds like the rollup (LCLI-807)", () => {
+  test("a task whose id is straße rolls up when referenced as STRASSE", async () => {
+    writeStory("fold", ["STRASSE"]);
+    const canonical = makeTask("straße", { title: "Straße task", status: "Done" });
+    const adapter = { ...okAdapter([]), viewTask: async () => canonical };
+    const { code, data } = await rollupJson(["stories/fold"], { adapter });
+    expect(code).toBe(0);
+    expect(data.tasks).toEqual([{ id: "straße", title: "Straße task", status: "Done" }]);
+  });
+
+  test("a task with an NFC alias rolls up when referenced in NFD", async () => {
+    const nfd = "café";
+    writeStory("fold2", [nfd]);
+    const canonical = { ...makeTask("T-1"), aliases: ["café"] };
+    const adapter = { ...okAdapter([]), viewTask: async () => canonical };
+    const { code, data } = await rollupJson(["stories/fold2"], { adapter });
+    expect(code).toBe(0);
+    expect(data.tasks).toEqual([{ id: "T-1", title: "Title for T-1", status: "To Do" }]);
+  });
+});

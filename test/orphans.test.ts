@@ -769,3 +769,27 @@ describe("cli — orphans wiring (end-to-end through the router)", () => {
     expect(code).toBe(2);
   });
 });
+
+describe("lore orphans — the confirmation read folds like the rollup (LCLI-807)", () => {
+  // The bulk list omits the task, so the reference becomes a CANDIDATE dangling link and the
+  // per-task confirmation (`confirmDanglingLinks` -> verifiedViewTask) decides it. Before the fix
+  // that read threw not_found and the live task was reported dangling; with referenceKey it resolves.
+  test("a task whose id is straße is not reported dangling when referenced as STRASSE", async () => {
+    writeStory("fold", ["STRASSE"]);
+    const canonical = makeTask("straße");
+    const adapter = { ...okAdapter([canonical]), viewTask: async () => canonical };
+    const { code, data } = await reportJson([], adapter);
+    expect(code).toBe(0);
+    expect(data.danglingLinks).toEqual([]);
+  });
+
+  test("a task with an NFC alias is not reported dangling when referenced in NFD", async () => {
+    const nfd = "café";
+    writeStory("fold2", [nfd]);
+    const canonical = { ...makeTask("T-1"), aliases: ["café"] };
+    const adapter = { ...okAdapter([canonical]), viewTask: async () => canonical };
+    const { code, data } = await reportJson([], adapter);
+    expect(code).toBe(0);
+    expect(data.danglingLinks).toEqual([]);
+  });
+});
