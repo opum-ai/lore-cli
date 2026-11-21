@@ -106,7 +106,9 @@ function readCommitted(tsPath) {
   const source = readFileSync(tsPath, "utf8");
   const start = source.indexOf(BLOCK_START);
   if (start === -1) throw new Error(`no ${BLOCK_START} in ${tsPath}`);
-  const end = source.indexOf(";", start);
+  // Anchor on `;` NEWLINE, not the first `;`: the block is a run of string literals, and a `;` inside
+  // one (or in a trailing comment on the same line) is not the statement terminator.
+  const end = source.indexOf(";\n", start);
   if (end === -1) throw new Error(`unterminated ${BLOCK_START} in ${tsPath}`);
   const literals = source.slice(start, end).match(/"(?:[^"\\]|\\.)*"/g) ?? [];
   const data = literals.map((literal) => JSON.parse(literal)).join("");

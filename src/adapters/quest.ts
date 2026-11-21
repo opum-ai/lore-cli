@@ -1045,8 +1045,9 @@ const MALFORMED_ALIAS_ID_LIMIT = 8;
  *    rather than a blanket failure caused by some other record.
  *  - a NON-STRING, NON-ARRAY value (number, object, boolean) has no string content to compare, so a
  *    reference that misses cannot be ruled out as one of its aliases. That is the ONE malformed shape
- *    a miss drifts on instead of answering `not_found`, naming the records (deduped and capped) --
- *    the per-task path rejects such a record as drift too.
+ *    a miss drifts on instead of answering `not_found`, naming the records (deduped and capped).
+ *    Quest itself fails the WHOLE load for a malformed `aliases` value, so a real quest's per-task
+ *    view fails for EVERY reference, not only one that record's aliases could have matched.
  * `aliases` absent or `null` is no aliases, exactly as the per-task reader's `?? []` treats it.
  */
 function rollupIndex(items: readonly Record<string, unknown>[]): TaskRollupIndex {
