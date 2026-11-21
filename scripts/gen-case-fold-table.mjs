@@ -14,7 +14,8 @@
 // order -- and the reader folds each code point through it with NO `toLowerCase` fallback. A code
 // point absent from the map folds to itself, which is the library's own semantics (`caseFold` pushes
 // the char unchanged when the map has no entry). The pair shares one fold table; a change to it is a
-// pair change, and the digest test fails in whichever half lags.
+// pair change. Only lore's half is pinned today (the digest test fails if lore's table moves); quest
+// carries no pin yet, so a lag in quest's half is not caught by either repository's CI.
 //
 // SOURCE OF TRUTH: the `unicode-case-folding` package's FOLDING_MAP, the exact library quest-cli's
 // `aliasKey` calls. This script reads that map out of the package's `index.js` and emits every entry
@@ -110,8 +111,9 @@ function formatModule(entries, digest) {
     "// Greek iota subscript, an Armenian ligature, ...). A code point ABSENT from the table folds to",
     "// itself, which is the library's own semantics -- the reader applies NO `String.prototype.toLowerCase`",
     "// fallback, so the result does not vary by Bun generation (DEC-282 (a12)). lore and quest share this",
-    "// one fold table; a change to it is a pair change, and the digest pin in",
-    "// test/lcli791-quest-rollup.test.ts fails in whichever half lags.",
+    "// one fold table; a change to it is a pair change. Only lore's half is pinned today: the digest pin",
+    "// in test/lcli791-quest-rollup.test.ts fails if lore's table moves, and quest carries no pin of its",
+    "// own yet, so a lag in quest's half is not caught by either repository's CI.",
     "//",
     `// entries: ${entries.length}`,
     `// sha256 of the newline-joined data below: ${digest}`,

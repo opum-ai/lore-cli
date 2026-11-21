@@ -6,8 +6,9 @@
 // Greek iota subscript, an Armenian ligature, ...). A code point ABSENT from the table folds to
 // itself, which is the library's own semantics -- the reader applies NO `String.prototype.toLowerCase`
 // fallback, so the result does not vary by Bun generation (DEC-282 (a12)). lore and quest share this
-// one fold table; a change to it is a pair change, and the digest pin in
-// test/lcli791-quest-rollup.test.ts fails in whichever half lags.
+// one fold table; a change to it is a pair change. Only lore's half is pinned today: the digest pin
+// in test/lcli791-quest-rollup.test.ts fails if lore's table moves, and quest carries no pin of its
+// own yet, so a lag in quest's half is not caught by either repository's CI.
 //
 // entries: 1585
 // sha256 of the newline-joined data below: ef08b22d969b928737ae158c7a0d2bc4b800769b178f99db69f21bd68255fc13

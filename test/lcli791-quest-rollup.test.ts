@@ -6,6 +6,7 @@
  * The quest binary is a counting fake, so every assertion is about SPAWNS (the cost that made
  * four concurrent checks a load of 128) and never about wall time.
  */
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -19,6 +20,7 @@ import {
   questListCacheKey,
   referenceKey,
 } from "../src/adapters/quest";
+import { dedupeTaskIds } from "../src/commands/link";
 import { gatherReconciliation, resolveRollupDetails, resolveTaskDetails } from "../src/commands/reconcile-shared";
 import type { LoreError } from "../src/errors";
 import { VERSION } from "../src/meta";
@@ -501,9 +503,11 @@ describe("the reference key folds exactly as Quest's findTask does (review F2, F
     expect(new Set(points).size).toBe(points.length);
   });
 
-  test("F5: referenceKey agrees with the library's caseFold at EVERY code point in the map", () => {
-    // A local caseFold built from the committed (digest-pinned) table: no dependency on the package.
-    // It is the library's semantics exactly -- look the code point up, else keep the char unchanged.
+  test("F5: referenceKey is self-consistent with the committed table at EVERY mapped code point", () => {
+    // SELF-CONSISTENCY, not drift protection: the reference below is built from the same committed
+    // table referenceKey reads, so this proves the reader applies the table (NFC first, then a plain
+    // per-code-point lookup) and nothing else. Agreement with the real library is the generator's
+    // differential check (`scripts/gen-case-fold-table.mjs`, run by hand) plus the digest pin above.
     const libraryCaseFold = (input: string): string => {
       let out = "";
       for (const char of input) out += CASE_FOLD_MAP.get(char) ?? char;
@@ -629,5 +633,12 @@ describe("the reference key folds exactly as Quest's findTask does (review F2, F
     expect(cappedError.message).toContain('"T-1"');
     expect(cappedError.message).not.toContain('"T-12"'); // the 9th and later are summarised
     expect(cappedError.message).toContain("and 4 more");
+  });
+});
+
+describe("dedupeTaskIds folds by referenceKey (LCLI-809, #749 should-fix 2)", () => {
+  test("STRASSE and straße are ONE task; NFD and NFC spellings of an alias are one", () => {
+    expect(dedupeTaskIds(["STRASSE", "straße", "T-1", "t-1"])).toEqual(["STRASSE", "T-1"]);
+    expect(dedupeTaskIds(["caf\u0065\u0301", "caf\u00e9"])).toEqual(["caf\u0065\u0301"]);
   });
 });

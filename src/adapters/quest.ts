@@ -987,8 +987,9 @@ function rollupRow(task: Record<string, unknown>): TaskRollupRow {
  * FULL fold map {@link CASE_FOLD_MAP}, generated from `unicode-case-folding@1.1.1` -- the exact
  * library quest-cli's `aliasKey` calls -- and applies NO `toLowerCase` fallback. A code point absent
  * from the map folds to itself, which is the library's own semantics. Both halves of the pair share
- * this one table; a change to it is a pair change, and the digest pin in
- * `test/lcli791-quest-rollup.test.ts` fails in whichever half lags. `scripts/gen-case-fold-table.mjs`
+ * this one table; a change to it is a pair change. Only lore's half is pinned today: the digest pin in
+ * `test/lcli791-quest-rollup.test.ts` fails if lore's table moves, and quest has no pin of its own yet.
+ * `scripts/gen-case-fold-table.mjs`
  * re-derives the table and differentially checks it against the library (not wired into CI).
  *
  * The one input Quest validates that this does not is an EMPTY reference: quest's `aliasKey` rejects

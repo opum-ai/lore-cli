@@ -8,6 +8,7 @@
 
 import { createHash } from "node:crypto";
 import type { BacklogTask } from "../adapters/backlog";
+import { referenceKey } from "../adapters/quest";
 import { LoreError } from "../errors";
 import type { BundleGraph, Edge } from "./bundle";
 import { effectiveProfileFor, toRefList } from "./bundle";
@@ -101,9 +102,9 @@ export function buildProjection(input: ProjectionInput): Projection {
   }
 
   const taskKeys = new Map<string, string>();
-  const tasks = [...input.tasks].sort((a, b) => compare(a.id.toLowerCase(), b.id.toLowerCase()) || compare(a.id, b.id));
+  const tasks = [...input.tasks].sort((a, b) => compare(referenceKey(a.id), referenceKey(b.id)) || compare(a.id, b.id));
   for (const task of tasks) {
-    taskKeys.set(task.id.toLowerCase(), keyFor(bundleId, "task", task.id.toLowerCase()));
+    taskKeys.set(referenceKey(task.id), keyFor(bundleId, "task", referenceKey(task.id)));
   }
 
   const manifest: ProjectionRecord = {
@@ -151,7 +152,7 @@ export function buildProjection(input: ProjectionInput): Projection {
   for (const task of tasks) {
     records.push({
       record: "task",
-      key: taskKeys.get(task.id.toLowerCase()),
+      key: taskKeys.get(referenceKey(task.id)),
       id: task.id,
       title: task.title,
       status: task.status,
@@ -178,17 +179,17 @@ export function buildProjection(input: ProjectionInput): Projection {
   // unresolvable prerequisite is a fact about the graph, and silently omitting it would make a
   // blocked task look ready.
   for (const task of tasks) {
-    const from = taskKeys.get(task.id.toLowerCase());
+    const from = taskKeys.get(referenceKey(task.id));
     if (from === undefined) continue;
     const seen = new Map<string, number>();
     for (const dependencyId of task.dependencies) {
-      const normalized = dependencyId.toLowerCase();
+      const normalized = referenceKey(dependencyId);
       const ordinal = seen.get(normalized) ?? 0;
       seen.set(normalized, ordinal + 1);
       const to = taskKeys.get(normalized) ?? null;
       records.push({
         record: "edge",
-        key: keyFor(bundleId, "task-dependency-edge", task.id.toLowerCase(), normalized, String(ordinal)),
+        key: keyFor(bundleId, "task-dependency-edge", referenceKey(task.id), normalized, String(ordinal)),
         from,
         to,
         kind: TASK_DEPENDENCY_EDGE_KIND,
@@ -207,7 +208,7 @@ export function buildProjection(input: ProjectionInput): Projection {
   for (const concept of input.graph.concepts.values()) {
     const seen = new Map<string, number>();
     for (const taskId of toRefList(concept.frontmatter.tasks)) {
-      const normalized = taskId.toLowerCase();
+      const normalized = referenceKey(taskId);
       const ordinal = seen.get(normalized) ?? 0;
       seen.set(normalized, ordinal + 1);
       const to = taskKeys.get(normalized) ?? null;

@@ -299,7 +299,7 @@ export async function runLink(options: LinkOptions): Promise<number> {
 
   const existingTasks = toRefList(concept.frontmatter.tasks);
   const tasks: LinkedTask[] = taskIds.map((taskId) => {
-    const alreadyLinked = containsCaseInsensitive(existingTasks, taskId);
+    const alreadyLinked = containsTaskReference(existingTasks, taskId);
     return { task: taskId, status: alreadyLinked ? "already-linked" : "added", backRef: "skipped" };
   });
   const nextTasks = [...existingTasks, ...tasks.filter((t) => t.status === "added").map((t) => t.task.toLowerCase())];
@@ -442,7 +442,7 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
   if (concept !== undefined) {
     const existingTasks = toRefList(concept.frontmatter.tasks);
     tasks = taskIds.map((taskId) => {
-      const wasLinked = containsCaseInsensitive(existingTasks, taskId);
+      const wasLinked = containsTaskReference(existingTasks, taskId);
       return { task: taskId, status: wasLinked ? "removed" : "not-linked", backRef: "skipped" };
     });
     const removedLower = new Set(tasks.filter((t) => t.status === "removed").map((t) => t.task.toLowerCase()));
@@ -1066,7 +1066,7 @@ export function dedupeTaskIds(taskIds: readonly string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const taskId of taskIds) {
-    const key = taskId.toLowerCase();
+    const key = referenceKey(taskId);
     if (!seen.has(key)) {
       seen.add(key);
       out.push(taskId);
@@ -1088,6 +1088,17 @@ function repoRelativePath(conceptPath: string): string {
  */
 function backRefLabel(conceptId: string): string {
   return `doc:${conceptId}`;
+}
+
+/**
+ * Whether a `tasks:` list already names `taskId`, compared by {@link referenceKey} so a non-ASCII id
+ * folds the way the rollup, `verifiedViewTask` and Quest's own resolver do (`STRASSE` names `straße`).
+ * Labels, doc paths and decision refs keep {@link containsCaseInsensitive}: they are Backlog's own
+ * strings, not task references.
+ */
+function containsTaskReference(list: readonly string[], taskId: string): boolean {
+  const wanted = referenceKey(taskId);
+  return list.some((item) => referenceKey(item) === wanted);
 }
 
 /** Whether `list` contains `value`, matched case-insensitively — the shared comparison `tasks:`/label membership always uses. */

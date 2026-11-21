@@ -84,6 +84,7 @@
 
 import { join } from "node:path";
 import type { BacklogAdapter, BacklogTask } from "../adapters/backlog";
+import { referenceKey } from "../adapters/quest";
 import { loadBundle, toRefList } from "../core/bundle";
 import type { Concept } from "../core/concept";
 import { loadProfile } from "../core/profile";
@@ -259,12 +260,15 @@ function classify(concepts: Iterable<Concept>, snapshot: readonly BacklogTask[])
   const references: DanglingLink[] = []; // every (concept, taskId) pair, for the dangling test
   for (const concept of concepts) {
     for (const task of dedupeTaskIds(toRefList(concept.frontmatter.tasks))) {
-      referenced.add(task.toLowerCase());
+      referenced.add(referenceKey(task));
       references.push({ concept: concept.id, task });
     }
   }
 
-  const byId = new Map(snapshot.map((task) => [task.id.toLowerCase(), task])); // for the parent-chain walk below
+  // Every key a task answers to (its id and each alias, folded as Quest's resolver folds them), for
+  // the parent-chain walk below and for the linked/dangling tests (round-2 #749 should-fix 1).
+  const byId = new Map<string, BacklogTask>();
+  for (const task of snapshot) for (const key of taskKeys(task)) byId.set(key, task);
   // A task is "linked" through any of the three exemption paths lore already recognizes (forward
   // ref, direct doc: label, or an owned ancestor) -- linked tasks are reported nowhere. An unlinked
   // task then splits two ways (LCLI-374 AC2): `--doc` already documented it (pendingLinks -- run
@@ -273,7 +277,9 @@ function classify(concepts: Iterable<Concept>, snapshot: readonly BacklogTask[])
   const pendingLinks: OrphanTask[] = [];
   for (const task of snapshot) {
     const linked =
-      referenced.has(task.id.toLowerCase()) || hasDocLabel(task) || hasOwnedAncestor(task, referenced, byId);
+      taskKeys(task).some((key) => referenced.has(key)) ||
+      hasDocLabel(task) ||
+      hasOwnedAncestor(task, referenced, byId);
     if (linked) {
       continue;
     }
@@ -283,9 +289,9 @@ function classify(concepts: Iterable<Concept>, snapshot: readonly BacklogTask[])
   orphanTasks.sort((a, b) => compareLower(a.id, b.id));
   pendingLinks.sort((a, b) => compareLower(a.id, b.id));
 
-  const known = new Set(snapshot.map((task) => task.id.toLowerCase())); // lower-cased ids Backlog knows
+  const known = new Set(snapshot.flatMap((task) => taskKeys(task))); // folded ids and aliases the tracker knows
   const danglingLinks = references
-    .filter((ref) => !known.has(ref.task.toLowerCase()))
+    .filter((ref) => !known.has(referenceKey(ref.task)))
     .sort((a, b) => compareLower(a.concept, b.concept) || compareLower(a.task, b.task));
 
   return { orphanTasks, pendingLinks, danglingLinks };
@@ -317,14 +323,16 @@ async function confirmDanglingLinks(
   if (candidates.length === 0) {
     return [];
   }
-  // One representative original-case spelling per lower-cased id — resolution is case-insensitive
-  // (verifiedViewTask), so a single call per distinct id is enough regardless of how many links share it.
-  const suspectIds = [...new Map(candidates.map((link) => [link.task.toLowerCase(), link.task])).values()];
-  const resolutions = await resolveTaskDetails(adapter, suspectIds);
+  // One representative spelling per folded id — resolution folds as Quest does (verifiedViewTask), so a
+  // single call per distinct key is enough regardless of how many links share it. `resolveTaskDetails`
+  // keys its result by the lower-cased REQUESTED spelling, so look each representative up that way and
+  // re-key the verdict by the folded id every candidate is tested against.
+  const suspects = new Map(candidates.map((link) => [referenceKey(link.task), link.task]));
+  const resolutions = await resolveTaskDetails(adapter, [...suspects.values()]);
   const confirmedAlive = new Set(
-    [...resolutions].filter(([, resolution]) => resolution.ok).map(([lowerId]) => lowerId),
+    [...suspects].filter(([, spelling]) => resolutions.get(spelling.toLowerCase())?.ok === true).map(([key]) => key),
   );
-  return candidates.filter((link) => !confirmedAlive.has(link.task.toLowerCase()));
+  return candidates.filter((link) => !confirmedAlive.has(referenceKey(link.task)));
 }
 
 /**
@@ -429,10 +437,10 @@ function hasOwnedAncestor(
   referenced: ReadonlySet<string>,
   byId: ReadonlyMap<string, BacklogTask>,
 ): boolean {
-  const visited = new Set<string>([task.id.toLowerCase()]);
+  const visited = new Set<string>(taskKeys(task));
   let parentId = task.parentTaskId;
   while (parentId !== null) {
-    const key = parentId.toLowerCase();
+    const key = referenceKey(parentId);
     if (visited.has(key)) {
       return false; // a cycle/self-reference in the parent chain — fail toward "still reported"
     }
@@ -447,6 +455,11 @@ function hasOwnedAncestor(
     parentId = parent.parentTaskId;
   }
   return false;
+}
+
+/** Every folded key a task answers to: its id plus each alias. */
+function taskKeys(task: BacklogTask): string[] {
+  return [referenceKey(task.id), ...(task.aliases ?? []).map(referenceKey)];
 }
 
 /** Case-insensitive string order, locale-independent, for the report's deterministic sort. */
