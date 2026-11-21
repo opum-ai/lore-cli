@@ -78,6 +78,7 @@
  * command's call to make unprompted) but no longer silently unmentioned.
  */
 
+import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import type { BacklogAdapter } from "../adapters/backlog";
 import { realGitAdapter, resolveHeadSha } from "../adapters/git";
@@ -125,6 +126,40 @@ export interface SyncOptions {
   gitSpawn?: GitSpawn;
   /** Explicit tracker-backend override (LCLI-333.1); production resolves via `resolveTrackerSelection`. Test/CI pin only — never a runtime fallback. */
   backend?: TrackerBackend;
+  /**
+   * Records the planned `docs/` writes so a concurrent waiter can reuse this run's COMPUTATION and
+   * still apply the result to its OWN checkout (LCLI-792, DEC-282 (a7) item 2). Called only on a
+   * run that actually writes; a `--dry-run`, or any early refusal, records nothing.
+   */
+  planSink?: (plan: SyncWritePlan) => void;
+}
+
+/**
+ * The replayable half of a `lore sync` result (LCLI-792, DEC-282 (a7) item 2): every `docs/` file
+ * this run computed, with the bytes it would write. A waiter whose input tree hash matches reuses
+ * the computation — the batched task read and the rendered managed blocks — and applies these bytes
+ * to its own checkout instead of writing nothing (round 1's F3 defect).
+ *
+ * Paths are bundle-relative, exactly as `SyncReport.files` reports them before the `DOCS_DIR`
+ * prefix is added, so a waiter in another worktree resolves each one against its own root.
+ */
+export interface SyncWritePlan {
+  readonly writes: readonly {
+    readonly path: string;
+    readonly after: string;
+    /**
+     * The sha256 of the bytes this file held when the HOLDER planned the write, or `null` when it did
+     * not exist (DEC-282 (a14) Q1). A waiter writes the file only if its own current bytes still
+     * match this, and skips it if they already equal `after`; any other state means the file changed
+     * since the plan and reuse is abandoned.
+     */
+    readonly beforeDigest: string | null;
+  }[];
+}
+
+/** sha256 hex of `bytes`; `undefined` stands for an absent file. */
+function digestOf(bytes: string | undefined): string | null {
+  return bytes === undefined ? null : createHash("sha256").update(bytes, "utf8").digest("hex");
 }
 
 /** The parsed form of `lore sync`'s arguments. */
@@ -316,6 +351,12 @@ export async function runSync(options: SyncOptions): Promise<number> {
       ensureDir(options.root, dirname(`${DOCS_DIR}/${path}`));
       rollbackWrites.push({ abs: join(docsRoot, path), relPath: `${DOCS_DIR}/${path}`, before, after });
     }
+    // Record the computed write set BEFORE touching disk, so a concurrent waiter can replay the
+    // computation in its own checkout (LCLI-792, DEC-282 (a7) item 2). A failure below throws out of
+    // the run, so nothing is ever cached for a plan that did not apply here.
+    options.planSink?.({
+      writes: [...writes].map(([path, { before, after }]) => ({ path, after, beforeDigest: digestOf(before) })),
+    });
     writeManyAtomicOrRollback(rollbackWrites);
   }
 
@@ -354,6 +395,65 @@ export async function runSync(options: SyncOptions): Promise<number> {
   };
   emit(reportRenderable(report), options.output, options.stdout);
   return EXIT_OK;
+}
+
+/**
+ * Apply a reused `lore sync` computation to THIS checkout (LCLI-792, DEC-282 (a7) item 2 and (a14)
+ * Q1), UNDER the advisory lock.
+ *
+ * A waiter whose input tree hash matched the holder's reuses the holder's computed write set rather
+ * than re-reading the tracker, but the holder's bytes were written into the HOLDER's worktree. Each
+ * planned file is judged against what THIS checkout holds right now:
+ *
+ * - current bytes equal `after` — already applied (the same-worktree case: the holder wrote them
+ *   here), so it is skipped;
+ * - current bytes hash to the plan's `beforeDigest` (absence included) — untouched since the holder
+ *   planned it, so it is written;
+ * - anything else — someone edited the file in the wait window — and the WHOLE plan is refused:
+ *   nothing is written and `false` is returned, so the caller recomputes from fresh bytes. A real
+ *   sync re-reads each concept and rewrites only its managed block and rollup field (LORE-119); the
+ *   plan's whole-file bytes would revert that edit.
+ *
+ * "Rehash the tree and compare with the input hash" is deliberately NOT the check: in the holder's
+ * own worktree the holder's writes change the tree, so it would always mismatch and silently
+ * degrade every same-worktree waiter to a serial recompute.
+ *
+ * The holder's run also swept tracker storage, which is a repository-side effect; the waiter runs
+ * its own sweep, so a Backlog bundle's `backlog/` is committed in the waiter's worktree too. For a
+ * Quest bundle that sweep is a git-free no-op.
+ *
+ * @returns `true` when this checkout now reflects the plan, `false` when it must be recomputed.
+ */
+export async function applySyncWritePlan(root: string, plan: SyncWritePlan): Promise<boolean> {
+  const docsRoot = join(root, DOCS_DIR);
+  assertNoSymlinkInAnyPath(
+    root,
+    plan.writes.map((write) => `${DOCS_DIR}/${write.path}`),
+  );
+  const pending: {
+    write: SyncWritePlan["writes"][number];
+    abs: string;
+    relPath: string;
+    before: string | undefined;
+  }[] = [];
+  for (const write of plan.writes) {
+    const relPath = `${DOCS_DIR}/${write.path}`;
+    const abs = join(docsRoot, write.path);
+    const current = readFileIfPresent(abs, relPath);
+    if (current === write.after) continue;
+    if (digestOf(current) !== write.beforeDigest) return false;
+    pending.push({ write, abs, relPath, before: current });
+  }
+  const rollbackWrites: AtomicRollbackWrite[] = [];
+  for (const { write, abs, relPath, before } of pending) {
+    ensureDir(root, dirname(relPath));
+    rollbackWrites.push({ abs, relPath, before, after: write.after });
+  }
+  writeManyAtomicOrRollback(rollbackWrites);
+
+  const backend = resolveSelectedBackend(root);
+  await sweepTrackerStorage(backend, backend === "backlog" ? { root, gitSpawn: bunGitSpawn(root) } : { root });
+  return true;
 }
 
 /**

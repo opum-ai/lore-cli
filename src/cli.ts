@@ -17,6 +17,7 @@
 import { Command } from "commander";
 import type { BacklogAdapter } from "./adapters/backlog";
 import type { TrackerEnvironment } from "./adapters/tracker-environment";
+import { runLockedCommand } from "./commands/advisory-run";
 import { runAgent } from "./commands/agent";
 import { runAgents } from "./commands/agents";
 import { commanderOption, commanderUnknownCommand, commanderUsageError } from "./commands/args";
@@ -45,7 +46,7 @@ import { runScaffold } from "./commands/scaffold";
 import { runSchema } from "./commands/schema";
 import { runSnapshot } from "./commands/snapshot";
 import { runSupersede } from "./commands/supersede";
-import { runSync } from "./commands/sync";
+import { applySyncWritePlan, runSync, type SyncWritePlan } from "./commands/sync";
 import { runTasks } from "./commands/tasks";
 import { runTypes } from "./commands/types";
 import { runValidate } from "./commands/validate";
@@ -460,16 +461,34 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
       stderr: context.stderr,
     }),
   check: (args, context, output) =>
-    runCheck({
+    runLockedCommand({
       root: context.cwd || process.cwd(),
-      output,
+      command: "check",
       args,
+      output,
       stdout: context.stdout,
       stderr: context.stderr,
-      fetch: context.fetch,
-      resolveHost: context.resolveHost,
-      adapter: context.adapter,
-      headCommitDate: context.headCommitDate,
+      // Every injected seam makes the output a function of the harness rather than of the on-disk
+      // tree, which is the premise result reuse rests on; `--external` is non-deterministic by
+      // definition. Either way the run still takes the lock (it just never reuses a result).
+      reusable:
+        !args.includes("--external") &&
+        context.adapter === undefined &&
+        context.fetch === undefined &&
+        context.resolveHost === undefined &&
+        context.headCommitDate === undefined,
+      run: (stdout, stderr) =>
+        runCheck({
+          root: context.cwd || process.cwd(),
+          output,
+          args,
+          stdout,
+          stderr,
+          fetch: context.fetch,
+          resolveHost: context.resolveHost,
+          adapter: context.adapter,
+          headCommitDate: context.headCommitDate,
+        }),
     }),
   replace: (args, context, output) =>
     runReplace({
@@ -514,15 +533,34 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
       stderr: context.stderr,
       adapter: context.adapter,
     }),
-  sync: (args, context, output) =>
-    runSync({
-      root: context.cwd || process.cwd(),
-      output,
+  sync: (args, context, output) => {
+    const root = context.cwd || process.cwd();
+    return runLockedCommand<SyncWritePlan>({
+      root,
+      command: "sync",
       args,
+      output,
       stdout: context.stdout,
       stderr: context.stderr,
-      adapter: context.adapter,
-    }),
+      // As for `check`: an injected adapter makes the result a harness artifact, not a function of
+      // the tree. `sync` keeps its lock either way; writes still run on every non-reused call.
+      reusable: context.adapter === undefined,
+      // A waiter reuses the holder's COMPUTATION (the batched task read and rendered blocks) but
+      // applies it to its OWN checkout — never replaying "updated N files" over a tree nothing
+      // wrote (LCLI-792 round 2, DEC-282 (a7) item 2).
+      applyPlan: (plan) => applySyncWritePlan(root, plan),
+      run: (stdout, stderr, recordPlan) =>
+        runSync({
+          root,
+          output,
+          args,
+          stdout,
+          stderr,
+          adapter: context.adapter,
+          planSink: recordPlan,
+        }),
+    });
+  },
   tasks: (args, context, output) =>
     runTasks({
       root: context.cwd || process.cwd(),
