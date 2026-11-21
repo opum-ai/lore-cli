@@ -959,8 +959,12 @@ step "lore check: clean again after healing" 0 -- lore check
 # block's own row, never in the (lowercased) frontmatter `lore_task_status:` value, so this touches
 # only the block body, not the frontmatter drift check just healed above.
 sed -i 's/In Progress/CORRUPTED-STATUS/' "$STORY_PATH" || true
-step "lore check: catches managed-block BODY drift (distinct from frontmatter status drift)" 6 \
+# DEC-282 item 3 (LCLI-793): drift confined to a lore:tasks block is a WARNING by default (exit 0)
+# and gates only under --strict (exit 6); every other drift stays an error in both modes.
+step "lore check: managed-block BODY drift is a warning by default (distinct from frontmatter status drift)" 0 \
   -- lore check
+step "lore check --strict: the same managed-block BODY drift gates" 6 \
+  -- lore check --strict
 step "lore sync: heals the managed-block body drift" 0 -- lore sync "$STORY_ID"
 step "lore check: clean again after healing the block-body drift" 0 -- lore check
 
