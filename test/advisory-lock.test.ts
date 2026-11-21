@@ -1456,6 +1456,9 @@ describe("round-3 fixes (LCLI-792, DEC-282 (a14))", () => {
       inputHash: "same",
       reusable: true,
       adopt: () => {
+        // The apply WROTE something, then failed: the tree this caller computes on is no longer the
+        // one its key names.
+        writeFileSync(join(root, "adopt-wrote.txt"), "partial apply\n");
         throw new Error("EACCES: simulated apply failure");
       },
       compute: () => {
@@ -1469,5 +1472,28 @@ describe("round-3 fixes (LCLI-792, DEC-282 (a14))", () => {
     expect(outcome.reused).toBe(false);
     expect(outcome.value).toBe("waiter-value");
     expect(computes).toBe(2);
+    // B2 (#758 round 2): the abandoned caller offers NOTHING for reuse. The slot still holds the
+    // HOLDER's result, not the waiter's, which was computed after the adopt changed the tree.
+    const slot = JSON.parse(readFileSync(advisoryResultPath(root, "check"), "utf8")) as {
+      inputHash: string;
+      value: string;
+    };
+    expect(slot.value).toBe("holder-value");
+    expect(slot.inputHash).toBe("same");
+  });
+
+  test("a throwing rehasher releases the lock instead of leaving it behind", async () => {
+    await expect(
+      withAdvisoryResult({
+        ...reader(),
+        inputHash: "h",
+        reusable: true,
+        rehash: () => {
+          throw new Error("git spawn failed");
+        },
+        compute: () => "v",
+      }),
+    ).rejects.toThrow("git spawn failed");
+    expect(existsSync(advisoryLockPath(root, "check-sync"))).toBe(false);
   });
 });

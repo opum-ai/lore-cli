@@ -490,9 +490,10 @@ export interface AdvisoryResultOptions<T> {
   /** The tree hash at entry (see {@link commandInputHash}); `null` disables reuse but still takes the lock. */
   readonly inputHash: string | null;
   /**
-   * Recompute the tree hash once the lock is held. A holder that had to WAIT may be looking at a
-   * tree the prior holder changed, so the result must be keyed by the tree it is actually computed
-   * against, not by the one it entered on. Defaults to reusing {@link inputHash} (correct when the
+   * Recompute the tree hash once the lock is held. Whoever acquires may be looking at a tree a prior
+   * holder changed (including one that wrote and released before this caller's first create attempt),
+   * so the result must be keyed by the tree it is actually computed against, not by the one it
+   * entered on. Defaults to reusing {@link inputHash} (correct when the
    * caller acquired immediately). Used for the result key and the post-acquire reuse check; the
    * while-waiting reuse check always uses the entry hash. Called ONCE whenever the lock is held
    * and `rehash` is supplied, even by a caller that acquired on its first try: the entry hash is
@@ -675,18 +676,28 @@ export async function withAdvisoryResult<T>(options: AdvisoryResultOptions<T>): 
       // even on a first-try acquire: the entry hash is computed before this call, so a holder can have
       // written and released in between (the cost, a few git spawns per locked run, is accepted for
       // correctness; the round-3 ruling amends the earlier "only after a wait").
-      const keyHash = reusable ? (options.rehash === undefined ? options.inputHash : options.rehash()) : null;
       const heartbeat = startHeartbeat(ctx, owner);
       try {
+        // Inside the try so a throwing rehasher releases the lock instead of leaving it behind.
+        const keyHash = reusable ? (options.rehash === undefined ? options.inputHash : options.rehash()) : null;
         const found = candidate ?? readReusable(keyHash);
         // Adopted UNDER the lock (the heartbeat is running and nobody else is computing), so an
         // apply can neither interleave with another holder's writes nor be seen half-done by a
         // `check` holder in this checkout. A refusal falls through to computing below.
-        if (found !== undefined && (adopt === undefined || (await adoptOrAbandon(adopt, found)))) {
-          return { value: found, reused: true, waited, forced: false };
+        let abandoned = false;
+        if (found !== undefined) {
+          if (adopt === undefined || (await adoptOrAbandon(adopt, found))) {
+            return { value: found, reused: true, waited, forced: false };
+          }
+          abandoned = true;
         }
         const value = await options.compute();
-        if (reusable && keyHash !== null) {
+        // NO slot after an abandon: an adopt that was attempted and did not accept (it refused, or
+        // threw after writing) may have changed this tree, so `keyHash` — taken before the adopt —
+        // no longer names the tree `compute` ran against. Storing under it could hand a waiter in
+        // another worktree a result computed from different inputs (round-2 verdict on #758, B2).
+        // The caller still gets its own result; it just is not offered for reuse.
+        if (reusable && keyHash !== null && !abandoned) {
           writeResult(resultPath, { schema: 1, inputHash: keyHash, finishedAt: ctx.now(), value });
         }
         return { value, reused: false, waited, forced: false };

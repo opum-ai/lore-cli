@@ -448,9 +448,9 @@ export async function runSync(options: SyncOptions): Promise<number> {
  *
  * A throw before the first write (a symlinked ancestor, an unreadable file) is treated by the caller
  * as "abandon and recompute", so a fresh run reports the real error in its own shape. A throw AFTER
- * the writes (the tracker sweep below) can leave the docs writes landed; the recompute then runs on
- * that tree and any later reuse is re-gated by the pre-image check, so it fails safe, exactly as an
- * uncontended `runSync` does when its own sweep fails.
+ * the writes (the tracker sweep below) can leave the docs writes landed; the caller then recomputes on
+ * that changed tree and stores NO result for reuse (the abandon path never writes a slot), because a
+ * plan computed there would omit the files this apply already wrote and carry no pre-image for them.
  *
  * The holder's run also swept tracker storage, which is a repository-side effect; the waiter runs
  * its own sweep, so a Backlog bundle's `backlog/` is committed in the waiter's worktree too. For a
