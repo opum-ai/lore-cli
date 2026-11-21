@@ -192,13 +192,32 @@ describe("the lock lives in the git COMMON dir, so worktrees share it", () => {
     // that returns its input and gives it a `.native` that maps the short segment to the long one
     // — the measured Windows behaviour, not a guess. Run against the pre-fix source the two
     // results DIFFER (red); with the fix they are one string.
-    const shortRoot = join(root, "RUNNER~1", "main");
-    const longRoot = join(root, "runneradmin", "main");
-    const brokenRoot = join(root, "BROKEN", "main");
+    //
+    // The fixture uses SENTINEL segment names, never the literal `RUNNER~1`: on a real Windows
+    // runner `os.tmpdir()` is ITSELF `C:\Users\RUNNER~1\AppData\Local\Temp`, so a fake that maps
+    // that literal rewrites the tmp PREFIX of every path too, while the expected values are built
+    // from the unrewritten prefix — and the two disagree (CI run 44933943308). A sentinel cannot
+    // occur in any host tmp path, so it only ever affects the fixture's own segment, and every
+    // expected value is derived through the SAME mapping the fake applies.
+    const SHORT_SEGMENT = "SHORT~7Q";
+    const LONG_SEGMENT = "longname7q";
+    const BROKEN_SEGMENT = "UNRESOLVABLE~9Z";
+    const mapShortToLong = (path: string): string => path.split(SHORT_SEGMENT).join(LONG_SEGMENT);
+
+    const shortRoot = join(root, SHORT_SEGMENT, "main");
+    const longRoot = join(root, LONG_SEGMENT, "main");
+    const brokenRoot = join(root, BROKEN_SEGMENT, "main");
     for (const dir of [shortRoot, longRoot, brokenRoot]) mkdirSync(dir, { recursive: true });
     const shortDir = join(shortRoot, "shared");
     const longDir = join(longRoot, "shared");
     const brokenDir = join(brokenRoot, "shared");
+    const expectedShort = mapShortToLong(shortDir);
+
+    // Positive controls for the fixture itself: the mapping changes exactly the fixture segment
+    // and leaves the tmp prefix (`root`, under `os.tmpdir()`) byte-identical, so a mapping that
+    // rewrote the prefix — the CI defect — cannot pass, and the assertion below is not vacuous.
+    expect(mapShortToLong(root)).toBe(root);
+    expect(expectedShort).not.toBe(shortDir);
 
     const preload = join(root, "fake-win32-fs.ts");
     writeFileSync(
@@ -207,9 +226,10 @@ describe("the lock lives in the git COMMON dir, so worktrees share it", () => {
         `const fs = require("node:fs");`,
         `const short = process.env.LORE_FAKE_8_3_SHORT ?? "";`,
         `const long = process.env.LORE_FAKE_8_3_LONG ?? "";`,
+        `const broken = process.env.LORE_FAKE_8_3_BROKEN ?? "";`,
         "const jsRealpath = (p) => p;",
         "jsRealpath.native = (p) => {",
-        `  if (p.includes("BROKEN")) throw new Error("EACCES: emulated unopenable handle");`,
+        `  if (broken !== "" && p.includes(broken)) throw new Error("EACCES: emulated unopenable handle");`,
         `  return short !== "" && p.includes(short) ? p.split(short).join(long) : p;`,
         "};",
         "fs.realpathSync = jsRealpath;",
@@ -239,7 +259,12 @@ describe("the lock lives in the git COMMON dir, so worktrees share it", () => {
       {
         stdout: "pipe",
         stderr: "pipe",
-        env: { ...process.env, LORE_FAKE_8_3_SHORT: "RUNNER~1", LORE_FAKE_8_3_LONG: "runneradmin" },
+        env: {
+          ...process.env,
+          LORE_FAKE_8_3_SHORT: SHORT_SEGMENT,
+          LORE_FAKE_8_3_LONG: LONG_SEGMENT,
+          LORE_FAKE_8_3_BROKEN: BROKEN_SEGMENT,
+        },
       },
     );
     const [code, stdout, stderr] = await Promise.all([child.exited, drain(child.stdout), drain(child.stderr)]);
@@ -250,7 +275,11 @@ describe("the lock lives in the git COMMON dir, so worktrees share it", () => {
       fallback: string | null;
     };
     expect(a).not.toBeNull();
-    expect(a).toBe(join(longRoot, "shared"));
+    // Expected value derived through the SAME mapping the fake applies, never from a second,
+    // unrewritten spelling of the input.
+    expect(a).toBe(expectedShort);
+    expect(a).toBe(longDir);
+    // The property under test: both spellings of ONE common dir resolve to ONE key.
     expect(b).toBe(a);
     // The documented fallback: a native realpath that cannot resolve leaves the path unresolved,
     // rather than throwing or returning a second spelling.
