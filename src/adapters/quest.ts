@@ -974,27 +974,87 @@ function rollupRow(task: Record<string, unknown>): TaskRollupRow {
   };
 }
 /**
+ * The comparison key Quest's own `findTask` uses (quest-cli's `aliasKey`): Unicode canonical
+ * composition, then Unicode DEFAULT case folding. lore must fold a reference the same way, or a
+ * non-ASCII id or alias can match on one read path and miss -- or fail to be ambiguous -- on the
+ * other. Quest compares `aliasKey(id)`/`aliasKey(alias)` against `aliasKey(reference)`, so BOTH the
+ * indexed id/alias and the requested reference go through here.
+ *
+ * JavaScript has no built-in case fold. `String.prototype.toLowerCase()` performs lowercase
+ * MAPPING, which agrees with default case folding for every code point EXCEPT those in
+ * {@link FOLD_OVERRIDES}: the multi-code-point full foldings (`ß` -> `ss`, Greek iota subscript,
+ * Armenian ligature, ...) and the few single-code-point foldings whose target is not their
+ * lowercase (`ς` -> `σ`, `µ` -> `μ`, Cherokee, ...). The table is generated from
+ * `unicode-case-folding@1.1.1` -- the exact library quest-cli's `aliasKey` calls -- so every
+ * canonical code point folds identically to Quest's own key; a test pins the representative cases
+ * (`ß`/`ss`, final sigma, NFC/NFD, and ambiguity across fold-equal ids). A code point absent from
+ * the table folds as its own `.toLowerCase()`. The one input Quest validates that this does not is
+ * an EMPTY reference: quest's `aliasKey` rejects it, lore treats it as a miss (a linked concept is
+ * not a task id).
+ */
+const FOLD_OVERRIDE_DATA =
+  "µμ\nßss\nŉʼn\nſs\nǰǰ\nͅι\nΐΐ\nΰΰ\nςσ\nϐβ\nϑθ\nϕφ\nϖπ\nϰκ\nϱρ\nϵε\nևեւ\nᎠᎠ\nᎡᎡ\nᎢᎢ\nᎣᎣ\nᎤᎤ\nᎥᎥ\nᎦᎦ\nᎧᎧ\n" +
+  "ᎨᎨ\nᎩᎩ\nᎪᎪ\nᎫᎫ\nᎬᎬ\nᎭᎭ\nᎮᎮ\nᎯᎯ\nᎰᎰ\nᎱᎱ\nᎲᎲ\nᎳᎳ\nᎴᎴ\nᎵᎵ\nᎶᎶ\nᎷᎷ\nᎸᎸ\nᎹᎹ\nᎺᎺ\nᎻᎻ\nᎼᎼ\nᎽᎽ\nᎾᎾ\nᎿᎿ\nᏀᏀ\nᏁᏁ\nᏂᏂ\n" +
+  "ᏃᏃ\nᏄᏄ\nᏅᏅ\nᏆᏆ\nᏇᏇ\nᏈᏈ\nᏉᏉ\nᏊᏊ\nᏋᏋ\nᏌᏌ\nᏍᏍ\nᏎᏎ\nᏏᏏ\nᏐᏐ\nᏑᏑ\nᏒᏒ\nᏓᏓ\nᏔᏔ\nᏕᏕ\nᏖᏖ\nᏗᏗ\nᏘᏘ\nᏙᏙ\nᏚᏚ\nᏛᏛ\nᏜᏜ\nᏝᏝ\n" +
+  "ᏞᏞ\nᏟᏟ\nᏠᏠ\nᏡᏡ\nᏢᏢ\nᏣᏣ\nᏤᏤ\nᏥᏥ\nᏦᏦ\nᏧᏧ\nᏨᏨ\nᏩᏩ\nᏪᏪ\nᏫᏫ\nᏬᏬ\nᏭᏭ\nᏮᏮ\nᏯᏯ\nᏰᏰ\nᏱᏱ\nᏲᏲ\nᏳᏳ\nᏴᏴ\nᏵᏵ\nᏸᏰ\nᏹᏱ\nᏺᏲ\n" +
+  "ᏻᏳ\nᏼᏴ\nᏽᏵ\nᲀв\nᲁд\nᲂо\nᲃс\nᲄт\nᲅт\nᲆъ\nᲇѣ\nᲈꙋ\nẖẖ\nẗẗ\nẘẘ\nẙẙ\nẚaʾ\nẛṡ\nẞss\nὐὐ\nὒὒ\nὔὔ\nὖὖ\nᾀἀι" +
+  "\nᾁἁι\nᾂἂι\nᾃἃι\nᾄἄι\nᾅἅι\nᾆἆι\nᾇἇι\nᾈἀι\nᾉἁι\nᾊἂι\nᾋἃι\nᾌἄι\nᾍἅι\nᾎἆι\nᾏἇι\nᾐἠι\nᾑἡι\nᾒἢι\nᾓἣι\nᾔἤι\nᾕἥι\nᾖ" +
+  "ἦι\nᾗἧι\nᾘἠι\nᾙἡι\nᾚἢι\nᾛἣι\nᾜἤι\nᾝἥι\nᾞἦι\nᾟἧι\nᾠὠι\nᾡὡι\nᾢὢι\nᾣὣι\nᾤὤι\nᾥὥι\nᾦὦι\nᾧὧι\nᾨὠι\nᾩὡι\nᾪὢι\nᾫὣι" +
+  "\nᾬὤι\nᾭὥι\nᾮὦι\nᾯὧι\nᾲὰι\nᾳαι\nᾴάι\nᾶᾶ\nᾷᾶι\nᾼαι\nῂὴι\nῃηι\nῄήι\nῆῆ\nῇῆι\nῌηι\nῒῒ\nῖῖ\nῗῗ\nῢῢ\nῤ" +
+  "ῤ\nῦῦ\nῧῧ\nῲὼι\nῳωι\nῴώι\nῶῶ\nῷῶι\nῼωι\nꭰᎠ\nꭱᎡ\nꭲᎢ\nꭳᎣ\nꭴᎤ\nꭵᎥ\nꭶᎦ\nꭷᎧ\nꭸᎨ\nꭹᎩ\nꭺᎪ\nꭻᎫ\nꭼᎬ\nꭽᎭ\nꭾᎮ\nꭿᎯ" +
+  "\nꮀᎰ\nꮁᎱ\nꮂᎲ\nꮃᎳ\nꮄᎴ\nꮅᎵ\nꮆᎶ\nꮇᎷ\nꮈᎸ\nꮉᎹ\nꮊᎺ\nꮋᎻ\nꮌᎼ\nꮍᎽ\nꮎᎾ\nꮏᎿ\nꮐᏀ\nꮑᏁ\nꮒᏂ\nꮓᏃ\nꮔᏄ\nꮕᏅ\nꮖᏆ\nꮗᏇ\nꮘᏈ\nꮙᏉ\nꮚᏊ" +
+  "\nꮛᏋ\nꮜᏌ\nꮝᏍ\nꮞᏎ\nꮟᏏ\nꮠᏐ\nꮡᏑ\nꮢᏒ\nꮣᏓ\nꮤᏔ\nꮥᏕ\nꮦᏖ\nꮧᏗ\nꮨᏘ\nꮩᏙ\nꮪᏚ\nꮫᏛ\nꮬᏜ\nꮭᏝ\nꮮᏞ\nꮯᏟ\nꮰᏠ\nꮱᏡ\nꮲᏢ\nꮳᏣ\nꮴᏤ\nꮵᏥ" +
+  "\nꮶᏦ\nꮷᏧ\nꮸᏨ\nꮹᏩ\nꮺᏪ\nꮻᏫ\nꮼᏬ\nꮽᏭ\nꮾᏮ\nꮿᏯ\nﬀff\nﬁfi\nﬂfl\nﬃffi\nﬄffl\nﬅst\nﬆst\nﬓմն\nﬔմե\nﬕմի\nﬖվն\nﬗմխ";
+
+/**
+ * The table encoded one entry per line as `<code point><fold output>`: the first code point is the
+ * key, the remainder is its replacement (which may be several code points). A newline separates
+ * entries, so the data cannot itself contain one.
+ */
+const FOLD_OVERRIDES: ReadonlyMap<string, string> = new Map(
+  FOLD_OVERRIDE_DATA.split("\n").map((line) => {
+    const key = String.fromCodePoint(line.codePointAt(0) as number);
+    return [key, line.slice(key.length)] as const;
+  }),
+);
+
+function referenceKey(reference: string): string {
+  let key = "";
+  for (const char of reference.normalize("NFC")) key += FOLD_OVERRIDES.get(char) ?? char.toLowerCase();
+  return key;
+}
+
+/**
  * Index listed records by every id they answer to, mirroring how `viewTask` resolves a reference.
  * Quest's own `findTask` refuses a reference that matches the id or an alias of MORE than one record
  * (`task_reference_ambiguous`), and `task list` runs no uniqueness validation, so the index does the
  * same instead of choosing a winner: a lookup that matches two records throws, even across `tasks/`,
- * `completed/` and `archive/`. Records the rollup never looks up are never validated.
+ * `completed/` and `archive/`. Records the rollup never looks up are never validated -- except that a
+ * record whose `aliases` field is not a list of strings makes a MISSING reference drift rather than
+ * `not_found`, because the per-task path rejects that record as drift too and the missing reference
+ * may be one of the aliases the list could not index.
  */
 function rollupIndex(items: readonly Record<string, unknown>[]): TaskRollupIndex {
   const byReference = new Map<string, Record<string, unknown>[]>();
+  const malformedAliasIds: string[] = [];
   const add = (reference: string, item: Record<string, unknown>) => {
-    const key = reference.toLowerCase();
+    const key = referenceKey(reference);
     const held = byReference.get(key);
     if (held === undefined) byReference.set(key, [item]);
+    // A record whose alias repeats its own id is ONE match, exactly as `findTask` counts it.
     else if (!held.includes(item)) held.push(item);
   };
   for (const item of items) {
     if (typeof item.id === "string") add(item.id, item);
-    if (Array.isArray(item.aliases)) for (const alias of item.aliases) if (typeof alias === "string") add(alias, item);
+    const aliases = item.aliases;
+    if (aliases === undefined || aliases === null) continue;
+    if (Array.isArray(aliases) && aliases.every((alias) => typeof alias === "string"))
+      for (const alias of aliases) add(alias, item);
+    else malformedAliasIds.push(typeof item.id === "string" ? item.id : JSON.stringify(item.id));
   }
   return {
     lookup(id) {
-      const key = safe(id).toLowerCase(); // the same refusal a per-task read of a "-"-led id raised
+      const key = referenceKey(safe(id)); // the same refusal a per-task read of a "-"-led id raised
       const matches = byReference.get(key) ?? [];
       if (matches.length > 1)
         throw new LoreError(
@@ -1004,13 +1064,36 @@ function rollupIndex(items: readonly Record<string, unknown>[]): TaskRollupIndex
           { taskId: id, matches: matches.map((match) => match.id) },
         );
       const item = matches[0];
-      if (item === undefined) return undefined;
-      // The per-task path validated aliases too (summary()), so a linked record with a malformed
+      if (item === undefined) {
+        // A record whose `aliases` is not a list of strings cannot be indexed by alias, so a
+        // reference that would only have matched it lands here. That reference is NOT `not_found`:
+        // the per-task path rejects the record as drift, and NAME the record so the fix is obvious.
+        if (malformedAliasIds.length > 0)
+          throw new LoreError(
+            "drift",
+            `Quest returned invalid task aliases for ${malformedAliasIds.map((x) => `"${x}"`).join(", ")}; ` +
+              `the reference "${id}" cannot be resolved against a record the tracker failed to parse`,
+            QUEST_VERSION_SET_HINT,
+          );
+        return undefined;
+      }
+      // The per-task path validated aliases too (summary()), so a matched record with a malformed
       // aliases field raises the same drift here.
       strings(item.aliases ?? [], "task aliases");
       return rollupRow(item);
     },
   };
+}
+
+/** The cache key: it names lore's version, quest's version and the `.quest` tree digest. Exported for its test. */
+export function questListCacheKey(parts: {
+  readonly loreVersion: string;
+  readonly questVersion: string;
+  readonly treeDigest: string;
+}): string {
+  return createHash("sha256")
+    .update(`lore ${parts.loreVersion} quest ${parts.questVersion}\0${parts.treeDigest}`)
+    .digest("hex");
 }
 
 /**
@@ -1027,17 +1110,6 @@ function rollupIndex(items: readonly Record<string, unknown>[]): TaskRollupIndex
  * lands during the list would otherwise leave post-write records under the pre-write key, to be
  * served as current if `.quest` later returns byte for byte to the old tree (a git restore).
  */
-/** The cache key: it names lore's version, quest's version and the `.quest` tree digest. Exported for its test. */
-export function questListCacheKey(parts: {
-  readonly loreVersion: string;
-  readonly questVersion: string;
-  readonly treeDigest: string;
-}): string {
-  return createHash("sha256")
-    .update(`lore ${parts.loreVersion} quest ${parts.questVersion}\0${parts.treeDigest}`)
-    .digest("hex");
-}
-
 function questListCache(root: string, questVersion: string) {
   const file = join(root, ".lore", "cache", "quest", "task-list.json");
   function treeKey(): string | undefined {
