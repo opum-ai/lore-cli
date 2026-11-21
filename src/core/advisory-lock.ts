@@ -493,8 +493,9 @@ export interface AdvisoryResultOptions<T> {
    * Recompute the tree hash once the lock is held. Whoever acquires may be looking at a tree a prior
    * holder changed (including one that wrote and released before this caller's first create attempt),
    * so the result must be keyed by the tree it is actually computed against, not by the one it
-   * entered on. Defaults to reusing {@link inputHash} (correct when the
-   * caller acquired immediately). Used for the result key and the post-acquire reuse check; the
+   * entered on. Without it the result is keyed by {@link inputHash}, the ENTRY hash, which can already
+   * be stale for the reason given below even on a first-try acquire, so any caller whose command can
+   * change the tree should supply `rehash`. Used for the result key and the post-acquire reuse check; the
    * while-waiting reuse check always uses the entry hash. Called ONCE whenever the lock is held
    * and `rehash` is supplied, even by a caller that acquired on its first try: the entry hash is
    * taken BEFORE this call (git spawns), so a holder can write and release between it and the first
@@ -507,7 +508,8 @@ export interface AdvisoryResultOptions<T> {
    * When set, a waiter that finds a matching result does not return it straight away: it keeps
    * waiting until it holds the lock, then calls `adopt(value)`. `true` means the result is now
    * reflected in this caller's checkout (applied, or already equal) and is returned as reused;
-   * `false` abandons reuse and this caller computes, still under the lock. Unset (a read-only
+   * `false` abandons reuse and this caller computes, still under the lock. A throw counts as `false`, and
+   * an abandoned caller stores NO result for reuse (its tree may have changed during the adopt). Unset (a read-only
    * command) keeps the original behaviour: the matching result is returned without taking the lock.
    */
   readonly adopt?: (value: T) => boolean | Promise<boolean>;
@@ -588,7 +590,7 @@ interface CallContext {
  * waiter reuse the holder's finished result instead of recomputing it.
  *
  * The call returns `{ value, reused, waited, forced }`; it never throws for lock contention (only
- * what `compute` itself throws). A crashed holder is recovered by dead-pid detection; a holder on
+ * what `compute` or a supplied `rehash` throws; a throwing `rehash` still releases the lock). A crashed holder is recovered by dead-pid detection; a holder on
  * another host (or one whose record cannot be read) by the age backstop; a same-host live holder is
  * never stolen from and is left to the wait bound, after which this caller computes unlocked
  * (DEC-282 (a8)). A broken lock mechanism likewise proceeds unlocked.
