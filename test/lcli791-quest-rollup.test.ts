@@ -7,10 +7,18 @@
  * four concurrent checks a load of 128) and never about wall time.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createQuestAdapter, type QuestSpawn, type QuestSpawnResult, questListCacheKey } from "../src/adapters/quest";
+import {
+  createQuestAdapter,
+  FOLD_OVERRIDE_DATA,
+  type QuestSpawn,
+  type QuestSpawnResult,
+  questListCacheKey,
+  referenceKey,
+} from "../src/adapters/quest";
 import { gatherReconciliation, resolveRollupDetails, resolveTaskDetails } from "../src/commands/reconcile-shared";
 import type { LoreError } from "../src/errors";
 import { VERSION } from "../src/meta";
@@ -55,6 +63,8 @@ interface FakeOptions {
   collide?: "alias" | "id";
   /** T-3's `aliases` is not an array of strings, which the per-task path rejects as drift. */
   badAliases?: boolean;
+  /** Replace the generated T-1..T-n rows with EXACTLY these records (the list path uses no view). */
+  records?: readonly Record<string, unknown>[];
   /** Make the list itself fail. */
   failList?: "exit" | "text" | "object";
 }
@@ -88,6 +98,7 @@ function fakeQuest(n: number, counts: Counts, options: FakeOptions = {}): QuestS
       if (options.failList === "exit") return { exitCode: 1, stdout: "", stderr: "quest exploded" };
       if (options.failList === "text") return { exitCode: 0, stdout: "not json", stderr: "" };
       if (options.failList === "object") return ok("task.list", { not: "an array" });
+      if (options.records !== undefined) return ok("task.list", options.records);
       const rows: Record<string, unknown>[] = Array.from({ length: n }, (_, k) => row(k + 1));
       if (options.badAliases) rows[2] = { ...rows[2], aliases: 5 };
       if (options.collide === "alias")
@@ -362,5 +373,211 @@ describe("the list is cached by the .quest tree hash", () => {
     const after: Counts = { list: 0, view: 0, total: 0 };
     await resolveRollupDetails(adapterFor(1, after), ["T-1"]);
     expect(after.list).toBe(1);
+  });
+});
+
+describe("the CALL SITE uses the full cache key, not a bare or constant-keyed digest (review F1)", () => {
+  // treeKey hashes every FILE under .quest (path + bytes). `beforeEach` leaves .quest with only the
+  // empty tasks/ DIRECTORY, so no file contributes and the tree digest is sha256(""). The expected
+  // key is therefore computable WITHOUT calling the implementation's own treeKey.
+  const emptyTreeDigest = () => createHash("sha256").digest("hex");
+  const fullKey = () =>
+    questListCacheKey({ loreVersion: VERSION, questVersion: VERSION, treeDigest: emptyTreeDigest() });
+  const cacheFile = () => join(root, ".lore", "cache", "quest", "task-list.json");
+  const cachedItems = (n: number) =>
+    ids(n).map((id, k) => ({
+      id,
+      title: `Task ${k + 1}`,
+      status: "To Do",
+      file: `.quest/tasks/${id}.json`,
+      aliases: [],
+    }));
+
+  // A HIT here is the witness that the READ side keys on lore + quest + the tree digest: BOTH mutants
+  // (treeKey returning the bare tree digest, and treeKey passing constant versions) key on something
+  // else, so this seeded entry is a MISS for them and the list runs (counts.list === 1).
+  test("a cache entry keyed by the full key is served with NO list read", async () => {
+    mkdirSync(join(root, ".lore", "cache", "quest"), { recursive: true });
+    writeFileSync(cacheFile(), JSON.stringify({ key: fullKey(), items: cachedItems(2) }));
+    const counts: Counts = { list: 0, view: 0, total: 0 };
+    const resolved = await resolveRollupDetails(adapterFor(2, counts), ["T-1"]);
+    expect(resolved.get("t-1")?.ok).toBe(true);
+    expect(counts.list).toBe(0);
+  });
+
+  // The WRITE side, same witness: the entry the call site persists must be keyed by the full key.
+  test("a cold read WRITES the entry under the full key", async () => {
+    const counts: Counts = { list: 0, view: 0, total: 0 };
+    await resolveRollupDetails(adapterFor(2, counts), ids(2));
+    const written = JSON.parse(readFileSync(cacheFile(), "utf8")) as { key: string };
+    expect(written.key).toBe(fullKey());
+    expect(written.key).not.toBe(emptyTreeDigest()); // a bare-digest key is NOT the full key
+  });
+});
+
+describe("the reference key folds exactly as Quest's findTask does (review F2, F5, F7)", () => {
+  const task = (id: string, aliases: unknown): Record<string, unknown> => ({
+    id,
+    title: `Task ${id}`,
+    status: "To Do",
+    path: `.quest/tasks/${id}.json`,
+    aliases,
+  });
+
+  test("F2: a record whose alias repeats its own id is ONE match, as findTask counts it", async () => {
+    const counts: Counts = { list: 0, view: 0, total: 0 };
+    const resolved = await resolveRollupDetails(adapterFor(1, counts, { records: [task("T-1", ["T-1"])] }), ["T-1"]);
+    const hit = resolved.get("t-1");
+    expect(hit?.ok).toBe(true);
+    expect((hit as { detail: { id: string } }).detail.id).toBe("T-1");
+    expect(counts.view).toBe(0);
+  });
+
+  test("F5: ASCII references still fold case-insensitively (behaviour unchanged)", async () => {
+    const counts: Counts = { list: 0, view: 0, total: 0 };
+    const resolved = await resolveRollupDetails(adapterFor(1, counts, { records: [task("T-1", ["Mixed-Case"])] }), [
+      "mixed-case",
+    ]);
+    expect(resolved.get("mixed-case")?.ok).toBe(true);
+  });
+
+  test("F5: a reference and an alias differing only by NFC/NFD form match", async () => {
+    const nfc = "café"; // e + U+0301 composed
+    const nfd = "café"; // e + combining acute, decomposed
+    expect(nfc).not.toBe(nfd);
+    const counts: Counts = { list: 0, view: 0, total: 0 };
+    const resolved = await resolveRollupDetails(adapterFor(1, counts, { records: [task("T-1", [nfc])] }), [nfd]);
+    const hit = resolved.get(nfd.toLowerCase());
+    expect(hit?.ok).toBe(true);
+    expect((hit as { detail: { id: string } }).detail.id).toBe("T-1");
+  });
+
+  test("F5: 'STRASSE' matches 'straße' exactly as Quest's fold does (ß folds to ss)", async () => {
+    const counts: Counts = { list: 0, view: 0, total: 0 };
+    const resolved = await resolveRollupDetails(adapterFor(1, counts, { records: [task("T-1", ["straße"])] }), [
+      "STRASSE",
+    ]);
+    const hit = resolved.get("strasse");
+    expect(hit?.ok).toBe(true);
+    expect((hit as { detail: { id: string } }).detail.id).toBe("T-1");
+  });
+
+  test("F5: Greek final sigma folds to sigma exactly as Quest's fold does (ς -> σ)", async () => {
+    const counts: Counts = { list: 0, view: 0, total: 0 };
+    // The alias ends in FINAL sigma (ς); the reference ends in ordinary sigma (σ). Quest's fold
+    // maps BOTH to σ; a plain `.toLowerCase()` leaves ς alone and the two differ.
+    const resolved = await resolveRollupDetails(adapterFor(1, counts, { records: [task("T-1", ["λόγος"])] }), [
+      "λόγοσ",
+    ]);
+    const hit = resolved.get("λόγοσ".toLowerCase());
+    expect(hit?.ok).toBe(true);
+    expect((hit as { detail: { id: string } }).detail.id).toBe("T-1");
+  });
+
+  test("F5: two ids that are fold-equal (ß/ss) are ambiguous, as findTask refuses them", async () => {
+    const counts: Counts = { list: 0, view: 0, total: 0 };
+    const resolved = await resolveRollupDetails(
+      adapterFor(2, counts, { records: [task("straße", []), task("STRASSE", [])] }),
+      ["strasse"],
+    );
+    const ambiguous = resolved.get("strasse") as { ok: false; error: LoreError };
+    expect(ambiguous.ok).toBe(false);
+    expect(ambiguous.error.type).toBe("conflict");
+    expect(ambiguous.error.message).toContain("task_reference_ambiguous");
+  });
+
+  test("F5: the generated fold table is pinned by entry count and sha256 (scripts/gen-case-fold-table.mjs)", () => {
+    // Regenerate with: node scripts/gen-case-fold-table.mjs --lib <unicode-case-folding@1.1.1>/index.js
+    expect(FOLD_OVERRIDE_DATA.split("\n").length).toBe(297);
+    expect(createHash("sha256").update(FOLD_OVERRIDE_DATA).digest("hex")).toBe(
+      "874a3f8ece0a7f1d1db10a8feb9437590f3621cb069a1f94f206e3e28f35c7d0",
+    );
+  });
+
+  test("F5: every override entry is applied, so referenceKey matches the pinned table at all 297 code points", () => {
+    const lines = FOLD_OVERRIDE_DATA.split("\n");
+    const mismatched = lines.filter((line) => {
+      const key = String.fromCodePoint(line.codePointAt(0) as number);
+      return referenceKey(key) !== line.slice(key.length);
+    });
+    expect(mismatched).toEqual([]);
+    // Positive controls: the check is not vacuous -- a full folding and a sub-lowercase fold both bite.
+    expect(referenceKey("ß")).toBe("ss");
+    expect(referenceKey("ς")).toBe("σ"); // final sigma folds to sigma, which is NOT its toLowerCase
+  });
+
+  test("F5: the table carries CaseFolding's U+1FBE entry (1FBE; C; 03B9)", () => {
+    // NFC canonically decomposes U+1FBE to U+03B9 BEFORE the table is consulted, so referenceKey
+    // already matched this pair with or without the entry; the entry keeps the table byte-identical to
+    // the library's raw per-code-point difference set, which is what the count/hash above pin. U+1FD3
+    // and U+1FE3 are the same shape (NFC -> U+0390 / U+03B0) and are covered by that same pin.
+    expect(FOLD_OVERRIDE_DATA.split("\n")).toContain("ιι");
+    expect(referenceKey("ι")).toBe("ι"); // NFC gets there even without the entry; the table must agree
+  });
+
+  test("F7: a STRING aliases value is compared by reference key, so a matching alias is drift, not not_found", async () => {
+    const counts: Counts = { list: 0, view: 0, total: 0 };
+    const resolved = await resolveRollupDetails(
+      adapterFor(2, counts, { records: [task("T-1", []), task("T-3", "OLD")] }),
+      ["T-1", "old"], // a case-fold-equal spelling: the comparison is by reference key
+    );
+    expect(resolved.get("t-1")?.ok).toBe(true);
+    const bad = resolved.get("old") as { ok: false; error: LoreError };
+    expect(bad.ok).toBe(false);
+    expect(bad.error.type).toBe("drift"); // the per-task path rejects T-3 as drift, and the list does too
+    expect(counts.view).toBe(0); // DEC-282 item 1: the list path never spawns a per-task view
+  });
+
+  test("F7: a miss stays not_found while an IRRELEVANT record has a malformed string alias", async () => {
+    const counts: Counts = { list: 0, view: 0, total: 0 };
+    const resolved = await resolveRollupDetails(
+      adapterFor(2, counts, { records: [task("T-1", []), task("T-3", "OLD")] }),
+      ["T-1", "T-9"], // T-9 matches no alias of T-3, so T-3's malformed field is irrelevant to it
+    );
+    expect(resolved.get("t-1")?.ok).toBe(true);
+    const miss = resolved.get("t-9") as { ok: false; error: LoreError };
+    expect(miss.ok).toBe(false);
+    expect(miss.error.type).toBe("not_found");
+  });
+
+  test("F7: a MIXED array compares its string elements; a miss is still not_found", async () => {
+    const records = [task("T-1", []), task("T-3", ["OLD", 5])];
+    const matched = await resolveRollupDetails(adapterFor(2, { list: 0, view: 0, total: 0 }, { records }), ["OLD"]);
+    const bad = matched.get("old") as { ok: false; error: LoreError };
+    expect(bad.ok).toBe(false);
+    expect(bad.error.type).toBe("drift"); // T-3 is malformed, matched through its string element
+    const missed = await resolveRollupDetails(adapterFor(2, { list: 0, view: 0, total: 0 }, { records }), ["T-9"]);
+    expect((missed.get("t-9") as { ok: false; error: LoreError }).error.type).toBe("not_found");
+  });
+
+  test("F7: a null aliases value is no aliases, as the per-task reader's ?? [] treats it", async () => {
+    const records = [task("T-1", []), task("T-3", null)];
+    const found = await resolveRollupDetails(adapterFor(2, { list: 0, view: 0, total: 0 }, { records }), ["T-3"]);
+    expect(found.get("t-3")?.ok).toBe(true);
+    const missed = await resolveRollupDetails(adapterFor(2, { list: 0, view: 0, total: 0 }, { records }), ["T-9"]);
+    expect((missed.get("t-9") as { ok: false; error: LoreError }).error.type).toBe("not_found");
+  });
+
+  test("F7: a NON-STRING, NON-ARRAY aliases value is the one shape a miss drifts on, named and capped", async () => {
+    const single = await resolveRollupDetails(
+      adapterFor(2, { list: 0, view: 0, total: 0 }, { records: [task("T-1", []), task("T-3", 5)] }),
+      ["T-9"],
+    );
+    const bad = single.get("t-9") as { ok: false; error: LoreError };
+    expect(bad.ok).toBe(false);
+    expect(bad.error.type).toBe("drift");
+    expect(bad.error.message).toContain('"T-3"'); // names the record with no comparable alias content
+
+    // Cap: 12 unparseable records name the first 8 and summarise the rest, so the message stays bounded.
+    rmSync(join(root, ".lore"), { recursive: true, force: true }); // a cold cache: the prior read is unrelated
+    const many = Array.from({ length: 12 }, (_, k) => task(`T-${k + 1}`, 5));
+    const capped = await resolveRollupDetails(adapterFor(12, { list: 0, view: 0, total: 0 }, { records: many }), [
+      "T-99",
+    ]);
+    const cappedError = (capped.get("t-99") as { ok: false; error: LoreError }).error;
+    expect(cappedError.type).toBe("drift");
+    expect(cappedError.message).toContain('"T-1"');
+    expect(cappedError.message).not.toContain('"T-12"'); // the 9th and later are summarised
+    expect(cappedError.message).toContain("and 4 more");
   });
 });
