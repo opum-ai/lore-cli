@@ -449,7 +449,7 @@ describe("the reference key folds exactly as Quest's findTask does (review F2, F
     expect(nfc).not.toBe(nfd);
     const counts: Counts = { list: 0, view: 0, total: 0 };
     const resolved = await resolveRollupDetails(adapterFor(1, counts, { records: [task("T-1", [nfc])] }), [nfd]);
-    const hit = resolved.get(nfd.toLowerCase());
+    const hit = resolved.get(referenceKey(nfd));
     expect(hit?.ok).toBe(true);
     expect((hit as { detail: { id: string } }).detail.id).toBe("T-1");
   });

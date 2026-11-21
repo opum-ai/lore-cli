@@ -774,9 +774,11 @@ describe("lore orphans — the confirmation read folds like the rollup (LCLI-807
   // The bulk list omits the task, so the reference becomes a CANDIDATE dangling link and the
   // per-task confirmation (`confirmDanglingLinks` -> verifiedViewTask) decides it. Before the fix
   // that read threw not_found and the live task was reported dangling; with referenceKey it resolves.
-  test("a task whose id is straße is not reported dangling when referenced as STRASSE", async () => {
-    writeStory("fold", ["STRASSE"]);
-    const canonical = makeTask("straße");
+  test("a task whose id is STRASSE is not reported dangling or orphaned when referenced as straße", async () => {
+    // The id is STRASSE and the reference spells it straße: lower("straße") is NOT its fold, so this
+    // is what exercises the REFERENCE side of the key (a toLowerCase there leaves the task an orphan).
+    writeStory("fold", ["straße"]);
+    const canonical = makeTask("STRASSE");
     const adapter = { ...okAdapter([canonical]), viewTask: async () => canonical };
     const { code, data } = await reportJson([], adapter);
     expect(code).toBe(0);

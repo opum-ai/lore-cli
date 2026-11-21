@@ -37,7 +37,8 @@
 //       Differential CHECK: recompute from the library and compare with the committed table EXACTLY
 //       (order and content); exit 1 on any missing, spurious or out-of-order entry, naming them.
 //   node scripts/gen-case-fold-table.mjs --lib /tmp/package/index.js --ts src/adapters/case-fold-table.ts --write
-//       Replace the committed module with the regenerated one (then let biome format the file).
+//       Replace the committed module with the regenerated one. The output is already biome-stable: the
+//       whole-module check above compares exact bytes, so do not reformat the file afterwards.
 //
 // REPRODUCIBILITY: unicode-case-folding@1.1.1 tarball shasum 644d22adc0eb8ff806d6e34640f2ce6241853fcd,
 // integrity sha512-ZAYziAnMTBisO2dT5tyGvBFMNsIfonOS/BZTd3UZaKWtXMOZqK8s8HRUCrlKxGCTeCxCuCjS/6HW+4a6G+rbzw==.

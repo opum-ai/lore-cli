@@ -130,6 +130,20 @@ describe("gatherReconciliation", () => {
     ]);
   });
 
+  test("two concepts linking one task under different spellings (STRASSE / straße) both reconcile (LCLI-809, #756 B1)", async () => {
+    const canonical = makeTask("straße", { status: "Done" });
+    const adapter = {
+      ...fakeAdapter([]),
+      viewTask: async () => canonical,
+      statusFlow: async () => ["To Do", "In Progress", "Done"],
+    };
+    const a = concept("stories/a.md", { tasks: ["STRASSE"], status: "todo" });
+    const b = concept("stories/b.md", { tasks: ["straße"], status: "todo" });
+    const targets = await gatherReconciliation(root, [a, b], adapter);
+    expect(targets.map((t) => t.rows.map((r) => r.id))).toEqual([["straße"], ["straße"]]);
+    expect(targets.map((t) => t.newTaskStatus)).toEqual(["done", "done"]);
+  });
+
   test("returns a zero-row target and touches no config or adapter for an explicit empty tasks: field", async () => {
     mkdirSync(join(root, "backlog"), { recursive: true });
     writeFileSync(join(root, "backlog", "config.yml"), "statuses: not-a-list\n");

@@ -211,6 +211,28 @@ describe("lore link — the read path folds like the rollup (LCLI-807)", () => {
   });
 });
 
+describe("lore link and unlink compare a task reference by referenceKey (LCLI-809, #756 B2)", () => {
+  const canonical = makeTask("straße");
+  const adapter = (): BacklogAdapter => ({ ...fakeAdapter([]), viewTask: async () => canonical });
+  const storedDoc = "---\ntype: Story\ntitle: Stored\ntasks:\n  - straße\n---\nBody.\n";
+
+  test("link: STRASSE is ALREADY LINKED when the doc stores straße", async () => {
+    writeDoc("stories/stored.md", storedDoc);
+    const { code, report } = await linkCmd(["stories/stored", "STRASSE", "--no-back-ref"], adapter());
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks).toEqual([{ task: "STRASSE", status: "already-linked", backRef: "skipped" }]);
+  });
+
+  test("unlink: STRASSE removes the stored straße from tasks:, not just from the report", async () => {
+    writeDoc("stories/stored.md", storedDoc);
+    const { code, report } = await unlinkCmd(["stories/stored", "STRASSE", "--no-back-ref"], adapter());
+    expect(code).toBe(EXIT_OK);
+    expect(report.tasks).toEqual([{ task: "STRASSE", status: "removed", backRef: "skipped" }]);
+    const concept = parseConcept("stories/stored.md", readDoc("stories/stored.md"));
+    expect(concept.frontmatter.tasks ?? []).toEqual([]);
+  });
+});
+
 // ── AC#1: link wires tasks: + doc: label + --doc ──────────────────────────────────
 
 describe("lore link — wiring (AC#1)", () => {

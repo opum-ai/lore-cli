@@ -251,12 +251,12 @@ interface OrphanBuckets {
  * flat list of every `(concept, taskId)` reference (for the dangling test) at once; a single pass over
  * the snapshot then classifies each task as linked (reported nowhere), `pendingLinks` (documented via
  * `--doc` but not yet linked), or `orphanTasks` (documented nowhere), and `danglingLinks` filters the
- * references against the snapshot's case-insensitive known-id set. All three outputs are sorted for a
+ * references against the snapshot's set of folded ids and aliases ({@link referenceKey}). All three outputs are sorted for a
  * deterministic, diff-stable report. `danglingLinks` here is a CANDIDATE list against the bulk snapshot
  * alone — {@link runOrphans} confirms it further (LCLI-375); {@link computeOrphans} does not.
  */
 function classify(concepts: Iterable<Concept>, snapshot: readonly BacklogTask[]): OrphanBuckets {
-  const referenced = new Set<string>(); // lower-cased task ids any concept forward-links
+  const referenced = new Set<string>(); // folded ({@link referenceKey}) task ids any concept forward-links
   const references: DanglingLink[] = []; // every (concept, taskId) pair, for the dangling test
   for (const concept of concepts) {
     for (const task of dedupeTaskIds(toRefList(concept.frontmatter.tasks))) {
@@ -325,12 +325,12 @@ async function confirmDanglingLinks(
   }
   // One representative spelling per folded id — resolution folds as Quest does (verifiedViewTask), so a
   // single call per distinct key is enough regardless of how many links share it. `resolveTaskDetails`
-  // keys its result by the lower-cased REQUESTED spelling, so look each representative up that way and
+  // keys its result by the folded REQUESTED spelling, so look each representative up that way and
   // re-key the verdict by the folded id every candidate is tested against.
   const suspects = new Map(candidates.map((link) => [referenceKey(link.task), link.task]));
   const resolutions = await resolveTaskDetails(adapter, [...suspects.values()]);
   const confirmedAlive = new Set(
-    [...suspects].filter(([, spelling]) => resolutions.get(spelling.toLowerCase())?.ok === true).map(([key]) => key),
+    [...suspects].filter(([, spelling]) => resolutions.get(referenceKey(spelling))?.ok === true).map(([key]) => key),
   );
   return candidates.filter((link) => !confirmedAlive.has(referenceKey(link.task)));
 }

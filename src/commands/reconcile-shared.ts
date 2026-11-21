@@ -14,6 +14,7 @@
 
 import { posix } from "node:path";
 import type { BacklogAdapter, BacklogTaskDetail } from "../adapters/backlog";
+import { referenceKey } from "../adapters/quest";
 import type { TaskRollupIndex } from "../adapters/tracker";
 import { loadConfig } from "../config";
 import { toRefList } from "../core/bundle";
@@ -176,7 +177,7 @@ export async function resolveReconcileConfig(root: string, adapter = defaultAdap
  * @param configOverride an already-resolved-and-validated {@link ReconcileConfig} (`lore sync` passes
  *   its own, having already called {@link resolveReconcileConfig} itself for ordering reasons); when
  *   omitted, resolved (and validated) here.
- * @param detailsOverride an already-resolved {@link TaskResolution} map, keyed by lowercase task id,
+ * @param detailsOverride an already-resolved {@link TaskResolution} map, keyed by the folded task id ({@link referenceKey}),
  *   covering (at least) every id `concepts` links — `lore check`'s multi-root drift pass (LORE-50)
  *   resolves the union of every bundle root's linked ids exactly once and passes the shared result
  *   to each root's own `gatherReconciliation` call, rather than each root re-fetching the same id.
@@ -227,7 +228,7 @@ export async function gatherReconciliation(
     if (linked.length === 0) {
       return { concept, newTaskStatus: null, rows: [] };
     }
-    const detailList = linked.map((id) => details.get(id.toLowerCase()) as RollupDetail);
+    const detailList = linked.map((id) => details.get(referenceKey(id)) as RollupDetail);
     const newTaskStatus = reconcileStatus(
       detailList.map((d) => d.status),
       flow,
@@ -267,18 +268,18 @@ export async function resolveRollupDetails(
     index = await adapter.taskRollup();
   } catch (cause) {
     const error = cause instanceof Error ? cause : new Error(String(cause));
-    for (const taskId of taskIds) resolved.set(taskId.toLowerCase(), { ok: false, error });
+    for (const taskId of taskIds) resolved.set(referenceKey(taskId), { ok: false, error });
     return resolved;
   }
   for (const taskId of taskIds) {
     try {
       const detail = index.lookup(taskId);
       resolved.set(
-        taskId.toLowerCase(),
+        referenceKey(taskId),
         detail === undefined ? { ok: false, error: taskNotFound(taskId) } : { ok: true, detail },
       );
     } catch (cause) {
-      resolved.set(taskId.toLowerCase(), {
+      resolved.set(referenceKey(taskId), {
         ok: false,
         error: cause instanceof Error ? cause : new Error(String(cause)),
       });
@@ -298,7 +299,7 @@ function taskNotFound(taskId: string): LoreError {
 }
 
 /**
- * Resolve every task id to a {@link TaskResolution}, keyed by lowercase id — a not-found, an
+ * Resolve every task id to a {@link TaskResolution}, keyed by folded id ({@link referenceKey}) — a not-found, an
  * identity-mismatched, or a rejected `viewTask` all become an `ok: false` entry rather than a
  * thrown error, so a caller resolving ids shared across several independent groups (bundle roots,
  * in `lore check`'s multi-root drift pass) can fetch each distinct id exactly once and let EACH
@@ -310,7 +311,7 @@ function taskNotFound(taskId: string): LoreError {
  * via `link.ts`'s shared {@link verifiedViewTask} — a mismatch is treated exactly like a not-found
  * rather than stored as `ok: true` (it throws a `LoreError`, caught below and stored verbatim, same
  * as any other `viewTask` rejection). Nothing downstream (`gatherReconciliation`'s
- * `details.get(id.toLowerCase())` lookup keys purely on the REQUESTED id) would otherwise notice an
+ * `details.get(referenceKey(id))` lookup keys purely on the REQUESTED id) would otherwise notice an
  * adapter handing back the wrong task's detail, and a mismatch here would silently attribute
  * another task's title/status to this concept's managed `tasks:` block. This is the ONE place the
  * check lives — `verifiedViewTask` — shared with `link.ts`'s own `viewTask` consumers and
@@ -325,12 +326,12 @@ export async function resolveTaskDetails(
     try {
       const detail = await verifiedViewTask(adapter, taskId);
       if (detail === null) {
-        resolved.set(taskId.toLowerCase(), { ok: false, error: taskNotFound(taskId) });
+        resolved.set(referenceKey(taskId), { ok: false, error: taskNotFound(taskId) });
       } else {
-        resolved.set(taskId.toLowerCase(), { ok: true, detail });
+        resolved.set(referenceKey(taskId), { ok: true, detail });
       }
     } catch (cause) {
-      resolved.set(taskId.toLowerCase(), {
+      resolved.set(referenceKey(taskId), {
         ok: false,
         error: cause instanceof Error ? cause : new Error(String(cause)),
       });
@@ -354,14 +355,14 @@ function pickResolved(
 ): Map<string, RollupDetail> {
   const details = new Map<string, RollupDetail>();
   for (const taskId of taskIds) {
-    const r = resolved.get(taskId.toLowerCase());
+    const r = resolved.get(referenceKey(taskId));
     if (r === undefined) {
       throw new Error(`internal: task "${taskId}" was never resolved`);
     }
     if (!r.ok) {
       throw r.error;
     }
-    details.set(taskId.toLowerCase(), r.detail);
+    details.set(referenceKey(taskId), r.detail);
   }
   return details;
 }
