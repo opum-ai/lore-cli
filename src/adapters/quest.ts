@@ -984,27 +984,28 @@ function rollupRow(task: Record<string, unknown>): TaskRollupRow {
  * MAPPING, which agrees with default case folding for every code point EXCEPT those in
  * {@link FOLD_OVERRIDES}: the multi-code-point full foldings (`ß` -> `ss`, Greek iota subscript,
  * Armenian ligature, ...) and the few single-code-point foldings whose target is not their
- * lowercase (`ς` -> `σ`, `µ` -> `μ`, Cherokee, ...). The table is generated from
- * `unicode-case-folding@1.1.1` -- the exact library quest-cli's `aliasKey` calls -- so every
- * canonical code point folds identically to Quest's own key; a test pins the representative cases
- * (`ß`/`ss`, final sigma, NFC/NFD, and ambiguity across fold-equal ids). A code point absent from
- * the table folds as its own `.toLowerCase()`. The one input Quest validates that this does not is
- * an EMPTY reference: quest's `aliasKey` rejects it, lore treats it as a miss (a linked concept is
- * not a task id).
+ * lowercase (`ς` -> `σ`, `µ` -> `μ`, Cherokee, ...), and the REVERSE direction -- a code point JS
+ * lowercases but the fold map leaves alone (Cherokee uppercase) is an IDENTITY override, so lore does
+ * not lowercase what Quest does not. The table is generated from `unicode-case-folding@1.1.1` -- the
+ * exact library quest-cli's `aliasKey` calls -- by `scripts/gen-case-fold-table.mjs`, which is also
+ * where the differential check over every code point U+0000..U+10FFFF lives (it is not wired into CI).
+ * test/lcli791-quest-rollup.test.ts pins this data's entry count and sha256 and covers the
+ * representative folds (`ß`/`ss`, final sigma, Greek prosgegrammeni U+1FBE, NFC/NFD, and ambiguity
+ * across fold-equal ids). A code point absent from the table folds as its own `.toLowerCase()`. The
+ * one input Quest validates that this does not is an EMPTY reference: quest's `aliasKey` rejects it,
+ * lore treats it as a miss (a linked concept is not a task id).
  */
-const FOLD_OVERRIDE_DATA =
-  "µμ\nßss\nŉʼn\nſs\nǰǰ\nͅι\nΐΐ\nΰΰ\nςσ\nϐβ\nϑθ\nϕφ\nϖπ\nϰκ\nϱρ\nϵε\nևեւ\nᎠᎠ\nᎡᎡ\nᎢᎢ\nᎣᎣ\nᎤᎤ\nᎥᎥ\nᎦᎦ\nᎧᎧ\n" +
-  "ᎨᎨ\nᎩᎩ\nᎪᎪ\nᎫᎫ\nᎬᎬ\nᎭᎭ\nᎮᎮ\nᎯᎯ\nᎰᎰ\nᎱᎱ\nᎲᎲ\nᎳᎳ\nᎴᎴ\nᎵᎵ\nᎶᎶ\nᎷᎷ\nᎸᎸ\nᎹᎹ\nᎺᎺ\nᎻᎻ\nᎼᎼ\nᎽᎽ\nᎾᎾ\nᎿᎿ\nᏀᏀ\nᏁᏁ\nᏂᏂ\n" +
-  "ᏃᏃ\nᏄᏄ\nᏅᏅ\nᏆᏆ\nᏇᏇ\nᏈᏈ\nᏉᏉ\nᏊᏊ\nᏋᏋ\nᏌᏌ\nᏍᏍ\nᏎᏎ\nᏏᏏ\nᏐᏐ\nᏑᏑ\nᏒᏒ\nᏓᏓ\nᏔᏔ\nᏕᏕ\nᏖᏖ\nᏗᏗ\nᏘᏘ\nᏙᏙ\nᏚᏚ\nᏛᏛ\nᏜᏜ\nᏝᏝ\n" +
-  "ᏞᏞ\nᏟᏟ\nᏠᏠ\nᏡᏡ\nᏢᏢ\nᏣᏣ\nᏤᏤ\nᏥᏥ\nᏦᏦ\nᏧᏧ\nᏨᏨ\nᏩᏩ\nᏪᏪ\nᏫᏫ\nᏬᏬ\nᏭᏭ\nᏮᏮ\nᏯᏯ\nᏰᏰ\nᏱᏱ\nᏲᏲ\nᏳᏳ\nᏴᏴ\nᏵᏵ\nᏸᏰ\nᏹᏱ\nᏺᏲ\n" +
-  "ᏻᏳ\nᏼᏴ\nᏽᏵ\nᲀв\nᲁд\nᲂо\nᲃс\nᲄт\nᲅт\nᲆъ\nᲇѣ\nᲈꙋ\nẖẖ\nẗẗ\nẘẘ\nẙẙ\nẚaʾ\nẛṡ\nẞss\nὐὐ\nὒὒ\nὔὔ\nὖὖ\nᾀἀι" +
-  "\nᾁἁι\nᾂἂι\nᾃἃι\nᾄἄι\nᾅἅι\nᾆἆι\nᾇἇι\nᾈἀι\nᾉἁι\nᾊἂι\nᾋἃι\nᾌἄι\nᾍἅι\nᾎἆι\nᾏἇι\nᾐἠι\nᾑἡι\nᾒἢι\nᾓἣι\nᾔἤι\nᾕἥι\nᾖ" +
-  "ἦι\nᾗἧι\nᾘἠι\nᾙἡι\nᾚἢι\nᾛἣι\nᾜἤι\nᾝἥι\nᾞἦι\nᾟἧι\nᾠὠι\nᾡὡι\nᾢὢι\nᾣὣι\nᾤὤι\nᾥὥι\nᾦὦι\nᾧὧι\nᾨὠι\nᾩὡι\nᾪὢι\nᾫὣι" +
-  "\nᾬὤι\nᾭὥι\nᾮὦι\nᾯὧι\nᾲὰι\nᾳαι\nᾴάι\nᾶᾶ\nᾷᾶι\nᾼαι\nῂὴι\nῃηι\nῄήι\nῆῆ\nῇῆι\nῌηι\nῒῒ\nῖῖ\nῗῗ\nῢῢ\nῤ" +
-  "ῤ\nῦῦ\nῧῧ\nῲὼι\nῳωι\nῴώι\nῶῶ\nῷῶι\nῼωι\nꭰᎠ\nꭱᎡ\nꭲᎢ\nꭳᎣ\nꭴᎤ\nꭵᎥ\nꭶᎦ\nꭷᎧ\nꭸᎨ\nꭹᎩ\nꭺᎪ\nꭻᎫ\nꭼᎬ\nꭽᎭ\nꭾᎮ\nꭿᎯ" +
-  "\nꮀᎰ\nꮁᎱ\nꮂᎲ\nꮃᎳ\nꮄᎴ\nꮅᎵ\nꮆᎶ\nꮇᎷ\nꮈᎸ\nꮉᎹ\nꮊᎺ\nꮋᎻ\nꮌᎼ\nꮍᎽ\nꮎᎾ\nꮏᎿ\nꮐᏀ\nꮑᏁ\nꮒᏂ\nꮓᏃ\nꮔᏄ\nꮕᏅ\nꮖᏆ\nꮗᏇ\nꮘᏈ\nꮙᏉ\nꮚᏊ" +
-  "\nꮛᏋ\nꮜᏌ\nꮝᏍ\nꮞᏎ\nꮟᏏ\nꮠᏐ\nꮡᏑ\nꮢᏒ\nꮣᏓ\nꮤᏔ\nꮥᏕ\nꮦᏖ\nꮧᏗ\nꮨᏘ\nꮩᏙ\nꮪᏚ\nꮫᏛ\nꮬᏜ\nꮭᏝ\nꮮᏞ\nꮯᏟ\nꮰᏠ\nꮱᏡ\nꮲᏢ\nꮳᏣ\nꮴᏤ\nꮵᏥ" +
-  "\nꮶᏦ\nꮷᏧ\nꮸᏨ\nꮹᏩ\nꮺᏪ\nꮻᏫ\nꮼᏬ\nꮽᏭ\nꮾᏮ\nꮿᏯ\nﬀff\nﬁfi\nﬂfl\nﬃffi\nﬄffl\nﬅst\nﬆst\nﬓմն\nﬔմե\nﬕմի\nﬖվն\nﬗմխ";
+export const FOLD_OVERRIDE_DATA =
+  "µμ\nßss\nŉʼn\nſs\nǰǰ\nͅι\nΐΐ\nΰΰ\nςσ\nϐβ\nϑθ\nϕφ\nϖπ\nϰκ\nϱρ\nϵε\nևեւ\nᎠᎠ\nᎡᎡ\nᎢᎢ\nᎣᎣ\nᎤᎤ\nᎥᎥ\nᎦᎦ\nᎧᎧ\nᎨᎨ\nᎩᎩ\nᎪᎪ\nᎫᎫ\nᎬᎬ\nᎭᎭ\nᎮᎮ\nᎯᎯ\nᎰᎰ\n" +
+  "ᎱᎱ\nᎲᎲ\nᎳᎳ\nᎴᎴ\nᎵᎵ\nᎶᎶ\nᎷᎷ\nᎸᎸ\nᎹᎹ\nᎺᎺ\nᎻᎻ\nᎼᎼ\nᎽᎽ\nᎾᎾ\nᎿᎿ\nᏀᏀ\nᏁᏁ\nᏂᏂ\nᏃᏃ\nᏄᏄ\nᏅᏅ\nᏆᏆ\nᏇᏇ\nᏈᏈ\nᏉᏉ\nᏊᏊ\nᏋᏋ\nᏌᏌ\nᏍᏍ\nᏎᏎ\nᏏᏏ\nᏐᏐ\nᏑᏑ\nᏒᏒ\nᏓᏓ\nᏔᏔ\n" +
+  "ᏕᏕ\nᏖᏖ\nᏗᏗ\nᏘᏘ\nᏙᏙ\nᏚᏚ\nᏛᏛ\nᏜᏜ\nᏝᏝ\nᏞᏞ\nᏟᏟ\nᏠᏠ\nᏡᏡ\nᏢᏢ\nᏣᏣ\nᏤᏤ\nᏥᏥ\nᏦᏦ\nᏧᏧ\nᏨᏨ\nᏩᏩ\nᏪᏪ\nᏫᏫ\nᏬᏬ\nᏭᏭ\nᏮᏮ\nᏯᏯ\nᏰᏰ\nᏱᏱ\nᏲᏲ\nᏳᏳ\nᏴᏴ\nᏵᏵ\nᏸᏰ\nᏹᏱ\nᏺᏲ\n" +
+  "ᏻᏳ\nᏼᏴ\nᏽᏵ\nᲀв\nᲁд\nᲂо\nᲃс\nᲄт\nᲅт\nᲆъ\nᲇѣ\nᲈꙋ\nẖẖ\nẗẗ\nẘẘ\nẙẙ\nẚaʾ\nẛṡ\nẞss\nὐὐ\nὒὒ\nὔὔ\nὖὖ\nᾀἀι\nᾁἁι\nᾂἂι\nᾃἃι\nᾄἄι\nᾅἅι\nᾆἆι\n" +
+  "ᾇἇι\nᾈἀι\nᾉἁι\nᾊἂι\nᾋἃι\nᾌἄι\nᾍἅι\nᾎἆι\nᾏἇι\nᾐἠι\nᾑἡι\nᾒἢι\nᾓἣι\nᾔἤι\nᾕἥι\nᾖἦι\nᾗἧι\nᾘἠι\nᾙἡι\nᾚἢι\nᾛἣι\nᾜἤι\nᾝἥι\nᾞἦι\nᾟἧι\nᾠὠι\nᾡὡι\n" +
+  "ᾢὢι\nᾣὣι\nᾤὤι\nᾥὥι\nᾦὦι\nᾧὧι\nᾨὠι\nᾩὡι\nᾪὢι\nᾫὣι\nᾬὤι\nᾭὥι\nᾮὦι\nᾯὧι\nᾲὰι\nᾳαι\nᾴάι\nᾶᾶ\nᾷᾶι\nᾼαι\nιι\nῂὴι\nῃηι\nῄήι\nῆῆ\nῇῆι\nῌηι\n" +
+  "ῒῒ\nΐΐ\nῖῖ\nῗῗ\nῢῢ\nΰΰ\nῤῤ\nῦῦ\nῧῧ\nῲὼι\nῳωι\nῴώι\nῶῶ\nῷῶι\nῼωι\nꭰᎠ\nꭱᎡ\nꭲᎢ\nꭳᎣ\nꭴᎤ\nꭵᎥ\nꭶᎦ\nꭷᎧ\nꭸᎨ\nꭹᎩ\nꭺᎪ\nꭻᎫ\nꭼᎬ\nꭽᎭ\n" +
+  "ꭾᎮ\nꭿᎯ\nꮀᎰ\nꮁᎱ\nꮂᎲ\nꮃᎳ\nꮄᎴ\nꮅᎵ\nꮆᎶ\nꮇᎷ\nꮈᎸ\nꮉᎹ\nꮊᎺ\nꮋᎻ\nꮌᎼ\nꮍᎽ\nꮎᎾ\nꮏᎿ\nꮐᏀ\nꮑᏁ\nꮒᏂ\nꮓᏃ\nꮔᏄ\nꮕᏅ\nꮖᏆ\nꮗᏇ\nꮘᏈ\nꮙᏉ\nꮚᏊ\nꮛᏋ\nꮜᏌ\nꮝᏍ\nꮞᏎ\nꮟᏏ\nꮠᏐ\nꮡᏑ\n" +
+  "ꮢᏒ\nꮣᏓ\nꮤᏔ\nꮥᏕ\nꮦᏖ\nꮧᏗ\nꮨᏘ\nꮩᏙ\nꮪᏚ\nꮫᏛ\nꮬᏜ\nꮭᏝ\nꮮᏞ\nꮯᏟ\nꮰᏠ\nꮱᏡ\nꮲᏢ\nꮳᏣ\nꮴᏤ\nꮵᏥ\nꮶᏦ\nꮷᏧ\nꮸᏨ\nꮹᏩ\nꮺᏪ\nꮻᏫ\nꮼᏬ\nꮽᏭ\nꮾᏮ\nꮿᏯ\nﬀff\nﬁfi\nﬂfl\nﬃffi\n" +
+  "ﬄffl\nﬅst\nﬆst\nﬓմն\nﬔմե\nﬕմի\nﬖվն\nﬗմխ";
 
 /**
  * The table encoded one entry per line as `<code point><fold output>`: the first code point is the
@@ -1018,25 +1019,42 @@ const FOLD_OVERRIDES: ReadonlyMap<string, string> = new Map(
   }),
 );
 
-function referenceKey(reference: string): string {
+/** NFC, then the fold table above (else `.toLowerCase()`), per code point. Exported for its differential test. */
+export function referenceKey(reference: string): string {
   let key = "";
   for (const char of reference.normalize("NFC")) key += FOLD_OVERRIDES.get(char) ?? char.toLowerCase();
   return key;
 }
+
+/** How many malformed-record ids the "no comparable alias content" drift names before summarising the rest. */
+const MALFORMED_ALIAS_ID_LIMIT = 8;
 
 /**
  * Index listed records by every id they answer to, mirroring how `viewTask` resolves a reference.
  * Quest's own `findTask` refuses a reference that matches the id or an alias of MORE than one record
  * (`task_reference_ambiguous`), and `task list` runs no uniqueness validation, so the index does the
  * same instead of choosing a winner: a lookup that matches two records throws, even across `tasks/`,
- * `completed/` and `archive/`. Records the rollup never looks up are never validated -- except that a
- * record whose `aliases` field is not a list of strings makes a MISSING reference drift rather than
- * `not_found`, because the per-task path rejects that record as drift too and the missing reference
- * may be one of the aliases the list could not index.
+ * `completed/` and `archive/`. Records the rollup never looks up are never validated, so one malformed
+ * record nothing links cannot fail the rollup.
+ *
+ * A malformed `aliases` value is treated by what can still be COMPARED (LCLI-791 review F7):
+ *  - a STRING, or the string ELEMENTS of an array, are indexed by their reference key like any
+ *    well-formed alias. A reference that matches one is drift at lookup -- the match-time `strings()`
+ *    validation the per-task path also runs -- while a reference that matches none is `not_found`,
+ *    because a string reference can never equal a non-string element. An unrelated miss stays a truth
+ *    rather than a blanket failure caused by some other record.
+ *  - a NON-STRING, NON-ARRAY value (number, object, boolean) has no string content to compare, so a
+ *    reference that misses cannot be ruled out as one of its aliases. That is the ONE malformed shape
+ *    a miss drifts on instead of answering `not_found`, naming the records (deduped and capped) --
+ *    the per-task path rejects such a record as drift too.
+ * `aliases` absent or `null` is no aliases, exactly as the per-task reader's `?? []` treats it.
  */
 function rollupIndex(items: readonly Record<string, unknown>[]): TaskRollupIndex {
   const byReference = new Map<string, Record<string, unknown>[]>();
-  const malformedAliasIds: string[] = [];
+  // Records whose `aliases` value is neither a string, an array nor absent: no alias content to
+  // compare. Deduped (a repeated id must not be listed twice) and capped at render. Consulted only on
+  // a MISS.
+  const unparseableAliasIds = new Set<string>();
   const add = (reference: string, item: Record<string, unknown>) => {
     const key = referenceKey(reference);
     const held = byReference.get(key);
@@ -1047,10 +1065,13 @@ function rollupIndex(items: readonly Record<string, unknown>[]): TaskRollupIndex
   for (const item of items) {
     if (typeof item.id === "string") add(item.id, item);
     const aliases = item.aliases;
-    if (aliases === undefined || aliases === null) continue;
-    if (Array.isArray(aliases) && aliases.every((alias) => typeof alias === "string"))
-      for (const alias of aliases) add(alias, item);
-    else malformedAliasIds.push(typeof item.id === "string" ? item.id : JSON.stringify(item.id));
+    if (aliases === undefined || aliases === null) continue; // absent, as `summary()`'s `?? []` reads it
+    // Index whatever string content is comparable; a matching reference then resolves to THIS record,
+    // where the match-time validation below raises the per-task path's own drift.
+    if (typeof aliases === "string") add(aliases, item);
+    else if (Array.isArray(aliases)) {
+      for (const alias of aliases) if (typeof alias === "string") add(alias, item);
+    } else unparseableAliasIds.add(typeof item.id === "string" ? item.id : String(item.id));
   }
   return {
     lookup(id) {
@@ -1065,20 +1086,27 @@ function rollupIndex(items: readonly Record<string, unknown>[]): TaskRollupIndex
         );
       const item = matches[0];
       if (item === undefined) {
-        // A record whose `aliases` is not a list of strings cannot be indexed by alias, so a
-        // reference that would only have matched it lands here. That reference is NOT `not_found`:
-        // the per-task path rejects the record as drift, and NAME the record so the fix is obvious.
-        if (malformedAliasIds.length > 0)
+        // Only a record with NO comparable alias content can land here and still be a possibility; the
+        // per-task path rejects it as drift, so answer drift rather than `not_found`.
+        if (unparseableAliasIds.size > 0) {
+          const ids = [...unparseableAliasIds];
+          const shown = ids
+            .slice(0, MALFORMED_ALIAS_ID_LIMIT)
+            .map((record) => `"${record}"`)
+            .join(", ");
+          const rest =
+            ids.length > MALFORMED_ALIAS_ID_LIMIT ? ` and ${ids.length - MALFORMED_ALIAS_ID_LIMIT} more` : "";
           throw new LoreError(
             "drift",
-            `Quest returned invalid task aliases for ${malformedAliasIds.map((x) => `"${x}"`).join(", ")}; ` +
+            `Quest returned invalid task aliases for ${shown}${rest}; ` +
               `the reference "${id}" cannot be resolved against a record the tracker failed to parse`,
             QUEST_VERSION_SET_HINT,
           );
+        }
         return undefined;
       }
       // The per-task path validated aliases too (summary()), so a matched record with a malformed
-      // aliases field raises the same drift here.
+      // aliases field raises the same drift here -- a string-valued field and a mixed array included.
       strings(item.aliases ?? [], "task aliases");
       return rollupRow(item);
     },
