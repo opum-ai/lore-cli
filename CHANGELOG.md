@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`lore check` treats drift confined to a `lore:tasks` managed block as a warning by default, and an error only under `--strict` (LCLI-793, DEC-282 item 3)**
+  Any tracker write can stale the `<!-- lore:tasks -->` rollup, and the tracker never rewrites a lore block, so failing the gate on that drift alone made every tracker write cost a `lore sync` plus `lore check` round trip. A report whose only drift is a stale `lore:tasks` block now exits `0` with a `managed-block-drift` finding at warning severity (it was exit `6`); `--strict` turns that same finding back into exit `6`, the flag's existing meaning. **Every other drift stays an error in both modes:** `status-drift`, `index-drift` (the `lore:index` block), `schema-drift`, and broken links or anchors, so a report mixing `lore:tasks` drift with any of them still exits `6`. A corrupted or duplicated block marker is still a thrown validation error (exit `6`), not this warning. The finding text is unchanged (`the <!-- lore:tasks --> block is stale — run `lore sync` to regenerate it from live task data`); only its severity moved. Callers that gate on `lore check` exit `0` to mean "no task drift" should pass `--strict`.
+
 ### Fixed
 
 - **`bin/lore.cjs` no longer leaves the native binary, or what it spawned, running when the wrapper is stopped, and now dies by the child's signal (LCLI-797, DEC-282 item 7 and (a2))**
