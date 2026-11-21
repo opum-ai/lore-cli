@@ -116,7 +116,7 @@ generic unknown-key warning merely because an active custom profile omitted it.
 | `status` | Recognized lifecycle value: `draft`, `stable`, or `deprecated` | None; absence means stable under OKF |
 | `stale_after` | Recognized absolute date; malformed values are a Lore producer-profile error | Elapsed dates produce warning-tier `stale-after`, evaluated from `check --as-of YYYY-MM-DD` or HEAD's commit date, never the machine clock |
 | `runtime`, `parameters`, `computation`, `executor`, `attester` | Recognized for a known `Attested Computation`; `runtime` is required by the Lore profile and malformed contracts are errors | A missing local `computation` asset produces warning-tier `broken-computation`; Lore never opens or executes it |
-| `lore_task_status` | Recognized Lore extension for linked-task progress under 0.2 | Status and managed-block drift are Lore coherence errors |
+| `lore_task_status` | Recognized Lore extension for linked-task progress under 0.2 | Status drift and `index.md` drift are Lore coherence errors; `lore:tasks` block drift is a warning that gates only under `--strict` (DEC-282 item 3) |
 | legacy `timestamp` | Preserved with an advisory under 0.2 | Never converted implicitly |
 
 Unknown nested producer extensions are preserved by the loose object schemas.

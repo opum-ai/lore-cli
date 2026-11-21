@@ -131,7 +131,7 @@ const CHECK: InstructionTopic = {
   body: `\`lore check [paths...]\` is lore's read-only CI gate. It always emits the
 full \`check.report\` on stdout (\`kind: check.report\` under \`--json\`) --
 findings for broken bundle-scoped links, rotted heading anchors, reconciliation
-drift (a Story's written status or managed block gone stale), committed-schema
+drift (a Story's written status or managed block gone stale; \`lore:tasks\` block drift is a warning, an error only under \`--strict\`), committed-schema
 drift, unknown active-
 profile types, and portability-lint warnings. Relative \`.md\` links that normalize
 above the selected bundle root are not resolved; the report exposes them through

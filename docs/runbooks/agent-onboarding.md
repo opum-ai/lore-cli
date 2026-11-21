@@ -121,7 +121,7 @@ do the work            4. write code; edit docs OUTSIDE managed regions
 lore sync              5. reconcile status + rewrite managed blocks + regen index
    │
    ▼
-lore check             6. CI gate — exit 6 on drift/broken-link/anchor/portability, 7 if it cannot judge
+lore check             6. CI gate — exit 6 on drift (`lore:tasks` block drift: warning, error under `--strict`)/broken-link/anchor/portability, 7 if it cannot judge
 ```
 
 Starting from scratch instead of an existing Story? `lore new Story "<title>"`
@@ -489,7 +489,7 @@ non-destructive.
 | See a Story's live tasks | `lore tasks <story> --json` | `kind: tasks.rollup`; reads each task through the configured tracker's CLI (Quest by default) |
 | Couple a task to a Story | `lore link <story> <task-id>` | sets frontmatter + `doc:` label; lore commits only on Backlog.md; Quest needs `LORE_QUEST_ACTOR*` set |
 | Make the bundle coherent | `lore sync --json` | recompute status, rewrite managed blocks, regen index |
-| Gate the bundle | `lore check` | read-only; exit `6` on drift/broken-link/anchor/portability, `7` when it cannot judge a committed schema |
+| Gate the bundle | `lore check` | read-only; exit `6` on drift (`lore:tasks` block drift: warning, error under `--strict`)/broken-link/anchor/portability, `7` when it cannot judge a committed schema |
 | Pull guidance on demand | `lore instructions [<topic>]` | just-in-time, mirrors `backlog instructions` |
 | Discover the surface | `lore help --json` | capability manifest in the canonical envelope |
 | Refactor across docs | `lore replace` / `lore rename` / `lore supersede` | graph-aware; skips managed regions |

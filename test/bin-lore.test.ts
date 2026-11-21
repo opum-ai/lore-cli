@@ -471,7 +471,9 @@ describe.skipIf(process.platform === "win32")("bin/lore.cjs — never orphans th
       ];
       // The native-lore stub wrote its own pid before it spawned the quest wrapper's node; track it so
       // a red run cannot leak it, and assert the sweep took it too.
+      // The stub's pid file lists the native lore pid first (the grandchild's pid, if any, follows).
       const [lorePid] = readFileSync(pidFile, "utf8").split("\n").filter(Boolean).map(Number) as [number];
+      expect(lorePid).toBeGreaterThan(0);
       spawned.push(questWrapperPid, nativePid, lorePid);
       await wrapper.exited;
       expect(wrapper.exitCode).not.toBe(0);

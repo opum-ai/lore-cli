@@ -51,8 +51,8 @@
  * **Drift-gate exemption (ADR-0007).** Because a git-derived `log.md` changes on *every* commit, it
  * is materialized at **`lore sync`** time and **excluded** from `lore check`'s regenerate-and-compare
  * drift gate. Gating it would report permanent drift (the gate's own commit would invalidate it) and
- * break on shallow/read-only CI checkouts where full history is absent. `index.md` and the
- * `<!-- lore:tasks -->` managed blocks stay gated as before. The exemption is what made the loss above
+ * break on shallow/read-only CI checkouts where full history is absent. `index.md` stays gated as
+ * before, and the `<!-- lore:tasks -->` managed blocks gate only under `--strict` (a warning otherwise). The exemption is what made the loss above
  * invisible, and it still stands — but it no longer hides anything, because merge semantics make a
  * shrinking `log.md` impossible by construction, which is a stronger guarantee than a gate reporting
  * one after the fact.
