@@ -774,13 +774,28 @@ describe("lore orphans — the confirmation read folds like the rollup (LCLI-807
   // The bulk list omits the task, so the reference becomes a CANDIDATE dangling link and the
   // per-task confirmation (`confirmDanglingLinks` -> verifiedViewTask) decides it. Before the fix
   // that read threw not_found and the live task was reported dangling; with referenceKey it resolves.
-  test("a task whose id is straße is not reported dangling when referenced as STRASSE", async () => {
-    writeStory("fold", ["STRASSE"]);
-    const canonical = makeTask("straße");
+  test("a task whose id is STRASSE is not reported dangling or orphaned when referenced as straße", async () => {
+    // The id is STRASSE and the reference spells it straße: lower("straße") is NOT its fold, so this
+    // is what exercises the REFERENCE side of the key (a toLowerCase there leaves the task an orphan).
+    writeStory("fold", ["straße"]);
+    const canonical = makeTask("STRASSE");
     const adapter = { ...okAdapter([canonical]), viewTask: async () => canonical };
     const { code, data } = await reportJson([], adapter);
     expect(code).toBe(0);
     expect(data.danglingLinks).toEqual([]);
+    // ... and the task it names is LINKED, not an orphan (the classification folds too).
+    expect(data.orphanTasks).toEqual([]);
+  });
+
+  test("the BULK classification alone folds: no confirmation read can rescue a mis-key (LCLI-809)", async () => {
+    writeStory("fold3", ["STRASSE", "caf\u0065\u0301"]);
+    const canonical = { ...makeTask("straße"), aliases: ["caf\u00e9"] };
+    // The per-task read finds nothing, so only the bulk list can say these references are live.
+    const adapter = { ...okAdapter([canonical]), viewTask: async () => null };
+    const { code, data } = await reportJson([], adapter);
+    expect(code).toBe(0);
+    expect(data.danglingLinks).toEqual([]);
+    expect(data.orphanTasks).toEqual([]);
   });
 
   test("a task with an NFC alias is not reported dangling when referenced in NFD", async () => {
@@ -791,5 +806,6 @@ describe("lore orphans — the confirmation read folds like the rollup (LCLI-807
     const { code, data } = await reportJson([], adapter);
     expect(code).toBe(0);
     expect(data.danglingLinks).toEqual([]);
+    expect(data.orphanTasks).toEqual([]);
   });
 });

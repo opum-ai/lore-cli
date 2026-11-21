@@ -179,6 +179,9 @@ export function makeTask(id: string, overrides: Partial<BacklogTaskDetail> = {})
 function toSummary(task: BacklogTaskDetail): BacklogTask {
   return {
     id: task.id,
+    // Quest's list carries aliases; a fixture that declares them must reach the summary, or a test
+    // of alias-aware classification (LCLI-809) would read a list that cannot hold the alias.
+    ...(task.aliases === undefined ? {} : { aliases: task.aliases }),
     title: task.title,
     status: task.status,
     priority: task.priority,

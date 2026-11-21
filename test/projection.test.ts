@@ -303,3 +303,41 @@ describe("lore export command", () => {
     }
   });
 });
+
+describe("projection task edges fold like the rollup (LCLI-809, #749 should-fix 2)", () => {
+  test("a task-edge target and a dependency target resolve by referenceKey, not toLowerCase", () => {
+    const graph = buildGraph([
+      parseConcept(
+        "index.md",
+        '---\ntype: Reference\ntitle: Home\nokf_version: "0.1"\ntasks:\n  - straße\n  - STRASSE\n---\n',
+      ),
+    ]);
+    const tasks = [
+      makeTask("straße", { title: "Fold" }),
+      makeTask("T-2", { title: "Dependent", dependencies: ["straße"] }),
+    ];
+    const projection = buildProjection({
+      graph,
+      tasks,
+      sourceAdapterVersion: QUEST_SOURCE_ADAPTER_VERSION,
+      docsRoot: "docs",
+      okfVersion: "0.1",
+      exporterVersion: "0.1.0",
+      gitCommit: "a".repeat(40),
+      generatedAt: "2026-07-27T00:00:00.000Z",
+    });
+    // Both spellings (a same-spelling `straße`, which a plain toLowerCase would NOT match against the
+    // folded key, and the folded `STRASSE`) resolve to the one task.
+    const taskEdges = projection.records.filter((record) => record.record === "edge" && record.kind === "task");
+    expect(taskEdges.map((edge) => [edge.target, edge.dangling])).toEqual([
+      ["straße", false],
+      ["STRASSE", false],
+    ]);
+    expect(taskEdges[0]?.to).not.toBeNull();
+    expect(taskEdges[1]?.to).toBe(taskEdges[0]?.to);
+    const dependencyEdge = projection.records.find(
+      (record) => record.record === "edge" && record.kind !== "task" && record.kind !== "link",
+    );
+    expect(dependencyEdge).toMatchObject({ target: "straße", dangling: false });
+  });
+});

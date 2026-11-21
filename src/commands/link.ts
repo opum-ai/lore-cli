@@ -299,7 +299,7 @@ export async function runLink(options: LinkOptions): Promise<number> {
 
   const existingTasks = toRefList(concept.frontmatter.tasks);
   const tasks: LinkedTask[] = taskIds.map((taskId) => {
-    const alreadyLinked = containsCaseInsensitive(existingTasks, taskId);
+    const alreadyLinked = containsTaskReference(existingTasks, taskId);
     return { task: taskId, status: alreadyLinked ? "already-linked" : "added", backRef: "skipped" };
   });
   const nextTasks = [...existingTasks, ...tasks.filter((t) => t.status === "added").map((t) => t.task.toLowerCase())];
@@ -442,17 +442,19 @@ export async function runUnlink(options: LinkOptions): Promise<number> {
   if (concept !== undefined) {
     const existingTasks = toRefList(concept.frontmatter.tasks);
     tasks = taskIds.map((taskId) => {
-      const wasLinked = containsCaseInsensitive(existingTasks, taskId);
+      const wasLinked = containsTaskReference(existingTasks, taskId);
       return { task: taskId, status: wasLinked ? "removed" : "not-linked", backRef: "skipped" };
     });
-    const removedLower = new Set(tasks.filter((t) => t.status === "removed").map((t) => t.task.toLowerCase()));
-    const nextTasks = existingTasks.filter((t) => !removedLower.has(t.toLowerCase()));
+    // Folded the SAME way `containsTaskReference` decided "removed" above, or the report says removed
+    // for an entry the filter then leaves in `tasks:` (`straße` stored, `STRASSE` unlinked).
+    const removedKeys = new Set(tasks.filter((t) => t.status === "removed").map((t) => referenceKey(t.task)));
+    const nextTasks = existingTasks.filter((t) => !removedKeys.has(referenceKey(t)));
     // Refuse before writing when the tracker cannot accept the back-reference removal that follows
     // (LCLI-582, runLink's check). unlink reads no task up front, so it cannot tell whether an edit
     // will be needed: it refuses whenever it would change the doc and back-refs are on. A concept
     // listing a task whose label is already gone therefore now needs an actor too; before, it
     // succeeded. `--no-back-ref` skips the check entirely.
-    if (!noBackRef && removedLower.size > 0) adapter.assertWriteReady?.();
+    if (!noBackRef && removedKeys.size > 0) adapter.assertWriteReady?.();
     // Write the doc-side removal FIRST — mirrors runLink's order. The doc write needs no Backlog
     // round-trip and never depends on any back-reference edit's outcome, so committing it before
     // the per-task Backlog edits means a failure on the Backlog side can never strand it (the
@@ -1049,27 +1051,41 @@ export function assertNoLabelCaseCollision(
 }
 
 /**
- * Deduplicate a coupling id list case-insensitively, keeping the first-seen casing and argument
- * order. It serves BOTH coupling fields, which have the same requirement for the same reason —
- * neither list is schema-enforced unique, so a hand-edited case-duplicate writes the same edge
- * twice:
+ * Deduplicate a `tasks:` id list by {@link referenceKey} — the fold the rollup, `verifiedViewTask` and
+ * Quest's own resolver use — keeping the first-seen spelling and argument order. The list is not
+ * schema-enforced unique, so a hand-edited duplicate (`LORE-1`/`lore-1`, `STRASSE`/`straße`, or one
+ * accent in NFC and NFD) would otherwise write the same edge twice. Exported for
+ * `commands/rename.ts`, which dedups a concept's `tasks:` frontmatter before {@link moveBackRefs}.
  *
- * - `tasks:` ids. Exported for `commands/rename.ts`, which dedups a concept's `tasks:` frontmatter
- *   before {@link moveBackRefs} — without it a `["lore-1", "LORE-1"]` pair drives a redundant
- *   Backlog round trip and a duplicate report row.
- * - `decisions:` entries, already qualified to `<repo>:DEC-N` when they reach it (LCLI-670;
- *   LCLI-727 F16 corrected this docstring, which spoke of task ids alone after that arm landed).
- *   The NAME stays as-is: it is imported by three commands, and renaming it would be a wider change
- *   than the contract it states.
+ * `decisions:` entries are NOT task references and use {@link dedupeDecisionRefs}.
  */
 export function dedupeTaskIds(taskIds: readonly string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const taskId of taskIds) {
-    const key = taskId.toLowerCase();
+    const key = referenceKey(taskId);
     if (!seen.has(key)) {
       seen.add(key);
       out.push(taskId);
+    }
+  }
+  return out;
+}
+
+/**
+ * Deduplicate qualified `decisions:` entries (`<repo>:DEC-N`) case-insensitively, keeping the
+ * first-seen casing and order. This is `dedupeTaskIds`' behaviour before it folded by
+ * {@link referenceKey}: decision refs are ASCII Backlog strings, not task references, so they keep
+ * the plain comparison {@link containsCaseInsensitive} also applies to them.
+ */
+function dedupeDecisionRefs(refs: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const ref of refs) {
+    const key = ref.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(ref);
     }
   }
   return out;
@@ -1090,7 +1106,20 @@ function backRefLabel(conceptId: string): string {
   return `doc:${conceptId}`;
 }
 
-/** Whether `list` contains `value`, matched case-insensitively — the shared comparison `tasks:`/label membership always uses. */
+/**
+ * Whether a `tasks:` list already names `taskId`, compared by {@link referenceKey} so a non-ASCII id
+ * folds the way the rollup, `verifiedViewTask` and Quest's own resolver do (`STRASSE` names `straße`).
+ * Labels, doc paths and decision refs keep {@link containsCaseInsensitive}: they are Backlog's own
+ * strings, not task references.
+ */
+function containsTaskReference(list: readonly string[], taskId: string): boolean {
+  const wanted = referenceKey(taskId);
+  return list.some((item) => referenceKey(item) === wanted);
+}
+
+/**
+ * Whether `list` contains `value`, matched case-insensitively — the comparison label, doc-path and
+ * decision-ref membership use. `tasks:` membership uses {@link containsTaskReference}. */
 function containsCaseInsensitive(list: readonly string[], value: string): boolean {
   return list.some((item) => item.toLowerCase() === value.toLowerCase());
 }
@@ -1175,10 +1204,10 @@ function runLinkDecisions(
   const { concept, decisions, repo, docsRoot, profile, lintByPath } = context;
   assertDecisionCouplingSupported(concept, profile);
   const qualifier = resolveDecisionQualifier({ root: options.root, repoFlag: repo });
-  // Deduped case-insensitively BEFORE scoring, the rule `dedupeTaskIds` applies to task ids
+  // Deduped case-insensitively BEFORE scoring, the same plain rule this list always had (task ids fold by referenceKey instead)
   // (LCLI-670 review B1): `--decision DEC-9 --decision DEC-9`, and `DEC-9` alongside the already
   // qualified `lore-cli:DEC-9`, are one entry, not two rows both reporting `added`.
-  const qualified = dedupeTaskIds(decisions.map((raw) => qualifyDecisionRef(raw, qualifier)));
+  const qualified = dedupeDecisionRefs(decisions.map((raw) => qualifyDecisionRef(raw, qualifier)));
   const existing = toRefList(concept.frontmatter.decisions);
   const rows: LinkedDecision[] = qualified.map((decision) => ({
     decision,
