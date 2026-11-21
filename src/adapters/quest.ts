@@ -16,6 +16,7 @@ import { QUEST_STATUS_FLOW_HINTS } from "../core/reconcile";
 import { type ErrorType, errnoCode, LoreError } from "../errors";
 import { VERSION } from "../meta";
 import type { BacklogComment, BacklogCriterion, BacklogTask, BacklogTaskDetail, ListTasksOptions } from "./backlog";
+import { CASE_FOLD_MAP } from "./case-fold-table";
 import { compareSemver, parseSemver } from "./semver";
 import type { TaskRollupIndex, TaskRollupRow, TrackerAdapter, TrackerCapability } from "./tracker";
 
@@ -980,49 +981,22 @@ function rollupRow(task: Record<string, unknown>): TaskRollupRow {
  * other. Quest compares `aliasKey(id)`/`aliasKey(alias)` against `aliasKey(reference)`, so BOTH the
  * indexed id/alias and the requested reference go through here.
  *
- * JavaScript has no built-in case fold. `String.prototype.toLowerCase()` performs lowercase
- * MAPPING, which agrees with default case folding for every code point EXCEPT those in
- * {@link FOLD_OVERRIDES}: the multi-code-point full foldings (`ß` -> `ss`, Greek iota subscript,
- * Armenian ligature, ...) and the few single-code-point foldings whose target is not their
- * lowercase (`ς` -> `σ`, `µ` -> `μ`, Cherokee, ...), and the REVERSE direction -- a code point JS
- * lowercases but the fold map leaves alone (Cherokee uppercase) is an IDENTITY override, so lore does
- * not lowercase what Quest does not. The table is generated from `unicode-case-folding@1.1.1` -- the
- * exact library quest-cli's `aliasKey` calls -- by `scripts/gen-case-fold-table.mjs`, which is also
- * where the differential check over every code point U+0000..U+10FFFF lives (it is not wired into CI).
- * test/lcli791-quest-rollup.test.ts pins this data's entry count and sha256 and covers the
- * representative folds (`ß`/`ss`, final sigma, Greek prosgegrammeni U+1FBE, NFC/NFD, and ambiguity
- * across fold-equal ids). A code point absent from the table folds as its own `.toLowerCase()`. The
- * one input Quest validates that this does not is an EMPTY reference: quest's `aliasKey` rejects it,
- * lore treats it as a miss (a linked concept is not a task id).
+ * JavaScript has no built-in case fold, and `String.prototype.toLowerCase()` is NOT a substitute: it
+ * performs lowercase MAPPING, whose result varies by Bun generation (the pinned CI bun, Unicode 15.x,
+ * folds fewer code points than a local Bun on Unicode 17). So this folds each code point through the
+ * FULL fold map {@link CASE_FOLD_MAP}, generated from `unicode-case-folding@1.1.1` -- the exact
+ * library quest-cli's `aliasKey` calls -- and applies NO `toLowerCase` fallback. A code point absent
+ * from the map folds to itself, which is the library's own semantics. Both halves of the pair share
+ * this one table; a change to it is a pair change, and the digest pin in
+ * `test/lcli791-quest-rollup.test.ts` fails in whichever half lags. `scripts/gen-case-fold-table.mjs`
+ * re-derives the table and differentially checks it against the library (not wired into CI).
+ *
+ * The one input Quest validates that this does not is an EMPTY reference: quest's `aliasKey` rejects
+ * it, lore treats it as a miss (a linked concept is not a task id).
  */
-export const FOLD_OVERRIDE_DATA =
-  "µμ\nßss\nŉʼn\nſs\nǰǰ\nͅι\nΐΐ\nΰΰ\nςσ\nϐβ\nϑθ\nϕφ\nϖπ\nϰκ\nϱρ\nϵε\nևեւ\nᎠᎠ\nᎡᎡ\nᎢᎢ\nᎣᎣ\nᎤᎤ\nᎥᎥ\nᎦᎦ\nᎧᎧ\nᎨᎨ\nᎩᎩ\nᎪᎪ\nᎫᎫ\nᎬᎬ\nᎭᎭ\nᎮᎮ\nᎯᎯ\nᎰᎰ\n" +
-  "ᎱᎱ\nᎲᎲ\nᎳᎳ\nᎴᎴ\nᎵᎵ\nᎶᎶ\nᎷᎷ\nᎸᎸ\nᎹᎹ\nᎺᎺ\nᎻᎻ\nᎼᎼ\nᎽᎽ\nᎾᎾ\nᎿᎿ\nᏀᏀ\nᏁᏁ\nᏂᏂ\nᏃᏃ\nᏄᏄ\nᏅᏅ\nᏆᏆ\nᏇᏇ\nᏈᏈ\nᏉᏉ\nᏊᏊ\nᏋᏋ\nᏌᏌ\nᏍᏍ\nᏎᏎ\nᏏᏏ\nᏐᏐ\nᏑᏑ\nᏒᏒ\nᏓᏓ\nᏔᏔ\n" +
-  "ᏕᏕ\nᏖᏖ\nᏗᏗ\nᏘᏘ\nᏙᏙ\nᏚᏚ\nᏛᏛ\nᏜᏜ\nᏝᏝ\nᏞᏞ\nᏟᏟ\nᏠᏠ\nᏡᏡ\nᏢᏢ\nᏣᏣ\nᏤᏤ\nᏥᏥ\nᏦᏦ\nᏧᏧ\nᏨᏨ\nᏩᏩ\nᏪᏪ\nᏫᏫ\nᏬᏬ\nᏭᏭ\nᏮᏮ\nᏯᏯ\nᏰᏰ\nᏱᏱ\nᏲᏲ\nᏳᏳ\nᏴᏴ\nᏵᏵ\nᏸᏰ\nᏹᏱ\nᏺᏲ\n" +
-  "ᏻᏳ\nᏼᏴ\nᏽᏵ\nᲀв\nᲁд\nᲂо\nᲃс\nᲄт\nᲅт\nᲆъ\nᲇѣ\nᲈꙋ\nẖẖ\nẗẗ\nẘẘ\nẙẙ\nẚaʾ\nẛṡ\nẞss\nὐὐ\nὒὒ\nὔὔ\nὖὖ\nᾀἀι\nᾁἁι\nᾂἂι\nᾃἃι\nᾄἄι\nᾅἅι\nᾆἆι\n" +
-  "ᾇἇι\nᾈἀι\nᾉἁι\nᾊἂι\nᾋἃι\nᾌἄι\nᾍἅι\nᾎἆι\nᾏἇι\nᾐἠι\nᾑἡι\nᾒἢι\nᾓἣι\nᾔἤι\nᾕἥι\nᾖἦι\nᾗἧι\nᾘἠι\nᾙἡι\nᾚἢι\nᾛἣι\nᾜἤι\nᾝἥι\nᾞἦι\nᾟἧι\nᾠὠι\nᾡὡι\n" +
-  "ᾢὢι\nᾣὣι\nᾤὤι\nᾥὥι\nᾦὦι\nᾧὧι\nᾨὠι\nᾩὡι\nᾪὢι\nᾫὣι\nᾬὤι\nᾭὥι\nᾮὦι\nᾯὧι\nᾲὰι\nᾳαι\nᾴάι\nᾶᾶ\nᾷᾶι\nᾼαι\nιι\nῂὴι\nῃηι\nῄήι\nῆῆ\nῇῆι\nῌηι\n" +
-  "ῒῒ\nΐΐ\nῖῖ\nῗῗ\nῢῢ\nΰΰ\nῤῤ\nῦῦ\nῧῧ\nῲὼι\nῳωι\nῴώι\nῶῶ\nῷῶι\nῼωι\nꭰᎠ\nꭱᎡ\nꭲᎢ\nꭳᎣ\nꭴᎤ\nꭵᎥ\nꭶᎦ\nꭷᎧ\nꭸᎨ\nꭹᎩ\nꭺᎪ\nꭻᎫ\nꭼᎬ\nꭽᎭ\n" +
-  "ꭾᎮ\nꭿᎯ\nꮀᎰ\nꮁᎱ\nꮂᎲ\nꮃᎳ\nꮄᎴ\nꮅᎵ\nꮆᎶ\nꮇᎷ\nꮈᎸ\nꮉᎹ\nꮊᎺ\nꮋᎻ\nꮌᎼ\nꮍᎽ\nꮎᎾ\nꮏᎿ\nꮐᏀ\nꮑᏁ\nꮒᏂ\nꮓᏃ\nꮔᏄ\nꮕᏅ\nꮖᏆ\nꮗᏇ\nꮘᏈ\nꮙᏉ\nꮚᏊ\nꮛᏋ\nꮜᏌ\nꮝᏍ\nꮞᏎ\nꮟᏏ\nꮠᏐ\nꮡᏑ\n" +
-  "ꮢᏒ\nꮣᏓ\nꮤᏔ\nꮥᏕ\nꮦᏖ\nꮧᏗ\nꮨᏘ\nꮩᏙ\nꮪᏚ\nꮫᏛ\nꮬᏜ\nꮭᏝ\nꮮᏞ\nꮯᏟ\nꮰᏠ\nꮱᏡ\nꮲᏢ\nꮳᏣ\nꮴᏤ\nꮵᏥ\nꮶᏦ\nꮷᏧ\nꮸᏨ\nꮹᏩ\nꮺᏪ\nꮻᏫ\nꮼᏬ\nꮽᏭ\nꮾᏮ\nꮿᏯ\nﬀff\nﬁfi\nﬂfl\nﬃffi\n" +
-  "ﬄffl\nﬅst\nﬆst\nﬓմն\nﬔմե\nﬕմի\nﬖվն\nﬗմխ";
-
-/**
- * The table encoded one entry per line as `<code point><fold output>`: the first code point is the
- * key, the remainder is its replacement (which may be several code points). A newline separates
- * entries, so the data cannot itself contain one.
- */
-const FOLD_OVERRIDES: ReadonlyMap<string, string> = new Map(
-  FOLD_OVERRIDE_DATA.split("\n").map((line) => {
-    const key = String.fromCodePoint(line.codePointAt(0) as number);
-    return [key, line.slice(key.length)] as const;
-  }),
-);
-
-/** NFC, then the fold table above (else `.toLowerCase()`), per code point. Exported for its differential test. */
 export function referenceKey(reference: string): string {
   let key = "";
-  for (const char of reference.normalize("NFC")) key += FOLD_OVERRIDES.get(char) ?? char.toLowerCase();
+  for (const char of reference.normalize("NFC")) key += CASE_FOLD_MAP.get(char) ?? char;
   return key;
 }
 

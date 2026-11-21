@@ -1,41 +1,42 @@
-// scripts/gen-case-fold-table.mjs — regenerate FOLD_OVERRIDE_DATA in src/adapters/quest.ts (LCLI-791)
+// scripts/gen-case-fold-table.mjs — regenerate src/adapters/case-fold-table.ts (LCLI-791, LCLI-807)
 //
-// WHY THIS TABLE EXISTS. lore's one-list rollup index must fold a task reference EXACTLY as
-// quest-cli's `aliasKey` does -- `caseFold(alias.normalize("NFC"))` (quest-cli src/domain/records.ts)
-// -- or the same reference can match on the per-task `task view` path and miss (or fail to be
-// ambiguous) on the one-list path. JavaScript has no built-in case fold, so lore starts from
-// `String.prototype.toLowerCase()` (lowercase MAPPING) and carries only the code points where Unicode
-// DEFAULT case folding DISAGREES with it: the multi-code-point full foldings (ss, Greek iota
-// subscript, Armenian ligatures, ...), the single-code-point foldings whose target is not their
-// lowercase (final sigma, micro sign, Cherokee, ...), and the REVERSE direction -- a code point JS
-// lowercases but the fold map leaves alone (the Cherokee uppercase block) is an IDENTITY override so
-// lore does not lowercase what quest does not.
+// WHY THIS TABLE EXISTS (DEC-282 (a12)). lore's one-list rollup index, `lore link`'s read path and
+// Quest's own `findTask` must fold a task reference EXACTLY as quest-cli's `aliasKey` does --
+// `caseFold(alias.normalize("NFC"))` (quest-cli src/domain/records.ts, unicode-case-folding@1.1.1) --
+// or the same reference matches on one read path and misses (or fails to be ambiguous) on another.
+//
+// WHY THE FULL MAP, NOT A toLowerCase DELTA. An earlier revision carried only the 297 code points where
+// Unicode DEFAULT case folding disagreed with `String.prototype.toLowerCase()`, and let `toLowerCase`
+// fold every OTHER code point. CI then measured that `toLowerCase` itself differs by Bun generation
+// (the pinned CI bun, Unicode 15.x, folds fewer code points than a local Bun on Unicode 17), so a
+// binary built on an older Bun folded fewer characters than quest does. The table is now the FULL
+// FOLDING_MAP from unicode-case-folding@1.1.1 -- every key the library maps, in ascending code point
+// order -- and the reader folds each code point through it with NO `toLowerCase` fallback. A code
+// point absent from the map folds to itself, which is the library's own semantics (`caseFold` pushes
+// the char unchanged when the map has no entry). The pair shares one fold table; a change to it is a
+// pair change, and the digest test fails in whichever half lags.
 //
 // SOURCE OF TRUTH: the `unicode-case-folding` package's FOLDING_MAP, the exact library quest-cli's
-// `aliasKey` calls. This script reads that map out of the package's `index.js` and, for every code
-// point U+0000..U+10FFFF, emits an override `<code point><folded output>` when `caseFold(cp)` differs
-// from `cp.toLowerCase()`.
-//
-// A few emitted code points (U+1FBE, U+1FD3, U+1FE3 today) are CANONICALLY DECOMPOSED by NFC, and the
-// reader normalizes before consulting the table, so it reaches their folded form through NFC rather
-// than through the entry. The entry is still correct and is kept so the committed table stays the
-// library's raw difference set byte for byte -- which is exactly what the committed-table pin checks.
+// `aliasKey` calls. This script reads that map out of the package's `index.js` and emits every entry
+// as `<code point><folded output>`, one per line, ascending by code point. It does NOT execute the
+// library -- it parses the `new Map([...])` literal, exactly as before.
 //
 // NOT WIRED INTO CI OR A RELEASE GATE, by design: it needs the package that lore deliberately does not
 // depend on. Run it by hand only when the library quest pins moves. The committed table is pinned by
-// test/lcli791-quest-rollup.test.ts (entry count + sha256 of the data), so ordinary drift is caught
-// without this script; the script is how the pinned bytes are (re)derived and differentially checked.
+// test/lcli791-quest-rollup.test.ts (entry count + sha256 of the data, and a per-entry agreement
+// check), so ordinary drift is caught without this script; the script is how the pinned bytes are
+// (re)derived and differentially checked.
 //
 // USAGE
 //   npm pack unicode-case-folding@1.1.1 --pack-destination /tmp
 //   tar -xzf /tmp/unicode-case-folding-1.1.1.tgz -C /tmp
 //   node scripts/gen-case-fold-table.mjs --lib /tmp/package/index.js
-//       Print the FOLD_OVERRIDE_DATA block plus the entry count and sha256 to pin.
-//   node scripts/gen-case-fold-table.mjs --lib /tmp/package/index.js --ts src/adapters/quest.ts
-//       Differential CHECK: recompute from the library and compare with the committed table; exit 1 on
-//       any missing or spurious entry, naming them.
-//   node scripts/gen-case-fold-table.mjs --lib /tmp/package/index.js --ts src/adapters/quest.ts --write
-//       Replace the committed table with the regenerated block (then let biome format the file).
+//       Print the generated module plus the entry count and sha256 to pin.
+//   node scripts/gen-case-fold-table.mjs --lib /tmp/package/index.js --ts src/adapters/case-fold-table.ts
+//       Differential CHECK: recompute from the library and compare with the committed table EXACTLY
+//       (order and content); exit 1 on any missing, spurious or out-of-order entry, naming them.
+//   node scripts/gen-case-fold-table.mjs --lib /tmp/package/index.js --ts src/adapters/case-fold-table.ts --write
+//       Replace the committed module with the regenerated one (then let biome format the file).
 //
 // REPRODUCIBILITY: unicode-case-folding@1.1.1 tarball shasum 644d22adc0eb8ff806d6e34640f2ce6241853fcd,
 // integrity sha512-ZAYziAnMTBisO2dT5tyGvBFMNsIfonOS/BZTd3UZaKWtXMOZqK8s8HRUCrlKxGCTeCxCuCjS/6HW+4a6G+rbzw==.
@@ -44,7 +45,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 
-const BLOCK_START = "const FOLD_OVERRIDE_DATA =";
+const BLOCK_START = "export const CASE_FOLD_TABLE_DATA =";
 // Wrap the emitted string literals at roughly this many UTF-16 code units of table per line.
 const LINE_BUDGET = 110;
 
@@ -61,26 +62,23 @@ function loadFoldingMap(libPath) {
 }
 
 /**
- * The override entries, ascending by code point: `<code point><fold output>` when the fold differs
- * from that code point's lowercase mapping. Code points where they agree need no entry, because the
- * reader falls back to `.toLowerCase()`.
+ * The FULL table: every entry of the library's FOLDING_MAP, `<code point><fold output>`, ascending by
+ * code point. Code points the map omits need no entry -- the reader folds them to themselves.
  *
  * @param {Map<number, number[]>} foldingMap
  * @returns {string[]}
  */
 function buildEntries(foldingMap) {
   const entries = [];
-  for (let codePoint = 0; codePoint <= 0x10ffff; codePoint++) {
-    const char = String.fromCodePoint(codePoint);
-    const lower = char.toLowerCase();
-    const mapped = foldingMap.get(codePoint);
-    const folded = mapped === undefined ? char : String.fromCodePoint(...mapped);
-    if (folded !== lower) entries.push(char + folded);
+  for (const [codePoint, mapped] of foldingMap) {
+    entries.push(String.fromCodePoint(codePoint) + String.fromCodePoint(...mapped));
   }
+  // Ascending code point order, pinned so the committed bytes are deterministic.
+  entries.sort((a, b) => (a.codePointAt(0) ?? 0) - (b.codePointAt(0) ?? 0));
   return entries;
 }
 
-/** Render the entries as the `const FOLD_OVERRIDE_DATA = ...;` TypeScript block. */
+/** Render the entries as the `export const CASE_FOLD_TABLE_DATA = ...;` TypeScript block. */
 function formatBlock(entries) {
   const chunks = [];
   let current = [];
@@ -101,7 +99,42 @@ function formatBlock(entries) {
   return `${BLOCK_START}\n  ${literals.join(" +\n  ")};`;
 }
 
-/** Read the committed table out of the TypeScript source, with the span the block occupies. */
+/** The whole generated module: header, the data block with its entry count, and the parsed map. */
+function formatModule(entries, digest) {
+  const header = [
+    "// GENERATED FILE -- do not edit by hand. Regenerate with scripts/gen-case-fold-table.mjs.",
+    "//",
+    "// The FULL Unicode DEFAULT case-fold map from `unicode-case-folding@1.1.1`, the exact library",
+    "// quest-cli's `aliasKey` calls. Each line is one entry, `<code point><fold output>`, ascending by",
+    "// code point; a newline separates entries, and a fold output may be several code points (`ss`, a",
+    "// Greek iota subscript, an Armenian ligature, ...). A code point ABSENT from the table folds to",
+    "// itself, which is the library's own semantics -- the reader applies NO `String.prototype.toLowerCase`",
+    "// fallback, so the result does not vary by Bun generation (DEC-282 (a12)). lore and quest share this",
+    "// one fold table; a change to it is a pair change, and the digest pin in",
+    "// test/lcli791-quest-rollup.test.ts fails in whichever half lags.",
+    "//",
+    `// entries: ${entries.length}`,
+    `// sha256 of the newline-joined data below: ${digest}`,
+    "",
+  ].join("\n");
+  return (
+    `${header}${formatBlock(entries)}\n\n` +
+    "/** One entry per line in {@link CASE_FOLD_TABLE_DATA}; pinned by the digest test. */\n" +
+    `export const CASE_FOLD_TABLE_ENTRY_COUNT = ${entries.length};\n\n` +
+    "/**\n" +
+    " * The table parsed: the first code point of each line is the key, the remainder its replacement\n" +
+    " * (one or more code points). A code point the map does not hold folds to itself.\n" +
+    " */\n" +
+    "export const CASE_FOLD_MAP: ReadonlyMap<string, string> = new Map(\n" +
+    '  CASE_FOLD_TABLE_DATA.split("\\n").map((line) => {\n' +
+    "    const key = String.fromCodePoint(line.codePointAt(0) as number);\n" +
+    "    return [key, line.slice(key.length)] as const;\n" +
+    "  }),\n" +
+    ");\n"
+  );
+}
+
+/** Read the committed table out of the generated module, with the span the data block occupies. */
 function readCommitted(tsPath) {
   const source = readFileSync(tsPath, "utf8");
   const start = source.indexOf(BLOCK_START);
@@ -129,38 +162,43 @@ function main() {
   const args = process.argv.slice(2);
   const libPath = argument(args, "--lib");
   if (libPath === undefined) {
-    throw new Error("usage: gen-case-fold-table.mjs --lib <unicode-case-folding/index.js> [--ts <quest.ts> [--write]]");
+    throw new Error(
+      "usage: gen-case-fold-table.mjs --lib <unicode-case-folding/index.js> [--ts <case-fold-table.ts> [--write]]",
+    );
   }
   const entries = buildEntries(loadFoldingMap(libPath));
   const data = entries.join("\n");
-  const block = formatBlock(entries);
   const digest = sha256(data);
   const tsPath = argument(args, "--ts");
 
   if (tsPath === undefined) {
-    process.stdout.write(`${block}\n\n// entries: ${entries.length}\n// sha256: ${digest}\n`);
+    process.stdout.write(`${formatModule(entries, digest)}\n// entries: ${entries.length}\n// sha256: ${digest}\n`);
     return;
   }
 
-  const committed = readCommitted(tsPath);
-  const expected = new Set(entries);
-  const actual = new Set(committed.data.split("\n").filter((line) => line !== ""));
-  const missing = [...expected].filter((entry) => !actual.has(entry));
-  const extra = [...actual].filter((entry) => !expected.has(entry));
-
   if (args.includes("--write")) {
-    writeFileSync(tsPath, committed.source.slice(0, committed.start) + block + committed.source.slice(committed.end));
+    writeFileSync(tsPath, formatModule(entries, digest));
     process.stdout.write(`wrote ${entries.length} entries (sha256 ${digest}) to ${tsPath}\n`);
     return;
   }
 
+  // Differential CHECK: compare the committed full table with the library's map EXACTLY (order and
+  // content), not as an unordered set.
+  const committed = readCommitted(tsPath);
+  const actual = committed.data.split("\n").filter((line) => line !== "");
+  const missing = entries.filter((entry) => !actual.includes(entry));
+  const extra = actual.filter((entry) => !entries.includes(entry));
+  const inOrder = actual.length === entries.length && actual.every((entry, i) => entry === entries[i]);
+
   process.stdout.write(
-    `committed ${actual.size} entries (sha256 ${sha256(committed.data)})\n` +
+    `committed ${actual.length} entries (sha256 ${sha256(committed.data)})\n` +
       `expected  ${entries.length} entries (sha256 ${digest})\n`,
   );
   for (const entry of missing) process.stdout.write(`  MISSING ${JSON.stringify(entry)}\n`);
   for (const entry of extra) process.stdout.write(`  EXTRA   ${JSON.stringify(entry)}\n`);
-  if (missing.length > 0 || extra.length > 0) {
+  if (!inOrder && missing.length === 0 && extra.length === 0)
+    process.stdout.write("  OUT OF ORDER: the committed entries are not ascending by code point\n");
+  if (!inOrder || missing.length > 0 || extra.length > 0) {
     process.exitCode = 1;
     process.stdout.write("the committed table disagrees with unicode-case-folding; re-run with --write\n");
   }
