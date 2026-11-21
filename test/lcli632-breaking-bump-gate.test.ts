@@ -395,31 +395,35 @@ describe("the quest-side read (AC3, enforced)", () => {
 test("the real CHANGELOG: --next checks the named version's own section when it exists and [Unreleased] otherwise; the no-flag arm is the version's own section (canonical since LCLI-649)", () => {
   const real = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
   const version = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
-  // The bump's own section is the checked one: 0.15.0 has a "## [0.15.0]"
-  // heading, so it is checked against the versioned section below it. The
-  // section carries a canonical `### Changed (breaking)` heading (the Codex
-  // skill path move: `lore agents --check` goes from exit 0 to 6 on an
-  // unchanged workspace, ODOC-556), so it reads `breaking: true` and the
-  // 0.14.1 -> 0.15.0 minor bump satisfies it. package.json names 0.15.0, so
-  // the CLI with no flag selects the same section.
+  // The bump's own section is the checked one: 0.15.1 has a "## [0.15.1]"
+  // heading, so it is checked against the versioned section below it. That
+  // section carries NO canonical `### Changed (breaking)` heading (the Codex
+  // skill path move it carries from the 0.15.0 rc is described in prose,
+  // because the gate refuses that heading in a patch release), so it reads
+  // `breaking: false` and the 0.15.0 -> 0.15.1 patch bump is clean. package.json
+  // names 0.15.1, so the CLI with no flag selects the same section.
   // The literals below are this release's; if package.json moves without them, say so here.
-  expect(version).toBe("0.15.0");
-  const next = breakingBumpProblems(real, "0.15.0");
+  expect(version).toBe("0.15.1");
+  const next = breakingBumpProblems(real, "0.15.1");
   expect(next).toMatchObject({
-    source: "## [0.15.0] - 2026-10-31",
-    previous: "0.14.1",
-    level: "minor",
-    breaking: true,
+    source: "## [0.15.1] - 2026-11-21",
+    previous: "0.15.0",
+    level: "patch",
+    breaking: false,
   });
   expect(next.problems).toEqual([]);
-  // The same section at a patch step is the refusal direction, on the real
-  // tree: a breaking heading cannot ride a 0.14.x bump.
+  // The 0.15.0 section keeps its canonical breaking heading, so it still reads
+  // breaking, its minor step from 0.14.1 satisfies it, and the same section at a
+  // patch step is the refusal direction on the real tree.
+  const rc = breakingBumpProblems(real, "0.15.0");
+  expect(rc).toMatchObject({ source: "## [0.15.0] - 2026-10-31", previous: "0.14.1", level: "minor", breaking: true });
+  expect(rc.problems).toEqual([]);
   const asPatch = breakingBumpProblems(real.replace("## [0.15.0] - 2026-10-31", "## [0.14.2] - 2026-10-31"), "0.14.2");
   expect(asPatch).toMatchObject({ level: "patch", breaking: true });
   expect(asPatch.problems.length).toBeGreaterThan(0);
   // Unreleased arm on the real tree: [Unreleased] is empty, so a patch above
-  // the current version reads [Unreleased] against 0.15.0 and is clean.
-  const patch = breakingBumpProblems(real, "0.15.1");
+  // the current version reads [Unreleased] against 0.15.1 and is clean.
+  const patch = breakingBumpProblems(real, "0.15.2");
   expect(patch).toMatchObject({ source: "## [Unreleased]", previous: version, level: "patch", breaking: false });
   expect(patch.problems).toEqual([]);
   // The released section below it. LCLI-649 converted its legacy
