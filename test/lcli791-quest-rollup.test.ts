@@ -11,9 +11,9 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CASE_FOLD_MAP, CASE_FOLD_TABLE_DATA, CASE_FOLD_TABLE_ENTRY_COUNT } from "../src/adapters/case-fold-table";
 import {
   createQuestAdapter,
-  FOLD_OVERRIDE_DATA,
   type QuestSpawn,
   type QuestSpawnResult,
   questListCacheKey,
@@ -486,33 +486,83 @@ describe("the reference key folds exactly as Quest's findTask does (review F2, F
     expect(ambiguous.error.message).toContain("task_reference_ambiguous");
   });
 
-  test("F5: the generated fold table is pinned by entry count and sha256 (scripts/gen-case-fold-table.mjs)", () => {
+  test("F5: the generated fold table is the FULL 1.1.1 map, pinned by entry count and sha256 (DEC-282 (a12))", () => {
     // Regenerate with: node scripts/gen-case-fold-table.mjs --lib <unicode-case-folding@1.1.1>/index.js
-    expect(FOLD_OVERRIDE_DATA.split("\n").length).toBe(297);
-    expect(createHash("sha256").update(FOLD_OVERRIDE_DATA).digest("hex")).toBe(
-      "874a3f8ece0a7f1d1db10a8feb9437590f3621cb069a1f94f206e3e28f35c7d0",
+    expect(CASE_FOLD_TABLE_DATA.split("\n").length).toBe(1585);
+    expect(CASE_FOLD_TABLE_DATA.split("\n").length).toBe(CASE_FOLD_TABLE_ENTRY_COUNT);
+    expect(createHash("sha256").update(CASE_FOLD_TABLE_DATA).digest("hex")).toBe(
+      "ef08b22d969b928737ae158c7a0d2bc4b800769b178f99db69f21bd68255fc13",
     );
   });
 
-  test("F5: every override entry is applied, so referenceKey matches the pinned table at all 297 code points", () => {
-    const lines = FOLD_OVERRIDE_DATA.split("\n");
-    const mismatched = lines.filter((line) => {
-      const key = String.fromCodePoint(line.codePointAt(0) as number);
-      return referenceKey(key) !== line.slice(key.length);
-    });
-    expect(mismatched).toEqual([]);
-    // Positive controls: the check is not vacuous -- a full folding and a sub-lowercase fold both bite.
-    expect(referenceKey("ß")).toBe("ss");
-    expect(referenceKey("ς")).toBe("σ"); // final sigma folds to sigma, which is NOT its toLowerCase
+  test("F5: the table is the library's FOLDING_MAP verbatim -- unique keys, ascending by code point", () => {
+    const points = CASE_FOLD_TABLE_DATA.split("\n").map((line) => line.codePointAt(0) as number);
+    expect(points).toEqual([...points].sort((a, b) => a - b));
+    expect(new Set(points).size).toBe(points.length);
   });
 
-  test("F5: the table carries CaseFolding's U+1FBE entry (1FBE; C; 03B9)", () => {
-    // NFC canonically decomposes U+1FBE to U+03B9 BEFORE the table is consulted, so referenceKey
-    // already matched this pair with or without the entry; the entry keeps the table byte-identical to
-    // the library's raw per-code-point difference set, which is what the count/hash above pin. U+1FD3
-    // and U+1FE3 are the same shape (NFC -> U+0390 / U+03B0) and are covered by that same pin.
-    expect(FOLD_OVERRIDE_DATA.split("\n")).toContain("ιι");
-    expect(referenceKey("ι")).toBe("ι"); // NFC gets there even without the entry; the table must agree
+  test("F5: referenceKey agrees with the library's caseFold at EVERY code point in the map", () => {
+    // A local caseFold built from the committed (digest-pinned) table: no dependency on the package.
+    // It is the library's semantics exactly -- look the code point up, else keep the char unchanged.
+    const libraryCaseFold = (input: string): string => {
+      let out = "";
+      for (const char of input) out += CASE_FOLD_MAP.get(char) ?? char;
+      return out;
+    };
+    const lines = CASE_FOLD_TABLE_DATA.split("\n");
+    const mismatched: { key: string; got: string; want: string }[] = [];
+    for (const line of lines) {
+      const key = String.fromCodePoint(line.codePointAt(0) as number);
+      // quest computes `caseFold(input.normalize("NFC"))`, so parity is against the NFC form.
+      const want = libraryCaseFold(key.normalize("NFC"));
+      const got = referenceKey(key);
+      if (got !== want) mismatched.push({ key: JSON.stringify(key), got, want });
+    }
+    expect(mismatched).toEqual([]);
+    expect(lines.length).toBe(1585); // the loop read the whole map, not an empty slice
+  });
+
+  test("F5: each mapped code point folds to its raw map value, or its canonically equivalent NFC form", () => {
+    const composed: string[] = [];
+    for (const line of CASE_FOLD_TABLE_DATA.split("\n")) {
+      const key = String.fromCodePoint(line.codePointAt(0) as number);
+      const value = line.slice(key.length);
+      const viaNfc = referenceKey(key); // referenceKey(key) is caseFold(NFC(key))
+      if (viaNfc === value) continue;
+      // The rest are canonical compositions: byte-different from the raw map value, canonically equal.
+      composed.push(`U+${(key.codePointAt(0) as number).toString(16).toUpperCase()}`);
+      expect(viaNfc.normalize("NFC")).toBe(value.normalize("NFC"));
+    }
+    expect(composed).toEqual(["U+1FBB", "U+1FC9", "U+1FCB", "U+1FDB", "U+1FEB", "U+1FF9", "U+1FFB"]);
+  });
+
+  test("F5: positive controls -- ß, final sigma, U+1FBE, and the Unicode-16 Garay pair (U+10D50 -> U+10D70)", () => {
+    expect(referenceKey("ß")).toBe("ss");
+    expect(referenceKey("ς")).toBe("σ"); // final sigma folds to sigma, NOT its toLowerCase
+    expect(referenceKey("ι")).toBe("ι"); // U+1FBE: NFC -> U+03B9, then fold
+    // Garay (Unicode 16): the pair IS in 1.1.1; the map records it and referenceKey applies it.
+    expect(CASE_FOLD_MAP.has(String.fromCodePoint(0x10d50))).toBe(true);
+    expect(referenceKey(String.fromCodePoint(0x10d50))).toBe(String.fromCodePoint(0x10d70));
+    expect(referenceKey("STRASSE")).toBe(referenceKey("straße")); // whole-string parity with quest
+  });
+
+  test("F5: referenceKey does NOT depend on String.prototype.toLowerCase (red under the previous impl)", () => {
+    const inputs = ["Hello", "straße", "café", "ς", "Ꭰ", "ǅ", "Ω", String.fromCodePoint(0x10d50)];
+    const before = inputs.map((input) => referenceKey(input));
+    const original = String.prototype.toLowerCase;
+    try {
+      // A code point absent from the map must fold to ITSELF, not to its lowercase. The previous
+      // implementation (`?? char.toLowerCase()`) calls this and so throws here -> red.
+      String.prototype.toLowerCase = () => {
+        throw new Error("referenceKey must not call String.prototype.toLowerCase");
+      };
+      expect(inputs.map((input) => referenceKey(input))).toEqual(before);
+    } finally {
+      String.prototype.toLowerCase = original;
+    }
+    // Cherokee uppercase is ABSENT from the fold map, so it folds to itself; toLowerCase would map it
+    // to U+AB70. That is the runtime-independence the full map buys (DEC-282 (a12)).
+    expect(referenceKey("Ꭰ")).toBe("Ꭰ");
   });
 
   test("F7: a STRING aliases value is compared by reference key, so a matching alias is drift, not not_found", async () => {
