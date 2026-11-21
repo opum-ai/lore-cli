@@ -46,13 +46,27 @@
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 
+// sha256 of the `index.js` inside the unicode-case-folding@1.1.1 tarball named above. The tarball shasum
+// is recorded in prose; THIS is checked: the script refuses a `--lib` whose bytes differ, so a check or a
+// --write can never silently run against a different release of the library (or a hand-edited file).
+// When the library quest pins moves on purpose, update this constant and the tarball shasum together.
+const LIB_INDEX_SHA256 = "c20cb4dd91d4e79c17ed42423ea99cd0fb98344727963d002159c417df103237";
+
 const BLOCK_START = "export const CASE_FOLD_TABLE_DATA =";
 // Wrap the emitted string literals at roughly this many UTF-16 code units of table per line.
 const LINE_BUDGET = 110;
 
 /** Read and parse the FOLDING_MAP literal from the unicode-case-folding `index.js`. */
 function loadFoldingMap(libPath) {
-  const source = readFileSync(libPath, "utf8");
+  const bytes = readFileSync(libPath);
+  const actual = createHash("sha256").update(bytes).digest("hex");
+  if (actual !== LIB_INDEX_SHA256) {
+    throw new Error(
+      `${libPath} has sha256 ${actual}, not the pinned ${LIB_INDEX_SHA256} (unicode-case-folding@1.1.1 index.js); ` +
+        "refusing to derive the fold table from a different library file",
+    );
+  }
+  const source = bytes.toString("utf8");
   const match = /const FOLDING_MAP = new Map\(([\s\S]*?)\);/.exec(source);
   if (match === null) throw new Error(`no FOLDING_MAP literal found in ${libPath}`);
   const body = match[1];
@@ -200,9 +214,17 @@ function main() {
   for (const entry of extra) process.stdout.write(`  EXTRA   ${JSON.stringify(entry)}\n`);
   if (!inOrder && missing.length === 0 && extra.length === 0)
     process.stdout.write("  OUT OF ORDER: the committed entries are not ascending by code point\n");
-  if (!inOrder || missing.length > 0 || extra.length > 0) {
+  // The WHOLE module, not only its data block: a changed header comment, import or trailing line is
+  // drift too (the data block compare above cannot see it). `--write` plus biome reproduces the
+  // committed bytes exactly, so any difference here is real.
+  const moduleMatches = committed.source === formatModule(entries, digest);
+  if (!moduleMatches && inOrder && missing.length === 0 && extra.length === 0)
+    process.stdout.write(
+      "  MODULE DIFFERS from the regenerated module outside the data block (header or formatting)\n",
+    );
+  if (!inOrder || missing.length > 0 || extra.length > 0 || !moduleMatches) {
     process.exitCode = 1;
-    process.stdout.write("the committed table disagrees with unicode-case-folding; re-run with --write\n");
+    process.stdout.write("the committed module disagrees with unicode-case-folding; re-run with --write\n");
   }
 }
 
