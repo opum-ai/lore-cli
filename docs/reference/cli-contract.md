@@ -366,6 +366,37 @@ contributes to exit `6`; see [validation/coherence reference](okf-conformance.md
 and the gate behavior in [CLI surface](cli-surface.md)). This keeps everyday
 commands non-fatal on advisory findings while letting gates enforce them.
 
+### 4.2 Read-only commands and clone-local coordination state
+
+A command documented as **read-only** (`lore check` is the one that matters) does not mutate the
+working tree, `.lore/`, or the docs bundle, and does not change any tracked or authored byte. One
+exception is named exactly, ruled by DEC-282 (a17) under ODOC-610 (2026-11-22): **lore's own
+coordination state under `<git-common-dir>/lore/advisory/` is not authored state, so a read-only
+command may create or update it.** It exists because `lore check` and `lore sync` take an advisory
+lock per git common directory, so concurrent runs from different worktrees of one clone serialize
+instead of multiplying `quest` processes, and a waiter whose input tree hash matches a finished
+result reuses it (LCLI-792, DEC-282 items 2, (a7) and (a8); shipped in `0.15.1`).
+
+What lives there, by file name (`advisoryLockPath`, `advisoryBreakPath` and `advisoryResultPath` in
+`src/core/advisory-lock.ts`):
+
+- `<lockName>.lock` — the lock, with the holder's heartbeat;
+- `<lockName>.lock.break` — the file that serialises stale-lock recovery;
+- `<resultName>.result.json` — a finished result a waiter may reuse; for `check` that is
+  `check.result.json`.
+
+The exception is scoped exactly, and the ruling states the scope:
+
+- It covers only `<git-common-dir>/lore/advisory/`. Nothing else under `.git` is exempt (refs,
+  index, config, objects), and nothing in any worktree.
+- The exempt path stays inside the git common directory, is untracked, and is never committed.
+- A recorded result can hold `lore check` output. It stays local and is never pushed.
+
+A qualification row that asserts a read-only command left the repository untouched must therefore
+treat that one directory as outside the comparison, and must still assert every other byte is
+unchanged. Before `0.15.1`, `lore check` wrote nothing there; a consumer comparing against an older
+release will see the directory appear.
+
 ---
 
 ## 5. Failure model
