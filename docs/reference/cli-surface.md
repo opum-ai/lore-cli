@@ -344,7 +344,10 @@ Tiered per-file validation:
 
 ### `check`
 
-The **drift gate** — read-only, never writes. Aggregates:
+The **drift gate** — read-only: it never writes to the working tree, `.lore/`, or the docs bundle.
+The one thing it may write is its own clone-local coordination state under
+`<git-common-dir>/lore/advisory/`, which is not authored state (see
+[CLI contract §4.2](cli-contract.md#42-read-only-commands-and-clone-local-coordination-state)). Aggregates:
 
 - **Status reconciliation drift** — recomputes each `Story`/`Spec` status from
   its linked tasks (via `backlog … --json`) and reports any file whose
