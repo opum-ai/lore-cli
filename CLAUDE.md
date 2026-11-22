@@ -119,11 +119,13 @@ external users invoke, which the retirement-scope rule explicitly protects.
 `.claude-plugin/marketplace.json` pins `opum-ai/lore-cli` at a tag name, and
 `scripts/check-federated-content.mjs` re-resolves the whole chain — tag ref, tag
 object, commit, root tree, `skills/` subtree — against a recorded baseline in
-`scripts/federated-pin-baselines.json`. Read by ref 2026-09-27 ~06:15Z (origin/main `d2f43c5`):
-pinned at `v0.11.0`, `skills/` baseline `ce580cd17d1da6a61ddb53f649398719b9262f96`, the
-same tree `v0.9.3` carried (their OMARK-74). Earlier revisions recorded `v0.9.3` (read
-earlier on 2026-09-27, origin/main `8e5eec20`) and `v0.7.0` / `2998f74d…` (2026-09-15); each
-went stale as the pin moved, so re-read by ref before quoting this one.
+`scripts/federated-pin-baselines.json`. Read by ref 2026-11-22 08:38Z (their `main`): pinned
+at `v0.15.1`, `skills/` tree `a64e795e…`. Every revision of this paragraph has gone stale as
+the pin moved (`v0.7.0`, `v0.9.3`, `v0.11.0` before it), and on 2026-11-22 the stale `v0.11.0`
+was quoted to them as their baseline: their real pin was `v0.14.1`, so the "skills/ moved
++25 -2" claim was wrong and the real diff was one line. Read the pin and baseline from their
+`marketplace.json` and `scripts/federated-pin-baselines.json` by ref before any message that
+names them, and quote this paragraph's figures as history, never as current.
 
 Two things follow, and the second is the one that gets misstated. Anything landing
 under `skills/` changes what the next tag ships to plugin users, so it is not an
