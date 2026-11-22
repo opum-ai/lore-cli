@@ -68,7 +68,7 @@ env:
   # receipt, whose pair lock needs a lore binary from a lore release run, and this run is that run:
   # without a source build the cycle never closes. (Measured: run 41314948217 failed all six probe
   # legs at setup-quest with notarget @opum-ai/quest@0.15.0.) 0.14.1 crossed the same way (LCLI-714)
-  # and LCLI-750 dropped the pin afterwards; LCLI-781 drops this one, with ci.yml's, once quest 0.15.0
+  # and LCLI-750 dropped the pin afterwards; LCLI-781 drops this one, with ci.yml's, once quest 0.15.1
   # is on npm latest.
   #
   # This file carries its own copy because a workflow_dispatch run executes THIS file from the
