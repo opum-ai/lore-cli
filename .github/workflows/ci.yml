@@ -105,17 +105,17 @@ permissions:
   contents: read
 
 env:
-  # LCLI-775, DEC-55 (ODOC-556 pair release 0.15.0): the opum-ai/quest-cli commit that
+  # LCLI-775, DEC-55 (ODOC-556 pair release 0.15.1): the opum-ai/quest-cli commit that
   # carries the Quest version CLAUDE.md's managed block declares. Read by
   # .github/actions/setup-quest ONLY when that version does not install from npm,
   # which is the window between this bump landing and quest's publish: lore's pair
   # lock otherwise leaves the docs gate and compile smoke unable to run at all.
   #
-  # This is quest-cli's dev squash of #709 (QCLI-551, 0.15.0), resolved against the
+  # This is quest-cli's dev squash of #782 (the 0.15.1 bump, DEC-290), resolved against the
   # remote before it was written here. Remove this pin, and the three `source-ref`
-  # lines below, once quest 0.15.0 is on npm (LCLI-781); the action asserts the built
+  # lines below, once quest 0.15.1 is on npm (LCLI-781); the action asserts the built
   # quest reports the declared version, so a drifted ref fails by name.
-  QUEST_SOURCE_REF: 81645e558d2548aaabd542080d00c6718e43a9d1
+  QUEST_SOURCE_REF: 7f6ab5480eb37571d419d3f6e447f102d5c2e13e
 
 jobs:
   check:

@@ -399,7 +399,7 @@ describe("ci.yml docs gate (LCLI-504)", () => {
     const setup = steps.find((step) => step.uses === "./.github/actions/setup-quest");
     expect(setup).toBeDefined();
     expect(setup?.with?.version).toBe("${{ steps.quest.outputs.version }}");
-    // LCLI-775: while quest 0.15.0 is off npm the call carries the pinned source ref.
+    // LCLI-775: while quest 0.15.1 is off npm the call carries the pinned source ref.
     expect(setup?.with?.["source-ref"]).toBe("${{ env.QUEST_SOURCE_REF }}");
     // Derived from CLAUDE.md's managed block rather than pinned a second time here —
     // the same rule the tracker job states, and the reason the two must stay in step.

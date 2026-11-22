@@ -294,7 +294,7 @@ end to end: a clean tree produces no diff.
 ### `lore check` (read-only, the CI gate)
 `commands/check` → the **same** reconcile + managed-block + link/anchor
 computation as `sync`, but **diffs instead of writing**. Reports status drift,
-stale managed blocks, broken internal links, missing heading anchors, and
+stale managed blocks (a stale `lore:tasks` block is a warning, an error only under `--strict`), broken internal links, missing heading anchors, and
 portability-lint findings. Internal links are validated by default; external
 liveness is opt-in via `--external` (no Rust/lychee runtime dependency). Exit `6`
 on drift. This is the gate CI runs.
